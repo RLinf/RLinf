@@ -1,0 +1,39 @@
+name: Unit Tests
+
+on:
+    push:
+        branches: [ main, feat/*, v* ]
+    pull_request:
+        branches: [ main, feat/*, v* ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+    unit-tests:
+        runs-on: self-hosted
+        container:
+            image: beijing-j.cr.infini-ai.com:32443/te-dbdcudoygepmq5vx/rlsys:v2.4
+            volumes:
+                - /mnt/public/dataset:/workspace/dataset
+                - /mnt/public/tokenizer:/workspace/tokenizer
+            options: --gpus="all" --shm-size=80g
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Install Megatron
+              run: git clone https://github.com/NVIDIA/Megatron-LM.git -b v0.11.0 megatron
+
+            - name: Install pytest
+              run: pip install pytest
+
+            - name: Run pytest
+              run: |
+                export PYTHONPATH=$(pwd):$(pwd)/megatron:$(pwd)/tests/unit_tests 
+                pytest tests/unit_tests
