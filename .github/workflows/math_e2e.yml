@@ -1,4 +1,4 @@
-name: Qwen Math 1.5B End2End
+name: Math End2End
 
 on:
     push:
@@ -10,11 +10,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-    math-test:
+    qwen-grpo-test:
         runs-on: self-hosted
         container:
             image: beijing-j.cr.infini-ai.com:32443/te-dbdcudoygepmq5vx/rlsys:v2.4

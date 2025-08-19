@@ -1,4 +1,4 @@
-name: Unit Tests
+name: Embodied End2End
 
 on:
     push:
@@ -14,14 +14,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-    unit-tests:
+    openvla-ppo-test:
         runs-on: self-hosted
         container:
-            image: beijing-j.cr.infini-ai.com:32443/te-dbdcudoygepmq5vx/rlsys:v2.4
+            image: beijing-j.cr.infini-ai.com:32443/te-dbdcudoygepmq5vx/rlsys_ci_test:v0.1
             volumes:
                 - /mnt/public/dataset:/workspace/dataset
                 - /mnt/public/tokenizer:/workspace/tokenizer
-            options: --gpus="all" --shm-size=80g
+            options: --gpus="all" --shm-size=2g --privileged -e NVIDIA_DRIVER_CAPABILITIES="compute,utility,graphics"
 
         steps:
             - name: Checkout code
@@ -30,10 +30,7 @@ jobs:
             - name: Install Megatron
               run: git clone https://github.com/NVIDIA/Megatron-LM.git -b v0.11.0 megatron
 
-            - name: Install pytest
-              run: pip install pytest
-
-            - name: Run pytest
+            - name: OpenVLA test
               run: |
-                export PYTHONPATH=$(pwd):$(pwd)/megatron:$(pwd)/tests/unit_tests 
-                pytest tests/unit_tests
+                export REPO_PATH=$(pwd)
+                bash tests/e2e_tests/embodied/run_openvla.sh
