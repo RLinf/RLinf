@@ -1,0 +1,765 @@
+/* Enhanced Sphinx Modal Styles for AI Chat */
+
+/* Design System Variables - Based on Refactoring UI Principles */
+:root {
+  /* Spacing Scale - Systematic spacing based on 4px increments */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 20px;
+  --space-2xl: 24px;
+  --space-3xl: 32px;
+  --space-4xl: 40px;
+  --space-5xl: 48px;
+  
+  /* Typography Scale - Proportional type system */
+  --text-xs: 0.75rem;  /* 12px */
+  --text-sm: 0.875rem; /* 14px */
+  --text-base: 1rem;   /* 16px */
+  --text-lg: 1.125rem; /* 18px */
+  --text-xl: 1.25rem;  /* 20px */
+  
+  /* Line Heights - Inverse relationship to size */
+  --leading-tight: 1.2;
+  --leading-snug: 1.3;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.6;
+  
+  /* HSL Color System - Better for manipulation */
+  --sphinx-primary-hue: 267;
+  --sphinx-primary-sat: 92%;
+  
+  /* Primary Color Shades */
+  --sphinx-primary-50: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 97%);
+  --sphinx-primary-100: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 95%);
+  --sphinx-primary-200: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 85%);
+  --sphinx-primary-300: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 75%);
+  --sphinx-primary-400: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 65%);
+  --sphinx-primary-500: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 50%);
+  --sphinx-primary-600: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 45%);
+  --sphinx-primary-700: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 35%);
+  --sphinx-primary-800: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 25%);
+  --sphinx-primary-900: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 15%);
+  
+  /* Warm Greys - Subtle warmth for better feel */
+  --sphinx-grey-50: hsl(30, 20%, 97%);
+  --sphinx-grey-100: hsl(30, 15%, 95%);
+  --sphinx-grey-200: hsl(30, 10%, 85%);
+  --sphinx-grey-300: hsl(30, 8%, 75%);
+  --sphinx-grey-400: hsl(30, 6%, 65%);
+  --sphinx-grey-500: hsl(30, 5%, 50%);
+  --sphinx-grey-600: hsl(30, 6%, 40%);
+  --sphinx-grey-700: hsl(30, 8%, 30%);
+  --sphinx-grey-800: hsl(30, 10%, 20%);
+  --sphinx-grey-900: hsl(30, 15%, 10%);
+  
+  /* Semantic Colors with Better Contrast */
+  --sphinx-error-50: hsl(0, 80%, 97%);
+  --sphinx-error-100: hsl(0, 80%, 95%);
+  --sphinx-error-500: hsl(0, 80%, 50%);
+  --sphinx-error-700: hsl(0, 80%, 35%);
+  --sphinx-error-800: hsl(0, 80%, 25%);
+  
+  --sphinx-success-50: hsl(120, 60%, 97%);
+  --sphinx-success-100: hsl(120, 60%, 95%);
+  --sphinx-success-500: hsl(120, 60%, 50%);
+  --sphinx-success-700: hsl(120, 60%, 35%);
+  
+  /* Shadows for Depth - Emulate light source from top */
+  --shadow-xs: 0 1px 2px hsla(0, 0%, 0%, 0.05);
+  --shadow-sm: 0 1px 3px hsla(0, 0%, 0%, 0.1), 0 1px 2px hsla(0, 0%, 0%, 0.06);
+  --shadow-md: 0 4px 6px hsla(0, 0%, 0%, 0.07), 0 2px 4px hsla(0, 0%, 0%, 0.06);
+  --shadow-lg: 0 10px 15px hsla(0, 0%, 0%, 0.1), 0 4px 6px hsla(0, 0%, 0%, 0.05);
+  --shadow-xl: 0 20px 25px hsla(0, 0%, 0%, 0.1), 0 10px 10px hsla(0, 0%, 0%, 0.04);
+  --shadow-inset: inset 0 2px 4px hsla(0, 0%, 0%, 0.06);
+  
+  /* Border Radius Scale */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-pill: 50px;
+  
+  /* Font Family */
+  --sphinx-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  
+  /* Legacy compatibility - map to new system */
+  --sphinx-primary: var(--sphinx-primary-500);
+  --sphinx-primary-hover: var(--sphinx-primary-600);
+  --sphinx-primary-soft: var(--sphinx-primary-100);
+  --sphinx-primary-light: var(--sphinx-primary-300);
+  --sphinx-background: white;
+  --sphinx-surface: var(--sphinx-grey-50);
+  --sphinx-border: var(--sphinx-grey-200);
+  --sphinx-text-primary: var(--sphinx-grey-900);
+  --sphinx-text-secondary: var(--sphinx-grey-600);
+  --sphinx-text-tertiary: var(--sphinx-grey-400);
+  --sphinx-shadow-color: hsla(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 50%, 0.2);
+  --sphinx-radius-lg: var(--radius-lg);
+  --sphinx-radius-md: var(--radius-md);
+  --sphinx-radius-sm: var(--radius-sm);
+  --sphinx-radius-pill: var(--radius-pill);
+}
+
+/* Dark mode theme - Enhanced with new system */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Primary colors remain HSL-based but adjusted for dark mode */
+    --sphinx-primary-50: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 10%);
+    --sphinx-primary-100: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 15%);
+    --sphinx-primary-200: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 25%);
+    --sphinx-primary-300: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 35%);
+    --sphinx-primary-400: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 45%);
+    --sphinx-primary-500: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 55%);
+    --sphinx-primary-600: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 65%);
+    --sphinx-primary-700: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 75%);
+    --sphinx-primary-800: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 85%);
+    --sphinx-primary-900: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 95%);
+    
+    /* Dark greys with blue tint for coolness */
+    --sphinx-grey-50: hsl(220, 20%, 10%);
+    --sphinx-grey-100: hsl(220, 15%, 15%);
+    --sphinx-grey-200: hsl(220, 10%, 25%);
+    --sphinx-grey-300: hsl(220, 8%, 35%);
+    --sphinx-grey-400: hsl(220, 6%, 45%);
+    --sphinx-grey-500: hsl(220, 5%, 55%);
+    --sphinx-grey-600: hsl(220, 6%, 65%);
+    --sphinx-grey-700: hsl(220, 8%, 75%);
+    --sphinx-grey-800: hsl(220, 10%, 85%);
+    --sphinx-grey-900: hsl(220, 15%, 95%);
+    
+    /* Update legacy mappings for dark mode */
+    --sphinx-primary: var(--sphinx-primary-500);
+    --sphinx-primary-hover: var(--sphinx-primary-600);
+    --sphinx-background: var(--sphinx-grey-50);
+    --sphinx-surface: var(--sphinx-grey-100);
+    --sphinx-border: var(--sphinx-grey-200);
+    --sphinx-text-primary: var(--sphinx-grey-900);
+    --sphinx-text-secondary: var(--sphinx-grey-600);
+    --sphinx-text-tertiary: var(--sphinx-grey-400);
+    --sphinx-shadow-color: hsla(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 55%, 0.15);
+  }
+}
+
+/* Chat-specific styles */
+.sphinx-ai-chat {
+  display: flex;
+  flex-direction: column;
+  height: min(500px, calc(100vh - 200px)); /* Responsive height with minimum space for modal chrome */
+  min-height: 200px; /* Ensure minimum usable space */
+  position: relative;
+}
+
+.sphinx-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-2xl) 30px;
+  padding-bottom: max(100px, 20%); /* Dynamic space for overlapping chat input */
+  background: var(--sphinx-background);
+  /* Remove max-height to use flex: 1 instead */
+}
+
+.sphinx-message {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  margin-bottom: var(--space-xl);
+  opacity: 0;
+  animation: fadeInUp 0.3s ease forwards;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.sphinx-message.user-message {
+  flex-direction: row-reverse;
+}
+
+.sphinx-message-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 18px;
+  background: var(--sphinx-surface);
+  border: 2px solid var(--sphinx-border);
+}
+
+.user-message .sphinx-message-avatar {
+  background: var(--sphinx-primary);
+  color: white;
+  border-color: var(--sphinx-primary);
+}
+
+.sphinx-message-content {
+  max-width: 75%;
+  padding: var(--space-sm) var(--space-lg);
+  border-radius: var(--radius-2xl);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  background: var(--sphinx-surface);
+  color: var(--sphinx-text-primary);
+  border: 1px solid var(--sphinx-border);
+  position: relative;
+  box-shadow: var(--shadow-sm);
+}
+
+.user-message .sphinx-message-content {
+  background: var(--sphinx-primary);
+  color: white;
+  border-color: var(--sphinx-primary);
+  border-bottom-right-radius: var(--radius-sm);
+}
+
+.ai-message .sphinx-message-content {
+  border-bottom-left-radius: var(--radius-sm);
+}
+
+.sphinx-message-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* Markdown rendering styles for AI messages */
+.ai-message .sphinx-message-text {
+  white-space: normal; /* Allow normal text flow for rendered HTML */
+}
+
+.sphinx-message-text h1,
+.sphinx-message-text h2,
+.sphinx-message-text h3 {
+  margin: var(--space-lg) 0 var(--space-md) 0;
+  font-weight: 600;
+  line-height: var(--leading-tight);
+  color: var(--sphinx-text-primary);
+}
+
+.sphinx-message-text h1 {
+  font-size: var(--text-xl);
+}
+
+.sphinx-message-text h2 {
+  font-size: var(--text-lg);
+}
+
+.sphinx-message-text h3 {
+  font-size: var(--text-base);
+}
+
+.sphinx-message-text p {
+  margin: var(--space-md) 0;
+  line-height: var(--leading-relaxed);
+}
+
+.sphinx-message-text strong {
+  font-weight: 600;
+  color: var(--sphinx-text-primary);
+}
+
+.sphinx-message-text em {
+  font-style: italic;
+}
+
+.sphinx-message-text code {
+  background: var(--sphinx-grey-100);
+  color: var(--sphinx-text-primary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+  font-size: 0.9em;
+}
+
+.sphinx-message-text pre {
+  background: var(--sphinx-grey-100);
+  border-radius: 6px;
+  padding: var(--space-lg);
+  margin: var(--space-md) 0;
+  overflow-x: auto;
+  border: 1px solid var(--sphinx-border);
+}
+
+.sphinx-message-text pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  color: var(--sphinx-text-primary);
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+
+.sphinx-message-text ul,
+.sphinx-message-text ol {
+  margin: var(--space-md) 0;
+  padding-left: var(--space-xl);
+}
+
+.sphinx-message-text li {
+  margin: var(--space-xs) 0;
+  line-height: var(--leading-relaxed);
+}
+
+.sphinx-message-text a {
+  color: var(--sphinx-primary);
+  text-decoration: underline;
+  transition: color 0.2s ease;
+}
+
+.sphinx-message-text a:hover {
+  color: var(--sphinx-primary-hover);
+}
+
+.sphinx-message-text br {
+  line-height: var(--leading-relaxed);
+}
+
+/* Chat input area */
+.sphinx-chat-input {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  border-top: 1px solid var(--sphinx-border);
+  padding: var(--space-2xl) 30px;
+  background: var(--sphinx-surface);
+  border-radius: 0;
+  z-index: 10;
+}
+
+/* Mode selector - Legacy styles removed, using new VitePress-style system */
+
+/* Input container - Updated for new mode selection system */
+.sphinx-input-container {
+  display: flex;
+  gap: var(--space-md);
+  align-items: center;
+  position: relative;
+}
+
+.sphinx-input-container textarea {
+  flex: 1;
+  height: 44px;
+  min-height: 44px;
+  max-height: 120px;
+  padding: var(--space-md) var(--space-lg);
+  border: 2px solid var(--sphinx-border);
+  border-radius: var(--sphinx-radius-md);
+  resize: none;
+  font-family: var(--sphinx-font-sans);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  background: var(--sphinx-background);
+  color: var(--sphinx-text-primary);
+  transition: all 0.2s ease;
+  overflow-y: auto;
+  box-shadow: var(--shadow-inset);
+  box-sizing: border-box;
+  vertical-align: top;
+}
+
+.sphinx-input-container textarea:focus {
+  outline: none;
+  outline-offset: -2px;
+  border-color: #CF9BFF;
+  box-shadow: 0 0 0 3px rgba(170, 0, 255, 0.1);
+}
+
+.sphinx-input-container textarea::placeholder {
+  color: var(--sphinx-text-tertiary);
+  font-weight: 400;
+}
+
+.sphinx-submit-btn {
+  padding: var(--space-md) var(--space-xl);
+  background: var(--sphinx-primary);
+  color: white;
+  border: 2px solid var(--sphinx-primary);
+  border-radius: var(--sphinx-radius-md);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  font-family: var(--sphinx-font-sans);
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  min-width: 80px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  box-shadow: var(--shadow-md);
+}
+
+.sphinx-submit-btn:hover:not(:disabled) {
+  background: var(--sphinx-primary-hover);
+  border-color: var(--sphinx-primary-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lg);
+}
+
+.sphinx-submit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  background: var(--sphinx-text-secondary);
+  border-color: var(--sphinx-text-secondary);
+}
+
+/* Sources display */
+.sphinx-sources {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--sphinx-border);
+}
+
+.sphinx-sources h4 {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  color: var(--sphinx-text-secondary);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.sphinx-source {
+  margin-bottom: 6px;
+}
+
+.sphinx-source a {
+  color: var(--sphinx-primary);
+  text-decoration: none;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  transition: all 0.2s ease;
+}
+
+.sphinx-source a:hover {
+  text-decoration: underline;
+  color: var(--sphinx-primary-hover);
+}
+
+.sphinx-source a::before {
+  content: "🔗";
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* Loading states */
+.sphinx-message.loading .sphinx-message-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0.8;
+  font-style: italic;
+}
+
+.sphinx-message.loading .sphinx-message-text::before {
+  content: '';
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--sphinx-border);
+  border-top: 2px solid var(--sphinx-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Streaming indicator */
+.sphinx-streaming-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: var(--sphinx-primary);
+  border-radius: 50%;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 0.3; }
+  50% { opacity: 1; }
+  100% { opacity: 0.3; }
+}
+
+/* Empty state */
+.sphinx-chat-empty {
+  text-align: center;
+  padding: var(--space-lg) var(--space-md) var(--space-md) var(--space-md);
+  color: var(--sphinx-text-secondary);
+}
+
+.sphinx-chat-empty h3 {
+  margin: 0 0 var(--space-xs) 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: var(--leading-tight);
+  color: var(--sphinx-text-primary);
+}
+
+.sphinx-chat-empty p {
+  margin: 0 0 var(--space-md) 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--sphinx-text-tertiary);
+}
+
+.sphinx-suggested-prompts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-sm);
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+.sphinx-suggested-prompt {
+  padding: var(--space-sm) var(--space-md);
+  background: var(--sphinx-surface);
+  border: 1px solid var(--sphinx-border);
+  border-radius: var(--sphinx-radius-md);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  color: var(--sphinx-text-primary);
+  transition: all 0.2s ease;
+  text-align: center;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-xs);
+}
+
+.sphinx-suggested-prompt::before {
+  content: "💡";
+  margin-right: var(--space-xs);
+  font-size: var(--text-sm);
+}
+
+.sphinx-suggested-prompt:hover {
+  background: var(--sphinx-primary);
+  color: white;
+  border-color: var(--sphinx-primary);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+/* Error states */
+.sphinx-message.error .sphinx-message-content {
+  background: var(--sphinx-error-50);
+  border-color: var(--sphinx-error-100);
+  color: var(--sphinx-error-700);
+}
+
+.sphinx-error-icon {
+  color: #e53e3e;
+  margin-right: 6px;
+}
+
+/* Scrollbar styling */
+.sphinx-chat-messages::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sphinx-chat-messages::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 3px;
+}
+
+.sphinx-chat-messages::-webkit-scrollbar-thumb {
+  background: var(--sphinx-border);
+  border-radius: 3px;
+}
+
+.sphinx-chat-messages::-webkit-scrollbar-thumb:hover {
+  background: var(--sphinx-text-secondary);
+}
+
+/* Very short viewport heights - ensure modal is usable */
+@media (max-height: 500px) {
+  .sphinx-ai-chat {
+    height: calc(100vh - 120px); /* Use most of available space */
+    min-height: 120px; /* Absolute minimum */
+  }
+  
+  .sphinx-chat-messages {
+    padding: var(--space-md) 30px;
+    padding-bottom: max(80px, 25%); /* Proportionally larger space for input */
+  }
+  
+  .sphinx-chat-input {
+    padding: var(--space-md) 30px; /* Reduced padding for short screens */
+  }
+  
+  .sphinx-input-container textarea {
+    min-height: 36px; /* Smaller input on short screens */
+    max-height: 80px;
+  }
+}
+
+/* Responsive design */
+@media (max-width: 900px) {
+  .sphinx-ai-chat {
+    height: min(420px, calc(100vh - 180px)); /* Responsive height for medium screens */
+    min-height: 180px;
+  }
+  
+  .sphinx-chat-messages {
+    padding: 18px 30px;
+    padding-bottom: 95px; /* Bottom padding for medium screens */
+    /* Remove min/max-height, use flex: 1 */
+  }
+  
+  .sphinx-message-content {
+    max-width: 82%;
+    padding: 13px 16px;
+  }
+}
+
+@media (max-width: 768px) {
+  .sphinx-ai-chat {
+    height: min(380px, calc(100vh - 160px)); /* Responsive height for tablets */
+    min-height: 160px;
+  }
+  
+  .sphinx-chat-messages {
+    padding: 16px 30px;
+    padding-bottom: 90px; /* Bottom padding for tablets */
+    /* Remove min/max-height, use flex: 1 */
+  }
+  
+  .sphinx-message-content {
+    max-width: 85%;
+    padding: 12px 14px;
+  }
+  
+  /* Old mode selector styles removed */
+  
+  .sphinx-input-container {
+    flex-direction: row;
+    gap: var(--space-sm);
+    align-items: center;
+  }
+  
+  .sphinx-input-left-controls {
+    height: 40px;
+  }
+  
+  .sphinx-mode-selector-wrapper {
+    height: 40px;
+  }
+  
+  .sphinx-mode-badge {
+    height: 40px;
+    padding: var(--space-sm) var(--space-md);
+    font-size: var(--text-xs);
+  }
+  
+  .sphinx-input-container textarea {
+    height: 40px;
+    min-height: 40px;
+  }
+  
+  .sphinx-submit-btn {
+    height: 40px;
+    padding: var(--space-sm) var(--space-md);
+    min-width: 60px;
+    font-size: var(--text-xs);
+  }
+  
+  .sphinx-suggested-prompts {
+    max-width: 100%;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  
+  .sphinx-suggested-prompt {
+    font-size: 11px;
+    padding: 6px 8px;
+    min-height: 32px;
+  }
+}
+
+@media (max-width: 480px) {
+  .sphinx-ai-chat {
+    height: min(320px, calc(100vh - 140px)); /* Responsive height for mobile */
+    min-height: 140px;
+  }
+  
+  .sphinx-chat-input {
+    padding: 16px 20px;
+  }
+  
+  .sphinx-chat-messages {
+    padding: 12px 20px;
+    padding-bottom: 80px; /* Smaller bottom padding for mobile */
+    /* Uses flex: 1 for full available height */
+  }
+  
+  .sphinx-message {
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  
+  .sphinx-message-avatar {
+    width: 32px;
+    height: 32px;
+    font-size: 16px;
+  }
+  
+  .sphinx-input-left-controls {
+    height: 36px;
+  }
+  
+  .sphinx-mode-selector-wrapper {
+    height: 36px;
+  }
+  
+  .sphinx-input-container textarea {
+    height: 36px;
+    min-height: 36px;
+    padding: var(--space-sm) var(--space-md);
+    font-size: 11px;
+  }
+  
+  .sphinx-submit-btn {
+    height: 36px;
+    padding: var(--space-xs) var(--space-sm);
+    min-width: 50px;
+    font-size: 11px;
+  }
+  
+  .sphinx-chat-empty {
+    padding: 12px 8px 8px 8px;
+  }
+  
+  .sphinx-suggested-prompts {
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    max-width: 100%;
+  }
+  
+  .sphinx-suggested-prompt {
+    font-size: 10px;
+    padding: 4px 6px;
+    min-height: 28px;
+  }
+} 
