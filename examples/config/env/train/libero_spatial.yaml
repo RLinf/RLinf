@@ -1,0 +1,24 @@
+simulator_type: libero
+auto_reset: ${algorithm.auto_reset}
+ignore_terminations: ${algorithm.ignore_terminations}
+use_rel_reward: true
+task_suite_name: libero_spatial
+max_episode_steps: 120
+
+seed: 0
+num_task: ${algorithm.num_group_envs}
+num_group: ${algorithm.num_group_envs}
+group_size: ${algorithm.group_size}
+use_fixed_reset_state_ids: false
+num_images_in_input: 1
+
+num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
+
+video_cfg:
+  save_video: true
+  info_on_video: true
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  camera_heights: 256
+  camera_widths: 256

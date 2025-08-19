@@ -1,0 +1,168 @@
+defaults:
+  - env/train: libero_10
+  - env/eval: libero_10
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  num_gpus_per_node: 8
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "./logs"
+    project_name: rlinf
+    experiment_name: "test_openvla"
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: 1000
+  max_steps: -1
+
+  only_eval: False
+  val_check_interval: -1
+  save_interval: 1000
+  seq_length: 4096
+  max_prompt_length: 50
+
+algorithm:
+  auto_reset: True
+  ignore_terminations: False
+  require_values: True
+  normalize_advantages: True
+  kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
+  group_size: 1
+  n_chunk_steps: 512
+  n_eval_chunk_steps: 64
+  # training rollout mbs
+  rollout_micro_batch_size: 256
+  num_group_envs: 64
+  rollout_epoch: 1
+
+  reward_type: chunk_level
+  logprob_type: token_level
+  entropy_type: token_level
+
+  # mbs to do log prob inference, can be set to
+  # lower than rollout_micro_batch_size to reduce
+  # memory usage
+  logprob_forward_micro_batch_size: 16 # ${.rollout_micro_batch_size}
+  adv_type: "ppo"
+  loss_type: "ppo"
+  loss_agg_func: "token-mean"
+  kl_beta: 0.0
+  ratio_clip_eps: 0.2
+  entropy_bonus: 0
+  clip_ratio_high: 0.28
+  clip_ratio_low: 0.2
+  clip_ratio_c: 3.0
+  value_clip: 0.2
+
+  huber_delta: 10.0
+
+  gamma: 0.99
+  gae_lambda: 0.95
+  # params for rollout
+  sampling_params:
+    use_greedy: False
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+
+  # length argument for autoregressive sampling
+  # max length means max amount of tokens to generate
+  length_params:
+    max_new_token: null
+    max_length: 1024
+    min_length: 1
+
+env:
+  group_name: "EnvGroup"
+  channel:
+    name: "env_buffer_list"
+    queue_name: "obs_buffer"
+    queue_size: 0
+  enable_offload: False
+
+rollout:
+  group_name: "RolloutGroup"
+  channel:
+    name: ${env.channel.name}
+    queue_name: "action_buffer"
+    queue_size: 0
+  mode: "colocate"
+  generation_backend: "huggingface"
+  model_dir: /storage/download_models/storage/Openvla-oft-SFT-libero10-trajall/
+  recompute_logprobs: False
+  pipeline_stage_num: 2
+  enable_offload: True
+
+actor:
+  group_name: "ActorGroup"
+  channel:
+    name: ${env.channel.name}
+    queue_name: "replay_buffer"
+    queue_size: 0
+  training_backend: "fsdp"
+  checkpoint_load_path: /storage/download_models/storage/Openvla-oft-SFT-libero10-trajall/
+  checkpoint_save_path: "/storage/results"
+  micro_batch_size: 32
+  global_batch_size: 1024
+  seed: 1234
+  enable_offload: True
+
+  tokenizer:
+    tokenizer_type: "HuggingFaceTokenizer"
+    tokenizer_model: /storage/download_models/storage/Openvla-oft-SFT-libero10-trajall/
+    extra_vocab_size: 421
+    use_fast: False
+    trust_remote_code: True
+    padding_side: "right"
+
+  model:
+    model_name: "openvla_oft"
+    value_type: ${algorithm.reward_type}
+    action_dim: 7
+    num_action_chunks: 8
+    unnorm_key: libero_10_no_noops
+    center_crop: False
+    # number of responses (i.e. num sample times)
+    
+    precision: "bf16"
+    add_bias_linear: False
+    add_qkv_bias: True
+    vocab_size: 32000
+    hidden_size: 4096
+    policy_setup: "widowx_bridge"
+    vh_mode: "a0"
+    image_size: [224, 224]
+    is_lora: True
+    lora_rank: 32
+    num_images_in_input: 1
+    attn_implementation: "flash_attention_2"
+    low_cpu_mem_usage: True
+    trust_remote_code: True
+
+  optim:
+    lr: 5e-6
+    value_lr: 3e-3
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-05
+    clip_grad: 1.0
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

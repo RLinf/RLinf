@@ -1,0 +1,28 @@
+simulator_type: maniskill
+auto_reset: ${algorithm.auto_reset}
+ignore_terminations: ${algorithm.ignore_terminations}
+use_rel_reward: true
+seed: 0
+num_group: ${algorithm.num_group_envs}
+group_size: ${algorithm.group_size}
+use_fixed_reset_state_ids: false
+
+video_cfg:
+  save_video: true
+  info_on_video: true
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  id: PutOnPlateInScene25Main-v3
+  num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
+  obs_mode: "rgb+segmentation"
+  control_mode: None
+  sim_backend: "gpu"
+  sim_config:
+    sim_freq: 500
+    control_freq: 5
+  max_episode_steps: 80 # 100
+  sensor_configs:
+    shader_pack: "default"
+  render_mode: all
+  obj_set: train
