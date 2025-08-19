@@ -14,18 +14,11 @@
 
 import asyncio
 import os
-import sys
 
 import pytest
 import torch
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from rlinf.scheduler import Cluster, PackedPlacementStrategy, Worker
-
-# Add project root to the Python path
-os.environ["RAY_DEDUP_LOGS"] = "0"
-
 
 SENDER_GROUP_NAME = "sender_ipc_worker_group"
 RECEIVER_GROUP_NAME = "receiver_ipc_worker_group"
