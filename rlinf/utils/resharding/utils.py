@@ -15,7 +15,6 @@
 import re
 
 import torch
-
 from megatron.core import parallel_state
 
 

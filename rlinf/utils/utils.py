@@ -19,7 +19,6 @@ from contextlib import contextmanager
 from functools import partial, wraps
 
 import torch
-
 from megatron.core.num_microbatches_calculator import (
     reconfigure_num_microbatches_calculator,
 )

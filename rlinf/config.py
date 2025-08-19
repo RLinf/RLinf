@@ -20,10 +20,6 @@ from typing import Callable, Union
 
 import torch
 import torch.nn.functional as F
-from omegaconf import OmegaConf, open_dict
-from omegaconf.dictconfig import DictConfig
-from transformers import AutoConfig
-
 from megatron.core.model_parallel_config import ModelParallelConfig
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import (
@@ -31,6 +27,9 @@ from megatron.core.utils import (
     scaled_init_method_normal,
 )
 from megatron.training.global_vars import get_timers
+from omegaconf import OmegaConf, open_dict
+from omegaconf.dictconfig import DictConfig
+from transformers import AutoConfig
 
 logging.getLogger().setLevel(logging.INFO)
 

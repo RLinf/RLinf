@@ -17,11 +17,11 @@ import os
 
 import numpy as np
 import torch
+from megatron.core.utils import divide
 from omegaconf import DictConfig
 from torch.distributed.device_mesh import init_device_mesh
 from tqdm import tqdm
 
-from megatron.core.utils import divide
 from rlinf.algorithms.embodiment.utils import (
     actor_loss_fn,
     append_to_dict,

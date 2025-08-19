@@ -18,9 +18,9 @@ import time
 from typing import Dict
 
 import torch
+from megatron.core import mpu
 from omegaconf import DictConfig, open_dict
 
-from megatron.core import mpu
 from rlinf.data.io_struct import RolloutResult
 from rlinf.utils.placement import ComponentPlacement
 from rlinf.utils.utils import (
