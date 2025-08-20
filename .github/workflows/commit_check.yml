@@ -22,8 +22,6 @@ jobs:
         with:
           message: true
           branch: true
-          author-name: true
-          author-email: true
           commit-signoff: true
           merge-base: false
           imperative: false
