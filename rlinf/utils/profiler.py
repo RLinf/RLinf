@@ -1,289 +1,220 @@
-import os
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import torch
 from torch.profiler import ProfilerActivity, profile, tensorboard_trace_handler
 
 
+# NEW: A simple context manager that does nothing.
+@contextmanager
+def null_context():
+    yield
+
+
 class PyTorchProfiler:
     """
-    PyTorch Profiler wrapper for RL training.
+    A PyTorch Profiler wrapper for RL training.
 
-    This class provides a convenient interface to use PyTorch's profiler
-    for performance analysis during training.
+    This profiler is configured via a dictionary (e.g., from YAML) and used
+    as a context manager that automatically handles whether to profile a given step.
+
+    Usage:
+        profiler = PyTorchProfiler.from_config(cfg.profiler)
+        for step in range(num_steps):
+            with profiler.step(step):
+                # Your training code here
+                ...
     """
 
     def __init__(
         self,
-        enabled: bool = False,
-        output_dir: str = "./profiler_output",
-        activities: Optional[list] = None,
+        enabled: bool,
+        output_dir: str,
+        profile_interval: int,
+        activities: List[str] = ["cpu", "cuda"],
         record_shapes: bool = False,
         profile_memory: bool = True,
         with_stack: bool = False,
         with_flops: bool = True,
         with_modules: bool = False,
-        use_cuda: bool = True,
-        use_cpu: bool = True,
-        profile_steps: Optional[list] = None,
-        filename_prefix: str = "chrome_trace",
-        include_rank_in_filename: bool = True,
-        synchronize_cuda_on_exit: bool = True,
-        export_chrome_trace: bool = True,
         export_tensorboard: bool = True,
+        export_chrome_trace: bool = True,
+        chrome_filename_prefix: str = "chrome_trace",
     ):
-        """
-        Initialize the PyTorch Profiler.
-
-        Args:
-            enabled: Whether to enable profiling
-            output_dir: Directory to save profiler outputs
-            activities: List of activities to profile (ProfilerActivity.CPU, ProfilerActivity.CUDA)
-            record_shapes: Whether to record tensor shapes
-            profile_memory: Whether to profile memory usage
-            with_stack: Whether to include stack traces
-            with_flops: Whether to compute FLOPs
-            with_modules: Whether to include module information
-            use_cuda: Whether to profile CUDA operations
-            use_cpu: Whether to profile CPU operations
-            export_chrome_trace: Whether to export Chrome trace
-            export_tensorboard: Whether to export TensorBoard trace
-        """
         self.enabled = enabled
+        if not self.enabled:
+            return
+        self.step_idx = 0
         self.output_dir = Path(output_dir)
-        self.record_shapes = record_shapes
-        self.profile_memory = profile_memory
-        self.with_stack = with_stack
-        self.with_flops = with_flops
-        self.with_modules = with_modules
-        self.use_cuda = use_cuda
-        self.use_cpu = use_cpu
-        self._profile_steps_set = set(profile_steps) if profile_steps else None
-        self.filename_prefix = filename_prefix
-        self.include_rank_in_filename = include_rank_in_filename
-        self.synchronize_cuda_on_exit = synchronize_cuda_on_exit
-        self.export_chrome_trace = export_chrome_trace
-        self.export_tensorboard = export_tensorboard
+        self.profile_interval = profile_interval
+        self.activities = self._parse_activities(activities)
 
-        # Set up activities
-        if activities is None:
-            activities = []
-            if self.use_cpu:
-                activities.append(ProfilerActivity.CPU)
-            if self.use_cuda and torch.cuda.is_available():
-                activities.append(ProfilerActivity.CUDA)
-        self.activities = activities
+        self.on_trace_ready = self._create_trace_handler(
+            export_tensorboard, export_chrome_trace, chrome_filename_prefix
+        )
 
-        # Compose exporters used when flushing a step
-        self.on_trace_ready = self._compose_on_trace_ready()
+        self.profiler_instance = profile(
+            activities=self.activities,
+            record_shapes=record_shapes,
+            profile_memory=profile_memory,
+            with_stack=with_stack,
+            with_flops=with_flops,
+            with_modules=with_modules,
+            on_trace_ready=self.on_trace_ready,
+        )
 
-        # Create output directory
-        if self.enabled:
-            self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        self.profiler = None
-        self._step_count = 0
+    def _parse_activities(self, activity_strs: List[str]) -> List[ProfilerActivity]:
+        """Parses string activities from config into ProfilerActivity enums."""
+        valid_activities = set()
+        activity_map = {
+            "cpu": ProfilerActivity.CPU,
+            "cuda": ProfilerActivity.CUDA,
+        }
+        for act_str in activity_strs:
+            act_enum = activity_map.get(act_str.lower())
+            if act_enum:
+                if act_enum == ProfilerActivity.CUDA and not torch.cuda.is_available():
+                    raise RuntimeError(
+                        "'cuda' activity requested but CUDA is not available."
+                    )
+                else:
+                    valid_activities.add(act_enum)
+            else:
+                raise ValueError(
+                    f"Unknown profiler activity '{act_str}', currently support ['cpu', 'cuda']."
+                )
 
-    def _compose_on_trace_ready(self):
-        """Compose a trace-ready callback from requested outputs."""
-        handlers = []
+        if ProfilerActivity.CUDA in valid_activities:
+            valid_activities.add(ProfilerActivity.CPU)
 
-        if self.export_tensorboard:
-            handlers.append(
-                tensorboard_trace_handler(str(self.output_dir / "tensorboard"))
+        if not valid_activities:
+            print(
+                "Warning: No valid profiler activities enabled. Profiler will not run."
             )
+            self.enabled = False
 
-        if self.export_chrome_trace:
+        return list(valid_activities)
+
+    def _get_chrome_trace_filename(self, prefix: str) -> str:
+        """Generates a unique filename for the Chrome trace."""
+        fname = prefix
+        if torch.distributed.is_initialized():
+            fname += f"_rank{torch.distributed.get_rank()}"
+        if torch.cuda.is_available():
+            fname += f"_dev{torch.cuda.current_device()}"
+
+        timestamp = int(time.time() * 1000)
+        fname += f"_{timestamp}"
+        return f"{fname}.json"
+
+    def _create_trace_handler(
+        self, export_tb: bool, export_chrome: bool, chrome_prefix: str
+    ) -> Optional[Callable]:
+        """Creates a composed handler for on_trace_ready."""
+        if not (export_tb or export_chrome):
+            return None
+
+        handlers = []
+        if export_tb:
+            tb_dir = str(self.output_dir / "tensorboard")
+            handlers.append(tensorboard_trace_handler(tb_dir, worker_name="worker"))
+
+        if export_chrome:
 
             def chrome_handler(prof):
-                timestamp = int(time.time())
-                chrome_trace_path = (
-                    self.output_dir / f"{self.filename_prefix}_{timestamp}.json"
+                trace_path = self.output_dir / self._get_chrome_trace_filename(
+                    chrome_prefix
                 )
-                prof.export_chrome_trace(str(chrome_trace_path))
-                print(f"Chrome trace exported to: {chrome_trace_path}")
+                prof.export_chrome_trace(str(trace_path))
+                print(f"Chrome trace exported to: {trace_path}")
 
             handlers.append(chrome_handler)
 
-        def composed(prof):
+        def composed_handler(prof):
+            # Synchronize before export for accurate timings
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
             for handler in handlers:
                 try:
                     handler(prof)
-                except Exception as exc:
-                    print(f"Profiler trace handler error: {exc}")
+                except Exception as e:
+                    print(f"Profiler trace handler '{handler.__name__}' error: {e}")
 
-        return composed
+        return composed_handler
 
-    def is_selected_step(self, step_index: int) -> bool:
-        """Return True iff this step should be profiled.
-
-        If profile_steps provided, only those steps are profiled; else all.
-        """
+    def _should_profile(self, step_idx: int) -> bool:
+        """Determines if the current step should be profiled."""
         if not self.enabled:
             return False
-        if self._profile_steps_set is not None:
-            return step_index in self._profile_steps_set
-        return True
+        return step_idx % self.profile_interval == 0
 
     @contextmanager
-    def profile_step(self, step_name: Optional[str] = None):
+    def step(self) -> Optional[torch.profiler.profile]:
         """
-        Context manager for profiling a single step.
-
-        Args:
-            step_name: Name of the step being profiled
+        A context manager to profile a code block for a given step.
+        It automatically starts/stops the profiler if the step is selected.
         """
-        if not self.enabled:
-            yield
-            return
-
-        # Always use a short-lived profiler per selected step and export immediately
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
-        with profile(
-            activities=self.activities,
-            record_shapes=self.record_shapes,
-            profile_memory=self.profile_memory,
-            with_stack=self.with_stack,
-            with_flops=self.with_flops,
-            with_modules=self.with_modules,
-        ) as prof:
-            yield
-
-        # Ensure CUDA work is finished before export for accurate timings
-        if self.synchronize_cuda_on_exit and torch.cuda.is_available():
-            try:
-                torch.cuda.synchronize()
-            except Exception:
-                pass
-
-        # Export traces for this step
-        if self.export_tensorboard:
-            try:
-                tb_handler = tensorboard_trace_handler(
-                    str(self.output_dir / "tensorboard")
-                )
-                tb_handler(prof)
-            except Exception as exc:
-                print(f"TensorBoard export error: {exc}")
-
-        if self.export_chrome_trace:
-            try:
-                step_tag = step_name or f"step_{self._step_count}"
-                fname = f"{self.filename_prefix}_{step_tag}"
-                # Enrich filename with rank/device to avoid collisions on multi-rank runs
-                if self.include_rank_in_filename:
-                    try:
-                        rank = (
-                            torch.distributed.get_rank()
-                            if torch.distributed.is_initialized()
-                            else None
-                        )
-                    except Exception:
-                        rank = None
-                    dev = None
-                    try:
-                        if torch.cuda.is_available():
-                            dev = torch.cuda.current_device()
-                    except Exception:
-                        dev = None
-                    if rank is not None:
-                        fname += f"_rank{rank}"
-                    if dev is not None:
-                        fname += f"_dev{dev}"
-                chrome_path = self.output_dir / f"{fname}.json"
-                prof.export_chrome_trace(str(chrome_path))
-            except Exception as exc:
-                print(f"Chrome trace export error: {exc}")
-
-        self._step_count += 1
-
-    def start(self):
-        """No-op (kept for API compatibility)."""
-        return
-
-    def step(self):
-        """No-op (kept for API compatibility)."""
-        return
-
-    def stop(self):
-        """No-op (kept for API compatibility)."""
-        return
-
-    def get_stats(self) -> Dict[str, Any]:
-        """Get profiler statistics."""
-        if not self.enabled or self.profiler is None:
-            return {}
-
-        stats = {
-            "step_count": self._step_count,
-            "output_dir": str(self.output_dir),
-        }
-
-        return stats
+        self.step_idx += 1
+        if self._should_profile(self.step_idx):
+            with self.profiler_instance as prof:
+                yield prof
+        else:
+            yield None
 
     @classmethod
-    def from_config(cls, config: Dict[str, Any]) -> "PyTorchProfiler":
+    def from_config(
+        cls, profiler_config: Optional[Dict[str, Any]]
+    ) -> "PyTorchProfiler":
         """
-        Create profiler from configuration dictionary.
-
-        Args:
-            config: Configuration dictionary
-
-        Returns:
-            PyTorchProfiler instance
+        Creates a PyTorchProfiler instance from a configuration dictionary.
+        Returns a disabled profiler if config is None or disabled.
         """
-        return cls(**config)
+        if not profiler_config or not profiler_config.get("enabled", False):
+            return cls(enabled=False)
 
+        supported_params = {
+            "enabled",
+            "output_dir",
+            "activities",
+            "record_shapes",
+            "profile_memory",
+            "with_stack",
+            "with_flops",
+            "with_modules",
+            "export_tensorboard",
+            "export_chrome_trace",
+            "chrome_filename_prefix",
+            "profile_interval",
+        }
 
-def create_profiler_from_config(cfg) -> Optional[PyTorchProfiler]:
-    """
-    Create profiler from configuration.
+        unknown_params = set(profiler_config.keys()) - supported_params
+        if unknown_params:
+            raise ValueError(f"Unknown profiler parameters: {unknown_params}")
 
-    Args:
-        cfg: Configuration object
+        valid_config = {
+            k: v for k, v in profiler_config.items() if k in supported_params
+        }
 
-    Returns:
-        PyTorchProfiler instance or None if not enabled
-    """
-    if not hasattr(cfg, "profiler") or not cfg.profiler.get("enabled", False):
-        return None
+        missing_params = set(supported_params) - set(valid_config.keys())
+        if missing_params:
+            raise ValueError(f"Missing required profiler parameters: {missing_params}")
 
-    profiler_config = cfg.profiler.copy()
-
-    # Filter out parameters that are not supported by PyTorchProfiler
-    # These parameters are used by megatron_worker.py for operator-level profiling
-    supported_params = {
-        "enabled",
-        "output_dir",
-        "activities",
-        "record_shapes",
-        "profile_memory",
-        "with_stack",
-        "with_flops",
-        "with_modules",
-        "use_cuda",
-        "use_cpu",
-        "profile_steps",
-        "filename_prefix",
-        "include_rank_in_filename",
-        "synchronize_cuda_on_exit",
-        "export_chrome_trace",
-        "export_tensorboard",
-    }
-
-    # Remove unsupported parameters (like profile_interval)
-    profiler_config = {
-        k: v for k, v in profiler_config.items() if k in supported_params
-    }
-
-    # Set default output directory if not specified
-    if "output_dir" not in profiler_config:
-        profiler_config["output_dir"] = os.path.join(
-            cfg.trainer.output_dir, cfg.trainer.experiment_name, "profiler_output"
-        )
-
-    return PyTorchProfiler.from_config(profiler_config)
+        return cls(**valid_config)
