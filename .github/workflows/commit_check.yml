@@ -1,0 +1,31 @@
+name: Commit Check
+
+on:
+  push:
+  pull_request:
+    branches: 'main'
+
+jobs:
+  commit-check:
+    runs-on: ubuntu-latest
+    permissions:  # use permissions because use of pr-comments
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}  # checkout PR HEAD commit
+          fetch-depth: 0  # required for merge-base check
+      - uses: commit-check/commit-check-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # use GITHUB_TOKEN because use of pr-comments
+        with:
+          message: true
+          branch: true
+          author-name: true
+          author-email: true
+          commit-signoff: true
+          merge-base: false
+          imperative: false
+          job-summary: true
+        #   pr-comments: ${{ github.event_name == 'pull_request' }}
