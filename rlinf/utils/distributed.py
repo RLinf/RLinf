@@ -19,7 +19,11 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Union
 import numpy as np
 import torch
 import torch.distributed
-from megatron.core import parallel_state
+
+try:
+    from megatron.core import parallel_state
+except ImportError:
+    parallel_state = None  # type: ignore
 from torch.distributed import ProcessGroup
 from typing_extensions import Self
 
