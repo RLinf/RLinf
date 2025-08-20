@@ -93,14 +93,14 @@ class EnvWorker(Worker):
         enable_offload = self.cfg.env.enable_offload
         only_eval = getattr(self.cfg.runner, "only_eval", False)
         if self.cfg.env.train.simulator_type == "maniskill":
-            from rlinf.envs.maniskill_env import ManiskillEnv
+            from rlinf.envs.maniskill.maniskill_env import ManiskillEnv
 
             if not only_eval:
                 for _ in range(self.stage_num):
                     self.simulator_list.append(
                         EnvManager(
                             self.cfg.env.train,
-                            rank=self._local_rank,
+                            rank=self._rank,
                             env_cls=ManiskillEnv,
                             enable_offload=enable_offload,
                         )
@@ -110,20 +110,20 @@ class EnvWorker(Worker):
                     self.eval_simulator_list.append(
                         EnvManager(
                             self.cfg.env.eval,
-                            rank=self._local_rank,
+                            rank=self._rank,
                             env_cls=ManiskillEnv,
                             enable_offload=enable_offload,
                         )
                     )
         elif self.cfg.env.train.simulator_type == "libero":
-            from rlinf.envs.libero_env import LiberoEnv
+            from rlinf.envs.libero.libero_env import LiberoEnv
 
             if not only_eval:
                 for _ in range(self.stage_num):
                     self.simulator_list.append(
                         EnvManager(
                             self.cfg.env.train,
-                            rank=self._local_rank,
+                            rank=self._rank,
                             env_cls=LiberoEnv,
                             enable_offload=enable_offload,
                         )
@@ -133,7 +133,7 @@ class EnvWorker(Worker):
                     self.eval_simulator_list.append(
                         EnvManager(
                             self.cfg.env.eval,
-                            rank=self._local_rank,
+                            rank=self._rank,
                             env_cls=LiberoEnv,
                             enable_offload=enable_offload,
                         )

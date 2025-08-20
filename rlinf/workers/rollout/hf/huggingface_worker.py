@@ -40,7 +40,7 @@ def create_rollout_batch(data):
     return ret_data
 
 
-class MutilStepRolloutWorker(Worker):
+class MultiStepRolloutWorker(Worker):
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
 
@@ -204,9 +204,8 @@ class MutilStepRolloutWorker(Worker):
             self._logger.info(f"Now epoch is={rollout_epoch}")
             for step in tqdm(
                 range(self.cfg.algorithm.n_chunk_steps),
-                desc=f"Rollout Epoch {rollout_epoch} in Generate Step",
+                desc=f"Rollout ID {self._rank} Epoch {rollout_epoch} in Generate Step",
             ):
-                self._logger.info(f"Rollout id {self._rank} step {step}")
                 for i in range(self.stage_num):
                     env_batch = await self.recv_env_batch()
                     self.update_env_batch(i, env_batch)

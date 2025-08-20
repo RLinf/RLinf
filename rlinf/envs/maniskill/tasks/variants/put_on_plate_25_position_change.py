@@ -18,7 +18,7 @@ from mani_skill.utils.registration import register_env
 from mani_skill.utils.structs.pose import Pose
 from transforms3d.euler import euler2quat
 
-from rlinf.environment.tasks.put_on_in_scene_multi import (
+from rlinf.envs.maniskill.tasks.put_on_in_scene_multi import (
     PutOnPlateInScene25MainV3,
 )
 

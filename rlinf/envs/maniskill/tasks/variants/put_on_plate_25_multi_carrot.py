@@ -12,73 +12,133 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from itertools import product
-
 import numpy as np
 import torch
 from mani_skill.utils.geometry import rotation_conversions
 from mani_skill.utils.registration import register_env
 from mani_skill.utils.structs.pose import Pose
+from transforms3d.euler import euler2quat
 
-from rlinf.environment.tasks.put_on_in_scene_multi import (
+from rlinf.envs.maniskill.tasks.put_on_in_scene_multi import (
     PutOnPlateInScene25MainV3,
 )
 
 
 @register_env(
-    "PutOnPlateInScene25EEPose-v1",
+    "PutOnPlateInScene25MultiCarrot-v1",
     max_episode_steps=80,
     asset_download_ids=["bridge_v2_real2sim"],
 )
-class PutOnPlateInScene25EEPose(PutOnPlateInScene25MainV3):
+class PutOnPlateInScene25MultiCarrot(PutOnPlateInScene25MainV3):
     select_extra_ids: torch.Tensor
 
     def _generate_init_pose(self):
-        super()._generate_init_pose()
+        xy_center = np.array([-0.16, 0.00]).reshape(1, 2)
+        half_edge_length = np.array([0.075, 0.075]).reshape(1, 2)
 
-        robot_qpos = []
+        grid_pos = (
+            np.array(
+                [
+                    [0.0, 0.0],
+                    [0.0, 0.2],
+                    [0.0, 0.4],
+                    [0.0, 0.6],
+                    [0.0, 0.8],
+                    [0.0, 1.0],
+                    [0.2, 0.0],
+                    [0.2, 0.2],
+                    [0.2, 0.4],
+                    [0.2, 0.6],
+                    [0.2, 0.8],
+                    [0.2, 1.0],
+                    [0.4, 0.0],
+                    [0.4, 0.2],
+                    [0.4, 0.4],
+                    [0.4, 0.6],
+                    [0.4, 0.8],
+                    [0.4, 1.0],
+                    [0.6, 0.0],
+                    [0.6, 0.2],
+                    [0.6, 0.4],
+                    [0.6, 0.6],
+                    [0.6, 0.8],
+                    [0.6, 1.0],
+                    [0.8, 0.0],
+                    [0.8, 0.2],
+                    [0.8, 0.4],
+                    [0.8, 0.6],
+                    [0.8, 0.8],
+                    [0.8, 1.0],
+                    [1.0, 0.0],
+                    [1.0, 0.2],
+                    [1.0, 0.4],
+                    [1.0, 0.6],
+                    [1.0, 0.8],
+                    [1.0, 1.0],
+                ]
+            )
+            * 2
+            - 1
+        )  # [36, 2]
+        grid_pos = grid_pos * half_edge_length + xy_center
 
-        robot_qpos.append(np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+        xyz_configs = []
+        for i, grid_pos_1 in enumerate(grid_pos):
+            for j, grid_pos_2 in enumerate(grid_pos):
+                for k, grid_pos_3 in enumerate(grid_pos):
+                    if (
+                        np.linalg.norm(grid_pos_1 - grid_pos_2) > 0.070
+                        and np.linalg.norm(grid_pos_3 - grid_pos_2) > 0.070
+                        and np.linalg.norm(grid_pos_1 - grid_pos_3) > 0.15
+                    ):
+                        xyz_configs.append(
+                            np.array(
+                                [
+                                    np.append(grid_pos_1, 0.95),  # carrot
+                                    np.append(grid_pos_2, 0.92),  # plate
+                                    np.append(grid_pos_3, 1.0),  # extra carrot
+                                ]
+                            )
+                        )
+        xyz_configs = np.stack(xyz_configs)
 
-        p0 = [-0.15, -0.08, 0.0, 0.08, 0.15]
-        p1 = [-0.15, -0.08, 0.0, 0.08, 0.15]
-        p2 = [-0.15, -0.08, 0.0, 0.08, 0.15]
-        p3 = [-0.15, -0.08, 0.0, 0.08, 0.15]
-        p4 = [-0.15, -0.08, 0.0, 0.08, 0.15]
-        p5 = [-0.6, -0.3, 0.0, 0.3, 0.6]
-        for p0, p1, p2, p3, p4, p5 in product(p0, p1, p2, p3, p4, p5):
-            p012sum = p1 + p2
-            if abs(p012sum) > 0.25:
-                continue
-            robot_qpos.append(np.array([p0, p1, p2, p3, p4, p5, 0.0, 0.0]))
+        quat_configs = np.stack(
+            [
+                np.array([euler2quat(0, 0, 0.0), [1, 0, 0, 0]]),
+                np.array([euler2quat(0, 0, np.pi / 4), [1, 0, 0, 0]]),
+                np.array([euler2quat(0, 0, np.pi / 2), [1, 0, 0, 0]]),
+                np.array([euler2quat(0, 0, np.pi * 3 / 4), [1, 0, 0, 0]]),
+            ]
+        )
 
-        robot_qpos = np.stack(robot_qpos)
-        self.robot_qpos = robot_qpos
+        self.xyz_configs = xyz_configs
+        self.quat_configs = quat_configs
 
-        print(f"robot_qpos: {robot_qpos.shape}")
+        print(f"xyz_configs: {xyz_configs.shape}")
+        print(f"quat_configs: {quat_configs.shape}")
 
     @property
     def basic_obj_infos(self):
         if self.obj_set == "train":
-            le = 1
-            le_offset = 0
+            lc = 16
+            lc_offset = 0
         elif self.obj_set == "test":
-            le = len(self.robot_qpos) - 1
-            le_offset = 1
+            lc = 9
+            lc_offset = 16
         elif self.obj_set == "all":
-            le = len(self.robot_qpos)
-            le_offset = 0
+            lc = 25
+            lc_offset = 0
         else:
             raise ValueError(f"Unknown obj_set: {self.obj_set}")
-        lc = 16
-        lc_offset = 0
+
+        le = lc - 1
+        le_offset = 0
         lo = 16
         lo_offset = 0
         lp = len(self.plate_names)
         lp_offset = 0
         l1 = len(self.xyz_configs)
         l2 = len(self.quat_configs)
-
         return lc, lc_offset, lo, lo_offset, lp, lp_offset, l1, l2, le, le_offset
 
     @property
@@ -90,7 +150,6 @@ class PutOnPlateInScene25EEPose(PutOnPlateInScene25MainV3):
         return ltt
 
     def _initialize_episode_pre(self, env_idx: torch.Tensor, options: dict):
-        # NOTE: this part of code is not GPU parallelized
         lc, lc_offset, lo, lo_offset, lp, lp_offset, l1, l2, le, le_offset = (
             self.basic_obj_infos
         )
@@ -99,10 +158,11 @@ class PutOnPlateInScene25EEPose(PutOnPlateInScene25MainV3):
         self.select_carrot_ids = (
             self.episode_id // (le * lp * lo * l1 * l2) + lc_offset
         )  # [b]
+        self.select_extra_ids = (self.episode_id // (lp * lo * l1 * l2)) % le  # [b]
         self.select_extra_ids = (
-            self.episode_id // (lp * lo * l1 * l2)
-        ) % le + le_offset  # [b]
-        self.select_plate_ids = (self.episode_id // (lo * l1 * l2)) % lp + lp_offset
+            self.select_carrot_ids + self.select_extra_ids + 1
+        ) % lc + lc_offset  # [b]
+        self.select_plate_ids = (self.episode_id // (lo * l1 * l2)) % lp
         self.select_overlay_ids = (self.episode_id // (l1 * l2)) % lo + lo_offset
         self.select_pos_ids = (self.episode_id // l2) % l1
         self.select_quat_ids = self.episode_id % l2
@@ -116,22 +176,7 @@ class PutOnPlateInScene25EEPose(PutOnPlateInScene25MainV3):
         sensor = self._sensor_configs[self.rgb_camera_name]
         assert sensor.width == 640
         assert sensor.height == 480
-        overlay_images = np.stack(
-            [self.overlay_images_numpy[idx] for idx in self.select_overlay_ids]
-        )
-        self.overlay_images = torch.tensor(
-            overlay_images, device=self.device
-        )  # [b, H, W, 3]
-        overlay_textures = np.stack(
-            [self.overlay_textures_numpy[idx] for idx in self.select_overlay_ids]
-        )
-        self.overlay_textures = torch.tensor(
-            overlay_textures, device=self.device
-        )  # [b, H, W, 3]
-        overlay_mix = np.array(
-            [self.overlay_mix_numpy[idx] for idx in self.select_overlay_ids]
-        )
-        self.overlay_mix = torch.tensor(overlay_mix, device=self.device)  # [b]
+        self._reset_overlay(env_idx)
 
         # xyz and quat
         xyz_configs = torch.tensor(self.xyz_configs, device=self.device)
@@ -139,8 +184,13 @@ class PutOnPlateInScene25EEPose(PutOnPlateInScene25MainV3):
 
         select_carrot = [self.carrot_names[idx] for idx in self.select_carrot_ids]
         select_plate = [self.plate_names[idx] for idx in self.select_plate_ids]
+
+        select_extra = [self.carrot_names[idx] for idx in self.select_extra_ids]
+
         carrot_actor = [self.objs_carrot[n] for n in select_carrot]
         plate_actor = [self.objs_plate[n] for n in select_plate]
+
+        extra_actor = [self.objs_carrot[n] for n in select_extra]
 
         # for motion planning capability
         self.source_obj_name = select_carrot[0]
@@ -163,8 +213,14 @@ class PutOnPlateInScene25EEPose(PutOnPlateInScene25MainV3):
                 .repeat(b, 1)
             )  # [b, 3]
             p_select = xyz_configs[self.select_pos_ids, 0].reshape(b, 3)  # [b, 3]
+
+            is_select_extra = self.select_extra_ids == idx  # [b]
+            p_select_extra = xyz_configs[self.select_pos_ids, 2].reshape(b, 3)  # [b, 3]
             p = torch.where(
                 is_select.unsqueeze(1).repeat(1, 3), p_select, p_reset
+            )  # [b, 3]
+            p = torch.where(
+                is_select_extra.unsqueeze(1).repeat(1, 3), p_select_extra, p
             )  # [b, 3]
 
             q_reset = (
@@ -175,6 +231,9 @@ class PutOnPlateInScene25EEPose(PutOnPlateInScene25MainV3):
             q_select = quat_configs[self.select_quat_ids, 0].reshape(b, 4)  # [b, 4]
             q = torch.where(
                 is_select.unsqueeze(1).repeat(1, 4), q_select, q_reset
+            )  # [b, 4]
+            q = torch.where(
+                is_select_extra.unsqueeze(1).repeat(1, 4), q_select, q
             )  # [b, 4]
 
             self.objs_carrot[name].set_pose(Pose.create_from_pq(p=p, q=q))
@@ -210,9 +269,19 @@ class PutOnPlateInScene25EEPose(PutOnPlateInScene25MainV3):
         c_ang = torch.stack([a.angular_velocity[i] for i, a in enumerate(carrot_actor)])
         p_lin = torch.stack([a.linear_velocity[i] for i, a in enumerate(plate_actor)])
         p_ang = torch.stack([a.angular_velocity[i] for i, a in enumerate(plate_actor)])
+        e_lin = torch.stack([a.linear_velocity[i] for i, a in enumerate(extra_actor)])
+        e_ang = torch.stack([a.angular_velocity[i] for i, a in enumerate(extra_actor)])
 
-        lin_vel = torch.linalg.norm(c_lin) + torch.linalg.norm(p_lin)
-        ang_vel = torch.linalg.norm(c_ang) + torch.linalg.norm(p_ang)
+        lin_vel = (
+            torch.linalg.norm(c_lin)
+            + torch.linalg.norm(p_lin)
+            + torch.linalg.norm(e_lin)
+        )
+        ang_vel = (
+            torch.linalg.norm(c_ang)
+            + torch.linalg.norm(p_ang)
+            + torch.linalg.norm(e_ang)
+        )
 
         if lin_vel > 1e-3 or ang_vel > 1e-2:
             pass
@@ -220,13 +289,7 @@ class PutOnPlateInScene25EEPose(PutOnPlateInScene25MainV3):
 
         # measured values for bridge dataset
         self.agent.robot.set_pose(self.initial_robot_pos)
-
-        robot_qpos = torch.tensor(self.robot_qpos, device=self.device)
-        initial_qpos = torch.tensor(self.initial_qpos, device=self.device).reshape(
-            1, -1
-        )  # [1, 8]
-        qpos = robot_qpos[self.select_extra_ids] + initial_qpos  # [b, 8]
-        self.agent.reset(init_qpos=qpos)
+        self.agent.reset(init_qpos=self.initial_qpos)
 
         # figure out object bounding boxes after settling. This is used to determine if an object is near the target object
         self.carrot_q_after_settle = torch.stack(
@@ -286,27 +349,4 @@ class PutOnPlateInScene25EEPose(PutOnPlateInScene25MainV3):
         self.plate_bbox_world = p_rotated_bbox_size  # [b, 3]
 
         # stats to track
-        self.consecutive_grasp = torch.zeros(
-            (b,), dtype=torch.int32, device=self.device
-        )
-        self.episode_stats = {
-            # "all_obj_keep_height": torch.zeros((b,), dtype=torch.bool),
-            # "moved_correct_obj": torch.zeros((b,), dtype=torch.bool),
-            # "moved_wrong_obj": torch.zeros((b,), dtype=torch.bool),
-            "near_tgt_obj": torch.zeros((b,), dtype=torch.bool),
-            # "is_src_obj_grasped": torch.zeros((b,), dtype=torch.bool, device=self.device),
-            "is_closest_to_tgt": torch.zeros((b,), dtype=torch.bool),
-            "consecutive_grasp": torch.zeros(
-                (b,), dtype=torch.bool, device=self.device
-            ),
-            "src_on_target": torch.zeros((b,), dtype=torch.bool, device=self.device),
-            "gripper_carrot_dist": torch.zeros(
-                (b,), dtype=torch.float32, device=self.device
-            ),
-            "gripper_plate_dist": torch.zeros(
-                (b,), dtype=torch.float32, device=self.device
-            ),
-            "carrot_plate_dist": torch.zeros(
-                (b,), dtype=torch.float32, device=self.device
-            ),
-        }
+        self._reset_stats(env_idx)     

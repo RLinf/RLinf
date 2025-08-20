@@ -25,6 +25,7 @@ def compute_advantages(
     num_group_envs: int,
     group_size: int,
     normalize_advantages: bool = True,
+    loss_mask: Optional[torch.Tensor] = None,
     rollout_epoch: int = 1,
     epsilon: float = 1e-6,
 ) -> torch.Tensor:
