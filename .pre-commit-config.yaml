@@ -3,6 +3,7 @@ repos:
     rev: "v0.12.9"
     hooks:
       - id: ruff
-        args: ["--fix", "--show-fixes", "--preview", "--output-format=full"]
+        args: ["--preview"]
       - id: ruff-format
+        args: ["--check"]
 
