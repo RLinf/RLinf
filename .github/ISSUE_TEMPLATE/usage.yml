@@ -1,0 +1,26 @@
+name: Usage
+description: Report here if you don't know how to use RLinf.
+title: "[Usage]: "
+labels: ["help wanted"]
+
+body:
+- type: textarea
+  attributes:
+    label: Problem description
+    description: |
+      What problems are you experiencing when using RLinf?
+    value: |
+      I don't know how to add a new model.  
+  validations:
+    required: true
+- type: markdown
+  attributes:
+    value: >
+      Thanks for contributing to RLinf!
+- type: checkboxes
+  id: check_doc
+  attributes:
+    label: Before submitting a new issue...
+    options:
+      - label: Have you checked relevant issues, FAQs (https://rlinf-docs.readthedocs.io/en/latest/rst_source/faq.html), or asked the chatbot at the top right corner of the [documentation page](https://rlinf-docs.readthedocs.io).
+        required: true
