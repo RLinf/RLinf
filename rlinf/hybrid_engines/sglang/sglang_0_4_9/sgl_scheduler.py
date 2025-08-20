@@ -51,6 +51,8 @@ from rlinf.workers.rollout.utils import (
 from .io_struct import (
     OffloadReqInput,
     OffloadReqOutput,
+    SyncHFWeightInput,
+    SyncHFWeightOutput,
     SyncWeightInput,
     SyncWeightOutput,
     TaskMethodInput,
@@ -96,6 +98,7 @@ class Scheduler(_Scheduler, Worker):
                 (TaskMethodInput, self.run_task_method),
                 (OffloadReqInput, self.offload_model_weights),
                 (SyncWeightInput, self.sync_weight),
+                (SyncHFWeightInput, self.sync_hf_weight),
             ]
         )
         self.cfg = config
@@ -128,6 +131,10 @@ class Scheduler(_Scheduler, Worker):
             )
 
             self.actor_weight_rank = rank_map[(self.get_parent_rank(), self._rank)]
+        # it's important to use load_weight to load resharded weight from megatron
+        for _, module in self.tp_worker.worker.model_runner.model.named_modules():
+            if hasattr(module, "use_presharded_weights"):
+                module.use_presharded_weights = True
 
         self._logger.info(
             f"Running Scheduler dp rank {self.get_parent_rank()}, tp rank {self.tp_rank}, corresponding actor weight rank = {self.actor_weight_rank}"
@@ -185,6 +192,34 @@ class Scheduler(_Scheduler, Worker):
         self.sync_in_tp("offload_model_weights")
         # self.cuda_info("After offload Model weights and kv cache")
         return OffloadReqOutput()
+
+    def sync_hf_weight(self, recv_req: SyncHFWeightInput):
+        use_cudagraph = not self.cfg.rollout.enforce_eager
+        colocate = self.placement_mode == PlacementMode.COLLOCATED
+
+        assert use_cudagraph, "use_cudagraph must be True now."
+
+        state_dict = self.recv(
+            src_group_name=self._actor_group_name,
+            src_rank=self.actor_weight_rank,
+        )
+
+        model = self.tp_worker.worker.model_runner.model
+
+        if colocate:
+            self.resume_memory_occupation(ResumeMemoryOccupationReqInput())
+        for name, handle in state_dict.items():
+            func, args = handle
+            list_args = list(args)
+            # NOTE: the key is to change device id to the current device id
+            # in case two processes have different CUDA_VISIBLE_DEVICES
+            list_args[6] = torch.cuda.current_device()
+            new_weight = func(*list_args)
+
+            model.load_weights([(name, new_weight.clone())])
+            del new_weight
+        self.sync_in_tp("sync_hf_weight")
+        return SyncHFWeightOutput()
 
     def sync_weight(self, recv_req: SyncWeightInput):
         use_cudagraph = not self.cfg.rollout.enforce_eager
