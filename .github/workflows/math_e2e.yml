@@ -40,7 +40,7 @@ jobs:
     qwen-grpo-test:
         runs-on: self-hosted
         container:
-            image: beijing-j.cr.infini-ai.com:32443/te-dbdcudoygepmq5vx/rlsys:v2.4
+            image: rlinf/rlinf:math-rlinf0.1-torch2.5.1-sglang0.4.4-vllm0.7.1-megatron0.11.0-te2.1
             volumes:
                 - /mnt/public/dataset:/workspace/dataset
                 - /mnt/public/tokenizer:/workspace/tokenizer

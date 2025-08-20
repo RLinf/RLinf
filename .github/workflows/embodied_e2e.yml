@@ -40,11 +40,11 @@ jobs:
     openvla-ppo-test:
         runs-on: self-hosted
         container:
-            image: beijing-j.cr.infini-ai.com:32443/te-dbdcudoygepmq5vx/rlsys_ci_test:v0.1
+            image: rlinf/rlinf:agentic-openvla-rlinf0.1-torch2.5.1
             volumes:
                 - /mnt/public/dataset:/workspace/dataset
                 - /mnt/public/tokenizer:/workspace/tokenizer
-            options: --gpus="all" --shm-size=2g --privileged -e NVIDIA_DRIVER_CAPABILITIES="compute,utility,graphics"
+            options: --gpus="all" --shm-size=2g -e NVIDIA_DRIVER_CAPABILITIES="compute,utility,graphics"
 
         steps:
             - name: Checkout code
