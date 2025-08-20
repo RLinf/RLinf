@@ -52,7 +52,7 @@ class EmbodiedEvalRunner:
     def run(self):
         eval_metrics = self.evaluate()
         eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
-        self.metric_logger.log(step=0, data=eval_metrics)
+        self.metric_log.log(step=0, data=eval_metrics)
         print(f"{eval_metrics=}")
 
-        self.metric_logger.finish()
+        self.metric_log.finish()

@@ -35,8 +35,7 @@ from mani_skill.utils.structs.types import SimConfig
 from sapien.physx import PhysxMaterial
 from transforms3d.euler import euler2quat
 
-CARROT_DATASET_DIR = Path(__file__).parent / ".." / ".." / "assets" / "carrot"
-
+CARROT_DATASET_DIR = Path(__file__).parent / ".." / "assets" / "carrot"
 
 class PutOnPlateInScene25(BaseEnv):
     """Base Digital Twin environment for digital twins of the BridgeData v2"""
@@ -53,10 +52,14 @@ class PutOnPlateInScene25(BaseEnv):
     )
 
     overlay_images_numpy: list[np.ndarray]
-    overlay_textures_numpy: list[np.ndarray]
-    overlay_mix_numpy: list[float]
+    overlay_images_hw = (480, 640)
     overlay_images: torch.Tensor
+    
+    overlay_textures_numpy: list[np.ndarray]
+    overlay_texture_hw = (480, 640)
     overlay_textures: torch.Tensor
+    
+    overlay_mix_numpy: list[float]
     overlay_mix: torch.Tensor
     model_db_carrot: dict[str, dict]
     model_db_plate: dict[str, dict]
@@ -305,7 +308,7 @@ class PutOnPlateInScene25(BaseEnv):
         )
         if not hasattr(self, "overlay_images") or len(env_idx) == self.num_envs:
             self.overlay_images = torch.zeros(
-                (self.num_envs, 480, 640, 3), device=self.device
+                (self.num_envs, *self.overlay_images_hw, 3), device=self.device
             )
         # Update only the environments being reset
         self.overlay_images[env_idx] = torch.tensor(
@@ -313,7 +316,7 @@ class PutOnPlateInScene25(BaseEnv):
         )
         if not hasattr(self, "overlay_textures") or len(env_idx) == self.num_envs:
             self.overlay_textures = torch.zeros(
-                (self.num_envs, 480, 640, 3), device=self.device, dtype=torch.float32
+                (self.num_envs, *self.overlay_texture_hw, 3), device=self.device, dtype=torch.float32
             )
         # Update only the environments being reset
         self.overlay_textures[env_idx] = torch.tensor(
@@ -737,9 +740,6 @@ class PutOnPlateInScene25(BaseEnv):
         rgb_ret = torch.clamp(rgb_ret, 0, 255)  # [b, H, W, 3]
         rgb_ret = rgb_ret.to(torch.uint8)  # [b, H, W, 3]
 
-        # rgb = rgb * (1 - mask) + overlay_img * mask
-        # rgb = rgb * 0.5 + overlay_img * 0.5 # "debug" mode
-
         return rgb_ret
 
     def get_obs(self, info: Optional[dict] = None, unflattened=True):
@@ -837,7 +837,10 @@ class PutOnPlateInScene25MainV3(PutOnPlateInScene25):
         texture_fd = CARROT_DATASET_DIR / "more_table" / "textures"
         self.overlay_images_numpy = [
             cv2.resize(
-                cv2.cvtColor(cv2.imread(str(img_fd / k)), cv2.COLOR_BGR2RGB), (640, 480)
+                cv2.cvtColor(
+                    cv2.imread(str(img_fd / k)), cv2.COLOR_BGR2RGB
+                ), 
+                (self.overlay_images_hw[1], self.overlay_images_hw[0])
             )
             for k in model_db_table  # [H, W, 3]
         ]  # (B) [H, W, 3]
@@ -846,7 +849,7 @@ class PutOnPlateInScene25MainV3(PutOnPlateInScene25):
                 cv2.cvtColor(
                     cv2.imread(str(texture_fd / v["texture"])), cv2.COLOR_BGR2RGB
                 ),
-                (640, 480),
+                (self.overlay_texture_hw[1], self.overlay_texture_hw[0]),
             )
             for v in model_db_table.values()  # [H, W, 3]
         ]  # (B) [H, W, 3]

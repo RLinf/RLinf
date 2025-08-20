@@ -12,81 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import cv2
 import torch
-from mani_skill.utils import io_utils
+import torch.nn.functional as F
 from mani_skill.utils.geometry import rotation_conversions
 from mani_skill.utils.registration import register_env
 from mani_skill.utils.structs.pose import Pose
 
-from rlinf.environment.tasks.put_on_in_scene_multi import (
-    CARROT_DATASET_DIR,
-    PutOnPlateInScene25MainV3,
-)
-from rlinf.environment.tasks.variants.utils import (
+from rlinf.envs.maniskill.tasks.variants.utils import (
     masks_to_boxes_pytorch,
 )
-
-
-@register_env(
-    "PutOnPlateInScene25VisionWhole03-v1",
-    max_episode_steps=80,
-    asset_download_ids=["bridge_v2_real2sim"],
+from rlinf.envs.maniskill.tasks.put_on_in_scene_multi import (
+    PutOnPlateInScene25MainV3,
 )
-class PutOnPlateInScene25VisionWhole03(PutOnPlateInScene25MainV3):
+
+
+@register_env("PutOnPlateInScene25VisionTexture03-v1", max_episode_steps=80, asset_download_ids=["bridge_v2_real2sim"])
+class PutOnPlateInScene25VisionTexture03(PutOnPlateInScene25MainV3):
     select_extra_ids: torch.Tensor
 
     overlay_texture_mix_ratio = 0.3
-
-    def _prep_init(self):
-        # models
-        self.model_db_carrot: dict[str, dict] = io_utils.load_json(
-            CARROT_DATASET_DIR / "more_carrot" / "model_db.json"
-        )
-        assert len(self.model_db_carrot) == 25
-
-        self.model_db_plate: dict[str, dict] = io_utils.load_json(
-            CARROT_DATASET_DIR / "more_plate" / "model_db.json"
-        )
-        only_plate_name = list(self.model_db_plate.keys())[0]
-        self.model_db_plate = {
-            k: v for k, v in self.model_db_plate.items() if k == only_plate_name
-        }
-        assert len(self.model_db_plate) == 1
-
-        # random configs
-        self.carrot_names = list(self.model_db_carrot.keys())
-        self.plate_names = list(self.model_db_plate.keys())
-
-        # rgb overlay
-        model_db_table = io_utils.load_json(
-            CARROT_DATASET_DIR / "more_table" / "model_db.json"
-        )
-
-        img_fd = CARROT_DATASET_DIR / "more_table" / "imgs"
-        texture_fd = CARROT_DATASET_DIR / "more_table" / "textures"
-        self.overlay_images_numpy = [
-            cv2.resize(
-                cv2.cvtColor(cv2.imread(str(img_fd / k)), cv2.COLOR_BGR2RGB), (640, 480)
-            )
-            for k in model_db_table  # [H, W, 3]
-        ]  # (B) [H, W, 3]
-        self.overlay_textures_numpy = [
-            cv2.resize(
-                cv2.cvtColor(
-                    cv2.imread(str(texture_fd / v["texture"])), cv2.COLOR_BGR2RGB
-                ),
-                (1280, 960),
-            )
-            for v in model_db_table.values()  # [H, W, 3]
-        ]  # (B) [H, W, 3]
-        self.overlay_mix_numpy = [
-            v["mix"]
-            for v in model_db_table.values()  # []
-        ]
-        assert len(self.overlay_images_numpy) == 21
-        assert len(self.overlay_textures_numpy) == 21
-        assert len(self.overlay_mix_numpy) == 21
 
     @property
     def basic_obj_infos(self):
@@ -110,7 +54,6 @@ class PutOnPlateInScene25VisionWhole03(PutOnPlateInScene25MainV3):
         lp_offset = 0
         l1 = len(self.xyz_configs)
         l2 = len(self.quat_configs)
-
         return lc, lc_offset, lo, lo_offset, lp, lp_offset, l1, l2, le, le_offset
 
     @property
@@ -295,8 +238,7 @@ class PutOnPlateInScene25VisionWhole03(PutOnPlateInScene25MainV3):
         )  # [b, 3]
         self.plate_bbox_world = p_rotated_bbox_size  # [b, 3]
 
-        # stats to track
-        self._reset_stats(env_idx, c_rotated_bbox_size, p_rotated_bbox_size)
+        self._reset_stats(env_idx)
 
     def _green_sceen_rgb(
         self, rgb, segmentation, overlay_img, overlay_texture, overlay_mix
@@ -321,28 +263,45 @@ class PutOnPlateInScene25VisionWhole03(PutOnPlateInScene25MainV3):
         mix = overlay_mix.unsqueeze(1).unsqueeze(1).unsqueeze(1)  # [b, 1, 1, 1]
         mix = mix * self.overlay_texture_mix_ratio
         assert rgb.shape == overlay_img.shape
-        assert rgb.shape[1] * 2 == overlay_texture.shape[1]
-        assert rgb.shape[2] * 2 == overlay_texture.shape[2]
+        assert rgb.shape == overlay_texture.shape
 
+        # Step 1
         b, H, W, _ = mask.shape
         boxes = masks_to_boxes_pytorch(arm_obj_mask)  # [b, 4], [xmin, ymin, xmax, ymax]
 
+        # Step 2
         xmin, ymin, xmax, ymax = [boxes[:, i] for i in range(4)]  # [b]
-        x_mean = torch.clamp((xmin + xmax) // 2, min=1, max=639)
-        y_mean = torch.clamp((ymin + ymax) // 2, min=1, max=479)
+        h_box = (ymax - ymin + 1).clamp(min=1)  # [b]
+        w_box = (xmax - xmin + 1).clamp(min=1)  # [b]
 
+        # Step 3
+        max_h, max_w = h_box.max().item(), w_box.max().item()
+        texture = overlay_texture.permute(0, 3, 1, 2).float()  # [b, 3, H_tex, W_tex]
+        texture_resized = F.interpolate(
+            texture, size=(max_h, max_w), mode="bilinear", align_corners=False
+        )
+        # [b, 3, max_h, max_w]
+
+        # Step 4
         rgb = rgb.to(torch.float32)
-        rgb_ret = overlay_img * mask + rgb * (1 - mask)
+        rgb_ret = overlay_img * mask
 
         for i in range(b):
-            ym = y_mean[i]
-            xm = x_mean[i]
-            tex_crop = overlay_texture[
-                i, ym : ym + 480, xm : xm + 640, :
-            ]  # [h_box, w_box, 3]
-
+            tex_crop = texture_resized[i, :, : h_box[i], : w_box[i]].permute(
+                1, 2, 0
+            )  # [h_box, w_box, 3]
+            y0, y1 = ymin[i].item(), (ymin[i] + h_box[i]).item()
+            x0, x1 = xmin[i].item(), (xmin[i] + w_box[i]).item()
+            rgb_box = rgb[i, y0:y1, x0:x1, :]  # [h_box, w_box, 3]
+            overlay_img_box = overlay_img[i, y0:y1, x0:x1, :]  # [h_box, w_box, 3]
+            mask_box = arm_obj_mask[i, y0:y1, x0:x1]  # [h_box, w_box]
             mix_val = mix[i].item()
-            rgb_ret[i] = rgb_ret[i] * (1 - mix_val) + tex_crop * mix_val
+
+            mask_box_3 = mask_box.unsqueeze(-1).to(rgb_box.dtype)  # [h_box, w_box, 1]
+            blended = tex_crop * mix_val + rgb_box * (1.0 - mix_val)
+            out_box = blended * mask_box_3 + overlay_img_box * (1 - mask_box_3)
+
+            rgb_ret[i, y0:y1, x0:x1, :] = out_box
 
         rgb_ret = torch.clamp(rgb_ret, 0, 255)
         rgb_ret = rgb_ret.to(torch.uint8)
@@ -351,9 +310,9 @@ class PutOnPlateInScene25VisionWhole03(PutOnPlateInScene25MainV3):
 
 
 @register_env(
-    "PutOnPlateInScene25VisionWhole05-v1",
+    "PutOnPlateInScene25VisionTexture05-v1",
     max_episode_steps=80,
     asset_download_ids=["bridge_v2_real2sim"],
 )
-class PutOnPlateInScene25VisionWhole05(PutOnPlateInScene25VisionWhole03):
+class PutOnPlateInScene25VisionTexture05(PutOnPlateInScene25VisionTexture03):
     overlay_texture_mix_ratio = 0.5

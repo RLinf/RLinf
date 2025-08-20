@@ -21,7 +21,7 @@ from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
 from rlinf.workers.env.env_worker import EnvWorker
-from rlinf.workers.rollout.hf.huggingface_worker import MutilStepRolloutWorker
+from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 mp.set_start_method("spawn", force=True)
 
@@ -44,7 +44,7 @@ def main(cfg) -> None:
     )
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
-    rollout_group = MutilStepRolloutWorker.create_group(cfg).launch(
+    rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
         cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
     )
     # Create env worker group

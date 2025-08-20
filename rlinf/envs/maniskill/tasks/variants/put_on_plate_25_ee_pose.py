@@ -12,29 +12,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from itertools import product
+
+import numpy as np
 import torch
-import torch.nn.functional as F
 from mani_skill.utils.geometry import rotation_conversions
 from mani_skill.utils.registration import register_env
 from mani_skill.utils.structs.pose import Pose
 
-from rlinf.environment.tasks.put_on_in_scene_multi import (
+from rlinf.envs.maniskill.tasks.put_on_in_scene_multi import (
     PutOnPlateInScene25MainV3,
-)
-from rlinf.environment.tasks.variants.utils import (
-    masks_to_boxes_pytorch,
 )
 
 
 @register_env(
-    "PutOnPlateInScene25VisionTexture03-v1",
+    "PutOnPlateInScene25EEPose-v1",
     max_episode_steps=80,
     asset_download_ids=["bridge_v2_real2sim"],
 )
-class PutOnPlateInScene25VisionTexture03(PutOnPlateInScene25MainV3):
+class PutOnPlateInScene25EEPose(PutOnPlateInScene25MainV3):
     select_extra_ids: torch.Tensor
 
-    overlay_texture_mix_ratio = 0.3
+    def _generate_init_pose(self):
+        super()._generate_init_pose()
+
+        robot_qpos = []
+
+        robot_qpos.append(np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+
+        p0 = [-0.15, -0.08, 0.0, 0.08, 0.15]
+        p1 = [-0.15, -0.08, 0.0, 0.08, 0.15]
+        p2 = [-0.15, -0.08, 0.0, 0.08, 0.15]
+        p3 = [-0.15, -0.08, 0.0, 0.08, 0.15]
+        p4 = [-0.15, -0.08, 0.0, 0.08, 0.15]
+        p5 = [-0.6, -0.3, 0.0, 0.3, 0.6]
+        for p0, p1, p2, p3, p4, p5 in product(p0, p1, p2, p3, p4, p5):
+            p012sum = p1 + p2
+            if abs(p012sum) > 0.25:
+                continue
+            robot_qpos.append(np.array([p0, p1, p2, p3, p4, p5, 0.0, 0.0]))
+
+        robot_qpos = np.stack(robot_qpos)
+        self.robot_qpos = robot_qpos
+
+        print(f"robot_qpos: {robot_qpos.shape}")
 
     @property
     def basic_obj_infos(self):
@@ -42,14 +63,13 @@ class PutOnPlateInScene25VisionTexture03(PutOnPlateInScene25MainV3):
             le = 1
             le_offset = 0
         elif self.obj_set == "test":
-            le = 16
+            le = len(self.robot_qpos) - 1
             le_offset = 1
         elif self.obj_set == "all":
-            le = 17
+            le = len(self.robot_qpos)
             le_offset = 0
         else:
             raise ValueError(f"Unknown obj_set: {self.obj_set}")
-
         lc = 16
         lc_offset = 0
         lo = 16
@@ -58,6 +78,7 @@ class PutOnPlateInScene25VisionTexture03(PutOnPlateInScene25MainV3):
         lp_offset = 0
         l1 = len(self.xyz_configs)
         l2 = len(self.quat_configs)
+
         return lc, lc_offset, lo, lo_offset, lp, lp_offset, l1, l2, le, le_offset
 
     @property
@@ -69,6 +90,7 @@ class PutOnPlateInScene25VisionTexture03(PutOnPlateInScene25MainV3):
         return ltt
 
     def _initialize_episode_pre(self, env_idx: torch.Tensor, options: dict):
+        # NOTE: this part of code is not GPU parallelized
         lc, lc_offset, lo, lo_offset, lp, lp_offset, l1, l2, le, le_offset = (
             self.basic_obj_infos
         )
@@ -80,7 +102,7 @@ class PutOnPlateInScene25VisionTexture03(PutOnPlateInScene25MainV3):
         self.select_extra_ids = (
             self.episode_id // (lp * lo * l1 * l2)
         ) % le + le_offset  # [b]
-        self.select_plate_ids = (self.episode_id // (lo * l1 * l2)) % lp
+        self.select_plate_ids = (self.episode_id // (lo * l1 * l2)) % lp + lp_offset
         self.select_overlay_ids = (self.episode_id // (l1 * l2)) % lo + lo_offset
         self.select_pos_ids = (self.episode_id // l2) % l1
         self.select_quat_ids = self.episode_id % l2
@@ -94,7 +116,22 @@ class PutOnPlateInScene25VisionTexture03(PutOnPlateInScene25MainV3):
         sensor = self._sensor_configs[self.rgb_camera_name]
         assert sensor.width == 640
         assert sensor.height == 480
-        self._reset_overlay(env_idx)
+        overlay_images = np.stack(
+            [self.overlay_images_numpy[idx] for idx in self.select_overlay_ids]
+        )
+        self.overlay_images = torch.tensor(
+            overlay_images, device=self.device
+        )  # [b, H, W, 3]
+        overlay_textures = np.stack(
+            [self.overlay_textures_numpy[idx] for idx in self.select_overlay_ids]
+        )
+        self.overlay_textures = torch.tensor(
+            overlay_textures, device=self.device
+        )  # [b, H, W, 3]
+        overlay_mix = np.array(
+            [self.overlay_mix_numpy[idx] for idx in self.select_overlay_ids]
+        )
+        self.overlay_mix = torch.tensor(overlay_mix, device=self.device)  # [b]
 
         # xyz and quat
         xyz_configs = torch.tensor(self.xyz_configs, device=self.device)
@@ -183,7 +220,13 @@ class PutOnPlateInScene25VisionTexture03(PutOnPlateInScene25MainV3):
 
         # measured values for bridge dataset
         self.agent.robot.set_pose(self.initial_robot_pos)
-        self.agent.reset(init_qpos=self.initial_qpos)
+
+        robot_qpos = torch.tensor(self.robot_qpos, device=self.device)
+        initial_qpos = torch.tensor(self.initial_qpos, device=self.device).reshape(
+            1, -1
+        )  # [1, 8]
+        qpos = robot_qpos[self.select_extra_ids] + initial_qpos  # [b, 8]
+        self.agent.reset(init_qpos=qpos)
 
         # figure out object bounding boxes after settling. This is used to determine if an object is near the target object
         self.carrot_q_after_settle = torch.stack(
@@ -242,81 +285,5 @@ class PutOnPlateInScene25VisionTexture03(PutOnPlateInScene25MainV3):
         )  # [b, 3]
         self.plate_bbox_world = p_rotated_bbox_size  # [b, 3]
 
-        self._reset_stats(env_idx, c_rotated_bbox_size, p_rotated_bbox_size)
-
-    def _green_sceen_rgb(
-        self, rgb, segmentation, overlay_img, overlay_texture, overlay_mix
-    ):
-        """returns green screened RGB data given a batch of RGB and segmentation images and one overlay image"""
-        actor_seg = segmentation[..., 0]
-        # mask = torch.ones_like(actor_seg, device=actor_seg.device)
-        if actor_seg.device != self.robot_link_ids.device:
-            # if using CPU simulation, the device of the robot_link_ids and target_object_actor_ids will be CPU first
-            # but for most users who use the sapien_cuda render backend image data will be on the GPU.
-            self.robot_link_ids = self.robot_link_ids.to(actor_seg.device)
-            self.target_object_actor_ids = self.target_object_actor_ids.to(
-                actor_seg.device
-            )
-
-        robot_item_ids = torch.concat(
-            [self.robot_link_ids, self.target_object_actor_ids]
-        )
-        arm_obj_mask = torch.isin(actor_seg, robot_item_ids)  # [b, H, W]
-
-        mask = (~arm_obj_mask).to(torch.float32).unsqueeze(-1)  # [b, H, W, 1]
-        mix = overlay_mix.unsqueeze(1).unsqueeze(1).unsqueeze(1)  # [b, 1, 1, 1]
-        mix = mix * self.overlay_texture_mix_ratio
-        assert rgb.shape == overlay_img.shape
-        assert rgb.shape == overlay_texture.shape
-
-        # Step 1
-        b, H, W, _ = mask.shape
-        boxes = masks_to_boxes_pytorch(arm_obj_mask)  # [b, 4], [xmin, ymin, xmax, ymax]
-
-        # Step 2
-        xmin, ymin, xmax, ymax = [boxes[:, i] for i in range(4)]  # [b]
-        h_box = (ymax - ymin + 1).clamp(min=1)  # [b]
-        w_box = (xmax - xmin + 1).clamp(min=1)  # [b]
-
-        # Step 3
-        max_h, max_w = h_box.max().item(), w_box.max().item()
-        texture = overlay_texture.permute(0, 3, 1, 2).float()  # [b, 3, H_tex, W_tex]
-        texture_resized = F.interpolate(
-            texture, size=(max_h, max_w), mode="bilinear", align_corners=False
-        )
-        # [b, 3, max_h, max_w]
-
-        # Step 4
-        rgb = rgb.to(torch.float32)
-        rgb_ret = overlay_img * mask
-
-        for i in range(b):
-            tex_crop = texture_resized[i, :, : h_box[i], : w_box[i]].permute(
-                1, 2, 0
-            )  # [h_box, w_box, 3]
-            y0, y1 = ymin[i].item(), (ymin[i] + h_box[i]).item()
-            x0, x1 = xmin[i].item(), (xmin[i] + w_box[i]).item()
-            rgb_box = rgb[i, y0:y1, x0:x1, :]  # [h_box, w_box, 3]
-            overlay_img_box = overlay_img[i, y0:y1, x0:x1, :]  # [h_box, w_box, 3]
-            mask_box = arm_obj_mask[i, y0:y1, x0:x1]  # [h_box, w_box]
-            mix_val = mix[i].item()
-
-            mask_box_3 = mask_box.unsqueeze(-1).to(rgb_box.dtype)  # [h_box, w_box, 1]
-            blended = tex_crop * mix_val + rgb_box * (1.0 - mix_val)
-            out_box = blended * mask_box_3 + overlay_img_box * (1 - mask_box_3)
-
-            rgb_ret[i, y0:y1, x0:x1, :] = out_box
-
-        rgb_ret = torch.clamp(rgb_ret, 0, 255)
-        rgb_ret = rgb_ret.to(torch.uint8)
-
-        return rgb_ret
-
-
-@register_env(
-    "PutOnPlateInScene25VisionTexture05-v1",
-    max_episode_steps=80,
-    asset_download_ids=["bridge_v2_real2sim"],
-)
-class PutOnPlateInScene25VisionTexture05(PutOnPlateInScene25VisionTexture03):
-    overlay_texture_mix_ratio = 0.5
+        # stats to track
+        self._reset_stats(env_idx)
