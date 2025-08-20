@@ -1,10 +1,8 @@
 name: Lint
 
 on:
-    push:
-        branches: [ main, feat/*, v* ]
-    pull_request:
-        branches: [ main, feat/*, v* ]
+    push
+    pull_request
 
 permissions:
   contents: read
@@ -15,9 +13,7 @@ concurrency:
 
 jobs:
     lint:
-        runs-on: self-hosted
-        container:
-            image: beijing-j.cr.infini-ai.com:32443/te-dbdcudoygepmq5vx/rlsys:v2.4
+        runs-on: ubuntu-latest
         
         steps:
             - name: Checkout code
