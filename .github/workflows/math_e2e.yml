@@ -2,28 +2,20 @@ name: Math End2End
 
 on:
     push:
-        branches: [ main, v[0-9].[0-9] ]
+        branches: [ main, v[0-9].[0-9], feat/ci ]
         paths:
           - '**/*.py'
-          - '!.github/workflows/*.yml'
-          - '.github/workflows/math_e2e.yml'
           - '!docs/**'
-          - '!tests/**'
           - 'README.md'
-          - 'Dockerfile'
           - '*.yaml'
           - '*.toml'
-          
+
     pull_request:
-        branches: [ main, v[0-9].[0-9] ]
+        branches: [ main, v[0-9].[0-9], feat/ci ]
         paths:
           - '**/*.py'
-          - '!.github/workflows/*.yml'
-          - '.github/workflows/math_e2e.yml'
           - '!docs/**'
-          - '!tests/**'
           - 'README.md'
-          - 'Dockerfile'
           - '*.yaml'
           - '*.toml'
 
