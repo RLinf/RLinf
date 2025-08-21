@@ -1,5 +1,5 @@
 Flexible Execution Modes
-==========================
+========================
 
 Conventional RL post-training systems can typically be categorized—based on their GPU placement strategy—into two primary modes: :doc:`collocated` and :doc:`disaggregated`.
 
