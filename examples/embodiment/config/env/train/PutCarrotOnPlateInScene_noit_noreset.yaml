@@ -1,0 +1,29 @@
+simulator_type: maniskill
+auto_reset: false
+ignore_terminations: false
+use_rel_reward: true
+seed: 0
+num_group: ${algorithm.num_group_envs}
+group_size: ${algorithm.group_size}
+policy_setup: ${actor.model.policy_setup}
+use_fixed_reset_state_ids: true
+only_eval: false
+
+video_cfg:
+  save_video: true
+  info_on_video: true
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  id: "PutCarrotOnPlateInScene-v1"
+  num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
+  obs_mode: "rgb+segmentation"
+  control_mode: None
+  sim_backend: "gpu"
+  sim_config:
+    sim_freq: 500
+    control_freq: 5
+  max_episode_steps: 60 # 100
+  sensor_configs:
+    shader_pack: "default"
+  render_mode: all

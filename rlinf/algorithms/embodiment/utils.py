@@ -121,7 +121,7 @@ def append_to_dict(data, new_data):
         data[key].append(val)
 
 
-def compute_loss_mask(self, dones):
+def compute_loss_mask(dones):
     _, actual_bsz, num_action_chunks = dones.shape
     n_chunk_step = dones.shape[0] - 1
     flattened_dones = dones.transpose(1, 2).reshape(
