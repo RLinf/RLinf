@@ -54,11 +54,11 @@ class PutOnPlateInScene25(BaseEnv):
     overlay_images_numpy: list[np.ndarray]
     overlay_images_hw = (480, 640)
     overlay_images: torch.Tensor
-    
+
     overlay_textures_numpy: list[np.ndarray]
     overlay_texture_hw = (480, 640)
     overlay_textures: torch.Tensor
-    
+
     overlay_mix_numpy: list[float]
     overlay_mix: torch.Tensor
     model_db_carrot: dict[str, dict]
@@ -839,7 +839,7 @@ class PutOnPlateInScene25MainV3(PutOnPlateInScene25):
             cv2.resize(
                 cv2.cvtColor(
                     cv2.imread(str(img_fd / k)), cv2.COLOR_BGR2RGB
-                ), 
+                ),
                 (self.overlay_images_hw[1], self.overlay_images_hw[0])
             )
             for k in model_db_table  # [H, W, 3]

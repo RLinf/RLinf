@@ -349,4 +349,4 @@ class PutOnPlateInScene25MultiCarrot(PutOnPlateInScene25MainV3):
         self.plate_bbox_world = p_rotated_bbox_size  # [b, 3]
 
         # stats to track
-        self._reset_stats(env_idx)     
+        self._reset_stats(env_idx)
