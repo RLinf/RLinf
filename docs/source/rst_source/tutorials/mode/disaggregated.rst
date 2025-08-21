@@ -1,5 +1,5 @@
 Disaggregated Mode
-==================================
+==================
 
 .. image:: ../../../_static/svg/disaggregated.svg
    :width: 600px

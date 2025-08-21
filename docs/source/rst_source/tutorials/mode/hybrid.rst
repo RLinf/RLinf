@@ -1,5 +1,5 @@
 Hybrid Mode
-=====================
+===========
 
 .. image:: ../../../_static/svg/hybrid.svg
    :width: 600px
