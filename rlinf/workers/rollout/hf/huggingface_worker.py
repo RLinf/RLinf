@@ -319,7 +319,7 @@ class MultiStepRolloutWorker(Worker):
     def reload_model(self):
         self.hf_model = self.hf_model.to(self.device)
 
-    def update_weights(self):
+    def sync_model_from_actor(self):
         param_state_dict = self.recv(self._actor_group_name, src_rank=self._rank)
         self.hf_model.load_state_dict(param_state_dict)
         del param_state_dict

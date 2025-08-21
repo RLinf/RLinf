@@ -18,7 +18,9 @@ from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
 from rlinf.algorithms.embodiment.utils import compute_evaluate_metrics
-from rlinf.scheduler import Worker
+from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
+from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.runner_utils import check_progress
@@ -28,9 +30,9 @@ class EmbodiedRunner:
     def __init__(
         self,
         cfg: DictConfig,
-        actor: Worker,
-        rollout: Worker,
-        env: Worker,
+        actor: EmbodiedFSDPActor,
+        rollout: MultiStepRolloutWorker,
+        env: EnvWorker,
         critic=None,
         reward=None,
         run_timer=None,
@@ -66,12 +68,12 @@ class EmbodiedRunner:
         self.env.init_worker().wait()
 
     def update_rollout_weights(self):
-        rollout_futures = self.rollout.update_weights()
-        actor_futures = self.actor.send_weights()
+        rollout_futures = self.rollout.sync_model_from_actor()
+        actor_futures = self.actor.sync_model_to_rollout()
         actor_futures.wait()
         rollout_futures.wait()
 
-    def generate_responses(self):
+    def generate_rollouts(self):
         env_futures = self.env.interact()
         rollout_futures = self.rollout.generate()
         actor_futures = self.actor.recv_rollout_batch()
@@ -104,29 +106,14 @@ class EmbodiedRunner:
                     self.metric_logger.log(data=eval_metrics, step=_step)
 
             with self.timer("step"):
-                # generate response and compute rule-based rewards.
-                with self.timer("generation"):
-                    # prompts: actor -> rollout
-                    # response ( + rule-based rewards): rollout -> actor
+                with self.timer("rollout"):
                     self.update_rollout_weights()
-                    self.generate_responses()
+                    self.generate_rollouts()
 
-                with self.timer("preprocess_rollout_batch"):
-                    self.actor.preprocess_rollout_batch()
-
-                # recompute rollout policy logprobs, otherwise will use sglang logprobs.
+                # recompute rollout policy logprobs, otherwise will use rollout logprobs.
                 if self.recompute_logprobs:
                     with self.timer("prev_logprobs"):
                         self.actor.compute_logprobs()
-
-                # compute ref policy logprobs.
-                if self.compute_ref_logprobs:
-                    with self.timer("ref_logprobs"):
-                        self.actor.compute_ref_logprobs()
-
-                with self.timer("cal_response_mask"):
-                    actor_futures = self.actor.compute_loss_mask()
-                    actor_rollout_metrics = actor_futures.wait()
 
                 # compute advantages and returns.
                 with self.timer("cal_adv_and_returns"):

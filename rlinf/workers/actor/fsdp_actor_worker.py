@@ -25,6 +25,7 @@ from rlinf.algorithms.embodiment.utils import (
     actor_loss_fn,
     append_to_dict,
     calculate_advantages_and_returns,
+    compute_loss_mask,
     compute_rollout_metrics,
     compute_split_num,
 )
@@ -38,7 +39,7 @@ from rlinf.utils.data_iter_utils import get_iterator_k_split
 from rlinf.utils.placement import HybridComponentPlacement
 
 
-class FSDPActor(FSDPModelManager, Worker):
+class EmbodiedFSDPActor(FSDPModelManager, Worker):
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
         super().__init__(cfg.actor)
@@ -86,7 +87,7 @@ class FSDPActor(FSDPModelManager, Worker):
             return model
         return super().model_provider_func()
 
-    def send_weights(self):
+    def sync_model_to_rollout(self):
         if next(self.model.parameters()).is_cpu:
             self.load_fsdp_param_and_grad(self.device)
             self.load_fsdp_optimizer(self.device)
@@ -129,19 +130,15 @@ class FSDPActor(FSDPModelManager, Worker):
                     [recv_list[i][key] for i in range(split_num)], dim=0
                 )
 
-    def compute_rollout_metrics(self):
-        return compute_rollout_metrics(self.rollout_batch)
+        self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
 
-    def prepare_for_inference(self):
-        self.model.eval()
-
-    def preprocess_rollout_batch(self):
+    def _process_received_rollout_batch(self, rollout_batch):
         """
         original shape: [rollout_epoch x n_chunk_steps, bsz, num_action_chunks, ...]
         target shape: [n_chunk_steps, rollout_epoch x bsz, num_action_chunks, ...]
         """
         rollout_epoch = self.cfg.algorithm.rollout_epoch
-        for key, value in self.rollout_batch.items():
+        for key, value in rollout_batch.items():
             new_value = value.reshape(
                 rollout_epoch, -1, *value.shape[1:]
             )  # [rollout_epoch, n_chunk_step, bsz, ...]
@@ -149,45 +146,22 @@ class FSDPActor(FSDPModelManager, Worker):
                 0, 1
             )  # [n_chunk_step, rollout_epoch, bsz, ...]
             new_value = new_value.reshape(new_value.shape[0], -1, *new_value.shape[3:])
-            self.rollout_batch[key] = new_value
+            rollout_batch[key] = new_value
+
+        if not self.cfg.env.train.auto_reset and not self.cfg.env.train.ignore_terminations:
+            dones = rollout_batch[
+                "dones"
+            ]  # [n_chunk_step, rollout_epoch x bsz, num_action_chunks]
+            loss_mask, loss_mask_sum = compute_loss_mask(dones)
+
+            rollout_batch["loss_mask"] = loss_mask
+            rollout_batch["loss_mask_sum"] = loss_mask_sum
+
+        return rollout_batch
 
     def compute_logprobs(self):
+        self.model.eval()
         self.rollout_batch["logprob"] = self.rollout_batch["prev_logprobs"]
-
-    def compute_ref_logprobs(self):
-        self.rollout_batch["ref_logprobs"] = self.rollout_batch["logprob"]
-
-    def compute_loss_mask(self):
-        if self.cfg.env.train.auto_reset or self.cfg.env.train.ignore_terminations:
-            return
-
-        dones = self.rollout_batch[
-            "dones"
-        ]  # [n_chunk_step, rollout_epoch x bsz, num_action_chunks]
-        _, actual_bsz, num_action_chunks = dones.shape
-        n_chunk_step = dones.shape[0] - 1
-        flattened_dones = dones.transpose(1, 2).reshape(
-            -1, actual_bsz
-        )  # [n_chunk_step + 1, rollout_epoch x bsz]
-        flattened_dones = flattened_dones[
-            -(n_chunk_step * num_action_chunks + 1) :
-        ]  # [n_steps+1, actual-bsz]
-        flattened_loss_mask = (flattened_dones.cumsum(dim=0) == 0)[
-            :-1
-        ]  # [n_steps, actual-bsz]
-
-        loss_mask = flattened_loss_mask.reshape(
-            n_chunk_step, num_action_chunks, actual_bsz
-        )
-        loss_mask = loss_mask.transpose(
-            1, 2
-        )  # [n_chunk_step, actual_bsz, num_action_chunks]
-
-        loss_mask_sum = loss_mask.sum(dim=(0, 2), keepdim=True)  # [1, bsz, 1]
-        loss_mask_sum = loss_mask_sum.expand_as(loss_mask)
-
-        self.rollout_batch["loss_mask"] = loss_mask
-        self.rollout_batch["loss_mask_sum"] = loss_mask_sum
 
     def compute_advantages_and_returns(self):
         stage_num = self.cfg.rollout.pipeline_stage_num
@@ -307,6 +281,8 @@ class FSDPActor(FSDPModelManager, Worker):
                     action_token_len=action_token_len,
                     value_model=True if self.cfg.algorithm.adv_type == "ppo" else False,
                     value_head_mode=self.cfg.actor.model.get("vh_mode", None),
+                    temperature=self.cfg.algorithm.sampling_params.temperature_train,
+                    top_k=self.cfg.algorithm.sampling_params.top_k,
                     logits_processor_args=logits_processor_args,
                 )
 
@@ -370,7 +346,6 @@ class FSDPActor(FSDPModelManager, Worker):
 
         return mean_metric_dict
 
-    # 8. Checkpoint saving method (called in save)
     def save_checkpoint(self, save_base_path, step):
         torch.distributed.barrier()
         model_state = self.get_model_state_dict()

@@ -4,8 +4,8 @@ export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
 export SRC_FILE="${EMBODIED_PATH}/eval_embodied_agent.py"
 
-export MUJOCO_GL="egl"
-export PYOPENGL_PLATFORM="egl"
+export MUJOCO_GL="osmesa"
+export PYOPENGL_PLATFORM="osmesa"
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 # NOTE: set LIBERO_REPO_PATH to the path of the LIBERO repo
 export LIBERO_REPO_PATH="/storage/repo/LIBERO"
@@ -26,6 +26,6 @@ fi
 LOG_DIR="${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')" #/$(date +'%Y%m%d-%H:%M:%S')"
 MEGA_LOG_FILE="${LOG_DIR}/eval_embodiment.log"
 mkdir -p "${LOG_DIR}"
-CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME} trainer.logger.path=${LOG_DIR}"
+CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME} runner.logger.log_path=${LOG_DIR}"
 echo ${CMD}
 ${CMD} 2>&1 | tee ${MEGA_LOG_FILE}
