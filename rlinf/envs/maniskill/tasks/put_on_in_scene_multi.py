@@ -37,6 +37,7 @@ from transforms3d.euler import euler2quat
 
 CARROT_DATASET_DIR = Path(__file__).parent / ".." / "assets" / "carrot"
 
+
 class PutOnPlateInScene25(BaseEnv):
     """Base Digital Twin environment for digital twins of the BridgeData v2"""
 
@@ -316,7 +317,9 @@ class PutOnPlateInScene25(BaseEnv):
         )
         if not hasattr(self, "overlay_textures") or len(env_idx) == self.num_envs:
             self.overlay_textures = torch.zeros(
-                (self.num_envs, *self.overlay_texture_hw, 3), device=self.device, dtype=torch.float32
+                (self.num_envs, *self.overlay_texture_hw, 3),
+                device=self.device,
+                dtype=torch.float32,
             )
         # Update only the environments being reset
         self.overlay_textures[env_idx] = torch.tensor(
@@ -837,10 +840,8 @@ class PutOnPlateInScene25MainV3(PutOnPlateInScene25):
         texture_fd = CARROT_DATASET_DIR / "more_table" / "textures"
         self.overlay_images_numpy = [
             cv2.resize(
-                cv2.cvtColor(
-                    cv2.imread(str(img_fd / k)), cv2.COLOR_BGR2RGB
-                ),
-                (self.overlay_images_hw[1], self.overlay_images_hw[0])
+                cv2.cvtColor(cv2.imread(str(img_fd / k)), cv2.COLOR_BGR2RGB),
+                (self.overlay_images_hw[1], self.overlay_images_hw[0]),
             )
             for k in model_db_table  # [H, W, 3]
         ]  # (B) [H, W, 3]

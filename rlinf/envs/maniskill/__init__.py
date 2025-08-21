@@ -24,4 +24,5 @@ def import_all_tasks():
     for _, module_name, _ in pkgutil.iter_modules([str(package_path)]):
         importlib.import_module(f"{package_name}.{module_name}")
 
+
 import_all_tasks()

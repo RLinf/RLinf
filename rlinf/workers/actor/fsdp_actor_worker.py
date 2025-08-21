@@ -148,7 +148,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             new_value = new_value.reshape(new_value.shape[0], -1, *new_value.shape[3:])
             rollout_batch[key] = new_value
 
-        if not self.cfg.env.train.auto_reset and not self.cfg.env.train.ignore_terminations:
+        if (
+            not self.cfg.env.train.auto_reset
+            and not self.cfg.env.train.ignore_terminations
+        ):
             dones = rollout_batch[
                 "dones"
             ]  # [n_chunk_step, rollout_epoch x bsz, num_action_chunks]

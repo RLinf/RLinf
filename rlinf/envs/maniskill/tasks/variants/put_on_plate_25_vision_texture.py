@@ -26,7 +26,11 @@ from rlinf.envs.maniskill.tasks.variants.utils import (
 )
 
 
-@register_env("PutOnPlateInScene25VisionTexture03-v1", max_episode_steps=80, asset_download_ids=["bridge_v2_real2sim"])
+@register_env(
+    "PutOnPlateInScene25VisionTexture03-v1",
+    max_episode_steps=80,
+    asset_download_ids=["bridge_v2_real2sim"],
+)
 class PutOnPlateInScene25VisionTexture03(PutOnPlateInScene25MainV3):
     select_extra_ids: torch.Tensor
 
