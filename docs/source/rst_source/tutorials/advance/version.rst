@@ -75,7 +75,7 @@ Internal Version Routing
 
 Directory layout::
 
-   infini_rl/generation/sglang/
+   rlinf/generation/sglang/
    ├── __init__.py               # Version detection and routing
    ├── sglang_worker.py          # Main worker implementation
    ├── sglang_0_4_4/             # SGLang 0.4.4 specific implementation

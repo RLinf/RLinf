@@ -22,6 +22,11 @@ offering practical guidance to help you fully optimize your RL post-training wor
    Covers how to resume training from saved checkpoints,  
    ensuring fault tolerance and seamless continuation for long-running or interrupted training jobs.
 
+- :doc:`logger`  
+   Introduces how to visualize and track key metrics during your training process.  
+   Currently, we support three backends for experiment tracking and visualization: 
+   TensorBoard, Weights & Biases (wandb), and SwanLab.
+
 
 .. toctree::
    :hidden:
@@ -31,13 +36,4 @@ offering practical guidance to help you fully optimize your RL post-training wor
    lora
    version
    resume
-
-
-.. - :doc:`Flexible Execution Modes <mode>`  
-..    Describes the three execution modes supported by RLinf: **task-colocated**, **task-disaggregated**, and the novel **hybrid** mode with fine-grained pipelining.
-
-.. - :doc:`Online Scaling Mechanism <online-scaling>`  
-..    Introduces the online scaling mechanism, which allows dynamic adjustment of the number of GPUs and nodes used at each stage during runtime.
-
-.. - :doc:`Auto Scheduling Policy <auto-scheduling>`  
-..    Explains the implementation of RLinf’s auto scheduling policy, which dynamically allocates GPU resources based on workload.
+   logger

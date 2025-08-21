@@ -6,9 +6,20 @@ to train and generate from models. It supports any model implemented in HuggingF
 As an example, this section provides a step-by-step recipe for integrating a new HuggingFace model into RLinf, following the OpenVLA pattern.
 
 
-**1. Model Configuration and Registration**
+Prerequisites
+-------------
 
-Edit `infini_rl/models/__init__.py` to extend `get_model_config_and_processor`. 
+* Familiarity with **HuggingFace Transformers library**
+* Understanding of the **RLinf** framework architecture
+* Knowledge of **PyTorch** and distributed training
+
+Step-by-Step Implementation
+---------------------------
+
+1. Model Configuration and Registration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Edit `rlinf/models/__init__.py` to extend `get_model_config_and_processor`. 
 This registers your model’s `Config`, `ImageProcessor`, and `Processor` so RLinf can load them by name and wire up preprocessing automatically.
 
 .. code-block:: python
@@ -43,15 +54,16 @@ This registers your model’s `Config`, `ImageProcessor`, and `Processor` so RLi
 
       return model_config, input_processor
 
-**2. Model Implementation**
+2. Model Implementation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Create your class in `infini_rl/models/embodiment/your_model_action_model.py` inheriting from a HuggingFace base. 
+Create your class in `rlinf/models/embodiment/your_model_action_model.py` inheriting from a HuggingFace base. 
 Implement `predict_action_batch` to wrap generation, decoding, and optional value computation, keeping RL logic encapsulated.
 
 .. code-block:: python
 
   from transformers import YourBaseModel
-  from infini_rl.models.embodiment.modules.value_head import ValueHead
+  from rlinf.models.embodiment.modules.value_head import ValueHead
 
   class YourModelForRLActionPrediction(YourBaseModel):
       def __init__(self, config, hidden_size, unnorm_key, vh_mode, action_dim):
@@ -96,9 +108,10 @@ Implement `predict_action_batch` to wrap generation, decoding, and optional valu
               values = torch.zeros_like(logits[..., :1])
           return actions, sequences, logits, values
 
-**3. Model Loading**
+3. Model Loading
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Modify `get_model` in `infini_rl/models/__init__.py` to call `from_pretrained` for your class when `cfg.model_name` matches. This ensures checkpoints load with the correct dtype, dimensions, and LoRA hooks.
+Modify `get_model` in `rlinf/models/__init__.py` to call `from_pretrained` for your class when `cfg.model_name` matches. This ensures checkpoints load with the correct dtype, dimensions, and LoRA hooks.
 
 .. code-block:: python
 
@@ -127,9 +140,11 @@ Modify `get_model` in `infini_rl/models/__init__.py` to call `from_pretrained` f
 
       return model
 
-**4. Environment Wrapper Functions**
+4. Environment Wrapper Functions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Add `wrap_observation_your_model` and `wrap_chunk_actions_your_model` in `infini_rl/envs/your_env_wrapper.py`. 
+
+Add `wrap_observation_your_model` and `wrap_chunk_actions_your_model` in `rlinf/envs/your_env_wrapper.py`. 
 These convert simulator data to model inputs and model outputs back to simulator actions in the required shape and device.
 
 .. code-block:: python
@@ -157,9 +172,11 @@ These convert simulator data to model inputs and model outputs back to simulator
           actions.append(formatted)
       return torch.stack(actions, dim=1).to(device="cuda").to(sim_precision)
 
-**5. Worker Integration**
+5. Worker Integration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Update `get_observation_action_wrapper_func` in `infini_rl/workers/generation/hf/multi_step_worker.py` 
+
+Update `get_observation_action_wrapper_func` in `rlinf/workers/generation/hf/multi_step_worker.py` 
 to return your wrappers when `cfg.env.train.wrapper` and `cfg.model_name` match. 
 
 .. code-block:: python
@@ -167,7 +184,7 @@ to return your wrappers when `cfg.env.train.wrapper` and `cfg.model_name` match.
   def get_observation_action_wrapper_func(cfg):
       if cfg.env.train.wrapper == "your_env":
           if cfg.actor.model.model_name == "your_model_name":
-              from infini_rl.envs.your_env_wrapper import (
+              from rlinf.envs.your_env_wrapper import (
                   wrap_observation_your_model,
                   wrap_chunk_actions_your_model,
               )
@@ -175,7 +192,9 @@ to return your wrappers when `cfg.env.train.wrapper` and `cfg.model_name` match.
           raise NotImplementedError
       raise NotImplementedError
 
-**6. Configuration File**
+6. Configuration File
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 
 Create `examples/embodiment/config/your_config.yaml` with fields like `model_name`, `action_token_len`, and `precision`. 
 This template exposes your model’s hyperparameters for easy experiment setup.

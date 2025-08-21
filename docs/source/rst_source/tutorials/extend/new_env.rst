@@ -121,7 +121,7 @@ If you need to support saving/restoring environment state, inherit from ``EnvOff
 
 .. code-block:: python
 
-   from infini_rl.envs.env_offload_wrapper import EnvOffloadMixin
+   from rlinf.envs.env_offload_wrapper import EnvOffloadMixin
    import io
    import torch
 

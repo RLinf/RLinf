@@ -104,7 +104,7 @@ html_theme_options = {
     "icon_links": [
         {
             "name": "GitHub",
-            "url":  "https://cloud.infini-ai.com",  # TODO: update to GitHub
+            "url":  "https://github.com/RLinf/RLinf",
             "icon": "fab fa-github",
             "type": "fontawesome",
         },

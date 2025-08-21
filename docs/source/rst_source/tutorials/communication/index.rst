@@ -13,10 +13,12 @@ to support efficient, scalable, and elastic distributed execution.
    the *Channel*—which functions as a producer-consumer queue.  
    This abstraction is essential for implementing fine-grained pipelining across different RL stages.
 
-.. toctree::
-   :hidden:
-   :maxdepth: 1
+TODO: TO be update~
 
-   collective
-   channel
+.. .. toctree::
+..    :hidden:
+..    :maxdepth: 1
+
+..    collective
+..    channel
 

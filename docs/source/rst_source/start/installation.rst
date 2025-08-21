@@ -34,15 +34,17 @@ Install from Docker Image
 We provide two pre-built Docker images optimized for different backend engine combinations:
 
 - The official image for **Megatron** and **SGLang**: ``TODO``
-- The official image for **FSDP** and **Huggingface**: ``TODO``
+- The official image for **FSDP** and **Huggingface**: ``rlinf/rlinf:agentic-openvla-rlinf0.1-torch2.5.1`` and ``rlinf/rlinf:agentic-openvlaoft-rlinf0.1-torch2.5.1 ``
 
 Once you've identified the appropriate image for your setup, pull the Docker image:
 
 .. code-block:: bash
 
-   docker pull rlinf/rlinf:latest      
+   docker pull rlinf/rlinf:CHOSEDN_IMAGE
 
 Then, start the container using the pulled image:
+
+For Megatron + SGLang, run:
 
 .. code-block:: bash
 
@@ -52,6 +54,19 @@ Then, start the container using the pulled image:
       -w /workspace/RLinf \
       --name rlinf \
       rlinf/rlinf:latest /bin/bash
+
+For FSDP + HuggingFace, run:
+
+.. code-block:: bash
+
+   docker run -it --gpus all \
+      --shm-size 100g \
+      --net=host \
+      --env NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
+      --name rlinf \
+      rlinf/rlinf:agentic-openvla-rlinf0.1-torch2.5.1 /bin/bash
+
+
 
 Inside the container, clone the RLinf repository:
 

@@ -6,7 +6,7 @@
 Welcome to **RLinf**!
 =====================
 
-RLinf is a flexible and scalable open-source infrastructure designed for post-training foundation models (LLMs, VLMs, VLAs) via reinforcement learning. The 'inf' in RLinf stands for Infrastructure, highlighting its role as a robust backbone for next-generation training. It also stands for Infinite, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
+RLinf is a flexible and scalable open-source infrastructure designed for post-training foundation models via reinforcement learning. The 'inf' in RLinf stands for Infrastructure, highlighting its role as a robust backbone for next-generation training. It also stands for Infinite, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
 
 .. Centered on Agentic Reinforcement Learning, RLinf supports the training and evaluation of next-generation agents by unlocking scalable compute, unifying mainstream frameworks, and streamlining the end-to-end workflow—making RL post-training accessible to everyone.
 
@@ -31,8 +31,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 **RLinf is fast with:**
 
-- Automatic Online-Scaling Mechanism
-- Creatively achieves the first GPU switching within 1 second.
+- Automatic Online-Scaling Mechanism: GPU switching within 1 second.
 - Auto-scheduling policy: automatically selects the most suitable execution mode based on the training workload.
 - Improves efficiency by 20-40% while preserving the on-policy property of RL algorithms.
 
