@@ -429,11 +429,11 @@ def validate_embodied_cfg(cfg):
     )
 
     # process num-envs
-    from rlinf.utils.placement import EmbodiedComponentPlacement
+    from rlinf.utils.placement import HybridComponentPlacement
 
-    component_placement = EmbodiedComponentPlacement(cfg)
+    component_placement = HybridComponentPlacement(cfg)
     stage_num = cfg.rollout.pipeline_stage_num
-    env_world_size = component_placement.env_world_size
+    env_world_size = component_placement.get_world_size("env")
     cfg.algorithm.num_group_envs = (
         cfg.algorithm.num_group_envs // stage_num // env_world_size
     )

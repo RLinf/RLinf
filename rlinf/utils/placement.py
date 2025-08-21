@@ -91,15 +91,26 @@ class ComponentPlacement:
 
     @property
     def placement_mode(self):
+        """Get the placement mode for the component.
+
+        Returns:
+            PlacementMode: The placement mode for the component.
+        """
         return self._placement_mode
 
-    @property
-    def rollout_world_size(self):
-        raise NotImplementedError
+    def get_world_size(self, component_name: str):
+        """Get the world size for a specific component.
 
-    @property
-    def actor_world_size(self):
-        raise NotImplementedError
+        Args:
+            component_name (str): The name of the component.
+
+        Returns:
+            int: The world size for the specified component.
+        """
+        assert component_name in self._component_gpu_map, (
+            f"Unknown component name: {component_name}"
+        )
+        return len(self._component_gpu_map[component_name])
 
     @overload
     def _generate_placements(self):
@@ -122,57 +133,38 @@ class ComponentPlacement:
         return self._placements[component_name]
 
 
-class EmbodiedComponentPlacement(ComponentPlacement):
-    """Component placement for Embodied Experiment."""
-
-    def __init__(self, config):
-        super().__init__(config)
-        self._placement_mode = PlacementMode.HYBRID
-        self._env_gpus = self._component_gpu_map.get("env", None)
-        self._rollout_gpus = self._component_gpu_map.get("rollout", None)
-        self._actor_gpus = self._component_gpu_map.get("actor", None)
-        assert self._env_gpus is not None, (
-            "Environment GPUs must be specified in the component_placement config."
-        )
-        assert self._rollout_gpus is not None, (
-            "Rollout GPUs must be specified in the component_placement config."
-        )
-        assert self._actor_gpus is not None, (
-            "Actor GPUs must be specified in the component_placement config."
-        )
-        self._env_num_gpus = len(self._env_gpus)
-        self._rollout_num_gpus = len(self._rollout_gpus)
-        self._actor_num_gpus = len(self._actor_gpus)
-
-    @property
-    def env_world_size(self):
-        return self._env_num_gpus
-
-    @property
-    def rollout_world_size(self):
-        return self._rollout_num_gpus
-
-    @property
-    def actor_world_size(self):
-        return self._actor_num_gpus
-
-    def _generate_placements(self):
-        self._placements["env"] = PackedPlacementStrategy(
-            start_gpu_id=self._env_gpus[0], end_gpu_id=self._env_gpus[-1]
-        )
-        self._placements["rollout"] = PackedPlacementStrategy(
-            start_gpu_id=self._rollout_gpus[0], end_gpu_id=self._rollout_gpus[-1]
-        )
-        self._placements["actor"] = PackedPlacementStrategy(
-            start_gpu_id=self._actor_gpus[0], end_gpu_id=self._actor_gpus[-1]
-        )
-
-
-class MathComponentPlacement(ComponentPlacement):
-    """Component placement for Math Experiment."""
+class HybridComponentPlacement(ComponentPlacement):
+    """Hybrid component placement that allows components to run on any sets of continuous GPUs."""
 
     def __init__(self, config: DictConfig):
-        """Initialize MathComponentPlacement
+        """Initialize HybridComponentPlacement
+
+        Args:
+            config (DictConfig): The configuration dictionary.
+        """
+        super().__init__(config)
+        self._placement_mode = PlacementMode.HYBRID
+
+    def _generate_placements(self):
+        for component_name, component_gpus in self._component_gpu_map.items():
+            self._placements[component_name] = PackedPlacementStrategy(
+                start_gpu_id=component_gpus[0], end_gpu_id=component_gpus[-1]
+            )
+
+
+class ModelParallelComponentPlacement(ComponentPlacement):
+    """Component placement for model-parallel components.
+
+    The components must be actor, rollout, and optionally inference. This placement supports both collocated and disaggregated modes.
+
+    In the collocated mode, all components share the same set of GPUs. In particular, the rollout group is specially placed in a strided manner to enable fast cudaIPC-based weight sync.
+    In the disaggregated mode, each component has its own dedicated set of GPUs.
+
+    In the collocated mode, only actor and rollout exist. While in the disaggregated mode, actor, rollout, and inference should all exist.
+    """
+
+    def __init__(self, config: DictConfig):
+        """Initialize ModelParallelComponentPlacement
 
         Args:
             config (DictConfig): The configuration dictionary for the component placement.

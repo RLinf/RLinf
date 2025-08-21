@@ -28,7 +28,7 @@ from rlinf.scheduler import Channel
 from rlinf.utils.data_iter_utils import split_list
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
-from rlinf.utils.placement import MathComponentPlacement
+from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.runner_utils import check_progress, local_mkdir_safe
 from rlinf.utils.timers import Timer
 from rlinf.workers.actor.megatron_actor_worker import MegatronActor
@@ -47,7 +47,7 @@ class MathRunner:
     def __init__(
         self,
         cfg: DictConfig,
-        placement: MathComponentPlacement,
+        placement: ModelParallelComponentPlacement,
         train_dataset: Dataset,
         val_dataset: Dataset,
         rollout: SGLangWorker,

@@ -27,7 +27,7 @@ from rlinf.models.embodiment.model_utils import (
     prepare_observations,
 )
 from rlinf.scheduler import Worker
-from rlinf.utils.placement import EmbodiedComponentPlacement
+from rlinf.utils.placement import HybridComponentPlacement
 
 
 def create_rollout_batch(data):
@@ -60,9 +60,9 @@ class MutilStepRolloutWorker(Worker):
         # stage_num: default to 2, use for pipeline rollout process
         self.stage_num = cfg.rollout.pipeline_stage_num
 
-        self._component_placement = EmbodiedComponentPlacement(cfg)
+        self._component_placement = HybridComponentPlacement(cfg)
         self.channel = self.connect_channel(cfg.rollout.channel.name)
-        for i in range(self._component_placement.rollout_world_size):
+        for i in range(self._component_placement.get_world_size("rollout")):
             self.channel.create_queue(
                 f"{self._action_queue_name}_{i}", maxsize=cfg.rollout.channel.queue_size
             )
@@ -342,8 +342,8 @@ class MutilStepRolloutWorker(Worker):
 
     async def send_rollout_batch(self, stage_id):
         # send rollout_batch to actor
-        send_num = self._component_placement.rollout_world_size * self.stage_num
-        recv_num = self._component_placement.actor_world_size
+        send_num = self._component_placement.get_world_size("rollout") * self.stage_num
+        recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(recv_num, send_num)
         rollout_batch = create_rollout_batch(self.buffer_list[stage_id])
         for i in range(split_num):

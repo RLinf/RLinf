@@ -18,7 +18,7 @@ import torch.multiprocessing as mp
 from rlinf.config import validate_cfg
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Cluster
-from rlinf.utils.placement import EmbodiedComponentPlacement
+from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MutilStepRolloutWorker
@@ -35,7 +35,7 @@ def main(cfg) -> None:
     cluster = Cluster(
         num_nodes=cfg.cluster.num_nodes, num_gpus_per_node=cfg.cluster.num_gpus_per_node
     )
-    component_placement = EmbodiedComponentPlacement(cfg)
+    component_placement = HybridComponentPlacement(cfg)
 
     # Create actor worker group
     actor_placement = component_placement.get_strategy("actor")
