@@ -281,6 +281,13 @@ class MegatronActor(MegatronModelManager, Worker):
                     ref_logprobs = None
                     if "ref_logprobs" in batch:
                         ref_logprobs = batch["ref_logprobs"]
+                    if self.cfg.algorithm.get("importance_sampling_fix", False):
+                        inference_prev_logprobs = prev_logprobs
+                        training_prev_logprobs = batch["megatron_prev_logprobs"]
+                        advantages = advantages * torch.clamp(
+                            (training_prev_logprobs - inference_prev_logprobs).exp(),
+                            min=self.cfg.algorithm.importance_sampling_clip,
+                        )
 
                     mask = batch["attention_mask"][:, -response_len:]
 
@@ -709,7 +716,12 @@ class MegatronActor(MegatronModelManager, Worker):
             "attention_mask": self.rollout_batches["attention_mask"],
             "position_ids": self.rollout_batches["position_ids"],
         }
-        self.rollout_batches["prev_logprobs"] = self.inference_step(batch)
+        prev_logprob_name = (
+            "megatron_prev_logprobs"
+            if self.cfg.algorithm.get("importance_sampling_fix", False)
+            else "prev_logprobs"
+        )
+        self.rollout_batches[prev_logprob_name] = self.inference_step(batch)
 
     def compute_ref_logprobs(self):
         """Compute the reference log probabilities for the rollout batches."""

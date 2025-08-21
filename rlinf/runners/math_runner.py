@@ -73,7 +73,10 @@ class MathRunner:
 
         # Configurations
         self.compute_ref_logprobs = self.cfg.algorithm.kl_beta > 0
-        self.recompute_logprobs = self.cfg.rollout.recompute_logprobs
+        self.recompute_logprobs = (
+            self.cfg.rollout.recompute_logprobs
+            or self.cfg.algorithm.get("importance_sampling_fix", False)
+        )
         self.consumed_samples = 0
         self.global_steps = 0
 
