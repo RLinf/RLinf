@@ -171,7 +171,21 @@ class MegatronActor(MegatronModelManager, Worker):
         self._init_profiler()
 
     def _init_profiler(self):
+        def _validate_schedule_info():
+            assert (
+                self.cfg.actor.megatron.profiler.schedule_warmup is not None
+                and self.cfg.actor.megatron.profiler.schedule_warmup >= 0
+            ), "<schedule_warmup> must be set and greater than 0 when using profiler."
+            assert (
+                self.cfg.actor.megatron.profiler.schedule_active is not None
+                and self.cfg.actor.megatron.profiler.schedule_active > 0
+            ), "<schedule_active> must be set and greater than 0 when using profiler."
+
         self.use_profiler = self.cfg.actor.megatron.use_profiler
+
+        # here we should validate profiler's schedule info
+        if self.use_profiler:
+            _validate_schedule_info()
         self.profiler = (
             PyTorchProfiler.from_config(self.cfg.actor.megatron.profiler)
             if self.use_profiler
@@ -477,7 +491,7 @@ class MegatronActor(MegatronModelManager, Worker):
         self.num_microbatches = n_micro_batch
 
         if self.use_profiler:
-            self.profiler.start()
+            self.profiler.start(forward_only=forward_only)
 
         if forward_only:
             self.return_loss = False
@@ -543,11 +557,8 @@ class MegatronActor(MegatronModelManager, Worker):
 
                     outputs[key] = metric_mean.cpu().item()
 
-            # Always call advance_step after each logical step when profiler is enabled
-            self.profiler.advance_step()
-
         if self.use_profiler:
-            self.profiler.stop()
+            self.profiler.stop(forward_only=forward_only)
 
         return outputs
 
@@ -690,19 +701,22 @@ class MegatronActor(MegatronModelManager, Worker):
             gbs=self.cfg.actor.global_batch_size,
             dp=parallel_state.get_data_parallel_world_size(),
         )
-
         rollout_size = self.rollout_batches["input_ids"].size(0)
+        num_microbatches = divide(
+            rollout_size,
+            self.cfg.actor.global_batch_size
+            // parallel_state.get_data_parallel_world_size(),
+        )
         rollout_dataloader_iter = get_iterator_k_split(
             batch=self.rollout_batches,
-            num_microbatches=divide(
-                rollout_size,
-                self.cfg.actor.global_batch_size
-                // parallel_state.get_data_parallel_world_size(),
-            ),
+            num_microbatches=num_microbatches,
             shuffle=self.cfg.algorithm.get("shuffle_rollout", True),
             shuffle_seed=self.cfg.actor.seed,
         )
         training_metrics_list = []
+
+        if self.use_profiler:
+            self.profiler.init_fwd_bwd_schedule(num_microbatches)
         for batch in rollout_dataloader_iter:
             training_metrics = self.training_step(batch)
             training_metrics_list.append(training_metrics)

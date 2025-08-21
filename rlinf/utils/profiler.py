@@ -13,7 +13,6 @@
 # limitations under the License.
 
 
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -46,27 +45,10 @@ class PyTorchProfilerFunc:
 
 
 class PyTorchProfiler:
-    """
-    A PyTorch Profiler wrapper that manages scheduling across multiple,
-    non-continuous calls, making it suitable for use inside functions
-    that are called repeatedly (like in an actor model).
-
-    Usage (as intended by the user):
-        profiler = PyTorchProfiler.from_config(cfg.profiler)
-
-        # This function is called multiple times by an external loop
-        def run_forward_backward():
-            with profiler.step():
-                # Your training code here
-                ...
-            profiler.advance_step()
-    """
-
     def __init__(
         self,
         output_dir: str = "./profiler_output",
         activities: List[str] = ["cpu", "cuda"],
-        schedule_wait: int = 5,
         schedule_warmup: int = 1,
         schedule_active: int = 3,
         schedule_repeat: int = 2,
@@ -91,20 +73,29 @@ class PyTorchProfiler:
             "with_modules": with_modules,
         }
 
-        self.on_trace_ready = self._create_trace_handler(
-            export_tensorboard, export_chrome_trace, chrome_filename_prefix
+        self.on_fwd_trace_ready = self._create_trace_handler(
+            export_tensorboard,
+            export_chrome_trace,
+            chrome_filename_prefix,
+            forward_only=True,
+        )
+        self.on_fwd_bwd_trace_ready = self._create_trace_handler(
+            export_tensorboard,
+            export_chrome_trace,
+            chrome_filename_prefix,
+            forward_only=False,
         )
 
-        self.schedule = schedule(
-            wait=schedule_wait,
-            warmup=schedule_warmup,
-            active=schedule_active,
-            repeat=schedule_repeat,
-        )
+        self.fwd_bwd_step_counter = 0  # training's micro_batch steps
+        self.fwd_step_counter = 0  # inference's micro_batch steps
+        self.current_action = ProfilerAction.NONE  # schedule's status
+        self.active_profiler = None  # current used profiler
+        self.fwd_bwd_schedule = None  # schedule for training
 
-        self.step_counter = 0
-        self.current_action = ProfilerAction.NONE
-        self.active_profiler = None
+        self.schedule_repeat = schedule_repeat
+        self.schedule_active = schedule_active
+        self.schedule_warmup = schedule_warmup
+        self.schedule_wait = 0
 
     def _parse_activities(self, activity_strs: List[str]) -> List[ProfilerActivity]:
         valid_activities = set()
@@ -126,17 +117,22 @@ class PyTorchProfiler:
         fname = prefix
         if torch.distributed.is_initialized():
             fname += f"_rank{torch.distributed.get_rank()}"
-        return f"{fname}_{self.step_counter}.json"
+        return f"{fname}_{self.fwd_bwd_step_counter}.json"
 
     def _create_trace_handler(
-        self, export_tb: bool, export_chrome: bool, chrome_prefix: str
+        self,
+        export_tb: bool,
+        export_chrome: bool,
+        chrome_prefix: str,
+        forward_only: bool,
     ) -> Optional[Callable]:
         if not (export_tb or export_chrome):
             return None
 
         if export_tb:
-            tb_dir = str(self.output_dir / "tensorboard")
-            print(f"Profiler configured to save TensorBoard traces to: {tb_dir}")
+            tb_dir = str(
+                self.output_dir / "tensorboard" / ("fwd" if forward_only else "fwd_bwd")
+            )
             return tensorboard_trace_handler(dir_name=tb_dir)
 
         if export_chrome:
@@ -147,9 +143,10 @@ class PyTorchProfiler:
                 trace_path = self.output_dir / self._get_chrome_trace_filename(
                     chrome_prefix
                 )
-                print(f"Profiler saving Chrome trace to: {trace_path}")
                 try:
-                    p.export_chrome_trace(str(trace_path))
+                    p.export_chrome_trace(
+                        str(trace_path) / ("fwd" if forward_only else "fwd_bwd")
+                    )
                 except Exception as e:
                     print(f"Failed to export Chrome trace: {e}")
 
@@ -157,58 +154,67 @@ class PyTorchProfiler:
 
         return None  # should not be reached
 
-    @contextmanager
-    def step(self) -> contextmanager:
-        self.current_action = self.schedule(self.step_counter)
-
-        if self.current_action != ProfilerAction.NONE:
-            temp_profiler = profile(
-                **self.profiler_kwargs,
-                on_trace_ready=self.on_trace_ready
-                if self.current_action == ProfilerAction.RECORD
-                else None,
+    def init_fwd_bwd_schedule(self, num_minibatches: int = 0) -> None:
+        if self.fwd_bwd_schedule is None:
+            self.schedule_wait = (
+                num_minibatches - self.schedule_warmup - self.schedule_active
             )
-            with temp_profiler:
-                yield
+            assert self.schedule_wait >= 0, (
+                f"schedule_wait should greater than or equal to 0,got {self.schedule_wait}"
+            )
+            self.fwd_bwd_schedule = schedule(
+                wait=self.schedule_wait,
+                warmup=self.schedule_warmup,
+                active=self.schedule_active,
+                repeat=self.schedule_repeat,
+            )
         else:
-            # in a 'wait' step, do nothing.
-            yield
+            schedule_wait = (
+                num_minibatches - self.schedule_warmup - self.schedule_active
+            )
+            assert schedule_wait == self.schedule_wait, (
+                "num_minibatches changed, please create a new profiler instance,"
+                f"old is {self.schedule_wait} new is {schedule_wait}"
+            )
 
-    def advance_step(self):
-        """Advances the profiler's step counter."""
-        self.step_counter += 1
-
-    def start(self) -> None:
+    def start(self, forward_only: bool = False) -> None:
         if self.active_profiler:
             raise RuntimeError(
                 "Profiler is already running. Call stop() before start()."
             )
 
-        self.current_action = self.schedule(self.step_counter)
-
-        if self.current_action != ProfilerAction.NONE:
+        if forward_only:
             self.active_profiler = profile(
                 **self.profiler_kwargs,
-                on_trace_ready=self.on_trace_ready
-                if self.current_action == ProfilerAction.RECORD
+                on_trace_ready=self.on_fwd_trace_ready
+                if self.fwd_step_counter < self.schedule_repeat
                 else None,
             )
             self.active_profiler.start()
+        else:
+            self.current_action = self.fwd_bwd_schedule(self.fwd_bwd_step_counter)
+            if self.current_action != ProfilerAction.NONE:
+                self.active_profiler = profile(
+                    **self.profiler_kwargs,
+                    on_trace_ready=self.on_fwd_bwd_trace_ready
+                    if self.current_action == ProfilerAction.RECORD_AND_SAVE
+                    else None,
+                )
+                self.active_profiler.start()
 
-    def stop(self):
+    def stop(self, forward_only: bool = False):
         if self.active_profiler:
             self.active_profiler.stop()
             self.active_profiler = None
-        self.step_counter += 1
+        if forward_only:
+            self.fwd_step_counter += 1
+        else:
+            self.fwd_bwd_step_counter += 1
 
     @classmethod
     def from_config(
         cls, profiler_config: Optional[Dict[str, Any]]
     ) -> "PyTorchProfiler":
-        """
-        Creates a PyTorchProfiler instance from a configuration dictionary.
-        Returns a disabled profiler if config is None or disabled.
-        """
         required_params = {
             "output_dir",
             "activities",
@@ -220,7 +226,6 @@ class PyTorchProfiler:
             "export_tensorboard",
             "export_chrome_trace",
             "chrome_filename_prefix",
-            "schedule_wait",
             "schedule_warmup",
             "schedule_active",
             "schedule_repeat",
@@ -237,5 +242,4 @@ class PyTorchProfiler:
         missing_params = set(required_params) - set(valid_config.keys())
         if missing_params:
             raise ValueError(f"Missing required profiler parameters: {missing_params}")
-
         return cls(**valid_config)

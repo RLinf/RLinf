@@ -231,21 +231,22 @@ actor:
       tensor_model_parallel_size: ${actor.model.tensor_model_parallel_size}
       pipeline_model_parallel_size: ${actor.model.pipeline_model_parallel_size}
       
-    profiler:
+    profiler: # profile megatron when inference and traning
       output_dir: ${runner.output_dir}/${runner.experiment_name}/profiler
       activities: ["cpu", "cuda"]
-      record_shapes: True
-      profile_memory: True
-      with_stack: True
-      with_flops: True
+      record_shapes: False
+      profile_memory: False
+      with_stack: False
+      with_flops: False
       with_modules: True
       export_tensorboard: True
-      export_chrome_trace: True
+      export_chrome_trace: False
       chrome_filename_prefix: "chrome_trace"
-      schedule_wait: 1
-      schedule_warmup: 1
-      schedule_active: 3
-      schedule_repeat: 2
+      schedule_warmup: 2
+      schedule_active: 1
+      schedule_repeat: 1 # inference and training will repeat such times
+      # schedule_wait: it will be set at runtime
+
 
 reward:
   use_reward_model: false
