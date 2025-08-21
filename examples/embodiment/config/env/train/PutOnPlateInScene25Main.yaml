@@ -6,6 +6,7 @@ seed: 0
 num_group: ${algorithm.num_group_envs}
 group_size: ${algorithm.group_size}
 use_fixed_reset_state_ids: false
+only_eval: false
 
 video_cfg:
   save_video: true

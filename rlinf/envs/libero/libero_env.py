@@ -121,7 +121,10 @@ class LiberoEnv(gym.Env):
         self.cumsum_trial_id_bins = np.cumsum(self.trial_id_bins)
 
     def update_reset_state_ids(self):
-        reset_state_ids = self._get_random_reset_state_ids(self.num_group)
+        if self.cfg.only_eval:
+            reset_state_ids = self._get_ordered_reset_state_ids(self.num_group)
+        else:
+            reset_state_ids = self._get_random_reset_state_ids(self.num_group)
         self.reset_state_ids = reset_state_ids.repeat(self.group_size)
 
     def _init_task_and_trial_ids(self):
@@ -133,6 +136,11 @@ class LiberoEnv(gym.Env):
         reset_state_ids = self._generator.integers(
             low=0, high=self.total_num_group_envs, size=(num_reset_states,)
         )
+        return reset_state_ids
+
+    def _get_ordered_reset_state_ids(self, num_reset_states):
+        start_idx = self.rank * num_reset_states
+        reset_state_ids = torch.tensor(list(range(start_idx, start_idx + num_reset_states)), dtype=torch.int32)
         return reset_state_ids
 
     def _get_task_and_trial_ids_from_reset_state_ids(self, reset_state_ids):

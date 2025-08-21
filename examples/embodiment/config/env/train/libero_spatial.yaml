@@ -4,6 +4,7 @@ ignore_terminations: ${algorithm.ignore_terminations}
 use_rel_reward: true
 task_suite_name: libero_spatial
 max_episode_steps: 120
+only_eval: false
 
 seed: 0
 num_task: ${algorithm.num_group_envs}

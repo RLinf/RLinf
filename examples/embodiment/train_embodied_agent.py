@@ -19,7 +19,7 @@ from rlinf.config import validate_cfg
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
+from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
@@ -39,7 +39,7 @@ def main(cfg) -> None:
 
     # Create actor worker group
     actor_placement = component_placement.get_strategy("actor")
-    actor_group = FSDPActor.create_group(cfg).launch(
+    actor_group = EmbodiedFSDPActor.create_group(cfg).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
     )
     # Create rollout worker group

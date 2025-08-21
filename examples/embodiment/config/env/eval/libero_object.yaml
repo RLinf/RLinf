@@ -7,6 +7,7 @@ max_episode_steps: 512
 
 use_rel_reward: true
 reward_coef: 5.0
+only_eval: true
 
 seed: 0
 num_task: ${algorithm.num_group_envs}
