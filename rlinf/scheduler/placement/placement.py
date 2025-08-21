@@ -16,8 +16,6 @@ import logging
 from dataclasses import dataclass
 from typing import List, overload
 
-from ..cluster import Cluster
-
 
 @dataclass
 class Placement:
@@ -51,26 +49,6 @@ class Placement:
 class PlacementStrategy:
     """Base class for placement strategies.
 
-    To setup a placement strategy, you can either use the `PlacementStrategy.get_placement_strategy` method to parse config from the OmegaConf yaml, or directly instantiate a subclass of `PlacementStrategy`.
-
-    A config yaml looks something like this:
-
-    .. code-block:: yaml
-
-        placement:
-            strategy: packed  # or strided
-            master_node: 0  # The node where the first worker will be placed.
-            num_nodes: 1  # The total number of nodes in the cluster.
-            master_gpu: 0  # The GPU where the first worker will be placed.
-
-    You can then pass the placement config to the `PlacementStrategy.get_placement_strategy` method to get the appropriate placement strategy instance.
-    The config attributes can be found in the documentations of the `__init__` parameters of the corresponding placement strategy class, e.g., `PackedPlacementStrategy` or `StridedPlacementStrategy`.
-
-    Currently, we support two placement strategy subclasses, representing two strategies:
-
-    1. PackedPlacementStrategy: Places workers in a packed manner, filling up each node with workers before moving to the next node.
-    2. StridedPlacementStrategy: Places workers in a strided manner, allowing for strided placement across GPUs.
-
     The following example shows how to place the worker on specified nodes and GPUs with the placement strategy.
 
     Example::
@@ -79,7 +57,6 @@ class PlacementStrategy:
         ...     Cluster,
         ...     Worker,
         ...     PackedPlacementStrategy,
-        ...     StridedPlacementStrategy,
         ... )
         >>>
         >>> class MyWorker(Worker):
@@ -109,39 +86,20 @@ class PlacementStrategy:
         [0, 1, 2, 3, 4, 5, 6, 7]
         >>>
         >>>
-        >>> # This will execute the hello method only on ranks 0 and 1.
-        >>> my_worker_group.execute_on([0, 1]).hello().wait()
-        [0, 1]
-        >>>
-        >>>
         >>> # Create a placement strategy. This controls how workers are placed on the cluster.
         >>> # `PackedPlacementStrategy` will fill up nodes with workers before moving to the next node.
-        >>> placement = PackedPlacementStrategy(master_node=0, num_nodes=1)
+        >>> placement = PackedPlacementStrategy(start_gpu_id=4, end_gpu_id=7)
         >>> my_worker = MyWorker.create_group().launch(
         ...     cluster=cluster, name="packed_group", placement_strategy=placement
         ... )
-        >>> my_worker.available_gpus().wait() # This will run 8 processes on the first node, each using 1 GPU.
-        [1, 1, 1, 1, 1, 1, 1, 1]
-        >>>
-        >>>
-        >>> # `master_gpu` allows for control over worker placement at the GPU granularity.
-        >>> # `num_processes` allows for control over how many processes to run.
-        >>> placement_fine_grained = PackedPlacementStrategy(
-        ...     master_node=0, master_gpu=2, num_processes=2
-        ... )
-        >>> my_worker_fine = MyWorker.create_group().launch(
-        ...     cluster=cluster,
-        ...     name="packed_group_fine",
-        ...     placement_strategy=placement_fine_grained,
-        ... )
-        >>> my_worker_fine.available_gpus().wait()  # This will only run on two GPUs (2 and 3) of the first node.
-        [1, 1]
+        >>> my_worker.available_gpus().wait() # This will run 4 processes on the first node's GPU 4, 5, 6, 7, each using 1 GPU.
+        [1, 1, 1, 1]
         >>>
         >>>
         >>> # `num_gpus_per_process` allows for one process to hold multiple GPUs.
         >>> # For example, if you want a process to hold 4 GPUs, you can set the `num_gpus_per_process` to 4.
         >>> placement_chunked = PackedPlacementStrategy(
-        ...     master_node=0, num_nodes=1, num_gpus_per_process=4
+        ...     start_gpu_id=0, end_gpu_id=7, num_gpus_per_process=4
         ... )
         >>> my_worker_chunked = MyWorker.create_group().launch(
         ...     cluster=cluster,
@@ -152,10 +110,10 @@ class PlacementStrategy:
         [4, 4]
         >>>
         >>>
-        >>> # `StridedPlacementStrategy` allows for strided placement of workers across GPUs.
+        >>> # `stride` allows for strided placement of workers across GPUs.
         >>> # For example, if you want to place workers on every second GPU, you can set the stride to 2.
-        >>> placement_strided = StridedPlacementStrategy(
-        ...     master_node=0, num_nodes=1, stride=2, num_gpus_per_process=2
+        >>> placement_strided = PackedPlacementStrategy(
+        ...     start_gpu_id=0, end_gpu_id=7, stride=2, num_gpus_per_process=2
         ... )
         >>> my_worker_strided = MyWorker.create_group().launch(
         ...     cluster=cluster,
@@ -167,17 +125,25 @@ class PlacementStrategy:
 
     """
 
-    def __init__(self, master_node: int, num_nodes: int):
+    def __init__(self, start_gpu_id: int, end_gpu_id: int):
         """Initialize the PlacementStrategy.
 
         Args:
-            master_node (int): The ID of the master node.
-            num_nodes (int): The total number of nodes in the cluster.
+            start_gpu_id (int): The starting GPU ID for the placement.
+            end_gpu_id (int): The ending GPU ID for the placement.
 
         """
         self._placement_strategy = None
-        self._master_node = master_node
-        self._num_nodes = num_nodes
+        self._start_gpu_id = start_gpu_id
+        self._end_gpu_id = end_gpu_id
+        assert start_gpu_id >= 0, (
+            f"The start GPU ID {start_gpu_id} must be non-negative."
+        )
+        assert end_gpu_id >= 0, f"The end GPU ID {end_gpu_id} must be non-negative."
+        assert end_gpu_id >= start_gpu_id, (
+            f"The end GPU ID {end_gpu_id} must be greater than or equal to the start GPU ID {start_gpu_id}."
+        )
+        self._num_gpus = end_gpu_id - start_gpu_id + 1
         self._logger = logging.getLogger(name=self.__class__.__name__)
         self._logger.setLevel(logging.INFO)
         self._logger.propagate = False
@@ -196,50 +162,3 @@ class PlacementStrategy:
         self, num_gpus_per_node: int, isolate_gpu: bool = True
     ) -> List[Placement]:
         return None
-
-    @classmethod
-    def get_placement_strategy(
-        cls, placement_cfg, cluster: Cluster
-    ) -> "PlacementStrategy":
-        """Get the placement strategy based on the configuration.
-
-        Args:
-            placement_cfg: Configuration object containing placement strategy details.
-            cluster (Cluster): The Cluster object containing information about the cluster.
-
-        Returns:
-            PlacementStrategy: An instance of the appropriate placement strategy class.
-
-        """
-        strategy_name = placement_cfg.get("strategy", "default").lower()
-        master_node = placement_cfg.get("master_node", 0)
-        num_nodes = cluster.num_nodes
-        from .packed import PackedPlacementStrategy
-        from .strided import StridedPlacementStrategy
-
-        if strategy_name == "packed":
-            num_gpus_per_process = placement_cfg.get("num_gpus_per_process", 1)
-            master_gpu = placement_cfg.get("master_gpu", 0)
-            num_processes = placement_cfg.get("num_processes", 0)
-            if num_processes != 0:
-                num_nodes = 0  # If num_processes is set, num_nodes should not be used.
-            return PackedPlacementStrategy(
-                master_node=master_node,
-                num_nodes=num_nodes,
-                master_gpu=master_gpu,
-                num_processes=num_processes,
-                num_gpus_per_process=num_gpus_per_process,
-            )
-        elif strategy_name == "strided":
-            stride = placement_cfg.get("stride", 1)
-            num_gpus_per_process = placement_cfg.get("num_gpus_per_process", 1)
-            return StridedPlacementStrategy(
-                master_node=master_node,
-                num_nodes=num_nodes,
-                stride=stride,
-                num_gpus_per_process=num_gpus_per_process,
-            )
-        elif strategy_name == "default":
-            return None  # The WorkerGroup will recognize None and use the default placement strategy which is packed on all GPUs.
-        else:
-            raise ValueError(f"Unknown placement strategy: {strategy_name}")

@@ -18,11 +18,7 @@ from typing import Dict, List, overload
 
 from omegaconf import DictConfig
 
-from rlinf.scheduler.placement import (
-    PackedPlacementStrategy,
-    PlacementStrategy,
-    StridedPlacementStrategy,
-)
+from rlinf.scheduler.placement import PackedPlacementStrategy, PlacementStrategy
 
 
 class PlacementMode(Enum):
@@ -54,7 +50,7 @@ class ComponentPlacement:
         # actor,inference: 0-4, which means both the actor and inference groups occupy GPU 0 to 4
         # Alternatively, "all" can be used to specify all GPUs
         for components in self._placement_config.keys():
-            components_gpus = self._placement_config[components]
+            components_gpus: str = self._placement_config[components]
             components = components.split(",")
             components = [c.strip() for c in components]
             if components_gpus == "all":
@@ -63,8 +59,14 @@ class ComponentPlacement:
             else:
                 components_gpus = components_gpus.split("-")
                 try:
-                    start_gpu = int(components_gpus[0])
-                    end_gpu = int(components_gpus[1])
+                    if len(components_gpus) == 1:
+                        start_gpu = int(components_gpus[0])
+                        end_gpu = start_gpu
+                    elif len(components_gpus) == 2:
+                        start_gpu = int(components_gpus[0])
+                        end_gpu = int(components_gpus[1])
+                    else:
+                        raise ValueError
                 except (ValueError, IndexError):
                     raise ValueError(
                         f"Invalid GPU range for components {components}: {components_gpus}, expected format: start-end"
@@ -155,14 +157,14 @@ class EmbodiedComponentPlacement(ComponentPlacement):
         return self._actor_num_gpus
 
     def _generate_placements(self):
-        self._placements["env"] = PackedPlacementStrategy.from_gpu_range(
-            self._env_gpus, self._env_num_gpus, self._cluster_num_gpus_per_node
+        self._placements["env"] = PackedPlacementStrategy(
+            start_gpu_id=self._env_gpus[0], end_gpu_id=self._env_gpus[-1]
         )
-        self._placements["rollout"] = PackedPlacementStrategy.from_gpu_range(
-            self._rollout_gpus, self._rollout_num_gpus, self._cluster_num_gpus_per_node
+        self._placements["rollout"] = PackedPlacementStrategy(
+            start_gpu_id=self._rollout_gpus[0], end_gpu_id=self._rollout_gpus[-1]
         )
-        self._placements["actor"] = PackedPlacementStrategy.from_gpu_range(
-            self._actor_gpus, self._actor_num_gpus, self._cluster_num_gpus_per_node
+        self._placements["actor"] = PackedPlacementStrategy(
+            start_gpu_id=self._actor_gpus[0], end_gpu_id=self._actor_gpus[-1]
         )
 
 
@@ -207,7 +209,7 @@ class MathComponentPlacement(ComponentPlacement):
             logging.info("Running in disaggregated mode")
         else:
             raise ValueError(
-                f"Currently only collocated and disaggregated modes are supported in math. But got {self._component_gpu_map}"
+                f"The specified placement does not match either the collocated mode (all the components use the same GPUs) or the disaggregated mode (all the components use completely different GPUs), but got {self._component_gpu_map}"
             )
 
         # Sanity checking
@@ -219,27 +221,26 @@ class MathComponentPlacement(ComponentPlacement):
         )
 
     def _is_collocated(self):
-        if (
-            len(self._actor_gpus) == self._cluster_num_gpus
-            and len(self._rollout_gpus) == self._cluster_num_gpus
-        ):
+        if self._actor_gpus == self._rollout_gpus:
             return True
         return False
 
     def _is_disaggregated(self):
         if self._inference_gpus is not None:
+            actor_gpu_set = set(self._actor_gpus)
+            rollout_gpu_set = set(self._rollout_gpus)
+            inference_gpu_set = set(self._inference_gpus)
             return (
-                len(self._actor_gpus)
-                + len(self._inference_gpus)
-                + len(self._rollout_gpus)
-                == self._cluster_num_gpus
+                actor_gpu_set.isdisjoint(rollout_gpu_set)
+                and actor_gpu_set.isdisjoint(inference_gpu_set)
+                and rollout_gpu_set.isdisjoint(inference_gpu_set)
             )
         return False
 
     def _generate_placements(self):
         if self._placement_mode == PlacementMode.COLLOCATED:
             self._placements["actor"] = PackedPlacementStrategy(
-                num_nodes=self._config.cluster.num_nodes
+                self._actor_gpus[0], self._actor_gpus[-1]
             )
 
             actor_tp_size = self._config.actor.model.tensor_model_parallel_size
@@ -251,25 +252,25 @@ class MathComponentPlacement(ComponentPlacement):
                 f"Actor TP size ({actor_tp_size}) must be divisible by Rollout TP size ({rollout_tp_size})"
             )
             stride = actor_tp_size // rollout_tp_size
-            self._placements["rollout"] = StridedPlacementStrategy(
-                num_nodes=self._config.cluster.num_nodes,
+            self._placements["rollout"] = PackedPlacementStrategy(
+                self._rollout_gpus[0],
+                self._rollout_gpus[-1],
                 num_gpus_per_process=rollout_tp_size,
                 stride=stride,
             )
         elif self._placement_mode == PlacementMode.DISAGGREGATED:
             # Generate continuous placement strategies for components in a cluster.
-            self._placements["rollout"] = PackedPlacementStrategy.from_gpu_range(
-                self._rollout_gpus,
-                self.rollout_dp_size,
-                self._cluster_num_gpus_per_node,
+            num_gpus_per_rollout_dp = len(self._rollout_gpus) // self.rollout_dp_size
+            self._placements["rollout"] = PackedPlacementStrategy(
+                self._rollout_gpus[0],
+                self._rollout_gpus[-1],
+                num_gpus_per_process=num_gpus_per_rollout_dp,
             )
-            self._placements["inference"] = PackedPlacementStrategy.from_gpu_range(
-                self._inference_gpus,
-                self.inference_world_size,
-                self._cluster_num_gpus_per_node,
+            self._placements["inference"] = PackedPlacementStrategy(
+                self._inference_gpus[0], self._inference_gpus[-1]
             )
-            self._placements["actor"] = PackedPlacementStrategy.from_gpu_range(
-                self._actor_gpus, self.actor_world_size, self._cluster_num_gpus_per_node
+            self._placements["actor"] = PackedPlacementStrategy(
+                self._actor_gpus[0], self._actor_gpus[-1]
             )
 
     @property

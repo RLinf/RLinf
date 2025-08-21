@@ -260,9 +260,7 @@ def main(cfg) -> None:
 
     component_placement = MathComponentPlacement(cfg)
 
-    ds_placement_strategy = PackedPlacementStrategy(
-        num_processes=1, num_gpus_per_process=1
-    )
+    ds_placement_strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=0)
     dataserver = DataServer.create_group(cfg).launch(
         cluster=cluster,
         name=cfg.actor.channel.name,

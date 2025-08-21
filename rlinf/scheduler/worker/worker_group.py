@@ -120,7 +120,9 @@ class WorkerGroup(Generic[WorkerClsType]):
 
         if self._placement_strategy is None:
             # Use all resources by default
-            self._placement_strategy = PackedPlacementStrategy(0, cluster._num_nodes)
+            self._placement_strategy = PackedPlacementStrategy(
+                0, cluster.num_nodes * cluster.num_gpus_per_node - 1
+            )
         if name is not None:
             self._worker_group_name = name
 
@@ -130,14 +132,14 @@ class WorkerGroup(Generic[WorkerClsType]):
 
         return self
 
-    def execute_on(self, ranks: List[int]):
+    def execute_on(self, *ranks: int):
         """Set the ranks to execute functions on in the worker group. This function only affects the immediately subsequent call of any remote function of the WorkerGroup. After one call, the execute_on state is reset to execute on all ranks.
 
         Args:
-            ranks (List[int]): List of ranks to execute functions on. If None, all workers will be executed.
+            ranks (int): ranks to execute functions on. If None, all workers will be executed.
 
         """
-        self._execution_ranks = ranks
+        self._execution_ranks = list(ranks)
         return self
 
     def _close(self):

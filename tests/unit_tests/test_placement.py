@@ -20,7 +20,6 @@ import torch
 from rlinf.scheduler import (
     Cluster,
     PackedPlacementStrategy,
-    StridedPlacementStrategy,
     Worker,
 )
 
@@ -68,7 +67,7 @@ class TestPlacementStrategies:
     def test_packed_placement(self, cluster: Cluster):
         """Verify that PackedPlacementStrategy places workers on all available GPUs."""
         num_gpus = cluster.num_gpus_per_node
-        placement = PackedPlacementStrategy(master_node=0, num_nodes=1)
+        placement = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=num_gpus - 1)
         worker_group = PlacementTestWorker.create_group().launch(
             cluster=cluster, name="packed_test", placement_strategy=placement
         )
@@ -117,7 +116,7 @@ class TestPlacementStrategies:
         """Verify that FineGrainedPackedPlacementStrategy places a specific number of workers."""
         num_workers_to_place = 2
         placement = PackedPlacementStrategy(
-            master_node=0, master_gpu=0, num_processes=num_workers_to_place
+            start_gpu_id=0, end_gpu_id=num_workers_to_place - 1
         )
         worker_group = PlacementTestWorker.create_group().launch(
             cluster=cluster, name="fine_grained_test", placement_strategy=placement
@@ -141,7 +140,9 @@ class TestPlacementStrategies:
         expected_num_workers = num_gpus // stride
 
         placement = PackedPlacementStrategy(
-            master_node=0, num_nodes=1, num_gpus_per_process=stride
+            start_gpu_id=0,
+            end_gpu_id=cluster._num_gpus_per_node - 1,
+            num_gpus_per_process=stride,
         )
         worker_group = PlacementTestWorker.create_group().launch(
             cluster=cluster, name="chunked_test", placement_strategy=placement
@@ -169,7 +170,7 @@ class TestPlacementStrategies:
             assert info["local_world_size"] == 1
 
     def test_strided_placement(self, cluster: Cluster):
-        """Verify that StridedPlacementStrategy allocates GPUs in a strided manner."""
+        """Verify that stride allocates GPUs in a strided manner."""
 
         num_gpus = cluster.num_gpus_per_node
         stride = 2
@@ -181,14 +182,14 @@ class TestPlacementStrategies:
             or num_gpus % (stride * num_gpus_per_process) != 0
         ):
             pytest.skip(
-                "StridedPlacementStrategy test requires num_gpus to be divisible by stride * num_gpus_per_process."
+                "Strided test requires num_gpus to be divisible by stride * num_gpus_per_process."
             )
 
         expected_num_workers = (num_gpus // (stride * num_gpus_per_process)) * stride
 
-        placement = StridedPlacementStrategy(
-            master_node=0,
-            num_nodes=1,
+        placement = PackedPlacementStrategy(
+            start_gpu_id=0,
+            end_gpu_id=7,
             stride=stride,
             num_gpus_per_process=num_gpus_per_process,
         )
@@ -224,7 +225,7 @@ class TestPlacementStrategies:
 
     def test_packed_placement_strategy_multiple_nodes(self):
         """Test PackedPlacementStrategy with 2 nodes and 4 GPUs per node, 1 GPU per process."""
-        strategy = PackedPlacementStrategy(master_node=0, num_nodes=2)
+        strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=7)
         placements = strategy.get_placement(
             num_nodes_in_cluster=2, num_gpus_per_node=4, isolate_gpu=True
         )
@@ -243,7 +244,7 @@ class TestPlacementStrategies:
     def test_packed_placement_strategy_multiple_nodes_multiple_gpus_per_process(self):
         """Test PackedPlacementStrategy with 2 nodes, 4 GPUs per node, 2 GPUs per process."""
         strategy = PackedPlacementStrategy(
-            master_node=0, num_nodes=2, num_gpus_per_process=2
+            start_gpu_id=0, end_gpu_id=7, num_gpus_per_process=2
         )
         placements = strategy.get_placement(
             num_nodes_in_cluster=2, num_gpus_per_node=4, isolate_gpu=True
@@ -263,7 +264,7 @@ class TestPlacementStrategies:
 
     def test_packed_placement_strategy_multiple_nodes_no_isolate(self):
         """Test PackedPlacementStrategy with 2 nodes, 4 GPUs per node, isolate_gpu=False."""
-        strategy = PackedPlacementStrategy(master_node=0, num_nodes=2)
+        strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=7)
         placements = strategy.get_placement(
             num_nodes_in_cluster=2, num_gpus_per_node=4, isolate_gpu=False
         )
@@ -279,9 +280,9 @@ class TestPlacementStrategies:
             assert p.cuda_visible_devices == [str(j) for j in range(4)]
             assert p.isolate_gpu is False
 
-    def test_packed_placement_strategy_master_node_offset(self):
-        """Test PackedPlacementStrategy with master_node offset (start from node 1)."""
-        strategy = PackedPlacementStrategy(master_node=1, num_nodes=1)
+    def test_packed_placement_strategy_node_offset(self):
+        """Test PackedPlacementStrategy with node offset (start from node 1)."""
+        strategy = PackedPlacementStrategy(start_gpu_id=4, end_gpu_id=7)
         placements = strategy.get_placement(
             num_nodes_in_cluster=2, num_gpus_per_node=4, isolate_gpu=True
         )
@@ -299,7 +300,7 @@ class TestPlacementStrategies:
 
     def test_packed_placement_strategy_partial_node(self):
         """Test PackedPlacementStrategy with 2 nodes, 4 GPUs per node, but only 1 node used."""
-        strategy = PackedPlacementStrategy(master_node=0, num_nodes=1)
+        strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=3)
         placements = strategy.get_placement(
             num_nodes_in_cluster=2, num_gpus_per_node=4, isolate_gpu=True
         )
@@ -317,7 +318,7 @@ class TestPlacementStrategies:
 
     def test_packed_placement_strategy_single_node_single_gpu_per_process(self):
         """Test PackedPlacementStrategy with 1 node, 4 GPUs per node, 1 GPU per process."""
-        strategy = PackedPlacementStrategy(master_node=0, num_nodes=1)
+        strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=3)
         placements = strategy.get_placement(
             num_nodes_in_cluster=1, num_gpus_per_node=4, isolate_gpu=True
         )
@@ -336,7 +337,7 @@ class TestPlacementStrategies:
     def test_packed_placement_strategy_single_node_multiple_gpus_per_process(self):
         """Test PackedPlacementStrategy with 1 node, 4 GPUs per node, 2 GPUs per process."""
         strategy = PackedPlacementStrategy(
-            master_node=0, num_nodes=1, num_gpus_per_process=2
+            start_gpu_id=0, end_gpu_id=3, num_gpus_per_process=2
         )
         placements = strategy.get_placement(
             num_nodes_in_cluster=1, num_gpus_per_node=4, isolate_gpu=True
@@ -356,7 +357,7 @@ class TestPlacementStrategies:
 
     def test_packed_placement_strategy_isolate_gpu_false(self):
         """Test PackedPlacementStrategy with isolate_gpu=False."""
-        strategy = PackedPlacementStrategy(master_node=0, num_nodes=1)
+        strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=3)
         placements = strategy.get_placement(
             num_nodes_in_cluster=1, num_gpus_per_node=4, isolate_gpu=False
         )
@@ -374,7 +375,7 @@ class TestPlacementStrategies:
 
     def test_packed_placement_strategy_master_gpu_offset(self):
         """Test PackedPlacementStrategy with master_gpu offset (start from GPU 2)."""
-        strategy = PackedPlacementStrategy(master_node=0, num_nodes=1, master_gpu=2)
+        strategy = PackedPlacementStrategy(start_gpu_id=2, end_gpu_id=3)
         placements = strategy.get_placement(
             num_nodes_in_cluster=1, num_gpus_per_node=4, isolate_gpu=True
         )
@@ -392,7 +393,7 @@ class TestPlacementStrategies:
 
     def test_packed_placement_strategy_num_processes(self):
         """Test PackedPlacementStrategy with num_processes specified."""
-        strategy = PackedPlacementStrategy(master_node=0, num_processes=3)
+        strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=2)
         placements = strategy.get_placement(
             num_nodes_in_cluster=1, num_gpus_per_node=4, isolate_gpu=True
         )
@@ -408,21 +409,16 @@ class TestPlacementStrategies:
             assert p.cuda_visible_devices == [str(i)]
             assert p.isolate_gpu is True
 
-    def test_packed_placement_strategy_invalid_both_num_nodes_and_num_processes(self):
-        """Test that specifying both num_nodes and num_processes raises ValueError."""
-        with pytest.raises(ValueError):
-            PackedPlacementStrategy(master_node=0, num_nodes=1, num_processes=2)
-
-    def test_packed_placement_strategy_invalid_neither_num_nodes_nor_num_processes(
-        self,
-    ):
-        """Test that not specifying num_nodes or num_processes raises ValueError."""
-        with pytest.raises(ValueError):
-            PackedPlacementStrategy(master_node=0)
+    def test_packed_placement_strategy_invalid_start_end_gpu(self):
+        """Test that specifying both start_gpu_id and end_gpu_id raises ValueError."""
+        with pytest.raises(AssertionError):
+            PackedPlacementStrategy(start_gpu_id=4, end_gpu_id=1)
+            PackedPlacementStrategy(start_gpu_id=4, end_gpu_id=-1)
+            PackedPlacementStrategy(start_gpu_id=-4, end_gpu_id=-1)
 
     def test_packed_placement_strategy_invalid_master_gpu(self):
         """Test that specifying master_gpu >= num_gpus_per_node raises AssertionError."""
-        strategy = PackedPlacementStrategy(master_node=0, num_nodes=1, master_gpu=4)
+        strategy = PackedPlacementStrategy(start_gpu_id=4, end_gpu_id=7)
         with pytest.raises(AssertionError):
             strategy.get_placement(
                 num_nodes_in_cluster=1, num_gpus_per_node=4, isolate_gpu=True
@@ -430,10 +426,18 @@ class TestPlacementStrategies:
 
     def test_packed_placement_strategy_invalid_num_gpus_per_process(self):
         """Test that specifying num_gpus_per_process that doesn't fit raises AssertionError."""
-        strategy = PackedPlacementStrategy(
-            master_node=0, num_processes=2, num_gpus_per_process=3
-        )
         with pytest.raises(AssertionError):
+            strategy = PackedPlacementStrategy(
+                start_gpu_id=0, end_gpu_id=2, num_gpus_per_process=4
+            )
+            strategy.get_placement(
+                num_nodes_in_cluster=1, num_gpus_per_node=4, isolate_gpu=True
+            )
+
+    def test_packed_placement_strategy_invalid_stride(self):
+        """Test that specifying stride that doesn't fit raises AssertionError."""
+        with pytest.raises(AssertionError):
+            strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=2, stride=7)
             strategy.get_placement(
                 num_nodes_in_cluster=1, num_gpus_per_node=4, isolate_gpu=True
             )
