@@ -67,7 +67,7 @@ RUN pip install \
     mani_skill \
     tensordict
 
-RUN pip install --no-build-isolation  --use-pep517 flash-attn==2.5.5
+RUN pip install --no-build-isolation --use-pep517 flash-attn==2.5.5
 
 WORKDIR /workspace
 
