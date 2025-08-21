@@ -41,6 +41,28 @@ def compute_rollout_metrics(
     reward_scores = rollout_batch["reward_scores"].clone().to(device=device)
     is_end = rollout_batch["is_end"].clone().float().to(device=device)
 
+    dp_world_size = parallel_state.get_data_parallel_world_size()
+
+    prompt_lengths_list = [
+        torch.empty_like(prompt_lengths) for _ in range(dp_world_size)
+    ]
+    decode_lengths_list = [
+        torch.empty_like(response_lengths) for _ in range(dp_world_size)
+    ]
+    torch.distributed.all_gather(
+        prompt_lengths_list,
+        prompt_lengths,
+        group=parallel_state.get_data_parallel_group(),
+    )
+    torch.distributed.all_gather(
+        decode_lengths_list,
+        response_lengths,
+        group=parallel_state.get_data_parallel_group(),
+    )
+
+    total_prompt_lengths = torch.cat(prompt_lengths_list, dim=0)
+    total_decode_lengths = torch.cat(decode_lengths_list, dim=0)
+
     torch.distributed.all_reduce(
         prompt_lengths,
         torch.distributed.ReduceOp.AVG,
@@ -100,7 +122,7 @@ def compute_rollout_metrics(
         "advantages_max": adv_max,
         "advantages_min": -adv_min,
     }
-    return rollout_metrics
+    return rollout_metrics, total_prompt_lengths, total_decode_lengths
 
 
 def compute_rollout_metrics_pipeline(

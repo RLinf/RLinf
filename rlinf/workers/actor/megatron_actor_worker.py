@@ -461,7 +461,7 @@ class MegatronActor(MegatronModelManager, Worker):
             with self.profiler.step():
                 if forward_only:
                     self.return_loss = False
-                    with torch.autograd.profiler.record_function("forward_only"):
+                    with torch.profiler.record_function("forward_only"):
                         forward_outputs = fwd_bwd_function(
                             forward_step_func=self.get_forward_step_func(),
                             data_iterator=self.make_data_iterator_list(
@@ -475,9 +475,7 @@ class MegatronActor(MegatronModelManager, Worker):
                             collect_non_loss_data=True,
                         )
                     if self.enable_dynamic_batch_size:
-                        with torch.autograd.profiler.record_function(
-                            "dynamic_batch_processing"
-                        ):
+                        with torch.profiler.record_function("dynamic_batch_processing"):
                             outputs = torch.cat(forward_outputs, dim=0).to(
                                 torch.float32
                             )
@@ -490,20 +488,16 @@ class MegatronActor(MegatronModelManager, Worker):
                             )
                             outputs = outputs[revert_indices]
                     else:
-                        with torch.autograd.profiler.record_function(
-                            "static_batch_processing"
-                        ):
+                        with torch.profiler.record_function("static_batch_processing"):
                             outputs = (
                                 torch.cat(forward_outputs)
                                 if len(forward_outputs) > 0
                                 else None
                             )
-                    with torch.autograd.profiler.record_function("broadcast_outputs"):
+                    with torch.profiler.record_function("broadcast_outputs"):
                         outputs = broadcast_tensor_within_pp(outputs)
                 else:
-                    with torch.autograd.profiler.record_function(
-                        "megatron_forward_backward"
-                    ):
+                    with torch.profiler.record_function("megatron_forward_backward"):
                         self.return_loss = True
                         forward_outputs = fwd_bwd_function(
                             forward_step_func=self.get_forward_step_func(),
@@ -851,26 +845,41 @@ class MegatronActor(MegatronModelManager, Worker):
             advantages = masked_normalization(advantages, mask)
         self.rollout_batches["advantages"] = advantages
 
-        rollout_metrics = cpu_dict(
+        rollout_metrics, total_prompt_lengths, total_decode_lengths = (
             compute_rollout_metrics(
                 self.rollout_batches, self.cfg.data.max_prompt_length, self.response_len
             )
         )
+
+        rollout_metrics = cpu_dict(rollout_metrics)
+
         self.rollout_batches.pop("reward_scores")
 
         if self.cfg.actor.get("calculate_flops", False):
-            batch_size = self.cfg.data.rollout_batch_size * self.cfg.algorithm.get(
-                "group_size", 1
+            total_generation_tflops = (
+                self.flops_calculator.flops_generate(
+                    total_prompt_lengths, total_decode_lengths
+                )
+                .float()
+                .sum()
+                .item()
+                / 1e12
             )
-            prefill_decode_flops, prefill_total_flops = self.flops_calculator.flops(
-                batch_size=batch_size,
-                prompt_length=rollout_metrics["prompt_length"],
-                decode_length=rollout_metrics["response_length"],
+            total_inference_tflops = (
+                self.flops_calculator.flops_inference(
+                    total_prompt_lengths + total_decode_lengths
+                )
+                .float()
+                .sum()
+                .item()
+                / 1e12
             )
+
             rollout_metrics.update(
                 {
-                    "prefill_decode_flops": prefill_decode_flops,
-                    "prefill_total_flops": prefill_total_flops,
+                    "generation_tflops": total_generation_tflops,
+                    "inference_tflops": total_inference_tflops,
+                    "training_tflops": total_inference_tflops * 3,  # factor
                 }
             )
 
