@@ -12,16 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
+
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import torch
-from torch.profiler import ProfilerActivity, profile, tensorboard_trace_handler
+from torch.profiler import (
+    ProfilerActivity,
+    profile,
+    schedule,
+    tensorboard_trace_handler,
+)
+from torch.profiler.profiler import ProfilerAction
 
 
-# NEW: A simple context manager that does nothing.
+# A simple context manager that does nothing, for disabled or waiting steps.
 @contextmanager
 def null_context():
     yield
@@ -29,23 +35,29 @@ def null_context():
 
 class PyTorchProfiler:
     """
-    A PyTorch Profiler wrapper for RL training.
+    A PyTorch Profiler wrapper that manages scheduling across multiple,
+    non-continuous calls, making it suitable for use inside functions
+    that are called repeatedly (like in an actor model).
 
-    This profiler is configured via a dictionary (e.g., from YAML) and used
-    as a context manager that automatically handles whether to profile a given step.
-
-    Usage:
+    Usage (as intended by the user):
         profiler = PyTorchProfiler.from_config(cfg.profiler)
-        for step in range(num_steps):
-            with profiler.step(step):
+
+        # This function is called multiple times by an external loop
+        def run_forward_backward():
+            with profiler.step():
                 # Your training code here
                 ...
+            profiler.advance_step()
     """
 
     def __init__(
         self,
         output_dir: str = "./profiler_output",
         activities: List[str] = ["cpu", "cuda"],
+        schedule_wait: int = 5,
+        schedule_warmup: int = 1,
+        schedule_active: int = 3,
+        schedule_repeat: int = 2,
         record_shapes: bool = False,
         profile_memory: bool = True,
         with_stack: bool = False,
@@ -55,108 +67,103 @@ class PyTorchProfiler:
         export_chrome_trace: bool = True,
         chrome_filename_prefix: str = "chrome_trace",
     ):
-        self.step_idx = 0
         self.output_dir = Path(output_dir)
-        self.activities = self._parse_activities(activities)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        self.profiler_kwargs = {
+            "activities": self._parse_activities(activities),
+            "record_shapes": record_shapes,
+            "profile_memory": profile_memory,
+            "with_stack": with_stack,
+            "with_flops": with_flops,
+            "with_modules": with_modules,
+        }
 
         self.on_trace_ready = self._create_trace_handler(
             export_tensorboard, export_chrome_trace, chrome_filename_prefix
         )
-        self.profiler_instance = profile(
-            activities=self.activities,
-            record_shapes=record_shapes,
-            profile_memory=profile_memory,
-            with_stack=with_stack,
-            with_flops=with_flops,
-            with_modules=with_modules,
-            on_trace_ready=self.on_trace_ready,
+
+        self.schedule = schedule(
+            wait=schedule_wait,
+            warmup=schedule_warmup,
+            active=schedule_active,
+            repeat=schedule_repeat,
         )
 
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.step_counter = 0
+        self.current_action = ProfilerAction.NONE
 
     def _parse_activities(self, activity_strs: List[str]) -> List[ProfilerActivity]:
-        """Parses string activities from config into ProfilerActivity enums."""
         valid_activities = set()
-        activity_map = {
-            "cpu": ProfilerActivity.CPU,
-            "cuda": ProfilerActivity.CUDA,
-        }
+        activity_map = {"cpu": ProfilerActivity.CPU, "cuda": ProfilerActivity.CUDA}
         for act_str in activity_strs:
             act_enum = activity_map.get(act_str.lower())
             if act_enum:
                 if act_enum == ProfilerActivity.CUDA and not torch.cuda.is_available():
-                    raise RuntimeError(
-                        "'cuda' activity requested but CUDA is not available."
+                    print(
+                        "Warning: 'cuda' activity requested but CUDA is not available."
                     )
                 else:
                     valid_activities.add(act_enum)
             else:
-                raise ValueError(
-                    f"Unknown profiler activity '{act_str}', currently support ['cpu', 'cuda']."
-                )
-
-        if ProfilerActivity.CUDA in valid_activities:
-            valid_activities.add(ProfilerActivity.CPU)
-
-        if not valid_activities:
-            print(
-                "Warning: No valid profiler activities enabled. Profiler will not run."
-            )
-            self.enabled = False
-
+                raise ValueError(f"Unknown profiler activity '{act_str}'.")
         return list(valid_activities)
 
     def _get_chrome_trace_filename(self, prefix: str) -> str:
-        """Generates a unique filename for the Chrome trace."""
         fname = prefix
         if torch.distributed.is_initialized():
             fname += f"_rank{torch.distributed.get_rank()}"
-        if torch.cuda.is_available():
-            fname += f"_dev{torch.cuda.current_device()}"
-
-        timestamp = int(time.time() * 1000)
-        fname += f"_{timestamp}"
-        return f"{fname}.json"
+        return f"{fname}_{self.step_counter}.json"
 
     def _create_trace_handler(
         self, export_tb: bool, export_chrome: bool, chrome_prefix: str
     ) -> Optional[Callable]:
-        """Creates a composed handler for on_trace_ready."""
         if not (export_tb or export_chrome):
             return None
 
-        handlers = []
         if export_tb:
             tb_dir = str(self.output_dir / "tensorboard")
-            handlers.append(tensorboard_trace_handler(tb_dir, worker_name="worker"))
+            print(f"Profiler configured to save TensorBoard traces to: {tb_dir}")
+            return tensorboard_trace_handler(dir_name=tb_dir)
 
         if export_chrome:
 
-            def chrome_handler(prof):
+            def chrome_handler(p):
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
                 trace_path = self.output_dir / self._get_chrome_trace_filename(
                     chrome_prefix
                 )
-                prof.export_chrome_trace(str(trace_path))
-                print(f"Chrome trace exported to: {trace_path}")
-
-            handlers.append(chrome_handler)
-
-        def composed_handler(prof):
-            # Synchronize before export for accurate timings
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-            for handler in handlers:
+                print(f"Profiler saving Chrome trace to: {trace_path}")
                 try:
-                    handler(prof)
+                    p.export_chrome_trace(str(trace_path))
                 except Exception as e:
-                    print(f"Profiler trace handler '{handler.__name__}' error: {e}")
+                    print(f"Failed to export Chrome trace: {e}")
 
-        return composed_handler
+            return chrome_handler
+
+        return None  # should not be reached
 
     @contextmanager
-    def step(self) -> Optional[torch.profiler.profile]:
-        with self.profiler_instance as prof:
-            yield prof
+    def step(self) -> contextmanager:
+        self.current_action = self.schedule(self.step_counter)
+
+        if self.current_action != ProfilerAction.NONE:
+            temp_profiler = profile(
+                **self.profiler_kwargs,
+                on_trace_ready=self.on_trace_ready
+                if self.current_action == ProfilerAction.RECORD
+                else None,
+            )
+            with temp_profiler:
+                yield
+        else:
+            # in a 'wait' step, do nothing.
+            yield
+
+    def advance_step(self):
+        """Advances the profiler's step counter."""
+        self.step_counter += 1
 
     @classmethod
     def from_config(
@@ -166,7 +173,7 @@ class PyTorchProfiler:
         Creates a PyTorchProfiler instance from a configuration dictionary.
         Returns a disabled profiler if config is None or disabled.
         """
-        supported_params = {
+        required_params = {
             "output_dir",
             "activities",
             "record_shapes",
@@ -177,17 +184,21 @@ class PyTorchProfiler:
             "export_tensorboard",
             "export_chrome_trace",
             "chrome_filename_prefix",
+            "schedule_wait",
+            "schedule_warmup",
+            "schedule_active",
+            "schedule_repeat",
         }
 
-        unknown_params = set(profiler_config.keys()) - supported_params
+        unknown_params = set(profiler_config.keys()) - required_params
         if unknown_params:
             raise ValueError(f"Unknown profiler parameters: {unknown_params}")
 
         valid_config = {
-            k: v for k, v in profiler_config.items() if k in supported_params
+            k: v for k, v in profiler_config.items() if k in required_params
         }
 
-        missing_params = set(supported_params) - set(valid_config.keys())
+        missing_params = set(required_params) - set(valid_config.keys())
         if missing_params:
             raise ValueError(f"Missing required profiler parameters: {missing_params}")
 

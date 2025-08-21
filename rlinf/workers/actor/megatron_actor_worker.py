@@ -458,10 +458,10 @@ class MegatronActor(MegatronModelManager, Worker):
         self.num_microbatches = n_micro_batch
 
         if self.use_profiler:
-            with self.profiler.step() as _:
-                with torch.autograd.profiler.record_function("megatron_forward_only"):
-                    if forward_only:
-                        self.return_loss = False
+            with self.profiler.step():
+                if forward_only:
+                    self.return_loss = False
+                    with torch.autograd.profiler.record_function("forward_only"):
                         forward_outputs = fwd_bwd_function(
                             forward_step_func=self.get_forward_step_func(),
                             data_iterator=self.make_data_iterator_list(
@@ -474,51 +474,62 @@ class MegatronActor(MegatronModelManager, Worker):
                             micro_batch_size=1,
                             collect_non_loss_data=True,
                         )
-                        if self.enable_dynamic_batch_size:
-                            with torch.autograd.profiler.record_function(
-                                "dynamic_batch_processing"
-                            ):
-                                outputs = torch.cat(forward_outputs, dim=0).to(
-                                    torch.float32
-                                )
-                                indices = sum(indices, [])
-                                assert len(indices) == outputs.size(0), (
-                                    f"{len(indices)} vs. {outputs.size()}"
-                                )
-                                revert_indices = torch.tensor(
-                                    get_reverse_idx(indices), dtype=torch.long
-                                )
-                                outputs = outputs[revert_indices]
-                        else:
-                            with torch.autograd.profiler.record_function(
-                                "static_batch_processing"
-                            ):
-                                outputs = (
-                                    torch.cat(forward_outputs)
-                                    if len(forward_outputs) > 0
-                                    else None
-                                )
+                    if self.enable_dynamic_batch_size:
                         with torch.autograd.profiler.record_function(
-                            "broadcast_outputs"
+                            "dynamic_batch_processing"
                         ):
-                            outputs = broadcast_tensor_within_pp(outputs)
+                            outputs = torch.cat(forward_outputs, dim=0).to(
+                                torch.float32
+                            )
+                            indices = sum(indices, [])
+                            assert len(indices) == outputs.size(0), (
+                                f"{len(indices)} vs. {outputs.size()}"
+                            )
+                            revert_indices = torch.tensor(
+                                get_reverse_idx(indices), dtype=torch.long
+                            )
+                            outputs = outputs[revert_indices]
                     else:
                         with torch.autograd.profiler.record_function(
-                            "megatron_forward_backward"
+                            "static_batch_processing"
                         ):
-                            self.return_loss = True
-                            forward_outputs = fwd_bwd_function(
-                                forward_step_func=self.get_forward_step_func(),
-                                data_iterator=self.make_data_iterator_list(
-                                    data_iter, padding=True
-                                ),
-                                model=self.model,
-                                num_microbatches=n_micro_batch,
-                                forward_only=False,
-                                seq_length=total_seqlen,
-                                micro_batch_size=1,
+                            outputs = (
+                                torch.cat(forward_outputs)
+                                if len(forward_outputs) > 0
+                                else None
                             )
-                        outputs = {}
+                    with torch.autograd.profiler.record_function("broadcast_outputs"):
+                        outputs = broadcast_tensor_within_pp(outputs)
+                else:
+                    with torch.autograd.profiler.record_function(
+                        "megatron_forward_backward"
+                    ):
+                        self.return_loss = True
+                        forward_outputs = fwd_bwd_function(
+                            forward_step_func=self.get_forward_step_func(),
+                            data_iterator=self.make_data_iterator_list(
+                                data_iter, padding=True
+                            ),
+                            model=self.model,
+                            num_microbatches=n_micro_batch,
+                            forward_only=False,
+                            seq_length=total_seqlen,
+                            micro_batch_size=1,
+                        )
+                    outputs = {}
+
+                    if forward_outputs:
+                        keys = forward_outputs[0].keys()
+                        for key in keys:
+                            metric_mean = torch.stack(
+                                [loss_reduced[key] for loss_reduced in forward_outputs]
+                            ).mean()
+                            torch.distributed.broadcast(metric_mean, get_last_rank())
+
+                            outputs[key] = metric_mean.cpu().item()
+
+            # Always call advance_step after each logical step when profiler is enabled
+            self.profiler.advance_step()
         else:
             if forward_only:
                 self.return_loss = False
@@ -561,16 +572,15 @@ class MegatronActor(MegatronModelManager, Worker):
                 )
                 outputs = {}
 
-        if forward_outputs:
-            print(f"!!!{type(forward_outputs)=}")
-            keys = forward_outputs[0].keys()
-            for key in keys:
-                metric_mean = torch.stack(
-                    [loss_reduced[key] for loss_reduced in forward_outputs]
-                ).mean()
-                torch.distributed.broadcast(metric_mean, get_last_rank())
+                if forward_outputs:
+                    keys = forward_outputs[0].keys()
+                    for key in keys:
+                        metric_mean = torch.stack(
+                            [loss_reduced[key] for loss_reduced in forward_outputs]
+                        ).mean()
+                        torch.distributed.broadcast(metric_mean, get_last_rank())
 
-                outputs[key] = metric_mean.cpu().item()
+                        outputs[key] = metric_mean.cpu().item()
 
         return outputs
 
