@@ -44,9 +44,7 @@ class PyTorchProfiler:
 
     def __init__(
         self,
-        enabled: bool,
-        output_dir: str,
-        profile_interval: int,
+        output_dir: str = "./profiler_output",
         activities: List[str] = ["cpu", "cuda"],
         record_shapes: bool = False,
         profile_memory: bool = True,
@@ -57,18 +55,13 @@ class PyTorchProfiler:
         export_chrome_trace: bool = True,
         chrome_filename_prefix: str = "chrome_trace",
     ):
-        self.enabled = enabled
-        if not self.enabled:
-            return
         self.step_idx = 0
         self.output_dir = Path(output_dir)
-        self.profile_interval = profile_interval
         self.activities = self._parse_activities(activities)
 
         self.on_trace_ready = self._create_trace_handler(
             export_tensorboard, export_chrome_trace, chrome_filename_prefix
         )
-
         self.profiler_instance = profile(
             activities=self.activities,
             record_shapes=record_shapes,
@@ -160,24 +153,10 @@ class PyTorchProfiler:
 
         return composed_handler
 
-    def _should_profile(self, step_idx: int) -> bool:
-        """Determines if the current step should be profiled."""
-        if not self.enabled:
-            return False
-        return step_idx % self.profile_interval == 0
-
     @contextmanager
     def step(self) -> Optional[torch.profiler.profile]:
-        """
-        A context manager to profile a code block for a given step.
-        It automatically starts/stops the profiler if the step is selected.
-        """
-        self.step_idx += 1
-        if self._should_profile(self.step_idx):
-            with self.profiler_instance as prof:
-                yield prof
-        else:
-            yield None
+        with self.profiler_instance as prof:
+            yield prof
 
     @classmethod
     def from_config(
@@ -187,11 +166,7 @@ class PyTorchProfiler:
         Creates a PyTorchProfiler instance from a configuration dictionary.
         Returns a disabled profiler if config is None or disabled.
         """
-        if not profiler_config or not profiler_config.get("enabled", False):
-            return cls(enabled=False)
-
         supported_params = {
-            "enabled",
             "output_dir",
             "activities",
             "record_shapes",
@@ -202,7 +177,6 @@ class PyTorchProfiler:
             "export_tensorboard",
             "export_chrome_trace",
             "chrome_filename_prefix",
-            "profile_interval",
         }
 
         unknown_params = set(profiler_config.keys()) - supported_params
