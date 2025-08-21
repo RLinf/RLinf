@@ -19,12 +19,12 @@ from mani_skill.utils.geometry import rotation_conversions
 from mani_skill.utils.registration import register_env
 from mani_skill.utils.structs.pose import Pose
 
-from rlinf.envs.maniskill.tasks.variants.utils import (
-    masks_to_boxes_pytorch,
-)
 from rlinf.envs.maniskill.tasks.put_on_in_scene_multi import (
     CARROT_DATASET_DIR,
     PutOnPlateInScene25MainV3,
+)
+from rlinf.envs.maniskill.tasks.variants.utils import (
+    masks_to_boxes_pytorch,
 )
 
 
@@ -68,14 +68,14 @@ class PutOnPlateInScene25VisionWhole03(PutOnPlateInScene25MainV3):
         texture_fd = CARROT_DATASET_DIR / "more_table" / "textures"
         self.overlay_images_numpy = [
             cv2.resize(
-                cv2.cvtColor(cv2.imread(str(img_fd / k)), cv2.COLOR_BGR2RGB), 
+                cv2.cvtColor(cv2.imread(str(img_fd / k)), cv2.COLOR_BGR2RGB),
                 (self.overlay_images_hw[1], self.overlay_images_hw[0])
             )
             for k in model_db_table  # [H, W, 3]
         ]  # (B) [H, W, 3]
         self.overlay_textures_numpy = [
             cv2.resize(
-                cv2.cvtColor(cv2.imread(str(texture_fd / v["texture"])), cv2.COLOR_BGR2RGB), 
+                cv2.cvtColor(cv2.imread(str(texture_fd / v["texture"])), cv2.COLOR_BGR2RGB),
                 (self.overlay_texture_hw[1], self.overlay_texture_hw[0]))
             for v in model_db_table.values()  # [H, W, 3]
         ]  # (B) [H, W, 3]

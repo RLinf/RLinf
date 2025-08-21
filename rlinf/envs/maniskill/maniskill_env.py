@@ -28,7 +28,6 @@ from mani_skill.utils.visualization.misc import (
     tile_images,
 )
 from omegaconf.omegaconf import OmegaConf
-from .tasks import *
 
 __all__ = ["ManiskillEnv"]
 
