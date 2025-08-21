@@ -1,0 +1,29 @@
+name: Feature request
+description: Submit a proposal/request for a new feature
+title: "[Feature]: "
+labels: ["enhancement"]
+
+body:
+- type: textarea
+  attributes:
+    label: Feature description
+    description: >
+      Please describe your feature proposal.
+  validations:
+    required: true
+- type: textarea
+  attributes:
+    label: Additional context
+    description: >
+      Add any other context or screenshots about the feature request.
+- type: markdown
+  attributes:
+    value: >
+      Thanks for contributing to RLinf!
+- type: checkboxes
+  id: check_doc
+  attributes:
+    label: Before submitting a new issue...
+    options:
+      - label: Have you checked relevant issues, FAQs (https://rlinf-docs.readthedocs.io/en/latest/rst_source/faq.html), or asked the chatbot at the top right corner of the [documentation page](https://rlinf-docs.readthedocs.io).
+        required: true

@@ -1,0 +1,62 @@
+name: Unit Tests
+
+on:
+    push:
+        branches:
+          - 'v[0-9].[0-9]'
+          - 'feature/ci'
+          # - main
+        paths:
+          - '**/*.py'
+          - 'tests/**'
+          - '.github/workflows/*.yml'
+          - '!docs/**'
+          - 'README.md'
+          - '!*.yaml'
+          - '!*.toml'
+
+    pull_request:
+        branches:
+          - 'v[0-9].[0-9]'
+          - 'feature/ci'
+          # - main
+        paths:
+          - '**/*.py'
+          - 'tests/**'
+          - '.github/workflows/*.yml'
+          - '!docs/**'
+          - 'README.md'
+          - '*.yaml'
+          - '*.toml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+    unit-tests:
+        runs-on: self-hosted
+        container:
+            image: rlinf/rlinf:math-rlinf0.1-torch2.5.1-sglang0.4.4-vllm0.7.1-megatron0.11.0-te2.1
+            volumes:
+                - /mnt/public/dataset:/workspace/dataset
+                - /mnt/public/tokenizer:/workspace/tokenizer
+            options: --gpus="all" --shm-size=80g
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Install Megatron
+              run: git clone https://github.com/NVIDIA/Megatron-LM.git -b v0.11.0 megatron
+
+            - name: Install pytest
+              run: pip install pytest
+
+            - name: Run pytest
+              run: |
+                export PYTHONPATH=$(pwd):$(pwd)/megatron:$(pwd)/tests/unit_tests 
+                pytest tests/unit_tests

@@ -272,7 +272,17 @@ class EnvManager:
 
     def __setattr__(self, name, value):
         # Handle special attributes that should be set on self
-        if name in ['cfg', 'rank', 'process', 'command_queue', 'result_queue', 'state_buffer', 'env_cls', 'env', 'context']:
+        if name in [
+            "cfg",
+            "rank",
+            "process",
+            "command_queue",
+            "result_queue",
+            "state_buffer",
+            "env_cls",
+            "env",
+            "context",
+        ]:
             super().__setattr__(name, value)
             return
 
@@ -282,23 +292,23 @@ class EnvManager:
             return
 
         # For offloaded environments, send attribute set command
-        if name.startswith('_'):
-            raise AttributeError(f"Cannot set private attribute '{name}' on offloaded environment")
+        if name.startswith("_"):
+            raise AttributeError(
+                f"Cannot set private attribute '{name}' on offloaded environment"
+            )
 
         if self.process is None or not self.process.is_alive():
             raise RuntimeError("Simulator not running")
 
         value = recursive_to_own(value)
-        self.command_queue.put({
-            'method': '__setattr__',
-            'args': [name, value],
-            'kwargs': {}
-        })
+        self.command_queue.put(
+            {"method": "__setattr__", "args": [name, value], "kwargs": {}}
+        )
 
         result = self.result_queue.get()
         result = recursive_to_own(result)
-        if result['status'] == 'error':
-            raise Exception(result['error'])
+        if result["status"] == "error":
+            raise Exception(result["error"])
 
 
 def _simulator_worker(
@@ -339,11 +349,11 @@ def _simulator_worker(
                 args = command.get("args", [])
                 kwargs = command.get("kwargs", {})
 
-                if method_name == '__setattr__':
+                if method_name == "__setattr__":
                     # Handle attribute setting
                     attr_name, attr_value = args
                     setattr(simulator, attr_name, attr_value)
-                    result_queue.put({'status': 'success', 'data': None})
+                    result_queue.put({"status": "success", "data": None})
                 elif hasattr(simulator, method_name):
                     method = getattr(simulator, method_name)
                     assert callable(method), f"Method {method_name} is not callable"

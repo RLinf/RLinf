@@ -17,15 +17,15 @@ from typing import List
 
 import torch
 import torch.distributed
-from omegaconf import DictConfig, OmegaConf
-from torch.multiprocessing.reductions import reduce_tensor
-
 from megatron.core import parallel_state
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.utils import divide
 from megatron.training.training import unwrap_model
 from megatron.training.utils import average_losses_across_data_parallel_group
+from omegaconf import DictConfig, OmegaConf
+from torch.multiprocessing.reductions import reduce_tensor
+
 from rlinf.algorithms.math.algo_functions import (
     actor_loss_fn,
     calculate_adv_and_returns,

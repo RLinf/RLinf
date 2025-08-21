@@ -21,10 +21,6 @@ from datetime import timedelta
 import numpy as np
 import torch
 import torch.distributed
-from omegaconf import open_dict
-from omegaconf.dictconfig import DictConfig
-from omegaconf.omegaconf import OmegaConf
-
 from megatron.core import mpu, tensor_parallel
 from megatron.core.num_microbatches_calculator import init_num_microbatches_calculator
 from megatron.core.rerun_state_machine import (
@@ -36,6 +32,10 @@ from megatron.core.rerun_state_machine import (
 from megatron.core.utils import get_te_version, is_te_min_version
 from megatron.legacy import fused_kernels
 from megatron.training.global_vars import _set_timers, set_args
+from omegaconf import open_dict
+from omegaconf.dictconfig import DictConfig
+from omegaconf.omegaconf import OmegaConf
+
 from rlinf.config import torch_dtype_from_precision
 
 

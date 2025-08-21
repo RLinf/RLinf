@@ -1,0 +1,55 @@
+name: Embodied End2End
+
+on:
+    push:
+        branches:
+          - 'v[0-9].[0-9]'
+          - 'feature/ci'
+          # - main
+        paths:
+          - '**/*.py'
+          - 'tests/**'
+          - '.github/workflows/*.yml'
+          - '!docs/**'
+          - 'README.md'
+          - '!*.yaml'
+          - '!*.toml'
+
+    pull_request:
+        branches:
+          - 'v[0-9].[0-9]'
+          - 'feature/ci'
+          # - main
+        paths:
+          - '**/*.py'
+          - 'tests/**'
+          - '.github/workflows/*.yml'
+          - '!docs/**'
+          - 'README.md'
+          - '!*.yaml'
+          - '!*.toml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+    openvla-ppo-test:
+        runs-on: self-hosted
+        container:
+            image: rlinf/rlinf:agentic-openvla-rlinf0.1-torch2.5.1
+            volumes:
+                - /mnt/public/dataset:/workspace/dataset
+                - /mnt/public/tokenizer:/workspace/tokenizer
+            options: --gpus="all" --shm-size=2g -e NVIDIA_DRIVER_CAPABILITIES="compute,utility,graphics"
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+            - name: OpenVLA test
+              run: |
+                export REPO_PATH=$(pwd)
+                bash tests/e2e_tests/embodied/run_openvla.sh

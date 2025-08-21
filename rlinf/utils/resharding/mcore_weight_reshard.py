@@ -14,7 +14,6 @@
 
 
 import torch
-
 from megatron.core import parallel_state
 
 from .reshard_config import ReshardConfig

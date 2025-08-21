@@ -16,7 +16,7 @@ import dataclasses
 import logging
 import os
 from dataclasses import asdict
-from typing import Callable, Union
+from typing import TYPE_CHECKING, Callable, Union
 
 import torch
 import torch.nn.functional as F
@@ -24,13 +24,9 @@ from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
 from transformers import AutoConfig
 
-from megatron.core.model_parallel_config import ModelParallelConfig
-from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.core.utils import (
-    init_method_normal,
-    scaled_init_method_normal,
-)
-from megatron.training.global_vars import get_timers
+if TYPE_CHECKING:
+    from megatron.core.model_parallel_config import ModelParallelConfig
+    from megatron.core.transformer.transformer_config import TransformerConfig
 
 logging.getLogger().setLevel(logging.INFO)
 
@@ -524,13 +520,19 @@ def build_config(cls, cfg):
     return cls(**kwargs)
 
 
-def build_transformer_config(cfg) -> TransformerConfig:
+def build_transformer_config(cfg) -> "TransformerConfig":
     """
     Builds the megatron core transformer config for the model.
     For attributes in the RLinf model config that are the same
     as the megatron core TransformerConfig, we will use the value from the RLinf model config.
     For attributes in TransformerConfig that are not in the RLinf model config, we add custom logic.
     """
+    from megatron.core.transformer.transformer_config import TransformerConfig
+    from megatron.core.utils import (
+        init_method_normal,
+        scaled_init_method_normal,
+    )
+
     # get model parallel configs
     model_parallel_config = _build_model_parallel_config(cfg)
 
@@ -705,12 +707,14 @@ def build_transformer_config(cfg) -> TransformerConfig:
     return transformer_config
 
 
-def _build_model_parallel_config(cfg: DictConfig) -> ModelParallelConfig:
+def _build_model_parallel_config(cfg: DictConfig) -> "ModelParallelConfig":
     """
     For attributes in the RLinf model config that are the same as the
     megatron core ModelParallelConfig we will use the value from the RLinf config.
     For attributes in ModelParallelConfig that are not in the RLinf model config, we add custom logic.
     """
+    from megatron.core.model_parallel_config import ModelParallelConfig
+    from megatron.training.global_vars import get_timers
     # cfg = OmegaConf.to_container(cfg, resolve=True)
 
     # dtype used in p2p communication

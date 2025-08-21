@@ -13,19 +13,12 @@
 # limitations under the License.
 
 # ruff: noqa: D103
-import os
-import sys
 from typing import Any, Optional
 
 import pytest
 import torch
 
 from rlinf.scheduler import Channel, Cluster, PackedPlacementStrategy, Worker
-
-# Add project root to the Python path
-os.environ["RAY_DEDUP_LOGS"] = "0"
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 
 # --- Constants ---
 PRODUCER_GROUP_NAME = "producer_group"

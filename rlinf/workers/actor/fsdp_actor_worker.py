@@ -21,7 +21,6 @@ from omegaconf import DictConfig
 from torch.distributed.device_mesh import init_device_mesh
 from tqdm import tqdm
 
-from megatron.core.utils import divide
 from rlinf.algorithms.embodiment.utils import (
     actor_loss_fn,
     append_to_dict,
@@ -252,12 +251,15 @@ class FSDPActor(FSDPModelManager, Worker):
         # Split to make minibatch iterator for updating the actor
         # See PPO paper for details. https://arxiv.org/abs/1707.06347
         rollout_size = self.rollout_batch["input_ids"].size(0)
+        batch_size_per_rank = (
+            self.cfg.actor.global_batch_size // torch.distributed.get_world_size()
+        )
+        assert rollout_size % batch_size_per_rank == 0, (
+            f"{rollout_size} is not divisible by {batch_size_per_rank}"
+        )
         rollout_dataloader_iter = get_iterator_k_split(
             self.rollout_batch,
-            divide(
-                rollout_size,
-                self.cfg.actor.global_batch_size // torch.distributed.get_world_size(),
-            ),
+            rollout_size // batch_size_per_rank,
         )
 
         metrics = {}
