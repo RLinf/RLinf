@@ -120,6 +120,7 @@ def append_to_dict(data, new_data):
             data[key] = []
         data[key].append(val)
 
+
 def compute_loss_mask(self, dones):
     _, actual_bsz, num_action_chunks = dones.shape
     n_chunk_step = dones.shape[0] - 1
@@ -133,9 +134,7 @@ def compute_loss_mask(self, dones):
         :-1
     ]  # [n_steps, actual-bsz]
 
-    loss_mask = flattened_loss_mask.reshape(
-        n_chunk_step, num_action_chunks, actual_bsz
-    )
+    loss_mask = flattened_loss_mask.reshape(n_chunk_step, num_action_chunks, actual_bsz)
     loss_mask = loss_mask.transpose(
         1, 2
     )  # [n_chunk_step, actual_bsz, num_action_chunks]
@@ -144,6 +143,7 @@ def compute_loss_mask(self, dones):
     loss_mask_sum = loss_mask_sum.expand_as(loss_mask)
 
     return loss_mask, loss_mask_sum
+
 
 def calculate_advantages_and_returns(
     adv_type,

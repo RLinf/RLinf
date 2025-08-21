@@ -62,24 +62,26 @@ class PutOnPlateInScene25MainImageV3(PutOnPlateInScene25MainV3):
         self.overlay_images_numpy = [
             cv2.resize(
                 cv2.cvtColor(cv2.imread(str(img_fd / k)), cv2.COLOR_BGR2RGB),
-                (self.overlay_images_hw[1], self.overlay_images_hw[0])
+                (self.overlay_images_hw[1], self.overlay_images_hw[0]),
             )
             for k in model_db_table  # [H, W, 3]
         ]  # (B) [H, W, 3]
         self.overlay_textures_numpy = [
             cv2.resize(
-                cv2.cvtColor(cv2.imread(str(texture_fd / v["texture"])), cv2.COLOR_BGR2RGB),
-               (self.overlay_texture_hw[1], self.overlay_texture_hw[0])
+                cv2.cvtColor(
+                    cv2.imread(str(texture_fd / v["texture"])), cv2.COLOR_BGR2RGB
+                ),
+                (self.overlay_texture_hw[1], self.overlay_texture_hw[0]),
             )
             for v in model_db_table.values()  # [H, W, 3]
         ]  # (B) [H, W, 3]
         self.overlay_mix_numpy = [
-            v["mix"] for v in model_db_table.values()  # []
+            v["mix"]
+            for v in model_db_table.values()  # []
         ]
         assert len(self.overlay_images_numpy) == 21
         assert len(self.overlay_textures_numpy) == 21
         assert len(self.overlay_mix_numpy) == 21
-
 
     @property
     def basic_obj_infos(self):

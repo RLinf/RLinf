@@ -140,7 +140,9 @@ class LiberoEnv(gym.Env):
 
     def _get_ordered_reset_state_ids(self, num_reset_states):
         start_idx = self.rank * num_reset_states
-        reset_state_ids = torch.tensor(list(range(start_idx, start_idx + num_reset_states)), dtype=torch.int32)
+        reset_state_ids = torch.tensor(
+            list(range(start_idx, start_idx + num_reset_states)), dtype=torch.int32
+        )
         return reset_state_ids
 
     def _get_task_and_trial_ids_from_reset_state_ids(self, reset_state_ids):

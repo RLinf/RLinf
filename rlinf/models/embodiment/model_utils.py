@@ -79,9 +79,7 @@ def custom_forward(
     logits = output.logits[:, -action_token_len - 1 : -1]  # [B, action_dim, vocab_size]
 
     processed_logits_tensor = logits / temperature
-    top_k = min(
-        top_k, processed_logits_tensor.size(-1)
-    )  # Safety check
+    top_k = min(top_k, processed_logits_tensor.size(-1))  # Safety check
     if top_k > -1:
         logits_warper = TopKLogitsWarper(
             top_k
