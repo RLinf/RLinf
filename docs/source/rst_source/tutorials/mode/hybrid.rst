@@ -6,7 +6,7 @@ Hybrid Mode
    :align: center
    :class: hyb-img
 
-RLinf further augments the collocated mode and disaggregated mode, by introducing hybrid mode: you can choose which tasks share the same set of GPUs and which tasks use separate GPUs.
+RLinf further augments the collocated mode and disaggregated mode, by introducing hybrid mode: some tasks share the same set of GPUs and some tasks use separate GPUs.
 
 The above figure shows a concrete placement and execution example for an embodied RL training. 
 Simulation workers are placed on GPU 0-1, generation workers are placed on GPU 2-3. Two *data queues* decouple producer and consumer rates, 
