@@ -27,10 +27,22 @@ from torch.profiler import (
 from torch.profiler.profiler import ProfilerAction
 
 
-# A simple context manager that does nothing, for disabled or waiting steps.
-@contextmanager
-def null_context():
-    yield
+class PyTorchProfilerFunc:
+    """
+    Helper Class to create record_function and start/stop gracefully.
+    """
+
+    def __init__(self, name: str, enabled: bool):
+        self.context = torch.profiler.record_function(name) if enabled else False
+        self.enabled = enabled
+
+    def start(self):
+        if self.enabled:
+            self.context.__enter__()
+
+    def stop(self):
+        if self.enabled:
+            self.context.__exit__(None, None, None)
 
 
 class PyTorchProfiler:
@@ -92,6 +104,7 @@ class PyTorchProfiler:
 
         self.step_counter = 0
         self.current_action = ProfilerAction.NONE
+        self.active_profiler = None
 
     def _parse_activities(self, activity_strs: List[str]) -> List[ProfilerActivity]:
         valid_activities = set()
@@ -163,6 +176,29 @@ class PyTorchProfiler:
 
     def advance_step(self):
         """Advances the profiler's step counter."""
+        self.step_counter += 1
+
+    def start(self) -> None:
+        if self.active_profiler:
+            raise RuntimeError(
+                "Profiler is already running. Call stop() before start()."
+            )
+
+        self.current_action = self.schedule(self.step_counter)
+
+        if self.current_action != ProfilerAction.NONE:
+            self.active_profiler = profile(
+                **self.profiler_kwargs,
+                on_trace_ready=self.on_trace_ready
+                if self.current_action == ProfilerAction.RECORD
+                else None,
+            )
+            self.active_profiler.start()
+
+    def stop(self):
+        if self.active_profiler:
+            self.active_profiler.stop()
+            self.active_profiler = None
         self.step_counter += 1
 
     @classmethod
