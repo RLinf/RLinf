@@ -21,7 +21,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: "./logs"
+    log_path: "../results"
     project_name: rlinf
     experiment_name: "test_openvla"
     logger_backends: ["tensorboard"] # wandb, swanlab
@@ -107,7 +107,7 @@ rollout:
     queue_size: 0
   mode: "colocate"
   backend: "huggingface"
-  model_dir: "/storage/download_models/Openvla-oft-SFT-libero10-trajall/"
+  model_dir: "/model/Openvla-oft-SFT-libero10-trajall/"
   recompute_logprobs: False
   gpu_memory_utilization: 0.5
   enforce_eager: True
@@ -122,8 +122,8 @@ actor:
     queue_size: 0
   training_backend: "fsdp"
 
-  checkpoint_load_path: "/storage/download_models/Openvla-oft-SFT-libero10-trajall/"
-  checkpoint_save_path: "/storage/results"
+  checkpoint_load_path: "/model/Openvla-oft-SFT-libero10-trajall/"
+  checkpoint_save_path: "../results"
 
   micro_batch_size: 8
   global_batch_size: 160
@@ -151,7 +151,7 @@ actor:
     image_size: [224, 224]
     is_lora: True
     lora_rank: 32
-    lora_path: /storage/models/oft-sft/lora_004000
+    lora_path: /model/oft-sft/lora_004000
     ckpt_path: null
     num_images_in_input: 1
     attn_implementation: "flash_attention_2"
@@ -160,7 +160,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/storage/download_models/Openvla-oft-SFT-libero10-trajall/"
+    tokenizer_model: "/model/Openvla-oft-SFT-libero10-trajall/"
     extra_vocab_size: 421
     use_fast: False
     trust_remote_code: True

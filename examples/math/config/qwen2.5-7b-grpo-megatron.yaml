@@ -33,7 +33,7 @@ runner:
 
   resume_dir: null
   experiment_name: grpo-7b
-  output_dir: /storage/results
+  output_dir: ../results
 
 algorithm:
   group_size: 16
@@ -82,7 +82,7 @@ rollout:
 
   gpu_memory_utilization: 0.65
 
-  model_dir: /storage/hf_models/DeepSeek-R1-Distill-Qwen-7B
+  model_dir: /model/DeepSeek-R1-Distill-Qwen-7B
   model_arch: qwen2.5
   enforce_eager: False         # if False, vllm will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
@@ -118,8 +118,8 @@ data:
   shuffle: True
   validation_shuffle: True
   seed: 1234
-  train_data_paths: ["/storage/data/boba_106k_0319_prompt_1024.jsonl"]
-  val_data_paths: ["/storage/data/validation.jsonl"]
+  train_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
+  val_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
 
 actor:
   group_name: "ActorGroup"
@@ -127,7 +127,7 @@ actor:
   mcore_gpt: True
   spec_name: decoder_gpt
 
-  checkpoint_load_path: "/storage/mg_ckpts/DeepSeek-R1-Distill-Qwen-7B-tp4-pp1-fp16"
+  checkpoint_load_path: null
 
   offload_optimizer: True
   offload_weight: True
@@ -204,7 +204,7 @@ actor:
     weight_decay_incr_style: cosine
 
   tokenizer:
-    tokenizer_model: /storage/hf_models/DeepSeek-R1-Distill-Qwen-7B
+    tokenizer_model: /model/DeepSeek-R1-Distill-Qwen-7B
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'
@@ -220,7 +220,7 @@ actor:
     use_hf_ckpt: False # if true, will transfer hf model to generate megatron checkpoint and use it for training.
     
     ckpt_convertor: # config for ckpt convertor
-      model: DeepSeek-R1-Distill-Qwen-1.5B
+      model: DeepSeek-R1-Distill-Qwen-7B
       model_type: null # will be set by hf model's config if null
       hf_model_path: ${rollout.model_dir} # path to the hf model
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
