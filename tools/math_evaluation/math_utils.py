@@ -158,25 +158,6 @@ def is_expr_equal(ans_p, ans_l, is_strict=False):
         return False
 
 
-# @timeout_decorator.timeout(5)
-# def compare_ans(ans_p_str, ans_l_str, is_strict=False):
-#     ans_p_str = clean_expr_str(ans_p_str)
-#     ans_p_str = ans_p_str.replace(",", "").replace("$", "")
-#     ans_l_str = clean_expr_str(ans_l_str)
-#     ans_l_str = ans_l_str.replace(",", "").replace("$", "")
-#     if ans_p_str is None:
-#         return False
-#     if ans_p_str.replace(" ", "") == ans_l_str.replace(" ", ""):
-#         return True
-#     ans_p = parse_latex_answer(ans_p_str)
-#     if ans_p is None:
-#         return False
-#     ans_l = parse_latex_answer(ans_l_str)
-#     if ans_l is None:
-#         return False
-#     return is_expr_equal(ans_p, ans_l, is_strict=is_strict)
-
-
 def extract_answer_number(sentence: str) -> float:
     sentence = sentence.replace(",", "")
     pred = list(re.findall(r"-?\d+\.?\d*", sentence))

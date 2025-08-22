@@ -20,7 +20,6 @@ class KeywordsStoppingCriteria(StoppingCriteria):
         if len(self.current_context) == 0:
             self.current_context = [[] for _ in range(input_ids.shape[0])]
 
-        # self.current_context.append(input_ids[0][-1].item())
         sequences_should_be_stopped = []
         for i in range(input_ids.shape[0]):
             _id = input_ids[i][-1].item()
@@ -123,8 +122,6 @@ def generate_completions(
             input_ids=batch_input_ids,
             attention_mask=attention_mask,
             stopping_criteria=StoppingCriteriaList([stop_criteria]),
-            # stopping_criteria=[KeyWordsCriteria(stop_id_sequences)] if stop_id_sequences else None,
-            # stopping_criteria=[KeyWordsCriteriaTrunc(stop_id_sequences, batch_input_ids.size(1))] if stop_id_sequences else None,
             **generation_kwargs,
         )
 
@@ -192,7 +189,6 @@ def load_hf_lm_and_tokenizer(
         padding_side=padding_side,
         trust_remote_code=True,
     )
-    # tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path, legacy=False, use_fast=use_fast_tokenizer, padding_side=padding_side, trust_remote_code=True)
 
     # set pad token to eos token if pad token is not set
     if tokenizer.pad_token is None:
@@ -207,10 +203,6 @@ def load_hf_lm_and_tokenizer(
                 "You are using a new tokenizer without a pad token."
                 "This is not supported by this script."
             )
-
-    # if tokenizer.pad_token is None:
-    #     tokenizer.pad_token = tokenizer.unk_token
-    #     tokenizer.pad_token_id = tokenizer.unk_token_id
 
     if gptq_model:
         from auto_gptq import AutoGPTQForCausalLM
@@ -267,7 +259,6 @@ def _test_generate_completions():
         prompts=prompts,
         max_new_tokens=128,
         batch_size=16,
-        # stop_id_sequences=stop_id_sequences,
         stop_id_sequences=stop_sequences,
     )
     print(outputs)

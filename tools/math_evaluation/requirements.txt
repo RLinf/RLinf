@@ -1,4 +1,4 @@
-# common
+# should be already installed in the docker image
 vllm
 tqdm
 datasets
@@ -6,11 +6,10 @@ torch
 transformers
 python_dateutil
 flash_attn
-
-# math_eval
-sympy==1.12
-antlr4-python3-runtime==4.11.1 # ! The version needs to be compatible with sympy.
+sympy
+antlr4-python3-runtime
 word2number
+
+# new for math evaluation
 Pebble
 timeout-decorator
-latex2sympy2
