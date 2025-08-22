@@ -1,0 +1,86 @@
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PATH=/opt/conda/bin:$PATH \
+    CUDNN_PATH=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/
+
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu/|http://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' /etc/apt/sources.list && \
+    sed -i 's|http://security.ubuntu.com/ubuntu/|http://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' /etc/apt/sources.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        git \
+        vim \
+        libibverbs-dev \
+        openssh-server \
+        sudo \
+        runit \
+        runit-systemd \
+        tmux \
+        wget \
+        curl \
+        ca-certificates \
+        mesa-utils \
+        libosmesa6-dev \
+        freeglut3-dev \
+        libglew-dev \
+        libegl1 \
+        libgles2 \
+        libglvnd-dev \
+        libglfw3-dev \
+        libgl1-mesa-dev \
+        libgl1-mesa-glx \
+        libglib2.0-0 \
+        libsm6 \
+        libxext6 \
+        libxrender-dev \
+        libgomp1 \
+        && rm -rf /var/lib/apt/lists/* \
+        && apt-get clean
+
+RUN python -m pip install -i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple --upgrade pip && \
+    pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+
+RUN pip install \
+    hydra-core==1.4.0.dev1 \
+    torchdata \
+    word2number \
+    setuptools==69.5.1 \
+    datasets \
+    sentencepiece \
+    regex \
+    einops \
+    scipy \
+    wandb \
+    tensorboard \
+    nvitop \
+    accelerate \
+    pylatexenc \
+    pybind11 \
+    torch_memory_saver \
+    ray[default]==2.47.0 \
+    transformers==4.40.1 \
+    draccus \
+    rich \
+    tensorflow_graphics \
+    peft==0.11.1 \
+    timm==0.9.10 \
+    mani_skill \
+    tensordict
+
+RUN pip install --no-build-isolation  --use-pep517 flash-attn==2.5.5
+
+WORKDIR /workspace
+
+RUN git clone https://github.com/openvla/openvla.git /workspace/openvla && \
+    git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git /workspace/libero
+
+RUN pip install \
+    -e /workspace/libero \
+    -e /workspace/openvla 
+
+RUN pip install -r /workspace/openvla/experiments/robot/libero/libero_requirements.txt 
+
+RUN echo "source /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc
+RUN echo "conda activate" >> ~/.bashrc
+
+CMD ["/bin/bash"]

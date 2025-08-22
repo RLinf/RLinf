@@ -44,35 +44,6 @@ Once you've identified the appropriate image for your setup, pull the Docker ima
 
 Then, start the container using the pulled image:
 
-.. For Megatron + SGLang, run:
-
-.. .. code-block:: bash
-
-..    .. docker run -it --gpus all \
-..    ..    --shm-size 80g \
-..    ..    --net=host \
-..    ..    -v "$(pwd)":/workspace/RLinf \
-..    ..    -w /workspace/RLinf \
-..    ..    --name rlinf \
-..    ..    rlinf/rlinf:latest /bin/bash
-
-..    docker run -it --gpus all \
-..       --shm-size 80g \
-..       --net=host \
-..       --name rlinf \
-..       rlinf/rlinf:math-rlinf0.1-torch2.5.1-sglang0.4.4-vllm0.7.1-megatron0.11.0-te2.1 /bin/bash
-
-.. For FSDP + HuggingFace, run:
-
-.. .. code-block:: bash
-
-..    docker run -it --gpus all \
-..       --shm-size 100g \
-..       --net=host \
-..       --env NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
-..       --name rlinf \
-..       rlinf/rlinf:agentic-openvla-rlinf0.1-torch2.5.1 /bin/bash
-
 .. code-block:: bash
 
    docker run -it --gpus all \

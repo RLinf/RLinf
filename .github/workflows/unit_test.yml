@@ -50,9 +50,6 @@ jobs:
             - name: Checkout code
               uses: actions/checkout@v4
 
-            - name: Install Megatron
-              run: git clone https://github.com/NVIDIA/Megatron-LM.git -b v0.11.0 megatron
-
             - name: Install pytest
               run: pip install pytest
 

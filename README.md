@@ -134,4 +134,4 @@ We welcome contributions to RLinf. Please read [contribution guide](TODO:) befor
 ## Citation and Acknowledgement
 
 
-TODO: 中文版
+TODO: Chinese version

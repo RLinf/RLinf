@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List
+from typing import Dict, List
 
 from .placement import Placement, PlacementStrategy
 
@@ -22,62 +22,32 @@ class PackedPlacementStrategy(PlacementStrategy):
 
     def __init__(
         self,
-        master_node: int = 0,
-        num_nodes: int = 0,
-        master_gpu: int = 0,
-        num_processes: int = 0,
+        start_gpu_id: int,
+        end_gpu_id: int,
         num_gpus_per_process: int = 1,
+        stride: int = 1,
     ):
         """Initialize the PackedPlacementStrategy.
 
         Args:
-            master_node (int): The ID of the master node where the first process will be placed.
-            num_nodes (int): Total number of nodes in the cluster.
-            master_gpu (int): The GPU ID on the master node where the first process will be placed.
-            num_processes (int): Total number of processes to place. Should not be specified if `num_nodes` is set, as it will be calculated based on `num_nodes` and `num_gpus_per_process`.
-            num_gpus_per_process (int): Number of GPUs per process. Defaults to 1.
-            isolate_gpu (bool): Whether to isolate the GPUs for each process by setting `CUDA_VISIBLE_DEVICES`. Defaults to True. When set to True, each process will only be able to see the GPUs they are assigned with. For example, if the `num_gpus_per_process` is 1, each process will only see 1 GPU, and `torch.cuda.current_device()` will return 0 on all processes. Some programs are incompatible with this behavior and must see all GPUs. So setting isolate_gpu=False will allow such programs to see all GPUs, and we can only make sure the process is scheduled on the right node instead of the right GPUs. Use at your own risk!
+            start_gpu_id (int): The global starting GPU ID in the cluster for the placement.
+            end_gpu_id (int): The global ending GPU ID in the cluster for the placement.
+            num_gpus_per_process (int): The number of GPUs to allocate for each process.
+            stride (int): The stride to use when allocating GPUs. This allows one process to have multiple GPUs in a strided manner, e.g., GPU 0, 2, 4 (stride 2) or GPU 0, 3, 6 (stride 3).
 
         """
-        super().__init__(master_node, num_nodes)
-        if num_processes != 0 and num_nodes != 0:
-            raise ValueError(
-                "No need to specify both num_processes and num_nodes. Because when num_nodes is set, num_processes will be calculated based on `num_nodes` and `num_gpus_per_process`. Setting both leads to ambiguity."
-            )
-        if num_processes == 0 and num_nodes == 0:
-            raise ValueError(
-                "At least one of num_processes or num_nodes must be specified."
-            )
+        super().__init__(start_gpu_id, end_gpu_id)
         self._placement_strategy = "PACKED"
-        self._master_gpu = master_gpu
-        self._num_processes = num_processes
         self._num_gpus_per_process = num_gpus_per_process
+        self._stride = stride
 
-    @staticmethod
-    def from_gpu_range(
-        gpu_range: List[int], num_processes: int, num_gpus_per_node: int
-    ):
-        """Create a PackedPlacementStrategy from a GPU range.
-
-        Args:
-            gpu_range (List[int]): The range of GPU IDs to use for the placement.
-            num_processes (int): The number of processes to place.
-            num_gpus_per_node (int): The number of GPUs per node.
-
-        Returns:
-            PackedPlacementStrategy: The created PackedPlacementStrategy instance.
-        """
-        start_node = gpu_range[0] // num_gpus_per_node
-        num_gpus = len(gpu_range)
-        num_gpus_per_process = num_gpus // num_processes
-        assert len(gpu_range) % num_processes == 0, (
-            f"Number of GPUs {len(gpu_range)} is not divisible by number of processes {num_processes}"
+        assert self._num_gpus % (self._num_gpus_per_process * self._stride) == 0, (
+            f"The number of GPUs {self._num_gpus} must be divisible by num_gpus_per_process * stride ({self._num_gpus_per_process * self._stride})."
         )
-        return PackedPlacementStrategy(
-            master_node=start_node,
-            master_gpu=gpu_range[0],
-            num_processes=num_processes,
-            num_gpus_per_process=num_gpus_per_process,
+
+        self._logger.info("")
+        self._logger.info(
+            f"Using packed placement starting from GPU {self._start_gpu_id}, ending at GPU {self._end_gpu_id}, with {self._num_gpus_per_process} GPUs per process and stride {self._stride}."
         )
 
     def get_placement(
@@ -98,39 +68,51 @@ class PackedPlacementStrategy(PlacementStrategy):
 
         """
         rank = 0
-        placements = []
-        assert self._master_gpu < num_gpus_per_node, (
-            f"Master GPU ID {self._master_gpu} must be within 0 to {num_gpus_per_node - 1}."
+        placements: List[Placement] = []
+        start_node = self._start_gpu_id // num_gpus_per_node
+        gpu_usage_map: Dict[int, bool] = dict.fromkeys(
+            range(self._start_gpu_id, self._end_gpu_id + 1), False
         )
 
-        if self._num_nodes != 0 and self._num_processes == 0:
-            self._num_processes = (
-                self._num_nodes * num_gpus_per_node - self._master_gpu
-            ) // self._num_gpus_per_process
-
-        self._logger.info(
-            f"Using packed placement with {self._num_gpus_per_process} GPUs per process, {self._num_processes} processes, starting from node {self._master_node}, GPU ID {self._master_gpu}."
+        assert start_node < num_nodes_in_cluster, (
+            f"The start GPU ID {self._start_gpu_id} is in Node ID {start_node}, but the cluster only has {num_nodes_in_cluster} nodes."
         )
 
-        global_gpu_id = self._master_gpu
+        start_gpu_id = self._start_gpu_id
         node_rank = 0
-        node_id = self._master_node
-        local_gpu_id = self._master_gpu
+        node_id = start_node
+        local_gpu_id = self._start_gpu_id % num_gpus_per_node
         local_rank = 0
         local_world_size = 1
 
         while True:
-            assert local_gpu_id + self._num_gpus_per_process <= num_gpus_per_node, (
-                f"Cannot find placement with {self._num_gpus_per_process} GPUs per process starting from GPU {local_gpu_id} on node {node_id} with {num_gpus_per_node} GPUs per node. Probably because `num_gpus_per_node` ({num_gpus_per_node}) cannot be divided by `num_gpus_per_process` ({self._num_gpus_per_process})."
+            # Generate the placement for one process
+            assert (
+                local_gpu_id + (self._num_gpus_per_process - 1) * self._stride
+                <= num_gpus_per_node
+            ), (
+                f"Trouble finding placement for Rank {rank} which starts at GPU {local_gpu_id} in node {node_id}, with {self._num_gpus_per_process} GPUs and stride {self._stride}. But only {num_gpus_per_node} GPUs available in the node. As a result, this process will spread across multiple nodes, which is impossible."
             )
 
+            local_gpus = list(
+                range(
+                    local_gpu_id,
+                    local_gpu_id + self._num_gpus_per_process * self._stride,
+                    self._stride,
+                )
+            )
+            global_gpus = list(
+                range(
+                    start_gpu_id,
+                    start_gpu_id + self._num_gpus_per_process * self._stride,
+                    self._stride,
+                )
+            )
+            for gpu_id in global_gpus:
+                gpu_usage_map[gpu_id] = True
+
             if isolate_gpu:
-                cuda_visible_devices = [
-                    str(gpu_id)
-                    for gpu_id in range(
-                        local_gpu_id, local_gpu_id + self._num_gpus_per_process
-                    )
-                ]
+                cuda_visible_devices = [str(gpu_id) for gpu_id in local_gpus]
             else:
                 cuda_visible_devices = [
                     str(gpu_id) for gpu_id in range(num_gpus_per_node)
@@ -151,19 +133,31 @@ class PackedPlacementStrategy(PlacementStrategy):
 
             # The next placement
             rank += 1
-            global_gpu_id += self._num_gpus_per_process
-            if global_gpu_id % num_gpus_per_node == 0:  # Place to the next node
+            found_all = True
+            for gpu_id in sorted(gpu_usage_map.keys()):
+                if not gpu_usage_map[gpu_id]:
+                    start_gpu_id = gpu_id
+                    found_all = False
+                    break
+
+            next_node_id = start_gpu_id // num_gpus_per_node
+            if next_node_id != node_id:
+                # Place to the next node
+                assert next_node_id == node_id + 1, (
+                    f"Rank {rank} is trying to move from Node {node_id} to Node {next_node_id}, "
+                    f"but this is not allowed."
+                )
                 node_rank += 1
-                node_id += 1
+                node_id = next_node_id
                 local_gpu_id = 0
                 local_rank = 0
                 next_node = True
             else:
-                local_gpu_id = global_gpu_id % num_gpus_per_node
+                local_gpu_id = start_gpu_id % num_gpus_per_node
                 local_rank += 1
                 next_node = False
 
-            if next_node or rank >= self._num_processes:
+            if next_node or found_all:
                 # If we are at the end of a node, set local_world_size for all previous placements whose local_world_size == 0
                 # Reversal traverse the placements to set local_world_size
                 for i in range(len(placements) - 1, -1, -1):
@@ -175,13 +169,8 @@ class PackedPlacementStrategy(PlacementStrategy):
             else:
                 local_world_size += 1
 
-            if rank >= self._num_processes:
+            if found_all:
                 break
-
-            if self._num_nodes != 0:
-                assert node_rank < self._num_nodes, (
-                    f"Node rank {node_rank} exceeds the number of nodes {self._num_nodes}. Please check your configuration."
-                )
 
             assert node_id < num_nodes_in_cluster, (
                 f"Not enough ({num_nodes_in_cluster}) nodes in the cluster to generate the placement."

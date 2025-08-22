@@ -1,40 +1,33 @@
 FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel
-
 ENV DEBIAN_FRONTEND=noninteractive
-
 RUN apt update && apt install git vim libibverbs-dev openssh-server sudo runit runit-systemd tmux -y
 RUN python -m pip install -i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple --upgrade pip
 RUN pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
-
-WORKDIR /workspace
-COPY latex2sympy/ ./latex2sympy/
-
-RUN pip install -e latex2sympy
+WORKDIR /opt
+RUN git clone https://github.com/NVIDIA/Megatron-LM.git && cd Megatron-LM && git checkout v0.11.0
+WORKDIR /opt
+RUN git clone https://github.com/RLinf/latex2sympy2.git && cd latex2sympy2 && pip install -e .
 RUN pip install hydra-core==1.4.0.dev1
-
 RUN pip install torchdata
 RUN pip install word2number
 RUN pip install vllm==0.7.1
-RUN pip install setuptools==69.5.1 datasets sentencepiece regex einops scipy wandb tensorboard nvitop accelerate pylatexenc pybind11 torch_memory_saver
+RUN pip install setuptools==69.5.1 datasets sentencepiece regex einops scipy wandb tensorboard nvitop accelerate pylatexenc pybind11 torch_memory_saver swanlab
 RUN pip install ray[default]==2.47.0
-
-
 ENV CUDNN_PATH=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/
 # te 2.4.0 will ignore CUDNN_PATH and cannot find cudnn.h (do not know why)
 RUN pip install transformer_engine[pytorch]==2.1.0
-WORKDIR /workspace
+WORKDIR /opt
 RUN git clone https://github.com/NVIDIA/apex && cd apex && pip install -v \
         --disable-pip-version-check \
         --no-cache-dir \
         --no-build-isolation \
         --config-settings "--build-option=--cpp_ext" \
         --config-settings "--build-option=--cuda_ext" ./
-
-WORKDIR /workspace
+WORKDIR /opt
 RUN pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
 # install sglang
 RUN pip install sglang[all]==0.4.4
-
 ENV PATH=/opt/conda/bin:$PATH
+ENV PYTHONPATH=/opt/Megatron-LM:$PYTHONPATH
 WORKDIR /workspace
 CMD [ "/bin/bash" ]
