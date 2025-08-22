@@ -2,11 +2,11 @@ Agentic RL-VLA
 ========================
 
 This document provides a comprehensive guide to launching and running the OpenVLA (Open Vision-Language-Action) embodied agent training task in the RLinf framework. 
-The task focuses on training a vision-language-action model for robotic manipulation using the ManiSkill environment.
+The task focuses on training a vision-language-action model for robotic manipulation using the ManiSkill3 environment.
 
 The primary objective is to train an OpenVLA model to perform robotic manipulation through:
 
-1. **Visual Understanding**: Processing RGB images from the robot’s camera.
+1. **Visual Understanding**: Processing RGB images from the robot's camera.
 2. **Language Comprehension**: Interpreting natural-language task descriptions.
 3. **Action Generation**: Producing precise robotic actions (position, rotation, gripper control).
 4. **Reinforcement Learning**: Optimizing the policy via the PPO with environment feedback.
@@ -14,7 +14,7 @@ The primary objective is to train an OpenVLA model to perform robotic manipulati
 Environment
 -----------------------
 
-**ManiSkill Environment**
+**ManiSkill3 Environment**
 
 - **Environment**: ManiSkill2 simulation platform
 - **Task**: Control a robotic arm to grasp a variety of objects
@@ -62,83 +62,57 @@ Algorithm
 
    - Value head for critic function
 
-**Key Parameters Configuration**
-
-.. code-block:: yaml
-
-   algorithm:
-     adv_type: "ppo"
-     loss_type: "ppo"
-     gamma: 0.99
-     gae_lambda: 0.95
-     clip_ratio_high: 0.2
-     clip_ratio_low: 0.2
-     value_clip: 0.2
-     entropy_bonus: 0
-
 Running the Script
 -------------------
 
-**1. Environment Setup**
+**1. Key Parameters Configuration**
 
-.. code-block:: bash
+.. code-block:: yaml
+   cluster:
+      num_nodes: 2
+      num_gpus_per_node: 8
+      component_placement:
+         env: 0-7
+         rollout: 8-15
+         actor: 0-15
 
-   # Set environment variables
-   export PYTHONPATH=$PYTHONPATH:/path/to/megatron-infinigence-rl
+   rollout:
+      pipeline_stage_num: 2
+
+Here you can flexibly configure the GPU count for env, rollout, and actor components.
+Using the above configuration, you can achieve pipeline overlap between env and rollout, and sharing with actor.
+Additionally, by setting `pipeline_stage_num = 2` in the configuration, you can achieve pipeline overlap between rollout and actor, improving rollout efficiency.
+
+.. code-block:: yaml
+   cluster:
+      num_nodes: 1
+      num_gpus_per_node: 8
+      component_placement:
+         env,rollout,actor: all
+
+You can also reconfigure the placement to achieve complete sharing, where env, rollout, and actor components all share all GPUs.
+
+.. code-block:: yaml
+   cluster:
+      num_nodes: 2
+      num_gpus_per_node: 16
+      component_placement:
+         env: 0-3
+         rollout: 4-7
+         actor: 8-15
+
+You can also reconfigure the placement to achieve complete separation, where env, rollout, and actor components each use their own GPUs without interference, eliminating the need for offload functionality.
 
 **2. Configuration File**
 
 Use the provided configuration: ``examples/embodiment/config/maniskill_ppo_openvla.yaml``
 
-**3. Launch Command**
+**4. Launch Command**
 
 .. code-block:: bash
 
-   cd examples/embodiment
-   python train_embodied_agent.py
-
-.. Complete Workflow
-.. -----------------
-
-.. Phase 1: Initialization
-.. ~~~~~~~~~~~~~~~~~~~~~~~
-
-.. 1. **Cluster Setup**: Initialize distributed training.
-.. 2. **Model Loading**: Load OpenVLA pre-trained weights.
-.. 3. **Environment Creation**: Initialize ManiSkill environments.
-.. 4. **Worker Groups**: Create actor, rollout, and environment workers.
-
-.. Phase 2: Training Loop
-.. ~~~~~~~~~~~~~~~~~~~~~~
-
-.. 1. **Environment Interaction**
-..    - Reset environments with random initial states.
-..    - Collect observations (images + task descriptions).
-..    - Send to generation workers.
-
-.. 2. **Action Generation**
-..    - Process observations through the OpenVLA model.
-..    - Generate action tokens using sampling parameters.
-..    - Convert tokens to continuous actions.
-..    - Send actions back to the environment.
-
-.. 3. **Experience Collection**
-..    - Execute actions in simulation.
-..    - Collect rewards and new observations.
-..    - Store experience in a replay buffer.
-..    - Handle episode termination and reset.
-
-.. 4. **Policy Update**
-..    - Compute advantages and returns.
-..    - Update the policy using PPO.
-..    - Log training metrics.
-
-.. Phase 3: Evaluation
-.. ~~~~~~~~~~~~~~~~~~~
-
-.. - Run evaluation episodes.
-.. - Compute success rates and related metrics.
-.. - Generate visualization results.
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla # openvla model
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft # openvlaoft model
 
 Visualization and Results
 -------------------------
@@ -153,6 +127,7 @@ Visualization and Results
 **2. Key Metrics Tracked**
 
 - **Training Metrics**:
+
   - ``actor/loss``: PPO policy loss
   - ``actor/value_loss``: Value function loss
   - ``actor/entropy``: Policy entropy
@@ -160,12 +135,14 @@ Visualization and Results
   - ``actor/lr``: Learning rate
 
 - **Rollout Metrics**:
+
   - ``rollout/reward_mean``: Average episode reward
   - ``rollout/reward_std``: Reward standard deviation
   - ``rollout/episode_length``: Average episode length
   - ``rollout/success_rate``: Task completion rate
 
 - **Environment Metrics**:
+
   - ``env/success_rate``: Success rate across environments
   - ``env/step_reward``: Step-by-step reward
   - ``env/termination_rate``: Episode termination rate
@@ -190,17 +167,38 @@ Visualization and Results
          project_name: "infini-rl"
          experiment_name: "openvla-maniskill"
 
-The animation below shows the results of training the OpenVLA model on ManiSkill’s multi-task benchmark 
-using the PPO algorithm within the RLInf framework, taking a total of 48 GPU-hours on H100 GPUs.
+.. Using a single 8-GPU H100 machine, training for 48 hours, the OpenVLA model achieved from 55% to 90% accuracy on ManiSkill3.
 
-.. .. video:: ../../_static/video/embody.mp4
-..    :width: 720
-..    :align: center
-..    :autoplay:
-..    :loop:
-..    :muted:
-..    :preload: metadata
-..    :playsinline:
+.. .. raw:: html
+
+..    <img src="https://github.com/user-attachments/assets/c641471f-2ee0-4ecc-b152-f20b5946651f" width="800"/>
+
+
+.. Using a single 8-GPU H100 machine, training for 24 hours, the OpenVLAOFT model achieved from 50% to 90% accuracy on ManiSkill3.
+
+.. .. raw:: html
+
+..    <img src="https://github.com/user-attachments/assets/460de75c-e4ed-4926-b8c7-dc2e493afcf0" width="800"/>
+
+Using a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) achieved up to 90% accuracy on ManiSkill3 within 48h and 24h of training, respectively.
+
+.. raw:: html
+
+   <div style="display: flex; justify-content: space-between; gap: 10px;">
+     <div style="flex: 1; text-align: center;">
+       <img src="https://github.com/user-attachments/assets/c641471f-2ee0-4ecc-b152-f20b5946651f" style="width: 100%;"/>
+       <p><em>OpenVLA (48h training)</em></p>
+     </div>
+     <div style="flex: 1; text-align: center;">
+       <img src="https://github.com/user-attachments/assets/460de75c-e4ed-4926-b8c7-dc2e493afcf0" style="width: 100%;"/>
+       <p><em>OpenVLA-OFT (24h training)</em></p>
+     </div>
+   </div>
+
+
+The animation below shows the results of training the OpenVLA model on ManiSkill3's multi-task benchmark 
+using the PPO algorithm within the RLInf framework.
+
 
 .. raw:: html
 

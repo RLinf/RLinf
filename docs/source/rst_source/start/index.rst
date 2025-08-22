@@ -4,19 +4,21 @@ Quickstart
 Welcome to the RLinf Quickstart Guide. This section will walk you through launching RLinf for the first time. 
 We present three concise examples to demonstrate the framework's workflow and help you get started quickly.
 
-Available examples:
 
-- Embodied training on the XXX task using the XXX algorithm (see :doc:`embody`)
+- **Installation:** Two installation methods for RLinf are supported: using a Docker image or a custom user environment (see :doc:`installation`).
 
-- Mathematical training on the XXX dataset using the XXX algorithm (see :doc:`math`)
+- **Embodied training:** Training in the ManiSkill3 environment with the OpenVLA and OpenVLA-OFT models using the PPO algorithm (see :doc:`vla`).
 
-- Distributed Multi-node training on the XXX dataset using the XXX algorithm (see :doc:`distribute`)
+- **Mathematical training:** Training on the boba dataset with the DeepSeek-R1-Distill-Qwen-1.5B model using the GRPO algorithm (see :doc:`llm`).
+
+- **Distributed training:** Multi-node training for mathematical tasks (see :doc:`distribute`).
+
 
 .. toctree::
    :hidden:
    :maxdepth: 1
 
    installation
-   embody
-   math
+   vla
+   llm
    distribute

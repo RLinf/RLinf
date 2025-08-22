@@ -6,7 +6,7 @@
 Welcome to **RLinf**!
 =====================
 
-RLinf is a flexible and scalable open-source infrastructure designed for post-training foundation models (LLMs, VLMs, VLAs) via reinforcement learning. The 'inf' in RLinf stands for Infrastructure, highlighting its role as a robust backbone for next-generation training. It also stands for Infinite, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
+RLinf is a flexible and scalable open-source infrastructure designed for post-training foundation models via reinforcement learning. The 'inf' in RLinf stands for Infrastructure, highlighting its role as a robust backbone for next-generation training. It also stands for Infinite, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
 
 .. Centered on Agentic Reinforcement Learning, RLinf supports the training and evaluation of next-generation agents by unlocking scalable compute, unifying mainstream frameworks, and streamlining the end-to-end workflow—making RL post-training accessible to everyone.
 
@@ -25,14 +25,13 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 **RLinf is unique with:**
 
 - Embodied Agent Support
-- Native adapters for VLA models: `OpenVLA`_, `OpenVLA-OFT`_, `π₀`_
-- Plug-and-play connectors for CPU- and GPU-based simulators: `ManiSkill3`_, `LIBERO`_
+- Fast adaptation support for mainstream VLA models: `OpenVLA`_, `OpenVLA-OFT`_, `π₀`_
+- Support for mainstream CPU & GPU-based simulators via standardized RL interfaces: `ManiSkill3`_, `LIBERO`_
 - Enabling the first RL fine-tuning of the π₀ model family with a flow-matching action expert.
 
 **RLinf is fast with:**
 
-- Automatic Online-Scaling Mechanism
-- Creatively achieves the first GPU switching within 1 second.
+- Automatic online-scaling mechanism: GPU switching within 1 second.
 - Auto-scheduling policy: automatically selects the most suitable execution mode based on the training workload.
 - Improves efficiency by 20-40% while preserving the on-policy property of RL algorithms.
 
@@ -40,9 +39,9 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 - Flexible Execution Modes
 
-  - Task-colocated: shares all GPUs across all workers.
-  - Task-disaggregated: enables fine-grained pipelining.
-  - Hybrid: combines colocated and disaggregated modes—specially designed for agent training in embodied intelligence.
+  - Collocated mode: shares all GPUs across all workers.
+  - Disaggregated mode: enables fine-grained pipelining.
+  - Hybrid mode: combines collocated and disaggregated modes—specially designed for agent training in embodied intelligence.
 
 - Multiple Backend Integrations
 
@@ -54,38 +53,6 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 - Support for SFT.
 
-.. RLinf supports:
-
-.. - **Embodied Intelligence**
-  
-..   - Native adapters for VLA models: `OpenVLA`_, `OpenVLA-OFT`_, `π₀`_
-..   - Plug-and-play connectors for simulators: `ManiSkill`_, `LIBERO`_
-..   - First RL fine-tuning of the π₀ model family
-
-.. - **Hybrid Execution Modes**
-  
-..   - **Task-collocated** that shares all GPUs across all workers.
-..   - **Task-disaggregated** with fine-grained pipelining。
-..   - **Hybrid** that combines collocated and disaggregated modes.
-
-.. - **Flexible Backend Integration**
-  
-..   - **Small-scale validation**: Hugging Face + FSDP for rapid adaptation and validation on new models and algorithms.
-..   - **Large-scale training**: `Megatron-LM`_ as the training backend with `SGLang`_ or `vLLM`_ as the inference engine for efficient large-scale execution.
-
-.. - **Elastic Scaling and Scheduling**
-  
-..   - **Online-scaling mechanism**: Dynamically scale both training and inference backends to handle the inherent variability of RL.  
-..   - **Auto-scheduling policy**: Automatically select the most suitable execution mode based on the user’s training workload.
-
-.. - **Algorithms**
-  
-..   - Support for popular RL methods, including **PPO**, **GRPO**, **DAPO**, and more.
-
-.. - **State-of-the-Art Performance**
-  
-..   - `Reproducible embodied RL training results <TODO:>`_ for robotic arms, demonstrating strong generalization capabilities.
-..   - Math RL training with **1.5B / 7B / 32B** models achieving `SOTA results <TODO:>`_.
 
 .. _OpenVLA: https://github.com/openvla/openvla
 .. _OpenVLA-OFT: https://github.com/moojink/openvla-oft
@@ -155,7 +122,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 --------------------------------------------
 
 
-Contribution guidelines
+Contribution Guidelines
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Great! We are always on the lookout for more contributors to our code base.

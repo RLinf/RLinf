@@ -11,11 +11,11 @@ It consists of two public-facing classes:
 Group Creation & Caching
 ----------------------------------------
 
-The ``Collective`` class is instantiated on each task (as a singleton per task) and is responsible for creating and caching ``CollectiveGroup`` instances.
-When two tasks or a set of tasks need to communicate, a collective group must be established that includes all participants.
+The ``Collective`` class is instantiated on each worker (as a singleton per worker) and is responsible for creating and caching ``CollectiveGroup`` instances.
+When two workers or a set of workers need to communicate, a collective group must be established that includes all participants.
 The typical usage in this framework is to form groups for point-to-point communication by
-``Collective.create_collective_group(task_addresses, group_name=None)``,
-which either retrieves an existing ``CollectiveGroup`` for the given set of task addresses or creates a new one.
+``Collective.create_collective_group(worker_addresses, group_name=None)``,
+which either retrieves an existing ``CollectiveGroup`` for the given set of worker addresses or creates a new one.
 
 
 .. _collectivegroup_p2p:
@@ -23,9 +23,9 @@ which either retrieves an existing ``CollectiveGroup`` for the given set of task
 CollectiveGroup and P2P Communication
 -------------------------------------
 
-A ``CollectiveGroup`` is the core abstraction in RLinf for managing point-to-point communication between two tasks.
+A ``CollectiveGroup`` is the core abstraction in RLinf for managing point-to-point communication between two workers.
 It determines the local rank (0 or 1) from ``group_info`` and **lazily initializes** communication process groups on first use.
-Internally, separate **send** and **receive** process groups are created for both GPU (NCCL) and CPU (Gloo), forming dedicated one-way channels; in a two-task setup, a carefully configured broadcast is equivalent to a send/receive.
+Internally, separate **send** and **receive** process groups are created for both GPU (NCCL) and CPU (Gloo), forming dedicated one-way channels; in a two-worker setup, a carefully configured broadcast is equivalent to a send/receive.
 Initialization uses a TCP rendezvous to coordinate port allocation and synchronization, ensuring both sides are ready.
 Each direction maintains a work queue backed by a dedicated CUDA stream, strictly preserving the order of send/recv operations and preventing message interleaving.
 
@@ -89,6 +89,6 @@ Minimal examples:
 Summary
 --------------
 
-In summary, the **collective** component provides the engine for P2P data transfer between tasks. It abstracts away the details of using PyTorch's distributed backends, managing multiple process groups to simulate send/receive, and optimizing for GPU transfers. 
+In summary, the **collective** component provides the engine for P2P data transfer between workers. It abstracts away the details of using PyTorch's distributed backends, managing multiple process groups to simulate send/receive, and optimizing for GPU transfers. 
 Users of the framework typically invoke these via the `Worker.send/recv` or channel operations, rather than calling `CollectiveGroup` directly.
 

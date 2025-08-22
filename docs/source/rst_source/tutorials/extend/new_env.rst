@@ -2,7 +2,7 @@ Adding New Environment
 ============================
 
 This document provides detailed instructions on how to add new environments to the RLinf framework.  
-RLinf supports various reinforcement learning environments, including robotic manipulation (e.g., ManiSkill, LIBERO) and others.
+RLinf supports various reinforcement learning environments, including robotic manipulation (e.g., ManiSkill3, LIBERO) and others.
 
 The RLinf environment system consists of the following components:
 
@@ -121,7 +121,7 @@ If you need to support saving/restoring environment state, inherit from ``EnvOff
 
 .. code-block:: python
 
-   from infini_rl.envs.env_offload_wrapper import EnvOffloadMixin
+   from rlinf.envs.env_offload_wrapper import EnvOffloadMixin
    import io
    import torch
 
@@ -202,11 +202,11 @@ Add action processing utilities in ``action_utils.py``:
 5. Create Task Variants (Optional)
 -----------------------------------
 
-If you require specific task variants, place them under ``tasks/variants/``:
+If you require specific task variants, place them under ``envs/YOUR_ENV/tasks/variants/``:
 
 .. code-block:: python
 
-   # tasks/variants/your_task_variant.py
+   # envs/YOUR_ENV/tasks/variants/your_task_variant.py
    class YourTaskVariant:
        def __init__(self, config):
            self.config = config

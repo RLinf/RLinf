@@ -66,7 +66,7 @@ autosummary_generate = True
 
 html_theme = "pydata_sphinx_theme"
 html_show_sourcelink = False  # Hide “View page source” link
-html_baseurl = "https://RLinf-docs.readthedocs.io/en/latest/"
+html_baseurl = "https://RLinf-docs.readthedocs.io/en/latest/"  # TODO: update
 html_favicon = "_static/favicon.ico"
 html_static_path = ["_static"]
 html_css_files = [
@@ -116,7 +116,7 @@ html_theme_options = {
     "icon_links": [
         {
             "name": "GitHub",
-            "url": "https://cloud.infini-ai.com",  # TODO: update to GitHub
+            "url": "https://github.com/RLinf/RLinf",
             "icon": "fab fa-github",
             "type": "fontawesome",
         },

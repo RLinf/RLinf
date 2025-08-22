@@ -1,3 +1,4 @@
-Auto Scheduling Policy
+Auto Scheduling Strategy
 ================================
 
+TO Be Updated ~

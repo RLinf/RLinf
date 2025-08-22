@@ -1,15 +1,40 @@
-Basic YAML Configuration
-================================
+YAML Configuration
+=====================
 
 
-Below is a complete reference for the configuration file used in the `GRPO + Megatron-LM + SGLang` reinforcement learning pipeline. 
+Below is a complete reference for the configuration file used in the RLinf
 Every important key in the YAML is documented below so that you can confidently adapt the file to your own cluster, model, or research ideas.  
 Parameters are grouped exactly by their top-level key.
 
+For clarity, this section includes the following three main parts: 
+**Basic Configuration**, **MATH-specific Configuration**, and **Embody-specific Configuration**.
+Therefore, users can find the corresponding configuration information according to their own needs.
+
+.. contents::
+   :depth: 1
+   :local:
+
+
+Basic Configuration
+---------------------
+
+hydra
+~~~~~~
+
+.. code:: yaml
+
+  hydra:
+    run:
+      dir: .
+    output_subdir: null 
+
+``hydra.run.dir``: Working directory for Hydra runs.
+
+``hydra.output_subdir``: Output subdirectory (null disables subdirectory creation).
 
 
 cluster
-----------------
+~~~~~~~~~~~~~~~
 
 .. code:: yaml
 
@@ -30,22 +55,20 @@ Each line of component placement config looks like: ``actor,inference: 0-4``,
 which means both the actor and inference groups occupy GPU 0 to 4
 Alternatively, "all" can be used to specify all GPUs
 
+See more details in :doc:`../mode/index`.
+
 runner
--------------
+~~~~~~~~~~~~~~~
 
 .. code:: yaml
 
   runner:
     task_type: math
     logger:
-      path: ${runner.output_dir}/${runner.experiment_name}/tensorboard
-      tensorboard:
-        enable: True
-        queue_size: 10
-      wandb:
-        enable: False
-        project_name: infini-rl
-        experiment_name: ${runner.experiment_name}
+      log_path: ${runner.output_dir}/${runner.experiment_name}
+      project_name: rlinf
+      experiment_name: ${runner.experiment_name}
+      logger_backends: ["tensorboard"] # wandb, swanlab
 
     max_epochs: 5
     max_steps: -1
@@ -55,42 +78,42 @@ runner
 
     seq_length: 2048
 
-    enable_dynamic_batch_size: False
-    max_tokens_per_mbs: 2048
-
     resume_dir: null
     experiment_name: grpo-1.5b
     output_dir: ../results
 
+``runner.task_type``: Task type identifier, math or embodied.
 
-``runner.logger``: The logging parameter including tensorboard and wandb
+**logger:**
 
-``runner.max_epochs``: Maximum number of *epochs* to run. Epoch here = walking once through the dataset
+``runner.logger.log_path``: Base directory for log files.
 
-``runner.max_steps``: Maximum number of training steps before stopping early. If set to -1, this defaults to set automatially based on the ``runner.max_epochs``.
+``runner.logger.project_name``: Project name for experiment tracking.
 
-``runner.val_check_interval``: How often to launch a validation rollout.
+``runner.logger.experiment_name``: Specific experiment name.
+
+``runner.logger.logger_backends``: List of logging backends (tensorboard, wandb, swanlab).
+
+See more details about logger backends in :doc:`../advance/logger`.
+
+``runner.max_epochs``: Maximum number of training epochs.
+
+``runner.max_steps``: Maximum training steps. If set to -1, this defaults to set automatially based on the ``runner.max_epochs``.
+
+``runner.val_check_interval``: How often to launch a validation rollout (-1 to disable).
 
 ``runner.save_interval``: Checkpoint frequency in trainer steps.
 
-``runner.seq_length``: Total sequence length (prompt + generated response) fed into Megatron during RL updates.
-
-``runner.enable_dynamic_batch_size``: Whether to user dynamic batch size when training by Megatron.
-
-``runner.max_tokens_per_mbs``: Upper limit of tokens in a Megatron microbatch when dynamic batching is enabled.
+``runner.seq_length``: Total sequence length (prompt + generated response) fed into models.
 
 
 algorithm
----------
+~~~~~~~~~~~~~~~
 
 .. code:: yaml
 
   algorithm:
     group_size: 2
-
-    n_minibatches: 4
-    training_batch_size_per_gpu: 1 
-    rollout_batch_size_per_gpu: null 
 
     logprob_forward_micro_batch_size: 1 
 
@@ -116,17 +139,9 @@ algorithm
       top_k: 1000000
       top_p: 1.0
       repetition_penalty: 1.0
-      max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
-      min_new_tokens: 1
 
 
 ``algorithm.group_size``: Responses per prompt (set > 1 to enable group baselines).
-
-``algorithm.n_minibatches``: Number of gradient update per batch.
-
-``algorithm.training_batch_size_per_gpu``: Micro-batch size on each actor GPU.
-
-``algorithm.rollout_batch_size_per_gpu``: Inference micro-batch per GPU; null divides the global rollout batch evenly.
 
 ``algorithm.logprob_forward_micro_batch_size``: Micro-batch size for log-prob forward passes.
 
@@ -166,38 +181,10 @@ algorithm
 
 ``algorithm.sampling_params.repetition_penalty``: Penalize repeated tokens.
 
-``algorithm.sampling_params.max_new_tokens``: Max generated tokens; computed from runner.seq_length and data.max_prompt_length.
 
-``algorithm.sampling_params.min_new_tokens``: Minimum generated tokens.
-
-
-inference
----------
-
-.. code:: yaml
-
-  inference:
-    group_name: "InferenceGroup"
-    load_from_actor: True
-    model:
-      tensor_model_parallel_size: 1
-      pipeline_model_parallel_size: 1
-      sequence_parallel: False
-
-``inference.group_name``: Logical name for the inference worker group.
-
-``inference.load_from_actor``: Initialize inference weights from the actor.
-
-``inference.model.tensor_model_parallel_size``: TP degree inside the inference engine.
-
-``inference.model.pipeline_model_parallel_size``: PP degree inside the inference engine.
-
-``inference.model.sequence_parallel``: Enable Megatron sequence parallelism for inference
-
-See more details about the parallelism in :doc:`../advance/5D`.
 
 rollout
--------
+~~~~~~~~~~~~~~~
 
 .. code:: yaml
 
@@ -208,6 +195,120 @@ rollout
 
     model_dir: ../../model/DeepSeek-R1-Distill-Qwen-1.5B/
     model_arch: qwen2.5
+
+    recompute_logprobs: True
+
+``rollout.gpu_memory_utilization``: Target GPU memory utilization fraction.
+
+``rollout.group_name``: Logical name for rollout/inference workers.
+
+``rollout.model_dir``: Path to the HF model used by the generation backend.
+
+``rollout.model_arch``: Internal architecture tag used by the backend (e.g., qwen2.5).
+
+``rollout.recompute_logprobs``: Recompute log-probs for sampled sequences.
+
+
+
+actor
+~~~~~~~~~~~~~~~
+
+.. code:: yaml
+
+
+  actor:
+    group_name: "ActorGroup"
+
+    checkpoint_load_path: null
+
+    seed: 1234
+
+
+**Top-level**
+
+``actor.group_name``: Logical name for the training (actor) workers.
+
+``actor.checkpoint_load_path``: Path to a checkpoint to load before training.
+
+``actor.seed``: Global seed for reproducibility.
+
+reward
+~~~~~~~~~~~~~~~
+
+.. code:: yaml
+
+  reward:
+    use_reward_model: false
+
+``reward.use_reward_model``: Whether to use a reward model.
+
+critic
+~~~~~~~~~~~~~~~
+
+.. code:: yaml
+
+  critic:
+    use_critic_model: false
+
+
+``critic.use_critic_model``: Whether to use a critic model.
+
+
+
+MATH-specific Configuration
+----------------------------
+
+runner
+~~~~~~~~~~~~~~~
+
+.. code:: yaml
+
+  runner:
+    enable_dynamic_batch_size: False
+    max_tokens_per_mbs: 2048
+
+``runner.enable_dynamic_batch_size``: Whether to user dynamic batch size when training by Megatron.
+
+``runner.max_tokens_per_mbs``: Upper limit of tokens in a Megatron microbatch when dynamic batching is enabled.
+
+
+algorithm
+~~~~~~~~~~~~~~~
+
+.. code:: yaml
+
+  algorithm:
+
+    n_minibatches: 4
+    training_batch_size_per_gpu: 1 
+    rollout_batch_size_per_gpu: null 
+
+    sampling_params:
+      max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
+      min_new_tokens: 1
+
+``algorithm.n_minibatches``: Number of gradient update per batch.
+
+``algorithm.training_batch_size_per_gpu``: Micro-batch size on each actor GPU.
+
+``algorithm.rollout_batch_size_per_gpu``: Inference micro-batch per GPU; null divides the global rollout batch evenly.
+
+
+**sampling_params:**
+
+
+``algorithm.sampling_params.max_new_tokens``: Max generated tokens; computed from runner.seq_length and data.max_prompt_length.
+
+``algorithm.sampling_params.min_new_tokens``: Minimum generated tokens.
+
+
+
+rollout
+~~~~~~~~~~~~~~~
+
+.. code:: yaml
+
+  rollout:
     enforce_eager: False         # if False, vllm will capture cuda graph, which will take more time to initialize.
     distributed_executor_backend: mp   # ray or mp
     disable_log_stats: False
@@ -216,7 +317,6 @@ rollout
     eos: null                   # will be tokenizer.eos_token_id if null.
 
     attention_backend: triton
-    recompute_logprobs: True
 
     tensor_parallel_size: 1
     pipeline_parallel_size: 1
@@ -232,13 +332,7 @@ rollout
     use_torch_compile: False # enable torch_compile in SGLang for rollout.
     torch_compile_max_bs: 128 # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.
 
-``rollout.group_name``: Logical name for rollout/inference workers.
 
-``rollout.gpu_memory_utilization``: Target VRAM fraction per rollout worker.
-
-``rollout.model_dir``: Path to the HF model used by the generation backend.
-
-``rollout.model_arch``: Internal architecture tag used by the backend (e.g., qwen2.5).
 
 ``rollout.enforce_eager``: If True, disable CUDA graph capture to shorten warm-up.
 
@@ -254,11 +348,11 @@ rollout
 
 ``rollout.attention_backend``: Attention kernel backend (e.g., triton). 
 
-``rollout.recompute_logprobs``: Recompute log-probs for sampled sequences.
-
 ``rollout.tensor_parallel_size``: TP degree inside the generation backend.
 
 ``rollout.pipeline_parallel_size``: PP degree inside the generation backend.
+
+See more details about the parallelism in :doc:`../advance/5D`.
 
 ``rollout.validate_weight``: Send full weights once for cross-check/validation.
 
@@ -279,7 +373,7 @@ rollout
 
 
 data
-----
+~~~~~~~~~~~~~~~
 
 .. code:: yaml
 
@@ -319,18 +413,15 @@ data
 ``data.val_data_paths``: List of validation JSONL file paths.
 
 actor
------
+~~~~~~~~~~~~~~~
 
 .. code:: yaml
 
 
   actor:
-    group_name: "ActorGroup"
     training_backend: megatron
     mcore_gpt: True
     spec_name: decoder_gpt
-
-    checkpoint_load_path: null
 
     offload_optimizer: True
     offload_weight: True
@@ -339,8 +430,6 @@ actor
     enable_dp_load_balance: False
 
     calculate_flops: False
-
-    seed: 1234
 
     model:
       precision: fp16
@@ -432,15 +521,12 @@ actor
 
 **Top-level**
 
-``actor.group_name``: Logical name for the training (actor) workers.
 
 ``actor.training_backend``: Training backend (megatron).
 
 ``actor.mcore_gpt``: Use Megatron-Core GPT stack. TODO: exact scope.
 
 ``actor.spec_name``: Model spec/preset name (e.g., decoder-only GPT). TODO: preset mapping.
-
-``actor.checkpoint_load_path``: Path to a checkpoint to load before training.
 
 ``actor.offload_optimizer``: Offload optimizer state to CPU to reduce GPU memory.
 
@@ -452,7 +538,6 @@ actor
 
 ``actor.calculate_flops``: Compute and log FLOPs for profiling.
 
-``actor.seed``: Global seed for reproducibility.
 
 **Model sub-section**
 
@@ -594,28 +679,432 @@ actor
 
 
 reward
-------
+~~~~~~~~~~~~~~~
 
 .. code:: yaml
 
   reward:
-    use_reward_model: false
     reward_type: math
     reward_scale: 5.0
 
-``reward.use_reward_model``: Whether to use a reward model.
 
 ``reward.reward_type``: Which reward type to use for the training.
 
 ``reward.reward_scale``: when the answer is correct, it receives ``reward_scale``; when it is incorrect, it receives ``-reward_scale``.
 
-critic
-------
+
+Embody-specific Configuration
+-------------------------------
+
+
+defaults
+~~~~~~~~~~~~~~~
 
 .. code:: yaml
 
-  critic:
-    use_critic_model: false
+  defaults:
+    - env/train: PutCarrotOnPlateInScene
+    - env/eval: PutCarrotOnPlateInScene
+
+``defaults``: Hydra configuration inheritance. Specifies which environment configurations to load for training and evaluation.
+
+hydra
+~~~~~~~~~~~~~~~
+
+.. code:: yaml
+
+  hydra:
+    searchpath:
+      - file://${oc.env:REPO_PATH}/config/
+
+``hydra.searchpath``: Additional search paths for configuration files.
 
 
-``critic.use_critic_model``: Whether to use a critic model.
+runner
+~~~~~~~~~~~~~~~
+
+.. code:: yaml
+
+  runner:
+    only_eval: False
+    max_prompt_length: 30
+
+``runner.only_eval``: Run evaluation only without training.
+
+``runner.max_prompt_length``: Maximum prompt length in tokens.
+
+algorithm
+~~~~~~~~~~~~~~~
+
+.. code:: yaml
+
+  algorithm:
+    auto_reset: True
+    ignore_terminations: True
+    require_values: True
+    normalize_advantages: True
+    kl_penalty: kl
+
+    n_chunk_steps: 10
+    n_eval_chunk_steps: 10
+    rollout_micro_batch_size: 256
+    num_group_envs: 32
+    rollout_epoch: 1
+
+    reward_type: chunk_level
+    logprob_type: token_level
+    entropy_type: token_level
+
+
+    length_params:
+      max_new_token: null
+      max_length: 1024
+      min_length: 1
+
+``algorithm.auto_reset``: Automatically reset environments when episodes terminate.
+
+``algorithm.ignore_terminations``: Ignore episode terminations during training.
+
+``algorithm.require_values``: Whether value function computation is required.
+
+``algorithm.normalize_advantages``: Normalize advantages across the batch.
+
+``algorithm.kl_penalty``: KL divergence estimation method (kl or kl_penalty).
+
+``algorithm.n_chunk_steps``: Number of action steps per chunk.
+
+``algorithm.n_eval_chunk_steps``: Number of action steps per evaluation chunk.
+
+``algorithm.rollout_micro_batch_size``: Micro-batch size for rollout generation.
+
+``algorithm.num_group_envs``: Number of environment groups.
+
+``algorithm.rollout_epoch``: Number of rollout epochs per training step.
+
+``algorithm.reward_type``: Reward aggregation level (chunk_level, token_level, step_level).
+
+``algorithm.logprob_type``: Log probability computation level.
+
+``algorithm.entropy_type``: Entropy computation level.
+
+**length_params:**
+
+``algorithm.length_params.max_new_token``: Maximum new tokens to generate.
+
+``algorithm.length_params.max_length``: Maximum total sequence length.
+
+``algorithm.length_params.min_length``: Minimum sequence length.
+
+env
+~~~~~~~~~~~~~~~
+
+.. code:: yaml
+
+  env:
+    group_name: "EnvGroup"
+    channel:
+      name: "env_buffer_list"
+      queue_name: "obs_buffer"
+      queue_size: 0
+    enable_offload: True
+
+``env.group_name``: Logical name for environment worker group.
+
+``env.channel.name``: Shared memory channel name for inter-process communication.
+
+``env.channel.queue_name``: Queue name for observation buffer.
+
+``env.channel.queue_size``: Queue size (0 for unlimited).
+
+``env.enable_offload``: Enable environment offloading to reduce memory usage.
+
+rollout
+~~~~~~~~~~~~~~~
+
+.. code:: yaml
+
+  rollout:
+    channel:
+      name: ${env.channel.name}
+      queue_name: "action_buffer"
+      queue_size: 0
+    mode: "collocate"
+    backend: "huggingface"
+    enforce_eager: True
+    enable_offload: True
+    pipeline_stage_num: 2
+
+
+``rollout.channel.name``: Shared memory channel (inherits from env).
+
+``rollout.channel.queue_name``: Queue name for action buffer.
+
+``rollout.channel.queue_size``: Queue size.
+
+``rollout.mode``: Rollout mode (collocate for shared GPU).
+
+``rollout.backend``: Model backend (huggingface, vllm).
+
+``rollout.enforce_eager``: Disable CUDA graph capture for faster initialization.
+
+``rollout.enable_offload``: Enable model offloading to reduce memory usage.
+
+``rollout.pipeline_stage_num``: Number of pipeline stages for model parallelism.
+
+actor
+~~~~~~~~~~~~~~~
+
+.. code:: yaml
+
+  actor:
+    channel:
+      name: ${env.channel.name}
+      queue_name: "replay_buffer"
+      queue_size: 0
+    training_backend: "fsdp"
+    micro_batch_size: 8
+    global_batch_size: 160
+    enable_offload: True
+
+    model:
+      model_name: "openvla_oft"
+      action_dim: 7
+      num_action_chunks: 8
+      use_proprio: False
+      unnorm_key: bridge_orig
+      value_type: ${algorithm.reward_type}
+      val_micro_batch_size: 8
+      center_crop: True
+      do_sample: False
+      
+      precision: "bf16"
+      add_bias_linear: False
+      add_qkv_bias: True
+      vocab_size: 32000
+      hidden_size: 4096
+      policy_setup: "widowx_bridge"
+      vh_mode: "a0"
+      image_size: [224, 224]
+      is_lora: True
+      lora_rank: 32
+      lora_path: /storage/models/oft-sft/lora_004000
+      ckpt_path: null
+      num_images_in_input: 1
+      attn_implementation: "flash_attention_2"
+      low_cpu_mem_usage: True
+      trust_remote_code: True
+
+    tokenizer:
+      tokenizer_type: "HuggingFaceTokenizer"
+      tokenizer_model: "/storage/download_models/Openvla-oft-SFT-libero10-trajall/"
+      extra_vocab_size: 421
+      use_fast: False
+      trust_remote_code: True
+      padding_side: "right"
+    
+    optim:
+      lr: 1.0e-4
+      value_lr: 3.0e-3
+      adam_beta1: 0.9
+      adam_beta2: 0.999
+      adam_eps: 1.0e-05
+      clip_grad: 10.0
+
+
+``actor.channel.name``: Shared memory channel (inherits from env).
+
+``actor.channel.queue_name``: Queue name for replay buffer.
+
+``actor.training_backend``: Training backend (fsdp for distributed training).
+
+``actor.micro_batch_size``: Micro-batch size per GPU.
+
+``actor.global_batch_size``: Global batch size across all GPUs.
+
+``actor.enable_offload``: Enable model offloading to reduce memory usage.
+
+**Model Configuration:**
+
+``actor.model.model_name``: Model architecture name (openvla_oft).
+
+``actor.model.action_dim``: Action space dimensionality.
+
+``actor.model.num_action_chunks``: Number of action chunks per sequence.
+
+``actor.model.use_proprio``: Whether to use proprioceptive information.
+
+``actor.model.unnorm_key``: Key for action normalization.
+
+``actor.model.value_type``: Value function type (inherits from algorithm.reward_type).
+
+``actor.model.val_micro_batch_size``: Micro-batch size for value function computation.
+
+``actor.model.center_crop``: Whether to center crop input images.
+
+``actor.model.do_sample``: Whether to use sampling during inference.
+
+``actor.model.precision``: Numerical precision (bf16, fp16, fp32).
+
+``actor.model.add_bias_linear``: Add bias to linear layers.
+
+``actor.model.add_qkv_bias``: Add bias to QKV projections.
+
+``actor.model.vocab_size``: Vocabulary size.
+
+``actor.model.hidden_size``: Hidden dimension size.
+
+``actor.model.policy_setup``: Policy configuration (widowx_bridge).
+
+``actor.model.vh_mode``: Vision-head mode (a0).
+
+``actor.model.image_size``: Input image dimensions [height, width].
+
+``actor.model.is_lora``: Whether to use LoRA fine-tuning.
+
+``actor.model.lora_rank``: LoRA rank for low-rank adaptation.
+
+``actor.model.lora_path``: Path to LoRA weights.
+
+``actor.model.ckpt_path``: Path to model checkpoint.
+
+``actor.model.num_images_in_input``: Number of images in model input.
+
+``actor.model.attn_implementation``: Attention implementation (flash_attention_2).
+
+``actor.model.low_cpu_mem_usage``: Use low CPU memory initialization.
+
+``actor.model.trust_remote_code``: Trust remote code in model loading.
+
+**Tokenizer Configuration:**
+
+``actor.tokenizer.tokenizer_type``: Tokenizer type (HuggingFaceTokenizer).
+
+``actor.tokenizer.tokenizer_model``: Path to tokenizer model.
+
+``actor.tokenizer.extra_vocab_size``: Additional vocabulary size.
+
+``actor.tokenizer.use_fast``: Use fast tokenizer implementation.
+
+``actor.tokenizer.trust_remote_code``: Trust remote code in tokenizer.
+
+``actor.tokenizer.padding_side``: Padding side (left or right).
+
+**Optimizer Configuration:**
+
+``actor.optim.lr``: Learning rate for policy network.
+
+``actor.optim.value_lr``: Learning rate for value function.
+
+``actor.optim.adam_beta1/beta2``: Adam optimizer beta parameters.
+
+``actor.optim.adam_eps``: Adam optimizer epsilon.
+
+``actor.optim.clip_grad``: Gradient clipping norm.
+
+
+
+Env-based 
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The following configuration describes the key parameters of the environment, using Libero-10 as an example.
+
+The path is 
+
+**Environment Type**
+
+.. code:: yaml
+
+  simulator_type: libero
+  task_suite_name: libero_10
+
+``simulator_type``: Specifies the simulator type (libero for Libero benchmark).
+
+``task_suite_name``: Specifies the task suite (libero_10 for 10-task benchmark).
+
+**Episode Configuration**
+
+.. code:: yaml
+
+  auto_reset: ${algorithm.auto_reset}
+  ignore_terminations: ${algorithm.ignore_terminations}
+  max_episode_steps: 512
+
+``auto_reset``: Automatically reset environment when episode terminates (inherits from algorithm config).
+
+``ignore_terminations``: Ignore episode terminations during training (inherits from algorithm config).
+
+``max_episode_steps``: Maximum number of steps per episode (512 for complex Libero tasks).
+
+**Reward Configuration**
+
+.. code:: yaml
+
+  use_rel_reward: true
+  reward_coef: 5.0
+
+``use_rel_reward``: Use relative rewards (difference between current and previous step rewards).
+
+``reward_coef``: Reward coefficient for scaling rewards (5.0 for amplified reward signals).
+
+**Randomization and Groups**
+
+.. code:: yaml
+
+  seed: 0
+  num_task: ${algorithm.num_group_envs}
+  num_group: ${algorithm.num_group_envs}
+  group_size: ${algorithm.group_size}
+  use_fixed_reset_state_ids: false
+
+``seed``: Random seed for environment initialization (0 for reproducibility).
+
+``num_task``: Number of tasks to use (inherits from algorithm.num_group_envs).
+
+``num_group``: Number of environment groups (inherits from algorithm.num_group_envs).
+
+``group_size``: Number of environments per group (inherits from algorithm.group_size).
+
+``use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization).
+
+**Input Configuration**
+
+.. code:: yaml
+
+  num_images_in_input: 1
+
+``num_images_in_input``: Number of images in model input (1 for single camera view).
+
+**Environment Scaling**
+
+.. code:: yaml
+
+  num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
+
+``num_envs``: Total number of environments (calculated as group_size × num_group_envs).
+
+**Video Recording**
+
+.. code:: yaml
+
+  video_cfg:
+    save_video: true
+    info_on_video: true
+    video_base_dir: ${runner.logger.log_path}/video/train
+
+``video_cfg.save_video``: Enable video recording during training.
+
+``video_cfg.info_on_video``: Overlay training information on videos.
+
+``video_cfg.video_base_dir``: Directory to save training videos.
+
+**Camera Configuration**
+
+.. code:: yaml
+
+  init_params:
+    camera_heights: 256
+    camera_widths: 256
+
+``init_params.camera_heights``: Camera image height in pixels (256).
+
+``init_params.camera_widths``: Camera image width in pixels (256).

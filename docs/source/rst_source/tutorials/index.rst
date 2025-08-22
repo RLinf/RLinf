@@ -11,7 +11,7 @@ It provides a collection of hands-on tutorials covering all the core components 
 
 - :doc:`mode/index`  
    Learn about the different execution modes supported by RLinf, 
-   including task-colocated mode, task-disaggregated mode, 
+   including collocated mode, disaggregated mode, 
    and a hybrid mode with fine-grained pipelining.
 
 - :doc:`scheduler/index`  
