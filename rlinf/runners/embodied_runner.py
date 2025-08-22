@@ -47,8 +47,6 @@ class EmbodiedRunner:
         # this timer checks if we should stop training
         self.run_timer = run_timer
 
-        self.compute_ref_logprobs = self.cfg.algorithm.kl_beta > 0
-
         self.consumed_samples = 0
         # the step here is GRPO step
         self.global_step = 0

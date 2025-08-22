@@ -97,7 +97,7 @@ rollout:
     queue_size: 0
   mode: "colocate"
   backend: "huggingface"
-  model_dir: "/storage/download_models/openvla-7b-rlvla-rl/"
+  model_dir: "/path/to/model/openvla-7b-rlvla-rl/"
   enable_offload: True
   pipeline_stage_num: 2
 
@@ -108,7 +108,7 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: "/storage/download_models/openvla-7b-rlvla-rl/"
+  checkpoint_load_path: "/path/to/model/openvla-7b-rlvla-rl/"
   checkpoint_save_path: "/workspace/results"
   micro_batch_size: 20
   global_batch_size: 160
@@ -117,7 +117,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/storage/download_models/openvla-7b-rlvla-rl/"
+    tokenizer_model: "/path/to/model/openvla-7b-rlvla-rl/"
     use_fast: False
     trust_remote_code: True
     padding_side: "right"

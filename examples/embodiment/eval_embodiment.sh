@@ -8,7 +8,7 @@ export MUJOCO_GL="osmesa"
 export PYOPENGL_PLATFORM="osmesa"
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 # NOTE: set LIBERO_REPO_PATH to the path of the LIBERO repo
-export LIBERO_REPO_PATH="/storage/repo/LIBERO"
+export LIBERO_REPO_PATH="/path/to/repo/LIBERO"
 # NOTE: set LIBERO_CONFIG_PATH for libero/libero/__init__.py
 export LIBERO_CONFIG_PATH=${LIBERO_REPO_PATH}
 

@@ -105,8 +105,7 @@ rollout:
     queue_size: 0
   mode: "colocate"
   backend: "huggingface"
-  model_dir: "/model/openvla-7b-rlvla-warmup/"
-  recompute_logprobs: False
+  model_dir: "/path/to/model/openvla-7b-rlvla-warmup/"
   gpu_memory_utilization: 0.5
   enforce_eager: True
   enable_offload: True
@@ -120,7 +119,7 @@ actor:
     queue_size: 0
   training_backend: "fsdp"
 
-  checkpoint_load_path: "/model/openvla-7b-rlvla-warmup/"
+  checkpoint_load_path: "/path/to/model/openvla-7b-rlvla-warmup/"
   checkpoint_save_path: "../results"
 
   micro_batch_size: 20
@@ -130,7 +129,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/model/openvla-7b-rlvla-warmup/"
+    tokenizer_model: "/path/to/model/openvla-7b-rlvla-warmup/"
     extra_vocab_size: 421
     use_fast: False
     trust_remote_code: True

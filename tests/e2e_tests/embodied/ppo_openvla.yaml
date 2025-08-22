@@ -48,8 +48,6 @@ algorithm:
   num_group_envs: 8
   rollout_epoch: 1
 
-  recompute_logprobs: False
-
   # mbs to do log prob inference, can be set to
   # lower than rollout_micro_batch_size to reduce
   # memory usage
@@ -108,7 +106,6 @@ rollout:
   mode: "colocate"
   backend: "huggingface"
   model_dir: "/workspace/dataset/openvla-7b"
-  return_logprobs: ${not:algorithm.recompute_logprobs}
   gpu_memory_utilization: 0.5
   enforce_eager: True
   enable_offload: True
