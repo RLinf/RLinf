@@ -14,7 +14,6 @@ RUN pip install vllm==0.7.1
 RUN pip install setuptools==69.5.1 datasets sentencepiece regex einops scipy wandb tensorboard nvitop accelerate pylatexenc pybind11 torch_memory_saver swanlab
 RUN pip install ray[default]==2.47.0
 ENV CUDNN_PATH=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/
-# te 2.4.0 will ignore CUDNN_PATH and cannot find cudnn.h (do not know why)
 RUN pip install transformer_engine[pytorch]==2.1.0
 WORKDIR /opt
 RUN git clone https://github.com/NVIDIA/apex && cd apex && pip install -v \

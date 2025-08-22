@@ -1,8 +1,90 @@
 [project]
 name = "RLinf"
-dynamic = ["version", "dependencies", "optional-dependencies"]
+version = "0.1.0"
 readme = {file = "README.md", content-type = "text/markdown"}
-requires-python = ">=3.8"
+requires-python = "==3.11.10"
+keywords = [
+    "reinforcement-learning",
+    "embodied-intelligence",
+    "large-language-models",
+]
+classifiers = [
+    #   2 - Pre-Alpha  
+    #   3 - Alpha
+    #   4 - Beta
+    #   5 - Production/Stable
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: GPU :: NVIDIA CUDA :: 12 :: 12.4",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+]
+
+dependencies = [
+    # Core System
+    "accelerate",
+    "ray[default]",
+    "torch==2.5.1",
+
+    # Data processing
+    "pylatexenc",
+    "datasets",
+    "latex2sympy2",
+    "sentencepiece",
+    "torchdata",
+    "wandb",
+    "word2number",
+    "regex",
+    "scipy",
+
+    # Utilities
+    "hydra-core==1.4.0.dev1",
+    "einops",
+    "nvitop",
+    "pybind11",
+    "torch-memory-saver",
+    "setuptools>=69.5.1,<75.9",
+
+    # Logging
+    "swanlab",
+    "tensorboard",
+]
+
+[project.optional-dependencies]
+sgl_vllm = [
+    "transformers==4.48.3",
+    "sglang[all]==0.4.4",
+    "vllm==0.7.1",
+    "apex",
+]
+embodied = [
+    "transformers==4.40.1",
+    "draccus",
+    "rich",
+    "tensorflow_graphics",
+    "peft==0.11.1",
+    "timm==0.9.10",
+    "mani_skill",
+    "tensordict",
+    "libero @ git+https://github.com/Lifelong-Robot-Learning/LIBERO.git"
+]
+
+[tool.uv]
+prerelease = "allow"
+no-build-isolation-package = ["apex", "flash-attn"]
+conflicts = [
+    [
+      { extra = "sgl_vllm" },
+      { extra = "embodied" },
+    ],
+]
+
+[tool.uv.sources]
+latex2sympy2 = { git = "https://github.com/RLinf/latex2sympy2.git" }
+apex = { git = "https://github.com/NVIDIA/apex.git" }
+
+[tool.uv.extra-build-variables]
+apex = { APEX_CPP_EXT = "1", APEX_CUDA_EXT = "1" }
 
 [tool.ruff]
 line-length = 88

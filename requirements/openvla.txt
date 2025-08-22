@@ -1,0 +1,9 @@
+openvla @ git+https://github.com/openvla/openvla.git
+openvla_oft @ git+https://github.com/moojink/openvla-oft.git
+# https://github.com/openvla/openvla/blob/main/experiments/robot/libero/libero_requirements.txt
+imageio[ffmpeg]
+robosuite==1.4.1
+bddl
+easydict
+cloudpickle
+gym
