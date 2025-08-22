@@ -35,7 +35,7 @@ runner:
 
   resume_dir: null
   experiment_name: grpo-1.5b
-  output_dir: /storage/results
+  output_dir: ../results
 
 algorithm:
   group_size: 16
@@ -104,7 +104,7 @@ rollout:
 
   gpu_memory_utilization: 0.55
 
-  model_dir: /storage/hf_models/DeepSeek-R1-Distill-Qwen-1.5B
+  model_dir: /model/DeepSeek-R1-Distill-Qwen-1.5B/
   model_arch: qwen2.5
   enforce_eager: False         # if False, vllm will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
@@ -140,8 +140,8 @@ data:
   shuffle: True
   validation_shuffle: True
   seed: 1234
-  train_data_paths: ["/storage/data/boba_106k_0319_prompt_1024.jsonl"]
-  val_data_paths: ["/storage/data/validation.jsonl"]
+  train_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
+  val_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
 
 actor:
   group_name: "ActorGroup"
@@ -154,7 +154,7 @@ actor:
     queue_name: "actor_input_queue"
     queue_size: 0
 
-  checkpoint_load_path: "/storage/mg_ckpts/DeepSeek-R1-Distill-Qwen-1.5B-tp2-pp1"
+  checkpoint_load_path: null
 
   offload_optimizer: True
   offload_weight: True
@@ -228,7 +228,7 @@ actor:
     lr_decay_iters: 10
 
   tokenizer:
-    tokenizer_model: /storage/hf_models/DeepSeek-R1-Distill-Qwen-1.5B
+    tokenizer_model: /model/DeepSeek-R1-Distill-Qwen-1.5B/
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'

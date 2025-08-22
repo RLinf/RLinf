@@ -33,29 +33,45 @@ Install from Docker Image
 
 We provide two pre-built Docker images optimized for different backend engine combinations:
 
-- The official image for **Megatron** and **SGLang**: ``TODO``
-- The official image for **FSDP** and **Huggingface**: ``rlinf/rlinf:agentic-openvla-rlinf0.1-torch2.5.1`` and ``rlinf/rlinf:agentic-openvlaoft-rlinf0.1-torch2.5.1 ``
+- The official image for **Megatron** and **SGLang**: ``rlinf/rlinf:math-rlinf0.1-torch2.5.1-sglang0.4.4-vllm0.7.1-megatron0.11.0-te2.1``
+- The official image for **FSDP** and **Huggingface**: ``rlinf/rlinf:agentic-openvla-rlinf0.1-torch2.5.1`` and ``rlinf/rlinf:agentic-openvlaoft-rlinf0.1-torch2.5.1``.
 
 Once you've identified the appropriate image for your setup, pull the Docker image:
 
 .. code-block:: bash
 
-   docker pull rlinf/rlinf:CHOSEDN_IMAGE
+   docker pull rlinf/rlinf:CHOSEN_IMAGE
 
 Then, start the container using the pulled image:
 
-For Megatron + SGLang, run:
+.. For Megatron + SGLang, run:
 
-.. code-block:: bash
+.. .. code-block:: bash
 
-   docker run -it --gpus all \
-      --shm-size 80g \
-      -v "$(pwd)":/workspace/RLinf \
-      -w /workspace/RLinf \
-      --name rlinf \
-      rlinf/rlinf:latest /bin/bash
+..    .. docker run -it --gpus all \
+..    ..    --shm-size 80g \
+..    ..    --net=host \
+..    ..    -v "$(pwd)":/workspace/RLinf \
+..    ..    -w /workspace/RLinf \
+..    ..    --name rlinf \
+..    ..    rlinf/rlinf:latest /bin/bash
 
-For FSDP + HuggingFace, run:
+..    docker run -it --gpus all \
+..       --shm-size 80g \
+..       --net=host \
+..       --name rlinf \
+..       rlinf/rlinf:math-rlinf0.1-torch2.5.1-sglang0.4.4-vllm0.7.1-megatron0.11.0-te2.1 /bin/bash
+
+.. For FSDP + HuggingFace, run:
+
+.. .. code-block:: bash
+
+..    docker run -it --gpus all \
+..       --shm-size 100g \
+..       --net=host \
+..       --env NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
+..       --name rlinf \
+..       rlinf/rlinf:agentic-openvla-rlinf0.1-torch2.5.1 /bin/bash
 
 .. code-block:: bash
 
@@ -64,16 +80,20 @@ For FSDP + HuggingFace, run:
       --net=host \
       --env NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
       --name rlinf \
-      rlinf/rlinf:agentic-openvla-rlinf0.1-torch2.5.1 /bin/bash
-
-
+      rlinf/rlinf:CHOSEN_IMAGE /bin/bash
 
 Inside the container, clone the RLinf repository:
 
 .. code-block:: bash
 
-   git clone https://github.com/Infini-AI/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
    cd RLinf
+
+.. tip::
+
+   For multi-node training, make sure to clone the repository in shared storage so that every node has access to it.
+
+
 
 Install from Custom Environment
 -------------------------------

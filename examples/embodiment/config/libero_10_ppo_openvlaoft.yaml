@@ -19,7 +19,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: "./logs"
+    log_path: "../results"
     project_name: rlinf
     experiment_name: "test_openvla"
     logger_backends: ["tensorboard"] # wandb, swanlab
@@ -102,7 +102,7 @@ rollout:
     queue_size: 0
   mode: "colocate"
   generation_backend: "huggingface"
-  model_dir: /storage/download_models/storage/Openvla-oft-SFT-libero10-trajall/
+  model_dir: /model/Openvla-oft-SFT-libero10-trajall/
   recompute_logprobs: False
   pipeline_stage_num: 2
   enable_offload: True
@@ -114,8 +114,8 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: /storage/download_models/storage/Openvla-oft-SFT-libero10-trajall/
-  checkpoint_save_path: "/storage/results"
+  checkpoint_load_path: /model/Openvla-oft-SFT-libero10-trajall/
+  checkpoint_save_path: "../results"
   micro_batch_size: 32
   global_batch_size: 1024
   seed: 1234
@@ -123,7 +123,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: /storage/download_models/storage/Openvla-oft-SFT-libero10-trajall/
+    tokenizer_model: /model/Openvla-oft-SFT-libero10-trajall/
     extra_vocab_size: 421
     use_fast: False
     trust_remote_code: True

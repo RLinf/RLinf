@@ -1,4 +1,4 @@
-Task-disaggregated
+Disaggregated
 ==================================
 
 .. image:: ../../../_static/svg/disaggregated.svg

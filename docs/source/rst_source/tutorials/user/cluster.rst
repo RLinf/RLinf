@@ -7,7 +7,7 @@ By encapsulating Ray initialization and node information, it simplifies distribu
 
 .. note::
 
-   **Ray version requirement**: the framework requires ``ray>=2.47.0`` (enforced at import time).  
+   **Ray version requirement**: RLinf requires ``ray>=2.47.0`` (enforced at import time).  
    Do **not** call ``ray.init`` before creating a :class:`Cluster`; premature initialization can interfere with the namespace and logging configuration.
    
 Initialization and Ray Setup

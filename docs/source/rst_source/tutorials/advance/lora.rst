@@ -24,7 +24,7 @@ LoRA can be configured in the actor model section of your YAML configuration:
 - ``lora_path``: Path to pre-trained LoRA weights (null for new training)
 
 Target Modules
--------------
+---------------
 
 RLinf automatically applies LoRA to the following modules:
 
@@ -69,7 +69,7 @@ To start training with LoRA from scratch:
 4. Train only LoRA parameters
 
 Loading Pre-trained LoRA
-~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
 To continue training with existing LoRA weights:
 

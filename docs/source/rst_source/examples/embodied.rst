@@ -2,7 +2,7 @@ Agentic RL-VLA
 ========================
 
 This document provides a comprehensive guide to launching and running the OpenVLA (Open Vision-Language-Action) embodied agent training task in the RLinf framework. 
-The task focuses on training a vision-language-action model for robotic manipulation using the ManiSkill environment.
+The task focuses on training a vision-language-action model for robotic manipulation using the ManiSkill3 environment.
 
 The primary objective is to train an OpenVLA model to perform robotic manipulation through:
 
@@ -14,7 +14,7 @@ The primary objective is to train an OpenVLA model to perform robotic manipulati
 Environment
 -----------------------
 
-**ManiSkill Environment**
+**ManiSkill3 Environment**
 
 - **Environment**: ManiSkill2 simulation platform
 - **Task**: Control a robotic arm to grasp a variety of objects
@@ -196,7 +196,7 @@ Using a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) achiev
    </div>
 
 
-The animation below shows the results of training the OpenVLA model on ManiSkill's multi-task benchmark 
+The animation below shows the results of training the OpenVLA model on ManiSkill3's multi-task benchmark 
 using the PPO algorithm within the RLInf framework.
 
 

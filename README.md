@@ -7,10 +7,10 @@
 
 
 <!-- <a href="TODO"><img src="https://img.shields.io/badge/arXiv-Paper-red?logo=arxiv"></a> -->
-<a href="TODO"><img src="https://img.shields.io/badge/HuggingFace-yellow?logo=huggingface&logoColor=white" alt="Hugging Face"></a>
-<a href="TODO"><img src="https://img.shields.io/badge/Documentation-Purple?color=8A2BE2&logo=readthedocs"></a>
-<a href="TODO"><img src="https://devin.ai/assets/deepwiki-badge.png" alt="Ask DeepWiki.com" style="height:20px;"></a>
-<a href="TODO"><img src="https://img.shields.io/badge/微信-green?logo=wechat&amp"></a>
+<a href="https://huggingface.co/RLinf"><img src="https://img.shields.io/badge/HuggingFace-yellow?logo=huggingface&logoColor=white" alt="Hugging Face"></a>
+<a href="TODO:"><img src="https://img.shields.io/badge/Documentation-Purple?color=8A2BE2&logo=readthedocs"></a>
+<a href="TODO:"><img src="https://devin.ai/assets/deepwiki-badge.png" alt="Ask DeepWiki.com" style="height:20px;"></a>
+<a href="TODO:"><img src="https://img.shields.io/badge/微信-green?logo=wechat&amp"></a>
 
 </div>
 
@@ -33,13 +33,13 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 **RLinf is unique with:**
 
 - Embodied Agent Support
-- Native adapters for VLA models: [OpenVLA](https://github.com/openvla/openvla), [OpenVLA-OFT](https://github.com/moojink/openvla-oft), and [π₀](https://github.com/Physical-Intelligence/openpi).
-- Plug-and-play connectors for CPU- and GPU-based simulators: [ManiSkill3](https://github.com/haosulab/ManiSkill), [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO).
+- Fast adaptation support for mainstream VLA models: [OpenVLA](https://github.com/openvla/openvla), [OpenVLA-OFT](https://github.com/moojink/openvla-oft), and [π₀](https://github.com/Physical-Intelligence/openpi).
+- Support for mainstream CPU & GPU-based simulators via standardized RL interfaces: [ManiSkill3](https://github.com/haosulab/ManiSkill), [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO).
 - Enabling the first RL fine-tuning of the $\pi_0$ model family with a flow-matching action expert.
 
 **RLinf is fast with:**
 
-- Automatic Online-Scaling Mechanism: GPU switching within 1 second.
+- Automatic online-scaling mechanism: GPU switching within 1 second.
 - Auto-scheduling Strategy: automatically selects the most suitable execution mode based on the training workload.
 - Improves efficiency by 20-40% while preserving the on-policy property of RL algorithms.
 
@@ -47,9 +47,9 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 - Flexible Execution Modes
 
-  - Task-colocated: shares all GPUs across all workers.
-  - Task-disaggregated: enables fine-grained pipelining.
-  - Hybrid: combines colocated and disaggregated modes—specially designed for agent training in embodied intelligence.
+  - Collocated mode: shares all GPUs across all workers.
+  - Disaggregated mode: enables fine-grained pipelining.
+  - Hybrid mode: combines collocated and disaggregated modes—specially designed for agent training in embodied intelligence.
 
 - Multiple Backend Integrations
 
@@ -78,7 +78,9 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 - [ ] Support for real-world RL deployment  
 
 
-## Getting Started
+## Getting Started 
+
+TODO: fill
 
 The overall [**Documentation**]()
 
@@ -117,7 +119,7 @@ The overall [**Documentation**]()
 
 **Blogs**
 
-  - [Compare with VeRL]()
+  - [Comparison with VeRL]()
 
 ## Experiment Result
 

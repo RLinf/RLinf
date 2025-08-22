@@ -1,8 +1,9 @@
 Online Scaling Mechanism
 ========================
 
+
 Online scaling (also known as elastic training)  
-is a powerful feature that enables dynamic scaling of training resources during RL training **within seconds**.  
+is a powerful feature that enables dynamic scaling of training resources, with GPU swithching performed **within 1 second**.
 This capability allows you to adjust the number of GPUs and nodes used for training in real time,  
 based on cluster availability, workload demands, or resource optimization goals.
 
@@ -28,7 +29,7 @@ The system automatically handles:
 Why is Online Scaling Important?
 --------------------------------
 
-When using RLInf's task-disaggregated mode with fine-grained pipelining,  
+When using RLInf's disaggregated mode with fine-grained pipelining,  
 the rollout and inference stages are completed before the actor stage finishes.  
 At this point, the resources used for rollout and inference can be reallocated to the actor stage **within seconds**,  
 accelerating actor training and improving overall system performance.

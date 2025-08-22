@@ -1,5 +1,5 @@
-Basic YAML Configuration
-================================
+YAML Configuration
+=====================
 
 
 Below is a complete reference for the configuration file used in the RLinf
@@ -55,7 +55,7 @@ Each line of component placement config looks like: ``actor,inference: 0-4``,
 which means both the actor and inference groups occupy GPU 0 to 4
 Alternatively, "all" can be used to specify all GPUs
 
-see more details in :doc:`../mode/index`.
+See more details in :doc:`../mode/index`.
 
 runner
 ~~~~~~~~~~~~~~~
@@ -94,7 +94,7 @@ runner
 
 ``runner.logger.logger_backends``: List of logging backends (tensorboard, wandb, swanlab).
 
-see more details about logger backends in :doc:`../advance/logger`.
+See more details about logger backends in :doc:`../advance/logger`.
 
 ``runner.max_epochs``: Maximum number of training epochs.
 
@@ -828,7 +828,7 @@ rollout
       name: ${env.channel.name}
       queue_name: "action_buffer"
       queue_size: 0
-    mode: "colocate"
+    mode: "collocate"
     backend: "huggingface"
     enforce_eager: True
     enable_offload: True
@@ -841,7 +841,7 @@ rollout
 
 ``rollout.channel.queue_size``: Queue size.
 
-``rollout.mode``: Rollout mode (colocate for shared GPU).
+``rollout.mode``: Rollout mode (collocate for shared GPU).
 
 ``rollout.backend``: Model backend (huggingface, vllm).
 

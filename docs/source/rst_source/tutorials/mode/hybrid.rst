@@ -20,4 +20,4 @@ the training stage retains access to all GPUs, while simulation and generation o
 
 * Zero sharding overhead in the generation stage.  
 * Nearly zero bubble during generation stage.  
-* Empirically doubles rollout throughput versus classic task-disaggregated mode.
+* Empirically doubles rollout throughput versus classic disaggregated mode.

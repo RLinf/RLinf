@@ -21,7 +21,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: "./logs"
+    log_path: "../results"
     project_name: rlinf
     experiment_name: "test_openvla"
     logger_backends: ["tensorboard"] # wandb, swanlab
@@ -107,7 +107,7 @@ rollout:
     queue_size: 0
   mode: "colocate"
   backend: "huggingface"
-  model_dir: "/storage/models/rl4vla/openvla-7b-rlvla-warmup/"
+  model_dir: "/model/openvla-7b-rlvla-warmup/"
   recompute_logprobs: False
   gpu_memory_utilization: 0.5
   enforce_eager: True
@@ -122,8 +122,8 @@ actor:
     queue_size: 0
   training_backend: "fsdp"
 
-  checkpoint_load_path: "/storage/models/rl4vla/openvla-7b-rlvla-warmup/"
-  checkpoint_save_path: "/storage/results"
+  checkpoint_load_path: "/model/openvla-7b-rlvla-warmup/"
+  checkpoint_save_path: "../results"
 
   micro_batch_size: 20
   global_batch_size: 160
@@ -132,7 +132,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/storage/models/rl4vla/openvla-7b-rlvla-warmup/"
+    tokenizer_model: "/model/openvla-7b-rlvla-warmup/"
     extra_vocab_size: 421
     use_fast: False
     trust_remote_code: True
