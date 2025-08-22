@@ -107,7 +107,10 @@ def _convert_qwen2_5_weight(
         up_slice = torch.arange(1, split_num, 2, dtype=torch.long)
 
         return torch.cat([shard[gate_slice], shard[up_slice]], dim=0).reshape(
-            (-1, weight.shape[-1])
+            (
+                -1,
+                weight.shape[-1],
+            )
         )
     else:
         raise RuntimeError(f"convert_weight: Unknown weight name: {name}")

@@ -98,7 +98,6 @@ rollout:
   mode: "colocate"
   backend: "huggingface"
   model_dir: "/storage/download_models/openvla-7b-rlvla-rl/"
-  recompute_logprobs: False
   enable_offload: True
   pipeline_stage_num: 2
 

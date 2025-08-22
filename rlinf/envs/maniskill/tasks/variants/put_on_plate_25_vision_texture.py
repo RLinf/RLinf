@@ -259,7 +259,10 @@ class PutOnPlateInScene25VisionTexture03(PutOnPlateInScene25MainV3):
             )
 
         robot_item_ids = torch.concat(
-            [self.robot_link_ids, self.target_object_actor_ids]
+            [
+                self.robot_link_ids,
+                self.target_object_actor_ids,
+            ]
         )
         arm_obj_mask = torch.isin(actor_seg, robot_item_ids)  # [b, H, W]
 

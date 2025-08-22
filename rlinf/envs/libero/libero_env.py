@@ -105,7 +105,11 @@ class LiberoEnv(gym.Env):
                 get_libero_path("bddl_files"), task.problem_folder, task.bddl_file
             )
             env_fn_params.append(
-                {**base_env_args, "bddl_file_name": task_bddl_file, "seed": self.seed}
+                {
+                    **base_env_args,
+                    "bddl_file_name": task_bddl_file,
+                    "seed": self.seed,
+                }
             )
             task_descriptions.append(task.language)
         self.task_descriptions = task_descriptions

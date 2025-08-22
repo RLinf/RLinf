@@ -302,7 +302,11 @@ class EnvManager:
 
         value = recursive_to_own(value)
         self.command_queue.put(
-            {"method": "__setattr__", "args": [name, value], "kwargs": {}}
+            {
+                "method": "__setattr__",
+                "args": [name, value],
+                "kwargs": {},
+            }
         )
 
         result = self.result_queue.get()

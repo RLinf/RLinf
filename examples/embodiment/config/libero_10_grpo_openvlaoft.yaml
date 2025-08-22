@@ -96,7 +96,7 @@ rollout:
   mode: "colocate"
   generation_backend: "huggingface"
   model_dir: "/storage/download_models/Openvla-oft-SFT-libero10-traj1/"
-  recompute_logprobs: False
+
   enable_offload: False
   pipeline_stage_num: 1
 
