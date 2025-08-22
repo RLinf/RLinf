@@ -24,7 +24,7 @@ from libero.libero.benchmark import Benchmark, get_benchmark
 from libero.libero.envs import OffScreenRenderEnv
 from omegaconf.omegaconf import OmegaConf
 
-from rlinf.envs.libero_utils.utils import (
+from rlinf.envs.libero.utils import (
     get_libero_image,
     get_libero_wrist_image,
     list_of_dict_to_dict_of_list,
@@ -34,7 +34,7 @@ from rlinf.envs.libero_utils.utils import (
     tile_images,
     to_tensor,
 )
-from rlinf.envs.libero_utils.venv import ReconfigureSubprocEnv
+from rlinf.envs.libero.venv import ReconfigureSubprocEnv
 
 
 class LiberoEnv(gym.Env):

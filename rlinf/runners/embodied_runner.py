@@ -48,7 +48,6 @@ class EmbodiedRunner:
         self.run_timer = run_timer
 
         self.compute_ref_logprobs = self.cfg.algorithm.kl_beta > 0
-        self.recompute_logprobs = self.cfg.rollout.recompute_logprobs
 
         self.consumed_samples = 0
         # the step here is GRPO step
@@ -109,11 +108,6 @@ class EmbodiedRunner:
                 with self.timer("rollout"):
                     self.update_rollout_weights()
                     self.generate_rollouts()
-
-                # recompute rollout policy logprobs, otherwise will use rollout logprobs.
-                if self.recompute_logprobs:
-                    with self.timer("prev_logprobs"):
-                        self.actor.compute_logprobs()
 
                 # compute advantages and returns.
                 with self.timer("cal_adv_and_returns"):

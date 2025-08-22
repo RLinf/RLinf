@@ -1,5 +1,5 @@
 defaults:
-  - env/train: PutCarrotOnPlateInScene_noit_noreset
+  - env/train: PutCarrotOnPlateInScene
   - env/eval: PutCarrotOnPlateInScene
   - override hydra/job_logging: stdout
 
@@ -36,18 +36,20 @@ runner:
   max_prompt_length: 30
 
 algorithm:
+  auto_reset: False
+  ignore_terminations: False
+  use_fixed_reset_state_ids: True
+
   require_values: False
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 8
 
-  n_eval_steps: 60
-  # training generation mbs
-  rollout_micro_batch_size: 64
+  n_eval_steps: 80
   num_group_envs: 16
   rollout_epoch: 1
 
-  n_chunk_steps: 60
+  n_chunk_steps: 80
 
   reward_type: step_level
   logprob_type: token_level
@@ -101,8 +103,7 @@ rollout:
     queue_size: 0
   mode: "colocate"
   generation_backend: "huggingface"
-  model_dir: "/mnt/public/hongzhi/models/rl4vla/openvla-7b-rlvla-warmup/"
-  recompute_logprobs: False
+  model_dir: "/storage/models/rl4vla/openvla-7b-rlvla-warmup/"
   gpu_memory_utilization: 0.5
   enforce_eager: True
   enable_offload: True
@@ -116,18 +117,17 @@ actor:
     queue_size: 0
   training_backend: "fsdp"
 
-  checkpoint_load_path: "/mnt/public/hongzhi/models/rl4vla/openvla-7b-rlvla-warmup/"
-  checkpoint_save_path: "/mnt/public/guozhen/test_github_embodiment_0821/results"
+  checkpoint_load_path: "/storage/models/rl4vla/openvla-7b-rlvla-warmup/"
+  checkpoint_save_path: "/workspace/results"
 
   micro_batch_size: 40
-  global_batch_size: 480
+  global_batch_size: 640
   seed: 1234
   enable_offload: True
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/mnt/public/hongzhi/models/rl4vla/openvla-7b-rlvla-warmup/"
-    extra_vocab_size: 421
+    tokenizer_model: "/storage/models/rl4vla/openvla-7b-rlvla-warmup/"
     use_fast: False
     trust_remote_code: True
     padding_side: "right"

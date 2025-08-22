@@ -38,6 +38,8 @@ runner:
 algorithm:
   auto_reset: False
   ignore_terminations: False
+  use_fixed_reset_state_ids: True
+
   require_values: False
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
@@ -51,11 +53,6 @@ algorithm:
   reward_type: step_level
   logprob_type: token_level
   entropy_type: token_level
-
-  # mbs to do log prob inference, can be set to
-  # lower than rollout_micro_batch_size to reduce
-  # memory usage
-  logprob_forward_micro_batch_size: 16 # ${.rollout_micro_batch_size}
 
   adv_type: "grpo"
   loss_type: "grpo"
@@ -105,8 +102,7 @@ rollout:
     queue_size: 0
   mode: "colocate"
   backend: "huggingface"
-  model_dir: "/model/Openvla-oft-SFT-libero10-trajall/"
-  recompute_logprobs: False
+  model_dir: "/storage/download_models/Openvla-oft-SFT-libero10-trajall/"
   gpu_memory_utilization: 0.5
   enforce_eager: True
   enable_offload: True

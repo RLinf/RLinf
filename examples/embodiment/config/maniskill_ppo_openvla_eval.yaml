@@ -38,6 +38,8 @@ runner:
 algorithm:
   auto_reset: True
   ignore_terminations: True
+  use_fixed_reset_state_ids: False
+
   require_values: True
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
@@ -53,11 +55,6 @@ algorithm:
   reward_type: step_level
   logprob_type: action_level
   entropy_type: action_level
-
-  # mbs to do log prob inference, can be set to
-  # lower than rollout_micro_batch_size to reduce
-  # memory usage
-  logprob_forward_micro_batch_size: 16 # ${.rollout_micro_batch_size}
 
   adv_type: "ppo"
   loss_type: "ppo"
@@ -107,8 +104,7 @@ rollout:
     queue_size: 0
   mode: "colocate"
   backend: "huggingface"
-  model_dir: /mnt/mnt/public/hongzhi/models/gen-robot/openvla-7b-rlvla-rl/
-  recompute_logprobs: False
+  model_dir: /storage/models/gen-robot/openvla-7b-rlvla-rl/
   gpu_memory_utilization: 0.5
   enforce_eager: True
   enable_offload: True
@@ -122,8 +118,8 @@ actor:
     queue_size: 0
   training_backend: "fsdp"
 
-  checkpoint_load_path: /mnt/mnt/public/hongzhi/models/gen-robot/openvla-7b-rlvla-rl/
-  checkpoint_save_path: "/mnt/mnt/public/hongzhi/results"
+  checkpoint_load_path: /storage/models/gen-robot/openvla-7b-rlvla-rl/
+  checkpoint_save_path: "/workspace/results"
 
   micro_batch_size: 20
   global_batch_size: 160
@@ -132,7 +128,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: /mnt/mnt/public/hongzhi/models/gen-robot/openvla-7b-rlvla-rl/
+    tokenizer_model: /storage/models/gen-robot/openvla-7b-rlvla-rl/
     extra_vocab_size: 421
     use_fast: False
     trust_remote_code: True

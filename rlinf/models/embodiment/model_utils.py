@@ -80,7 +80,7 @@ def custom_forward(
 
     processed_logits_tensor = logits / temperature
     top_k = min(top_k, processed_logits_tensor.size(-1))  # Safety check
-    if top_k > -1:
+    if top_k > 0:
         logits_warper = TopKLogitsWarper(
             top_k
         )  # since here is logprob instead of logits, we use 0 instead of -inf
