@@ -1,5 +1,5 @@
 simulator_type: libero
-task_suite_name: libero_object
+task_suite_name: libero_spatial
 
 auto_reset: true
 ignore_terminations: true

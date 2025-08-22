@@ -1,5 +1,5 @@
 simulator_type: libero
-task_suite_name: libero_object
+task_suite_name: libero_10
 
 auto_reset: ${algorithm.auto_reset}
 ignore_terminations: ${algorithm.ignore_terminations}

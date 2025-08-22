@@ -6,8 +6,9 @@ seed: 0
 num_group: ${env.eval.num_envs}
 group_size: 1
 policy_setup: "windwox_bridge"
-use_fixed_reset_state_ids: false
+use_fixed_reset_state_ids: True
 num_envs: 16
+only_eval: true
 
 video_cfg:
   save_video: true
