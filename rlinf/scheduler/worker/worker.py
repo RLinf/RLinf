@@ -128,10 +128,17 @@ class Worker(metaclass=WorkerMeta):
         ...         )
         ...         torch.distributed.all_reduce(test_tensor)
         ...         return test_tensor
+        ...
+        ...     def hello(self):
+        ...         return self._rank
+        >>>
         >>> cluster = Cluster(num_nodes=1, num_gpus_per_node=8)
         >>> my_worker_group = MyWorker.create_group().launch(cluster=cluster, name="my_worker_group")
         >>> my_worker_group.initialize().wait()[0]
         tensor([[8.]], device='cuda:0')
+        >>> # This will execute the hello method only on ranks 0 and 1.
+        >>> my_worker_group.execute_on(4, 5).hello().wait()
+        [4, 5]
 
     The following example shows the communication capabilities of the Worker class.
 

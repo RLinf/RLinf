@@ -21,7 +21,7 @@ from omegaconf import DictConfig
 from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.env_manager import EnvManager
 from rlinf.scheduler import Worker
-from rlinf.utils.placement import EmbodiedComponentPlacement
+from rlinf.utils.placement import HybridComponentPlacement
 
 
 def put_tensor_cpu(data_dict):
@@ -61,17 +61,16 @@ class EnvWorker(Worker):
         self._action_queue_name = cfg.rollout.channel.queue_name
         self._replay_buffer_name = cfg.actor.channel.queue_name
 
-        self._component_placement = EmbodiedComponentPlacement(cfg)
+        self._component_placement = HybridComponentPlacement(cfg)
         assert (
-            self._component_placement.rollout_world_size
-            % self._component_placement.env_world_size
+            self._component_placement.get_world_size("rollout")
+            % self._component_placement.get_world_size("env")
             == 0
         )
         # gather_num: number of rollout for each env process
-        self.gather_num = (
-            self._component_placement.rollout_world_size
-            // self._component_placement.env_world_size
-        )
+        self.gather_num = self._component_placement.get_world_size(
+            "rollout"
+        ) // self._component_placement.get_world_size("env")
         # stage_num: default to 2, use for pipeline rollout process
         self.stage_num = self.cfg.rollout.pipeline_stage_num
         self.batch_size = self.cfg.env.train.num_group * self.cfg.env.train.group_size

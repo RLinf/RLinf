@@ -35,7 +35,7 @@ from rlinf.models import get_model
 from rlinf.models.embodiment.model_utils import custom_forward
 from rlinf.scheduler import Worker
 from rlinf.utils.data_iter_utils import get_iterator_k_split
-from rlinf.utils.placement import EmbodiedComponentPlacement
+from rlinf.utils.placement import HybridComponentPlacement
 
 
 class FSDPActor(FSDPModelManager, Worker):
@@ -53,11 +53,10 @@ class FSDPActor(FSDPModelManager, Worker):
 
         self._env_group_name = cfg.env.group_name
         self._rollout_group_name = cfg.rollout.group_name
-        self._component_placement = EmbodiedComponentPlacement(cfg)
+        self._component_placement = HybridComponentPlacement(cfg)
         self._weight_dst_rank_in_rollout = self._rank
-        if (
-            self._weight_dst_rank_in_rollout
-            >= self._component_placement.rollout_world_size
+        if self._weight_dst_rank_in_rollout >= self._component_placement.get_world_size(
+            "rollout"
         ):
             self._weight_dst_rank_in_rollout = None
 
@@ -106,8 +105,8 @@ class FSDPActor(FSDPModelManager, Worker):
             torch.cuda.empty_cache()
 
     async def recv_rollout_batch(self):
-        send_num = self._component_placement.rollout_world_size * self.stage_num
-        recv_num = self._component_placement.actor_world_size
+        send_num = self._component_placement.get_world_size("rollout") * self.stage_num
+        recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(send_num, recv_num)
 
         self.rollout_batch = {}
@@ -192,8 +191,8 @@ class FSDPActor(FSDPModelManager, Worker):
 
     def compute_advantages_and_returns(self):
         stage_num = self.cfg.rollout.pipeline_stage_num
-        env_world_size = self._component_placement.env_world_size
-        actor_world_size = self._component_placement.actor_world_size
+        env_world_size = self._component_placement.get_world_size("env")
+        actor_world_size = self._component_placement.get_world_size("actor")
         num_group_envs_for_train = (
             self.cfg.algorithm.num_group_envs
             * stage_num

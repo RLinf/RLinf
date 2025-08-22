@@ -23,7 +23,7 @@ from rlinf.data.datasets import create_rl_dataset
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.runners.math_runner import MathRunner
 from rlinf.scheduler import Cluster
-from rlinf.utils.placement import MathComponentPlacement, PlacementMode
+from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
@@ -42,7 +42,7 @@ def main(cfg) -> None:
     cluster = Cluster(
         num_nodes=cfg.cluster.num_nodes, num_gpus_per_node=cfg.cluster.num_gpus_per_node
     )
-    component_placement = MathComponentPlacement(cfg)
+    component_placement = ModelParallelComponentPlacement(cfg)
 
     # Rollout group
     rollout_placement_strategy = component_placement.get_strategy("rollout")

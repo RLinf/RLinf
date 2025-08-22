@@ -54,7 +54,7 @@ from rlinf.utils.distributed import (
     vocab_parallel_entropy_and_log_probs,
     vocab_parallel_log_probs_from_logits,
 )
-from rlinf.utils.placement import ComponentPlacement, PlacementMode
+from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.resharding.mcore_weight_reshard import MegatronCoreWeightReshard
 from rlinf.utils.resharding.reshard_config import ReshardConfig
 from rlinf.utils.train_utils import (
@@ -81,7 +81,9 @@ from rlinf.workers.rollout.utils import (
 class MegatronActor(MegatronModelManager, Worker):
     """The class for running the actor training using Megatron."""
 
-    def __init__(self, cfg: DictConfig, placement: ComponentPlacement, role="actor"):
+    def __init__(
+        self, cfg: DictConfig, placement: ModelParallelComponentPlacement, role="actor"
+    ):
         """Initialize the MegatronActor.
 
         Args:

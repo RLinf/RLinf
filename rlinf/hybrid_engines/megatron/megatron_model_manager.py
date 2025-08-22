@@ -1,11 +1,11 @@
 # Copyright 2025 The RLinf Authors.
-# 
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-# 
+#
 #     https://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -13,18 +13,16 @@
 # limitations under the License.
 
 import gc
-import queue
-from typing import Iterator, List, Optional, Dict
+import itertools
+import logging
+from typing import Iterator, List, Optional
 
 import torch
-import itertools
 from omegaconf import DictConfig
 
-from rlinf.utils.flops import FLOPSCalculator, ModelConfig
 from rlinf.config import build_config, build_transformer_config
 from rlinf.data.tokenizers import hf_tokenizer
-import logging
-
+from rlinf.utils.flops import FLOPSCalculator, ModelConfig
 from rlinf.utils.initialize import initialize_megatron, set_megatron_args
 from rlinf.utils.utils import clear_memory
 
@@ -52,7 +50,6 @@ try:
     HAVE_MEGATRON_CORE = True
 
 except (ImportError, ModuleNotFoundError):
-
     HAVE_MEGATRON_CORE = False
     raise "import error"
 
@@ -67,6 +64,7 @@ from megatron.training.training import (
 try:
     import transformer_engine
     from transformer_engine.pytorch import module as te_module
+
     HAVE_TE = True
     HAVE_TE_MODULE = True
 except ImportError:
@@ -79,17 +77,22 @@ HAVE_TE = HAVE_TE and HAVE_TE_MODULE
 
 logging.getLogger().setLevel(logging.INFO)
 
+
 def get_specs(spec_name, transformer_config=None, use_te=False):
-    if use_te and spec_name == '':
-        spec_name = 'te_gpt'
+    if use_te and spec_name == "":
+        spec_name = "te_gpt"
 
     num_experts = transformer_config.num_moe_experts if transformer_config else None
-    moe_grouped_gemm = transformer_config.moe_grouped_gemm if transformer_config else False
+    moe_grouped_gemm = (
+        transformer_config.moe_grouped_gemm if transformer_config else False
+    )
 
     name_spec_dict = {
         "decoder_gpt": get_gpt_decoder_block_spec(transformer_config, use_te),
         "local_gpt": get_gpt_layer_local_spec(num_experts, moe_grouped_gemm),
-        "te_gpt": get_gpt_layer_with_transformer_engine_spec(num_experts, moe_grouped_gemm, qk_layernorm=transformer_config.qk_layernorm),
+        "te_gpt": get_gpt_layer_with_transformer_engine_spec(
+            num_experts, moe_grouped_gemm, qk_layernorm=transformer_config.qk_layernorm
+        ),
     }
     if spec_name not in name_spec_dict:
         raise ValueError(f"Spec name '{spec_name}' is not recognized.")
@@ -134,7 +137,7 @@ class MegatronModelManager:
         self.model, self.optimizer, self.lr_scheduler = setup_model_and_optimizer(
             model_provider_func=self.model_provider_func,
             model_type=model_type,
-            checkpointing_context=self.checkpoint_context
+            checkpointing_context=self.checkpoint_context,
         )
 
     def model_provider_func(self, pre_process, post_process):
@@ -162,17 +165,17 @@ class MegatronModelManager:
             )
 
         else:
-
             from megatron.legacy.model.gpt_model import GPTModel
+
             config = build_config(ModelParallelConfig, self._cfg.model)
-            setattr(config, 'hidden_size', self._cfg.model.hidden_size)
+            setattr(config, "hidden_size", self._cfg.model.hidden_size)
 
             model = GPTModel(
                 config=config,
                 num_tokentypes=0,
                 parallel_output=True,
                 pre_process=pre_process,
-                post_process=post_process
+                post_process=post_process,
             )
         return model
 
@@ -192,7 +195,9 @@ class MegatronModelManager:
         for batch in microbatches:
             current_seqlen = 0
             if isinstance(batch, dict):
-                seqlens_in_batch = batch["attention_mask"].sum(dim=-1, dtype=torch.int32)
+                seqlens_in_batch = batch["attention_mask"].sum(
+                    dim=-1, dtype=torch.int32
+                )
                 tp_size = parallel_state.get_tensor_model_parallel_world_size()
                 cp_size = parallel_state.get_context_parallel_world_size()
                 align_size = tp_size * cp_size * 2 if cp_size > 1 else tp_size
@@ -214,11 +219,13 @@ class MegatronModelManager:
             if isinstance(batch, dict):
                 batch["max_batch_seqlen"] = max_batch_seqlen
             elif isinstance(batch, list):
-                batch.append(max_batch_seqlen)  
+                batch.append(max_batch_seqlen)
 
         return itertools.chain(microbatches)
 
-    def make_data_iterator_list(self, data_iterator: Iterator, padding: bool=False, vpp_size: int=1) -> List[Iterator]:
+    def make_data_iterator_list(
+        self, data_iterator: Iterator, padding: bool = False, vpp_size: int = 1
+    ) -> List[Iterator]:
         """Convert data iterator into form expected by Megatron
         With interleaved pipeline parallelism, Megatron expects a
         list of one data iterator per model chunk. Each model
@@ -232,8 +239,11 @@ class MegatronModelManager:
         if padding:
             data_iterator = self.padding_to_max(data_iterator)
         import copy
+
         if vpp_size > 1:
-            batch_generator = batch_generator = [copy.deepcopy(data_iterator) for _ in range(vpp_size)]  # number of vpp chunks
+            batch_generator = batch_generator = [
+                copy.deepcopy(data_iterator) for _ in range(vpp_size)
+            ]  # number of vpp chunks
             batch_generator = [iter(b) for b in batch_generator]
         else:
             # no vpp
@@ -241,51 +251,62 @@ class MegatronModelManager:
         return batch_generator
 
     def _get_checkpoint_context(self):
-        if self._cfg.megatron.non_persistent_ckpt_type == 'local':
+        if self._cfg.megatron.non_persistent_ckpt_type == "local":
             try:
-                from nvidia_resiliency_ext.checkpointing.local.ckpt_managers.local_manager import ( # type: ignore
+                from nvidia_resiliency_ext.checkpointing.local.ckpt_managers.local_manager import (  # type: ignore
                     LocalCheckpointManager,
                 )
-                from nvidia_resiliency_ext.checkpointing.local.replication.strategies import ( # type: ignore
+                from nvidia_resiliency_ext.checkpointing.local.replication.strategies import (  # type: ignore
                     CliqueReplicationStrategy,
                 )
             except ModuleNotFoundError:
-                raise RuntimeError("The 'nvidia_resiliency_ext' module is required for local "
-                                "checkpointing but was not found. Please ensure it is installed.")
+                raise RuntimeError(
+                    "The 'nvidia_resiliency_ext' module is required for local "
+                    "checkpointing but was not found. Please ensure it is installed."
+                )
 
             if self._cfg.megatron.replication:
                 repl_strategy = CliqueReplicationStrategy.from_replication_params(
                     self._cfg.megatron.replication_jump,
-                    self._cfg.megatron.replication_factor
+                    self._cfg.megatron.replication_factor,
                 )
             else:
                 repl_strategy = None
 
             checkpointing_context = {
-                'local_checkpoint_manager': LocalCheckpointManager(self._cfg.megatron.non_persistent_local_ckpt_dir,
-                                                                repl_strategy=repl_strategy
-                                                                )
+                "local_checkpoint_manager": LocalCheckpointManager(
+                    self._cfg.megatron.non_persistent_local_ckpt_dir,
+                    repl_strategy=repl_strategy,
+                )
             }
         else:
             checkpointing_context = {}
         return checkpointing_context
 
-    def save_checkpoint(self, checkpoint_save_path, step, num_floating_point_operations_so_far=0):
+    def save_checkpoint(
+        self, checkpoint_save_path, step, num_floating_point_operations_so_far=0
+    ):
         self._cfg.megatron.save = checkpoint_save_path
         set_megatron_args(self._cfg)
-        save_checkpoint(iteration=step,
-                        model=self.model,
-                        optimizer=self.optimizer,
-                        opt_param_scheduler=self.lr_scheduler,
-                        num_floating_point_operations_so_far=num_floating_point_operations_so_far,
-                        checkpointing_context=self.checkpoint_context,
-                        preprocess_common_state_dict_fn=preprocess_common_state_dict)
+        save_checkpoint(
+            iteration=step,
+            model=self.model,
+            optimizer=self.optimizer,
+            opt_param_scheduler=self.lr_scheduler,
+            num_floating_point_operations_so_far=num_floating_point_operations_so_far,
+            checkpointing_context=self.checkpoint_context,
+            preprocess_common_state_dict_fn=preprocess_common_state_dict,
+        )
 
     def load_checkpoint(self, checkpoint_load_path):
         self._cfg.megatron.load = checkpoint_load_path
         set_megatron_args(self._cfg)
-        load_checkpoint(self.model, self.optimizer, self.lr_scheduler,
-                        checkpointing_context=self.checkpoint_context)
+        load_checkpoint(
+            self.model,
+            self.optimizer,
+            self.lr_scheduler,
+            checkpointing_context=self.checkpoint_context,
+        )
 
     def load_state_dict(self, state_dict, strict=True):
         if len(self.model) == 1:
@@ -293,7 +314,7 @@ class MegatronModelManager:
         else:
             for i in range(len(self.model)):
                 parallel_state.set_virtual_pipeline_model_parallel_rank(i)
-                self.model[i].load_state_dict(state_dict['model%d' % i], strict=strict)
+                self.model[i].load_state_dict(state_dict["model%d" % i], strict=strict)
 
     def get_model_module_list(self):
         def extract_module(model):
@@ -319,14 +340,16 @@ class MegatronModelManager:
         logits_processor=None,
         logits_processor_args: Optional[dict] = None,
         temperature: float = 1.0,
-        max_batch_seqlen: int = 4096
+        max_batch_seqlen: int = 4096,
     ):
         """Default forward pass for GPT models with optional sequence packing."""
         pre_process = unwrap_model(model).pre_process
         post_process = unwrap_model(model).post_process
         if pack_seqs:
             batch_size, seq_len = attention_mask.shape[:2]
-            input_ids_rmpad, packed_seq_params = preprocess_packed_seqs(input_ids, attention_mask, pre_process=pre_process)
+            input_ids_rmpad, packed_seq_params = preprocess_packed_seqs(
+                input_ids, attention_mask, pre_process=pre_process
+            )
             input_ids_rmpad = input_ids_rmpad.contiguous()
             output_orig = model(
                 input_ids=input_ids_rmpad,
@@ -336,35 +359,77 @@ class MegatronModelManager:
             )
             output_orig /= temperature
             if post_process and logits_processor is not None:
-                args = {k: preprocess_packed_seqs(v, attention_mask, pre_process=True)[0] for k, v in logits_processor_args.items()}
+                args = {
+                    k: preprocess_packed_seqs(v, attention_mask, pre_process=True)[0]
+                    for k, v in logits_processor_args.items()
+                }
                 output_dict = logits_processor(output_orig, **args)
-                output = {k: postprocess_packed_seqs(v, packed_seq_params, attention_mask, batch_size, seq_len, post_process=post_process) for k, v in output_dict.items()}
+                output = {
+                    k: postprocess_packed_seqs(
+                        v,
+                        packed_seq_params,
+                        attention_mask,
+                        batch_size,
+                        seq_len,
+                        post_process=post_process,
+                    )
+                    for k, v in output_dict.items()
+                }
             else:
-                output = postprocess_packed_seqs(output_orig, packed_seq_params, attention_mask, batch_size, seq_len, post_process=post_process)
+                output = postprocess_packed_seqs(
+                    output_orig,
+                    packed_seq_params,
+                    attention_mask,
+                    batch_size,
+                    seq_len,
+                    post_process=post_process,
+                )
         else:
-            assert logits_processor is None, "logits_processor is not supported for non-packed sequence"
+            assert logits_processor is None, (
+                "logits_processor is not supported for non-packed sequence"
+            )
             batch_size, sequence_length = attention_mask.shape
-            new_input_ids, new_attention_mask, new_position_ids = remove_left_padding(input_ids, attention_mask, position_ids, sequence_parallel, pre_process=pre_process)
-            output = model(input_ids=new_input_ids, attention_mask=new_attention_mask, position_ids=new_position_ids)
-            output = recover_left_padding(output, new_attention_mask, attention_mask, sequence_length, post_process=post_process)
+            new_input_ids, new_attention_mask, new_position_ids = remove_left_padding(
+                input_ids,
+                attention_mask,
+                position_ids,
+                sequence_parallel,
+                pre_process=pre_process,
+            )
+            output = model(
+                input_ids=new_input_ids,
+                attention_mask=new_attention_mask,
+                position_ids=new_position_ids,
+            )
+            output = recover_left_padding(
+                output,
+                new_attention_mask,
+                attention_mask,
+                sequence_length,
+                post_process=post_process,
+            )
         if value_model and post_process:
             output = output[..., 0]
         return output
 
     def offload_model_weights_and_grad(self, offload_grad=True):
         for model_idx, model_chunk in enumerate(self.model):
-
             if isinstance(model_chunk, DDP):
                 for buffer_idx, buffer in enumerate(model_chunk.buffers):
                     if buffer.param_data.untyped_storage().size() > 0:
                         param_size = buffer.param_data.untyped_storage().size()
 
-                        buffer.param_data.cpu_data = buffer.param_data.data.cpu().pin_memory()
+                        buffer.param_data.cpu_data = (
+                            buffer.param_data.data.cpu().pin_memory()
+                        )
                         buffer.param_data_size = param_size
 
                         buffer.param_data.untyped_storage().resize_(0)
 
-                        assert buffer.param_data_size == buffer.param_data.cpu_data.untyped_storage().size()
+                        assert (
+                            buffer.param_data_size
+                            == buffer.param_data.cpu_data.untyped_storage().size()
+                        )
 
                     if offload_grad and buffer.grad_data.untyped_storage().size() > 0:
                         grad_size = buffer.grad_data.untyped_storage().size()
@@ -389,14 +454,20 @@ class MegatronModelManager:
             if isinstance(model_chunk, DDP):
                 for buffer in model_chunk.buffers:
                     # sometimes, we don't want to load grad for pure inference
-                    if load_grad and hasattr(buffer, 'grad_data_size'):
-                        buffer.grad_data.untyped_storage().resize_(buffer.grad_data_size)
+                    if load_grad and hasattr(buffer, "grad_data_size"):
+                        buffer.grad_data.untyped_storage().resize_(
+                            buffer.grad_data_size
+                        )
                         buffer.grad_data.zero_()
 
                     if buffer.param_data.untyped_storage().size() == 0:
-                        buffer.param_data.untyped_storage().resize_(buffer.param_data_size)
+                        buffer.param_data.untyped_storage().resize_(
+                            buffer.param_data_size
+                        )
                         # copy data from cpu to cuda
-                        buffer.param_data.copy_(buffer.param_data.cpu_data, non_blocking=True)
+                        buffer.param_data.copy_(
+                            buffer.param_data.cpu_data, non_blocking=True
+                        )
             else:
                 device_id = torch.cuda.current_device()
                 for _, param in model_chunk.named_parameters():
@@ -510,7 +581,11 @@ class MegatronModelManager:
             opt_state_dict_values = _opt.optimizer.state.values()
             for v in opt_state_dict_values:
                 if "exp_avg" in v:
-                    v["exp_avg"] = v["exp_avg"].to(torch.cuda.current_device(), non_blocking=True)
+                    v["exp_avg"] = v["exp_avg"].to(
+                        torch.cuda.current_device(), non_blocking=True
+                    )
                 if "exp_avg_sq" in v:
-                    v["exp_avg_sq"] = v["exp_avg_sq"].to(torch.cuda.current_device(), non_blocking=True)
+                    v["exp_avg_sq"] = v["exp_avg_sq"].to(
+                        torch.cuda.current_device(), non_blocking=True
+                    )
         clear_memory()

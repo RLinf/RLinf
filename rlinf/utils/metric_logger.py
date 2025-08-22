@@ -51,20 +51,19 @@ class MetricLogger:
             self.logger_backends = logger_backends
 
         wandb_proxy = logger_cfg.get("wandb_proxy", None)
-        swanlab_api_key = logger_cfg.get("swanlab_api_key", None)
         swanlab_mode = logger_cfg.get("swanlab_mode", "cloud")
-
         if len(self.logger_backends) > 0:
             assert all(
                 backend in self.supported_logger for backend in self.logger_backends
             ), f"Unsupported logger backend: {self.logger_backends}"
 
         self.logger = {}
+        config = OmegaConf.to_container(cfg, resolve=True)
+
         if "wandb" in self.logger_backends:
             import wandb
 
             wandb_log_path = os.path.join(log_path, "wandb")
-
             os.makedirs(wandb_log_path, exist_ok=True)
 
             settings = None
@@ -73,8 +72,9 @@ class MetricLogger:
             wandb.init(
                 project=project_name,
                 name=experiment_name,
-                config=cfg,
+                config=config,
                 settings=settings,
+                dir=wandb_log_path,
             )
             self.logger["wandb"] = wandb
 
@@ -82,16 +82,12 @@ class MetricLogger:
             import swanlab
 
             swanlab_log_path = os.path.join(log_path, "swanlab")
-
             os.makedirs(swanlab_log_path, exist_ok=True)
-
-            if swanlab_api_key:
-                swanlab.login(swanlab_api_key)
 
             swanlab.init(
                 project=project_name,
                 experiment_name=experiment_name,
-                config={"FRAMEWORK": "rlinf", **cfg},
+                config=config,
                 logdir=swanlab_log_path,
                 mode=swanlab_mode,
             )
@@ -99,11 +95,9 @@ class MetricLogger:
 
         if "tensorboard" in self.logger_backends:
             tensorboard_log_path = os.path.join(log_path, "tensorboard")
-
             os.makedirs(tensorboard_log_path, exist_ok=True)
 
             with open(os.path.join(tensorboard_log_path, "config.json"), "w") as f:
-                config = OmegaConf.to_container(cfg, resolve=True)
                 json.dump(config, f, indent=4)
 
             self.logger["tensorboard"] = _TensorboardLogger(tensorboard_log_path)

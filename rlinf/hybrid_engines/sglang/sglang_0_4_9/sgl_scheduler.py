@@ -39,7 +39,7 @@ from sglang.srt.utils import (
 from sglang.utils import get_exception_traceback
 
 from rlinf.scheduler import Worker, WorkerAddress
-from rlinf.utils.placement import ComponentPlacement, PlacementMode
+from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.workers.rollout.utils import (
     DisaggRankMapper,
     HybridRankMapper,
@@ -69,7 +69,7 @@ class Scheduler(_Scheduler, Worker):
     def __init__(
         self,
         parent_address: WorkerAddress,
-        placement: ComponentPlacement,
+        placement: ModelParallelComponentPlacement,
         config: DictConfig,
         world_size: int,
         rank: int,
@@ -268,7 +268,7 @@ class Scheduler(_Scheduler, Worker):
 # only modifiy Scheduler's initialization parameters
 def run_scheduler_process(
     parent_address: WorkerAddress,
-    placement: ComponentPlacement,
+    placement: ModelParallelComponentPlacement,
     config: DictConfig,
     world_size: int,
     rank: int,

@@ -1,27 +1,14 @@
 name: Lint
 
-on: [push, pull_request]
-
-permissions:
-  contents: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+on:
+  push:
+  pull_request:
+    branches: [main]
 
 jobs:
-    lint:
-        runs-on: ubuntu-latest
-        
-        steps:
-            - name: Checkout code
-              uses: actions/checkout@v4
-              
-            - name: Install ruff
-              run: pip install ruff
-              
-            - name: Run ruff linter
-              run: ruff check .
-              
-            - name: Run ruff formatter check
-              run: ruff format --check .
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-python@v3
+    - uses: pre-commit/action@v3.0.1

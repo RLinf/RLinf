@@ -1,0 +1,29 @@
+name: Documentation
+description: Report an issue related to https://rlinf-docs.readthedocs.io
+title: "[Doc]: "
+labels: ["documentation"]
+
+body:
+- type: textarea
+  attributes:
+    label: Documentation issue
+    description: >
+      A clear and concise description of what content in https://rlinf-docs.readthedocs.io is an issue.
+  validations:
+    required: true
+- type: textarea
+  attributes:
+    label: Suggest a potential alternative/fix
+    description: >
+      Tell us how we could improve the documentation in this regard.
+- type: markdown
+  attributes:
+    value: >
+      Thanks for contributing to RLinf!
+- type: checkboxes
+  id: check_doc
+  attributes:
+    label: Before submitting a new issue...
+    options:
+      - label: Have you checked relevant issues, FAQs (https://rlinf-docs.readthedocs.io/en/latest/rst_source/faq.html), or asked the chatbot at the top right corner of the [documentation page](https://rlinf-docs.readthedocs.io).
+        required: true

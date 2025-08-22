@@ -101,13 +101,13 @@ class Channel:
         >>>
         >>> cluster = Cluster(num_nodes=1, num_gpus_per_node=8)
         >>> placement1 = PackedPlacementStrategy(
-        ...     master_node=0, master_gpu=0, num_processes=1
+        ...     start_gpu_id=0, end_gpu_id=0
         ... )
         >>> worker_group1 = TestWorker.create_group().launch(
         ...     cluster, name="test", placement_strategy=placement1
         ... )
         >>> placement2 = PackedPlacementStrategy(
-        ...     master_node=0, master_gpu=1, num_processes=1
+        ...     start_gpu_id=1, end_gpu_id=1
         ... )
         >>> worker_group2 = TestWorker2.create_group().launch(
         ...     cluster, name="test2", placement_strategy=placement2
@@ -120,15 +120,12 @@ class Channel:
     """
 
     @classmethod
-    def create(
-        cls, name: str, node_id: int = 0, gpu_id: int = 0, maxsize: int = 0
-    ) -> "Channel":
+    def create(cls, name: str, gpu_id: int = 0, maxsize: int = 0) -> "Channel":
         """Create a new channel with the specified name, node ID, and GPU ID.
 
         Args:
             name (str): The name of the channel.
-            node_id (int): The ID of the node where the channel will be created.
-            gpu_id (int): The ID of the GPU where the channel will be created.
+            gpu_id (int): The global ID of the GPU in the cluster where the channel will be created.
             maxsize (int): The maximum size of the channel queue. Defaults to 0 (unbounded).
 
         Returns:
@@ -137,9 +134,8 @@ class Channel:
         """
         cluster = Cluster()
         placement = PackedPlacementStrategy(
-            master_node=node_id,
-            master_gpu=gpu_id,
-            num_processes=1,
+            start_gpu_id=gpu_id,
+            end_gpu_id=gpu_id,
         )
         try:
             from .channel_worker import ChannelWorker
@@ -205,10 +201,10 @@ class Channel:
         master_gpu = affine_worker_info.gpu_id
 
         cluster = Cluster()
+        global_gpu_id = master_node * cluster.num_gpus_per_node + master_gpu
         placement = PackedPlacementStrategy(
-            master_node=master_node,
-            master_gpu=master_gpu,
-            num_processes=1,
+            start_gpu_id=global_gpu_id,
+            end_gpu_id=global_gpu_id,
         )
         try:
             from .channel_worker import ChannelWorker
