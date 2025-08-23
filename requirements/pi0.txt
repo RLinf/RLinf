@@ -1,1 +1,3 @@
+
+flash-attn==2.5.5
 lerobot>=0.3.3

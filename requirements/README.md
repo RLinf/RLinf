@@ -28,7 +28,7 @@ Run the following to install Megatron, SGLang/vLLM and their dependencies.
 ```shell
 uv sync --extra sgl_vllm
 mkdir -p /opt && git clone https://github.com/NVIDIA/Megatron-LM.git -b core_r0.11.0 /opt/Megatron-LM
-uv pip install -r requirements/megatron.txt --no-build-isolation
+APEX_CPP_EXT=1 APEX_CUDA_EXT=1 uv pip install -r requirements/megatron.txt --no-build-isolation
 ```
 Before using Megatron, make sure it's path is added to the `PYTHONPATH` environment variables.
 ```shell
@@ -44,8 +44,8 @@ uv sync --extra embodied
 Next, depending on the experiment types, install the `openvla` or `pi0` dependencies.
 ```shell
 # For OpenVLA/OpenVLA-oft experiments
-UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla.txt
+UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla.txt --no-build-isolation
 
 # For Pi0 experiment
-UV_TORCH_BACKEND=auto uv pip install -r requirements/pi0.txt
+UV_TORCH_BACKEND=auto uv pip install -r requirements/pi0.txt --no-build-isolation
 ```

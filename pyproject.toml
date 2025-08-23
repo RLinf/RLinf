@@ -29,7 +29,7 @@ dependencies = [
     # Data processing
     "pylatexenc",
     "datasets",
-    "latex2sympy2",
+    "latex2sympy2 @ git+https://github.com/RLinf/latex2sympy2.git",
     "sentencepiece",
     "torchdata",
     "wandb",
@@ -55,10 +55,8 @@ sgl_vllm = [
     "transformers==4.48.3",
     "sglang[all]==0.4.4",
     "vllm==0.7.1",
-    "apex",
 ]
 embodied = [
-    "flash-attn==2.5.5",
     "prismatic",
     "transformers==4.40.1",
     "draccus",
@@ -73,20 +71,12 @@ embodied = [
 
 [tool.uv]
 prerelease = "allow"
-no-build-isolation-package = ["apex", "flash-attn"]
 conflicts = [
     [
       { extra = "sgl_vllm" },
       { extra = "embodied" },
     ],
 ]
-
-[tool.uv.sources]
-latex2sympy2 = { git = "https://github.com/RLinf/latex2sympy2.git" }
-apex = { git = "https://github.com/NVIDIA/apex.git" }
-
-[tool.uv.extra-build-variables]
-apex = { APEX_CPP_EXT = "1", APEX_CUDA_EXT = "1" }
 
 [tool.ruff]
 line-length = 88
