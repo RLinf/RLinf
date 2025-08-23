@@ -53,6 +53,14 @@ templates_path = ["_templates"]
 exclude_patterns = []
 default_role = "code"
 autosummary_generate = True
+autodoc_mock_imports = ["megatron"]
+autodoc_class_signature = "separated"
+autodoc_typehints = "description"
+# autoclass_content = "both"
+autodoc_docstring_signature = True
+napoleon_use_param = True
+napoleon_use_rtype = True
+napoleon_preprocess_types = True
 
 # Autodoc defaults: include members and inheritance
 # autodoc_default_options = {

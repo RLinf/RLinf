@@ -68,6 +68,7 @@ Running the Script
 **1. Key Parameters Configuration**
 
 .. code-block:: yaml
+
    cluster:
       num_nodes: 2
       num_gpus_per_node: 8
@@ -84,6 +85,7 @@ Using the above configuration, you can achieve pipeline overlap between env and 
 Additionally, by setting `pipeline_stage_num = 2` in the configuration, you can achieve pipeline overlap between rollout and actor, improving rollout efficiency.
 
 .. code-block:: yaml
+   
    cluster:
       num_nodes: 1
       num_gpus_per_node: 8
@@ -93,6 +95,7 @@ Additionally, by setting `pipeline_stage_num = 2` in the configuration, you can 
 You can also reconfigure the placement to achieve complete sharing, where env, rollout, and actor components all share all GPUs.
 
 .. code-block:: yaml
+
    cluster:
       num_nodes: 2
       num_gpus_per_node: 16
@@ -107,7 +110,7 @@ You can also reconfigure the placement to achieve complete separation, where env
 
 Use the provided configuration: ``examples/embodiment/config/maniskill_ppo_openvla.yaml``
 
-**4. Launch Command**
+**3. Launch Command**
 
 .. code-block:: bash
 

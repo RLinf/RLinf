@@ -39,7 +39,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 **RLinf is fast with:**
 
-- Automatic online-scaling mechanism: GPU switching within 1 second.
+- Online-scaling mechanism: GPU switching within 1 second.
 - Auto-scheduling Strategy: automatically selects the most suitable execution mode based on the training workload.
 - Improves efficiency by 20-40% while preserving the on-policy property of RL algorithms.
 

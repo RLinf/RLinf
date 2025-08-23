@@ -22,3 +22,4 @@ We present three concise examples to demonstrate the framework's workflow and he
    vla
    llm
    distribute
+   eval

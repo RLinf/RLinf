@@ -1,7 +1,7 @@
 Collocated Mode
 ===============
 
-.. image:: ../../../_static/svg/colocate.svg
+.. image:: ../../../_static/svg/collocate.svg
    :width: 600px
    :align: center
    :class: col-img
