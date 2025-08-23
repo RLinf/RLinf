@@ -23,7 +23,7 @@ classifiers = [
 dependencies = [
     # Core System
     "accelerate",
-    "ray[default]",
+    "ray[default]>=2.47.0",
     "torch==2.5.1",
 
     # Data processing
@@ -58,6 +58,8 @@ sgl_vllm = [
     "apex",
 ]
 embodied = [
+    "flash-attn==2.5.5",
+    "prismatic",
     "transformers==4.40.1",
     "draccus",
     "rich",
