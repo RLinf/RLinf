@@ -228,6 +228,16 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
             "accumulate_allreduce_grads_in_fp32", True
         )
 
+        # profiler
+        cfg.megatron.use_profiler = cfg.megatron.get("use_profiler", False)
+        if cfg.megatron.use_profiler:
+            cfg.megatron.profiler.schedule_warmup = cfg.megatron.profiler.get(
+                "schedule_warmup", 3
+            )
+            cfg.megatron.profiler.schedule_active = cfg.megatron.profiler.get(
+                "schedule_active", 1
+            )
+
         # distributed
         # If set, distributed ranks initialize order is changed from tp-cp-ep-dp-pp to tp-cp-ep-pp-dp.
         cfg.megatron.use_tp_pp_dp_mapping = cfg.megatron.get(

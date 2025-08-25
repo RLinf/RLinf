@@ -55,6 +55,7 @@ from rlinf.utils.distributed import (
     vocab_parallel_log_probs_from_logits,
 )
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
+from rlinf.utils.profiler import PyTorchProfiler, PyTorchProfilerFunc
 from rlinf.utils.resharding.mcore_weight_reshard import MegatronCoreWeightReshard
 from rlinf.utils.resharding.reshard_config import ReshardConfig
 from rlinf.utils.train_utils import (
@@ -166,6 +167,46 @@ class MegatronActor(MegatronModelManager, Worker):
             self._batch_buffer_for_metrics: List[RolloutResult] = []
 
         self.average_respone_len = self.response_len
+
+        self._init_profiler()
+
+    def _init_profiler(self):
+        def _validate_schedule_info():
+            assert (
+                self.cfg.actor.megatron.profiler.schedule_warmup is not None
+                and self.cfg.actor.megatron.profiler.schedule_warmup >= 0
+            ), "<schedule_warmup> must be set and greater than 0 when using profiler."
+            assert (
+                self.cfg.actor.megatron.profiler.schedule_active is not None
+                and self.cfg.actor.megatron.profiler.schedule_active > 0
+            ), "<schedule_active> must be set and greater than 0 when using profiler."
+
+        self.use_profiler = self.cfg.actor.megatron.use_profiler
+
+        # here we should validate profiler's schedule info
+        if self.use_profiler:
+            _validate_schedule_info()
+        self.profiler = (
+            PyTorchProfiler.from_config(self.cfg.actor.megatron.profiler)
+            if self.use_profiler
+            else None
+        )
+        self._forward_only_record = PyTorchProfilerFunc(
+            "forward_only", self.use_profiler
+        )
+        self._dynamic_batch_processing_record = PyTorchProfilerFunc(
+            "dynamic_batch_processing", self.use_profiler
+        )
+        self._static_batch_processing_record = PyTorchProfilerFunc(
+            "static_batch_processing", self.use_profiler
+        )
+        self._broadcast_outputs_record = PyTorchProfilerFunc(
+            "broadcast_outputs", self.use_profiler
+        )
+
+        self._megatron_forward_backward_record = PyTorchProfilerFunc(
+            "megatron_forward_backward", self.use_profiler
+        )
 
     def init_worker(self):
         self.setup_model_and_optimizer()
@@ -449,8 +490,12 @@ class MegatronActor(MegatronModelManager, Worker):
 
         self.num_microbatches = n_micro_batch
 
+        if self.use_profiler:
+            self.profiler.start(forward_only=forward_only)
+
         if forward_only:
             self.return_loss = False
+            self._forward_only_record.start()
             forward_outputs = fwd_bwd_function(
                 forward_step_func=self.get_forward_step_func(),
                 data_iterator=self.make_data_iterator_list(data_iter, padding=True),
@@ -461,7 +506,10 @@ class MegatronActor(MegatronModelManager, Worker):
                 micro_batch_size=1,
                 collect_non_loss_data=True,
             )
+            self._forward_only_record.stop()
+
             if self.enable_dynamic_batch_size:
+                self._dynamic_batch_processing_record.start()
                 outputs = torch.cat(forward_outputs, dim=0).to(torch.float32)
                 indices = sum(indices, [])
                 assert len(indices) == outputs.size(0), (
@@ -471,14 +519,21 @@ class MegatronActor(MegatronModelManager, Worker):
                     get_reverse_idx(indices), dtype=torch.long
                 )
                 outputs = outputs[revert_indices]
-            # Broadcast it from last PP stage to everything else.
+                self._dynamic_batch_processing_record.stop()
             else:
+                self._static_batch_processing_record.start()
                 outputs = (
                     torch.cat(forward_outputs) if len(forward_outputs) > 0 else None
                 )
+                self._static_batch_processing_record.stop()
+
+            self._broadcast_outputs_record.start()
             outputs = broadcast_tensor_within_pp(outputs)
+            self._broadcast_outputs_record.stop()
         else:
             self.return_loss = True
+
+            self._megatron_forward_backward_record.start()
             forward_outputs = fwd_bwd_function(
                 forward_step_func=self.get_forward_step_func(),
                 data_iterator=self.make_data_iterator_list(data_iter, padding=True),
@@ -488,6 +543,8 @@ class MegatronActor(MegatronModelManager, Worker):
                 seq_length=total_seqlen,
                 micro_batch_size=1,
             )
+            self._megatron_forward_backward_record.stop()
+
             outputs = {}
 
             if forward_outputs:
@@ -499,6 +556,9 @@ class MegatronActor(MegatronModelManager, Worker):
                     torch.distributed.broadcast(metric_mean, get_last_rank())
 
                     outputs[key] = metric_mean.cpu().item()
+
+        if self.use_profiler:
+            self.profiler.stop(forward_only=forward_only)
 
         return outputs
 
@@ -641,19 +701,22 @@ class MegatronActor(MegatronModelManager, Worker):
             gbs=self.cfg.actor.global_batch_size,
             dp=parallel_state.get_data_parallel_world_size(),
         )
-
         rollout_size = self.rollout_batches["input_ids"].size(0)
+        num_microbatches = divide(
+            rollout_size,
+            self.cfg.actor.global_batch_size
+            // parallel_state.get_data_parallel_world_size(),
+        )
         rollout_dataloader_iter = get_iterator_k_split(
             batch=self.rollout_batches,
-            num_microbatches=divide(
-                rollout_size,
-                self.cfg.actor.global_batch_size
-                // parallel_state.get_data_parallel_world_size(),
-            ),
+            num_microbatches=num_microbatches,
             shuffle=self.cfg.algorithm.get("shuffle_rollout", True),
             shuffle_seed=self.cfg.actor.seed,
         )
         training_metrics_list = []
+
+        if self.use_profiler:
+            self.profiler.init_fwd_bwd_schedule(num_microbatches)
         for batch in rollout_dataloader_iter:
             training_metrics = self.training_step(batch)
             training_metrics_list.append(training_metrics)
@@ -769,26 +832,41 @@ class MegatronActor(MegatronModelManager, Worker):
             advantages = masked_normalization(advantages, mask)
         self.rollout_batches["advantages"] = advantages
 
-        rollout_metrics = cpu_dict(
+        rollout_metrics, total_prompt_lengths, total_decode_lengths = (
             compute_rollout_metrics(
                 self.rollout_batches, self.cfg.data.max_prompt_length, self.response_len
             )
         )
+
+        rollout_metrics = cpu_dict(rollout_metrics)
+
         self.rollout_batches.pop("reward_scores")
 
         if self.cfg.actor.get("calculate_flops", False):
-            batch_size = self.cfg.data.rollout_batch_size * self.cfg.algorithm.get(
-                "group_size", 1
+            total_generation_tflops = (
+                self.flops_calculator.flops_generate(
+                    total_prompt_lengths, total_decode_lengths
+                )
+                .float()
+                .sum()
+                .item()
+                / 1e12
             )
-            prefill_decode_flops, prefill_total_flops = self.flops_calculator.flops(
-                batch_size=batch_size,
-                prompt_length=rollout_metrics["prompt_length"],
-                decode_length=rollout_metrics["response_length"],
+            total_inference_tflops = (
+                self.flops_calculator.flops_inference(
+                    total_prompt_lengths + total_decode_lengths
+                )
+                .float()
+                .sum()
+                .item()
+                / 1e12
             )
+
             rollout_metrics.update(
                 {
-                    "prefill_decode_flops": prefill_decode_flops,
-                    "prefill_total_flops": prefill_total_flops,
+                    "generation_tflops": total_generation_tflops,
+                    "inference_tflops": total_inference_tflops,
+                    "training_tflops": total_inference_tflops * 3,  # factor
                 }
             )
 

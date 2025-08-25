@@ -198,29 +198,28 @@ class MathRunner:
         num_gpus_inference = self.component_placement.inference_world_size
         num_gpus_rollout = self.component_placement.rollout_world_size
 
-        prefill_decode_flops = act_rollout_metrics.get("prefill_decode_flops")
-        prefill_total_flops = act_rollout_metrics.get("prefill_total_flops")
+        generation_tflops = act_rollout_metrics["generation_tflops"]
+        inference_tflops = act_rollout_metrics["inference_tflops"]
+        training_tflops = act_rollout_metrics["training_tflops"]
 
         flops_metrics = {
             "rollout_tflops_per_gpu": 0.0,
             "inference_tflops_per_gpu": 0.0,
             "training_tflops_per_gpu": 0.0,
         }
-
-        if rollout_time > 0 and num_gpus_rollout > 0 and prefill_decode_flops > 0:
+        if rollout_time > 0 and generation_tflops > 0:
             flops_metrics["rollout_tflops_per_gpu"] = (
-                prefill_decode_flops / rollout_time / 1e12 / num_gpus_rollout
+                generation_tflops / rollout_time / num_gpus_rollout
             )
 
-        if inference_time > 0 and num_gpus_inference > 0 and prefill_total_flops > 0:
+        if inference_time > 0 and inference_tflops > 0:
             flops_metrics["inference_tflops_per_gpu"] = (
-                prefill_total_flops / inference_time / 1e12 / num_gpus_inference
+                inference_tflops / inference_time / num_gpus_inference
             )
 
-        if training_time > 0 and num_gpus_actor > 0 and prefill_total_flops > 0:
-            # here we use factor 3 to approximate the training tflops
+        if training_time > 0 and training_tflops > 0:
             flops_metrics["training_tflops_per_gpu"] = (
-                3 * prefill_total_flops / training_time / 1e12 / num_gpus_actor
+                training_tflops / training_time / num_gpus_actor
             )
 
         return flops_metrics
