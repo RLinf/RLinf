@@ -1,17 +1,21 @@
-Worker and WorkerGroup 
-=========================
+Worker Interface
+===================================
 
-这一部分文档将详细介绍RLinf中对Worker和WorkerGroup的统一接口设计。
-Worker是RLinf中执行任务的基本单元，后续的RL 训练中的不同阶段都会继承它，以实现统一的通信与调度
-而WorkerGroup则是多个Worker的集合，让用户不必处理分布式训练中的复杂性。
-通过WorkerGroup，用户可以更方便地管理和调度多个Worker，从而实现更高效的分布式训练。
+This section provides a detailed introduction to the unified interface design of Worker and WorkerGroup in RLinf.  
+The **Worker** is the fundamental unit of execution in RLinf. Different stages of RL training will inherit from it in order to achieve unified communication and scheduling.  
+The **WorkerGroup** is a collection of multiple Workers, allowing users to avoid dealing with the complexities of distributed training directly.  
+With WorkerGroup, users can more easily manage and schedule multiple Workers, enabling more efficient distributed training.
 
-.. autoclass:: rlinf.workers.actor.megatron_actor_worker.MegatronActor
-   :show-inheritance:
-   :members: 
+Worker
+-------
 
-.. autoclass:: rlinf.hybrid_engines.megatron.megatron_model_manager.MegatronModelManager
-   :members: 
+.. autoclass:: rlinf.scheduler.worker.worker.Worker
+   :members: worker_address, create_group, send, recv, send_tensor, recv_tensor, create_channel, connect_channel, broadcast
+   :class-doc-from: init
+   :exclude-members: __init__, __new__
 
-.. autoclass:: rlinf.utils.placement.ComponentPlacement
+WorkerGroup
+-----------
+
+.. autoclass:: rlinf.scheduler.worker.worker_group.WorkerGroup
    :members:

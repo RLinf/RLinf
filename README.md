@@ -9,8 +9,8 @@
 <!-- <a href="TODO"><img src="https://img.shields.io/badge/arXiv-Paper-red?logo=arxiv"></a> -->
 <a href="https://huggingface.co/RLinf"><img src="https://img.shields.io/badge/HuggingFace-yellow?logo=huggingface&logoColor=white" alt="Hugging Face"></a>
 <a href="TODO:"><img src="https://img.shields.io/badge/Documentation-Purple?color=8A2BE2&logo=readthedocs"></a>
-<a href="TODO:"><img src="https://devin.ai/assets/deepwiki-badge.png" alt="Ask DeepWiki.com" style="height:20px;"></a>
-<a href="TODO:"><img src="https://img.shields.io/badge/微信-green?logo=wechat&amp"></a>
+<a href="https://deepwiki.com/RLinf/RLinf"><img src="https://devin.ai/assets/deepwiki-badge.png" alt="Ask DeepWiki.com" style="height:20px;"></a>
+<a href="https://github.com/user-attachments/assets/e4443113-73e5-4b28-aaa7-7af61172eddd"><img src="https://img.shields.io/badge/微信-green?logo=wechat&amp"></a>
 
 </div>
 
@@ -39,7 +39,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 **RLinf is fast with:**
 
-- Online-scaling mechanism: GPU switching within 1 second.
+- Online Scaling Strategy: dynamically scales training resources, with GPU switching performed within seconds.
 - Auto-scheduling Strategy: automatically selects the most suitable execution mode based on the training workload.
 - Improves efficiency by 20-40% while preserving the on-policy property of RL algorithms.
 
@@ -59,7 +59,6 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 - Built-in support for popular RL methods, including PPO, GRPO, DAPO, Reinforce++, and more.
 
-- Support for SFT.
 
 ## Roadmap
 
@@ -70,38 +69,37 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 ### 2. Application-Level Extensions
 - [ ] Support for Vision-Language Model (VLM) training  
-- [ ] Support for GUI/Web agent training  
+- [ ] Support for deep searcher agent training  
 - [ ] Support for multi-agent training  
-- [ ] Support for integration with more embodied simulators (e.g., Meta-World, GENESIS)  
-- [ ] Support for more Vision-Language Agents (VLAs), such as GR00T  
-- [ ] Support for world model training  
-- [ ] Support for real-world RL deployment  
+- [ ] Support for integration with more embodied simulators (e.g., [Meta-World](https://github.com/Farama-Foundation/Metaworld), [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis))  
+- [ ] Support for more Vision-Language Agents (VLAs), such as [GR00T](https://github.com/NVIDIA/Isaac-GR00T)
+- [ ] Support for world model   
+- [ ] Support for real-world RL embodied intelligence
 
 
 ## Getting Started 
 
 TODO: fill
 
-The overall [**Documentation**]()
+Complete documentation for RLinf can be found [**Here**](https://github.com/RLinf/Documentation).
 
 **Quickstart**
 
   - [Installation]()
   - [Quickstart 1: PPO Training of VLA on Maniskill3]()
   - [Quickstart 2: GRPO Training of LLMs on MATH]()
-  - [PPO in RLinf]()
-  - [GRPO in RLinf]()
-  - [Basic YAML Configuaration]()
+  - [Multi-node Training]()
+  - [Model Evaluation]()
 
 **Key Design**
-
-  - [Hybrid mode with fine-grained pipelining]()
-  - [Enable Online-scaling Mechanism]()
-  - [Execute Auto-scheduling Policy]()
+  - [Unified User Interface Usage]()
+  - [Flexible Execution Modes]()
+  - [Enable Automatic Scheduling]()
+  - [Elastic Communication]()
 
 **Example Gallery**
 
-  - [Embodied Intelligence VLA Training]()
+  - [Embodied Intelligence Vision-Language-Action Model training]()
   - [Math Reasoning Model Training]()
 
 **Advanced Features**
@@ -132,5 +130,3 @@ The overall [**Documentation**]()
 We welcome contributions to RLinf. Please read [contribution guide](TODO:) before taking action.
 
 ## Citation and Acknowledgement
-
-TODO: Chinese version

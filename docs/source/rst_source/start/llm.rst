@@ -38,11 +38,11 @@ Launch Training
 
    # model
    hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B \
-   --local-dir /model/DeepSeek-R1-Distill-Qwen-1.5B
+   --local-dir /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B
 
    # dataset
    hf download inclusionAI/AReaL-boba-Data --repo-type=dataset \
-   --local-dir /dataset/boba
+   --local-dir /path/to/dataset/boba
 
 **Step 2: Execute the provided launch script:**
 

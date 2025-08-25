@@ -27,7 +27,7 @@ For **OpenVLA**, run:
 
    # Download pre-trained OpenVLA model
    hf download gen-robot/openvla-7b-rlvla-warmup \
-   --local-dir /models/openvla-7b-rlvla-warmup/
+   --local-dir /path/to/model/openvla-7b-rlvla-warmup/
 
 
 the model is cited in `paper <https://arxiv.org/abs/2505.19789>`_

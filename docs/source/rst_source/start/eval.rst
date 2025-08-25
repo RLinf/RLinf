@@ -77,7 +77,7 @@ Stored outputs include:
 
 Example Metadata:
 
-.. code-block:: json
+.. code-block:: javascript
 
    {
        "num_samples": 30,
@@ -93,19 +93,19 @@ Example Metadata:
 
 Example Model Output:
 
-.. code-block:: json
+.. code-block:: javascript
 
    {
       "idx": 0, 
       "question": "Find the number of...", 
       "gt_cot": "None", 
-      "gt": "204", # ground truth answer
-      "solution": "... . Thus, we have the equation $(240-t)(s) = 540$ ..., ", # standard solution
-      "answer": "204", # ground truth answer
-      "code": ["Alright, so I need to figure out ... . Thus, the number of ... is \\(\\boxed{204}\\)."], # generated reasoning chains
-      "pred": ["204"], # extracted answers from reasoning chains
+      "gt": "204", // ground truth answer
+      "solution": "... . Thus, we have the equation $(240-t)(s) = 540$ ..., ", // standard solution
+      "answer": "204", // ground truth answer
+      "code": ["Alright, so I need to figure out ... . Thus, the number of ... is \\(\\boxed{204}\\)."], // generated reasoning chains
+      "pred": ["204"], // extracted answers from reasoning chains
       "report": [null], 
-      "score": [true] # whether the extracted answers are correct
+      "score": [true] // whether the extracted answers are correct
    }
 
 Datasets

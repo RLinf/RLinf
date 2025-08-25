@@ -1,36 +1,37 @@
 APIs
 ==========
 
-本文档将为用户详细的展开RLinf中最关键的api接口，旨在帮助用户深入了解我们的API设计和使用方法。
 
-本api文档从底层逐步往上，首先展开RLinf的基石api，
-包括：
+This section provides a detailed walkthrough of the most essential API interfaces in RLinf, aiming to help users deeply understand our API design and usage. 
+These key APIs are exposed to users to simplify the complex data flows of RL, allowing them to focus on higher-level abstractions without needing to worry about the underlying implementations.
 
-- 对worker以及workergroup的统一接口
+This API documentation proceeds bottom-up, starting with the foundational APIs of RLinf, including:
 
-- 对RLinf的GPU placement策略的介绍
+- :doc:`worker` — A unified interface for workers and worker groups.
+- :doc:`placement` — An introduction to RLinf’s GPU placement strategies.
+- :doc:`cluster` — Support for distributed training via clusters.
+- :doc:`channel` — Low-level communication primitives, including a producer–consumer queue abstraction.
 
-- 对RLinf的分布式训练的支持cluster
+After that, we introduce the upper-layer APIs used to implement different stages of RL:
 
-- 在通信上的底层实现，包括基于生产者-消费者的队列抽象
+- :doc:`actor` — Actor wrappers based on FSDP and Megatron.
+- :doc:`rollout` — Rollout wrappers built on Huggingface and SGLang.
+- :doc:`env` — Environment wrappers for embodied intelligence scenarios.
+- :doc:`data` — Encapsulation of the data structure for transmission between different workers.
 
-在这之后，我们将介绍RLinf的上侧用于具体实现RL不同阶段的api
-包括：
-
-- 基于FSDP和Megatron的actor封装（TODO: 包括hybrid engines manager）
-
-- 基于huggingface和sglang的用于rollout的封装
-
-- 在embody intelligence场景下对env的封装
-
-- 在megatron backend下对于inference stage的封装
-
-
+.. Finally, we include a set of helper functions: :doc:`utilities`.
+   
 .. toctree::
    :hidden:
    :maxdepth: 1
 
    worker
+   placement
+   cluster
+   channel
 
-
+   actor
+   rollout
+   env
+   data
 

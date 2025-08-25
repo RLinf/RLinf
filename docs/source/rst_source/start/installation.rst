@@ -25,7 +25,6 @@ Installation Methods
 --------------------
 
 RLinf provides two installation options. We **recommend using Docker**, as it provides the fastest and most reproducible environment.
-
 However, if your system is incompatible with the Docker image, you can also install RLinf manually in a Python environment.
 
 Install from Docker Image
@@ -69,13 +68,72 @@ Inside the container, clone the RLinf repository:
 Install from Custom Environment
 -------------------------------
 
-TODO:
+This installation is divided into two steps depending on the experiments you wish to run.
 
-1. Install CUDA and cuDNN.
-2. Create a new conda environment.
-3. Install dependencies such as Megatron and SGLang manually.
-4. Install Python dependencies:
+First, for all experiments, follow the :ref:`Common Dependencies <common-dependencies>` section to install common dependencies.
 
-.. code-block:: bash
+Second, for experiments depending on Megatron and SGLang/vLLM like Math, follow the :ref:`Megatron and SGLang/vLLM Dependencies <megatron-and-sglang-vllm-dependencies>` section to install Megatron-related dependencies.  
+For embodied experiments, follow the :ref:`Embodied Dependencies <embodied-dependencies>` to install OpenVLA or Pi0 dependencies.
 
-   pip install -r requirements.txt
+.. _common-dependencies:
+
+Common Dependencies
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+We recommend using `uv <https://docs.astral.sh/uv/>`_ to install the necessary Python dependencies.  
+If you are using `conda <https://docs.conda.io/projects/conda/en/latest/user-guide/getting-started.html>`_, you can also install ``uv`` via ``pip``.
+
+.. code-block:: shell
+
+   conda create -n rlinf python=3.11.10 -y
+   conda activate rlinf
+   pip install --upgrade uv
+
+After installing ``uv``, create a virtual environment and install PyTorch as well as the common dependencies.
+
+.. code-block:: shell
+
+   uv venv
+   source .venv/bin/activate
+   UV_TORCH_BACKEND=auto uv sync
+
+.. _megatron-and-sglang-vllm-dependencies:
+
+Megatron and SGLang/vLLM Dependencies
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Run the following to install Megatron, SGLang/vLLM and their dependencies.
+
+.. code-block:: shell
+
+   uv sync --extra sgl_vllm
+   mkdir -p /opt && git clone https://github.com/NVIDIA/Megatron-LM.git -b core_r0.11.0 /opt/Megatron-LM
+   APEX_CPP_EXT=1 APEX_CUDA_EXT=1 uv pip install -r requirements/megatron.txt --no-build-isolation
+
+Before using Megatron, make sure its path is added to the ``PYTHONPATH`` environment variable.
+
+.. code-block:: shell
+
+   export PYTHONPATH=/opt/Megatron-LM:$PYTHONPATH
+
+.. _embodied-dependencies:
+
+Embodied Dependencies
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For embodied experiments, first install the necessary system dependencies (currently only Debian/Ubuntu ``apt`` package management is supported).
+
+.. code-block:: shell
+
+   bash requirements/install_embodied_deps.sh
+   uv sync --extra embodied
+
+Next, depending on the experiment types, install the ``openvla`` or ``pi0`` dependencies.
+
+.. code-block:: shell
+
+   # For OpenVLA/OpenVLA-oft experiments
+   UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla.txt --no-build-isolation
+
+   # For Pi0 experiment
+   UV_TORCH_BACKEND=auto uv pip install -r requirements/pi0.txt --no-build-isolation

@@ -20,7 +20,7 @@ which either retrieves an existing ``CollectiveGroup`` for the given set of work
 
 .. _collectivegroup_p2p:
 
-CollectiveGroup and P2P Communication
+P2P Communication
 -------------------------------------
 
 A ``CollectiveGroup`` is the core abstraction in RLinf for managing point-to-point communication between two workers.

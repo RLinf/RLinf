@@ -8,6 +8,7 @@ It provides a collection of hands-on tutorials covering all the core components 
    From a user’s perspective, this tutorial introduces the fundamental components of RLinf, 
    including how to configure tasks using YAML, assign workers for each RL task, 
    and manage GPU resources from a global, cluster-level viewpoint.
+   TODO: flow
 
 - :doc:`mode/index`  
    Learn about the different execution modes supported by RLinf, 

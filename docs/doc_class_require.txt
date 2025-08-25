@@ -1,0 +1,54 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# Core System
+accelerate
+ray[default]
+torch
+# megatron-core
+# git+https://github.com/NVIDIA/Megatron-LM.git
+
+# Data processing
+pylatexenc
+datasets
+latex2sympy2 @ git+https://github.com/RLinf/latex2sympy2.git
+sentencepiece
+torchdata
+wandb
+word2number
+regex
+scipy
+
+# Utilities
+hydra-core
+omegaconf
+einops
+nvitop
+pybind11
+torch-memory-saver
+setuptools
+
+# Logging
+swanlab
+tensorboard
+
+# Optional: embodied
+prismatic
+transformers
+draccus
+rich
+tensorflow_graphics
+peft
+timm
+mani_skill
+tensordict
+libero @ git+https://github.com/Lifelong-Robot-Learning/LIBERO.git
+
+# Optional: sgl_vllm
+transformers
+sglang==0.4.4
+# sglang[all]==0.4.4
+uvloop
+fastapi
+
+
+
