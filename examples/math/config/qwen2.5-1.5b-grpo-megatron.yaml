@@ -83,7 +83,7 @@ rollout:
 
   gpu_memory_utilization: 0.55
 
-  model_dir: /model/DeepSeek-R1-Distill-Qwen-1.5B/
+  model_dir: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/
   model_arch: qwen2.5
   enforce_eager: False         # if False, vllm will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
@@ -94,7 +94,7 @@ rollout:
 
   attention_backend: triton
 
-  return_logprobs: ${not:algorithm.recompute_logprobs}
+  return_logprobs: ${not:${algorithm.recompute_logprobs}}
 
   tensor_parallel_size: 1
   pipeline_parallel_size: 1
@@ -204,7 +204,7 @@ actor:
     lr_decay_iters: 10
 
   tokenizer:
-    tokenizer_model: /model/DeepSeek-R1-Distill-Qwen-1.5B/
+    tokenizer_model: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'

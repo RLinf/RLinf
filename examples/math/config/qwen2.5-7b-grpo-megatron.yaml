@@ -83,7 +83,7 @@ rollout:
 
   gpu_memory_utilization: 0.65
 
-  model_dir: /model/DeepSeek-R1-Distill-Qwen-7B
+  model_dir: /path/to/model/DeepSeek-R1-Distill-Qwen-7B
   model_arch: qwen2.5
   enforce_eager: False         # if False, vllm will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
@@ -93,7 +93,7 @@ rollout:
   eos: null                   # will be tokenizer.eos_token_id if null.
 
   attention_backend: triton
-  return_logprobs: ${not:algorithm.recompute_logprobs}
+  return_logprobs: ${not:${algorithm.recompute_logprobs}}
 
   tensor_parallel_size: 2
   pipeline_parallel_size: 1
@@ -202,7 +202,7 @@ actor:
     lr_decay_iters: 10
 
   tokenizer:
-    tokenizer_model: /model/DeepSeek-R1-Distill-Qwen-7B
+    tokenizer_model: /path/to/model/DeepSeek-R1-Distill-Qwen-7B
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'
@@ -215,7 +215,7 @@ actor:
     use_dist_ckpt: False
     tp_comm_bootstrap_backend: nccl
     tp_comm_overlap_cfg: null # tp_comm_overlap_cfg.yaml
-    use_hf_ckpt: False # if true, will transfer hf model to generate megatron checkpoint and use it for training.
+    use_hf_ckpt: True # if true, will transfer hf model to generate megatron checkpoint and use it for training.
     use_profiler: False # if true, will enable torch profiler when training, pay attention it has influence on performance
 
     ckpt_convertor: # config for ckpt convertor
