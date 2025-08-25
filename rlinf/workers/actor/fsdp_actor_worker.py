@@ -36,8 +36,8 @@ from rlinf.models import get_model
 from rlinf.models.embodiment.model_utils import custom_forward
 from rlinf.scheduler import Worker
 from rlinf.utils.data_iter_utils import get_iterator_k_split
-from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.utils.distributed import all_reduce_dict
+from rlinf.utils.placement import HybridComponentPlacement
 
 
 class EmbodiedFSDPActor(FSDPModelManager, Worker):
@@ -348,7 +348,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         mean_metric_dict = {key: np.mean(value) for key, value in metrics.items()}
         mean_metric_dict = all_reduce_dict(mean_metric_dict, op=torch.distributed.ReduceOp.AVG)
-        
+
         self.optimizer.zero_grad()
         torch.cuda.synchronize()
         torch.distributed.barrier()
