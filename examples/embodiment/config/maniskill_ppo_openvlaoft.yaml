@@ -46,7 +46,7 @@ algorithm:
   group_size: 1
   n_chunk_steps: 10
   n_eval_chunk_steps: 10
-  num_group_envs: 32
+  num_group_envs: 64
   rollout_epoch: 1
   reward_type: chunk_level
   logprob_type: token_level
@@ -138,6 +138,8 @@ actor:
     lora_rank: 32
     lora_path: /path/to/model/oft-sft/lora_004000
     ckpt_path: null
+    
+    num_images_in_input: 1
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
     trust_remote_code: True

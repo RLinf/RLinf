@@ -9,7 +9,7 @@ use_fixed_reset_state_ids: ${algorithm.use_fixed_reset_state_ids}
 only_eval: False
 
 video_cfg:
-  save_video: True
+  save_video: False
   info_on_video: True
   video_base_dir: ${runner.logger.log_path}/video/train
 

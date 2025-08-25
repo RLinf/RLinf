@@ -265,19 +265,14 @@ def actor_loss_fn(
             - actor/pg_clipfrac: Fraction of clipped policy gradient loss
             - actor/ppo_kl: Approximate KL divergence
     """
-    # Compute approximate KL divergence
-    negative_approx_kl = log_probs - old_log_prob  # [bs, ] | [bs, len]
-
-    # Compute probability ratio for PPO clipping
-    ratio = torch.exp(negative_approx_kl)  # [bs, ] | [bs, len]
-    if len(ratio.shape) == 1:
-        ratio = ratio.unsqueeze(-1)
+    logratio = log_probs - old_log_prob
+    ratio = torch.exp(logratio)
 
     # Compute clipped and unclipped policy gradient losses
-    pg_losses = -advantages * ratio  # [bs, len]
+    pg_losses = -advantages * ratio
     pg_losses2 = -advantages * torch.clamp(
         ratio, 1.0 - clip_ratio_low, 1.0 + clip_ratio_high
-    )  # [bs, len]
+    )
 
     if loss_mask is not None:
         # Take the maximum of clipped and unclipped losses
@@ -294,8 +289,8 @@ def actor_loss_fn(
 
     # Compile metrics for logging
     metrics_data = {
-        "actor/loss": pg_loss.detach().item(),
-        "actor/pg_loss": pg_loss.detach().item(),
-        "actor/pg_clipfrac": pg_clipfrac.detach().item(),
+        "actor/raw_loss": pg_loss.detach().item(),
+        "actor/policy_loss": pg_loss.detach().item(),
+        "actor/policy_clipfrac": pg_clipfrac.detach().item(),
     }
     return pg_loss, metrics_data
