@@ -265,6 +265,7 @@ def actor_loss_fn(
             - actor/pg_clipfrac: Fraction of clipped policy gradient loss
             - actor/ppo_kl: Approximate KL divergence
     """
+    bsz = log_probs.shape[0]
     logratio = log_probs - old_log_prob
     ratio = torch.exp(logratio)
 
@@ -278,10 +279,10 @@ def actor_loss_fn(
         # Take the maximum of clipped and unclipped losses
         pg_loss = masked_sum(
             torch.max(pg_losses, pg_losses2) / loss_mask_sum, loss_mask
-        )  # float
+        ) / bsz # float
         pg_clipfrac = masked_sum(
             torch.gt(pg_losses2, pg_losses).float() / loss_mask_sum, loss_mask
-        )  # float
+        ) / bsz # float
     else:
         # Take the maximum of clipped and unclipped losses
         pg_loss = torch.max(pg_losses, pg_losses2).mean()  # float
