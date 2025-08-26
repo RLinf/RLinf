@@ -278,7 +278,7 @@ class MathRunner:
     def _sync_weights(self):
         self.actor.sync_model_to_rollout()
         self.rollout.sync_model_from_actor().wait()
-        self.actor.del_reshard_state_dict()
+        self.actor.del_reshard_state_dict().wait()
 
     def run(self):
         epoch_iter = range(self.epoch, self.cfg.runner.max_epochs)
@@ -300,9 +300,11 @@ class MathRunner:
                     with self.timer("prepare_data"):
                         self._put_batch(batch)
 
+                    with self.timer("sync_weights_to_rollout"):
+                        self._sync_weights()
+
                     # generate response and compute rule-based rewards.
                     with self.timer("rollout"):
-                        self._sync_weights()
                         self.rollout.rollout(
                             input_channel=self.dataloader_channel,
                             output_channel=self.rollout_channel,

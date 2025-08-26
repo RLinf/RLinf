@@ -477,6 +477,10 @@ def validate_math_cfg(cfg: DictConfig) -> DictConfig:
         f"Model {cfg.rollout.model_arch} is not supported"
     )
 
+    assert cfg.algorithm.recompute_logprobs != cfg.rollout.return_logprobs, (
+        "Exactly one of `algorithm.recompute_logprobs` or `rollout.return_logprobs` must be True to compute `prev_logprobs`."
+    )
+
     with open_dict(cfg):
         cfg.algorithm.training_batch_size_per_gpu = cfg.algorithm.get(
             "training_batch_size_per_gpu", 1

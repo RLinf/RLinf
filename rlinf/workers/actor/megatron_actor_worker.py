@@ -493,21 +493,21 @@ class MegatronActor(MegatronModelManager, Worker):
         if self.use_profiler:
             self.profiler.start(forward_only=forward_only)
 
-        if forward_only:
-            self.return_loss = False
-            self._forward_only_record.start()
-            forward_outputs = fwd_bwd_function(
-                forward_step_func=self.get_forward_step_func(),
-                data_iterator=self.make_data_iterator_list(data_iter, padding=True),
-                model=self.model,
-                num_microbatches=n_micro_batch,
-                forward_only=True,
-                seq_length=total_seqlen,
-                micro_batch_size=1,
-                collect_non_loss_data=True,
-            )
-            self._forward_only_record.stop()
+        self.return_loss = not forward_only
+        self._forward_only_record.start()
+        forward_outputs = fwd_bwd_function(
+            forward_step_func=self.get_forward_step_func(),
+            data_iterator=self.make_data_iterator_list(data_iter, padding=True),
+            model=self.model,
+            num_microbatches=n_micro_batch,
+            forward_only=forward_only,
+            seq_length=total_seqlen,
+            micro_batch_size=1,
+            collect_non_loss_data=True if forward_only else False,
+        )
+        self._forward_only_record.stop()
 
+        if forward_only:
             if self.enable_dynamic_batch_size:
                 self._dynamic_batch_processing_record.start()
                 outputs = torch.cat(forward_outputs, dim=0).to(torch.float32)
@@ -531,20 +531,6 @@ class MegatronActor(MegatronModelManager, Worker):
             outputs = broadcast_tensor_within_pp(outputs)
             self._broadcast_outputs_record.stop()
         else:
-            self.return_loss = True
-
-            self._megatron_forward_backward_record.start()
-            forward_outputs = fwd_bwd_function(
-                forward_step_func=self.get_forward_step_func(),
-                data_iterator=self.make_data_iterator_list(data_iter, padding=True),
-                model=self.model,
-                num_microbatches=n_micro_batch,
-                forward_only=False,
-                seq_length=total_seqlen,
-                micro_batch_size=1,
-            )
-            self._megatron_forward_backward_record.stop()
-
             outputs = {}
 
             if forward_outputs:
