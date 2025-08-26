@@ -19,7 +19,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 **RLinf is unique with:**
 
-- Macro-to-Micro Flow: a new paradigm M2Flow, which executes macro-level logical flows through micro-level execution flows, decoupling logical communication (programmable) from physical communication (fine-grained and schedulable).
+- Macro-to-Micro Flow: a new paradigm M2Flow, which executes macro-level logical flows through micro-level execution flows, decoupling logical workflow construction (programmable) from physical communication and scheduling (efficiency).
 
 - Embodied Agent Support
 
