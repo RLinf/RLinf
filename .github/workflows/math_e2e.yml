@@ -10,7 +10,7 @@ on:
           - 'tests/**'
           - '.github/workflows/*.yml'
           - '!docs/**'
-          - 'README.md'
+          - '!README.md'
           - '!*.yaml'
           - '!*.toml'
 
@@ -23,7 +23,7 @@ on:
           - 'tests/**'
           - '.github/workflows/*.yml'
           - '!docs/**'
-          - 'README.md'
+          - '!README.md'
           - '*.yaml'
           - '*.toml'
 
