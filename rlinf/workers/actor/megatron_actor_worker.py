@@ -928,9 +928,10 @@ class MegatronActor(MegatronModelManager, Worker):
                 f"In disaggregated mode, weight_dst_rank_in_rollout should be a list of ranks, got {type(self._weight_dst_rank_in_rollout)}"
             )
             self.reshard_state_dict = self._get_rollout_model_state_dict()
+            handle = {k: reduce_tensor(v) for k, v in self.reshard_state_dict.items()}
             for weight_dst_rank in self._weight_dst_rank_in_rollout:
                 self.send(
-                    self.reshard_state_dict,
+                    handle,
                     self._rollout_group_name,
                     weight_dst_rank,
                 )
