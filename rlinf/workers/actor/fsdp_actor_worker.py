@@ -220,20 +220,22 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 value = value.reshape(rollout_size, *value.shape[2:])
                 self.rollout_batch[key] = value[shuffle_id]
 
-        assert self.cfg.actor.global_batch_size % (
-            self.cfg.actor.micro_batch_size * self._world_size
-        ) == 0
+        assert (
+            self.cfg.actor.global_batch_size
+            % (self.cfg.actor.micro_batch_size * self._world_size)
+            == 0
+        )
 
         self.gradient_accumulation = (
-            self.cfg.actor.global_batch_size // self.cfg.actor.micro_batch_size // self._world_size
+            self.cfg.actor.global_batch_size
+            // self.cfg.actor.micro_batch_size
+            // self._world_size
         )
 
         # Split to make minibatch iterator for updating the actor
         # See PPO paper for details. https://arxiv.org/abs/1707.06347
         rollout_size = self.rollout_batch["input_ids"].size(0)
-        batch_size_per_rank = (
-            self.cfg.actor.global_batch_size // self._world_size
-        )
+        batch_size_per_rank = self.cfg.actor.global_batch_size // self._world_size
         assert rollout_size % batch_size_per_rank == 0, (
             f"{rollout_size} is not divisible by {batch_size_per_rank}"
         )
@@ -347,7 +349,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             append_to_dict(metrics, data)
 
         mean_metric_dict = {key: np.mean(value) for key, value in metrics.items()}
-        mean_metric_dict = all_reduce_dict(mean_metric_dict, op=torch.distributed.ReduceOp.AVG)
+        mean_metric_dict = all_reduce_dict(
+            mean_metric_dict, op=torch.distributed.ReduceOp.AVG
+        )
 
         self.optimizer.zero_grad()
         torch.cuda.synchronize()
