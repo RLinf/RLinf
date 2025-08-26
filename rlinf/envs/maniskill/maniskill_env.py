@@ -218,8 +218,8 @@ class ManiskillEnv(gym.Env):
                 else {},
             )
             self._is_start = False
-            terminations = extract_termination_from_info(
-                infos, num_envs=self.num_envs, device=self.device
+            terminations = torch.zeros(
+                self.num_envs, dtype=torch.bool, device=self.device
             )
             truncations = torch.zeros(
                 self.num_envs, dtype=torch.bool, device=self.device

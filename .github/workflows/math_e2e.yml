@@ -4,8 +4,7 @@ on:
     push:
         branches:
           - 'v[0-9].[0-9]'
-          - 'feature/ci'
-          # - main
+          - main
         paths:
           - '**/*.py'
           - 'tests/**'
@@ -18,8 +17,7 @@ on:
     pull_request:
         branches:
           - 'v[0-9].[0-9]'
-          - 'feature/ci'
-          # - main
+          - main
         paths:
           - '**/*.py'
           - 'tests/**'
@@ -38,7 +36,7 @@ concurrency:
 
 jobs:
     qwen-grpo-test:
-        runs-on: self-hosted
+        runs-on: rlinf
         container:
             image: rlinf/rlinf:math-rlinf0.1-torch2.5.1-sglang0.4.4-vllm0.7.1-megatron0.11.0-te2.1
             volumes:

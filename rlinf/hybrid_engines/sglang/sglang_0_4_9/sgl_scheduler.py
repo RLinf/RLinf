@@ -208,16 +208,20 @@ class Scheduler(_Scheduler, Worker):
 
         if colocate:
             self.resume_memory_occupation(ResumeMemoryOccupationReqInput())
-        for name, handle in state_dict.items():
-            func, args = handle
-            list_args = list(args)
-            # NOTE: the key is to change device id to the current device id
-            # in case two processes have different CUDA_VISIBLE_DEVICES
-            list_args[6] = torch.cuda.current_device()
-            new_weight = func(*list_args)
+            for name, handle in state_dict.items():
+                func, args = handle
+                list_args = list(args)
+                # NOTE: the key is to change device id to the current device id
+                # in case two processes have different CUDA_VISIBLE_DEVICES
+                list_args[6] = torch.cuda.current_device()
+                new_weight = func(*list_args)
 
-            model.load_weights([(name, new_weight.clone())])
-            del new_weight
+                model.load_weights([(name, new_weight)])
+                del new_weight
+        else:
+            # disaggregate mode, recv tensor directly
+            for name, tensor in state_dict.items():
+                model.load_weights([(name, tensor)])
         self.sync_in_tp("sync_hf_weight")
         return SyncHFWeightOutput()
 
