@@ -20,7 +20,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 
 <div align="center">
-  <img src="docs/source/_static/svg/overview.svg" alt="RLinf-overview" width="600"/>
+  <img src="docs/source/_static/svg/overview.svg" alt="RLinf-overview"/>
 </div>
 
 ## What's NEW!
