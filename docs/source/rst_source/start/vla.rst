@@ -73,8 +73,3 @@ Key metrics to pay attention to include
 .. raw:: html
 
    <img src="https://github.com/user-attachments/assets/90269207-b638-478b-bf5e-95bd8e2bfb36" width="800"/>
-
-
-
-
-TODO: update the pics for 10 epochs

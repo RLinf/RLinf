@@ -119,7 +119,7 @@ The following plots show training curves, consistent with those reported in ARea
 Final Performance
 ~~~~~~~~~~~~~~~~~
 
-We provide an evaluation `toolkit <https://github.com/RLinf/LLMEvalKit>`_ and corresponding `documentation <https://rlinf-docs.readthedocs.io/en/latest/rst_source/start/evaluation.html>`_.  
+We provide an evaluation `toolkit <https://github.com/RLinf/LLMEvalKit>`_ and corresponding :doc:`evaluation documentation <../start/eval>`.
 
 Measured performance on AIME24, AIME25, and GPQA-diamond shows RLinf achieves results comparable to or better than AReaL.
 

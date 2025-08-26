@@ -74,7 +74,7 @@ napoleon_preprocess_types = True
 
 html_theme = "pydata_sphinx_theme"
 html_show_sourcelink = False  # Hide “View page source” link
-html_baseurl = "https://RLinf-docs.readthedocs.io/en/latest/"  # TODO: update
+html_baseurl = "https://rlinf.readthedocs.io/en/latest/index.html"
 html_favicon = "_static/favicon.ico"
 html_static_path = ["_static"]
 html_css_files = [

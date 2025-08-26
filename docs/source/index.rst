@@ -8,11 +8,6 @@ Welcome to **RLinf**!
 
 RLinf is a flexible and scalable open-source infrastructure designed for post-training foundation models via reinforcement learning. The 'inf' in RLinf stands for Infrastructure, highlighting its role as a robust backbone for next-generation training. It also stands for Infinite, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
 
-.. Centered on Agentic Reinforcement Learning, RLinf supports the training and evaluation of next-generation agents by unlocking scalable compute, unifying mainstream frameworks, and streamlining the end-to-end workflow—making RL post-training accessible to everyone.
-
-.. * Related publication : `PAPER TITLE <TODO>`_
-.. * Source code : `GitHub repository <TODO>`_
-
 ----------------
 
 .. image:: _static/svg/overview.svg
@@ -24,7 +19,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 **RLinf is unique with:**
 
-- Model-to-Model Flow: a new paradigm M2Flow, which executes macro-level logical flows through micro-level execution flows, decoupling logical communication (programmable) from physical communication (fine-grained and schedulable).
+- Macro-to-Micro Flow: a new paradigm M2Flow, which executes macro-level logical flows through micro-level execution flows, decoupling logical communication (programmable) from physical communication (fine-grained and schedulable).
 
 - Embodied Agent Support
 
@@ -132,6 +127,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 --------------------------------------------
 
+.. _contribution-guidelines:
 
 Contribution Guidelines
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -143,3 +139,29 @@ Firstly, if you are unsure or afraid of anything, just ask or submit the issue o
 However, for those individuals who want a bit more guidance on the best way to contribute to the project, read on. This document will cover all the points we're looking for in your contributions, raising your chances of quickly merging or addressing your contributions.
 
 There are a few simple guidelines that you need to follow before providing your hacks.
+
+**Code Linting and Formatting**
+
+We use **pre-commit** and **ruff** to enforce code formatting and quality checks. To install them, run:
+
+.. code:: bash
+
+   pip install pre-commit
+   pip install ruff
+   pre-commit install
+
+After making changes to the code and before opening a PR, we recommend running:
+
+.. code:: bash
+
+   ruff check . --fix --preview
+
+This will check if your code follows the formatting rules.  
+If there are issues (e.g., indentation problems), it will fix them automatically
+
+**Creating a Pull Request**
+
+Once your code passes the checks, you can open a PR. Please ensure your commits and branches follow the required standards. Otherwise, our CI tests will reject your submission.
+
+- **Commit message guidelines**: See the `Conventional Commits specification <https://www.conventionalcommits.org/en/v1.0.0/>`_.
+- **Branch naming guidelines**: See the `Conventional Branch guidelines <https://conventional-branch.github.io/#summary>`_.
