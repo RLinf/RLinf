@@ -4,15 +4,12 @@ build:
   os: ubuntu-22.04
   tools:
     python: "3.10"
+  jobs:
+    pre_install:
+      - python -m pip install -U uv
+      - uv pip install -r docs/requirements.txt
+      - uv pip install -r docs/doc_class_require.txt
+      - uv pip install --no-build-isolation -r docs/no_build.txt
 
 sphinx:
   configuration: docs/source/conf.py
-
-
-commands:
-  - python -m pip install -U uv
-
-  - uv pip install --system -r docs/requirements.txt
-  - uv pip install --system -r docs/doc_class_require.txt
-
-  - uv pip install --system --no-build-isolation -r docs/no_build.txt

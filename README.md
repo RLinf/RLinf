@@ -24,18 +24,18 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 </div>
 
 ## What's NEW!
-- [2025/08] RLinf v0.1 is released! The technical report [RLinf: Reinforcement Learning Infrastructure for Agentic AI](TODO:) is also released accordingly.
-
+- [2025/08] RLinf is open-sourced. The formal v0.1 will be released soon. The technical report [RLinf: Reinforcement Learning Infrastructure for Agentic AI]() will also be released accordingly. 
 
 ## Key Features
 
 
 **RLinf is unique with:**
+- Model-to-Model Flow: a new paradigm M2Flow, which executes macro-level logical flows through micro-level execution flows, decoupling logical communication (programmable) from physical communication (fine-grained and schedulable).
 
 - Embodied Agent Support
-- Fast adaptation support for mainstream VLA models: [OpenVLA](https://github.com/openvla/openvla), [OpenVLA-OFT](https://github.com/moojink/openvla-oft), and [π₀](https://github.com/Physical-Intelligence/openpi).
-- Support for mainstream CPU & GPU-based simulators via standardized RL interfaces: [ManiSkill3](https://github.com/haosulab/ManiSkill), [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO).
-- Enabling the first RL fine-tuning of the $\pi_0$ model family with a flow-matching action expert.
+  - Fast adaptation support for mainstream VLA models: [OpenVLA](https://github.com/openvla/openvla), [OpenVLA-OFT](https://github.com/moojink/openvla-oft), and [π₀](https://github.com/Physical-Intelligence/openpi).
+  - Support for mainstream CPU & GPU-based simulators via standardized RL interfaces: [ManiSkill3](https://github.com/haosulab/ManiSkill), [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO).
+  - Enabling the first RL fine-tuning of the $\pi_0$ model family with a flow-matching action expert.
 
 **RLinf is fast with:**
 
@@ -49,15 +49,16 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
   - Collocated mode: shares all GPUs across all workers.
   - Disaggregated mode: enables fine-grained pipelining.
-  - Hybrid mode: combines collocated and disaggregated modes—specially designed for agent training in embodied intelligence.
+  - Hybrid mode: combines collocated and disaggregated modes—specially designed for VLA training in embodied intelligence.
 
 - Multiple Backend Integrations
 
-  - A single unified interface drives two complementary backends, allowing seamless switching without code changes.
   - FSDP + Hugging Face: rapid adaptation to new models and algorithms, ideal for beginners and fast prototyping.
   - Megatron + SGLang: optimized for large-scale training, delivering maximum efficiency for expert users with demanding workloads.
 
-- Built-in support for popular RL methods, including PPO, GRPO, DAPO, Reinforce++, and more.
+- Adaptive communication via the asynchronous communication channel
+
+- Built-in support for popular RL methods, including [PPO](https://arxiv.org/abs/1707.06347), [GRPO](https://arxiv.org/abs/2402.03300), [DAPO](https://arxiv.org/abs/2503.14476), [Reinforce++](https://arxiv.org/abs/2501.03262), and more.
 
 
 ## Roadmap
@@ -79,14 +80,12 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 ## Getting Started 
 
-TODO: fill
-
 Complete documentation for RLinf can be found [**Here**](https://github.com/RLinf/Documentation).
 
 **Quickstart**
 
   - [Installation]()
-  - [Quickstart 1: PPO Training of VLA on Maniskill3]()
+  - [Quickstart 1: PPO Training of VLAs on Maniskill3]()
   - [Quickstart 2: GRPO Training of LLMs on MATH]()
   - [Multi-node Training]()
   - [Model Evaluation]()
@@ -119,12 +118,12 @@ Complete documentation for RLinf can be found [**Here**](https://github.com/RLin
 
   - [Comparison with VeRL]()
 
-## Experiment Result
+## Build Status
 
 | Type | Status |
 | :---: | :---: |
 | Reasoning RL-MATH | [![Build Status]()]() |
-| Agentic RL-VLA | [![Build Status]()]() |
+| Embodied RL-VLA | [![Build Status]()]() |
 
 ## Contribution Guidelines
 We welcome contributions to RLinf. Please read [contribution guide](TODO:) before taking action.

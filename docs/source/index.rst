@@ -24,10 +24,13 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 **RLinf is unique with:**
 
+- Model-to-Model Flow: a new paradigm M2Flow, which executes macro-level logical flows through micro-level execution flows, decoupling logical communication (programmable) from physical communication (fine-grained and schedulable).
+
 - Embodied Agent Support
-- Fast adaptation support for mainstream VLA models: `OpenVLA`_, `OpenVLA-OFT`_, `π₀`_
-- Support for mainstream CPU & GPU-based simulators via standardized RL interfaces: `ManiSkill3`_, `LIBERO`_
-- Enabling the first RL fine-tuning of the π₀ model family with a flow-matching action expert.
+
+  - Fast adaptation support for mainstream VLA models: `OpenVLA`_, `OpenVLA-OFT`_, `π₀`_
+  - Support for mainstream CPU & GPU-based simulators via standardized RL interfaces: `ManiSkill3`_, `LIBERO`_
+  - Enabling the first RL fine-tuning of the π₀ model family with a flow-matching action expert.
 
 **RLinf is fast with:**
 
@@ -41,15 +44,23 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
   - Collocated mode: shares all GPUs across all workers.
   - Disaggregated mode: enables fine-grained pipelining.
-  - Hybrid mode: combines collocated and disaggregated modes—specially designed for agent training in embodied intelligence.
+  - Hybrid mode: combines collocated and disaggregated modes—specially designed for VLA training in embodied intelligence.
 
 - Multiple Backend Integrations
 
-  - A single unified interface drives two complementary backends, allowing seamless switching without code changes.
+  .. - A single unified interface drives two complementary backends, allowing seamless switching without code changes.
+  
   - FSDP + Hugging Face: rapid adaptation to new models and algorithms, ideal for beginners and fast prototyping.
   - Megatron + SGLang: optimized for large-scale training, delivering maximum efficiency for expert users with demanding workloads.
 
-- Built-in support for popular RL methods, including PPO, GRPO, DAPO, Reinforce++, and more.
+- Adaptive communication via the asynchronous communication channel
+
+- Built-in support for popular RL methods, including `PPO`_ , `GRPO`_ , `DAPO`_ , `Reinforce++`_ , and more.
+
+.. _PPO: https://arxiv.org/abs/1707.06347
+.. _GRPO: https://arxiv.org/abs/2402.03300
+.. _DAPO: https://arxiv.org/abs/2503.14476
+.. _Reinforce++: https://arxiv.org/abs/2501.03262
 
 
 
@@ -62,6 +73,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 .. _Megatron-LM: https://github.com/NVIDIA/Megatron-LM
 .. _SGLang: https://github.com/sgl-project/sglang
 .. _vLLM: https://github.com/vllm-project/vllm
+
 
 
 --------------------------------------------

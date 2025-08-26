@@ -13,6 +13,7 @@ We present three concise examples to demonstrate the framework's workflow and he
 
 - **Distributed training:** Multi-node training for mathematical tasks (see :doc:`distribute`).
 
+TODO: evalutaion
 
 .. toctree::
    :hidden:

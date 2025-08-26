@@ -1,4 +1,4 @@
-Quickstart 1: PPO Training of VLA on Maniskill3
+Quickstart 1: PPO Training of VLAs on Maniskill3
 =================================================
 
 This quick-start walks you through training the Visual-Language-Action model, including
