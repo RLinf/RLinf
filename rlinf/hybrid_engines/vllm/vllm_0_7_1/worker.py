@@ -13,13 +13,24 @@
 # limitations under the License.
 
 import json
+import os
+import signal
+import sys
 import threading
+from dataclasses import dataclass
+from multiprocessing.process import BaseProcess
+from typing import Dict, List
 
+import psutil
 import zmq
 from omegaconf import DictConfig
 from pydantic import TypeAdapter, ValidationError
 from vllm.config import VllmConfig
+from vllm.executor.multiproc_worker_utils import _add_prefix
+from vllm.logger import init_logger
+from vllm.utils import get_mp_context
 from vllm.v1.worker.gpu_worker import Worker as _VllmInnerWorker
+from vllm.worker.worker_base import WorkerWrapperBase
 
 from rlinf.scheduler import Worker as _RLinfWorker
 from rlinf.scheduler import WorkerAddress
@@ -30,6 +41,8 @@ from rlinf.workers.rollout.vllm.io_struct import (
     SyncHFWeightCommand,
     VLLMCommand,
 )
+
+logger = init_logger(__name__)
 
 
 class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
@@ -144,3 +157,104 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
         raise NotImplementedError(
             "VLLMWorker.offload_model_weights is not implemented yet."
         )
+
+
+@dataclass
+class ZmqWorkerProcHandle:
+    proc: BaseProcess
+    rank: int
+
+
+class ZmqWorkerProc:
+    def __init__(
+        self,
+        vllm_config: VllmConfig,
+        rank: int,
+        worker_input_ipc_name: str,
+        worker_output_ipc_name: str,
+    ):
+        self.rank = rank
+        self.vllm_config = vllm_config
+
+        self.worker_input_ipc_name = worker_input_ipc_name
+        self.worker_output_ipc_name = worker_output_ipc_name
+
+        context = zmq.Context()
+
+        self.send_to_executor = context.socket(zmq.PUSH)
+        self.send_to_executor.connect(self.worker_output_ipc_name)
+
+        self.recv_from_executor = context.socket(zmq.PULL)
+        self.recv_from_executor.connect(self.worker_input_ipc_name)
+
+        wrapper = WorkerWrapperBase(vllm_config=vllm_config, rpc_rank=rank)
+        all_kwargs: List[Dict] = [
+            {} for _ in range(vllm_config.parallel_config.world_size)
+        ]
+        all_kwargs[rank] = {
+            "vllm_config": vllm_config,
+            "rank": rank,
+            "local_rank": rank,
+            "distributed_init_method": "TODO",
+        }
+        wrapper.init_worker(all_kwargs=all_kwargs)
+
+        self.worker = wrapper.worker
+
+        pid = os.getpid()
+        _add_prefix(sys.stdout, f"VllmZmqWorker[rank={rank}]", pid)
+        _add_prefix(sys.stderr, f"VllmZmqWorker[rank={rank}]", pid)
+
+    @staticmethod
+    def worker_main(*args, **kwargs):
+        shutdown_requested = False
+
+        def signal_handler(signum, frame):
+            nonlocal shutdown_requested
+            if not shutdown_requested:
+                shutdown_requested = True
+                raise SystemExit()
+
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+
+        worker = None
+        try:
+            worker = ZmqWorkerProc(*args, **kwargs)
+
+            worker.worker_busy_loop()
+        except SystemExit:
+            logger.debug("Vllm inner worker proc interrupted.")
+        except Exception as e:
+            logger.fatal(f"Vllm inner worker proc failed with exception: {e}")
+            psutil.Process().parent().send_signal(signal.SIGUSR1)
+            raise
+        finally:
+            if worker is not None:
+                worker.shutdown()
+                worker = None
+
+    @staticmethod
+    def make_worker_process(
+        rank: int, worker_input_ipc_name: str, worker_output_ipc_name: str
+    ) -> ZmqWorkerProcHandle:
+        mp_context = get_mp_context()
+        process_kwargs = {
+            "rank": rank,
+            "worker_input_ipc_name": worker_input_ipc_name,
+            "worker_output_ipc_name": worker_output_ipc_name,
+        }
+
+        proc = mp_context.Process(
+            target=ZmqWorkerProc.worker_main, kwargs=process_kwargs, daemon=True
+        )
+
+        proc.start()
+
+        return ZmqWorkerProcHandle(proc=proc, rank=rank)
+
+    def shutdown(self):
+        return NotImplementedError
+
+    def worker_busy_loop(self):
+        raise NotImplementedError

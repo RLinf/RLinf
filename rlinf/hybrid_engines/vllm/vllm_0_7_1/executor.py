@@ -13,23 +13,30 @@
 # limitations under the License.
 
 import json
+import pickle
 import signal
 import tempfile
 import threading
 import weakref
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+import cloudpickle
 import psutil
 import zmq
 from pydantic import TypeAdapter, ValidationError
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
 from vllm.v1.executor.abstract import Executor
+from vllm.v1.executor.multiproc_executor import WorkerProcHandle
 
+from rlinf.hybrid_engines.vllm.vllm_0_7_1.worker import ZmqWorkerProc
 from rlinf.workers.rollout.vllm.io_struct import (
+    CollectiveRpcCommand,
+    CollectiveRpcResponse,
     OffloadModelWeightCommand,
     SyncHFWeightCommand,
     VLLMCommand,
+    VLLMResponse,
 )
 
 logger = init_logger(__name__)
@@ -54,6 +61,7 @@ class VLLMExecutor(Executor):
         self.send_to_engine.connect(self.executor_ipc_output_name)
 
         self.command_parser = TypeAdapter(VLLMCommand)
+        self.response_parser = TypeAdapter(VLLMResponse)
 
         self.command_handlers = {
             "sync_hf_weight": self.sync_hf_weight,
@@ -118,6 +126,15 @@ class VLLMExecutor(Executor):
         self.recv_from_workers = context.socket(zmq.PULL)
         self.recv_from_workers.bind(self.worker_output_ipc_name)
 
+        self.workers: List[WorkerProcHandle] = []
+        for rank in range(self.world_size):
+            worker = ZmqWorkerProc.make_worker_process(
+                rank=rank,
+                worker_input_ipc_name=self.worker_input_ipc_name,
+                worker_output_ipc_name=self.worker_output_ipc_name,
+            )
+            self.workers.append(worker)
+
     def collective_rpc(
         self,
         method: Union[str, Callable],
@@ -125,7 +142,32 @@ class VLLMExecutor(Executor):
         args: Tuple = (),
         kwargs: Optional[Dict] = None,
     ) -> List[Any]:
-        raise NotImplementedError("VLLMExecutor.collective_rpc is not implemented yet.")
+        kwargs = kwargs or {}
+        try:
+            if isinstance(method, str):
+                send_method = method
+            else:
+                send_method = cloudpickle.dumps(
+                    method, protocol=pickle.HIGHEST_PROTOCOL
+                )
+            logger.debug(f"Sending RPC request: {send_method}")
+            command = CollectiveRpcCommand(method=send_method, args=args, kwargs=kwargs)
+
+            self.send_to_workers.send_string(command.model_dump_json())
+            responses = [None] * self.world_size
+
+            for _ in range(self.world_size):
+                response_str: str = self.recv_from_workers.recv_string()
+                response: CollectiveRpcResponse = self.response_parser.validate_json(
+                    response_str
+                )
+                # TODO(daibo): whether response's success should be checked here
+                responses.append(response)
+
+            return responses
+        except Exception as e:
+            logger.fatal(f"VLLMExecutor.collective_rpc failed with exception: {e}")
+            raise e
 
     def check_health(self):
         self.collective_rpc("check_health")
