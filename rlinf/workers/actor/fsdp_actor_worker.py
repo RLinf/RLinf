@@ -267,33 +267,35 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             for data_idx, data in enumerate(train_micro_batch):
                 for k, v in data.items():
                     data[k] = v.to(f"cuda:{int(os.environ['LOCAL_RANK'])}")
-
                 data = self.model.preprocess_for_train(data)
-                input_ids = data["input_ids"]
-                action_tokens = data["action_tokens"]
-                attention_mask = data["attention_mask"]
-                pixel_values = data["pixel_values"]
+                if self.cfg.actor.model.model_name == "pi0":
+                    output_dict = self.model(data, mode="compute_logprob")
+                else:
+                    input_ids = data["input_ids"]
+                    action_tokens = data["action_tokens"]
+                    attention_mask = data["attention_mask"]
+                    pixel_values = data["pixel_values"]
 
-                action_token_len = self.model.action_dim * self.model.num_action_chunks
+                    action_token_len = self.model.action_dim * self.model.num_action_chunks
 
-                logits_processor_args = {
-                    "action_tokens": action_tokens,
-                    "vocab_size": self.model.vocab_size,
-                    "n_action_bins": self.model.config.n_action_bins,
-                }
+                    logits_processor_args = {
+                        "action_tokens": action_tokens,
+                        "vocab_size": self.model.vocab_size,
+                        "n_action_bins": self.model.config.n_action_bins,
+                    }
 
-                output_dict = custom_forward(
-                    self.model,
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    pixel_values=pixel_values,
-                    action_token_len=action_token_len,
-                    value_model=True if self.cfg.algorithm.adv_type == "ppo" else False,
-                    value_head_mode=self.cfg.actor.model.get("vh_mode", None),
-                    temperature=self.cfg.algorithm.sampling_params.temperature_train,
-                    top_k=self.cfg.algorithm.sampling_params.top_k,
-                    logits_processor_args=logits_processor_args,
-                )
+                    output_dict = custom_forward(
+                        self.model,
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        pixel_values=pixel_values,
+                        action_token_len=action_token_len,
+                        value_model=True if self.cfg.algorithm.adv_type == "ppo" else False,
+                        value_head_mode=self.cfg.actor.model.get("vh_mode", None),
+                        temperature=self.cfg.algorithm.sampling_params.temperature_train,
+                        top_k=self.cfg.algorithm.sampling_params.top_k,
+                        logits_processor_args=logits_processor_args,
+                    )
 
                 logprobs = output_dict["logprobs"]
                 entropy = output_dict["entropy"]
