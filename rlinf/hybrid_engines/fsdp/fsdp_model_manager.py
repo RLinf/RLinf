@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 import os
 
 import torch
@@ -19,6 +20,7 @@ import torch.optim as optim
 from omegaconf import DictConfig
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import MixedPrecision, ShardingStrategy, StateDictType
+from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 from transformers import AutoModelForCausalLM
 
 from rlinf.config import torch_dtype_from_precision
@@ -27,6 +29,14 @@ from rlinf.hybrid_engines.fsdp.utils import (
     init_fn,
 )
 from rlinf.utils.utils import clear_memory
+
+
+def should_wrap(module):
+    from transformers import PaliGemmaForConditionalGeneration
+    if isinstance(module, PaliGemmaForConditionalGeneration):
+        return True
+    else:
+        return False
 
 
 class FSDPModelManager:
@@ -78,7 +88,8 @@ class FSDPModelManager:
         """Setup model and optimizer."""
         module = self.model_provider_func()
 
-        module.gradient_checkpointing_enable()
+        if hasattr(module, 'gradient_checkpointing_enable'):
+            module.gradient_checkpointing_enable()
 
         mixed_precision = MixedPrecision(
             param_dtype=self.torch_dtype,
@@ -96,6 +107,8 @@ class FSDPModelManager:
             module=module, config=None, is_lora=self._cfg.model.is_lora
         )
 
+        auto_wrap_policy = functools.partial(lambda_auto_wrap_policy, lambda_fn=should_wrap)
+
         betas = (self._cfg.optim.adam_beta1, self._cfg.optim.adam_beta2)
 
         self.model = FSDP(
@@ -109,34 +122,24 @@ class FSDPModelManager:
             sync_module_states=True,
         )
 
-        # NOTE: Currently we assume that only the value head contains "value_head" in its name.
-        # The value head only serves for value prediction in RL algorithms like PPO.
-        param_groups = [
-            {
-                "params": [
-                    p
-                    for n, p in self.model.named_parameters()
-                    if "value_head" not in n and p.requires_grad
-                ],
-                "lr": self._cfg.optim.lr,
-                "betas": betas,
-            },
-        ]
+        params_actor = []
+        params_critic = []
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                if 'model.value_proj' in name or 'model.value_head' in name:
+                    params_critic.append(param)
+                else:
+                    params_actor.append(param)
 
-        if self._cfg.model.vh_mode in ["a", "a0", "a6"]:
-            param_groups.append(
-                {
-                    "params": [
-                        p
-                        for n, p in self.model.named_parameters()
-                        if "value_head" in n and p.requires_grad
-                    ],
-                    "lr": self._cfg.optim.value_lr,
-                    "betas": betas,
-                }
-            )
-
-        self.optimizer = optim.AdamW(param_groups)
+        if len(params_actor) > 0:
+            self.optimizer = optim.AdamW([
+                {'params': params_actor, 'lr': self._cfg.optim.lr, 'betas': betas},
+                # {'params': params_critic, 'lr': self._cfg.optim.value_lr, 'betas': betas},
+            ])
+        else:
+            self.optimizer = optim.AdamW([
+                {'params': params_critic, 'lr': self._cfg.optim.value_lr, 'betas': betas},
+            ])
 
     def get_model_state_dict(self):
         with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT):

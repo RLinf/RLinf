@@ -93,6 +93,14 @@ def get_model_config_and_processor(cfg: DictConfig):
             image_processor=image_processor,
             trust_remote_code=True,
         )
+    elif cfg.model.model_name == "pi0":
+        from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
+        from lerobot.configs.policies import PreTrainedConfig
+        AutoConfig.register("pi0", PI0Config)
+        model_config: PI0Config = PreTrainedConfig.from_pretrained(cfg.tokenizer.tokenizer_model)
+        # Pi0 doesn't use traditional tokenizer/image processor
+        # It handles preprocessing internally
+        input_processor = None
 
     return model_config, input_processor
 
@@ -166,6 +174,30 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
 
         # oft add
         model.vision_backbone.set_num_images_in_input(cfg.num_images_in_input)
+    elif cfg.model_name == "pi0":
+        from lerobot.common.datasets.lerobot_dataset import (
+            LeRobotDatasetMetadata,
+        )
+        from lerobot.common.policies.factory import make_policy
+        from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
+        from lerobot.configs.policies import PreTrainedConfig
+
+        from .embodiment.pi0_action_model import Pi0ForRLActionPrediction
+        AutoConfig.register("pi0", PI0Config)
+        # Load policy configuration from pretrained path
+        actor_model_config: PI0Config = PreTrainedConfig.from_pretrained(model_path)
+        actor_model_config.pretrained_path = model_path
+        override_config_kwargs = cfg
+        if override_config_kwargs is not None:
+            for key, val in override_config_kwargs.items():
+                setattr(actor_model_config, key, val)
+        model_dir_name = cfg.normalize_name
+        dataset_meta = LeRobotDatasetMetadata(
+            f"lerobot/{model_dir_name}", root=f"data/{model_dir_name}"
+        )
+        # Create the Pi0 wrapper model and set the policy
+        model = make_policy(actor_model_config, policy_class=Pi0ForRLActionPrediction, ds_meta=dataset_meta)
+        model = model.to(torch_dtype)
     else:
         return None
     if torch.cuda.is_available():
