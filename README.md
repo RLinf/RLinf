@@ -18,10 +18,6 @@
   <sub>RLinf: Reinforcement Learning Infrastructure for Agentic AI</sub>
 </h1>
 
-<h2 align="center">
-  RLinf: Reinforcement Learning Infrastructure for Agentic AI
-</h2>
-
 RLinf is a flexible and scalable open-source infrastructure designed for post-training foundation models via reinforcement learning. The 'inf' in RLinf stands for Infrastructure, highlighting its role as a robust backbone for next-generation training. It also stands for Infinite, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
 
 
