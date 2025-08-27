@@ -13,13 +13,15 @@
 # limitations under the License.
 
 
+from typing import List
+
 from omegaconf import DictConfig
 from vllm.config import VllmConfig
 from vllm.engine.arg_utils import EngineArgs
 from vllm.sampling_params import SamplingParams
 
 from rlinf.config import torch_dtype_from_precision
-from rlinf.data.io_struct import RolloutRequest
+from rlinf.data.io_struct import RolloutRequest, RolloutResult
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.placement import ComponentPlacement
 
@@ -97,15 +99,22 @@ class VLLMWorker(Worker):
                 self._stop()
                 break
 
-            requests = request.repeat_and_split(self._rollout_batch_size)
-            rollout_results = []
+            requests: List[RolloutRequest] = request.repeat_and_split(
+                self._rollout_batch_size
+            )
+            rollout_results: List[RolloutResult] = []
             for request in requests:
-                results = self._vllm_engine.generate(
+                vllm_results = self._vllm_engine.generate(
                     input_ids=request.input_ids,
                     sampling_params=self._sampling_params,
                     return_logprobs=self._return_logprobs,
                 )
                 # should be converted by _vllm_engine side.
+                results = RolloutResult.from_vllm_results(
+                    vllm_results,
+                    request.answers,
+                    self._return_logprobs,
+                )
                 rollout_results.append(results)
 
                 if self._cfg.rollout.print_outputs:

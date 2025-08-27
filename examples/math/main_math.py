@@ -27,7 +27,7 @@ from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
-from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
+from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
 
 """Script to start GRPO training"""
 mp.set_start_method("spawn", force=True)
@@ -46,7 +46,7 @@ def main(cfg) -> None:
 
     # Rollout group
     rollout_placement_strategy = component_placement.get_strategy("rollout")
-    rollout_group = VLLMWorker.create_group(cfg, component_placement).launch(
+    rollout_group = SGLangWorker.create_group(cfg, component_placement).launch(
         cluster,
         name=cfg.rollout.group_name,
         placement_strategy=rollout_placement_strategy,

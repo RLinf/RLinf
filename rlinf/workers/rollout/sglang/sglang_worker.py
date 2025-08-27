@@ -184,7 +184,7 @@ class SGLangWorker(Worker):
                 )
 
                 # Create RolloutResult from the outputs.
-                rollout_result = RolloutResult.from_engine_results(
+                rollout_result = RolloutResult.from_sglang_results(
                     results, request.input_ids, request.answers, self._return_logprobs
                 )
                 rollout_results.append(rollout_result)
@@ -332,7 +332,7 @@ class AsyncSGLangWorker(SGLangWorker):
                         continue
 
                 input_ids = [input_ids] * len(results)
-                rollout_result = RolloutResult.from_engine_results(results, input_ids)
+                rollout_result = RolloutResult.from_sglang_results(results, input_ids)
                 rollout_result.rewards = rewards
                 rollout_result.advantages = advantages
                 return_tasks.append(

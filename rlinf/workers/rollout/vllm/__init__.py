@@ -30,7 +30,9 @@ package_version = get_version(package_name)
 
 
 if package_version is None:
-    raise ValueError("vllm package is not installed or its version could not be determined.")
+    raise ValueError(
+        "vllm package is not installed or its version could not be determined."
+    )
 elif package_version >= parse("0.7.1") and package_version < parse("0.8.0"):
     from rlinf.hybrid_engines.vllm.vllm_0_7_1.vllm_engine import VLLMEngine
 else:

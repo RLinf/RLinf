@@ -12,15 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+import tempfile
+from functools import partial
 from typing import List, Optional, Union
 
-from vllm import RequestOutput
+import zmq
 from vllm.config import VllmConfig
 from vllm.inputs.data import TokensPrompt
+from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
 from vllm.utils import Counter
 from vllm.v1.engine.llm_engine import LLMEngine as _LLMEngine
+
+from rlinf.workers.rollout.vllm.io_struct import (
+    OffloadModelWeightCommand,
+    SyncHFWeightCommand,
+)
 
 from .executor import VLLMExecutor
 
@@ -29,9 +36,29 @@ class VLLMEngine:
     def __init__(
         self, vllm_config: VllmConfig, log_stats: bool, multiprocess_model: bool = False
     ):
+        self.executor_ipc_input_name = (
+            f"ipc://{tempfile.NamedTemporaryFile(delete=False).name}"
+        )
+        self.executor_ipc_output_name = (
+            f"ipc://{tempfile.NamedTemporaryFile(delete=False).name}"
+        )
+
+        context = zmq.Context()
+        self.send_to_executor = context.socket(zmq.PUSH)
+        self.send_to_executor.bind(self.executor_ipc_input_name)
+
+        self.recv_from_executor = context.socket(zmq.PULL)
+        self.recv_from_executor.bind(self.executor_ipc_output_name)
+
+        executor_factory = partial(
+            VLLMExecutor,
+            executor_ipc_input_name=self.executor_ipc_input_name,
+            executor_ipc_output_name=self.executor_ipc_output_name,
+        )
+
         self._engine = _LLMEngine(
             vllm_config=vllm_config,
-            executor_class=VLLMExecutor,
+            executor_class=executor_factory,
             log_stats=log_stats,
             multiprocess_mode=multiprocess_model,
         )
@@ -66,7 +93,7 @@ class VLLMEngine:
                 params=sampling_params,
             )
 
-    def _run_engine(self):
+    def _run_engine(self) -> List[RequestOutput]:
         outputs: List[RequestOutput] = []
 
         while self._engine.has_unfinished_requests():
@@ -77,9 +104,11 @@ class VLLMEngine:
         return sorted(outputs, key=lambda x: int(x.request_id))
 
     def offload_model_weights(self) -> None:
-        raise NotImplementedError(
-            "VLLMEngine.offload_model_weights is not implemented yet."
-        )
+        command = OffloadModelWeightCommand()
+        command_json = command.model_dump_json()
+        self.send_to_executor.send_string(command_json)
 
     def sync_hf_weight(self) -> None:
-        raise NotImplementedError("VLLMEngine.sync_hf_weight is not implemented yet.")
+        command = SyncHFWeightCommand()
+        command_json = command.model_dump_json()
+        self.send_to_executor.send_string(command_json)
