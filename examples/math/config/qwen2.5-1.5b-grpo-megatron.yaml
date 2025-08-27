@@ -66,6 +66,9 @@ algorithm:
   normalize_advantages: True
   early_stop_imp_ratio: 5.0
   use_valid_token_scale: False
+  
+  importance_sampling_fix: True
+  importance_sampling_clip: 1.0
 
   # params for rollout
   sampling_params:
