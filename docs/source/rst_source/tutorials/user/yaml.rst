@@ -505,7 +505,7 @@ actor
       ckpt_format: torch
       use_dist_ckpt: False
       tp_comm_bootstrap_backend: nccl
-      tp_comm_overlap_cfg: null #/mnt/public/megatron-infinigence-rl/examples/megatron_tp_comm_overlap_cfg.yaml
+      tp_comm_overlap_cfg: null 
       use_hf_ckpt: True # if true, will transfer hf model to generate megatron checkpoint and use it for training.
       
       ckpt: # config for ckpt convertor

@@ -21,6 +21,9 @@ img.logo-img {
     margin-bottom: 30px;
 }
 
+.red { color: red; font-weight: bold; }
+.green { color: green; }
+
 /* if you want also to remove underline on hover
 a.reference:hover,
 a.reference.external:hover,

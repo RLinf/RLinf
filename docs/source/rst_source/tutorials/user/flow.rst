@@ -55,6 +55,7 @@ these examples, then iterating toward your custom task. Key options include
 As a first run, keep the defaults and iterate. For a full parameter reference,
 see :doc:`yaml`.
 
+TODO: 我们provide xxx.yaml and sh
 
 Worker Launch Orchestration
 ---------------------------

@@ -1,21 +1,21 @@
-Comparison with Verl
+Comparison with VeRL
 =======================
 
 Last updated: 07/22/2025.
 
-This document provides a comprehensive guide for benchmarking VERL, including environment setup, configuration options, and performance results.
-VERL is a high-performance framework for training large language models using reinforcement learning techniques (GRPO, PPO, etc.).
+This document provides a comprehensive guide for benchmarking VeRL, including environment setup, configuration options, and performance results.
+VeRL is a high-performance framework for training large language models using reinforcement learning techniques (GRPO, PPO, etc.).
 
 Environment Setup
 ------------------
 
 For streamlined deployment, we recommend using Docker images for training setup. This approach ensures consistent environments and reduces configuration complexity.
-For detailed environment configuration and alternative installation methods, please refer to the `VERL documentation <https://verl.readthedocs.io/en/latest/start/install.html>`_.
+For detailed environment configuration and alternative installation methods, please refer to the `VeRL documentation <https://verl.readthedocs.io/en/latest/start/install.html>`_.
 
 Community Image
 ~~~~~~~~~~~~~~~
 
-VERL provides several pre-built Docker images optimized for different inference backends and training configurations:
+VeRL provides several pre-built Docker images optimized for different inference backends and training configurations:
 
 - vLLM with FSDP and Megatron: ``verlai/verl:app-verl0.4-vllm0.8.5-mcore0.12.1``, with Deep-EP support: ``verlai/verl:app-verl0.4-vllm0.8.5-mcore0.12.1-deepep``.
 - SGLang with FSDP and Megatron: ``verlai/verl:app-verl0.4-sglang0.4.6.post5-vllm0.8.5-mcore0.12.1`` (need vLLM support, but can have some package conflicts), with Deep-EP support: ``verlai/verl:app-verl0.4-sglang0.4.6.post5-vllm0.8.5-mcore0.12.1-deepep``.
@@ -25,7 +25,7 @@ VERL provides several pre-built Docker images optimized for different inference 
 Docker Installation and Setup
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Follow these steps to set up your VERL environment using Docker:
+Follow these steps to set up your VeRL environment using Docker:
 
 **1. Launch Docker Container**
 
@@ -37,9 +37,9 @@ Follow these steps to set up your VERL environment using Docker:
     docker start verl
     docker exec -it verl bash
 
-**2. Install VERL Framework**
+**2. Install VeRL Framework**
 
-For pre-built images, install only VERL without dependencies:
+For pre-built images, install only VeRL without dependencies:
 
 .. code-block:: bash
 
@@ -50,7 +50,7 @@ For pre-built images, install only VERL without dependencies:
 Dataset Preparation
 -------------------
 
-VERL requires datasets in Parquet format with a specific schema. The framework expects structured data that includes prompts, ground truth information, and metadata for reward modeling.
+VeRL requires datasets in Parquet format with a specific schema. The framework expects structured data that includes prompts, ground truth information, and metadata for reward modeling.
 
 **Required Data Format:**
 
@@ -86,7 +86,7 @@ VERL requires datasets in Parquet format with a specific schema. The framework e
 Configuration
 -------------
 
-VERL and our framework have many differences in parameter configuration. Here we provide an example and explain the meaning of some configurations.
+VeRL and our framework have many differences in parameter configuration. Here we provide an example and explain the meaning of some configurations.
 
 Bash example
 ~~~~~~~~~~~~
@@ -230,7 +230,7 @@ Training Control Parameters
 Multi-Node Training Setup
 -------------------------
 
-For large-scale training across multiple nodes, VERL uses Ray for distributed coordination. This section covers cluster setup and management.
+For large-scale training across multiple nodes, VeRL uses Ray for distributed coordination. This section covers cluster setup and management.
 
 Ray Cluster Initialization
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -249,7 +249,7 @@ Ray Cluster Initialization
    
        ray start --address=<head_node_ip:port>
 
-For detailed multi-node setup instructions, refer to the `VERL Multi-node Documentation <https://verl.readthedocs.io/en/latest/start/multinode.html>`_.
+For detailed multi-node setup instructions, refer to the `VeRL Multi-node Documentation <https://verl.readthedocs.io/en/latest/start/multinode.html>`_.
 
 Automated Ray Cluster Script
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -315,69 +315,37 @@ Use this script for automated cluster initialization across multiple nodes:
 Benchmark Results
 -----------------
 
-Performance evaluation of VERL using the Boba mathematical reasoning dataset with DeepSeek-R1-Distill-Qwen-7B model. Testing conducted on July 22, 2025, using the `latest VERL <https://github.com/volcengine/verl>`_.
+.. Performance evaluation of VeRL using the Boba mathematical reasoning dataset with DeepSeek-R1-Distill-Qwen-7B model. Testing conducted on July 22, 2025, using the `latest VeRL <https://github.com/volcengine/verl>`_.
 
-**Test Configuration:**
-- **VERL Commit ID**: f252da3
-- **Model**: DeepSeek-R1-Distill-Qwen-7B
-- **Dataset**: Boba mathematical reasoning dataset
-- **Hardware**: 8 nodes × 8 GPUs
-- **Algorithm**: GRPO 
+.. **Test Configuration:**
+.. - **VeRL Commit ID**: f252da3
+.. - **Model**: DeepSeek-R1-Distill-Qwen-7B
+.. - **Dataset**: Boba mathematical reasoning dataset
+.. - **Hardware**: 8 nodes × 8 GPUs
+.. - **Algorithm**: GRPO 
 
-================== ============ ========
-Metric             Value        Unit    
-================== ============ ========
-generate_sequences 316.959756   seconds 
-reshard            4.191206     seconds 
-gen                325.086604   seconds 
-reward             5.143515     seconds 
-old_log_prob       21.583357    seconds 
-ref                20.738621    seconds 
-adv                0.465133     seconds 
-update_actor       73.008971    seconds 
-step               447.358303   seconds 
-response_length    10425.773048 tokens  
-save_checkpoint    6.603002     seconds 
-================== ============ ========
-
-
-
-Performance evaluation of VERL using the Boba mathematical reasoning dataset with DeepSeek-R1-Distill-Qwen-1.5B model. Testing conducted on Aug 4, 2025, using `VERL <https://github.com/volcengine/verl>`_.
+.. ================== ============ ========
+.. Metric             Value        Unit    
+.. ================== ============ ========
+.. generate_sequences 316.959756   seconds 
+.. reshard            4.191206     seconds 
+.. gen                325.086604   seconds 
+.. reward             5.143515     seconds 
+.. old_log_prob       21.583357    seconds 
+.. ref                20.738621    seconds 
+.. adv                0.465133     seconds 
+.. update_actor       73.008971    seconds 
+.. step               447.358303   seconds 
+.. response_length    10425.773048 tokens  
+.. save_checkpoint    6.603002     seconds 
+.. ================== ============ ========
 
 
-Used VERL params are as belows:
 
-==================== ===============================
-Params               Value
-==================== ===============================
-VERL Commit ID       8fdc4d3 (v0.5.0 release)
-Model                DeepSeek-R1-Distill-Qwen-1.5B
-Dataset              Boba math reasoning dataset
-Hardware             1 nodes × 8 H100 GPUs 
-Sequence Parallelism 2
-Data Parallelism     4
-Pipeline Parallelism 1
-Context Length       28672
-MaxPrompt Length     1024
-Batch Size Per DP    128
-==================== ===============================
+Performance evaluation of VeRL using the Boba mathematical reasoning dataset with DeepSeek-R1-Distill-Qwen-1.5B model. Testing conducted on Aug 4, 2025, using `VeRL <https://github.com/volcengine/verl>`_.
 
-VERL benchmark results are as follows:
 
-======================= =============== ====================
-Metric                  Value           Unit    
-======================= =============== ====================
-response length         14254.837890625 tokens
-generation time         260.922         seconds 
-prev logprob time       17.513          seconds 
-training time           61.125          seconds 
-step time               363.545         seconds 
-gen throughput          6992.96         per-GPU tokens/s
-prev logprob throughput 52635.84        per-GPU tokens/s
-step throughput         20022.92        total tokens/s
-======================= =============== ====================
-
-Used RLinf params are as belows:
+Both RLinf and VeRL are using params belows:
 
 ==================== ===============================
 Params               Value
@@ -391,23 +359,97 @@ Pipeline Parallelism 1
 Context Length       28672
 MaxPrompt Length     1024
 Batch Size Per DP    128
-recompute            6 blocks
+recompute            20 blocks
 ==================== ===============================
 
+.. VeRL benchmark results are as follows:
 
-RLinf benchmark results are as follows:
+.. ======================= =============== ====================
+.. Metric                  Value           Unit    
+.. ======================= =============== ====================
+.. response length         14254.837890625 tokens
+.. generation time         260.922         seconds 
+.. prev logprob time       17.513          seconds 
+.. training time           61.125          seconds 
+.. step time               363.545         seconds 
+.. gen throughput          3533.27         per-GPU tokens/s
+.. prev logprob throughput 52635.84        per-GPU tokens/s
+.. step throughput         20022.92        total tokens/s
+.. ======================= =============== ====================
 
-======================= =============== ====================
-Metric                  Value           Unit    
-======================= =============== ====================
-response length         13975.00        tokens
-generation time         266.083         seconds 
-prev logprob time       17.783          seconds 
-training time           61.125          seconds 
-step time               346.33          seconds 
-gen throughput          6800.64         per-GPU tokens/s
-prev logprob throughput 50835.06        per-GPU tokens/s
-step throughput         20881.81        total tokens/s
-======================= =============== ====================
+
+.. RLinf benchmark results are as follows:
+
+.. ======================= =============== ====================
+.. Metric                  Value           Unit    
+.. ======================= =============== ====================
+.. response length         13975.00        tokens
+.. generation time         266.083         seconds 
+.. prev logprob time       17.783          seconds 
+.. training time           61.125          seconds 
+.. step time               346.33          seconds 
+.. gen throughput          3361.35         per-GPU tokens/s
+.. prev logprob throughput 50835.06        per-GPU tokens/s
+.. step throughput         19850.13        total tokens/s
+.. ======================= =============== ====================
+
+.. **Note**: RLinf results below does not count ref logprob time. 
+
+
+The following benchmark results compare **RLinf** with **VeRL**.  
+Tests for VeRL were conducted using **Commit ID 8fdc4d3 (v0.5.0 release)**.
+
+In general, for time-related metrics, smaller values are better; for throughput-related metrics, larger values are better; and for response length, there is usually no clear conclusion.
+In the table below, improvements of RLinf over VeRL are highlighted in :red:`red`, while regressions are highlighted in :green:`green`.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 27 12 12 15 20
+
+   * - Metric
+     - RLinf
+     - VeRL
+     - RLinf vs VeRL
+     - Unit
+   * - response length
+     - 13975.00
+     - 14254.84
+     - \
+     - tokens
+   * - generation time
+     - 266.08
+     - 260.92
+     - :green:`↑ 1.98%`
+     - seconds
+   * - prev logprob time
+     - 17.78
+     - 17.51
+     - :green:`↑ 1.54%`
+     - seconds
+   * - training time
+     - 61.12
+     - 66.53
+     - :red:`↓ 8.13%`
+     - seconds
+   * - step time
+     - 346.33
+     - 363.55
+     - :red:`↓ 4.74%`
+     - seconds
+   * - gen throughput
+     - 3361.35
+     - 3533.27
+     - :green:`↓ 4.87%`
+     - per-GPU tokens/s
+   * - prev logprob throughput
+     - 50835.06
+     - 52635.84
+     - :green:`↓ 3.42%`
+     - per-GPU tokens/s
+   * - step throughput
+     - 19850.13
+     - 20022.92
+     - :green:`↓ 0.87%`
+     - total tokens/s
 
 **Note**: RLinf results below does not count ref logprob time. 

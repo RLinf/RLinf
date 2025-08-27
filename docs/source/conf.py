@@ -17,6 +17,9 @@ import pathlib
 import re
 import sys
 
+from docutils import nodes
+from docutils.parsers.rst import roles
+
 # Ensure project root is on Python path for autodoc
 sys.path.insert(0, os.path.abspath("../../"))
 
@@ -134,6 +137,18 @@ html_theme_options = {
         "version_match": release,
     },
 }
+
+
+def make_role(color):
+    def role_fn(name, rawtext, text, lineno, inliner, options={}, content=[]):
+        node = nodes.inline(text, text, classes=[color])
+        return [node], []
+
+    return role_fn
+
+
+roles.register_local_role("red", make_role("red"))
+roles.register_local_role("green", make_role("green"))
 
 
 # -- HTML Context & Setup ------------------------------------------------------

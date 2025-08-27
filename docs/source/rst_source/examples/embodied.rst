@@ -1,10 +1,10 @@
 Agentic RL-VLA
 ========================
 
-This document provides a comprehensive guide to launching and running the OpenVLA (Open Vision-Language-Action) embodied agent training task in the RLinf framework. 
-The task focuses on training a vision-language-action model for robotic manipulation using the ManiSkill3 environment.
+This document provides a comprehensive guide to launching and managing the VLA (Vision-Language-Action) embodied agent training task within the RLinf framework, 
+focusing on training a VLA model for robotic manipulation in the ManiSkill3 environment. 
 
-The primary objective is to train an OpenVLA model to perform robotic manipulation through:
+The primary objective is to develop a model capable of performing robotic manipulation by:
 
 1. **Visual Understanding**: Processing RGB images from the robot's camera.
 2. **Language Comprehension**: Interpreting natural-language task descriptions.
@@ -32,7 +32,6 @@ Environment
    Out: 
 
 **Data Structure**
-
 
 - **Images**: RGB tensors ``[batch_size, 3, 224, 224]``
 - **Task Descriptions**: Natural-language instructions
@@ -106,16 +105,27 @@ You can also reconfigure the placement to achieve complete sharing, where env, r
 
 You can also reconfigure the placement to achieve complete separation, where env, rollout, and actor components each use their own GPUs without interference, eliminating the need for offload functionality.
 
-**2. Configuration File**
+**2. Configuration Files**
 
-Use the provided configuration: ``examples/embodiment/config/maniskill_ppo_openvla.yaml``
+We currently support training two models: OpenVLA and OpenVLA-OFT. Their corresponding configuration files are located at:
 
-**3. Launch Command**
+- **OpenVLA**: ``examples/embodiment/config/maniskill_ppo_openvla.yaml``
+- **OpenVLA-OFT**: ``examples/embodiment/config/maniskill_ppo_openvlaoft.yaml``
+
+**3. Launch Commands**
+
+To launch training with the OpenVLA model, run:
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla # openvla model
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft # openvlaoft model
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla 
+
+To launch training with the OpenVLA-OFT model, run:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft
+
 
 Visualization and Results
 -------------------------
@@ -167,21 +177,8 @@ Visualization and Results
      logger:
        wandb:
          enable: True
-         project_name: "infini-rl"
+         project_name: "RLinf"
          experiment_name: "openvla-maniskill"
-
-.. Using a single 8-GPU H100 machine, training for 48 hours, the OpenVLA model achieved from 55% to 90% accuracy on ManiSkill3.
-
-.. .. raw:: html
-
-..    <img src="https://github.com/user-attachments/assets/c641471f-2ee0-4ecc-b152-f20b5946651f" width="800"/>
-
-
-.. Using a single 8-GPU H100 machine, training for 24 hours, the OpenVLAOFT model achieved from 50% to 90% accuracy on ManiSkill3.
-
-.. .. raw:: html
-
-..    <img src="https://github.com/user-attachments/assets/460de75c-e4ed-4926-b8c7-dc2e493afcf0" width="800"/>
 
 Using a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) achieved up to 90% accuracy on ManiSkill3 within 48h and 24h of training, respectively.
 
@@ -201,7 +198,6 @@ Using a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) achiev
 
 The animation below shows the results of training the OpenVLA model on ManiSkill3's multi-task benchmark 
 using the PPO algorithm within the RLInf framework.
-
 
 .. raw:: html
 
