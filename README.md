@@ -4,14 +4,11 @@
 
 
 <div align="center">
-
-
 <!-- <a href="TODO"><img src="https://img.shields.io/badge/arXiv-Paper-red?logo=arxiv"></a> -->
 <a href="https://huggingface.co/RLinf"><img src="https://img.shields.io/badge/HuggingFace-yellow?logo=huggingface&logoColor=white" alt="Hugging Face"></a>
 <a href="https://rlinf.readthedocs.io/en/latest/"><img src="https://img.shields.io/badge/Documentation-Purple?color=8A2BE2&logo=readthedocs"></a>
 <a href="https://deepwiki.com/RLinf/RLinf"><img src="https://img.shields.io/badge/Ask%20DeepWiki-1DA1F2?logo=databricks&logoColor=white&color=00ADEF" alt="Ask DeepWiki"></a>
 <a href="https://github.com/user-attachments/assets/e4443113-73e5-4b28-aaa7-7af61172eddd"><img src="https://img.shields.io/badge/微信-green?logo=wechat&amp"></a>
-
 </div>
 
 <h1 align="center">
@@ -72,13 +69,13 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 - [ ] Support for vLLM inference backend
 
 ### 2. Application-Level Extensions
-- [ ] Support for Vision-Language Model (VLM) training  
+- [ ] Support for Vision-Language Models (VLMs) training  
 - [ ] Support for deep searcher agent training  
 - [ ] Support for multi-agent training  
 - [ ] Support for integration with more embodied simulators (e.g., [Meta-World](https://github.com/Farama-Foundation/Metaworld), [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis))  
-- [ ] Support for more Vision Language Action models (VLAs), such as [GR00T](https://github.com/NVIDIA/Isaac-GR00T)
+- [ ] Support for more Vision-Language-Action models (VLAs), such as [GR00T](https://github.com/NVIDIA/Isaac-GR00T)
 - [ ] Support for world model   
-- [ ] Support for real-world RL embodied intelligence
+- [ ] Support for real-world RL.
 
 
 ## Getting Started 

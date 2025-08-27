@@ -453,3 +453,6 @@ In the table below, improvements of RLinf over VeRL are highlighted in :red:`red
      - total tokens/s
 
 **Note**: RLinf results below does not count ref logprob time. 
+
+In conclusion, the overall training efficiency is comparable, 
+but our approach achieves a significant reduction in **training time** compared to VeRL.
