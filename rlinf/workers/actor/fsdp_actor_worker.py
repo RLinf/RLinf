@@ -163,11 +163,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         # filter data by accuracy
         if self.cfg.algorithm.get("filter_accuracy", False):
-            rewards = rollout_batch["rewards"]  # [n_chunk_step, batch, num_action_chunks]
+            rewards = rollout_batch[
+                "rewards"
+            ]  # [n_chunk_step, batch, num_action_chunks]
             n_chunk_step, batch_size, num_action_chunks = rewards.shape
 
             group_size = self.cfg.algorithm.group_size
-            assert batch_size % group_size == 0, f"batch {batch_size} not divisible by group_size {group_size}"
+            assert batch_size % group_size == 0, (
+                f"batch {batch_size} not divisible by group_size {group_size}"
+            )
             n_prompts = batch_size // group_size
 
             # calculate accuracy by prompt
@@ -176,13 +180,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             acc_tensor = reward_matrix.mean(dim=-1).max(dim=0).values  # [n_prompts]
 
             # mask
-            acc_mask_prompt = (acc_tensor >= self.cfg.algorithm.accuracy_lower_bound) & (
-                acc_tensor <= self.cfg.algorithm.accuracy_upper_bound
-            )  # [n_prompts]
+            acc_mask_prompt = (
+                acc_tensor >= self.cfg.algorithm.accuracy_lower_bound
+            ) & (acc_tensor <= self.cfg.algorithm.accuracy_upper_bound)  # [n_prompts]
 
             # extend mask dimension
             acc_mask = acc_mask_prompt.repeat_interleave(group_size)  # [batch]
-            acc_mask = acc_mask.unsqueeze(0).expand(n_chunk_step, -1).unsqueeze(-1)  # [n_chunk_step, batch]
+            acc_mask = (
+                acc_mask.unsqueeze(0).expand(n_chunk_step, -1).unsqueeze(-1)
+            )  # [n_chunk_step, batch]
 
             # update loss_mask
             if self.rollout_batch.get("loss_mask", None) is not None:
