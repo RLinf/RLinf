@@ -227,6 +227,7 @@ def actor_loss_fn(
     entropy_bonus: float,
     loss_mask: Optional[torch.Tensor] = None,
     loss_mask_sum: Optional[torch.Tensor] = None,
+    max_episode_steps: Optional[int] = None,
 ) -> Tuple[torch.Tensor, Dict]:
     bsz = logprobs.shape[0]
     # logprobs.shape: [bsz, token-len]
@@ -237,7 +238,6 @@ def actor_loss_fn(
         advantages = advantages.unsqueeze(-1)
         if loss_mask is not None:
             loss_mask = loss_mask.unsqueeze(-1)
-            loss_mask_sum *= single_action_dim
             loss_mask_sum = loss_mask_sum.unsqueeze(-1)
 
     elif logprob_type == "action_level":
@@ -251,6 +251,9 @@ def actor_loss_fn(
     if loss_type == "grpo":
         from rlinf.algorithms.embodiment.grpo_functions import actor_loss_fn
 
+        loss_mask_ratio = (
+            (loss_mask_sum * 1.0) / max_episode_steps if loss_mask is not None else None
+        )
         return actor_loss_fn(
             log_probs=logprobs,
             old_log_prob=old_logprobs,
@@ -258,7 +261,7 @@ def actor_loss_fn(
             clip_ratio_high=clip_ratio_high,
             clip_ratio_low=clip_ratio_low,
             loss_mask=loss_mask,
-            loss_mask_sum=loss_mask_sum,
+            loss_mask_ratio=loss_mask_ratio,
         )
     elif loss_type == "ppo":
         from rlinf.algorithms.embodiment.ppo_functions import actor_critic_loss_fn

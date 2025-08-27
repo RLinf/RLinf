@@ -15,7 +15,7 @@ video_cfg:
   video_base_dir: ${runner.logger.log_path}/video/eval
 
 init_params:
-  id: "PutCarrotOnPlateInScene-v1"
+  id: "PutCarrotOnPlateInScene-v2"
   num_envs: ${env.eval.num_envs}
   obs_mode: ${env.train.init_params.obs_mode}
   control_mode: None

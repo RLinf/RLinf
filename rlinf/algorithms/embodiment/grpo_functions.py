@@ -16,8 +16,6 @@ from typing import Dict, Optional, Tuple
 
 import torch
 
-from rlinf.utils.utils import masked_sum
-
 
 def compute_advantages(
     rewards: torch.Tensor,
@@ -243,7 +241,7 @@ def actor_loss_fn(
     clip_ratio_high: float,
     clip_ratio_low: float,
     loss_mask: Optional[torch.Tensor] = None,
-    loss_mask_sum: Optional[torch.Tensor] = None,
+    loss_mask_ratio: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, Dict]:
     """
     Compute actor loss for Group Relative Policy Optimization (GRPO).
@@ -265,7 +263,6 @@ def actor_loss_fn(
             - actor/pg_clipfrac: Fraction of clipped policy gradient loss
             - actor/ppo_kl: Approximate KL divergence
     """
-    bsz = log_probs.shape[0]
     logratio = log_probs - old_log_prob
     ratio = torch.exp(logratio)
 
@@ -277,16 +274,12 @@ def actor_loss_fn(
 
     if loss_mask is not None:
         # Take the maximum of clipped and unclipped losses
-        pg_loss = (
-            masked_sum(torch.max(pg_losses, pg_losses2) / loss_mask_sum, loss_mask)
-            / bsz
-        )  # float
+        pg_loss = (torch.max(pg_losses, pg_losses2) / loss_mask_ratio) * loss_mask
+        pg_loss = pg_loss.mean()
         pg_clipfrac = (
-            masked_sum(
-                torch.gt(pg_losses2, pg_losses).float() / loss_mask_sum, loss_mask
-            )
-            / bsz
-        )  # float
+            torch.gt(pg_losses2, pg_losses).float() / loss_mask_ratio
+        ) * loss_mask
+        pg_clipfrac = pg_clipfrac.mean()
     else:
         # Take the maximum of clipped and unclipped losses
         pg_loss = torch.max(pg_losses, pg_losses2).mean()  # float

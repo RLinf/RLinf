@@ -103,7 +103,7 @@ class FSDPModelManager:
         self.model = FSDP(
             module,
             param_init_fn=init_fn,
-            use_orig_params=False,
+            use_orig_params=True,
             auto_wrap_policy=auto_wrap_policy,
             device_id=int(os.environ["LOCAL_RANK"]),
             sharding_strategy=sharding_strategy,  # zero3

@@ -14,7 +14,7 @@ video_cfg:
   video_base_dir: ${runner.logger.log_path}/video/train
 
 init_params:
-  id: "PutCarrotOnPlateInScene-v1"
+  id: "PutCarrotOnPlateInScene-v2"
   num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
   obs_mode: "rgb+segmentation"
   control_mode: None
