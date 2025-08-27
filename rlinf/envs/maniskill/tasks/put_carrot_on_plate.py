@@ -59,31 +59,35 @@ class PutCarrotOnPlateInSceneV2(PutCarrotOnPlateInScene):
 
             # measured values for bridge dataset
             if self.scene_setting == "flat_table":
-                qpos = np.array([
-                    -0.01840777,
-                    0.0398835,
-                    0.22242722,
-                    -0.00460194,
-                    1.36524296,
-                    0.00153398,
-                    0.037,
-                    0.037,
-                ])
+                qpos = np.array(
+                    [
+                        -0.01840777,
+                        0.0398835,
+                        0.22242722,
+                        -0.00460194,
+                        1.36524296,
+                        0.00153398,
+                        0.037,
+                        0.037,
+                    ]
+                )
 
                 self.agent.robot.set_pose(
                     sapien.Pose([0.147, 0.028, 0.870], q=[0, 0, 0, 1])
                 )
             elif self.scene_setting == "sink":
-                qpos = np.array([
-                    -0.2600599,
-                    -0.12875618,
-                    0.04461369,
-                    -0.00652761,
-                    1.7033415,
-                    -0.26983038,
-                    0.037,
-                    0.037,
-                ])
+                qpos = np.array(
+                    [
+                        -0.2600599,
+                        -0.12875618,
+                        0.04461369,
+                        -0.00652761,
+                        1.7033415,
+                        -0.26983038,
+                        0.037,
+                        0.037,
+                    ]
+                )
                 self.agent.robot.set_pose(
                     sapien.Pose([0.127, 0.060, 0.85], q=[0, 0, 0, 1])
                 )
