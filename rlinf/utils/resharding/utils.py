@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import re
+from enum import Enum
+from typing import List, Tuple
 
 import torch
 from megatron.core import parallel_state
@@ -20,7 +22,7 @@ from megatron.core import parallel_state
 
 def get_convert_fn(model_arch: str):
     if model_arch == "qwen2.5":
-        return convert_fn_qwen2_5
+        return TransformFunc.convert_mega_qwen2_5_to_hf
     else:
         raise NotImplementedError(
             f"get_convert_fn for model_arch {model_arch} is not implemented"
@@ -50,164 +52,195 @@ def get_pp_reshard_fn(model_arch: str):
 ###########################
 
 
-def _convert_qwen2_5_weight(
-    para_skip_convert,
-    name: str,
-    weight: torch.Tensor,
-    q_slice,
-    k_slice,
-    v_slice,
-    tp_size,
-    target_tp,
-    head_size,
-    hidden_size,
-) -> torch.Tensor:
-    """
-    Convert weight from megatron to vLLM format
-    """
-    for skip in para_skip_convert:
-        if skip in name:
-            return weight
+class TransformType(Enum):
+    SPLIT_QKV = "split_qkv"
+    SPLIT_QKV_BIAS = "split_qkv_bias"
+    SPLIT_FC1 = "split_fc1"
+    SPLIT_NONE = "split_none"
 
-    if "linear_qkv" in name:
-        if "weight" in name:
-            weight = weight.reshape(-1, head_size, hidden_size)
-            max_dim0 = weight.size(0)
-            q_slice = q_slice[q_slice < max_dim0]
-            k_slice = k_slice[k_slice < max_dim0]
-            v_slice = v_slice[v_slice < max_dim0]
 
-            q = weight[q_slice]
-            k = weight[k_slice]
-            v = weight[v_slice]
-
-            return torch.cat([q, k, v], dim=0).reshape((-1, weight.size(-1)))
-        elif "bias" in name:
-            weight = weight.reshape((-1, head_size))
-            max_dim0 = weight.size(0)
-
-            q_slice = q_slice[q_slice < max_dim0]
-            k_slice = k_slice[k_slice < max_dim0]
-            v_slice = v_slice[v_slice < max_dim0]
-
-            qbias = weight[q_slice]
-            kbias = weight[k_slice]
-            vbias = weight[v_slice]
-
-            return torch.cat([qbias, kbias, vbias], dim=0).reshape((-1))
-        else:
-            raise RuntimeError(
-                f"convert_weight: Unknown weight type in linear_qkv: {name}"
-            )
-    elif "linear_fc1" in name:
-        # reshape gate & up
-        split_num = tp_size // target_tp * 2
-        shard = weight.reshape((split_num, -1, weight.shape[-1]))
-        gate_slice = torch.arange(0, split_num, 2, dtype=torch.long)
-        up_slice = torch.arange(1, split_num, 2, dtype=torch.long)
-
-        return torch.cat([shard[gate_slice], shard[up_slice]], dim=0).reshape(
-            (
-                -1,
-                weight.shape[-1],
-            )
+class TransformFunc:
+    @staticmethod
+    def _split_gqa_tensor(
+        tensor: torch.Tensor, new_statedict: dict, weight_names: List[str], config
+    ) -> None:
+        """
+        Private helper to split a GQA-combined tensor (weight or bias).
+        """
+        hidden_size = config.model_config.hidden_size
+        num_attention_heads = config.model_config.num_attention_heads
+        num_key_value_heads = (
+            config.model_config.num_query_groups or num_attention_heads
         )
-    else:
-        raise RuntimeError(f"convert_weight: Unknown weight name: {name}")
+        head_dim = hidden_size // num_attention_heads
 
+        tp_size = config.model_config.tensor_model_parallel_size
 
-def extract_layer_info(s):
-    pattern = r"layers\.(\d+)\.(.+)"
-    match = re.search(pattern, s)
-    if match:
-        return match.group(1), match.group(2)
-    return None, None
-
-
-def mega_name_to_vllm_name_qwen2(name: str):
-    if "embedding.word_embeddings.weight" in name:
-        return "model.embed_tokens.weight"
-    if "decoder.final_layernorm.weight" in name:
-        return "model.norm.weight"
-    if "output_layer.weight" in name:
-        return "lm_head.weight"
-    layer_id, suffix = extract_layer_info(name)
-
-    assert layer_id is not None, f"Cannot extract layer info from {name}"
-    result_pattern = "model.layers.{}.{}"
-    nmap = {
-        "self_attention.linear_proj.weight": "self_attn.o_proj.weight",
-        "self_attention.linear_qkv.layer_norm_weight": "input_layernorm.weight",
-        "self_attention.linear_qkv.weight": "self_attn.qkv_proj.weight",
-        "self_attention.linear_qkv.bias": "self_attn.qkv_proj.bias",
-        "mlp.linear_fc1.layer_norm_weight": "post_attention_layernorm.weight",
-        "mlp.linear_fc1.weight": "mlp.gate_up_proj.weight",
-        "mlp.linear_fc2.weight": "mlp.down_proj.weight",
-    }
-
-    assert suffix in nmap, f"Cannot find mapping for {suffix}"
-
-    return result_pattern.format(layer_id, nmap[suffix])
-
-
-def convert_fn_qwen2_5(model_state_dict, config):
-    para_skip_convert = [
-        "word_embeddings",
-        "layer_norm_weight",
-        "linear_proj",
-        "linear_fc2",
-        "final_layernorm",
-        "output_layer",
-        "rotary_pos_emb.inv_freq",
-        "linear_qkv.layer_norm_weight",
-        "mlp.linear_fc1.layer_norm_weight",
-        "final_layernorm.weight",
-    ]
-
-    tp_size = config.model_config.tensor_model_parallel_size
-    target_tp = config.reshard_tp_size
-
-    hidden_size = config.model_config.hidden_size
-    head_size = (
-        config.model_config.kv_channels
-        or hidden_size // config.model_config.num_attention_heads
-    )
-    head_num = config.model_config.num_attention_heads
-    num_query_groups = config.model_config.num_query_groups or head_num
-
-    heads_per_group = head_num // num_query_groups
-    qkv_total_dim = head_num + 2 * num_query_groups
-
-    q_slice = torch.cat(
-        [
-            torch.arange(
-                (heads_per_group + 2) * i,
-                (heads_per_group + 2) * i + heads_per_group,
-            )
-            for i in range(num_query_groups)
-        ]
-    )
-    k_slice = torch.arange(heads_per_group, qkv_total_dim, (heads_per_group + 2))
-    v_slice = torch.arange(heads_per_group + 1, qkv_total_dim, (heads_per_group + 2))
-
-    converted_model_state_dict = {}
-    for name, param in model_state_dict.items():
-        converted_model_state_dict[mega_name_to_vllm_name_qwen2(name)] = (
-            _convert_qwen2_5_weight(
-                para_skip_convert,
-                name,
-                param,
-                q_slice,
-                k_slice,
-                v_slice,
-                tp_size,
-                target_tp,
-                head_size,
-                hidden_size,
-            )
+        assert num_key_value_heads % tp_size == 0, (
+            "num_key_value_heads must be divisible by tensor parallel size"
         )
 
-    return converted_model_state_dict
+        q_heads_per_rank = num_attention_heads // tp_size
+        kv_heads_per_rank = num_key_value_heads // tp_size
+
+        q_shard_size = q_heads_per_rank * head_dim
+        k_shard_size = kv_heads_per_rank * head_dim
+        v_shard_size = kv_heads_per_rank * head_dim
+
+        shard_size = q_shard_size + k_shard_size + v_shard_size
+
+        q_shards, k_shards, v_shards = [], [], []
+
+        # [Qi,Ki,Vi]
+        for shard in tensor.split(shard_size, dim=0):
+            # Qi, Ki, Vi
+            q_shard, k_shard, v_shard = shard.split(
+                [q_shard_size, k_shard_size, v_shard_size], dim=0
+            )
+            q_shards.append(q_shard)
+            k_shards.append(k_shard)
+            v_shards.append(v_shard)
+
+        # cat
+        q_full = torch.cat(q_shards, dim=0)
+        k_full = torch.cat(k_shards, dim=0)
+        v_full = torch.cat(v_shards, dim=0)
+
+        # saved
+        new_statedict[weight_names[0]] = q_full.clone()
+        new_statedict[weight_names[1]] = k_full.clone()
+        new_statedict[weight_names[2]] = v_full.clone()
+
+    @staticmethod
+    def split_fc1(
+        linear_fc1: torch.Tensor, new_statedict: dict, weight_names: List[str], config
+    ) -> None:
+        assert weight_names is not None and len(weight_names) == 2, (
+            f"split_fc1 transform expects two weight names, got {weight_names}"
+        )
+
+        tp_size = config.model_config.tensor_model_parallel_size
+        target_tp = config.reshard_tp_size
+        split_size = linear_fc1.shape[0] // (tp_size // target_tp)
+        linear_fc1_slice = torch.split(linear_fc1, split_size, dim=0)
+
+        gate_proj_shards = []
+        up_proj_shards = []
+        for weight in linear_fc1_slice:
+            assert weight.shape[0] % 2 == 0, (
+                f"linear_fc1 weight shape {weight.shape} is not even along dim 0"
+            )
+            weight_chunk = torch.chunk(weight, 2, dim=0)
+            gate_proj_shards.append(weight_chunk[0])
+            up_proj_shards.append(weight_chunk[1])
+        gate_proj = torch.cat(gate_proj_shards, dim=0)
+        up_proj = torch.cat(up_proj_shards, dim=0)
+
+        new_statedict[weight_names[0]] = gate_proj.clone()
+        new_statedict[weight_names[1]] = up_proj.clone()
+
+    @staticmethod
+    def split_none(
+        tensor: torch.Tensor, new_statedict: dict, weight_names: List[str]
+    ) -> None:
+        assert weight_names is not None and len(weight_names) == 1, (
+            f"split_none transform expects one weight name, got {weight_names}"
+        )
+        new_statedict[weight_names[0]] = tensor.clone()
+
+    @staticmethod
+    def mega_name_qwen2_5_to_hf(name: str) -> Tuple[TransformType, List[str]]:
+        """
+        Convert qwen2_5 model weight megatron name to hf name and do shape transform if needed.
+
+        Args:
+            name (str): megatron model weight name
+
+        Returns:
+            (TransformType, List[str]): transform type and the corresponding hf model weight name
+        """
+        if "embedding.word_embeddings.weight" in name:
+            return (TransformType.SPLIT_NONE, ["model.embed_tokens.weight"])
+        if "decoder.final_layernorm.weight" in name:
+            return (TransformType.SPLIT_NONE, ["model.norm.weight"])
+        if "output_layer.weight" in name:
+            return (TransformType.SPLIT_NONE, ["lm_head.weight"])
+        layer_id, suffix = TransformFunc.extract_layer_info(name)
+        assert layer_id is not None, f"Cannot extract layer info from {name}"
+        result_pattern = "model.layers.{}.{}"
+        nmap = {
+            "self_attention.linear_proj.weight": (
+                TransformType.SPLIT_NONE,
+                ["self_attn.o_proj.weight"],
+            ),
+            "self_attention.linear_qkv.layer_norm_weight": (
+                TransformType.SPLIT_NONE,
+                ["input_layernorm.weight"],
+            ),
+            "self_attention.linear_qkv.weight": (
+                TransformType.SPLIT_QKV,
+                [
+                    "self_attn.q_proj.weight",
+                    "self_attn.k_proj.weight",
+                    "self_attn.v_proj.weight",
+                ],
+            ),
+            "self_attention.linear_qkv.bias": (
+                TransformType.SPLIT_QKV_BIAS,
+                [
+                    "self_attn.q_proj.bias",
+                    "self_attn.k_proj.bias",
+                    "self_attn.v_proj.bias",
+                ],
+            ),
+            "mlp.linear_fc1.layer_norm_weight": (
+                TransformType.SPLIT_NONE,
+                ["post_attention_layernorm.weight"],
+            ),
+            "mlp.linear_fc1.weight": (
+                TransformType.SPLIT_FC1,
+                ["mlp.gate_proj.weight", "mlp.up_proj.weight"],
+            ),
+            "mlp.linear_fc2.weight": (
+                TransformType.SPLIT_NONE,
+                ["mlp.down_proj.weight"],
+            ),
+        }
+
+        assert suffix in nmap, f"Cannot find mapping for {suffix}"
+
+        transform_type, suffixes = nmap[suffix]
+        return (
+            transform_type,
+            [result_pattern.format(layer_id, suffix) for suffix in suffixes],
+        )
+
+    @staticmethod
+    def convert_mega_qwen2_5_to_hf(model_state_dict: dict, config) -> dict:
+        new_statedict = {}
+        for name, param in model_state_dict.items():
+            transform_type, hf_names = TransformFunc.mega_name_qwen2_5_to_hf(name)
+            if transform_type == TransformType.SPLIT_QKV:
+                TransformFunc._split_gqa_tensor(param, new_statedict, hf_names, config)
+            elif transform_type == TransformType.SPLIT_QKV_BIAS:
+                TransformFunc._split_gqa_tensor(param, new_statedict, hf_names, config)
+            elif transform_type == TransformType.SPLIT_FC1:
+                TransformFunc.split_fc1(param, new_statedict, hf_names, config)
+            elif transform_type == TransformType.SPLIT_NONE:
+                TransformFunc.split_none(param, new_statedict, hf_names)
+            else:
+                raise NotImplementedError(
+                    f"Transform type {transform_type} not implemented"
+                )
+        return new_statedict
+
+    @staticmethod
+    def extract_layer_info(s):
+        pattern = r"layers\.(\d+)\.(.+)"
+        match = re.search(pattern, s)
+        if match:
+            return match.group(1), match.group(2)
+        return None, None
 
 
 ##############################

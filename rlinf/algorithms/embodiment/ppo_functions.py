@@ -159,7 +159,7 @@ def actor_critic_loss_fn(
 
     # Metrics
     metrics_data = {
-        "actor/loss": loss.detach().item(),
+        "actor/raw_loss": loss.detach().item(),
         "actor/policy_loss": policy_loss.detach().item(),
         "actor/value_loss": value_loss.detach().item(),
         "actor/ratio": ratio.mean().detach().item(),
@@ -221,7 +221,6 @@ def actor_loss_fn(
 
     # Metrics
     metrics_data = {
-        "actor/loss": loss.detach().item(),
         "actor/policy_loss": policy_loss.detach().item(),
         "actor/ratio": ratio.mean().detach().item(),
         "actor/entropy_loss": entropy_loss.detach().item(),

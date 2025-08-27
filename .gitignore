@@ -5,7 +5,7 @@ __pycache__
 *.npy
 *.txt
 !requirements/*
-!requirements.txt
+!docs/*
 *.DS_Store
 *.out
 build

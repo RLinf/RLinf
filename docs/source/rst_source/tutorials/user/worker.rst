@@ -126,9 +126,11 @@ It simplifies the process of launching multiple Workers across the cluster and e
 Example
 --------
 
-.. autoclass:: rlinf.scheduler.worker.Worker
+.. autoclass:: rlinf.scheduler.worker.worker.Worker
    :no-members:
    :no-inherited-members:
+   :exclude-members: __init__, __new__
+   :noindex:
 
 Summary
 --------

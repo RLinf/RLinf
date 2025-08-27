@@ -13,6 +13,7 @@ We present three concise examples to demonstrate the framework's workflow and he
 
 - **Distributed training:** Multi-node training for mathematical tasks (see :doc:`distribute`).
 
+- **Evaluation:** Assessing model performance on long-chain-of-thought mathematical reasoning (see :doc:`eval`).
 
 .. toctree::
    :hidden:
@@ -22,3 +23,4 @@ We present three concise examples to demonstrate the framework's workflow and he
    vla
    llm
    distribute
+   eval

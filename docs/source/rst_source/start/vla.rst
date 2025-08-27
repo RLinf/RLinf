@@ -1,4 +1,4 @@
-Quickstart 1: PPO Training of VLA on Maniskill3
+Quickstart 1: PPO Training of VLAs on Maniskill3
 =================================================
 
 This quick-start walks you through training the Visual-Language-Action model, including
@@ -27,7 +27,7 @@ For **OpenVLA**, run:
 
    # Download pre-trained OpenVLA model
    hf download gen-robot/openvla-7b-rlvla-warmup \
-   --local-dir /models/openvla-7b-rlvla-warmup/
+   --local-dir /path/to/model/openvla-7b-rlvla-warmup/
 
 
 the model is cited in `paper <https://arxiv.org/abs/2505.19789>`_
@@ -73,8 +73,3 @@ Key metrics to pay attention to include
 .. raw:: html
 
    <img src="https://github.com/user-attachments/assets/90269207-b638-478b-bf5e-95bd8e2bfb36" width="800"/>
-
-
-
-
-TODO: update the pics for 10 epochs

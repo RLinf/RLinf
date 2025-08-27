@@ -250,8 +250,12 @@
 
   // Enhanced modal creation with AI chat focus
   function createModal() {
-    const base   = window.location.origin + window.location.pathname;
-    const logoUrl = new URL("_static/svg/logo.svg", base).href;
+    // const base   = window.location.origin + window.location.pathname;
+    // const logoUrl = new URL("_static/svg/logo.svg", base).href;
+    const urlRoot = (window.DOCUMENTATION_OPTIONS && DOCUMENTATION_OPTIONS.URL_ROOT) || '/';
+    const logoUrl = urlRoot + '_static/svg/logo.svg';
+    const homeUrl = urlRoot; 
+
     const modal = document.createElement('div');
     
     modal.innerHTML = `
@@ -259,7 +263,7 @@
         <div class="sphinx-modal">
           <div class="sphinx-modal-header">
             <div class="sphinx-modal-header-content">
-              <a href="${window.location.pathname.replace(/[^/]+$/, '')}" class="navbar-brand">
+              <a href="${homeUrl}" class="navbar-brand">
                 <img src="${logoUrl}" class="sphinx-modal-logo" alt="logo">
               </a>
               <h3 class="sphinx-modal-title">Your AI Assistant</h3>

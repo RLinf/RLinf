@@ -456,22 +456,22 @@ class Worker(metaclass=WorkerMeta):
     ):
         """Send an object to a specific worker address in the collective group.
 
-            The function is specially optimized for torch.Tensor, List of torch.Tensor, Dict of torch.Tensor, which go through NCCL when the contained tensors are on GPU. Otherwise, all communications go through GLOO.
+        The function is specially optimized for torch.Tensor, List of torch.Tensor, Dict of torch.Tensor, which go through NCCL when the contained tensors are on GPU. Otherwise, all communications go through GLOO.
 
-            .. note::
-                Do not mix send with recv_tensor
+        .. note::
+            Do not mix send with recv_tensor
 
-            .. note::
-                We only use NCCL primitives when the list or dict values only contain GPU tensors. We also see complex dicts with deep hierarchy as common Python objects, which will be serialized into a CPU tensor and sent through GLOO.
+        .. note::
+            We only use NCCL primitives when the list or dict values only contain GPU tensors. We also see complex dicts with deep hierarchy as common Python objects, which will be serialized into a CPU tensor and sent through GLOO.
 
-            .. note::
-                When transferring GPU objects, the first send needs to be paired with a recv at the other end. Calling async send or recv first at both ends will result in communication hang, because NCCL communicators are established in a lazy manner when the first pair of send/recv is called.
+        .. note::
+            When transferring GPU objects, the first send needs to be paired with a recv at the other end. Calling async send or recv first at both ends will result in communication hang, because NCCL communicators are established in a lazy manner when the first pair of send/recv is called.
 
-            .. note::
-                Do not mix CPU and GPU tensors in a list or dict.
+        .. note::
+            Do not mix CPU and GPU tensors in a list or dict.
 
-            .. note::
-                This method is not thread safe.
+        .. note::
+            This method is not thread safe.
 
         Args:
             object (torch.Tensor | List[torch.Tensor] | Dict[str, torch.Tensor] | Any): The object to send.
@@ -492,14 +492,14 @@ class Worker(metaclass=WorkerMeta):
     ):
         """Out-of-place receive of an object from a specific worker address in the collective group.
 
-            .. note::
-                Do not mix recv with send_tensor
+        .. note::
+            Do not mix recv with send_tensor
 
-            .. note::
-                When transferring GPU objects, the first send needs to be paired with a recv at the other end. Calling async send or recv first at both ends will result in communication hang, because NCCL communicators are established in a lazy manner when the first pair of send/recv is called.
+        .. note::
+            When transferring GPU objects, the first send needs to be paired with a recv at the other end. Calling async send or recv first at both ends will result in communication hang, because NCCL communicators are established in a lazy manner when the first pair of send/recv is called.
 
-            .. note::
-                This method is not thread safe.
+        .. note::
+            This method is not thread safe.
 
         Args:
             async_op (bool): Whether to perform the operation asynchronously.
@@ -523,14 +523,14 @@ class Worker(metaclass=WorkerMeta):
     ):
         """Send a tensor to a specific worker address in the collective group. This function is optimized for sending a single tensor and does not introduce metadata communication overhead like send. But it needs to be paired with the in-place recv_tensor function which requires apriori knowledge of the tensor shape and dtype.
 
-            .. note::
-                Do not mix send_tensor with recv
+        .. note::
+            Do not mix send_tensor with recv
 
-            .. note::
-                When transferring GPU objects, the first send_tensor needs to be paired with a recv_tensor at the other end. Calling async send_tensor or recv_tensor first at both ends will result in communication hang, because NCCL communicators are established in a lazy manner when the first pair of send/recv is called.
+        .. note::
+            When transferring GPU objects, the first send_tensor needs to be paired with a recv_tensor at the other end. Calling async send_tensor or recv_tensor first at both ends will result in communication hang, because NCCL communicators are established in a lazy manner when the first pair of send/recv is called.
 
-            .. note::
-                This method is not thread safe.
+        .. note::
+            This method is not thread safe.
 
         Args:
             tensor (torch.Tensor): The tensor to send.
@@ -555,14 +555,14 @@ class Worker(metaclass=WorkerMeta):
     ):
         """In-place receive of a tensor from a specific worker address in the collective group. This function is optimized for receiving a single tensor and does not introduce metadata communication overhead like recv. But it requires preallocation of the tensor with the correct shape and dtype.
 
-            .. note::
-                Do not mix recv_tensor with send
+        .. note::
+            Do not mix recv_tensor with send
 
-            .. note::
-                When transferring GPU objects, the first send_tensor needs to be paired with a recv_tensor at the other end. Calling async send_tensor or recv_tensor first at both ends will result in communication hang, because NCCL communicators are established in a lazy manner when the first pair of send/recv is called.
+        .. note::
+            When transferring GPU objects, the first send_tensor needs to be paired with a recv_tensor at the other end. Calling async send_tensor or recv_tensor first at both ends will result in communication hang, because NCCL communicators are established in a lazy manner when the first pair of send/recv is called.
 
-            .. note::
-                This method is not thread safe.
+        .. note::
+            This method is not thread safe.
 
         Args:
             tensor (torch.Tensor): The tensor to receive. It must be preallocated with the correct shape and dtype.

@@ -167,6 +167,10 @@ class CompletionInfo:
 
 @dataclass(kw_only=True)
 class RolloutResult:
+    """
+    Rollout Result
+    """
+
     num_sequence: int
     prompt_lengths: List[int]
     prompt_ids: List[List[int]]
@@ -314,15 +318,35 @@ class RolloutResult:
             pad_token (int): Token used for padding, e.g., `tokenizer.pad_token_id`.
 
         Returns:
-            Dict[str,torch.Tensor]: A dictionary containing the following keys:
+            Dict[str, torch.Tensor]: A dictionary with keys:
 
-        - "input_ids" (torch.Tensor): Concatenated prompt and response token IDs, with shape [batch_size, training_seq_length].
-        - "attention_mask" (torch.Tensor): Attention mask for the input sequence, with shape [batch_size, training_seq_length].
-        - "is_end" (torch.Tensor): Boolean tensor indicating whether the sequence ends with shape [batch_size, ].
-        - "position_ids" (torch.Tensor): Position IDs for the input sequence, with shape [batch_size, training_seq_length].
-        - "prompt_lengths" (torch.Tensor): Lengths of the prompt sequences with shape [batch_size, ].
-        - "response_lengths" (torch.Tensor): Lengths of the response sequences with shape [batch_size, ].
-        - "advantages" (torch.Tensor): Advantage values for the responses,with shape [batch_size, training_seq_length - data_seq_length] .
+            input_ids (torch.Tensor):
+                Concatenated prompt and response token IDs,
+                shape ``[batch_size, training_seq_length]``.
+
+            attention_mask (torch.Tensor):
+                Attention mask for the input sequence,
+                shape ``[batch_size, training_seq_length]``.
+
+            is_end (torch.Tensor):
+                Boolean tensor indicating whether the sequence ends,
+                shape ``[batch_size]``.
+
+            position_ids (torch.Tensor):
+                Position IDs for the input sequence,
+                shape ``[batch_size, training_seq_length]``.
+
+            prompt_lengths (torch.Tensor):
+                Lengths of the prompt sequences,
+                shape ``[batch_size]``.
+
+            response_lengths (torch.Tensor):
+                Lengths of the response sequences,
+                shape ``[batch_size]``.
+
+            advantages (torch.Tensor), optional:
+                Advantage values for the responses,
+                shape ``[batch_size, training_seq_length - data_seq_length]``.
         """
 
         # len = training_seq_length: input_ids, attention_mask, position_ids

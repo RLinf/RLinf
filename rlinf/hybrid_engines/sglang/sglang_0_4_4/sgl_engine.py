@@ -46,7 +46,7 @@ from sglang.srt.utils import (
 from rlinf.scheduler import WorkerAddress
 from rlinf.utils.placement import ComponentPlacement
 
-from .io_struct import OffloadReqInput, SyncWeightInput
+from .io_struct import OffloadReqInput, SyncHFWeightInput, SyncWeightInput
 from .sgl_scheduler import run_scheduler_process
 from .tokenizer_manager import TokenizerManager
 
@@ -103,6 +103,11 @@ class Engine(_Engine):
         return loop.run_until_complete(
             self.tokenizer_manager.offload_model_weights(obj, None)
         )
+
+    def sync_hf_weight(self):
+        obj = SyncHFWeightInput()
+        loop = asyncio.get_event_loop()
+        return loop.run_until_complete(self.tokenizer_manager.sync_hf_weight(obj))
 
     def sync_weight(self):
         obj = SyncWeightInput()

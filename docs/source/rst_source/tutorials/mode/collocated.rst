@@ -1,7 +1,7 @@
 Collocated Mode
 ===============
 
-.. image:: ../../../_static/svg/colocate.svg
+.. image:: ../../../_static/svg/collocate.svg
    :width: 600px
    :align: center
    :class: col-img
@@ -40,7 +40,8 @@ Additonally, some workers support offloading to release GPUs to other workers du
      offload_weight: True
      offload_grad: True
 
-If offloading is enabled for actor, the actor is loaded into GPU memory before it runs, then it is offloaded into CPU memory after it finishes its execution. If offloading is not enabled, the collocated workers (assuming workers run on GPUs) will compete for GPU memory, which may lead to OOM error. Refer to `Math RL collocated mode yaml <https://github.com/RLinf/RLinf/blob/main/examples/math/config/qwen2.5-1.5b-grpo-megatron.yaml>`_ for the complete configuration.
+If offloading is enabled for actor, the actor is loaded into GPU memory before it runs, then it is offloaded into CPU memory after it finishes its execution. If offloading is not enabled, the collocated workers (assuming workers run on GPUs) will compete for GPU memory, which may lead to OOM error. 
+Refer to :doc:`../user/yaml` for the complete configuration.
 
 **ComponentPlacement programming**
 

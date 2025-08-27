@@ -76,6 +76,7 @@ Example
 .. autoclass:: rlinf.scheduler.channel.Channel
    :no-members:
    :no-inherited-members:
+   :exclude-members: __init__, __new__
 
 Summary
 --------------------------------

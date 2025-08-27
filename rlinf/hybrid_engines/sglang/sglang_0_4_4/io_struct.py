@@ -47,3 +47,13 @@ class SyncWeightInput:
 @dataclass
 class SyncWeightOutput:
     pass
+
+
+@dataclass
+class SyncHFWeightInput:
+    pass
+
+
+@dataclass
+class SyncHFWeightOutput:
+    pass

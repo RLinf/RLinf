@@ -37,7 +37,7 @@ In most cases, `env`, `rollout`, and `actor` should enable offloading as below t
    actor:
      enable_offload: True
 
-Refer to `ManiSkill configuration yaml <https://github.com/RLinf/RLinf/blob/main/examples/embodiment/config/maniskill_ppo_openvla.yaml>`_ for compete configuration.
+Refer to :doc:`../user/yaml` for compete configuration.
 
 **ComponentPlacement programming**
 
