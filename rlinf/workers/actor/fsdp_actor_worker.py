@@ -160,6 +160,35 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             rollout_batch["loss_mask"] = loss_mask
             rollout_batch["loss_mask_sum"] = loss_mask_sum
 
+        # filter data by accuracy
+        if self.cfg.algorithm.get("filter_accuracy", False):
+            rewards = rollout_batch["rewards"]  # [n_chunk_step, batch, num_action_chunks]
+            n_chunk_step, batch_size, num_action_chunks = rewards.shape
+
+            group_size = self.cfg.algorithm.group_size
+            assert batch_size % group_size == 0, f"batch {batch_size} not divisible by group_size {group_size}"
+            n_prompts = batch_size // group_size
+
+            # calculate accuracy by prompt
+            reward_matrix = rewards.sum(-1)  # [n_chunk_step, batch]
+            reward_matrix = reward_matrix.reshape(n_chunk_step, n_prompts, group_size)
+            acc_tensor = reward_matrix.mean(dim=-1).max(dim=0).values  # [n_prompts]
+
+            # mask
+            acc_mask_prompt = (acc_tensor >= self.cfg.algorithm.accuracy_lower_bound) & (
+                acc_tensor <= self.cfg.algorithm.accuracy_upper_bound
+            )  # [n_prompts]
+
+            # extend mask dimension
+            acc_mask = acc_mask_prompt.repeat_interleave(group_size)  # [batch]
+            acc_mask = acc_mask.unsqueeze(0).expand(n_chunk_step, -1).unsqueeze(-1)  # [n_chunk_step, batch]
+
+            # update loss_mask
+            if self.rollout_batch.get("loss_mask", None) is not None:
+                rollout_batch["loss_mask"] = acc_mask & self.rollout_batch["loss_mask"]
+            else:
+                rollout_batch["loss_mask"] = acc_mask
+
         return rollout_batch
 
     def compute_logprobs(self):
