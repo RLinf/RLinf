@@ -21,7 +21,7 @@ from omegaconf import DictConfig
 from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.env_manager import EnvManager
 from rlinf.scheduler import Worker
-from rlinf.utils.placement import EmbodiedComponentPlacement
+from rlinf.utils.placement import HybridComponentPlacement
 
 
 def put_tensor_cpu(data_dict):
@@ -61,17 +61,16 @@ class EnvWorker(Worker):
         self._action_queue_name = cfg.rollout.channel.queue_name
         self._replay_buffer_name = cfg.actor.channel.queue_name
 
-        self._component_placement = EmbodiedComponentPlacement(cfg)
+        self._component_placement = HybridComponentPlacement(cfg)
         assert (
-            self._component_placement.rollout_world_size
-            % self._component_placement.env_world_size
+            self._component_placement.get_world_size("rollout")
+            % self._component_placement.get_world_size("env")
             == 0
         )
         # gather_num: number of rollout for each env process
-        self.gather_num = (
-            self._component_placement.rollout_world_size
-            // self._component_placement.env_world_size
-        )
+        self.gather_num = self._component_placement.get_world_size(
+            "rollout"
+        ) // self._component_placement.get_world_size("env")
         # stage_num: default to 2, use for pipeline rollout process
         self.stage_num = self.cfg.rollout.pipeline_stage_num
         self.batch_size = self.cfg.env.train.num_group * self.cfg.env.train.group_size
@@ -94,14 +93,14 @@ class EnvWorker(Worker):
         enable_offload = self.cfg.env.enable_offload
         only_eval = getattr(self.cfg.runner, "only_eval", False)
         if self.cfg.env.train.simulator_type == "maniskill":
-            from rlinf.envs.maniskill_env import ManiskillEnv
+            from rlinf.envs.maniskill.maniskill_env import ManiskillEnv
 
             if not only_eval:
                 for _ in range(self.stage_num):
                     self.simulator_list.append(
                         EnvManager(
                             self.cfg.env.train,
-                            rank=self._local_rank,
+                            rank=self._rank,
                             env_cls=ManiskillEnv,
                             enable_offload=enable_offload,
                         )
@@ -111,20 +110,20 @@ class EnvWorker(Worker):
                     self.eval_simulator_list.append(
                         EnvManager(
                             self.cfg.env.eval,
-                            rank=self._local_rank,
+                            rank=self._rank,
                             env_cls=ManiskillEnv,
                             enable_offload=enable_offload,
                         )
                     )
         elif self.cfg.env.train.simulator_type == "libero":
-            from rlinf.envs.libero_env import LiberoEnv
+            from rlinf.envs.libero.libero_env import LiberoEnv
 
             if not only_eval:
                 for _ in range(self.stage_num):
                     self.simulator_list.append(
                         EnvManager(
                             self.cfg.env.train,
-                            rank=self._local_rank,
+                            rank=self._rank,
                             env_cls=LiberoEnv,
                             enable_offload=enable_offload,
                         )
@@ -134,7 +133,7 @@ class EnvWorker(Worker):
                     self.eval_simulator_list.append(
                         EnvManager(
                             self.cfg.env.eval,
-                            rank=self._local_rank,
+                            rank=self._rank,
                             env_cls=LiberoEnv,
                             enable_offload=enable_offload,
                         )

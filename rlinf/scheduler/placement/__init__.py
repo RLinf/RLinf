@@ -14,11 +14,9 @@
 
 from .packed import PackedPlacementStrategy
 from .placement import Placement, PlacementStrategy
-from .strided import StridedPlacementStrategy
 
 __all__ = [
     "PackedPlacementStrategy",
     "Placement",
     "PlacementStrategy",
-    "StridedPlacementStrategy",
 ]

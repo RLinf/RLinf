@@ -36,7 +36,7 @@ class EmbodiedEvalRunner:
         self.run_timer = run_timer
 
         self.timer = ScopedTimer(reduction="max", sync_cuda=False)
-        self.metric_log = MetricLogger(cfg)
+        self.metric_loger = MetricLogger(cfg)
 
     def evaluate(self):
         env_futures = self.env.evaluate()
@@ -52,7 +52,7 @@ class EmbodiedEvalRunner:
     def run(self):
         eval_metrics = self.evaluate()
         eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
-        self.metric_logger.log(step=0, data=eval_metrics)
+        self.metric_loger.log(step=0, data=eval_metrics)
         print(f"{eval_metrics=}")
 
-        self.metric_logger.finish()
+        self.metric_loger.finish()

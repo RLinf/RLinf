@@ -190,7 +190,12 @@ def middle_file_to_mg(convert_config: ConvertorConfig) -> None:
         else:
             raise ValueError(f"Unsupported schedular: {convert_config.schedular}")
         pp_rank_to_layers[pp_rank].append(
-            (model_key_vpp, layer, local_layer, local_num_layer)
+            (
+                model_key_vpp,
+                layer,
+                local_layer,
+                local_num_layer,
+            )
         )
 
     if convert_config.process_num > 1:

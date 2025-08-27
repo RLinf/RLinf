@@ -8,10 +8,11 @@ It provides a collection of hands-on tutorials covering all the core components 
    From a user’s perspective, this tutorial introduces the fundamental components of RLinf, 
    including how to configure tasks using YAML, assign workers for each RL task, 
    and manage GPU resources from a global, cluster-level viewpoint.
+   Finally, we provide a complete programming flow to illustrate the high-level workflow of RLinf.
 
 - :doc:`mode/index`  
    Learn about the different execution modes supported by RLinf, 
-   including task-colocated mode, task-disaggregated mode, 
+   including collocated mode, disaggregated mode, 
    and a hybrid mode with fine-grained pipelining.
 
 - :doc:`scheduler/index`  

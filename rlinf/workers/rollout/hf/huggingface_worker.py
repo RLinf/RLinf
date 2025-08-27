@@ -27,7 +27,7 @@ from rlinf.models.embodiment.model_utils import (
     prepare_observations,
 )
 from rlinf.scheduler import Worker
-from rlinf.utils.placement import EmbodiedComponentPlacement
+from rlinf.utils.placement import HybridComponentPlacement
 
 
 def create_rollout_batch(data):
@@ -40,7 +40,7 @@ def create_rollout_batch(data):
     return ret_data
 
 
-class MutilStepRolloutWorker(Worker):
+class MultiStepRolloutWorker(Worker):
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
 
@@ -60,9 +60,9 @@ class MutilStepRolloutWorker(Worker):
         # stage_num: default to 2, use for pipeline rollout process
         self.stage_num = cfg.rollout.pipeline_stage_num
 
-        self._component_placement = EmbodiedComponentPlacement(cfg)
+        self._component_placement = HybridComponentPlacement(cfg)
         self.channel = self.connect_channel(cfg.rollout.channel.name)
-        for i in range(self._component_placement.rollout_world_size):
+        for i in range(self._component_placement.get_world_size("rollout")):
             self.channel.create_queue(
                 f"{self._action_queue_name}_{i}", maxsize=cfg.rollout.channel.queue_size
             )
@@ -204,9 +204,8 @@ class MutilStepRolloutWorker(Worker):
             self._logger.info(f"Now epoch is={rollout_epoch}")
             for step in tqdm(
                 range(self.cfg.algorithm.n_chunk_steps),
-                desc=f"Rollout Epoch {rollout_epoch} in Generate Step",
+                desc=f"Rollout ID {self._rank} Epoch {rollout_epoch} in Generate Step",
             ):
-                self._logger.info(f"Rollout id {self._rank} step {step}")
                 for i in range(self.stage_num):
                     env_batch = await self.recv_env_batch()
                     self.update_env_batch(i, env_batch)
@@ -320,7 +319,7 @@ class MutilStepRolloutWorker(Worker):
     def reload_model(self):
         self.hf_model = self.hf_model.to(self.device)
 
-    def update_weights(self):
+    def sync_model_from_actor(self):
         param_state_dict = self.recv(self._actor_group_name, src_rank=self._rank)
         self.hf_model.load_state_dict(param_state_dict)
         del param_state_dict
@@ -342,8 +341,8 @@ class MutilStepRolloutWorker(Worker):
 
     async def send_rollout_batch(self, stage_id):
         # send rollout_batch to actor
-        send_num = self._component_placement.rollout_world_size * self.stage_num
-        recv_num = self._component_placement.actor_world_size
+        send_num = self._component_placement.get_world_size("rollout") * self.stage_num
+        recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(recv_num, send_num)
         rollout_batch = create_rollout_batch(self.buffer_list[stage_id])
         for i in range(split_num):

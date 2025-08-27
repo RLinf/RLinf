@@ -514,7 +514,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         action_tokens = action_tokens[:, -self.action_dim :]
 
         token_logits = (
-            generated_results.logits
+            generated_results.scores
         )  # ([B, vocab-size], ...), after logits processor and warper results
         token_logits_tensor = torch.stack(
             token_logits, dim=1

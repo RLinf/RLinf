@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import logging
 import os
 from collections import defaultdict
 from typing import List
@@ -71,6 +72,30 @@ class MathDataset(Dataset):
         self.prompt_key = config.prompt_key
 
         self.data = self._load_data()
+        if config.get("filter_prompt_by_length", False):
+            total = len(self.data)
+            filtered = []
+            failed = 0
+
+            for item in self.data:
+                try:
+                    _, L = self.encode(item[self.prompt_key])
+                    if L <= self.max_prompt_length:
+                        filtered.append(item)
+                except Exception:
+                    failed += 1
+
+            self.data = filtered
+            assert len(self.data) > 0, (
+                f"No samples found within max_prompt_length={self.max_prompt_length}. "
+                "Please check your dataset or increase max_prompt_length."
+            )
+
+            if failed > 0:
+                logging.warning(
+                    f"{failed} samples were skipped due to format issues "
+                    f"(kept {len(self.data)} / {total})."
+                )
 
     def _load_data(self):
         merged_data = []
@@ -110,9 +135,8 @@ class MathDataset(Dataset):
 
         answer = self.data[idx]["solutions"]
 
-        prompt_tokens, _ = self.encode(prompt)
+        prompt_tokens, prompt_length = self.encode(prompt)
         prompt_tokens_tensor = torch.as_tensor(prompt_tokens, dtype=torch.int64)
-        prompt_length = len(prompt_tokens)
 
         if prompt_length > self.max_prompt_length:
             print(

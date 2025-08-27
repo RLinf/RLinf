@@ -226,15 +226,10 @@ class MegatronModelManager:
     def make_data_iterator_list(
         self, data_iterator: Iterator, padding: bool = False, vpp_size: int = 1
     ) -> List[Iterator]:
-        """Convert data iterator into form expected by Megatron
+        """
+        Convert the data iterator into the format expected by Megatron.
         With interleaved pipeline parallelism, Megatron expects a
-        list of one data iterator per model chunk. Each model
-        chunk independently gets data from its data iterator, so
-        we need to interact with the data iterator multiple times
-        for each microbatch step. Instead of incorporating this
-        logic into the data loader, we cache the iterator's output
-        to the first model chunk and reuse it in the other model
-        chunks.
+        list of one data iterator per model chunk.
         """
         if padding:
             data_iterator = self.padding_to_max(data_iterator)

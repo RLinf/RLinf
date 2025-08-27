@@ -129,9 +129,11 @@ class TestWorkerGroup:
             cluster=cluster, name="dist_test_3"
         )
 
-        target_ranks = [0, 1]
+        target_ranks = (0, 1)
         base_value = 20
-        results = worker_group.execute_on(target_ranks).sum_with_rank(base_value).wait()
+        results = (
+            worker_group.execute_on(*target_ranks).sum_with_rank(base_value).wait()
+        )
 
         assert len(results) == len(target_ranks)
         expected_results = sorted([base_value + rank for rank in target_ranks])

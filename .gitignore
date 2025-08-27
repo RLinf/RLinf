@@ -4,7 +4,8 @@ __pycache__
 *.idx
 *.npy
 *.txt
-!requirements.txt
+!requirements/*
+!docs/*
 *.DS_Store
 *.out
 build
@@ -12,3 +13,5 @@ docs/build
 dist
 logs/*
 *.so
+.venv
+uv.lock

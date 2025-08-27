@@ -16,6 +16,7 @@ from typing import Any, Optional
 
 import torch
 import torch.nn.functional as F
+from transformers.generation import TopKLogitsWarper
 
 
 def default_logits_processor(logits, action_tokens, vocab_size, n_action_bins):
@@ -65,6 +66,8 @@ def custom_forward(
     value_model=False,
     value_head_mode: str = "a",
     logits_processor=default_logits_processor,
+    temperature: int = 1.0,
+    top_k: int = -1,
     logits_processor_args: Optional[dict] = None,
 ):
     output = model(
@@ -73,9 +76,17 @@ def custom_forward(
         pixel_values=pixel_values,
         output_hidden_states=output_hidden_states,
     )
-    logits = output.logits[:, -action_token_len - 1 : -1]  # [B, action-dim, vocab-size]
+    logits = output.logits[:, -action_token_len - 1 : -1]  # [B, action_dim, vocab_size]
 
-    output_dict = logits_processor(logits, **logits_processor_args)
+    processed_logits_tensor = logits / temperature
+    top_k = min(top_k, processed_logits_tensor.size(-1))  # Safety check
+    if top_k > 0:
+        logits_warper = TopKLogitsWarper(
+            top_k
+        )  # since here is logprob instead of logits, we use 0 instead of -inf
+        processed_logits_tensor = logits_warper(None, processed_logits_tensor)
+
+    output_dict = logits_processor(processed_logits_tensor, **logits_processor_args)
 
     if value_model:
         # NOTE: Here we subtract 1 because the input tokens do not include the EOS token.

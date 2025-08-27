@@ -24,7 +24,7 @@ Installation Requirements
    Mismatched CUDA / PyTorch wheels are the most common installation
    issue.  Verify both before installing SGLang.
 
-Install via *pip*
+Install via pip
 ~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
@@ -53,20 +53,42 @@ Install from Source
    Building from source can be time-consuming and heavy on disk space;
    prefer the pre-built wheels unless you need bleeding-edge fixes.
 
-
-Selecting SGLang in the YAML
 ----------------------------
 
 .. code-block:: yaml
 
     ....
-    generation:
-        # Model configuration
-        model_dir: "/path/to/your/model"
-        tensor_parallel_size: 4
+    rollout:
+        group_name: "RolloutGroup" # SGLang Generation Group Name, used for communication
+
+        gpu_memory_utilization: 0.55 # SGLang's parameter, which decides how much vram is used for static memory pool
+
+        model_dir: /model/path # model path
+        model_arch: qwen2.5 # model arch
+        enforce_eager: False         # if False, vllm will capture cuda graph, which will take more time to initialize.
+        distributed_executor_backend: mp   # ray or mp
+        disable_log_stats: False     # if true will log sglang's output
+        detokenize: False            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
+        padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for vllm rollout
+        eos: null                   # will be tokenizer.eos_token_id if null.
+
+        attention_backend: triton # attention backend used by SGLang
+        recompute_logprobs: True # whether SGLang will compute log probs
+
+        tensor_parallel_size: 1 # tp_size
+        pipeline_parallel_size: 1 # pp_size
         
-        # SGLang-specific settings
-        backend: "sglang"     
+        validate_weight: False # whether to send all weights at first for weight comparison.
+        validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
+        print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of inference engine.
+
+        sglang_decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
+        max_running_requests: 64 # the maximum number of running requests in the inference engine.
+        cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
+
+        use_torch_compile: False # enable torch_compile in SGLang for rollout.
+        torch_compile_max_bs: 128 # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.
+
     ...
 
 
@@ -75,7 +97,7 @@ Internal Version Routing
 
 Directory layout::
 
-   infini_rl/generation/sglang/
+   rlinf/hybrid_engines/sglang/
    ├── __init__.py               # Version detection and routing
    ├── sglang_worker.py          # Main worker implementation
    ├── sglang_0_4_4/             # SGLang 0.4.4 specific implementation

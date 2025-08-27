@@ -25,6 +25,7 @@ def omegaconf_register():
     OmegaConf.register_new_resolver("multiply", lambda x, y: x * y)
     OmegaConf.register_new_resolver("int_div", lambda x, y: x // y)
     OmegaConf.register_new_resolver("subtract", lambda x, y: x - y)
+    OmegaConf.register_new_resolver("not", lambda x: not bool(x))
     OmegaConf.register_new_resolver(
         "torch.dtype", lambda dtype_name: getattr(torch, dtype_name), replace=True
     )

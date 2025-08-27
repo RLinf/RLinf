@@ -6,12 +6,7 @@
 Welcome to **RLinf**!
 =====================
 
-RLinf is a flexible and scalable open-source infrastructure designed for post-training foundation models (LLMs, VLMs, VLAs) via reinforcement learning. The 'inf' in RLinf stands for Infrastructure, highlighting its role as a robust backbone for next-generation training. It also stands for Infinite, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
-
-.. Centered on Agentic Reinforcement Learning, RLinf supports the training and evaluation of next-generation agents by unlocking scalable compute, unifying mainstream frameworks, and streamlining the end-to-end workflow—making RL post-training accessible to everyone.
-
-.. * Related publication : `PAPER TITLE <TODO>`_
-.. * Source code : `GitHub repository <TODO>`_
+RLinf is a flexible and scalable open-source infrastructure designed for post-training foundation models via reinforcement learning. The 'inf' in RLinf stands for Infrastructure, highlighting its role as a robust backbone for next-generation training. It also stands for Infinite, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
 
 ----------------
 
@@ -24,68 +19,45 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 **RLinf is unique with:**
 
+- Macro-to-Micro Flow: a new paradigm M2Flow, which executes macro-level logical flows through micro-level execution flows, decoupling logical workflow construction (programmable) from physical communication and scheduling (efficiency).
+
 - Embodied Agent Support
-- Native adapters for VLA models: `OpenVLA`_, `OpenVLA-OFT`_, `π₀`_
-- Plug-and-play connectors for CPU- and GPU-based simulators: `ManiSkill3`_, `LIBERO`_
-- Enabling the first RL fine-tuning of the π₀ model family with a flow-matching action expert.
+
+  - Fast adaptation support for mainstream VLA models: `OpenVLA`_, `OpenVLA-OFT`_, `π₀`_
+  - Support for mainstream CPU & GPU-based simulators via standardized RL interfaces: `ManiSkill3`_, `LIBERO`_
+  - Enabling the first RL fine-tuning of the π₀ model family with a flow-matching action expert.
 
 **RLinf is fast with:**
 
-- Automatic Online-Scaling Mechanism
-- Creatively achieves the first GPU switching within 1 second.
-- Auto-scheduling policy: automatically selects the most suitable execution mode based on the training workload.
+- Online Scaling Strategy: dynamically scales training resources, with GPU switching performed within seconds.
+- Auto-scheduling Strategy: automatically selects the most suitable execution mode based on the training workload.
 - Improves efficiency by 20-40% while preserving the on-policy property of RL algorithms.
 
 **RLinf is flexible and easy to use with:**
 
 - Flexible Execution Modes
 
-  - Task-colocated: shares all GPUs across all workers.
-  - Task-disaggregated: enables fine-grained pipelining.
-  - Hybrid: combines colocated and disaggregated modes—specially designed for agent training in embodied intelligence.
+  - Collocated mode: shares all GPUs across all workers.
+  - Disaggregated mode: enables fine-grained pipelining.
+  - Hybrid mode: combines collocated and disaggregated modes—specially designed for VLA training in embodied intelligence.
 
 - Multiple Backend Integrations
 
-  - A single unified interface drives two complementary backends, allowing seamless switching without code changes.
+  .. - A single unified interface drives two complementary backends, allowing seamless switching without code changes.
+  
   - FSDP + Hugging Face: rapid adaptation to new models and algorithms, ideal for beginners and fast prototyping.
   - Megatron + SGLang: optimized for large-scale training, delivering maximum efficiency for expert users with demanding workloads.
 
-- Built-in support for popular RL methods, including PPO, GRPO, DAPO, Reinforce++, and more.
+- Adaptive communication via the asynchronous communication channel
 
-- Support for SFT.
+- Built-in support for popular RL methods, including `PPO`_ , `GRPO`_ , `DAPO`_ , `Reinforce++`_ , and more.
 
-.. RLinf supports:
+.. _PPO: https://arxiv.org/abs/1707.06347
+.. _GRPO: https://arxiv.org/abs/2402.03300
+.. _DAPO: https://arxiv.org/abs/2503.14476
+.. _Reinforce++: https://arxiv.org/abs/2501.03262
 
-.. - **Embodied Intelligence**
-  
-..   - Native adapters for VLA models: `OpenVLA`_, `OpenVLA-OFT`_, `π₀`_
-..   - Plug-and-play connectors for simulators: `ManiSkill`_, `LIBERO`_
-..   - First RL fine-tuning of the π₀ model family
 
-.. - **Hybrid Execution Modes**
-  
-..   - **Task-collocated** that shares all GPUs across all workers.
-..   - **Task-disaggregated** with fine-grained pipelining。
-..   - **Hybrid** that combines collocated and disaggregated modes.
-
-.. - **Flexible Backend Integration**
-  
-..   - **Small-scale validation**: Hugging Face + FSDP for rapid adaptation and validation on new models and algorithms.
-..   - **Large-scale training**: `Megatron-LM`_ as the training backend with `SGLang`_ or `vLLM`_ as the inference engine for efficient large-scale execution.
-
-.. - **Elastic Scaling and Scheduling**
-  
-..   - **Online-scaling mechanism**: Dynamically scale both training and inference backends to handle the inherent variability of RL.  
-..   - **Auto-scheduling policy**: Automatically select the most suitable execution mode based on the user’s training workload.
-
-.. - **Algorithms**
-  
-..   - Support for popular RL methods, including **PPO**, **GRPO**, **DAPO**, and more.
-
-.. - **State-of-the-Art Performance**
-  
-..   - `Reproducible embodied RL training results <TODO:>`_ for robotic arms, demonstrating strong generalization capabilities.
-..   - Math RL training with **1.5B / 7B / 32B** models achieving `SOTA results <TODO:>`_.
 
 .. _OpenVLA: https://github.com/openvla/openvla
 .. _OpenVLA-OFT: https://github.com/moojink/openvla-oft
@@ -96,6 +68,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 .. _Megatron-LM: https://github.com/NVIDIA/Megatron-LM
 .. _SGLang: https://github.com/sgl-project/sglang
 .. _vLLM: https://github.com/vllm-project/vllm
+
 
 
 --------------------------------------------
@@ -154,8 +127,9 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 --------------------------------------------
 
+.. _contribution-guidelines:
 
-Contribution guidelines
+Contribution Guidelines
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Great! We are always on the lookout for more contributors to our code base.
@@ -165,3 +139,29 @@ Firstly, if you are unsure or afraid of anything, just ask or submit the issue o
 However, for those individuals who want a bit more guidance on the best way to contribute to the project, read on. This document will cover all the points we're looking for in your contributions, raising your chances of quickly merging or addressing your contributions.
 
 There are a few simple guidelines that you need to follow before providing your hacks.
+
+**Code Linting and Formatting**
+
+We use **pre-commit** and **ruff** to enforce code formatting and quality checks. To install them, run:
+
+.. code:: bash
+
+   pip install pre-commit
+   pip install ruff
+   pre-commit install
+
+After making changes to the code and before opening a PR, we recommend running:
+
+.. code:: bash
+
+   ruff check . --fix --preview
+
+This will check if your code follows the formatting rules.  
+If there are issues (e.g., indentation problems), it will fix them automatically
+
+**Creating a Pull Request**
+
+Once your code passes the checks, you can open a PR. Please ensure your commits and branches follow the required standards. Otherwise, our CI tests will reject your submission.
+
+- **Commit message guidelines**: See the `Conventional Commits specification <https://www.conventionalcommits.org/en/v1.0.0/>`_.
+- **Branch naming guidelines**: See the `Conventional Branch guidelines <https://conventional-branch.github.io/#summary>`_.

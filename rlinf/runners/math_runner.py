@@ -28,7 +28,7 @@ from rlinf.scheduler import Channel
 from rlinf.utils.data_iter_utils import split_list
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
-from rlinf.utils.placement import MathComponentPlacement
+from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.runner_utils import check_progress, local_mkdir_safe
 from rlinf.utils.timers import Timer
 from rlinf.workers.actor.megatron_actor_worker import MegatronActor
@@ -47,12 +47,13 @@ class MathRunner:
     def __init__(
         self,
         cfg: DictConfig,
-        placement: MathComponentPlacement,
+        placement: ModelParallelComponentPlacement,
         train_dataset: Dataset,
         val_dataset: Dataset,
         rollout: SGLangWorker,
         inference: MegatronInference,
         actor: MegatronActor,
+        reward=None,
     ):
         """"""
         self.cfg = cfg
@@ -63,6 +64,7 @@ class MathRunner:
         self.actor = actor
         # Collocated mode uses actor as inference
         self.inference = inference if inference is not None else self.actor
+        self.reward = reward if reward is not None else self.actor
 
         # Data channels
         self.dataloader_channel = Channel.create("DataLoader")
@@ -74,7 +76,7 @@ class MathRunner:
         # Configurations
         self.compute_ref_logprobs = self.cfg.algorithm.kl_beta > 0
         self.recompute_logprobs = (
-            self.cfg.rollout.recompute_logprobs
+            self.cfg.algorithm.recompute_logprobs
             or self.cfg.algorithm.get("importance_sampling_fix", False)
         )
         self.consumed_samples = 0
@@ -199,29 +201,28 @@ class MathRunner:
         num_gpus_inference = self.component_placement.inference_world_size
         num_gpus_rollout = self.component_placement.rollout_world_size
 
-        prefill_decode_flops = act_rollout_metrics.get("prefill_decode_flops")
-        prefill_total_flops = act_rollout_metrics.get("prefill_total_flops")
+        generation_tflops = act_rollout_metrics["generation_tflops"]
+        inference_tflops = act_rollout_metrics["inference_tflops"]
+        training_tflops = act_rollout_metrics["training_tflops"]
 
         flops_metrics = {
             "rollout_tflops_per_gpu": 0.0,
             "inference_tflops_per_gpu": 0.0,
             "training_tflops_per_gpu": 0.0,
         }
-
-        if rollout_time > 0 and num_gpus_rollout > 0 and prefill_decode_flops > 0:
+        if rollout_time > 0 and generation_tflops > 0:
             flops_metrics["rollout_tflops_per_gpu"] = (
-                prefill_decode_flops / rollout_time / 1e12 / num_gpus_rollout
+                generation_tflops / rollout_time / num_gpus_rollout
             )
 
-        if inference_time > 0 and num_gpus_inference > 0 and prefill_total_flops > 0:
+        if inference_time > 0 and inference_tflops > 0:
             flops_metrics["inference_tflops_per_gpu"] = (
-                prefill_total_flops / inference_time / 1e12 / num_gpus_inference
+                inference_tflops / inference_time / num_gpus_inference
             )
 
-        if training_time > 0 and num_gpus_actor > 0 and prefill_total_flops > 0:
-            # here we use factor 3 to approximate the training tflops
+        if training_time > 0 and training_tflops > 0:
             flops_metrics["training_tflops_per_gpu"] = (
-                3 * prefill_total_flops / training_time / 1e12 / num_gpus_actor
+                training_tflops / training_time / num_gpus_actor
             )
 
         return flops_metrics
@@ -280,6 +281,7 @@ class MathRunner:
     def _sync_weights(self):
         self.actor.sync_model_to_rollout()
         self.rollout.sync_model_from_actor().wait()
+        self.actor.del_reshard_state_dict().wait()
 
     def run(self):
         epoch_iter = range(self.epoch, self.cfg.runner.max_epochs)
@@ -301,9 +303,11 @@ class MathRunner:
                     with self.timer("prepare_data"):
                         self._put_batch(batch)
 
+                    with self.timer("sync_weights_to_rollout"):
+                        self._sync_weights()
+
                     # generate response and compute rule-based rewards.
                     with self.timer("rollout"):
-                        self._sync_weights()
                         self.rollout.rollout(
                             input_channel=self.dataloader_channel,
                             output_channel=self.rollout_channel,
@@ -311,6 +315,10 @@ class MathRunner:
                         self.inference.process_rollout_result(
                             input_channel=self.rollout_channel
                         ).wait()
+
+                    # compute rewards
+                    with self.timer("cal_rewards"):
+                        self.reward.compute_rewards().wait()
 
                     # recompute rollout policy logprobs, otherwise will use sglang logprobs.
                     if self.recompute_logprobs:
@@ -421,7 +429,7 @@ class MathPipelineRunner:
         self.reward = reward
 
         self.compute_ref_logprobs = self.cfg.algorithm.kl_beta > 0
-        self.recompute_logprobs = self.cfg.rollout.recompute_logprobs
+        self.recompute_logprobs = self.cfg.algorithm.recompute_logprobs
 
         self.consumed_samples = 0
         # the step here is global step

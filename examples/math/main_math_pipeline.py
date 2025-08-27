@@ -29,7 +29,7 @@ from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.runners.math_runner import MathPipelineRunner
 from rlinf.scheduler import ChannelWorker, Cluster, PackedPlacementStrategy
 from rlinf.scheduler.channel.channel_worker import WeightedItem
-from rlinf.utils.placement import MathComponentPlacement
+from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.timers import Timer
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.actor.megatron_actor_worker import MegatronActor
@@ -46,7 +46,7 @@ class DataServer(ChannelWorker):
         super().__init__(maxsize)
         self.cfg = config
         self.name: str = self.cfg.actor.channel.name
-        self.component_placement = MathComponentPlacement(self.cfg)
+        self.component_placement = ModelParallelComponentPlacement(self.cfg)
 
         # >>> rollout configuration
         self._rollout_dp_size: int = self.component_placement.rollout_dp_size
@@ -258,11 +258,9 @@ def main(cfg) -> None:
         num_nodes=cfg.cluster.num_nodes, num_gpus_per_node=cfg.cluster.num_gpus_per_node
     )
 
-    component_placement = MathComponentPlacement(cfg)
+    component_placement = ModelParallelComponentPlacement(cfg)
 
-    ds_placement_strategy = PackedPlacementStrategy(
-        num_processes=1, num_gpus_per_process=1
-    )
+    ds_placement_strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=0)
     dataserver = DataServer.create_group(cfg).launch(
         cluster=cluster,
         name=cfg.actor.channel.name,

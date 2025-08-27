@@ -1,15 +1,16 @@
 simulator_type: maniskill
 auto_reset: ${algorithm.auto_reset}
 ignore_terminations: ${algorithm.ignore_terminations}
-use_rel_reward: true
+use_rel_reward: True
 seed: 0
 num_group: ${algorithm.num_group_envs}
 group_size: ${algorithm.group_size}
-use_fixed_reset_state_ids: false
+use_fixed_reset_state_ids: ${algorithm.use_fixed_reset_state_ids}
+only_eval: False
 
 video_cfg:
   save_video: False
-  info_on_video: False
+  info_on_video: True
   video_base_dir: ${runner.logger.log_path}/video/train
 
 init_params:
@@ -24,10 +25,4 @@ init_params:
   max_episode_steps: 80 # 100
   sensor_configs:
     shader_pack: "default"
-  render_mode: null
-
-task_suite_name: libero_10
-num_images_in_input: 1  
-num_steps_wait: 10
-num_trials_per_task: 50
-reward_coef: 5.0
+  render_mode: all

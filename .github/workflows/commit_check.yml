@@ -3,7 +3,7 @@ name: Commit Check
 on:
   push:
   pull_request:
-    branches: 'main'
+    branches: [main]
 
 jobs:
   commit-check:

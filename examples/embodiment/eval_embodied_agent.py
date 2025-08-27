@@ -18,9 +18,9 @@ import torch.multiprocessing as mp
 from rlinf.config import validate_cfg
 from rlinf.runners.embodied_eval_runner import EmbodiedEvalRunner
 from rlinf.scheduler import Cluster
-from rlinf.utils.placement import EmbodiedComponentPlacement
+from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
-from rlinf.workers.rollout.hf.huggingface_worker import MutilStepRolloutWorker
+from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 mp.set_start_method("spawn", force=True)
 
@@ -35,16 +35,16 @@ def main(cfg) -> None:
     cluster = Cluster(
         num_nodes=cfg.cluster.num_nodes, num_gpus_per_node=cfg.cluster.num_gpus_per_node
     )
-    component_placement = EmbodiedComponentPlacement(cfg)
+    component_placement = HybridComponentPlacement(cfg)
 
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
-    rollout_group = MutilStepRolloutWorker(cfg).create_group(
+    rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
         cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
     )
     # Create env worker group
     env_placement = component_placement.get_strategy("env")
-    env_group = EnvWorker(cfg).create_group(
+    env_group = EnvWorker.create_group(cfg).launch(
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 

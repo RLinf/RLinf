@@ -169,7 +169,7 @@ class EnvManager:
             import importlib
 
             class_name = env_cls.__name__
-            offload_module = importlib.import_module("rlinf.envs.env_offload_wrapper")
+            offload_module = importlib.import_module("rlinf.envs.offload_wrapper")
             if hasattr(offload_module, class_name):
                 offload_env_cls = getattr(offload_module, class_name)
                 self.env_cls = offload_env_cls
@@ -302,7 +302,11 @@ class EnvManager:
 
         value = recursive_to_own(value)
         self.command_queue.put(
-            {"method": "__setattr__", "args": [name, value], "kwargs": {}}
+            {
+                "method": "__setattr__",
+                "args": [name, value],
+                "kwargs": {},
+            }
         )
 
         result = self.result_queue.get()
@@ -315,7 +319,7 @@ def _simulator_worker(
     cfg, rank, env_cls, command_queue, result_queue, state_buffer, bind_numa=True
 ):
     """Worker process for simulator"""
-    from rlinf.envs.env_offload_wrapper import EnvOffloadMixin
+    from rlinf.envs.offload_wrapper.base import EnvOffloadMixin
 
     # Set NUMA affinity for the process to match the GPU rank
     if bind_numa:

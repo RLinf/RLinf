@@ -1,4 +1,4 @@
-Compare with Verl
+Comparison with Verl
 =======================
 
 Last updated: 07/22/2025.

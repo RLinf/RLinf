@@ -53,6 +53,14 @@ templates_path = ["_templates"]
 exclude_patterns = []
 default_role = "code"
 autosummary_generate = True
+autodoc_mock_imports = ["sglang", "megatron", "prismatic", "libero"]
+autodoc_class_signature = "separated"
+autodoc_typehints = "description"
+# autoclass_content = "both"
+autodoc_docstring_signature = True
+napoleon_use_param = True
+napoleon_use_rtype = True
+napoleon_preprocess_types = True
 
 # Autodoc defaults: include members and inheritance
 # autodoc_default_options = {
@@ -66,7 +74,7 @@ autosummary_generate = True
 
 html_theme = "pydata_sphinx_theme"
 html_show_sourcelink = False  # Hide “View page source” link
-html_baseurl = "https://RLinf-docs.readthedocs.io/en/latest/"
+html_baseurl = "https://rlinf.readthedocs.io/en/latest/index.html"
 html_favicon = "_static/favicon.ico"
 html_static_path = ["_static"]
 html_css_files = [
@@ -116,7 +124,7 @@ html_theme_options = {
     "icon_links": [
         {
             "name": "GitHub",
-            "url": "https://cloud.infini-ai.com",  # TODO: update to GitHub
+            "url": "https://github.com/RLinf/RLinf",
             "icon": "fab fa-github",
             "type": "fontawesome",
         },
@@ -147,9 +155,15 @@ def setup_html_context(app, pagename, templatename, context, doctree):
     )
 
 
+def customize_class_docstring(app, what, name, obj, options, lines):
+    if what == "class" and name == "rlinf.scheduler.channel.channel.Channel":
+        lines[:] = []
+
+
 def setup(app):
     """Register custom config values and connect context setup."""
     # Allow overriding via -D flags
+    app.connect("autodoc-process-docstring", customize_class_docstring)
     app.add_config_value(
         "typesense_host", "typesense.product-team-dev.infini-ai.com", "html"
     )

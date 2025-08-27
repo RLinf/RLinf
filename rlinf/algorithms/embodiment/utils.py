@@ -121,6 +121,30 @@ def append_to_dict(data, new_data):
         data[key].append(val)
 
 
+def compute_loss_mask(dones):
+    _, actual_bsz, num_action_chunks = dones.shape
+    n_chunk_step = dones.shape[0] - 1
+    flattened_dones = dones.transpose(1, 2).reshape(
+        -1, actual_bsz
+    )  # [n_chunk_step + 1, rollout_epoch x bsz]
+    flattened_dones = flattened_dones[
+        -(n_chunk_step * num_action_chunks + 1) :
+    ]  # [n_steps+1, actual-bsz]
+    flattened_loss_mask = (flattened_dones.cumsum(dim=0) == 0)[
+        :-1
+    ]  # [n_steps, actual-bsz]
+
+    loss_mask = flattened_loss_mask.reshape(n_chunk_step, num_action_chunks, actual_bsz)
+    loss_mask = loss_mask.transpose(
+        1, 2
+    )  # [n_chunk_step, actual_bsz, num_action_chunks]
+
+    loss_mask_sum = loss_mask.sum(dim=(0, 2), keepdim=True)  # [1, bsz, 1]
+    loss_mask_sum = loss_mask_sum.expand_as(loss_mask)
+
+    return loss_mask, loss_mask_sum
+
+
 def calculate_advantages_and_returns(
     adv_type,
     rewards: torch.Tensor,
@@ -225,29 +249,17 @@ def actor_loss_fn(
         advantages = advantages.sum(dim=-1)
 
     if loss_type == "grpo":
-        from rlinf.algorithms.embodiment.grpo_functions import (
-            actor_loss_fn,
-            actor_loss_fn_with_loss_mask,
-        )
+        from rlinf.algorithms.embodiment.grpo_functions import actor_loss_fn
 
-        if loss_mask is not None:
-            return actor_loss_fn_with_loss_mask(
-                log_probs=logprobs,
-                old_log_prob=old_logprobs,
-                advantages=advantages,
-                clip_ratio_high=clip_ratio_high,
-                clip_ratio_low=clip_ratio_low,
-                loss_mask=loss_mask,
-                loss_mask_sum=loss_mask_sum,
-            )
-        else:
-            return actor_loss_fn(
-                log_probs=logprobs,
-                old_log_prob=old_logprobs,
-                advantages=advantages,
-                clip_ratio_high=clip_ratio_high,
-                clip_ratio_low=clip_ratio_low,
-            )
+        return actor_loss_fn(
+            log_probs=logprobs,
+            old_log_prob=old_logprobs,
+            advantages=advantages,
+            clip_ratio_high=clip_ratio_high,
+            clip_ratio_low=clip_ratio_low,
+            loss_mask=loss_mask,
+            loss_mask_sum=loss_mask_sum,
+        )
     elif loss_type == "ppo":
         from rlinf.algorithms.embodiment.ppo_functions import actor_critic_loss_fn
 

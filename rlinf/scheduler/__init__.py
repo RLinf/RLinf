@@ -17,7 +17,6 @@ from .cluster import Cluster
 from .placement import (
     PackedPlacementStrategy,
     PlacementStrategy,
-    StridedPlacementStrategy,
 )
 from .worker import (
     Worker,
@@ -28,7 +27,6 @@ __all__ = [
     "Cluster",
     "PlacementStrategy",
     "PackedPlacementStrategy",
-    "StridedPlacementStrategy",
     "Worker",
     "WorkerAddress",
     "Channel",

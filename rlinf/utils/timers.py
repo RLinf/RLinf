@@ -94,6 +94,7 @@ class NamedTimer(object):
 
             def fn(x):
                 return x
+
         else:
             fn = getattr(np, self._reduction)
 

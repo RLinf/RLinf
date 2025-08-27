@@ -135,7 +135,7 @@ def cluster():
 
 @pytest.fixture(scope="module")
 def worker_groups(cluster):
-    placement = PackedPlacementStrategy(master_node=0, master_gpu=0, num_processes=1)
+    placement = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=0)
     global \
         group_count, \
         channel_count, \

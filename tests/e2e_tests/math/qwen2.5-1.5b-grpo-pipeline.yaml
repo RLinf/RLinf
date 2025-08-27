@@ -52,6 +52,7 @@ algorithm:
   # val rollout mbs
   val_rollout_batch_size_per_gpu: 4 # ${.rollout_batch_size_per_gpu}
 
+  recompute_logprobs: True
   shuffle_rollout: False
 
   max_num_gen_batches: 1
@@ -114,7 +115,7 @@ rollout:
   eos: null                   # will be tokenizer.eos_token_id if null.
 
   attention_backend: triton
-  recompute_logprobs: True
+  return_logprobs: ${not:algorithm.recompute_logprobs}
 
   tensor_parallel_size: 1
   pipeline_parallel_size: 1

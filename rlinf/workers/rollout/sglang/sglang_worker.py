@@ -47,7 +47,7 @@ class SGLangWorker(Worker):
         self._tokenizer = AutoTokenizer.from_pretrained(self._cfg.rollout.model_dir)
         self._eos = self._cfg.rollout.eos or self._tokenizer.eos_token_id
         self._return_logprobs = (
-            not self._cfg.rollout.recompute_logprobs
+            not self._cfg.rollout.return_logprobs
             or self._cfg.algorithm.get("importance_sampling_fix", False)
         )
         self._sampling_params = self._get_sampling_param_from_config()
@@ -163,7 +163,7 @@ class SGLangWorker(Worker):
         self._engine.offload_model_weights()
 
     def sync_model_from_actor(self):
-        self._engine.sync_weight()
+        self._engine.sync_hf_weight()
 
     def rollout(self, input_channel: Channel, output_channel: Channel):
         while True:
@@ -365,8 +365,8 @@ class AsyncSGLangWorker(SGLangWorker):
 
     async def sync_model_from_actor(self):
         """Update the weights of the SGLang engine."""
-        await self._engine.tokenizer_manager.sync_weight(
-            obj=io_struct.SyncWeightInput()
+        await self._engine.tokenizer_manager.sync_hf_weight(
+            obj=io_struct.SyncHFWeightInput()
         )
 
     def shutdown(self):
