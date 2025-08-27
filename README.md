@@ -14,7 +14,7 @@
 
 </div>
 
-<h1 align="center" style="font-size:1.8em;">
+<h1 align="center" style="font-size:1.7em;">
   RLinf: Reinforcement Learning Infrastructure for Agentic AI
 </h1>
 
