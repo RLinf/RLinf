@@ -47,7 +47,8 @@ class VLLMWorker(Worker):
                 * self._cfg.rollout.tensor_parallel_size
                 * self._cfg.rollout.pipeline_parallel_size
             )
-
+            
+        
     def _get_sampling_params_from_config(self) -> SamplingParams:
         cfg_sampling_params = self._cfg.algorithm.sampling_params
         if cfg_sampling_params.use_greedy:
@@ -72,19 +73,22 @@ class VLLMWorker(Worker):
         engine_args: EngineArgs = EngineArgs(
             model=self._cfg.rollout.model_dir,
             tensor_parallel_size=self._cfg.rollout.tensor_parallel_size,
-            dtype=torch_dtype_from_precision(self._cfg.model.precision),
+            dtype=torch_dtype_from_precision(self._cfg.actor.model.precision),
             gpu_memory_utilization=self._cfg.rollout.gpu_memory_utilization,
             enforce_eager=self._cfg.rollout.enforce_eager,
         )
         vllm_config: VllmConfig = engine_args.create_engine_config()
-
+        self.log_info(f"[LLM dp {self._rank}] start to initialize VLLM engine")
         self._vllm_engine = VLLMEngine(
+            rlinf_config=self._cfg,
             vllm_config=vllm_config,
             log_stats=True,  # temporarily True for debug
             multiprocess_model=True,  # use SyncMPClient
             parent_address=self.worker_address,
+            placement=self._placement,
+            dp_rank=self._rank,
         )
-
+        self.log_info(f"[LLM dp {self._rank}] VLLM engine initialized.")
         self._vllm_engine.offload_model_weights()
 
     def _stop(self) -> None:

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
 import json
 import os
 import signal
@@ -28,7 +29,9 @@ import zmq
 from omegaconf import DictConfig
 from pydantic import TypeAdapter, ValidationError
 from torch import nn
-from vllm.config import VllmConfig
+from vllm.config import VllmConfig, ParallelConfig
+from vllm.model_executor import set_random_seed
+from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 from vllm.device_allocator.cumem import CuMemAllocator
 from vllm.distributed import destroy_distributed_environment, destroy_model_parallel
 from vllm.executor.multiproc_worker_utils import _add_prefix
@@ -39,7 +42,8 @@ from vllm.v1.kv_cache_interface import KVCacheSpec
 from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.worker.gpu_worker import Worker as _VllmInnerWorker
 from vllm.worker.worker_base import WorkerWrapperBase
-
+from vllm.v1.worker.gpu_worker import _check_if_gpu_supports_dtype
+from vllm.distributed.parallel_state import set_custom_all_reduce
 from rlinf.scheduler import Worker as _RLinfWorker
 from rlinf.scheduler import WorkerAddress
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
@@ -68,7 +72,7 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
         world_size: int,
     ):
         _RLinfWorker.__init__(
-            self, parent_address=parent_address, world_size=world_size, rank=rank
+            self, parent_address=parent_address, world_size=world_size, rank=local_rank
         )
         super().__init__(vllm_config, local_rank, rank, distributed_init_method)
 
@@ -78,18 +82,18 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
         if self.placement_mode == PlacementMode.COLLOCATED:
             self.actor_weight_rank = (
                 HybridRankMapper.get_rollout_rank_to_actor_rank_map(
-                    self.cfg.actor.model.tensor_model_parallel_size,
-                    self.cfg.actor.model.pipeline_model_parallel_size,
-                    self.cfg.rollout.tensor_parallel_size,
-                    self.cfg.cluster.num_nodes * self.cfg.cluster.num_gpus_per_node,
+                    self.rlinf_config.actor.model.tensor_model_parallel_size,
+                    self.rlinf_config.actor.model.pipeline_model_parallel_size,
+                    self.rlinf_config.rollout.tensor_parallel_size,
+                    self.rlinf_config.cluster.num_nodes * self.rlinf_config.cluster.num_gpus_per_node,
                 )[self.get_parent_rank(), self._rank]
             )
         elif self.placement_mode == PlacementMode.DISAGGREGATED:
             rank_map = DisaggRankMapper.get_rollout_rank_to_actor_rank_map(
-                actor_tp_size=self.cfg.actor.model.tensor_model_parallel_size,
-                actor_pp_size=self.cfg.actor.model.pipeline_model_parallel_size,
+                actor_tp_size=self.rlinf_config.actor.model.tensor_model_parallel_size,
+                actor_pp_size=self.rlinf_config.actor.model.pipeline_model_parallel_size,
                 actor_world_size=placement.actor_world_size,
-                rollout_tp_size=self.cfg.rollout.tensor_parallel_size,
+                rollout_tp_size=self.rlinf_config.rollout.tensor_parallel_size,
                 rollout_world_size=placement.rollout_world_size,
             )
             self.log_info(
@@ -100,11 +104,11 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
             raise ValueError(f"Unsupported placement mode: {self.placement_mode}")
 
         self.log_info(
-            f"Running VllmInnerWoker dp rank {self.get_parent_rank()}, tp_rank {rank}, corresponding actor weight rank = {self.actor_weight_rank}"
+            f"Running VllmInnerWoker dp rank {self.get_parent_rank()}, tp_rank {self._rank}, corresponding actor weight rank = {self.actor_weight_rank}"
         )
 
     def sync_hf_weight(self, command: SyncHFWeightCommand) -> CollectiveRpcResponse:
-        use_cudagraph = not self.cfg.rollout.enforce_eager
+        use_cudagraph = not self.rlinf_config.rollout.enforce_eager
         colocate = self.placement_mode == PlacementMode.COLLOCATED
         assert use_cudagraph, "use_cudagraph must be True now."
 
@@ -177,6 +181,49 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
             rank=self._rank, data=result if self._rank == 0 else None, success=True
         )
 
+    # def init_device(self):
+    #     if self.device_config.device.type == "cuda":
+    #         # torch.distributed.all_reduce does not free the input tensor until
+    #         # the synchronization point. This causes the memory usage to grow
+    #         # as the number of all_reduce calls increases. This env var disables
+    #         # this behavior.
+    #         # Related issue:
+    #         # https://discuss.pytorch.org/t/cuda-allocation-lifetime-for-inputs-to-distributed-all-reduce/191573
+    #         os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
+
+    #         # This env var set by Ray causes exceptions with graph building.
+    #         os.environ.pop("NCCL_ASYNC_ERROR_HANDLING", None)
+    #         self.device = torch.device(f"cuda:{self.local_rank}")
+    #         torch.cuda.set_device(self.device)
+
+    #         _check_if_gpu_supports_dtype(self.model_config.dtype)
+    #         gc.collect()
+    #         torch.cuda.empty_cache()
+    #         self.init_gpu_memory = torch.cuda.mem_get_info()[0]
+    #     else:
+    #         raise RuntimeError(
+    #             f"Not support device type: {self.device_config.device}")
+    #     # Initialize the distributed environment.
+    #     init_worker_distributed_environment(self.parallel_config, self.rank,
+    #                                         self.distributed_init_method,
+    #                                         self.local_rank)
+    #     # Set random seed.
+    #     set_random_seed(self.model_config.seed)
+
+    #     # Construct the model runner
+    #     self.model_runner = GPUModelRunner(self.vllm_config, self.device)
+
+
+# def init_worker_distributed_environment(
+#     parallel_config: ParallelConfig, rank : int, distributed_init_method: str, local_rank: int
+# ):
+#     set_custom_all_reduce(not parallel_config.disable_custom_all_reduce)
+#     # return NotImplementedError
+
+
+# def initialize_model_parallel(tensor_model_parallel_size: int, 
+#                               data_model_parallel_size: int, 
+#                               pipeline_model_parallel_size:)
 
 @dataclass
 class ZmqWorkerProcHandle:
@@ -188,6 +235,7 @@ class ZmqWorkerProc:
     def __init__(
         self,
         vllm_config: VllmConfig,
+        local_rank: int,
         rank: int,
         worker_input_ipc_name: str,
         worker_output_ipc_name: str,
@@ -195,7 +243,7 @@ class ZmqWorkerProc:
         distributed_init_method: str,
         placement: ModelParallelComponentPlacement,
     ):
-        self.rank = rank
+        self.rank = rank # global rank in 2D parallel
         self.vllm_config = vllm_config
 
         self.worker_input_ipc_name = worker_input_ipc_name
@@ -211,13 +259,14 @@ class ZmqWorkerProc:
 
         self.command_parser = TypeAdapter(VLLMCommand)
 
-        wrapper = WorkerWrapperBase(vllm_config=vllm_config, rpc_rank=rank)
+        wrapper = WorkerWrapperBase(vllm_config=vllm_config, rpc_rank=local_rank)
         all_kwargs: List[Dict] = [
-            {} for _ in range(vllm_config.parallel_config.world_size)
+            {} for _ in range(vllm_config.parallel_config.tensor_parallel_size)
         ]
-        all_kwargs[rank] = {
+        all_kwargs[local_rank] = {
             "vllm_config": vllm_config,
-            "rank": rank,
+            "local_rank": local_rank,
+            "rank": local_rank,
             "distributed_init_method": distributed_init_method,
             "world_size": vllm_config.parallel_config.world_size,
             "parent_address": parent_address,
@@ -228,8 +277,13 @@ class ZmqWorkerProc:
         self.worker = wrapper.worker
 
         pid = os.getpid()
-        _add_prefix(sys.stdout, f"VllmZmqWorker[rank={rank}]", pid)
-        _add_prefix(sys.stderr, f"VllmZmqWorker[rank={rank}]", pid)
+        _add_prefix(sys.stdout, f"VllmZmqWorker[rank={rank},local_rank={local_rank}]", pid)
+        _add_prefix(sys.stderr, f"VllmZmqWorker[rank={rank},local_rank={local_rank}]", pid)
+        print(f"VllmZmqWorker proc started, rank:{rank}, local_rank:{local_rank}, pid:{pid}")
+        self.worker.init_device()
+        print(f"Vllm inner worker device initialized, rank:{rank}, local_rank:{local_rank}, pid:{pid}")
+        self.worker.load_model()
+        print(f"Vllm inner worker model loaded, rank:{rank}, local_rank:{local_rank}, pid:{pid}")
 
     @staticmethod
     def worker_main(*args, **kwargs):
@@ -263,20 +317,24 @@ class ZmqWorkerProc:
     @staticmethod
     def make_worker_process(
         rank: int,
+        local_rank: int,
         worker_input_ipc_name: str,
         worker_output_ipc_name: str,
         distributed_init_method: str,
         parent_address: WorkerAddress,
         placement: ModelParallelComponentPlacement,
+        vllm_config: VllmConfig,
     ) -> ZmqWorkerProcHandle:
         mp_context = get_mp_context()
         process_kwargs = {
             "rank": rank,
+            "local_rank" : local_rank,
             "worker_input_ipc_name": worker_input_ipc_name,
             "worker_output_ipc_name": worker_output_ipc_name,
             "distributed_init_method": distributed_init_method,
             "parent_address": parent_address,
             "placement": placement,
+            "vllm_config": vllm_config,
         }
 
         proc = mp_context.Process(
@@ -284,7 +342,7 @@ class ZmqWorkerProc:
         )
 
         proc.start()
-
+        print(f"proc started, return handle for rank:{rank}")
         return ZmqWorkerProcHandle(proc=proc, rank=rank)
 
     def shutdown(self):
@@ -299,12 +357,12 @@ class ZmqWorkerProc:
     def worker_busy_loop(self):
         while True:
             try:
-                command_str: str = self.recv_from_executor.recv_string(
-                    flags=zmq.NOBLOCK
-                )
+                print("Vllm inner worker waiting for command...")
+                command_str: str = self.recv_from_executor.recv_string()
                 command: CollectiveRpcCommand = self.command_parser.validate_json(
                     command_str
                 )
+                print(f"received rpc method call: {command.method}")
                 if isinstance(command.method, str):
                     func = getattr(self.worker, command.method, None)
                 elif isinstance(command.method, bytes):

@@ -50,12 +50,12 @@ class VLLMExecutor(Executor):
     def __init__(
         self,
         vllm_config: VllmConfig,
+        dp_rank: int,
         executor_ipc_input_name: str,
         executor_ipc_output_name: str,
         parent_address: WorkerAddress,
         placement: ModelParallelComponentPlacement,
     ):
-        super().__init__(vllm_config)
         self.executor_ipc_input_name = executor_ipc_input_name
         self.executor_ipc_output_name = executor_ipc_output_name
 
@@ -71,7 +71,8 @@ class VLLMExecutor(Executor):
 
         self.parent_address = parent_address
         self.placement = placement
-
+        self.dp_rank = dp_rank
+        self.tp_size = vllm_config.parallel_config.tensor_parallel_size
         # used by LLMengine to communicate straightly with executor
         self.command_handlers = {
             "sync_hf_weight": self.sync_hf_weight,
@@ -83,6 +84,10 @@ class VLLMExecutor(Executor):
         )
         self._listen_engine_handle.start()
 
+        super().__init__(vllm_config)
+        logger.info("VLLMExecutor initialized.")
+
+        
     def _listen_engine(self):
         while True:
             if self.recv_from_engine.poll(100):
@@ -116,11 +121,6 @@ class VLLMExecutor(Executor):
         signal.signal(signal.SIGUSR1, sigusr1_handler)
 
         self.world_size = self.parallel_config.world_size
-        tensor_parallel_size = self.parallel_config.tensor_parallel_size
-        assert self.world_size == tensor_parallel_size, (
-            f"world_size: {self.world_size} is not equal to "
-            f"tensor_parallel_size: {tensor_parallel_size}"
-        )
 
         context = zmq.Context()
         self.worker_input_ipc_name = (
@@ -138,20 +138,24 @@ class VLLMExecutor(Executor):
 
         self.workers: List[WorkerProcHandle] = []
 
-        distributed_init_method: str = get_distributed_init_method(
-            "127.0.0.1", get_open_port()
+        distributed_init_method = get_distributed_init_method(
+            "127.0.0.1",get_open_port()
         )
 
-        for rank in range(self.world_size):
+        for rank in range(self.tp_size):
             worker = ZmqWorkerProc.make_worker_process(
-                rank=rank,
+                local_rank=rank,
+                rank=self.tp_size * self.dp_rank + rank,
                 worker_input_ipc_name=self.worker_input_ipc_name,
                 worker_output_ipc_name=self.worker_output_ipc_name,
                 distributed_init_method=distributed_init_method,
                 parent_address=self.parent_address,
                 placement=self.placement,
+                vllm_config=self.vllm_config,
             )
+            logger.info(f"worker process created for rank:{rank}")
             self.workers.append(worker)
+            logger.info("all worker created!")
 
     def collective_rpc(
         self,
@@ -168,17 +172,18 @@ class VLLMExecutor(Executor):
                 send_method = cloudpickle.dumps(
                     method, protocol=pickle.HIGHEST_PROTOCOL
                 )
-            logger.debug(f"Sending RPC request: {send_method}")
+            logger.info(f"Sending RPC request: {send_method}")
             command = CollectiveRpcCommand(method=send_method, args=args, kwargs=kwargs)
 
             self.send_to_workers.send_string(command.model_dump_json())
             responses = [None] * self.world_size
-
+            logger.info(f"Waiting for {self.world_size} RPC responses")
             for _ in range(self.world_size):
                 response_str: str = self.recv_from_workers.recv_string()
                 response: CollectiveRpcResponse = self.response_parser.validate_json(
                     response_str
                 )
+                logger.info(f"received response from {response.rank} for command id :{response.command_id}")
                 # TODO(daibo): whether response's success should be checked here
                 if not response.success:
                     logger.error(
