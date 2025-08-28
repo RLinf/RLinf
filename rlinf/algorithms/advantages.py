@@ -1,12 +1,26 @@
 # Copyright 2025 The RLinf Authors.
-# Licensed under the Apache License, Version 2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-from typing import Callable, Dict, Optional, Tuple
+from typing import Optional, Tuple
+
 import torch
+
 from rlinf.algorithms.registry import register_advantage
 
+
 @register_advantage("ppo")
-def compute_advantages_and_returns(**kwargs) -> Tuple[torch.Tensor, torch.Tensor]:
+def compute_ppo_advantages_and_returns(**kwargs) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Calculate advantages and returns for Proximal Policy Optimization (PPO).
     NOTE: currently this function does not support auto-reset.
@@ -77,8 +91,11 @@ def compute_advantages_and_returns(**kwargs) -> Tuple[torch.Tensor, torch.Tensor
 
     return advantages, returns
 
+
 @register_advantage("grpo")
-def compute_grpo_advantages_and_returns(**kwargs) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+def compute_grpo_advantages_and_returns(
+    **kwargs,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """
     Group Relative Policy Optimization (GRPO) advantages.
     Returns is set to `None` since GRPO only needs normalized group rewards.
@@ -97,15 +114,21 @@ def compute_grpo_advantages_and_returns(**kwargs) -> Tuple[torch.Tensor, Optiona
     #     loss_mask = torch.ones_like(rewards)
 
     n_chunk_step, actual_bsz, num_action_chunks = rewards.shape
-    flattened_rewards = rewards.transpose(1, 2).reshape(n_chunk_step * num_action_chunks, -1)
+    flattened_rewards = rewards.transpose(1, 2).reshape(
+        n_chunk_step * num_action_chunks, -1
+    )
 
-    flattened_dones = dones.transpose(1, 2).reshape((n_chunk_step + 1) * num_action_chunks, -1)
+    flattened_dones = dones.transpose(1, 2).reshape(
+        (n_chunk_step + 1) * num_action_chunks, -1
+    )
     flattened_dones = flattened_dones[-(n_chunk_step * num_action_chunks + 1) :]
 
     # loss mask
     flattened_loss_mask = None
     if loss_mask is not None:
-        flattened_loss_mask = loss_mask.transpose(1, 2).reshape(n_chunk_step * num_action_chunks, -1)
+        flattened_loss_mask = loss_mask.transpose(1, 2).reshape(
+            n_chunk_step * num_action_chunks, -1
+        )
 
     n_steps = flattened_rewards.shape[0]
     scores = torch.zeros(actual_bsz)
@@ -122,16 +145,25 @@ def compute_grpo_advantages_and_returns(**kwargs) -> Tuple[torch.Tensor, Optiona
         flattened_advantages = scores.reshape(1, -1)
 
     if flattened_loss_mask is not None:
-        flattened_advantages = flattened_advantages.tile([n_steps, 1]) * flattened_loss_mask
+        flattened_advantages = (
+            flattened_advantages.tile([n_steps, 1]) * flattened_loss_mask
+        )
     else:
         flattened_advantages = flattened_advantages.tile([n_steps, 1])
 
-    advantages = flattened_advantages.reshape(n_chunk_step, num_action_chunks, actual_bsz).transpose(1, 2)
+    advantages = flattened_advantages.reshape(
+        n_chunk_step, num_action_chunks, actual_bsz
+    ).transpose(1, 2)
     return advantages, advantages
 
+
 @register_advantage("grpo-math")
-def compute_grpo_advantages(**kwargs):
-    reward_scores, mask, num_responses = kwargs["reward_scores"], kwargs["mask"], kwargs["num_responses"]
+def compute_math_grpo_advantages(**kwargs):
+    reward_scores, mask, num_responses = (
+        kwargs["reward_scores"],
+        kwargs["mask"],
+        kwargs["num_responses"],
+    )
 
     grouped_rewards = reward_scores.view(-1, num_responses)
     # compute median
@@ -150,3 +182,33 @@ def compute_grpo_advantages(**kwargs):
     advantages = (torch.zeros_like(mask) + advantages.view(-1, 1)) * mask
 
     return advantages
+
+
+if __name__ == "__main__":
+    # test compute_ppo_advantages_and_returns
+    torch.manual_seed(0)
+    rewards = torch.randn(4, 2, 3)
+    values = torch.randn(5, 2, 3)
+    dones = torch.zeros(5, 2, 3).bool()
+    dones[-1] = 1
+    advantages, returns = compute_ppo_advantages_and_returns(
+        rewards=rewards, values=values, dones=dones, gamma=0.99, gae_lambda=0.95
+    )
+    print(advantages.mean())
+    print(returns.mean())
+
+    # test compute_grpo_advantages_and_returns
+    torch.manual_seed(0)
+    rewards = torch.randn(4, 4, 3)
+    dones = torch.zeros(5, 4, 3).bool()
+    loss_mask = torch.rand_like(rewards) > 0.5
+    dones[-1] = 1
+    advantages, _ = compute_grpo_advantages_and_returns(
+        rewards=rewards,
+        dones=dones,
+        loss_mask=loss_mask,
+        num_group_envs=2,
+        group_size=2,
+        normalize_advantages=False,
+    )
+    print(advantages)

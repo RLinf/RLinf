@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
-from typing import Dict, Optional, Tuple
-
 import torch
-import torch.distributed
 
 
 def huber_loss(error: torch.Tensor, delta: float) -> torch.Tensor:
@@ -67,7 +63,6 @@ def kl_penalty(
 
 
 def preprocess_loss_inputs(**kwargs) -> dict:
-
     logprob_type = kwargs["logprob_type"]
     entropy_type = kwargs["entropy_type"]
     single_action_dim = kwargs["single_action_dim"]
@@ -117,6 +112,7 @@ def preprocess_loss_inputs(**kwargs) -> dict:
     )
 
     return kwargs
+
 
 def preprocess_advantages_inputs(**kwargs) -> dict:
     """

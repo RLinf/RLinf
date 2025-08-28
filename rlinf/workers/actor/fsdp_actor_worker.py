@@ -21,13 +21,7 @@ from omegaconf import DictConfig
 from torch.distributed.device_mesh import init_device_mesh
 from tqdm import tqdm
 
-from rlinf.utils.worker_utils import (
-    append_to_dict,
-    compute_loss_mask,
-    compute_rollout_metrics,
-    compute_split_num,
-)
-from rlinf.algorithms.registry import calculate_adv_and_returns, actor_loss
+from rlinf.algorithms.registry import actor_loss, calculate_adv_and_returns
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
 )
@@ -37,6 +31,12 @@ from rlinf.scheduler import Worker
 from rlinf.utils.data_iter_utils import get_iterator_k_split
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.worker_utils import (
+    append_to_dict,
+    compute_loss_mask,
+    compute_rollout_metrics,
+    compute_split_num,
+)
 
 
 class EmbodiedFSDPActor(FSDPModelManager, Worker):

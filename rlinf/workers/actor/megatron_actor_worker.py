@@ -31,12 +31,12 @@ from rlinf.algorithms.registry import (
     calculate_adv_and_returns,
 )
 from rlinf.algorithms.utils import kl_penalty
-from rlinf.tool.math_verifier.verify import math_verify_call
 from rlinf.data.io_struct import BatchResizingIterator, RolloutResult
 from rlinf.hybrid_engines.megatron.megatron_model_manager import (
     MegatronModelManager,
 )
 from rlinf.scheduler import Channel, Worker
+from rlinf.tool.math_verifier.verify import math_verify_call
 from rlinf.utils.data_iter_utils import (
     get_iterator_dynamic,
     get_iterator_k_split,

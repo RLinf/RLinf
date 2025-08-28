@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import math
-from typing import Dict, Optional, Tuple
+from typing import Dict
 
 import torch
 import torch.distributed

@@ -1,12 +1,28 @@
-# losses.py
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from typing import Dict, Tuple
+
 import torch
-from typing import Optional, Dict, Tuple, Callable
+
+from rlinf.algorithms.registry import register_policy_loss
 from rlinf.algorithms.utils import huber_loss
 from rlinf.utils.utils import masked_sum
-from rlinf.algorithms.registry import register_policy_loss
+
 
 @register_policy_loss("ppo_actor_critic")
-def actor_critic_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
+def ppo_actor_critic_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
     """
     Compute PPO actor loss function.
 
@@ -87,7 +103,7 @@ def actor_critic_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
 
 
 @register_policy_loss("grpo_actor")
-def actor_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
+def grpo_actor_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
     """
     Compute actor loss for Group Relative Policy Optimization (GRPO).
 
@@ -150,6 +166,7 @@ def actor_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
         "actor/policy_clipfrac": pg_clipfrac.detach().item(),
     }
     return pg_loss, metrics_data
+
 
 @register_policy_loss("math_actor")
 def math_actor_loss_fn(**kwargs):
@@ -224,3 +241,90 @@ def math_actor_loss_fn(**kwargs):
         clipped_ratio,
         dual_cliped_ratio,
     )
+
+
+if __name__ == "__main__":
+    # test math_actor_loss_fn
+    torch.manual_seed(0)
+    bsz = 4
+    max_seqlen = 8
+    logprobs = torch.randn(bsz, max_seqlen)
+    old_logprobs = logprobs + torch.randn(bsz, max_seqlen) * 0.1
+    advantages = torch.randn(bsz, max_seqlen)
+    loss_mask = torch.randint(0, 2, (bsz, max_seqlen)).bool()
+    eps_clip = 0.2
+    kwargs = {
+        "logprobs": logprobs,
+        "old_logprobs": old_logprobs,
+        "advantages": advantages,
+        "eps_clip": eps_clip,
+        "loss_mask": loss_mask,
+        "loss_agg_func": masked_sum,
+    }
+    (
+        loss,
+        proportion_clipped,
+        approx_kl,
+        ratio,
+        clipped_ratio,
+        dual_cliped_ratio,
+    ) = math_actor_loss_fn(**kwargs)
+    print(f"{loss=}, {proportion_clipped=}, {approx_kl=}")
+    print(f"{ratio=}")
+    print(f"{clipped_ratio=}")
+    print(f"{dual_cliped_ratio=}")
+
+    # test grpo_actor_loss_fn
+    torch.manual_seed(0)
+    bsz = 4
+    max_seqlen = 8
+    logprobs = torch.randn(bsz, max_seqlen)
+    old_logprobs = logprobs + torch.randn(bsz, max_seqlen) * 0.1
+    advantages = torch.randn(bsz, max_seqlen)
+    loss_mask = torch.randint(0, 2, (bsz, max_seqlen)).bool()
+    clip_ratio_low = 0.2
+    clip_ratio_high = 0.2
+    kwargs = {
+        "logprobs": logprobs,
+        "old_logprobs": old_logprobs,
+        "advantages": advantages,
+        "clip_ratio_low": clip_ratio_low,
+        "clip_ratio_high": clip_ratio_high,
+        "loss_mask": loss_mask,
+        "loss_mask_sum": loss_mask.sum(),
+    }
+    loss, metrics_data = grpo_actor_loss_fn(**kwargs)
+    print(f"{loss=}, {metrics_data=}")
+
+    # test ppo_actor_critic_loss_fn
+    torch.manual_seed(0)
+    bsz = 4
+    max_seqlen = 8
+    logprobs = torch.randn(bsz, max_seqlen)
+    old_logprobs = logprobs + torch.randn(bsz, max_seqlen) * 0.1
+    advantages = torch.randn(bsz, max_seqlen)
+    values = torch.randn(bsz, max_seqlen)
+    prev_values = values + torch.randn(bsz, max_seqlen) * 0.1
+    returns = values + advantages + torch.randn(bsz, max_seqlen)
+    entropy = torch.randn(bsz, max_seqlen)
+    clip_ratio_low = 0.2
+    clip_ratio_high = 0.2
+    value_clip = 0.2
+    huber_delta = 1.0
+    entropy_bonus = 0.01
+    kwargs = {
+        "logprobs": logprobs,
+        "old_logprobs": old_logprobs,
+        "advantages": advantages,
+        "values": values,
+        "prev_values": prev_values,
+        "returns": returns,
+        "entropy": entropy,
+        "clip_ratio_low": clip_ratio_low,
+        "clip_ratio_high": clip_ratio_high,
+        "value_clip": value_clip,
+        "huber_delta": huber_delta,
+        "entropy_bonus": entropy_bonus,
+    }
+    loss, metrics_data = ppo_actor_critic_loss_fn(**kwargs)
+    print(f"{loss=}, {metrics_data=}")
