@@ -17,6 +17,7 @@ import pickle
 import signal
 import tempfile
 import threading
+import time
 import weakref
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -26,10 +27,13 @@ import zmq
 from pydantic import TypeAdapter, ValidationError
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
+from vllm.utils import get_distributed_init_method, get_open_port
 from vllm.v1.executor.abstract import Executor
 from vllm.v1.executor.multiproc_executor import WorkerProcHandle
 
 from rlinf.hybrid_engines.vllm.vllm_0_7_1.worker import ZmqWorkerProc
+from rlinf.scheduler.manager.worker_manager import WorkerAddress
+from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.vllm.io_struct import (
     CollectiveRpcCommand,
     CollectiveRpcResponse,
@@ -48,6 +52,8 @@ class VLLMExecutor(Executor):
         vllm_config: VllmConfig,
         executor_ipc_input_name: str,
         executor_ipc_output_name: str,
+        parent_address: WorkerAddress,
+        placement: ModelParallelComponentPlacement,
     ):
         super().__init__(vllm_config)
         self.executor_ipc_input_name = executor_ipc_input_name
@@ -63,6 +69,10 @@ class VLLMExecutor(Executor):
         self.command_parser = TypeAdapter(VLLMCommand)
         self.response_parser = TypeAdapter(VLLMResponse)
 
+        self.parent_address = parent_address
+        self.placement = placement
+
+        # used by LLMengine to communicate straightly with executor
         self.command_handlers = {
             "sync_hf_weight": self.sync_hf_weight,
             "offload_model_weights": self.offload_model_weights,
@@ -127,11 +137,19 @@ class VLLMExecutor(Executor):
         self.recv_from_workers.bind(self.worker_output_ipc_name)
 
         self.workers: List[WorkerProcHandle] = []
+
+        distributed_init_method: str = get_distributed_init_method(
+            "127.0.0.1", get_open_port()
+        )
+
         for rank in range(self.world_size):
             worker = ZmqWorkerProc.make_worker_process(
                 rank=rank,
                 worker_input_ipc_name=self.worker_input_ipc_name,
                 worker_output_ipc_name=self.worker_output_ipc_name,
+                distributed_init_method=distributed_init_method,
+                parent_address=self.parent_address,
+                placement=self.placement,
             )
             self.workers.append(worker)
 
@@ -180,3 +198,35 @@ class VLLMExecutor(Executor):
 
     def sync_hf_weight(self, command: SyncHFWeightCommand):
         self.collective_rpc("sync_hf_weight", args=(command,))
+
+    def _ensure_worker_termination(self):
+        def wait_for_termination(procs, timeout):
+            if not time:
+                return all(not proc.is_alive() for proc in procs)
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                if all(not proc.is_alive() for proc in procs):
+                    return True
+                time.sleep(0.1)
+            return False
+
+        active_procs = [w.proc for w in self.workers if w.proc.is_alive()]
+        for p in active_procs:
+            p.terminate()
+        if not wait_for_termination(active_procs, 4):
+            active_procs = [p for p in active_procs if p.is_alive()]
+            for p in active_procs:
+                p.kill()
+
+    def shutdown(self):
+        if getattr(self, "shutting_down", False):
+            self.shutting_down = True
+
+            try:
+                self.send_to_engine.close()
+                self.recv_from_engine.close()
+                self._ensure_worker_termination()
+                self.send_to_workers.close()
+                self.recv_from_workers.close()
+            except Exception as e:
+                logger.error(f"Error during shutdown: {e}")

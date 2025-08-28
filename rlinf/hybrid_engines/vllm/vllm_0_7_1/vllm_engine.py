@@ -24,6 +24,8 @@ from vllm.sampling_params import SamplingParams
 from vllm.utils import Counter
 from vllm.v1.engine.llm_engine import LLMEngine as _LLMEngine
 
+from rlinf.scheduler.manager.worker_manager import WorkerAddress
+from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.vllm.io_struct import (
     OffloadModelWeightCommand,
     SyncHFWeightCommand,
@@ -34,7 +36,12 @@ from .executor import VLLMExecutor
 
 class VLLMEngine:
     def __init__(
-        self, vllm_config: VllmConfig, log_stats: bool, multiprocess_model: bool = False
+        self,
+        vllm_config: VllmConfig,
+        log_stats: bool,
+        parent_address: WorkerAddress,
+        placement: ModelParallelComponentPlacement,
+        multiprocess_model: bool = False,
     ):
         self.executor_ipc_input_name = (
             f"ipc://{tempfile.NamedTemporaryFile(delete=False).name}"
@@ -54,6 +61,8 @@ class VLLMEngine:
             VLLMExecutor,
             executor_ipc_input_name=self.executor_ipc_input_name,
             executor_ipc_output_name=self.executor_ipc_output_name,
+            parent_address=parent_address,
+            placement=placement,
         )
 
         self._engine = _LLMEngine(

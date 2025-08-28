@@ -16,11 +16,12 @@ import json
 import os
 import signal
 import sys
-import threading
 from dataclasses import dataclass
+from functools import partial
 from multiprocessing.process import BaseProcess
-from typing import Callable, Dict, List
+from typing import Dict, List
 
+import cloudpickle
 import psutil
 import torch
 import zmq
@@ -29,6 +30,7 @@ from pydantic import TypeAdapter, ValidationError
 from torch import nn
 from vllm.config import VllmConfig
 from vllm.device_allocator.cumem import CuMemAllocator
+from vllm.distributed import destroy_distributed_environment, destroy_model_parallel
 from vllm.executor.multiproc_worker_utils import _add_prefix
 from vllm.logger import init_logger
 from vllm.utils import GiB_bytes, get_mp_context
@@ -61,8 +63,6 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
         distributed_init_method: str,
         parent_address: WorkerAddress,
         placement: ModelParallelComponentPlacement,
-        worker_input_ipc_name: str,
-        worker_output_ipc_name: str,
         local_rank: int,
         rank: int,
         world_size: int,
@@ -99,71 +99,9 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
         else:
             raise ValueError(f"Unsupported placement mode: {self.placement_mode}")
 
-        context = zmq.Context()
-
-        self.send_to_executor = context.socket(zmq.PUSH)
-        self.send_to_executor.connect(worker_output_ipc_name)
-
-        self.recv_from_executor = context.socket(zmq.PULL)
-        self.recv_from_executor.connect(worker_input_ipc_name)
-
-        self.command_parser = TypeAdapter(VLLMCommand)
-
-        self.command_handlers = {
-            "sync_hf_weights": self.sync_hf_weight,
-            "offload_model_weights": self.offload_model_weights,
-            "execute_model": self.execute_model,
-            "get_kv_cache_spec": self.get_kv_cache_spec,
-            "initialize_cache": self.initialize_cache,
-            "compile_or_warm_up_model": self.compile_or_warm_up_model,
-            "determine_available_memory": self.determine_available_memory,
-            "profile": self.profile,
-            "check_health": self.check_health,
-            "get_model": self.get_model,
-        }
-
-        self._dispatch_loop_handle = threading.Thread(
-            target=self._dispatch_loop, daemon=True
-        )
-        self._dispatch_loop_handle.start()
-
         self.log_info(
             f"Running VllmInnerWoker dp rank {self.get_parent_rank()}, tp_rank {rank}, corresponding actor weight rank = {self.actor_weight_rank}"
         )
-
-    def _dispatch_loop(self):
-        while True:
-            try:
-                command_str: str = self.recv_from_executor.recv_string(
-                    flags=zmq.NOBLOCK
-                )
-                command: CollectiveRpcCommand = self.command_parser.validate_json(
-                    command_str
-                )
-                handler: Callable = self.command_handlers.get(command.method)
-                if handler:
-                    self.log_debug(f"Vllm inner worker dispatching command: {command}")
-                    response = handler(*command.args, **command.kwargs)
-                else:
-                    self.log_error(
-                        f"Vllm inner worker received unknown command: {command}"
-                    )
-                    response = CollectiveRpcResponse(
-                        command_id=command.command_id,
-                        rank=self._rank,
-                        data=None,
-                        success=False,
-                        error=f"Unknown command type: {command.command_type}",
-                    )
-                self.send_to_executor.send_string(response.model_dump_json())
-            except zmq.Again:
-                continue
-            except ValidationError as e:
-                self.log_error(f"Failed to parse command: {e}")
-            except json.JSONDecodeError as e:
-                self.log_error(f"Failed to decode JSON: {e}")
-            except Exception as e:
-                self.log_error(f"Unexpected error in dispatch loop: {e}")
 
     def sync_hf_weight(self, command: SyncHFWeightCommand) -> CollectiveRpcResponse:
         use_cudagraph = not self.cfg.rollout.enforce_eager
@@ -253,6 +191,9 @@ class ZmqWorkerProc:
         rank: int,
         worker_input_ipc_name: str,
         worker_output_ipc_name: str,
+        parent_address: WorkerAddress,
+        distributed_init_method: str,
+        placement: ModelParallelComponentPlacement,
     ):
         self.rank = rank
         self.vllm_config = vllm_config
@@ -268,6 +209,8 @@ class ZmqWorkerProc:
         self.recv_from_executor = context.socket(zmq.PULL)
         self.recv_from_executor.connect(self.worker_input_ipc_name)
 
+        self.command_parser = TypeAdapter(VLLMCommand)
+
         wrapper = WorkerWrapperBase(vllm_config=vllm_config, rpc_rank=rank)
         all_kwargs: List[Dict] = [
             {} for _ in range(vllm_config.parallel_config.world_size)
@@ -275,8 +218,10 @@ class ZmqWorkerProc:
         all_kwargs[rank] = {
             "vllm_config": vllm_config,
             "rank": rank,
-            "local_rank": rank,
-            "distributed_init_method": "TODO",
+            "distributed_init_method": distributed_init_method,
+            "world_size": vllm_config.parallel_config.world_size,
+            "parent_address": parent_address,
+            "placement": placement,
         }
         wrapper.init_worker(all_kwargs=all_kwargs)
 
@@ -317,13 +262,21 @@ class ZmqWorkerProc:
 
     @staticmethod
     def make_worker_process(
-        rank: int, worker_input_ipc_name: str, worker_output_ipc_name: str
+        rank: int,
+        worker_input_ipc_name: str,
+        worker_output_ipc_name: str,
+        distributed_init_method: str,
+        parent_address: WorkerAddress,
+        placement: ModelParallelComponentPlacement,
     ) -> ZmqWorkerProcHandle:
         mp_context = get_mp_context()
         process_kwargs = {
             "rank": rank,
             "worker_input_ipc_name": worker_input_ipc_name,
             "worker_output_ipc_name": worker_output_ipc_name,
+            "distributed_init_method": distributed_init_method,
+            "parent_address": parent_address,
+            "placement": placement,
         }
 
         proc = mp_context.Process(
@@ -335,7 +288,55 @@ class ZmqWorkerProc:
         return ZmqWorkerProcHandle(proc=proc, rank=rank)
 
     def shutdown(self):
-        return NotImplementedError
+        if getattr(self, "shutting_down", False):
+            self.shutting_down = True
+
+        self.send_to_executor.close()
+        self.recv_from_executor.close()
+        destroy_model_parallel()
+        destroy_distributed_environment()
 
     def worker_busy_loop(self):
-        raise NotImplementedError
+        while True:
+            try:
+                command_str: str = self.recv_from_executor.recv_string(
+                    flags=zmq.NOBLOCK
+                )
+                command: CollectiveRpcCommand = self.command_parser.validate_json(
+                    command_str
+                )
+                if isinstance(command.method, str):
+                    func = getattr(self.worker, command.method, None)
+                elif isinstance(command.method, bytes):
+                    func = partial(cloudpickle.loads(command.method), self.worker)
+                else:
+                    logger.error(
+                        f"Unknown method type recevied in zmq worker's worker_busy_loop: {type(command.method)}"
+                    )
+                    func = None
+                if func:
+                    logger.debug(f"Vllm inner worker dispatching command: {command}")
+                    response = func(*command.args, **command.kwargs)
+                else:
+                    logger.error(
+                        f"Vllm inner worker received unknown command: {command}"
+                    )
+                    response = CollectiveRpcResponse(
+                        command_id=command.command_id,
+                        rank=self._rank,
+                        data=None,
+                        success=False,
+                        error=f"Unknown command type: {command.command_type}",
+                    )
+                assert isinstance(response, CollectiveRpcResponse), (
+                    "Response is not a CollectiveRpcResponse. Check if there is some function you don't reimplement"
+                )
+                self.send_to_executor.send_string(response.model_dump_json())
+            except zmq.Again:
+                continue
+            except ValidationError as e:
+                logger.error(f"Failed to parse command: {e}")
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to decode JSON: {e}")
+            except Exception as e:
+                logger.error(f"Unexpected error in dispatch loop: {e}")

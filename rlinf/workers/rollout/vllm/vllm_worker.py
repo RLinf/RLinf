@@ -82,6 +82,7 @@ class VLLMWorker(Worker):
             vllm_config=vllm_config,
             log_stats=True,  # temporarily True for debug
             multiprocess_model=True,  # use SyncMPClient
+            parent_address=self.worker_address,
         )
 
         self._vllm_engine.offload_model_weights()

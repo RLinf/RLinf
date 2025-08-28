@@ -13,8 +13,8 @@
 # limitations under the License.
 
 
-import datetime
 import uuid
+from datetime import datetime
 from typing import Any, Dict, Literal, Optional, Tuple, Union
 
 from pydantic import BaseModel, Field
@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 class BaseCommand(BaseModel):
     command_id: uuid.UUID = Field(default_factory=uuid.uuid4)
-    timestamp: datetime = Field(default_factory=datetime.datetime.now)
+    timestamp: datetime = Field(default_factory=datetime.now)
     command_type: str
 
 
@@ -47,7 +47,7 @@ VLLMCommand = Union[
 
 
 class BaseResponse(BaseModel):
-    timestamp: datetime = Field(default_factory=datetime.datetime.now)
+    timestamp: datetime = Field(default_factory=datetime.now)
     response_type: str
 
 
