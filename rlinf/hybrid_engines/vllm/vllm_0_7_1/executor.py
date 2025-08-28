@@ -162,8 +162,11 @@ class VLLMExecutor(Executor):
                     response_str
                 )
                 # TODO(daibo): whether response's success should be checked here
-                responses.append(response)
-
+                if not response.success:
+                    logger.error(
+                        f"RPC command {response.command_id} failed on rank {response.rank} with error: {response.error}"
+                    )
+                responses[response.rank] = response.data
             return responses
         except Exception as e:
             logger.fatal(f"VLLMExecutor.collective_rpc failed with exception: {e}")

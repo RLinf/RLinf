@@ -19,16 +19,22 @@ import sys
 import threading
 from dataclasses import dataclass
 from multiprocessing.process import BaseProcess
-from typing import Dict, List
+from typing import Callable, Dict, List
 
 import psutil
+import torch
 import zmq
 from omegaconf import DictConfig
 from pydantic import TypeAdapter, ValidationError
+from torch import nn
 from vllm.config import VllmConfig
+from vllm.device_allocator.cumem import CuMemAllocator
 from vllm.executor.multiproc_worker_utils import _add_prefix
 from vllm.logger import init_logger
-from vllm.utils import get_mp_context
+from vllm.utils import GiB_bytes, get_mp_context
+from vllm.v1.core.scheduler import SchedulerOutput
+from vllm.v1.kv_cache_interface import KVCacheSpec
+from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.worker.gpu_worker import Worker as _VllmInnerWorker
 from vllm.worker.worker_base import WorkerWrapperBase
 
@@ -37,6 +43,8 @@ from rlinf.scheduler import WorkerAddress
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.workers.rollout.utils import DisaggRankMapper, HybridRankMapper
 from rlinf.workers.rollout.vllm.io_struct import (
+    CollectiveRpcCommand,
+    CollectiveRpcResponse,
     OffloadModelWeightCommand,
     SyncHFWeightCommand,
     VLLMCommand,
@@ -104,6 +112,14 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
         self.command_handlers = {
             "sync_hf_weights": self.sync_hf_weight,
             "offload_model_weights": self.offload_model_weights,
+            "execute_model": self.execute_model,
+            "get_kv_cache_spec": self.get_kv_cache_spec,
+            "initialize_cache": self.initialize_cache,
+            "compile_or_warm_up_model": self.compile_or_warm_up_model,
+            "determine_available_memory": self.determine_available_memory,
+            "profile": self.profile,
+            "check_health": self.check_health,
+            "get_model": self.get_model,
         }
 
         self._dispatch_loop_handle = threading.Thread(
@@ -118,16 +134,28 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
     def _dispatch_loop(self):
         while True:
             try:
-                command_str = self.recv_from_executor.recv_string(flags=zmq.NOBLOCK)
-                command = self.command_parser.validate_json(command_str)
-                handler = self.command_handlers.get(command.command_type)
+                command_str: str = self.recv_from_executor.recv_string(
+                    flags=zmq.NOBLOCK
+                )
+                command: CollectiveRpcCommand = self.command_parser.validate_json(
+                    command_str
+                )
+                handler: Callable = self.command_handlers.get(command.method)
                 if handler:
                     self.log_debug(f"Vllm inner worker dispatching command: {command}")
-                    handler(command)
+                    response = handler(*command.args, **command.kwargs)
                 else:
                     self.log_error(
                         f"Vllm inner worker received unknown command: {command}"
                     )
+                    response = CollectiveRpcResponse(
+                        command_id=command.command_id,
+                        rank=self._rank,
+                        data=None,
+                        success=False,
+                        error=f"Unknown command type: {command.command_type}",
+                    )
+                self.send_to_executor.send_string(response.model_dump_json())
             except zmq.Again:
                 continue
             except ValidationError as e:
@@ -137,7 +165,7 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
             except Exception as e:
                 self.log_error(f"Unexpected error in dispatch loop: {e}")
 
-    def sync_hf_weight(self, command: SyncHFWeightCommand):
+    def sync_hf_weight(self, command: SyncHFWeightCommand) -> CollectiveRpcResponse:
         use_cudagraph = not self.cfg.rollout.enforce_eager
         colocate = self.placement_mode == PlacementMode.COLLOCATED
         assert use_cudagraph, "use_cudagraph must be True now."
@@ -153,9 +181,62 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
         else:
             model.load_state_dict(state_dict)
 
-    def offload_model_weights(self, command: OffloadModelWeightCommand):
-        raise NotImplementedError(
-            "VLLMWorker.offload_model_weights is not implemented yet."
+    @torch.inference_mode()
+    def execute_model(self, scheduler_output: SchedulerOutput):
+        output: ModelRunnerOutput = super().execute_model(scheduler_output)
+        return CollectiveRpcResponse(
+            rank=self._rank, data=output if self._rank == 0 else None, success=True
+        )
+
+    def get_kv_cache_spec(self) -> CollectiveRpcResponse:
+        kv_cache_spec: KVCacheSpec = super().get_kv_cache_spec()
+        return CollectiveRpcResponse(rank=self._rank, data=kv_cache_spec, success=True)
+
+    def initialize_cache(self, kv_cache_config) -> CollectiveRpcResponse:
+        result: None = super().initialize_cache(kv_cache_config)
+        return CollectiveRpcResponse(rank=self._rank, data=result, success=True)
+
+    def compile_or_warm_up_model(self) -> CollectiveRpcResponse:
+        result: None = super().compile_or_warm_up_model()
+        return CollectiveRpcResponse(rank=self._rank, data=result, success=True)
+
+    @torch.inference_mode()
+    def determine_available_memory(self) -> CollectiveRpcResponse:
+        result: int = super().determine_available_memory()  # byte
+        return CollectiveRpcResponse(rank=self._rank, data=result, success=True)
+
+    def profile(self, is_start: bool = True) -> CollectiveRpcResponse:
+        result: None = super().profile(is_start)
+        return CollectiveRpcResponse(rank=self._rank, data=result, success=True)
+
+    def check_health(self) -> CollectiveRpcResponse:
+        result: None = super().check_health()
+        return CollectiveRpcResponse(rank=self._rank, data=result, success=True)
+
+    def offload_model_weights(
+        self, command: OffloadModelWeightCommand
+    ) -> CollectiveRpcResponse:
+        free_bytes_before_offload = torch.cuda.mem_get_info()[0]
+        allocator = CuMemAllocator.get_instance()
+        allocator.sleep(offload_tags=("weights",))
+        free_bytes_after_offload, total = torch.cuda.mem_get_info()
+        freed_bytes = free_bytes_before_offload - free_bytes_after_offload
+        assert freed_bytes >= 0
+        logger.info(
+            "Vllm inner worker offload weights: offloaded %.2f GiB memory",
+            freed_bytes / GiB_bytes,
+        )
+        return CollectiveRpcResponse(
+            command_id=command.command_id,
+            rank=self._rank,
+            data={"freed_bytes": freed_bytes},
+            success=True,
+        )
+
+    def get_model(self) -> CollectiveRpcResponse:
+        result: nn.Module = super().get_model()
+        return CollectiveRpcResponse(
+            rank=self._rank, data=result if self._rank == 0 else None, success=True
         )
 
 

@@ -68,7 +68,7 @@ class OffloadModelResponse(BaseResponse):
 
 class CollectiveRpcResponse(BaseResponse):
     response_type: Literal["collective_rpc"] = "collective_rpc"
-    command_id: uuid.UUID
+    command_id: uuid.UUID = Field(default_factory=uuid.uuid4)
     rank: int
     data: Any
     success: bool
