@@ -22,7 +22,7 @@ from omegaconf import DictConfig
 from sglang.srt.server_args import ServerArgs
 from transformers import AutoTokenizer
 
-from rlinf.algorithms.math.verifier.verify import MathRewardModel, math_verify_call
+from rlinf.tool.math_verifier.verify import MathRewardModel, math_verify_call
 from rlinf.config import torch_dtype_from_precision
 from rlinf.data.io_struct import (
     CompletionInfo,

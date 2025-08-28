@@ -26,12 +26,12 @@ from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig
 from torch.multiprocessing.reductions import reduce_tensor
 
-from rlinf.algorithms.math.algo_functions import (
-    actor_loss_fn,
+from rlinf.algorithms.registry import (
+    actor_loss,
     calculate_adv_and_returns,
-    kl_penalty,
 )
-from rlinf.algorithms.math.verifier.verify import math_verify_call
+from rlinf.algorithms.utils import kl_penalty
+from rlinf.tool.math_verifier.verify import math_verify_call
 from rlinf.data.io_struct import BatchResizingIterator, RolloutResult
 from rlinf.hybrid_engines.megatron.megatron_model_manager import (
     MegatronModelManager,
@@ -327,7 +327,7 @@ class MegatronActor(MegatronModelManager, Worker):
                         ratios,
                         cliped_ratio,
                         dual_cliped_ratio,
-                    ) = actor_loss_fn(
+                    ) = actor_loss(
                         self.loss_agg_func,
                         curr_logprobs,
                         prev_logprobs,

@@ -21,14 +21,13 @@ from omegaconf import DictConfig
 from torch.distributed.device_mesh import init_device_mesh
 from tqdm import tqdm
 
-from rlinf.algorithms.embodiment.utils import (
-    actor_loss_fn,
+from rlinf.utils.worker_utils import (
     append_to_dict,
-    calculate_advantages_and_returns,
     compute_loss_mask,
     compute_rollout_metrics,
     compute_split_num,
 )
+from rlinf.algorithms.registry import calculate_adv_and_returns, actor_loss
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
 )
@@ -177,7 +176,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             * env_world_size
             // actor_world_size
         )
-        advantages, returns = calculate_advantages_and_returns(
+        advantages, returns = calculate_adv_and_returns(
             adv_type=self.cfg.algorithm.adv_type,
             rewards=self.rollout_batch["rewards"],
             dones=self.rollout_batch["dones"],
@@ -305,7 +304,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 loss_mask = data.get("loss_mask", None)
                 loss_mask_sum = data.get("loss_mask_sum", None)
 
-                loss, metrics_data = actor_loss_fn(
+                loss, metrics_data = actor_loss(
                     self.cfg.algorithm.loss_type,
                     self.cfg.algorithm.logprob_type,
                     self.cfg.algorithm.entropy_type,

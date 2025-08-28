@@ -17,7 +17,7 @@ import os
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
-from rlinf.algorithms.embodiment.utils import compute_evaluate_metrics
+from rlinf.utils.worker_utils import compute_evaluate_metrics
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.runner_utils import check_progress
