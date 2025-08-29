@@ -304,10 +304,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 prev_values = data["prev_values"]
                 loss_mask = data.get("loss_mask", None)
                 loss_mask_sum = data.get("loss_mask_sum", None)
-                if hasattr(self.cfg.env.train, "max_episode_steps"):
-                    max_episode_steps = self.cfg.env.train.max_episode_steps
-                else:
-                    max_episode_steps = self.cfg.env.train.init_params.max_episode_steps
+                max_episode_steps = self.cfg.env.train.max_episode_steps
 
                 loss, metrics_data = actor_loss_fn(
                     self.cfg.algorithm.loss_type,

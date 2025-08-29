@@ -741,6 +741,7 @@ algorithm
   algorithm:
     auto_reset: True
     ignore_terminations: True
+    use_fixed_reset_state_ids: False
     require_values: True
     normalize_advantages: True
     kl_penalty: kl
@@ -764,6 +765,8 @@ algorithm
 ``algorithm.auto_reset``: Automatically reset environments when episodes terminate.
 
 ``algorithm.ignore_terminations``: Ignore episode terminations during training.
+
+``algorithm.use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO.
 
 ``algorithm.require_values``: Whether value function computation is required.
 
@@ -1054,7 +1057,7 @@ The path is
   num_task: ${algorithm.num_group_envs}
   num_group: ${algorithm.num_group_envs}
   group_size: ${algorithm.group_size}
-  use_fixed_reset_state_ids: false
+  use_fixed_reset_state_ids: ${algorithm.use_fixed_reset_state_ids}
 
 ``seed``: Random seed for environment initialization (0 for reproducibility).
 
@@ -1064,7 +1067,7 @@ The path is
 
 ``group_size``: Number of environments per group (inherits from algorithm.group_size).
 
-``use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization).
+``use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO (inherits from algorithm.use_fixed_reset_state_ids).
 
 **Input Configuration**
 

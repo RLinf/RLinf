@@ -111,6 +111,8 @@ class FSDPModelManager:
             sync_module_states=True,
         )
 
+        # NOTE: Currently we assume that only the value head contains "value_head" in its name.
+        # The value head only serves for value prediction in RL algorithms like PPO.
         param_groups = [
             {
                 "params": [

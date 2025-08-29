@@ -250,11 +250,13 @@ def actor_loss_fn(
     Adapted from https://github.com/huggingface/trl/blob/main/trl/trainer/ppotrainer.py#L1122
 
     Args:
-        log_prob (torch.Tensor): Current log probabilities of shape (bs,) or (bs, action-token-length)
-        old_log_prob (torch.Tensor): Previous log probabilities (will be repeated to match current shape)
-        advantages (torch.Tensor): Advantage values of shape (bs,)
+        log_prob (torch.Tensor): Current log probabilities
+        old_log_prob (torch.Tensor): Previous log probabilities
+        advantages (torch.Tensor): Advantage values of shape
         clip_ratio_high (float): Upper clipping ratio for PPO
         clip_ratio_low (float): Lower clipping ratio for PPO
+        loss_mask (Optional[torch.Tensor]): Mask tensor of shape to apply to the loss
+        loss_mask_ratio (Optional[torch.Tensor]): Ratio tensor for normalizing the loss when using a mask
 
     Returns:
         Tuple[torch.Tensor, Dict]: Policy gradient loss and metrics dictionary containing:

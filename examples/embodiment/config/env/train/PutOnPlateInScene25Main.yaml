@@ -7,6 +7,7 @@ num_group: ${algorithm.num_group_envs}
 group_size: ${algorithm.group_size}
 use_fixed_reset_state_ids: ${algorithm.use_fixed_reset_state_ids}
 only_eval: False
+max_episode_steps: 80
 
 video_cfg:
   save_video: True
@@ -22,7 +23,7 @@ init_params:
   sim_config:
     sim_freq: 500
     control_freq: 5
-  max_episode_steps: 80 # 100
+  max_episode_steps: ${env.train.max_episode_steps}
   sensor_configs:
     shader_pack: "default"
   render_mode: all
