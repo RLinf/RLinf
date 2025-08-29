@@ -11,12 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-import gc
-import json
 import os
 import signal
 import sys
+import traceback
 from dataclasses import dataclass
 from functools import partial
 from multiprocessing.process import BaseProcess
@@ -27,11 +25,8 @@ import psutil
 import torch
 import zmq
 from omegaconf import DictConfig
-from pydantic import TypeAdapter, ValidationError
 from torch import nn
-from vllm.config import VllmConfig, ParallelConfig
-from vllm.model_executor import set_random_seed
-from vllm.v1.worker.gpu_model_runner import GPUModelRunner
+from vllm.config import VllmConfig
 from vllm.device_allocator.cumem import CuMemAllocator
 from vllm.distributed import destroy_distributed_environment, destroy_model_parallel
 from vllm.executor.multiproc_worker_utils import _add_prefix
@@ -42,8 +37,7 @@ from vllm.v1.kv_cache_interface import KVCacheSpec
 from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.worker.gpu_worker import Worker as _VllmInnerWorker
 from vllm.worker.worker_base import WorkerWrapperBase
-from vllm.v1.worker.gpu_worker import _check_if_gpu_supports_dtype
-from vllm.distributed.parallel_state import set_custom_all_reduce
+
 from rlinf.scheduler import Worker as _RLinfWorker
 from rlinf.scheduler import WorkerAddress
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
@@ -53,7 +47,7 @@ from rlinf.workers.rollout.vllm.io_struct import (
     CollectiveRpcResponse,
     OffloadModelWeightCommand,
     SyncHFWeightCommand,
-    VLLMCommand,
+    WorkerReadyResponse,
 )
 
 logger = init_logger(__name__)
@@ -85,7 +79,8 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
                     self.rlinf_config.actor.model.tensor_model_parallel_size,
                     self.rlinf_config.actor.model.pipeline_model_parallel_size,
                     self.rlinf_config.rollout.tensor_parallel_size,
-                    self.rlinf_config.cluster.num_nodes * self.rlinf_config.cluster.num_gpus_per_node,
+                    self.rlinf_config.cluster.num_nodes
+                    * self.rlinf_config.cluster.num_gpus_per_node,
                 )[self.get_parent_rank(), self._rank]
             )
         elif self.placement_mode == PlacementMode.DISAGGREGATED:
@@ -181,49 +176,6 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
             rank=self._rank, data=result if self._rank == 0 else None, success=True
         )
 
-    # def init_device(self):
-    #     if self.device_config.device.type == "cuda":
-    #         # torch.distributed.all_reduce does not free the input tensor until
-    #         # the synchronization point. This causes the memory usage to grow
-    #         # as the number of all_reduce calls increases. This env var disables
-    #         # this behavior.
-    #         # Related issue:
-    #         # https://discuss.pytorch.org/t/cuda-allocation-lifetime-for-inputs-to-distributed-all-reduce/191573
-    #         os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
-
-    #         # This env var set by Ray causes exceptions with graph building.
-    #         os.environ.pop("NCCL_ASYNC_ERROR_HANDLING", None)
-    #         self.device = torch.device(f"cuda:{self.local_rank}")
-    #         torch.cuda.set_device(self.device)
-
-    #         _check_if_gpu_supports_dtype(self.model_config.dtype)
-    #         gc.collect()
-    #         torch.cuda.empty_cache()
-    #         self.init_gpu_memory = torch.cuda.mem_get_info()[0]
-    #     else:
-    #         raise RuntimeError(
-    #             f"Not support device type: {self.device_config.device}")
-    #     # Initialize the distributed environment.
-    #     init_worker_distributed_environment(self.parallel_config, self.rank,
-    #                                         self.distributed_init_method,
-    #                                         self.local_rank)
-    #     # Set random seed.
-    #     set_random_seed(self.model_config.seed)
-
-    #     # Construct the model runner
-    #     self.model_runner = GPUModelRunner(self.vllm_config, self.device)
-
-
-# def init_worker_distributed_environment(
-#     parallel_config: ParallelConfig, rank : int, distributed_init_method: str, local_rank: int
-# ):
-#     set_custom_all_reduce(not parallel_config.disable_custom_all_reduce)
-#     # return NotImplementedError
-
-
-# def initialize_model_parallel(tensor_model_parallel_size: int, 
-#                               data_model_parallel_size: int, 
-#                               pipeline_model_parallel_size:)
 
 @dataclass
 class ZmqWorkerProcHandle:
@@ -243,7 +195,7 @@ class ZmqWorkerProc:
         distributed_init_method: str,
         placement: ModelParallelComponentPlacement,
     ):
-        self.rank = rank # global rank in 2D parallel
+        self.rank = rank  # global rank in 2D parallel (tp,pp)
         self.vllm_config = vllm_config
 
         self.worker_input_ipc_name = worker_input_ipc_name
@@ -254,10 +206,9 @@ class ZmqWorkerProc:
         self.send_to_executor = context.socket(zmq.PUSH)
         self.send_to_executor.connect(self.worker_output_ipc_name)
 
-        self.recv_from_executor = context.socket(zmq.PULL)
+        self.recv_from_executor = context.socket(zmq.SUB)
+        self.recv_from_executor.setsockopt_string(zmq.SUBSCRIBE, "")
         self.recv_from_executor.connect(self.worker_input_ipc_name)
-
-        self.command_parser = TypeAdapter(VLLMCommand)
 
         wrapper = WorkerWrapperBase(vllm_config=vllm_config, rpc_rank=local_rank)
         all_kwargs: List[Dict] = [
@@ -277,13 +228,31 @@ class ZmqWorkerProc:
         self.worker = wrapper.worker
 
         pid = os.getpid()
-        _add_prefix(sys.stdout, f"VllmZmqWorker[rank={rank},local_rank={local_rank}]", pid)
-        _add_prefix(sys.stderr, f"VllmZmqWorker[rank={rank},local_rank={local_rank}]", pid)
-        print(f"VllmZmqWorker proc started, rank:{rank}, local_rank:{local_rank}, pid:{pid}")
+        _add_prefix(
+            sys.stdout, f"VllmZmqWorker[rank={rank},local_rank={local_rank}]", pid
+        )
+        _add_prefix(
+            sys.stderr, f"VllmZmqWorker[rank={rank},local_rank={local_rank}]", pid
+        )
+        print(
+            f"VllmZmqWorker proc started, rank:{rank}, local_rank:{local_rank}, pid:{pid}",
+            flush=True,
+        )
         self.worker.init_device()
-        print(f"Vllm inner worker device initialized, rank:{rank}, local_rank:{local_rank}, pid:{pid}")
+        print(
+            f"Vllm inner worker device initialized, rank:{rank}, local_rank:{local_rank}, pid:{pid}",
+            flush=True,
+        )
         self.worker.load_model()
-        print(f"Vllm inner worker model loaded, rank:{rank}, local_rank:{local_rank}, pid:{pid}")
+        print(
+            f"Vllm inner worker model loaded, rank:{rank}, local_rank:{local_rank}, pid:{pid}",
+            flush=True,
+        )
+
+        # send ready reponse to executor
+        command: WorkerReadyResponse = WorkerReadyResponse(rank=self.rank)
+        self.send_to_executor.send_pyobj(command)
+        print("Send ready response to Executor finished.")
 
     @staticmethod
     def worker_main(*args, **kwargs):
@@ -328,7 +297,7 @@ class ZmqWorkerProc:
         mp_context = get_mp_context()
         process_kwargs = {
             "rank": rank,
-            "local_rank" : local_rank,
+            "local_rank": local_rank,
             "worker_input_ipc_name": worker_input_ipc_name,
             "worker_output_ipc_name": worker_output_ipc_name,
             "distributed_init_method": distributed_init_method,
@@ -342,7 +311,7 @@ class ZmqWorkerProc:
         )
 
         proc.start()
-        print(f"proc started, return handle for rank:{rank}")
+        print(f"proc started, return handle for rank:{rank}", flush=True)
         return ZmqWorkerProcHandle(proc=proc, rank=rank)
 
     def shutdown(self):
@@ -357,10 +326,10 @@ class ZmqWorkerProc:
     def worker_busy_loop(self):
         while True:
             try:
-                print("Vllm inner worker waiting for command...")
-                command_str: str = self.recv_from_executor.recv_string()
-                command: CollectiveRpcCommand = self.command_parser.validate_json(
-                    command_str
+                print("Vllm inner worker waiting for command...", flush=True)
+                command: CollectiveRpcCommand = self.recv_from_executor.recv_pyobj()
+                assert isinstance(command, CollectiveRpcCommand), (
+                    f"Expected CollectiveRpcCommand, got {type(command)}"
                 )
                 print(f"received rpc method call: {command.method}")
                 if isinstance(command.method, str):
@@ -369,19 +338,22 @@ class ZmqWorkerProc:
                     func = partial(cloudpickle.loads(command.method), self.worker)
                 else:
                     logger.error(
-                        f"Unknown method type recevied in zmq worker's worker_busy_loop: {type(command.method)}"
+                        f"Unknown method type received in zmq worker's worker_busy_loop: {type(command.method)}"
                     )
                     func = None
                 if func:
                     logger.debug(f"Vllm inner worker dispatching command: {command}")
-                    response = func(*command.args, **command.kwargs)
+                    response: CollectiveRpcResponse = func(
+                        *command.args, **command.kwargs
+                    )
+                    response.command_id = command.command_id
                 else:
                     logger.error(
                         f"Vllm inner worker received unknown command: {command}"
                     )
-                    response = CollectiveRpcResponse(
+                    response: CollectiveRpcResponse = CollectiveRpcResponse(
                         command_id=command.command_id,
-                        rank=self._rank,
+                        rank=self.rank,
                         data=None,
                         success=False,
                         error=f"Unknown command type: {command.command_type}",
@@ -389,12 +361,9 @@ class ZmqWorkerProc:
                 assert isinstance(response, CollectiveRpcResponse), (
                     "Response is not a CollectiveRpcResponse. Check if there is some function you don't reimplement"
                 )
-                self.send_to_executor.send_string(response.model_dump_json())
+                self.send_to_executor.send_pyobj(response)
             except zmq.Again:
                 continue
-            except ValidationError as e:
-                logger.error(f"Failed to parse command: {e}")
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to decode JSON: {e}")
             except Exception as e:
                 logger.error(f"Unexpected error in dispatch loop: {e}")
+                traceback.print_exc()

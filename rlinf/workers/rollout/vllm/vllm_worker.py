@@ -47,8 +47,7 @@ class VLLMWorker(Worker):
                 * self._cfg.rollout.tensor_parallel_size
                 * self._cfg.rollout.pipeline_parallel_size
             )
-            
-        
+
     def _get_sampling_params_from_config(self) -> SamplingParams:
         cfg_sampling_params = self._cfg.algorithm.sampling_params
         if cfg_sampling_params.use_greedy:
@@ -76,6 +75,10 @@ class VLLMWorker(Worker):
             dtype=torch_dtype_from_precision(self._cfg.actor.model.precision),
             gpu_memory_utilization=self._cfg.rollout.gpu_memory_utilization,
             enforce_eager=self._cfg.rollout.enforce_eager,
+            enable_chunked_prefill=False,
+            task="generate",
+            trust_remote_code=self._cfg.actor.tokenizer.trust_remote_code,
+            max_model_len=self._cfg.runner.seq_length,
         )
         vllm_config: VllmConfig = engine_args.create_engine_config()
         self.log_info(f"[LLM dp {self._rank}] start to initialize VLLM engine")

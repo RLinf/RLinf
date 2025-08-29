@@ -11,26 +11,28 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import cloudpickle
 import tempfile
 from functools import partial
 from typing import List, Optional, Union
 
+import cloudpickle
 import zmq
+from omegaconf import DictConfig
 from vllm.config import VllmConfig
 from vllm.inputs.data import TokensPrompt
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
 from vllm.utils import Counter
 from vllm.v1.engine.llm_engine import LLMEngine as _LLMEngine
-from omegaconf import DictConfig
+
 from rlinf.scheduler.manager.worker_manager import WorkerAddress
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.vllm.io_struct import (
     OffloadModelWeightCommand,
+    OffloadModelWeightResponse,
     SyncHFWeightCommand,
+    SyncHFWeightResponse,
 )
-
 
 
 class VLLMEngine:
@@ -39,7 +41,7 @@ class VLLMEngine:
         rlinf_config: DictConfig,
         vllm_config: VllmConfig,
         log_stats: bool,
-        dp_rank:int,
+        dp_rank: int,
         parent_address: WorkerAddress,
         placement: ModelParallelComponentPlacement,
         multiprocess_model: bool = False,
@@ -59,12 +61,12 @@ class VLLMEngine:
         self.recv_from_executor.bind(self.executor_ipc_output_name)
 
         from rlinf.hybrid_engines.vllm.vllm_0_7_1.worker import VLLMWorker
-        
-        vllm_worker_cls = partial(VLLMWorker,rlinf_config=rlinf_config)
+
+        vllm_worker_cls = partial(VLLMWorker, rlinf_config=rlinf_config)
         vllm_config.parallel_config.worker_cls = cloudpickle.dumps(vllm_worker_cls)
 
         from rlinf.hybrid_engines.vllm.vllm_0_7_1.executor import VLLMExecutor
-        
+
         executor_factory = partial(
             VLLMExecutor,
             executor_ipc_input_name=self.executor_ipc_input_name,
@@ -123,10 +125,22 @@ class VLLMEngine:
 
     def offload_model_weights(self) -> None:
         command = OffloadModelWeightCommand()
-        command_json = command.model_dump_json()
-        self.send_to_executor.send_string(command_json)
+        self.send_to_executor.send_pyobj(command)
+        response: OffloadModelWeightResponse = self.recv_from_executor.recv_pyobj()
+        assert isinstance(response, OffloadModelWeightResponse), (
+            f"Expected OffloadModelWeightResponse, got {type(response)}"
+        )
+        assert response.command_id == command.command_id, (
+            f"Expected get {command.command_id}'s response, got, {response.command_id}"
+        )
 
     def sync_hf_weight(self) -> None:
         command = SyncHFWeightCommand()
-        command_json = command.model_dump_json()
-        self.send_to_executor.send_string(command_json)
+        self.send_to_executor.send_pyobj(command)
+        response: SyncHFWeightResponse = self.recv_from_executor.recv_pyobj()
+        assert isinstance(response, SyncHFWeightResponse), (
+            f"Expected SyncHFWeightResponse, got {type(response)}"
+        )
+        assert response.command_id == command.command_id, (
+            f"Expected get {command.command_id}'s response, got, {response.command_id}"
+        )

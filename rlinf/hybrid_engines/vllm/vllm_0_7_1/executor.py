@@ -12,19 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import pickle
 import signal
 import tempfile
 import threading
 import time
 import weakref
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 import cloudpickle
 import psutil
 import zmq
-from pydantic import TypeAdapter, ValidationError
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
 from vllm.utils import get_distributed_init_method, get_open_port
@@ -40,7 +38,7 @@ from rlinf.workers.rollout.vllm.io_struct import (
     OffloadModelWeightCommand,
     SyncHFWeightCommand,
     VLLMCommand,
-    VLLMResponse,
+    WorkerReadyResponse,
 )
 
 logger = init_logger(__name__)
@@ -66,9 +64,6 @@ class VLLMExecutor(Executor):
         self.send_to_engine = context.socket(zmq.PUSH)
         self.send_to_engine.connect(self.executor_ipc_output_name)
 
-        self.command_parser = TypeAdapter(VLLMCommand)
-        self.response_parser = TypeAdapter(VLLMResponse)
-
         self.parent_address = parent_address
         self.placement = placement
         self.dp_rank = dp_rank
@@ -85,29 +80,23 @@ class VLLMExecutor(Executor):
         self._listen_engine_handle.start()
 
         super().__init__(vllm_config)
-        logger.info("VLLMExecutor initialized.")
+        logger.info("VLLMExecutor initialized.", flush=True)
 
-        
     def _listen_engine(self):
         while True:
             if self.recv_from_engine.poll(100):
                 try:
-                    json_str = self.recv_from_engine.recv_string(flags=zmq.NOBLOCK)
-                    parsed_command = self.command_parser.validate_json(json_str)
-                    handler = self.command_handlers.get(parsed_command.command_type)
+                    command: VLLMCommand = self.recv_from_engine.recv_pyobj()
+                    handler = self.command_handlers.get(command.command_type)
                     if handler:
-                        logger.debug(f"Handling command: {parsed_command}")
-                        handler(parsed_command)
+                        logger.debug(f"Handling command: {type(command)}")
+                        handler(command)
                     else:
-                        logger.warning(
-                            f"No handler for command type: {parsed_command.command_type}"
-                        )
+                        logger.warning(f"No handler for command type: {type(command)}")
                 except zmq.Again:
                     continue
-                except ValidationError as e:
-                    print(f"Failed to parse command: {e}")
-                except json.JSONDecodeError as e:
-                    print(f"Failed to decode JSON: {e}")
+                except Exception as e:
+                    logger.error(f"Failed to handle requests from engine: {e}")
 
     def _init_executor(self):
         self._finalizer = weakref.finalize(self, self.shutdown)
@@ -136,10 +125,13 @@ class VLLMExecutor(Executor):
         self.recv_from_workers = context.socket(zmq.PULL)
         self.recv_from_workers.bind(self.worker_output_ipc_name)
 
+        self.worker_response_poller = zmq.Poller()
+        self.worker_response_poller.register(self.recv_from_workers, zmq.POLLIN)
+
         self.workers: List[WorkerProcHandle] = []
 
         distributed_init_method = get_distributed_init_method(
-            "127.0.0.1",get_open_port()
+            "127.0.0.1", get_open_port()
         )
 
         for rank in range(self.tp_size):
@@ -153,18 +145,57 @@ class VLLMExecutor(Executor):
                 placement=self.placement,
                 vllm_config=self.vllm_config,
             )
-            logger.info(f"worker process created for rank:{rank}")
+            logger.info(f"worker process created for rank:{rank}", flush=True)
             self.workers.append(worker)
-            logger.info("all worker created!")
+            logger.info("all worker created!", flush=True)
+
+        ready_workers: Set[int] = set()
+
+        startup_timeout_seconds = 60  # TIMEOUT THRES
+        end_time = time.monotonic() + startup_timeout_seconds
+
+        while len(ready_workers) < self.tp_size:
+            remaining_time = (end_time - time.monotonic()) * 1000
+            if remaining_time <= 0:
+                raise TimeoutError(
+                    f"Executor initialization failed. Only {len(ready_workers)}/{self.tp_size} "
+                    f"workers reported ready within {startup_timeout_seconds} seconds. "
+                    f"Missing ranks: {set(range(self.tp_size)) - ready_workers}"
+                )
+
+            socks = dict(self.worker_response_poller.poll(timeout=int(remaining_time)))
+
+            if self.recv_from_workers in socks:
+                response: WorkerReadyResponse = self.recv_from_workers.recv_pyobj()
+                try:
+                    if isinstance(response, WorkerReadyResponse):
+                        if response.rank not in ready_workers:
+                            logger.info(f"Worker {response.rank} is ready.")
+                            ready_workers.add(response.rank)
+                        else:
+                            logger.warning(
+                                f"Received duplicate ready signal from worker {response.rank}."
+                            )
+                    else:
+                        logger.warning(
+                            f"Received unexpected response of type '{type(response)}' "
+                            "during initialization. Expecting 'worker_ready'."
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to parse response from a worker: {e}. Raw response: '{response}'"
+                    )
+        logger.info("All workers are ready. Executor initialization is complete.")
 
     def collective_rpc(
         self,
         method: Union[str, Callable],
         timeout: Optional[float] = None,
         args: Tuple = (),
-        kwargs: Optional[Dict] = None,
+        kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[Any]:
         kwargs = kwargs or {}
+        timeout_ms = -1 if timeout is None else int(timeout * 1000)
         try:
             if isinstance(method, str):
                 send_method = method
@@ -172,28 +203,51 @@ class VLLMExecutor(Executor):
                 send_method = cloudpickle.dumps(
                     method, protocol=pickle.HIGHEST_PROTOCOL
                 )
-            logger.info(f"Sending RPC request: {send_method}")
+            logger.info(f"Sending RPC request: {send_method}", flush=True)
             command = CollectiveRpcCommand(method=send_method, args=args, kwargs=kwargs)
 
-            self.send_to_workers.send_string(command.model_dump_json())
+            self.send_to_workers.send_pyobj(command)
+
+            responses_received = 0
             responses = [None] * self.world_size
-            logger.info(f"Waiting for {self.world_size} RPC responses")
-            for _ in range(self.world_size):
-                response_str: str = self.recv_from_workers.recv_string()
-                response: CollectiveRpcResponse = self.response_parser.validate_json(
-                    response_str
-                )
-                logger.info(f"received response from {response.rank} for command id :{response.command_id}")
-                # TODO(daibo): whether response's success should be checked here
-                if not response.success:
-                    logger.error(
-                        f"RPC command {response.command_id} failed on rank {response.rank} with error: {response.error}"
+            while responses_received < self.world_size:
+                socks = dict(self.worker_response_poller.poll(timeout=timeout_ms))
+                if self.recv_from_workers in socks:
+                    response: CollectiveRpcResponse = (
+                        self.recv_from_workers.recv_pyobj()
                     )
-                responses[response.rank] = response.data
+                    print(
+                        f"!!!! recevied collective rpc response : {response}",
+                        flush=True,
+                    )
+                    assert isinstance(response, CollectiveRpcResponse), (
+                        f"Expected CollectiveRpcResponse, got {type(response)}"
+                    )
+                    if response.command_id != command.command_id:
+                        logger.info(
+                            f"Received a stale RPC response for command {response.command_id}, expecting {command.command_id}. Discarding.",
+                            flush=True,
+                        )
+                        continue
+
+                    if responses[response.rank] is None:
+                        responses_received += 1
+
+                    responses[response.rank] = response.data
+
+                else:
+                    raise TimeoutError
+            return responses
+        except TimeoutError:
+            logger.error(
+                f"RPC call timed out after {timeout}s. "
+                f"Received {responses_received}/{self.world_size} responses.",
+                flush=True,
+            )
             return responses
         except Exception as e:
-            logger.fatal(f"VLLMExecutor.collective_rpc failed with exception: {e}")
-            raise e
+            logger.error(f"Error occurred during RPC call: {e}", flush=True)
+            return responses
 
     def check_health(self):
         self.collective_rpc("check_health")
