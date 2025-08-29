@@ -233,7 +233,38 @@ class RolloutResult:
         answers: Optional[List[List[int]]] = None,
         return_logprobs: bool = False,
     ) -> "RolloutResult":
-        return NotImplementedError
+        num_sequences = len(results)
+
+        prompt_lengths = []
+        prompt_ids = []
+        response_lengths = []
+        response_ids = []
+        logprobs = []
+        is_end = []
+        for res in results:
+            if res.prompt_token_ids is not None:
+                response_ids.append(res.prompt_token_ids)
+                response_lengths.append(len(res.prompt_token_ids))
+            else:
+                return NotImplementedError("should tokenize prompt.")
+            response_id = list(res.outputs[0].token_ids)
+            response_ids.append(response_id)
+            response_lengths.append(len(response_id))
+            is_end.append(res.finished)
+            print(f"response str is {res.outputs[0].text}", flush=True)
+        result: RolloutResult = RolloutResult(
+            num_sequence=num_sequences,
+            answers=answers,
+            prompt_ids=prompt_ids,
+            prompt_lengths=prompt_lengths,
+            response_ids=response_ids,
+            response_lengths=response_lengths,
+            is_end=is_end,
+        )
+        if return_logprobs:
+            result.rollout_logprobs = logprobs
+            raise NotImplementedError("should compute logprobs.")
+        return result
 
     @staticmethod
     def from_sglang_results(

@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import gc
 import os
 import signal
 import sys
@@ -31,11 +32,17 @@ from vllm.device_allocator.cumem import CuMemAllocator
 from vllm.distributed import destroy_distributed_environment, destroy_model_parallel
 from vllm.executor.multiproc_worker_utils import _add_prefix
 from vllm.logger import init_logger
+from vllm.model_executor import set_random_seed
 from vllm.utils import GiB_bytes, get_mp_context
 from vllm.v1.core.scheduler import SchedulerOutput
 from vllm.v1.kv_cache_interface import KVCacheSpec
 from vllm.v1.outputs import ModelRunnerOutput
+from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 from vllm.v1.worker.gpu_worker import Worker as _VllmInnerWorker
+from vllm.v1.worker.gpu_worker import (
+    _check_if_gpu_supports_dtype,
+    init_worker_distributed_environment,
+)
 from vllm.worker.worker_base import WorkerWrapperBase
 
 from rlinf.scheduler import Worker as _RLinfWorker
@@ -66,7 +73,7 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
         world_size: int,
     ):
         _RLinfWorker.__init__(
-            self, parent_address=parent_address, world_size=world_size, rank=local_rank
+            self, parent_address=parent_address, world_size=world_size, rank=rank
         )
         super().__init__(vllm_config, local_rank, rank, distributed_init_method)
 
@@ -111,12 +118,30 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
             src_group_name=self._actor_group_name, src_rank=self.actor_weight_rank
         )
 
-        model = self.model_runner.model
+        allocator = CuMemAllocator.get_instance()
+        allocator.wake_up()
 
+        model = self.model_runner.model
         if colocate:
-            pass
+            for name, handle in state_dict.items():
+                func, args = handle
+                list_args = list(args)
+                list_args[6] = torch.cuda.current_device()
+                new_weight = func(*list_args)
+                print(
+                    "load %s: w=%s %s %s",
+                    name,
+                    tuple(new_weight.shape),
+                    new_weight.dtype,
+                    new_weight.device,
+                )
+                # print("load %s: w.shape=%s dtype=%s dev=%s stride=%s shared=%s | p.shape=%s dtype=%s dev=%s",name, tuple(w.shape), w.dtype, w.device, w.stride(),getattr(w.untyped_storage(), "is_shared", lambda: False)(),tuple(p.shape), p.dtype, p.device)
+                # model.load_state_dict([(name, new_weight)])
+                model.load_weights([(name, new_weight)])
+                del new_weight
         else:
-            model.load_state_dict(state_dict)
+            model.load_weights(state_dict.items())
+        return CollectiveRpcResponse(rank=self._rank, data=None, success=True)
 
     @torch.inference_mode()
     def execute_model(self, scheduler_output: SchedulerOutput):
@@ -155,10 +180,13 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
     ) -> CollectiveRpcResponse:
         free_bytes_before_offload = torch.cuda.mem_get_info()[0]
         allocator = CuMemAllocator.get_instance()
-        allocator.sleep(offload_tags=("weights",))
-        free_bytes_after_offload, total = torch.cuda.mem_get_info()
-        freed_bytes = free_bytes_before_offload - free_bytes_after_offload
-        assert freed_bytes >= 0
+        allocator.sleep(offload_tags=())
+
+        free_bytes_after_offload = torch.cuda.mem_get_info()[0]
+        freed_bytes = free_bytes_after_offload - free_bytes_before_offload
+        assert freed_bytes >= 0, (
+            f"before offload:{free_bytes_before_offload}, after offload:{free_bytes_after_offload}"
+        )
         logger.info(
             "Vllm inner worker offload weights: offloaded %.2f GiB memory",
             freed_bytes / GiB_bytes,
@@ -175,6 +203,33 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
         return CollectiveRpcResponse(
             rank=self._rank, data=result if self._rank == 0 else None, success=True
         )
+
+    def init_device(self):
+        if self.device_config.device.type == "cuda":
+            os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
+            os.environ.pop("NCCL_ASYNC_ERROR_HANDLING", None)
+            # because of cuda_visible_devices, use rank in process group
+            self.device = torch.device(f"cuda:{self.rank}")
+            torch.cuda.set_device(self.device)
+
+            _check_if_gpu_supports_dtype(self.model_config.dtype)
+            gc.collect()
+            torch.cuda.empty_cache()
+            self.init_gpu_memory = torch.cuda.mem_get_info()[0]
+        else:
+            raise RuntimeError(f"Not support device type: {self.device_config.device}")
+        # Initialize the distributed environment.
+        init_worker_distributed_environment(
+            self.parallel_config,
+            self.rank,
+            self.distributed_init_method,
+            self.local_rank,
+        )
+        # Set random seed.
+        set_random_seed(self.model_config.seed)
+
+        # Construct the model runner
+        self.model_runner = GPUModelRunner(self.vllm_config, self.device)
 
 
 @dataclass
@@ -210,14 +265,14 @@ class ZmqWorkerProc:
         self.recv_from_executor.setsockopt_string(zmq.SUBSCRIBE, "")
         self.recv_from_executor.connect(self.worker_input_ipc_name)
 
-        wrapper = WorkerWrapperBase(vllm_config=vllm_config, rpc_rank=local_rank)
+        wrapper = WorkerWrapperBase(vllm_config=vllm_config, rpc_rank=rank)
         all_kwargs: List[Dict] = [
             {} for _ in range(vllm_config.parallel_config.tensor_parallel_size)
         ]
-        all_kwargs[local_rank] = {
+        all_kwargs[rank] = {
             "vllm_config": vllm_config,
             "local_rank": local_rank,
-            "rank": local_rank,
+            "rank": rank,
             "distributed_init_method": distributed_init_method,
             "world_size": vllm_config.parallel_config.world_size,
             "parent_address": parent_address,

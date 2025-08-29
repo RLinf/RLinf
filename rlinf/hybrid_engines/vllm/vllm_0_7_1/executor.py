@@ -36,7 +36,9 @@ from rlinf.workers.rollout.vllm.io_struct import (
     CollectiveRpcCommand,
     CollectiveRpcResponse,
     OffloadModelWeightCommand,
+    OffloadModelWeightResponse,
     SyncHFWeightCommand,
+    SyncHFWeightResponse,
     VLLMCommand,
     WorkerReadyResponse,
 )
@@ -56,7 +58,6 @@ class VLLMExecutor(Executor):
     ):
         self.executor_ipc_input_name = executor_ipc_input_name
         self.executor_ipc_output_name = executor_ipc_output_name
-
         context = zmq.Context()
         self.recv_from_engine = context.socket(zmq.PULL)
         self.recv_from_engine.connect(self.executor_ipc_input_name)
@@ -66,12 +67,13 @@ class VLLMExecutor(Executor):
 
         self.parent_address = parent_address
         self.placement = placement
+
         self.dp_rank = dp_rank
         self.tp_size = vllm_config.parallel_config.tensor_parallel_size
         # used by LLMengine to communicate straightly with executor
         self.command_handlers = {
             "sync_hf_weight": self.sync_hf_weight,
-            "offload_model_weights": self.offload_model_weights,
+            "offload_model_weight": self.offload_model_weights,
         }
 
         self._listen_engine_handle = threading.Thread(
@@ -84,15 +86,17 @@ class VLLMExecutor(Executor):
 
     def _listen_engine(self):
         while True:
-            if self.recv_from_engine.poll(100):
+            if self.recv_from_engine.poll():
                 try:
                     command: VLLMCommand = self.recv_from_engine.recv_pyobj()
                     handler = self.command_handlers.get(command.command_type)
                     if handler:
                         logger.debug(f"Handling command: {type(command)}")
-                        handler(command)
+                        response = handler(command)
                     else:
                         logger.warning(f"No handler for command type: {type(command)}")
+                        response = None
+                    self.send_to_engine.send_pyobj(response)
                 except zmq.Again:
                     continue
                 except Exception as e:
@@ -133,11 +137,16 @@ class VLLMExecutor(Executor):
         distributed_init_method = get_distributed_init_method(
             "127.0.0.1", get_open_port()
         )
-
+        print(f"placement rollout gpus: {self.placement._rollout_gpus}")
         for rank in range(self.tp_size):
+            print(
+                f"vllm_executor: local rank is : {self.placement._rollout_gpus[self.dp_rank * self.tp_size + rank]}"
+            )
             worker = ZmqWorkerProc.make_worker_process(
-                local_rank=rank,
-                rank=self.tp_size * self.dp_rank + rank,
+                local_rank=self.placement._rollout_gpus[
+                    self.dp_rank * self.tp_size + rank
+                ],
+                rank=rank,
                 worker_input_ipc_name=self.worker_input_ipc_name,
                 worker_output_ipc_name=self.worker_output_ipc_name,
                 distributed_init_method=distributed_init_method,
@@ -253,10 +262,14 @@ class VLLMExecutor(Executor):
         self.collective_rpc("check_health")
 
     def offload_model_weights(self, command: OffloadModelWeightCommand):
+        # TODO(daibo): add return value check
         self.collective_rpc("offload_model_weights", args=(command,))
+        return OffloadModelWeightResponse(command_id=command.command_id)
 
     def sync_hf_weight(self, command: SyncHFWeightCommand):
+        # TODO(daibo): add return value check
         self.collective_rpc("sync_hf_weight", args=(command,))
+        return SyncHFWeightResponse(command_id=command.command_id)
 
     def _ensure_worker_termination(self):
         def wait_for_termination(procs, timeout):

@@ -76,11 +76,15 @@ class VLLMWorker(Worker):
             gpu_memory_utilization=self._cfg.rollout.gpu_memory_utilization,
             enforce_eager=self._cfg.rollout.enforce_eager,
             enable_chunked_prefill=False,
+            enable_prefix_caching=False,
             task="generate",
             trust_remote_code=self._cfg.actor.tokenizer.trust_remote_code,
             max_model_len=self._cfg.runner.seq_length,
+            max_num_seqs=self._cfg.rollout.max_running_requests,
+            enable_sleep_mode=True,  # it enables offload weights
         )
         vllm_config: VllmConfig = engine_args.create_engine_config()
+
         self.log_info(f"[LLM dp {self._rank}] start to initialize VLLM engine")
         self._vllm_engine = VLLMEngine(
             rlinf_config=self._cfg,
