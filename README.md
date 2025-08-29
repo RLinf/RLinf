@@ -144,8 +144,13 @@ If you find **RLinf** helpful, please cite the GitHub repository:
 }
 ```
 
-**Paper**: A full paper describing RLinf will be released by **September 20, 2025**. We will update this section with the official citation and BibTeX when it becomes available.
+**Paper**: A full paper describing RLinf will be released by **September 20, 2025**. We will update this section with the official citation and BibTeX when they become available.
 
 **Acknowledgements**
 RLinf has been inspired by, and benefits from, the ideas and tooling of the broader open-source community.
 In particular, we would like to thank the teams and contributors behind VERL, AREAL, Megatron-LM, SGLang, and PyTorch Fully Sharded Data Parallel (FSDP), and if we have inadvertently missed your project or contribution, please open an issue or a pull request so we can properly credit you.
+
+**Contact:**
+We welcome applications from Postdocs, PhD/Master's students, and interns. Join us in shaping the future of RL infrastructure and embodied AI!
+- Chao Yu: zoeyuchao@gmail.com
+- Yu Wang: yu-wang@tsinghua.edu.cn
