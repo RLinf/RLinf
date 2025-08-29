@@ -278,9 +278,7 @@ def actor_loss_fn(
         # Take the maximum of clipped and unclipped losses
         pg_loss = (torch.max(pg_losses, pg_losses2) / loss_mask_ratio) * loss_mask
         pg_loss = pg_loss.mean()
-        pg_clipfrac = (
-            torch.gt(pg_losses2, pg_losses).float() / loss_mask_ratio
-        ) * loss_mask
+        pg_clipfrac = torch.gt(pg_losses2, pg_losses).float() * loss_mask
         pg_clipfrac = pg_clipfrac.mean()
     else:
         # Take the maximum of clipped and unclipped losses
