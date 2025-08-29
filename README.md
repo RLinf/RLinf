@@ -32,6 +32,14 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 **RLinf is unique with:**
 - Macro-to-Micro Flow: a new paradigm M2Flow, which executes macro-level logical flows through micro-level execution flows, decoupling logical workflow construction (programmable) from physical communication and scheduling (efficiency).
 
+- Flexible Execution Modes
+
+  - Collocated mode: shares all GPUs across all workers.
+  - Disaggregated mode: enables fine-grained pipelining.
+  - Hybrid mode: a customizable combination of different placement modes, integrating both collocated and disaggregated modes.
+
+- Auto-scheduling Strategy: automatically selects the most suitable execution mode based on the training workload, without the need for manual resource allocation.
+  
 - Embodied Agent Support
   - Fast adaptation support for mainstream VLA models: [OpenVLA](https://github.com/openvla/openvla), [OpenVLA-OFT](https://github.com/moojink/openvla-oft), and [π₀](https://github.com/Physical-Intelligence/openpi).
   - Support for mainstream CPU & GPU-based simulators via standardized RL interfaces: [ManiSkill3](https://github.com/haosulab/ManiSkill), [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO).
@@ -39,17 +47,10 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 **RLinf is fast with:**
 
-- Online Scaling Strategy: dynamically scales training resources, with GPU switching performed within seconds.
-- Auto-scheduling Strategy: automatically selects the most suitable execution mode based on the training workload.
-- Improves efficiency by 20-40% while preserving the on-policy property of RL algorithms.
+- Hybrid mode with fine-grained pipelining: achieves a **120%+** throughput improvement compared to other frameworks.
+- Automatic Online Scaling Strategy: dynamically scales training resources, with GPU switching completed within seconds, further improving efficiency by 20–40% while preserving the on-policy nature of RL algorithms.
 
 **RLinf is flexible and easy to use with:**
-
-- Flexible Execution Modes
-
-  - Collocated mode: shares all GPUs across all workers.
-  - Disaggregated mode: enables fine-grained pipelining.
-  - Hybrid mode: combines collocated and disaggregated modes—specially designed for VLA training in embodied intelligence.
 
 - Multiple Backend Integrations
 
@@ -70,7 +71,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 - [ ] Support for vLLM inference backend
 
 ### 2. Application-Level Extensions
-- [ ] Support for Vision-Language Model (VLM) training  
+- [ ] Support for Vision-Language Models (VLMs) training  
 - [ ] Support for deep searcher agent training  
 - [ ] Support for multi-agent training  
 - [ ] Support for integration with more embodied simulators (e.g., [Meta-World](https://github.com/Farama-Foundation/Metaworld), [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis))  
