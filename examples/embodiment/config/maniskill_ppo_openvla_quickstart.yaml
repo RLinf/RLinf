@@ -36,6 +36,7 @@ runner:
 algorithm:
   auto_reset: True
   ignore_terminations: True
+  use_fixed_reset_state_ids: False
   require_values: True
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty

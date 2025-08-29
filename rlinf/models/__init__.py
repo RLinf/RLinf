@@ -200,6 +200,10 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
         else:
             model = PeftModel.from_pretrained(model, cfg.lora_path, is_trainable=True)
 
+        if hasattr(model, "value_head"):
+            for param in model.value_head.parameters():
+                param.requires_grad = True
+
     if hasattr(cfg, "ckpt_path") and cfg.ckpt_path is not None:
         model_dict = torch.load(cfg.ckpt_path)
         model.load_state_dict(model_dict)

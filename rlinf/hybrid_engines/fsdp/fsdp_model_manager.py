@@ -103,7 +103,7 @@ class FSDPModelManager:
         self.model = FSDP(
             module,
             param_init_fn=init_fn,
-            use_orig_params=False,
+            use_orig_params=True,
             auto_wrap_policy=auto_wrap_policy,
             device_id=int(os.environ["LOCAL_RANK"]),
             sharding_strategy=sharding_strategy,  # zero3
@@ -111,6 +111,8 @@ class FSDPModelManager:
             sync_module_states=True,
         )
 
+        # NOTE: Currently we assume that only the value head contains "value_head" in its name.
+        # The value head only serves for value prediction in RL algorithms like PPO.
         param_groups = [
             {
                 "params": [

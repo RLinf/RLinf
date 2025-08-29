@@ -304,6 +304,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 prev_values = data["prev_values"]
                 loss_mask = data.get("loss_mask", None)
                 loss_mask_sum = data.get("loss_mask_sum", None)
+                max_episode_steps = self.cfg.env.train.max_episode_steps
 
                 loss, metrics_data = actor_loss_fn(
                     self.cfg.algorithm.loss_type,
@@ -324,6 +325,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     entropy_bonus=self.cfg.algorithm.entropy_bonus,
                     loss_mask=loss_mask,
                     loss_mask_sum=loss_mask_sum,
+                    max_episode_steps=max_episode_steps,
                 )
 
                 loss /= self.gradient_accumulation

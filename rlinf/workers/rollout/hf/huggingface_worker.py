@@ -135,9 +135,10 @@ class MultiStepRolloutWorker(Worker):
                 hidden_features = last_hidden_state[
                     :, -action_token_len
                 ]  # [batch_size, hidden_dim]
-                chunk_values = self.hf_model.value_head(
-                    hidden_features
-                )  # [batch_size, 1]
+                with torch.no_grad():
+                    chunk_values = self.hf_model.value_head(
+                        hidden_features
+                    )  # [batch_size, 1]
 
         if chunk_values is None:
             chunk_values = torch.zeros_like(chunk_logprobs[..., :1])

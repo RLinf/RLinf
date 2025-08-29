@@ -6,6 +6,7 @@ seed: 0
 num_group: ${algorithm.num_group_envs}
 group_size: ${algorithm.group_size}
 use_fixed_reset_state_ids: ${algorithm.use_fixed_reset_state_ids}
+max_episode_steps: 80
 only_eval: False
 
 video_cfg:
@@ -14,7 +15,7 @@ video_cfg:
   video_base_dir: ${runner.logger.log_path}/video/train
 
 init_params:
-  id: "PutCarrotOnPlateInScene-v1"
+  id: "PutCarrotOnPlateInScene-v2"
   num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
   obs_mode: "rgb+segmentation"
   control_mode: None
@@ -22,7 +23,7 @@ init_params:
   sim_config:
     sim_freq: 500
     control_freq: 5
-  max_episode_steps: 80 # 100
+  max_episode_steps: ${env.train.max_episode_steps}
   sensor_configs:
     shader_pack: "default"
   render_mode: all

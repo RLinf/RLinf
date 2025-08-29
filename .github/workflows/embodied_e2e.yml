@@ -38,7 +38,7 @@ jobs:
     openvla-ppo-test:
         runs-on: rlinf
         container:
-            image: rlinf/rlinf:agentic-openvla-rlinf0.1-torch2.5.1
+            image: rlinf/rlinf:agentic-openvla-rlinf0.1-torch2.5.1-transformer4.40
             volumes:
                 - /mnt/public/dataset:/workspace/dataset
                 - /mnt/public/tokenizer:/workspace/tokenizer
