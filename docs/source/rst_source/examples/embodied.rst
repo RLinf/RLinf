@@ -1,8 +1,9 @@
 Agentic RL-VLA
 ========================
 
-This document provides a comprehensive guide to launching and managing the VLA (Vision-Language-Action) embodied agent training task within the RLinf framework, 
-focusing on training a VLA model for robotic manipulation in the ManiSkill3 environment. 
+This document provides a comprehensive guide to launching and managing the 
+Vision-Language-Action Models (VLAs) training task within the RLinf framework, 
+focusing on finetuning a VLA model for robotic manipulation in the ManiSkill3 environment. 
 
 The primary objective is to develop a model capable of performing robotic manipulation by:
 

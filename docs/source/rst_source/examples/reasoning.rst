@@ -121,7 +121,7 @@ Final Performance
 
 We provide an evaluation `toolkit <https://github.com/RLinf/LLMEvalKit>`_ and corresponding :doc:`evaluation documentation <../start/eval>`.
 
-Measured performance on AIME24, AIME25, and GPQA-diamond shows RLinf achieves results comparable to or better than AReaL.
+Measured performance on AIME24, AIME25, and GPQA-diamond shows RLinf achieves SOTA performance.
 
 .. list-table:: **1.5 B model results**
    :header-rows: 1
