@@ -79,6 +79,10 @@ algorithm:
     max_length: 1024
     min_length: 1
 
+  filter_accuracy: True
+  accuracy_lower_bound: 0.6
+  accuracy_upper_bound: 0.9
+
 env:
   group_name: "EnvGroup"
   channel:
