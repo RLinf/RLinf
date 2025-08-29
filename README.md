@@ -15,7 +15,7 @@
   <sub>RLinf: Reinforcement Learning Infrastructure for Agentic AI</sub>
 </h1>
 
-RLinf is a flexible and scalable open-source infrastructure designed for post-training foundation models via reinforcement learning. The 'inf' in RLinf stands for Infrastructure, highlighting its role as a robust backbone for next-generation training. It also stands for Infinite, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
+RLinf is a flexible and scalable open-source infrastructure designed for post-training foundation models via reinforcement learning. The 'inf' in RLinf stands for `Infrastructure`, highlighting its role as a robust backbone for next-generation training. It also stands for `Infinite`, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
 
 
 <div align="center">
@@ -23,7 +23,8 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 </div>
 
 ## What's NEW!
-- [2025/08] RLinf is open-sourced. The formal v0.1 will be released soon. The technical report [RLinf: Reinforcement Learning Infrastructure for Agentic AI]() will also be released accordingly. 
+- [2025/08] RLinf v0.1 is open-sourced. The paper [RLinf: A System for Adaptive, Dynamic, Fine-Grained Scheduling
+in Reinforcement Learning]() will also be released accordingly. 
 
 ## Key Features
 
@@ -31,6 +32,14 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 **RLinf is unique with:**
 - Macro-to-Micro Flow: a new paradigm M2Flow, which executes macro-level logical flows through micro-level execution flows, decoupling logical workflow construction (programmable) from physical communication and scheduling (efficiency).
 
+- Flexible Execution Modes
+
+  - Collocated mode: shares all GPUs across all workers.
+  - Disaggregated mode: enables fine-grained pipelining.
+  - Hybrid mode: a customizable combination of different placement modes, integrating both collocated and disaggregated modes.
+
+- Auto-scheduling Strategy: automatically selects the most suitable execution mode based on the training workload, without the need for manual resource allocation.
+  
 - Embodied Agent Support
   - Fast adaptation support for mainstream VLA models: [OpenVLA](https://github.com/openvla/openvla), [OpenVLA-OFT](https://github.com/moojink/openvla-oft), and [π₀](https://github.com/Physical-Intelligence/openpi).
   - Support for mainstream CPU & GPU-based simulators via standardized RL interfaces: [ManiSkill3](https://github.com/haosulab/ManiSkill), [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO).
@@ -38,17 +47,10 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 **RLinf is fast with:**
 
-- Online Scaling Strategy: dynamically scales training resources, with GPU switching performed within seconds.
-- Auto-scheduling Strategy: automatically selects the most suitable execution mode based on the training workload.
-- Improves efficiency by 20-40% while preserving the on-policy property of RL algorithms.
+- Hybrid mode with fine-grained pipelining: achieves a **120%+** throughput improvement compared to other frameworks.
+- Automatic Online Scaling Strategy: dynamically scales training resources, with GPU switching completed within seconds, further improving efficiency by 20–40% while preserving the on-policy nature of RL algorithms.
 
 **RLinf is flexible and easy to use with:**
-
-- Flexible Execution Modes
-
-  - Collocated mode: shares all GPUs across all workers.
-  - Disaggregated mode: enables fine-grained pipelining.
-  - Hybrid mode: combines collocated and disaggregated modes—specially designed for VLA training in embodied intelligence.
 
 - Multiple Backend Integrations
 
@@ -73,9 +75,9 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 - [ ] Support for deep searcher agent training  
 - [ ] Support for multi-agent training  
 - [ ] Support for integration with more embodied simulators (e.g., [Meta-World](https://github.com/Farama-Foundation/Metaworld), [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis))  
-- [ ] Support for more Vision-Language-Action models (VLAs), such as [GR00T](https://github.com/NVIDIA/Isaac-GR00T)
+- [ ] Support for more Vision Language Action models (VLAs), such as [GR00T](https://github.com/NVIDIA/Isaac-GR00T)
 - [ ] Support for world model   
-- [ ] Support for real-world RL.
+- [ ] Support for real-world RL embodied intelligence
 
 
 ## Getting Started 
@@ -142,8 +144,13 @@ If you find **RLinf** helpful, please cite the GitHub repository:
 }
 ```
 
-**Paper**: A full paper describing RLinf will be released by **September 20, 2025**. We will update this section with the official citation and BibTeX when it becomes available.
+**Paper**: A full paper describing RLinf will be released by **September 20, 2025**. We will update this section with the official citation and BibTeX when they become available.
 
 **Acknowledgements**
 RLinf has been inspired by, and benefits from, the ideas and tooling of the broader open-source community.
-In particular, we would like to thank the teams and contributors behind VeRL, Areal, Megatron-LM, SGLang, and PyTorch Fully Sharded Data Parallel (FSDP), and if we have inadvertently missed your project or contribution, please open an issue or a pull request so we can properly credit you.
+In particular, we would like to thank the teams and contributors behind VeRL, AReaL, Megatron-LM, SGLang, and PyTorch Fully Sharded Data Parallel (FSDP), and if we have inadvertently missed your project or contribution, please open an issue or a pull request so we can properly credit you.
+
+**Contact:**
+We welcome applications from Postdocs, PhD/Master's students, and interns. Join us in shaping the future of RL infrastructure and embodied AI!
+- Chao Yu: zoeyuchao@gmail.com
+- Yu Wang: yu-wang@tsinghua.edu.cn

@@ -1,10 +1,11 @@
 Comparison with VeRL
 =======================
 
-Last updated: 07/22/2025.
+Last updated: 08/04/2025.
 
 This document provides a comprehensive guide for benchmarking VeRL, including environment setup, configuration options, and performance results.
 VeRL is a high-performance framework for training large language models using reinforcement learning techniques (GRPO, PPO, etc.).
+However, VeRL currently supports only the collocated mode, so we compare it with RLinf in collocated mode as well to ensure a fair evaluation.
 
 Environment Setup
 ------------------

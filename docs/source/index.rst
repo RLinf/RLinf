@@ -3,10 +3,12 @@
    :align: center
    :class: logo-svg
 
-Welcome to **RLinf**!
-=====================
+.. raw:: html
 
-RLinf is a flexible and scalable open-source infrastructure designed for post-training foundation models via reinforcement learning. The 'inf' in RLinf stands for Infrastructure, highlighting its role as a robust backbone for next-generation training. It also stands for Infinite, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
+   <h1 style="text-align: center;">Welcome to <b>RLinf</b>!</h1>
+
+
+RLinf is a flexible and scalable open-source infrastructure designed for post-training foundation models via reinforcement learning. The 'inf' in RLinf stands for `Infrastructure`, highlighting its role as a robust backbone for next-generation training. It also stands for `Infinite`, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
 
 ----------------
 
@@ -21,6 +23,14 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 - Macro-to-Micro Flow: a new paradigm M2Flow, which executes macro-level logical flows through micro-level execution flows, decoupling logical workflow construction (programmable) from physical communication and scheduling (efficiency).
 
+- Flexible Execution Modes
+
+  - Collocated mode: shares all GPUs across all workers.
+  - Disaggregated mode: enables fine-grained pipelining.
+  - Hybrid mode: a customizable combination of different placement modes, integrating both collocated and disaggregated modes.
+
+- Auto-scheduling Strategy: automatically selects the most suitable execution mode based on the training workload, without the need for manual resource allocation.
+  
 - Embodied Agent Support
 
   - Fast adaptation support for mainstream VLA models: `OpenVLA`_, `OpenVLA-OFT`_, `π₀`_
@@ -29,9 +39,8 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 **RLinf is fast with:**
 
-- Online Scaling Strategy: dynamically scales training resources, with GPU switching performed within seconds.
-- Auto-scheduling Strategy: automatically selects the most suitable execution mode based on the training workload.
-- Improves efficiency by 20-40% while preserving the on-policy property of RL algorithms.
+- Hybrid mode with fine-grained pipelining: achieves a **120%+** throughput improvement compared to other frameworks.
+- Automatic Online Scaling Strategy: dynamically scales training resources, with GPU switching completed within seconds, further improving efficiency by 20–40% while preserving the on-policy nature of RL algorithms.
 
 **RLinf is flexible and easy to use with:**
 

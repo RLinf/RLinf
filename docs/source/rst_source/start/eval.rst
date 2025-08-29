@@ -35,7 +35,7 @@ To run evaluation on a single dataset:
 
 .. code-block:: bash
 
-   MODEL_NAME_OR_PATH=/model/path  # TODO: replace with your model path
+   MODEL_NAME_OR_PATH=/model/path  # replace with your model path
    OUTPUT_DIR=${MODEL_NAME_OR_PATH}/math_eval
    SPLIT="test"
    NUM_TEST_SAMPLE=-1

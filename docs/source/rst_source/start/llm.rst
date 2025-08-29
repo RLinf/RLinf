@@ -63,6 +63,15 @@ You can dynamically set it to **1, 2, 4, or 8** depending on your available reso
      component_placement:
         actor,rollout: all
 
+Finally, before running the script, you need to modify the corresponding configuration options in the YAML file according to the download paths of the model and dataset. Specifically, update:
+
+- ``rollout.model_dir``
+- ``data.train_data_paths``
+- ``data.val_data_paths``
+- ``actor.tokenizer.tokenizer_model``
+
+After these modifications, launch the following script to start training!
+
 
 .. code-block:: bash
 
