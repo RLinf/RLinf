@@ -29,7 +29,7 @@ The system automatically handles:
 Why is Online Scaling Important?
 --------------------------------
 
-When using RLInf's disaggregated mode with fine-grained pipelining,  
+When using RLinf's disaggregated mode with fine-grained pipelining,  
 the rollout and inference stages are completed before the actor stage finishes.  
 At this point, the resources used for rollout and inference can be reallocated to the actor stage **within seconds**,  
 accelerating actor training and improving overall system performance.

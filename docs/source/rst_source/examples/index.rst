@@ -7,9 +7,9 @@ demonstrating its efficiency in practice.
 
 At present, we provide two major categories of examples:
 
-- **Embodied (Agentic) Scenarios**: Training **VLA** models for embodied intelligence.  
+- **Embodied Agent Scenario**: Training **VLA** models for embodied intelligence.  
   See :doc:`embodied`.
-- **Reasoning Scenarios**: Training **LLM** models for advanced reasoning tasks.  
+- **Reasoner Scenario**: Training **LLM** models for advanced reasoning tasks.  
   See :doc:`reasoning`.
 
 The example gallery will continue to expand with new scenarios and tasks over time, 

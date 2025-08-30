@@ -17,7 +17,7 @@ Environment
 
 **ManiSkill3 Environment**
 
-- **Environment**: ManiSkill2 simulation platform
+- **Environment**: ManiSkill3 simulation platform
 - **Task**: Control a robotic arm to grasp a variety of objects
 - **Observation**: RGB images (224×224) from a third-person camera
 - **Action Space**: 7-dimensional continuous actions
@@ -54,7 +54,7 @@ Algorithm
 
    - Entropy regularization
 
-2. **Vision-Language Model**
+2. **Vision-Language-Action Model**
 
    - OpenVLA architecture with multimodal fusion
 
@@ -181,7 +181,7 @@ Visualization and Results
          project_name: "RLinf"
          experiment_name: "openvla-maniskill"
 
-Using a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) achieved up to 90% accuracy on ManiSkill3 within 48h and 24h of training, respectively.
+On a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) achieved up to 90% accuracy on ManiSkill3’s plate-25-main task, following 48 hours and 24 hours of training, respectively.
 
 .. raw:: html
 
@@ -198,7 +198,7 @@ Using a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) achiev
 
 
 The animation below shows the results of training the OpenVLA model on ManiSkill3's multi-task benchmark 
-using the PPO algorithm within the RLInf framework.
+using the PPO algorithm within the RLinf framework.
 
 .. raw:: html
 

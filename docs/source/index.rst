@@ -44,12 +44,6 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 **RLinf is flexible and easy to use with:**
 
-- Flexible Execution Modes
-
-  - Collocated mode: shares all GPUs across all workers.
-  - Disaggregated mode: enables fine-grained pipelining.
-  - Hybrid mode: combines collocated and disaggregated modes—specially designed for VLA training in embodied intelligence.
-
 - Multiple Backend Integrations
 
   .. - A single unified interface drives two complementary backends, allowing seamless switching without code changes.
