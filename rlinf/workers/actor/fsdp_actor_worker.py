@@ -21,7 +21,7 @@ from omegaconf import DictConfig
 from torch.distributed.device_mesh import init_device_mesh
 from tqdm import tqdm
 
-import rlinf.algorithms
+import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import actor_loss, calculate_adv_and_returns
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,

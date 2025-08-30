@@ -26,7 +26,7 @@ from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig
 from torch.multiprocessing.reductions import reduce_tensor
 
-import rlinf.algorithms
+import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import (
     actor_loss,
     calculate_adv_and_returns,
@@ -37,7 +37,6 @@ from rlinf.hybrid_engines.megatron.megatron_model_manager import (
     MegatronModelManager,
 )
 from rlinf.scheduler import Channel, Worker
-from tools.math_verifier.verify import math_verify_call
 from rlinf.utils.data_iter_utils import (
     get_iterator_dynamic,
     get_iterator_k_split,
@@ -78,6 +77,7 @@ from rlinf.workers.rollout.utils import (
     DisaggRankMapper,
     HybridRankMapper,
 )
+from tools.math_verifier.verify import math_verify_call
 
 
 class MegatronActor(MegatronModelManager, Worker):
