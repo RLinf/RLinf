@@ -35,7 +35,7 @@ from vllm.logger import init_logger
 from vllm.model_executor import set_random_seed
 from vllm.utils import GiB_bytes, get_mp_context
 from vllm.v1.core.scheduler import SchedulerOutput
-from vllm.v1.kv_cache_interface import KVCacheSpec
+from vllm.v1.kv_cache_interface import KVCacheConfig, KVCacheSpec
 from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 from vllm.v1.worker.gpu_worker import Worker as _VllmInnerWorker
@@ -122,6 +122,9 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
         allocator.wake_up()
 
         model = self.model_runner.model
+
+        self.restore_named_buffers()
+
         if colocate:
             for name, handle in state_dict.items():
                 func, args = handle
@@ -154,7 +157,7 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
         kv_cache_spec: KVCacheSpec = super().get_kv_cache_spec()
         return CollectiveRpcResponse(rank=self._rank, data=kv_cache_spec, success=True)
 
-    def initialize_cache(self, kv_cache_config) -> CollectiveRpcResponse:
+    def initialize_cache(self, kv_cache_config: KVCacheConfig) -> CollectiveRpcResponse:
         result: None = super().initialize_cache(kv_cache_config)
         return CollectiveRpcResponse(rank=self._rank, data=result, success=True)
 
@@ -178,10 +181,13 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
     def offload_model_weights(
         self, command: OffloadModelWeightCommand
     ) -> CollectiveRpcResponse:
+        model = self.model_runner.model
+        for name, buffer in model.named_buffers(recurse=True):
+            print(f"named_buffer when offload: name: {name}, buffer:{buffer}")
+
         free_bytes_before_offload = torch.cuda.mem_get_info()[0]
         allocator = CuMemAllocator.get_instance()
         allocator.sleep(offload_tags=())
-
         free_bytes_after_offload = torch.cuda.mem_get_info()[0]
         freed_bytes = free_bytes_after_offload - free_bytes_before_offload
         assert freed_bytes >= 0, (
@@ -230,6 +236,21 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
 
         # Construct the model runner
         self.model_runner = GPUModelRunner(self.vllm_config, self.device)
+
+    def save_named_buffers(self) -> None:
+        model = self.model_runner.model
+        saved_buffers = {}
+        for name, buffer in model.named_buffers(recurse=True):
+            saved_buffers[name] = buffer.detach().cpu()
+        logger.info(f"vllm worker saved named buffers: {list(saved_buffers.keys())}")
+        self.saved_buffers = saved_buffers
+
+    def restore_named_buffers(self) -> None:
+        model = self.model_runner.model
+        for name, buffer in model.named_buffers(recurse=True):
+            if name in self.saved_buffers:
+                buffer.copy_(self.saved_buffers[name].to(buffer.device))
+        logger.info("vllm worker restored named buffers from saved buffers")
 
 
 @dataclass
@@ -289,25 +310,14 @@ class ZmqWorkerProc:
         _add_prefix(
             sys.stderr, f"VllmZmqWorker[rank={rank},local_rank={local_rank}]", pid
         )
-        print(
-            f"VllmZmqWorker proc started, rank:{rank}, local_rank:{local_rank}, pid:{pid}",
-            flush=True,
-        )
         self.worker.init_device()
-        print(
-            f"Vllm inner worker device initialized, rank:{rank}, local_rank:{local_rank}, pid:{pid}",
-            flush=True,
-        )
         self.worker.load_model()
-        print(
-            f"Vllm inner worker model loaded, rank:{rank}, local_rank:{local_rank}, pid:{pid}",
-            flush=True,
-        )
+        # after load_model, we should save it's named_buffers to implement sync weight
+        self.worker.save_named_buffers()
 
-        # send ready reponse to executor
+        # send ready response to executor
         command: WorkerReadyResponse = WorkerReadyResponse(rank=self.rank)
         self.send_to_executor.send_pyobj(command)
-        print("Send ready response to Executor finished.")
 
     @staticmethod
     def worker_main(*args, **kwargs):
