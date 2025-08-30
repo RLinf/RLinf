@@ -243,15 +243,16 @@ class RolloutResult:
         is_end = []
         for res in results:
             if res.prompt_token_ids is not None:
-                response_ids.append(res.prompt_token_ids)
-                response_lengths.append(len(res.prompt_token_ids))
+                prompt_ids.append(res.prompt_token_ids)
+                prompt_lengths.append(len(res.prompt_token_ids))
             else:
                 return NotImplementedError("should tokenize prompt.")
             response_id = list(res.outputs[0].token_ids)
             response_ids.append(response_id)
             response_lengths.append(len(response_id))
             is_end.append(res.finished)
-            print(f"response str is {res.outputs[0].text}", flush=True)
+            prompt_lengths
+
         result: RolloutResult = RolloutResult(
             num_sequence=num_sequences,
             answers=answers,

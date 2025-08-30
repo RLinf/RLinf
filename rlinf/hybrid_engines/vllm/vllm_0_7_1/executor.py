@@ -137,9 +137,8 @@ class VLLMExecutor(Executor):
         distributed_init_method = get_distributed_init_method(
             "127.0.0.1", get_open_port()
         )
-        print(f"placement rollout gpus: {self.placement._rollout_gpus}")
         for rank in range(self.tp_size):
-            print(
+            logger.info(
                 f"vllm_executor: local rank is : {self.placement._rollout_gpus[self.dp_rank * self.tp_size + rank]}"
             )
             worker = ZmqWorkerProc.make_worker_process(
@@ -212,7 +211,7 @@ class VLLMExecutor(Executor):
                 send_method = cloudpickle.dumps(
                     method, protocol=pickle.HIGHEST_PROTOCOL
                 )
-            logger.info(f"Sending RPC request: {send_method}", flush=True)
+            logger.debug(f"Sending RPC request: {send_method}", flush=True)
             command = CollectiveRpcCommand(method=send_method, args=args, kwargs=kwargs)
 
             self.send_to_workers.send_pyobj(command)
@@ -225,15 +224,15 @@ class VLLMExecutor(Executor):
                     response: CollectiveRpcResponse = (
                         self.recv_from_workers.recv_pyobj()
                     )
-                    print(
-                        f"!!!! recevied collective rpc response : {response}",
+                    logger.debug(
+                        f"recevied collective rpc response : {response}",
                         flush=True,
                     )
                     assert isinstance(response, CollectiveRpcResponse), (
                         f"Expected CollectiveRpcResponse, got {type(response)}"
                     )
                     if response.command_id != command.command_id:
-                        logger.info(
+                        logger.error(
                             f"Received a stale RPC response for command {response.command_id}, expecting {command.command_id}. Discarding.",
                             flush=True,
                         )

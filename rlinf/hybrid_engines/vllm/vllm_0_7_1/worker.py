@@ -131,15 +131,7 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
                 list_args = list(args)
                 list_args[6] = torch.cuda.current_device()
                 new_weight = func(*list_args)
-                print(
-                    "load %s: w=%s %s %s",
-                    name,
-                    tuple(new_weight.shape),
-                    new_weight.dtype,
-                    new_weight.device,
-                )
-                # print("load %s: w.shape=%s dtype=%s dev=%s stride=%s shared=%s | p.shape=%s dtype=%s dev=%s",name, tuple(w.shape), w.dtype, w.device, w.stride(),getattr(w.untyped_storage(), "is_shared", lambda: False)(),tuple(p.shape), p.dtype, p.device)
-                # model.load_state_dict([(name, new_weight)])
+
                 model.load_weights([(name, new_weight)])
                 del new_weight
         else:
@@ -181,10 +173,6 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
     def offload_model_weights(
         self, command: OffloadModelWeightCommand
     ) -> CollectiveRpcResponse:
-        model = self.model_runner.model
-        for name, buffer in model.named_buffers(recurse=True):
-            print(f"named_buffer when offload: name: {name}, buffer:{buffer}")
-
         free_bytes_before_offload = torch.cuda.mem_get_info()[0]
         allocator = CuMemAllocator.get_instance()
         allocator.sleep(offload_tags=())
@@ -193,7 +181,7 @@ class VLLMWorker(_VllmInnerWorker, _RLinfWorker):
         assert freed_bytes >= 0, (
             f"before offload:{free_bytes_before_offload}, after offload:{free_bytes_after_offload}"
         )
-        logger.info(
+        logger.debug(
             "Vllm inner worker offload weights: offloaded %.2f GiB memory",
             freed_bytes / GiB_bytes,
         )
@@ -376,7 +364,7 @@ class ZmqWorkerProc:
         )
 
         proc.start()
-        print(f"proc started, return handle for rank:{rank}", flush=True)
+        logger.debug(f"proc started, return handle for rank:{rank}", flush=True)
         return ZmqWorkerProcHandle(proc=proc, rank=rank)
 
     def shutdown(self):
@@ -391,12 +379,12 @@ class ZmqWorkerProc:
     def worker_busy_loop(self):
         while True:
             try:
-                print("Vllm inner worker waiting for command...", flush=True)
+                logger.debug("Vllm inner worker waiting for command...", flush=True)
                 command: CollectiveRpcCommand = self.recv_from_executor.recv_pyobj()
                 assert isinstance(command, CollectiveRpcCommand), (
                     f"Expected CollectiveRpcCommand, got {type(command)}"
                 )
-                print(f"received rpc method call: {command.method}")
+                logger.debug(f"received rpc method call: {command.method}")
                 if isinstance(command.method, str):
                     func = getattr(self.worker, command.method, None)
                 elif isinstance(command.method, bytes):
