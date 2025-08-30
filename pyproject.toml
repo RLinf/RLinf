@@ -64,7 +64,7 @@ embodied = [
     "tensorflow_graphics",
     "peft==0.11.1",
     "timm==0.9.10",
-    "mani_skill",
+    "mani_skill @ git+https://github.com/haosulab/ManiSkill.git",
     "tensordict",
     "libero @ git+https://github.com/Lifelong-Robot-Learning/LIBERO.git"
 ]
