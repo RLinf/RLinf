@@ -27,7 +27,7 @@ from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
-from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
+from rlinf.workers.rollout.sglang.sglang_worker import AsyncSGLangWorker, SGLangWorker
 
 """Script to start GRPO training"""
 mp.set_start_method("spawn", force=True)
@@ -46,7 +46,12 @@ def main(cfg) -> None:
 
     # Rollout group
     rollout_placement_strategy = component_placement.get_strategy("rollout")
-    rollout_group = SGLangWorker.create_group(cfg, component_placement).launch(
+    SGLangWorkerCls = (
+        SGLangWorker
+        if component_placement.placement_mode == PlacementMode.COLLOCATED
+        else AsyncSGLangWorker
+    )
+    rollout_group = SGLangWorkerCls.create_group(cfg, component_placement).launch(
         cluster,
         name=cfg.rollout.group_name,
         placement_strategy=rollout_placement_strategy,
@@ -54,7 +59,10 @@ def main(cfg) -> None:
 
     # Inference group
     inference_group = None
-    if component_placement.placement_mode == PlacementMode.DISAGGREGATED:
+    if (
+        component_placement.placement_mode == PlacementMode.DISAGGREGATED
+        and cfg.algorithm.recompute_logprobs
+    ):
         inference_placement_strategy = component_placement.get_strategy("inference")
         inference_group = MegatronInference.create_group(
             cfg, component_placement

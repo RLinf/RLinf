@@ -163,37 +163,40 @@ class SGLangWorker(Worker):
         self._engine.sync_hf_weight()
 
     def rollout(self, input_channel: Channel, output_channel: Channel):
-        while True:
-            request: RolloutRequest = input_channel.get()
+        request: RolloutRequest = input_channel.get()
 
-            # Check if rollout has ended
-            if request is None:
-                self._stop()
-                break
+        # Repeat prompts based on the group_size config
+        requests = request.repeat_and_split(self._rollout_batch_size)
 
-            # Repeat prompts based on the group_size config
-            requests = request.repeat_and_split(self._rollout_batch_size)
+        rollout_results = []
+        for request in requests:
+            # Generate outputs using the SGLang engine.
+            results = self._engine.generate(
+                input_ids=request.input_ids,
+                sampling_params=self._sampling_params,
+                return_logprob=self._return_logprobs,
+            )
 
-            rollout_results = []
-            for request in requests:
-                # Generate outputs using the SGLang engine.
-                results = self._engine.generate(
-                    input_ids=request.input_ids,
-                    sampling_params=self._sampling_params,
-                    return_logprob=self._return_logprobs,
-                )
+            # Create RolloutResult from the outputs.
+            rollout_result = RolloutResult.from_engine_results(
+                results,
+                request.n,
+                request.input_ids,
+                request.answers,
+                self._return_logprobs,
+            )
+            rollout_results.append(rollout_result)
 
-                # Create RolloutResult from the outputs.
-                rollout_result = RolloutResult.from_engine_results(
-                    results, request.input_ids, request.answers, self._return_logprobs
-                )
-                rollout_results.append(rollout_result)
+            # Put and print results
+            if self._cfg.rollout.print_outputs:
+                prompts = self._tokenizer.batch_decode(request.input_ids)
+                print_sglang_outputs(prompts, results, self._tokenizer)
 
-                # Put and print results
-                if self._cfg.rollout.print_outputs:
-                    prompts = self._tokenizer.batch_decode(request.input_ids)
-                    print_sglang_outputs(prompts, results, self._tokenizer)
-            output_channel.put(rollout_results)
+        # Stop and offload SGLang first before putting into channel
+        # This avoids running SGLang and Megatron simultaneously
+        self._stop()
+        rollout_result = RolloutResult.merge_result_list(rollout_results)
+        output_channel.put(rollout_result)
 
 
 def all_floats_equal(float_list: list[float], epsilon: float = 1e-9) -> bool:
@@ -217,12 +220,6 @@ class AsyncSGLangWorker(SGLangWorker):
         self._sync_weight_end_event = asyncio.Event()
 
         self._reward_model = MathRewardModel(scale=self._cfg.reward.reward_scale)
-
-        self._channel = self.connect_channel(self._cfg.rollout.channel.name)
-
-        # all sglang dp will get input from the same queue, and put the results to another same queue.
-        self._input_queue_name = self._cfg.rollout.channel.queue_name
-        self._output_queue_name = self._cfg.rollout.channel.output_queue_name
         assert self._rollout_batch_size is None, (
             "rollout_batch_size_per_gpu is not supported in AsyncSGLangWorker"
         )
@@ -278,18 +275,17 @@ class AsyncSGLangWorker(SGLangWorker):
         result = await self._engine.async_generate(
             input_ids=input_ids,
             sampling_params=sampling_params,
+            return_logprob=self._return_logprobs,
         )
         # SGLang does not return input_ids, so we need to pass them for further usage.
         return raw_id, input_ids, result
 
-    async def _put_result_to_output_queue(self, result: RolloutResult):
-        await self._channel.put(
-            item=result, queue_name=self._output_queue_name, async_op=True
-        ).async_wait()
+    async def _put_result(self, result: RolloutResult, output_channel: Channel):
+        await output_channel.put(item=result, async_op=True).async_wait()
 
-    async def rollout(self):
-        rollout_request: RolloutRequest = await self._channel.get(
-            queue_name=self._input_queue_name, async_op=True
+    async def rollout(self, input_channel: Channel, output_channel: Channel):
+        rollout_request: RolloutRequest = await input_channel.get(
+            async_op=True
         ).async_wait()
         self._current_request = rollout_request
         self._completion_info.clear_and_set(rollout_request)
@@ -332,12 +328,19 @@ class AsyncSGLangWorker(SGLangWorker):
                         continue
 
                 input_ids = [input_ids] * len(results)
-                rollout_result = RolloutResult.from_engine_results(results, input_ids)
-                rollout_result.rewards = rewards
+                rollout_result = RolloutResult.from_engine_results(
+                    results,
+                    rollout_request.n,
+                    input_ids,
+                    return_logprobs=self._return_logprobs,
+                )
+                rollout_result.rewards = torch.tensor(
+                    rewards, dtype=torch.float32
+                ).reshape(1, -1)
                 rollout_result.advantages = advantages
                 return_tasks.append(
                     asyncio.create_task(
-                        self._put_result_to_output_queue(rollout_result)
+                        self._put_result(rollout_result, output_channel)
                     )
                 )
 

@@ -50,7 +50,7 @@ algorithm:
   # val rollout mbs
   val_rollout_batch_size_per_gpu: 4 # ${.rollout_batch_size_per_gpu}
 
-  recompute_logprobs: True
+  recompute_logprobs: False
   shuffle_rollout: False
 
   # GRPO loss params
@@ -136,7 +136,7 @@ actor:
   offload_weight: True
   offload_grad: True
 
-  enable_dp_load_balance: True
+  enable_dp_load_balance: False
 
   calculate_flops: True
 

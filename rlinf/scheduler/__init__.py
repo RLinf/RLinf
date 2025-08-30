@@ -18,10 +18,7 @@ from .placement import (
     PackedPlacementStrategy,
     PlacementStrategy,
 )
-from .worker import (
-    Worker,
-    WorkerAddress,
-)
+from .worker import Worker, WorkerAddress, WorkerGroupFuncResult
 
 __all__ = [
     "Cluster",
@@ -29,6 +26,7 @@ __all__ = [
     "PackedPlacementStrategy",
     "Worker",
     "WorkerAddress",
+    "WorkerGroupFuncResult",
     "Channel",
     "ChannelWorker",
     "WeightedItem",

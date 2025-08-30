@@ -71,7 +71,13 @@ class WorkerMeta(type):
             @functools.wraps(func)
             def sync_func(*args, **kwargs):
                 try:
-                    return func(*args, **kwargs)
+                    worker = args[0] if isinstance(args[0], Worker) else None
+                    start_time = time.perf_counter()
+                    outputs = func(*args, **kwargs)
+                    duration = time.perf_counter() - start_time
+                    if worker:
+                        worker._timer_metrics[func.__name__] = duration
+                    return outputs
                 except SystemExit:
                     # Catch SystemExit and log the error
                     raise RuntimeError(
@@ -81,7 +87,13 @@ class WorkerMeta(type):
             @functools.wraps(func)
             async def async_func(*args, **kwargs):
                 try:
-                    return await func(*args, **kwargs)
+                    worker = args[0] if isinstance(args[0], Worker) else None
+                    start_time = time.perf_counter()
+                    outputs = await func(*args, **kwargs)
+                    duration = time.perf_counter() - start_time
+                    if worker:
+                        worker._timer_metrics[func.__name__] = duration
+                    return outputs
                 except SystemExit:
                     # Catch SystemExit and log the error
                     raise RuntimeError(
@@ -350,6 +362,7 @@ class Worker(metaclass=WorkerMeta):
 
         self._actor = None
         self._has_initialized = False
+        self._timer_metrics: Dict[str, float] = {}
         set_new_omegaconf_resolvers()
 
     def __init__(
@@ -581,17 +594,17 @@ class Worker(metaclass=WorkerMeta):
     def create_channel(
         self,
         channel_name: str,
-        group_affinity: Optional[str] = None,
-        group_rank_affinity: Optional[int | List[int]] = None,
+        gpu_id: int = 0,
         maxsize: int = 0,
+        local: bool = False,
     ):
         """Create a new channel with the specified placement rank and maximum size.
 
         Args:
             channel_name (str): The name of the channel.
-            group_affinity (str): The name of the group you wish to place the channel data. Defaults to None, which means the channel will be placed on the first rank.
-            group_rank_affinity (int | List[int]): The rank of the group you wish to place the channel data.
+            gpu_id (int): The global ID of the GPU in the cluster where the channel will be created.
             maxsize (int): The maximum size of the channel queue. Defaults to 0 (unbounded).
+            local (bool): Create the channel for intra-process communication. Cannot be connected by other workers.
 
         Returns:
             Channel: A new instance of the Channel class.
@@ -599,12 +612,8 @@ class Worker(metaclass=WorkerMeta):
         """
         from ..channel.channel import Channel
 
-        return Channel._create_in_worker(
-            current_worker=self,
-            channel_name=channel_name,
-            group_name_affinity=group_affinity,
-            group_rank_affinity=group_rank_affinity,
-            maxsize=maxsize,
+        return Channel.create(
+            name=channel_name, gpu_id=gpu_id, maxsize=maxsize, local=local
         )
 
     def connect_channel(self, channel_name: str):
@@ -889,12 +898,12 @@ class Worker(metaclass=WorkerMeta):
             available_gpus=self._available_gpus,
         )
 
-    def is_data_io_rank(self) -> bool:
-        """Check if the worker is the rank for performing data I/O.
+    def get_execution_time(self, func_name: str):
+        """Retrieve the execution time of a function.
 
-        Returns:
-            bool: True if the worker is the data I/O rank, False otherwise.
+        Args:
+            func_name (str): The name of the function to retrieve the execution time for.
         """
-        raise NotImplementedError(
-            f"{self.is_data_io_rank.__name__} should be implemented in the a worker class. It is used to determine if the worker is the data I/O rank. Usually this means the model parallel source rank."
-        )
+        if func_name not in self._timer_metrics:
+            raise ValueError(f"Function '{func_name}' has not been executed.")
+        return self._timer_metrics[func_name]

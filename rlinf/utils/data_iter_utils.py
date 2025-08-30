@@ -72,7 +72,7 @@ def split_list(inputs, num_chunks, enforce_divisible_batch: Optional[bool] = Tru
 
 def get_iterator_k_split(
     batch: Union[Dict, List[torch.Tensor]],
-    num_microbatches: int,
+    num_splits: int,
     enforce_divisible_batch: Optional[bool] = True,
     shuffle: bool = False,
     shuffle_seed: Optional[int] = None,
@@ -157,14 +157,12 @@ def get_iterator_k_split(
         # Split tensor items
         items = list(tensor_items.items())
         if enforce_divisible_batch:
-            assert items[0][1].shape[0] % num_microbatches == 0, (
+            assert items[0][1].shape[0] % num_splits == 0, (
                 "Issue with batch size configuration!"
             )
-        split_batch = [
-            torch.tensor_split(item[1], num_microbatches, dim=0) for item in items
-        ]
+        split_batch = [torch.tensor_split(item[1], num_splits, dim=0) for item in items]
         # handle the case where the batch size from dynamic bucketting is not divisible
-        if items[0][1].shape[0] % num_microbatches != 0:
+        if items[0][1].shape[0] % num_splits != 0:
             chunk_size = split_batch[0][-1].shape[0]
             split_batch = [[j[:chunk_size] for j in i] for i in split_batch]
 
@@ -172,7 +170,7 @@ def get_iterator_k_split(
             # Only have tensor items
             microbatches = [
                 [(items[i][0], split_batch[i][j]) for i in range(len(items))]
-                for j in range(num_microbatches)
+                for j in range(num_splits)
             ]
         else:
             # Split list items
@@ -180,7 +178,7 @@ def get_iterator_k_split(
             split_list_batch = [
                 split_list(
                     item[1],
-                    num_microbatches,
+                    num_splits,
                     enforce_divisible_batch=enforce_divisible_batch,
                 )
                 for item in list_items
@@ -190,33 +188,32 @@ def get_iterator_k_split(
             all_split_batch = split_batch + split_list_batch
             microbatches = [
                 [(all_keys[i], all_split_batch[i][j]) for i in range(len(all_keys))]
-                for j in range(num_microbatches)
+                for j in range(num_splits)
             ]
         microbatches = [dict(elem) for elem in microbatches]
     else:
         # Split a list of torch tensors
-        assert batch[0].shape[0] % num_microbatches == 0, (
+        assert batch[0].shape[0] % num_splits == 0, (
             "Issue with batch size configuration!"
         )
         split_batch = []
         for item in batch:
             if torch.is_tensor(item):
-                split_batch.append(torch.tensor_split(item, num_microbatches, dim=0))
+                split_batch.append(torch.tensor_split(item, num_splits, dim=0))
             elif isinstance(item, list):
                 if isinstance(item[0], torch.Tensor):
                     split_tensors = [
-                        torch.tensor_split(elem, num_microbatches, dim=0)
-                        for elem in item
+                        torch.tensor_split(elem, num_splits, dim=0) for elem in item
                     ]
                     split_tuple = []
-                    for mbi in range(num_microbatches):
+                    for mbi in range(num_splits):
                         split_tuple.append(
                             [split_tensors[i][mbi] for i in range(len(split_tensors))]
                         )
                     split_tuple = tuple(split_tuple)
                     split_batch.append(split_tuple)
                 else:
-                    split_batch.append(split_list(item, num_microbatches))
+                    split_batch.append(split_list(item, num_splits))
             elif item is None:
                 split_batch.append(item)
             else:
@@ -224,7 +221,7 @@ def get_iterator_k_split(
 
         microbatches = [
             [elem[i] if elem is not None else elem for elem in split_batch]
-            for i in range(num_microbatches)
+            for i in range(num_splits)
         ]
 
     return itertools.chain(microbatches)

@@ -13,14 +13,13 @@
 # limitations under the License.
 
 import copy
-from typing import List
+from typing import Dict, List
 
 import torch
 import torch.distributed
 from megatron.core import parallel_state
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
-from megatron.core.utils import divide
 from megatron.training.training import unwrap_model
 from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig
@@ -38,8 +37,6 @@ from rlinf.hybrid_engines.megatron.megatron_model_manager import (
 )
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.data_iter_utils import (
-    get_iterator_dynamic,
-    get_iterator_k_split,
     get_last_rank,
     get_reverse_idx,
     get_seqlen_balanced_partitions,
@@ -49,7 +46,6 @@ from rlinf.utils.distributed import (
     broadcast_tensor_within_mp,
     broadcast_tensor_within_pp,
     compute_rollout_metrics,
-    compute_rollout_metrics_pipeline,
     masked_normalization,
     vocab_parallel_entropy_and_log_probs,
     vocab_parallel_log_probs_from_logits,
@@ -73,10 +69,7 @@ from rlinf.utils.utils import (
     seq_mean_token_mean,
     seq_mean_token_sum,
 )
-from rlinf.workers.rollout.utils import (
-    DisaggRankMapper,
-    HybridRankMapper,
-)
+from rlinf.workers.rollout.utils import RankMapper
 
 
 class MegatronActor(MegatronModelManager, Worker):
@@ -96,11 +89,16 @@ class MegatronActor(MegatronModelManager, Worker):
             raise ValueError(f"Role {role} is not defined in the configuration.")
         super().__init__(role_cfg)
         self.cfg = cfg
+        self.component_placement = placement
 
+        # Data configurations
         self.response_len = (
             role_cfg.model.encoder_seq_length - cfg.data.max_prompt_length
         )
+        self.average_response_len = self.response_len
 
+        # Algo configurations
+        self.recompute_logprobs = self.cfg.algorithm.recompute_logprobs
         self.calculate_entropy = self.cfg.algorithm.calculate_entropy
         self.calculate_entropy_loss = (
             self.cfg.algorithm.entropy_bonus > 0 and self.calculate_entropy
@@ -109,11 +107,9 @@ class MegatronActor(MegatronModelManager, Worker):
         self.logprob_forward_micro_batch_size = (
             self.cfg.algorithm.logprob_forward_micro_batch_size
         )
-
         self.kl_beta = self.cfg.algorithm.kl_beta
         self.kl_penalty_type = self.cfg.algorithm.kl_penalty_type
         self.clip_ratio_c = self.cfg.algorithm.clip_ratio_c
-
         if self.cfg.algorithm.loss_agg_func == "token-mean":
             self.loss_agg_func = masked_mean
         elif self.cfg.algorithm.loss_agg_func == "seq-mean-token-sum":
@@ -125,48 +121,63 @@ class MegatronActor(MegatronModelManager, Worker):
                 f"algorithm.loss_agg_func={self.cfg.algorithm.loss_agg_func} is not supported!"
             )
 
+        # Actor configurations
         self.enable_dynamic_batch_size = self.cfg.runner.enable_dynamic_batch_size
         self.max_tokens_per_mbs = self.cfg.runner.max_tokens_per_mbs
-
-        self.ref_policy_state_dict = None
-
         self.offload_optimizer = self.cfg.actor.offload_optimizer
         self.offload_weight = self.cfg.actor.offload_weight
         self.offload_grad = self.cfg.actor.offload_grad
+        self.is_weight_offloaded = False
+        self.is_optimizer_offloaded = False
+        self.ref_policy_state_dict = None
 
+        # Reward configurations
         if not self.cfg.reward.use_reward_model:
             assert self.cfg.reward.reward_type == "math", "only support math"
             self.reward_fn = math_verify_call
 
-        self._rollout_group_name = self.cfg.rollout.group_name
+        # Rollout configurations
+        self.rollout_group_name = self.cfg.rollout.group_name
 
-        self._is_data_io_rank = (
+        # Data I/O configurations
+        self.data_channel = None
+        self.num_train_steps = self.cfg.algorithm.n_minibatches
+        self.is_data_io_rank = (
             parallel_state.get_tensor_model_parallel_rank() == 0
             and parallel_state.get_context_parallel_rank() == 0
             and parallel_state.get_pipeline_model_parallel_rank() == 0
         )
-
-        self.component_placement = placement
-
-        if self.component_placement.placement_mode == PlacementMode.DISAGGREGATED:
-            self._data_channel = self.connect_channel(
-                channel_name=role_cfg.channel.name
+        self.rollout_results: List[RolloutResult] = []
+        self.total_batch_size_per_dp = (
+            self.cfg.data.rollout_batch_size
+            * self.cfg.algorithm.group_size
+            // parallel_state.get_data_parallel_world_size()
+        )
+        self.train_batch_iterator = BatchResizingIterator(
+            cfg=self.cfg,
+            get_batch_fn=self.get_batch_fn,
+            micro_batch_size=role_cfg.micro_batch_size,
+            total_batch_size=self.total_batch_size_per_dp,
+            num_global_batches=self.num_train_steps,
+            forward_only=False,
+        )
+        if self.recompute_logprobs:
+            self.num_inference_steps = (
+                self.cfg.data.rollout_batch_size
+                // self.component_placement.rollout_batch_size_per_inference_step
             )
-            self._queue_name = f"{role_cfg.channel.queue_name}_{parallel_state.get_data_parallel_rank()}"
-            self._data_channel.create_queue(
-                self._queue_name, maxsize=role_cfg.channel.queue_size
+            self.inference_batch_iterator = BatchResizingIterator(
+                cfg=self.cfg,
+                get_batch_fn=self.get_batch_fn,
+                micro_batch_size=self.logprob_forward_micro_batch_size,
+                total_batch_size=self.total_batch_size_per_dp,
+                num_global_batches=self.num_inference_steps,
+                forward_only=True,
             )
 
-            self.batch_iterator = BatchResizingIterator(
-                fetch_batch_fn=self.get_batch_fn,
-                micro_batch_size=role_cfg.micro_batch_size,
-                global_batch_size_per_dp=role_cfg.global_batch_size
-                // parallel_state.get_data_parallel_world_size(),
-            )
-
-            self._batch_buffer_for_metrics: List[RolloutResult] = []
-
-        self.average_respone_len = self.response_len
+        # Create GLOO MP group for broadcast
+        self._mp_group_ranks = parallel_state._MODEL_PARALLEL_GLOBAL_RANKS
+        self._cp_group_ranks = parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS
 
         self._init_profiler()
 
@@ -208,6 +219,14 @@ class MegatronActor(MegatronModelManager, Worker):
             "megatron_forward_backward", self.use_profiler
         )
 
+    def _load_weight_optimizer(self):
+        if self.is_weight_offloaded:
+            self.onload_model_weights_and_grad(load_grad=self.offload_grad)
+            self.is_weight_offloaded = False
+        if self.is_optimizer_offloaded:
+            self.onload_megatron_optimizer()
+            self.is_optimizer_offloaded = False
+
     def init_worker(self):
         self.setup_model_and_optimizer()
 
@@ -228,7 +247,7 @@ class MegatronActor(MegatronModelManager, Worker):
         self.rollout_weights_reshard = MegatronCoreWeightReshard(rollout_reshard_config)
         self._setup_rollout_weight_dst_ranks()
 
-        if self.cfg.get("inference", None) is not None:
+        if self.component_placement.has_dedicated_inference:
             inference_reshard_config = ReshardConfig(
                 model_arch=self.cfg.inference.model_arch,
                 model_config=self.transformer_config,
@@ -240,9 +259,6 @@ class MegatronActor(MegatronModelManager, Worker):
                 inference_reshard_config
             )
             self._setup_inference_weight_dst_ranks()
-
-        # Create GLOO MP group for broadcast
-        self._mp_group_ranks = parallel_state._MODEL_PARALLEL_GLOBAL_RANKS
 
         torch.distributed.barrier()
 
@@ -304,100 +320,101 @@ class MegatronActor(MegatronModelManager, Worker):
                     return output["log_probs"][:, -response_len - 1 : -1].contiguous()
 
                 return output, id_func
-            else:
 
-                def loss_func(output):
-                    curr_logprobs = output["log_probs"][
-                        :, -response_len - 1 : -1
-                    ].contiguous()
+            def loss_func(output):
+                curr_logprobs = output["log_probs"][
+                    :, -response_len - 1 : -1
+                ].contiguous()
 
-                    advantages = batch["advantages"]
-                    prev_logprobs = batch["prev_logprobs"]
-                    ref_logprobs = None
-                    if "ref_logprobs" in batch:
-                        ref_logprobs = batch["ref_logprobs"]
+                advantages = batch["advantages"]
+                prev_logprobs = batch["prev_logprobs"]
+                ref_logprobs = None
+                if "ref_logprobs" in batch:
+                    ref_logprobs = batch["ref_logprobs"]
 
-                    mask = batch["attention_mask"][:, -response_len:]
+                mask = batch["attention_mask"][:, -response_len:]
 
-                    # Calculate clipped PPO surrogate loss function.
-                    (
-                        loss,
-                        proportion_clipped,
-                        approx_kl,
-                        ratios,
-                        cliped_ratio,
-                        dual_cliped_ratio,
-                    ) = actor_loss_fn(
-                        self.loss_agg_func,
-                        curr_logprobs,
-                        prev_logprobs,
-                        advantages,
-                        self.ratio_eps,
-                        mask,
+                # Calculate clipped PPO surrogate loss function.
+                (
+                    loss,
+                    proportion_clipped,
+                    approx_kl,
+                    ratios,
+                    cliped_ratio,
+                    dual_cliped_ratio,
+                ) = actor_loss_fn(
+                    self.loss_agg_func,
+                    curr_logprobs,
+                    prev_logprobs,
+                    advantages,
+                    self.ratio_eps,
+                    mask,
+                )
+
+                logging_loss = loss.detach()
+                entropy_loss = torch.zeros(1, device=loss.device)
+                if self.calculate_entropy:
+                    entropy = output["entropy"][:, -response_len - 1 : -1].contiguous()
+                    entropy_loss = self.loss_agg_func(entropy, mask=mask)
+                    if self.calculate_entropy_loss:
+                        loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
+
+                kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+                if self.kl_beta > 0 and ref_logprobs is not None:
+                    kld = kl_penalty(ref_logprobs, curr_logprobs, self.kl_penalty_type)
+                    kl_loss = self.loss_agg_func(kld, mask)
+                    loss = loss + kl_loss * self.kl_beta
+
+                # Logging and early stopping according to KL (logp vs ref) or importance ratio (new logp vs old logp).
+                _imp = (ratios.detach().float() * mask).sum()
+                torch.distributed.all_reduce(
+                    _imp, group=parallel_state.get_data_parallel_group()
+                )
+                _n_valid_tokens = mask.count_nonzero().clone()
+                torch.distributed.all_reduce(
+                    _n_valid_tokens, group=parallel_state.get_data_parallel_group()
+                )
+                _imp /= _n_valid_tokens
+                # Early stopping.
+                if (
+                    self.cfg.algorithm.early_stop_imp_ratio is not None
+                    and _imp > self.cfg.algorithm.early_stop_imp_ratio
+                ):
+                    self.log_warning(
+                        f"Current importance ratio {_imp.item():.4f} is larger "
+                        f"than early stop threshold {self.cfg.algorithm.early_stop_imp_ratio}. Abandon this microbatch."
                     )
-
-                    logging_loss = loss.detach()
-                    entropy_loss = torch.zeros(1, device=loss.device)
-                    if self.calculate_entropy:
-                        entropy = output["entropy"][
-                            :, -response_len - 1 : -1
-                        ].contiguous()
-                        entropy_loss = self.loss_agg_func(entropy, mask=mask)
-                        if self.calculate_entropy_loss:
-                            loss = (
-                                loss - self.cfg.algorithm.entropy_bonus * entropy_loss
-                            )
-
-                    kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
-                    if self.kl_beta > 0 and ref_logprobs is not None:
-                        kld = kl_penalty(
-                            ref_logprobs, curr_logprobs, self.kl_penalty_type
-                        )
-                        kl_loss = self.loss_agg_func(kld, mask)
-                        loss = loss + kl_loss * self.kl_beta
-
-                    # Logging and early stopping according to KL (logp vs ref) or importance ratio (new logp vs old logp).
-                    _imp = (ratios.detach().float() * mask).sum()
-                    torch.distributed.all_reduce(
-                        _imp, group=parallel_state.get_data_parallel_group()
+                    loss = loss * 0.0
+                if self.cfg.algorithm.use_valid_token_scale:
+                    loss_scale = (
+                        mask.sum()
+                        / self.global_valid_token
+                        * parallel_state.get_data_parallel_world_size()
+                        * self.num_microbatches
                     )
-                    _n_valid_tokens = mask.count_nonzero().clone()
-                    torch.distributed.all_reduce(
-                        _n_valid_tokens, group=parallel_state.get_data_parallel_group()
-                    )
-                    _imp /= _n_valid_tokens
-                    # Early stopping.
-                    if (
-                        self.cfg.algorithm.early_stop_imp_ratio is not None
-                        and _imp > self.cfg.algorithm.early_stop_imp_ratio
-                    ):
-                        self.log_warning(
-                            f"Current importance ratio {_imp.item():.4f} is larger "
-                            f"than early stop threshold {self.cfg.algorithm.early_stop_imp_ratio}. Abandon this microbatch."
-                        )
-                        loss = loss * 0.0
-                    if self.cfg.algorithm.use_valid_token_scale:
-                        loss_scale = (
-                            mask.sum()
-                            / self.global_valid_token
-                            * parallel_state.get_data_parallel_world_size()
-                            * self.num_microbatches
-                        )
-                        loss *= loss_scale.item()
+                    loss *= loss_scale.item()
 
-                    with torch.no_grad():
-                        ratios = masked_mean(ratios.detach(), mask)
-                        cliped_ratio = masked_mean(cliped_ratio.detach(), mask)
-                        dual_cliped_ratio = masked_mean(
-                            dual_cliped_ratio.detach(), mask
-                        )
-                        entropy_loss = entropy_loss.detach()
-                        kl_loss = kl_loss.detach()
-                        approx_kl = approx_kl.detach()
-                        proportion_clipped = proportion_clipped.detach()
+                with torch.no_grad():
+                    ratios = masked_mean(ratios.detach(), mask)
+                    cliped_ratio = masked_mean(cliped_ratio.detach(), mask)
+                    dual_cliped_ratio = masked_mean(dual_cliped_ratio.detach(), mask)
+                    entropy_loss = entropy_loss.detach()
+                    kl_loss = kl_loss.detach()
+                    approx_kl = approx_kl.detach()
+                    proportion_clipped = proportion_clipped.detach()
 
-                    (
-                        reduced_actor_loss,
+                (
+                    reduced_actor_loss,
+                    ratios,
+                    cliped_ratio,
+                    dual_cliped_ratio,
+                    entropy_loss,
+                    kl_loss,
+                    approx_kl,
+                    proportion_clipped,
+                ) = average_losses_across_data_parallel_group(
+                    [
+                        logging_loss,
                         ratios,
                         cliped_ratio,
                         dual_cliped_ratio,
@@ -405,134 +422,92 @@ class MegatronActor(MegatronModelManager, Worker):
                         kl_loss,
                         approx_kl,
                         proportion_clipped,
-                    ) = average_losses_across_data_parallel_group(
-                        [
-                            logging_loss,
-                            ratios,
-                            cliped_ratio,
-                            dual_cliped_ratio,
-                            entropy_loss,
-                            kl_loss,
-                            approx_kl,
-                            proportion_clipped,
-                        ]
-                    )
-                    return (
-                        loss,
-                        {
-                            "loss": reduced_actor_loss,
-                            "ratio": ratios,
-                            "cliped_ratio": cliped_ratio,
-                            "dual_cliped_ratio": dual_cliped_ratio,
-                            "entropy_loss": entropy_loss,
-                            "kl_loss": kl_loss,
-                            "approx_kl": approx_kl,
-                            "proportion_clipped": proportion_clipped,
-                        },
-                    )
+                    ]
+                )
+                return (
+                    loss,
+                    {
+                        "loss": reduced_actor_loss,
+                        "ratio": ratios,
+                        "cliped_ratio": cliped_ratio,
+                        "dual_cliped_ratio": dual_cliped_ratio,
+                        "entropy_loss": entropy_loss,
+                        "kl_loss": kl_loss,
+                        "approx_kl": approx_kl,
+                        "proportion_clipped": proportion_clipped,
+                    },
+                )
 
-                return output, loss_func
+            return output, loss_func
 
         return forward_output_and_loss_func
 
-    def run_forward_backward(self, batch, forward_only=True):
+    def run_forward_backward(
+        self, batch_iterator: BatchResizingIterator, forward_only=True
+    ):
         """Run the forward and backward pass on the model.
 
         Args:
-            batch (dict): The input batch containing the data for the forward pass.
+            batch_iterator (Iterator): The input batch iterator for the forward pass.
             forward_only (bool): If True, only run the forward pass without backpropagation.
         """
         clear_memory()
-        batch_size = batch["input_ids"].size(0)
-        sequence_length = batch["input_ids"].size(1)
 
+        forward_micro_batch_size = (
+            self.logprob_forward_micro_batch_size
+            if forward_only
+            else self.cfg.actor.micro_batch_size
+        )
+        # Enable dynamic batch sizing
         if self.enable_dynamic_batch_size:
-            max_tokens_per_mbs = (
-                self.max_tokens_per_mbs
-                * parallel_state.get_context_parallel_world_size()
+            batch_iterator.enable_dynamic_batch_size(
+                cp_world_size=parallel_state.get_context_parallel_world_size(),
+                vpp_world_size=parallel_state.get_virtual_pipeline_model_parallel_world_size(),
+                max_tokens_per_mbs=self.max_tokens_per_mbs,
+                microbatch_group_size_per_vp_stage=self.transformer_config.microbatch_group_size_per_vp_stage,
             )
-            vpp_size = parallel_state.get_virtual_pipeline_model_parallel_world_size()
-            if vpp_size is not None and vpp_size > 1:
-                microbatch_group_size_per_vp_stage = (
-                    self.transformer_config.microbatch_group_size_per_vp_stage
-                )
-                data_iter, indices, n_micro_batch = get_iterator_dynamic(
-                    batch,
-                    num_batches_divided_by=microbatch_group_size_per_vp_stage,
-                    max_tokens_per_mbs=max_tokens_per_mbs,
-                )
-                assert (
-                    n_micro_batch
-                    % self.transformer_config.microbatch_group_size_per_vp_stage
-                    == 0
-                ), (
-                    f"micro_batches {data_iter} must be divisible by microbatch_group_size_per_vp_stage {microbatch_group_size_per_vp_stage} for megatron backend"
-                )
-            else:
-                data_iter, indices, n_micro_batch = get_iterator_dynamic(
-                    batch, max_tokens_per_mbs=max_tokens_per_mbs
-                )
-            total_seqlen = max_tokens_per_mbs
-        else:
-            forward_micro_batch_size = (
-                self.logprob_forward_micro_batch_size
-                if forward_only
-                else self.cfg.actor.micro_batch_size
-            )
-            n_micro_batch = (
-                max(1, batch_size // forward_micro_batch_size)
-                if forward_only
-                else get_num_microbatches()
-            )
-            data_iter = get_iterator_k_split(batch, n_micro_batch)
-            total_seqlen = forward_micro_batch_size * sequence_length
+
+        total_seqlen, num_microbatches, indices = batch_iterator.get_batch_info(
+            forward_micro_batch_size
+        )
         fwd_bwd_function = get_forward_backward_func()
-
-        self.num_microbatches = n_micro_batch
-
-        if self.use_profiler:
-            self.profiler.start(forward_only=forward_only)
-
+        self.num_microbatches = num_microbatches
         self.return_loss = not forward_only
-        self._forward_only_record.start()
+
+        self.log_debug(
+            f"{total_seqlen=}, {forward_micro_batch_size=}, {num_microbatches=}, {indices=}"
+        )
+
+        if forward_only:
+            self._forward_only_record.start()
         forward_outputs = fwd_bwd_function(
             forward_step_func=self.get_forward_step_func(),
-            data_iterator=self.make_data_iterator_list(data_iter, padding=True),
+            # TODO CHECK PADDING
+            data_iterator=self.make_data_iterator_list(batch_iterator),
             model=self.model,
-            num_microbatches=n_micro_batch,
+            num_microbatches=num_microbatches,
             forward_only=forward_only,
             seq_length=total_seqlen,
             micro_batch_size=1,
-            collect_non_loss_data=True if forward_only else False,
+            collect_non_loss_data=forward_only,
         )
-        self._forward_only_record.stop()
+        if forward_only:
+            self._forward_only_record.stop()
 
         if forward_only:
+            outputs = torch.cat(forward_outputs) if len(forward_outputs) > 0 else None
             if self.enable_dynamic_batch_size:
-                self._dynamic_batch_processing_record.start()
-                outputs = torch.cat(forward_outputs, dim=0).to(torch.float32)
                 indices = sum(indices, [])
                 assert len(indices) == outputs.size(0), (
-                    f"{len(indices)} vs. {outputs.size()}"
+                    f"Dynamic batch size indices length {len(indices)} does not equal output length {outputs.size()}"
                 )
                 revert_indices = torch.tensor(
                     get_reverse_idx(indices), dtype=torch.long
                 )
                 outputs = outputs[revert_indices]
-                self._dynamic_batch_processing_record.stop()
-            else:
-                self._static_batch_processing_record.start()
-                outputs = (
-                    torch.cat(forward_outputs) if len(forward_outputs) > 0 else None
-                )
-                self._static_batch_processing_record.stop()
-
-            self._broadcast_outputs_record.start()
             outputs = broadcast_tensor_within_pp(outputs)
-            self._broadcast_outputs_record.stop()
         else:
             outputs = {}
-
             if forward_outputs:
                 keys = forward_outputs[0].keys()
                 for key in keys:
@@ -543,96 +518,44 @@ class MegatronActor(MegatronModelManager, Worker):
 
                     outputs[key] = metric_mean.cpu().item()
 
-        if self.use_profiler:
-            self.profiler.stop(forward_only=forward_only)
-
         return outputs
 
-    def run_forward_backward_pipeline(self, batch, forward_only=False):
-        sequence_length = self.cfg.runner.seq_length
-        fwd_bwd_function = get_forward_backward_func()
-        forward_micro_batch_size = self.cfg.actor.micro_batch_size
-        n_micro_batch = get_num_microbatches()
-        self.num_microbatches = n_micro_batch
-        self.return_loss = True
-        forward_outputs = fwd_bwd_function(
-            forward_step_func=self.get_forward_step_func(),
-            data_iterator=self.make_data_iterator_list(batch),
-            model=self.model,
-            num_microbatches=n_micro_batch,
-            forward_only=False,
-            seq_length=forward_micro_batch_size * sequence_length,
-            micro_batch_size=1,
-        )
-        outputs = {}
-
-        for key in [
-            "loss",
-            "ratio",
-            "cliped_ratio",
-            "dual_cliped_ratio",
-            "entropy_loss",
-            "kl_loss",
-            "approx_kl",
-            "proportion_clipped",
-        ]:
-            if forward_outputs:
-                metric_mean = torch.stack(
-                    [loss_reduced[key] for loss_reduced in forward_outputs]
-                ).mean()
+    def get_batch_fn(self, forward_only: bool = False) -> Dict[str, torch.Tensor]:
+        if self.data_channel.is_local:
+            # Local channel, every process will put its own data locally
+            # No need to broadcast
+            result: RolloutResult = self.data_channel.get()
+        else:
+            if self.is_data_io_rank:
+                result: RolloutResult = self.data_channel.get()
             else:
-                metric_mean = torch.tensor(0.0, device=torch.cuda.current_device())
+                result = None
+            result = self.broadcast(result, ranks=self._mp_group_ranks)
+            result = self.broadcast(result, ranks=self._cp_group_ranks)
 
-            torch.distributed.broadcast(metric_mean, get_last_rank())
+        self.rollout_results.append(result)
+        batch = result.to_actor_batch(
+            self.cfg.data.max_prompt_length,
+            self.cfg.actor.model.encoder_seq_length,
+            self.tokenizer.eos_token_id,
+        )
 
-            outputs[key] = metric_mean.cpu().item()
+        # Compute reward and advantages in training
+        if not forward_only:
+            # Rule-based reward
+            if result.rewards is None:
+                self._compute_rewards(batch, result.answers)
+                result.rewards = batch["reward_scores"].cpu()
 
-        return outputs
+            # Advantages
+            if result.advantages is None:
+                self._compute_advantages(batch)
+                result.advantages = batch["advantages"].cpu()
+
+        return batch
 
     # Training
-    def get_batch_fn(self):
-        if (
-            parallel_state.get_pipeline_model_parallel_rank() == 0
-            and parallel_state.get_tensor_model_parallel_rank() == 0
-        ):
-            result: RolloutResult = self._data_channel.get(queue_name=self._queue_name)
-            torch.distributed.broadcast_object_list(
-                [result],
-                device=torch.cuda.current_device(),
-                src=parallel_state.get_tensor_model_parallel_src_rank(),
-                group=parallel_state.get_tensor_model_parallel_group(),
-            )
-            self._batch_buffer_for_metrics.append(result)
-
-            batch = result.to_actor_batch(
-                self.cfg.data.max_prompt_length,
-                self.cfg.runner.seq_length,
-                pad_token=self.tokenizer.eos_token_id,
-            )
-            batch["prev_logprobs"] = result.prev_logprobs
-            batch["ref_logprobs"] = result.ref_logprobs
-            return batch
-        else:
-            results: List[RolloutResult] = [None]
-            torch.distributed.broadcast_object_list(
-                results,
-                device=torch.cuda.current_device(),
-                src=parallel_state.get_tensor_model_parallel_src_rank(),
-                group=parallel_state.get_tensor_model_parallel_group(),
-            )
-
-            self._batch_buffer_for_metrics.append(results[0])
-            batch = results[0].to_actor_batch(
-                self.cfg.data.max_prompt_length,
-                self.cfg.runner.seq_length,
-                pad_token=self.tokenizer.eos_token_id,
-            )
-            batch["prev_logprobs"] = results[0].prev_logprobs
-            batch["ref_logprobs"] = results[0].ref_logprobs
-
-            return batch
-
-    def training_step(self, batch, pipeline_func: bool = False):
+    def training_step(self, batch):
         """Run a single training step on the model.
 
         Args:
@@ -643,25 +566,7 @@ class MegatronActor(MegatronModelManager, Worker):
             model_chunk.zero_grad_buffer()
         self.optimizer.zero_grad()
 
-        if self.cfg.algorithm.use_valid_token_scale:
-            if pipeline_func:
-                self.global_valid_token = (
-                    self.average_respone_len
-                    * get_num_microbatches()
-                    * self.cfg.actor.micro_batch_size
-                )
-            else:
-                loss_mask = batch["attention_mask"][:, -self.response_len :]
-                global_valid_token = loss_mask.to(dtype=torch.float32).sum().cuda()
-                torch.distributed.all_reduce(
-                    global_valid_token, group=parallel_state.get_data_parallel_group()
-                )
-                self.global_valid_token = global_valid_token
-
-        if pipeline_func:
-            metrics = self.run_forward_backward_pipeline(batch, forward_only=False)
-        else:
-            metrics = self.run_forward_backward(batch, forward_only=False)
+        train_metrics = self.run_forward_backward(batch, forward_only=False)
         increment = (
             get_num_microbatches()
             * self.cfg.actor.micro_batch_size
@@ -669,17 +574,22 @@ class MegatronActor(MegatronModelManager, Worker):
         )
         success, grad_norm, num_zeros_in_grad, lr = self.optimizer_step(increment)
 
-        metrics["grad_norm"] = grad_norm if grad_norm is not None else float("nan")
-        metrics["num_zeros_in_grad"] = (
+        # Training metrics
+        train_metrics["grad_norm"] = (
+            grad_norm if grad_norm is not None else float("nan")
+        )
+        train_metrics["num_zeros_in_grad"] = (
             num_zeros_in_grad if num_zeros_in_grad is not None else float("nan")
         )
-        metrics["lr"] = lr if lr is not None else float("nan")
-        metrics["update_success"] = int(success)
+        train_metrics["lr"] = lr if lr is not None else float("nan")
+        train_metrics["update_success"] = int(success)
 
-        return metrics
+        return train_metrics
 
-    def run_training(self):
+    def run_training(self, input_channel: Channel):
         """Run the training loop for the actor."""
+        self._load_weight_optimizer()
+
         set_train(self)
         configure_batch_sizes(
             rank=torch.distributed.get_rank(),
@@ -687,84 +597,73 @@ class MegatronActor(MegatronModelManager, Worker):
             gbs=self.cfg.actor.global_batch_size,
             dp=parallel_state.get_data_parallel_world_size(),
         )
-        rollout_size = self.rollout_batches["input_ids"].size(0)
-        num_microbatches = divide(
-            rollout_size,
-            self.cfg.actor.global_batch_size
-            // parallel_state.get_data_parallel_world_size(),
-        )
-        rollout_dataloader_iter = get_iterator_k_split(
-            batch=self.rollout_batches,
-            num_microbatches=num_microbatches,
-            shuffle=self.cfg.algorithm.get("shuffle_rollout", True),
-            shuffle_seed=self.cfg.actor.seed,
-        )
+
         training_metrics_list = []
+        self.data_channel = input_channel
+
+        # Valid token scale
+        if self.cfg.algorithm.use_valid_token_scale:
+            if self.component_placement.placement_mode == PlacementMode.DISAGGREGATED:
+                self.global_valid_token = (
+                    self.average_response_len
+                    * get_num_microbatches()
+                    * self.cfg.actor.micro_batch_size
+                )
+            else:
+                self.train_batch_iterator.register_global_batch_handler(
+                    self.valid_token_scale
+                )
+
+        # DP load balance
+        if self.cfg.actor.get("enable_dp_load_balance", False):
+            self.train_batch_iterator.register_full_batch_handler(self.dp_load_balance)
+
+        # Global batch iterations
+        for _ in range(self.num_train_steps):
+            training_metrics = self.training_step(self.train_batch_iterator)
+            self.train_batch_iterator.check_finished_global_batch()
+            training_metrics_list.append(training_metrics)
 
         if self.use_profiler:
-            self.profiler.init_fwd_bwd_schedule(num_microbatches)
-        for batch in rollout_dataloader_iter:
-            training_metrics = self.training_step(batch)
-            training_metrics_list.append(training_metrics)
+            self.profiler.init_fwd_bwd_schedule(self.cfg.algorithm.n_minibatches)
 
-        return training_metrics_list
-
-    def run_training_pipeline(self):
-        set_train(self)
-        configure_batch_sizes(
-            rank=torch.distributed.get_rank(),
-            mbs=self.cfg.actor.micro_batch_size,
-            gbs=self.cfg.actor.global_batch_size,
-            dp=parallel_state.get_data_parallel_world_size(),
+        # Rollout metrics
+        rollout_result = RolloutResult.merge_result_list(self.rollout_results)
+        batch = rollout_result.to_actor_batch(
+            self.cfg.data.max_prompt_length,
+            self.cfg.actor.model.encoder_seq_length,
+            self.tokenizer.eos_token_id,
         )
-        self.log_info(
-            f"run_training_pipeline: mbs={self.cfg.actor.micro_batch_size}, gbs={self.cfg.actor.global_batch_size}, dp={parallel_state.get_data_parallel_world_size()}, n_mbs={get_num_microbatches()}"
-        )
-
-        num_opt_step = self.cfg.algorithm.n_minibatches
-        self._batch_buffer_for_metrics.clear()
-
-        training_metrics_list = []
-        for _ in range(num_opt_step):
-            batch = self.batch_iterator
-            training_metrics = self.training_step(batch, pipeline_func=True)
-            training_metrics_list.append(training_metrics)
-
-        rollout_metrics = RolloutResult.to_metrics(self._batch_buffer_for_metrics)
-        rollout_metrics = compute_rollout_metrics_pipeline(
-            rollout_metrics, self.cfg.data.max_prompt_length, self.response_len
-        )
-        self.average_respone_len = rollout_metrics["response_length"]
+        batch["rewards"] = rollout_result.rewards
+        rollout_metrics = self._compute_rollout_metrics(batch)
+        self.rollout_results.clear()
 
         return rollout_metrics, training_metrics_list
 
+    def valid_token_scale(self, batch: Dict[str, torch.Tensor]):
+        loss_mask = batch["attention_mask"][:, -self.response_len :]
+        global_valid_token = loss_mask.to(dtype=torch.float32).sum().cuda()
+        torch.distributed.all_reduce(
+            global_valid_token, group=parallel_state.get_data_parallel_group()
+        )
+        self.global_valid_token = global_valid_token
+        return batch
+
+    def dp_load_balance(self, batch: Dict[str, torch.Tensor]):
+        batch_size = batch["input_ids"].shape[0]
+        assert batch_size == self.total_batch_size_per_dp, (
+            f"DP Load balance is only available when a single batch contains all data, e.g., in collocated mode. But got {batch_size=} and {self.total_batch_size_per_dp=}."
+        )
+        batch = RolloutDataBalance.from_rollout_batches(
+            rollout_batches=batch,
+            dp_world_size=parallel_state.get_data_parallel_world_size(),
+            dp_rank=parallel_state.get_data_parallel_rank(),
+            dp_group=parallel_state.get_data_parallel_group(),
+            partitioning_tool=get_seqlen_balanced_partitions,
+        )
+        return batch
+
     # Inference
-    @torch.no_grad()
-    def inference_step(self, batch):
-        set_eval(self)
-
-        return self.run_forward_backward(batch, forward_only=True)
-
-    def compute_logprobs(self):
-        """Compute the log probabilities for the rollout batches."""
-        batch = {
-            "input_ids": self.rollout_batches["input_ids"],
-            "attention_mask": self.rollout_batches["attention_mask"],
-            "position_ids": self.rollout_batches["position_ids"],
-        }
-        self.rollout_batches["prev_logprobs"] = self.inference_step(batch)
-
-    def compute_ref_logprobs(self):
-        """Compute the reference log probabilities for the rollout batches."""
-        assert self.ref_policy_state_dict is not None
-        with cpu_weight_swap(self.model[0], self.ref_policy_state_dict):
-            batch = {
-                "input_ids": self.rollout_batches["input_ids"],
-                "attention_mask": self.rollout_batches["attention_mask"],
-                "position_ids": self.rollout_batches["position_ids"],
-            }
-            self.rollout_batches["ref_logprobs"] = self.inference_step(batch)
-
     def _setup_inference_weight_dst_ranks(self):
         self._weight_dst_rank_in_inference = self.get_inference_weight_dst_ranks(
             self.cfg.inference.model.tensor_model_parallel_size,
@@ -801,71 +700,69 @@ class MegatronActor(MegatronModelManager, Worker):
             f"{self.__class__.__name__}: sync_model_to_inference resharding done."
         )
 
-    # Advantages and returns
-    def compute_advantages_and_returns(self):
+    @torch.no_grad()
+    def inference_step(self):
+        set_eval(self)
+        return self.run_forward_backward(
+            self.inference_batch_iterator, forward_only=True
+        )
+
+    def run_inference(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        compute_ref_logprobs: bool,
+    ):
+        """Compute prev/ref logprobs using the actor Model's forward.
+
+        Args:
+            input_channel: The input channel to read from.
+            output_channel: The output channel to send results to.
+            recompute_logprobs: Whether to recompute prev logprobs.
+            compute_ref_logprobs: Whether to compute reference logprobs.
+        """
+        self._load_weight_optimizer()
+
+        self.data_channel = input_channel
+        for _ in range(self.num_inference_steps):
+            # Prev logprobs
+            prev_logprobs = self.inference_step()
+            self.inference_batch_iterator.check_finished_global_batch()
+
+            rollout_result = RolloutResult.merge_result_list(self.rollout_results)
+            self.rollout_results.clear()
+            rollout_result.prev_logprobs = prev_logprobs.cpu()
+
+            # Ref logprobs
+            if compute_ref_logprobs:
+                self.inference_batch_iterator.replay_last_global_batch()
+                assert self.ref_policy_state_dict is not None
+                with cpu_weight_swap(self.model[0], self.ref_policy_state_dict):
+                    ref_logprobs = self.inference_step()
+                    rollout_result.ref_logprobs = ref_logprobs.cpu()
+
+            if output_channel.is_local:
+                output_channel.put(rollout_result)
+            else:
+                if self.is_data_io_rank:
+                    output_channel.put(rollout_result)
+
+    # Advantages and metrics
+    def _compute_advantages(self, batch: Dict[str, torch.Tensor]):
         """Compute the advantages and returns for the rollout batches."""
         clear_memory()
-        assert self.rollout_batches is not None
-        mask = self.rollout_batches["attention_mask"][:, -self.response_len :]
-        advantages, returns = calculate_adv_and_returns(
+        assert batch is not None
+        mask = batch["attention_mask"][:, -self.response_len :]
+        advantages, _ = calculate_adv_and_returns(
             self.cfg.algorithm.adv_type,
-            self.rollout_batches["reward_scores"].cuda(),
+            batch["reward_scores"].cuda(),
             mask.cuda(),
             self.cfg.algorithm.group_size,
         )
 
         if self.cfg.algorithm.normalize_advantages:
             advantages = masked_normalization(advantages, mask)
-        self.rollout_batches["advantages"] = advantages
-
-        rollout_metrics, total_prompt_lengths, total_decode_lengths = (
-            compute_rollout_metrics(
-                self.rollout_batches, self.cfg.data.max_prompt_length, self.response_len
-            )
-        )
-
-        rollout_metrics = cpu_dict(rollout_metrics)
-
-        self.rollout_batches.pop("reward_scores")
-
-        if self.cfg.actor.get("calculate_flops", False):
-            total_generation_tflops = (
-                self.flops_calculator.flops_generate(
-                    total_prompt_lengths, total_decode_lengths
-                )
-                .float()
-                .sum()
-                .item()
-                / 1e12
-            )
-            total_inference_tflops = (
-                self.flops_calculator.flops_inference(
-                    total_prompt_lengths + total_decode_lengths
-                )
-                .float()
-                .sum()
-                .item()
-                / 1e12
-            )
-
-            rollout_metrics.update(
-                {
-                    "generation_tflops": total_generation_tflops,
-                    "inference_tflops": total_inference_tflops,
-                    "training_tflops": total_inference_tflops * 3,  # factor
-                }
-            )
-
-        if self.cfg.actor.get("enable_dp_load_balance", False):
-            self.rollout_batches = RolloutDataBalance.from_rollout_batches(
-                rollout_batches=self.rollout_batches,
-                dp_world_size=parallel_state.get_data_parallel_world_size(),
-                dp_rank=parallel_state.get_data_parallel_rank(),
-                dp_group=parallel_state.get_data_parallel_group(),
-                partitioning_tool=get_seqlen_balanced_partitions,
-            )
-
-        return rollout_metrics
+        batch["advantages"] = advantages.cuda()
 
     # Rollout
     def _get_rollout_model_state_dict(self):
@@ -876,29 +773,10 @@ class MegatronActor(MegatronModelManager, Worker):
 
     def _setup_rollout_weight_dst_ranks(self):
         """Setup destination ranks for token and weight communication."""
-        if self.component_placement._placement_mode == PlacementMode.COLLOCATED:
-            self._weight_dst_rank_in_rollout = (
-                HybridRankMapper.get_actor_rank_to_rollout_rank(
-                    self._rank,
-                    self.component_placement.actor_tp_size,
-                    self.component_placement.actor_pp_size,
-                    self.component_placement.rollout_tp_size,
-                    self.component_placement.actor_world_size,
-                )
-            )
-        else:
-            assert (
-                self.component_placement._placement_mode == PlacementMode.DISAGGREGATED
-            ), "Unsupported placement mode for token and weight destination ranks."
-            self._weight_dst_rank_in_rollout = (
-                DisaggRankMapper.get_actor_rank_to_rollout_ranks(
-                    self.component_placement.actor_tp_size,
-                    self.component_placement.actor_pp_size,
-                    self.component_placement.actor_world_size,
-                    self.component_placement.rollout_tp_size,
-                    self.component_placement.rollout_world_size,
-                )[self._rank]
-            )
+        rank_map = RankMapper.get_actor_rank_to_rollout_rank_map(
+            self.component_placement
+        )
+        self._weight_dst_rank_in_rollout = rank_map[self._rank]
         self.log_info(
             f"Actor rank {self._rank} will send weights to {self._weight_dst_rank_in_rollout}"
         )
@@ -912,14 +790,14 @@ class MegatronActor(MegatronModelManager, Worker):
         if self.component_placement._placement_mode == PlacementMode.COLLOCATED:
             if self.offload_optimizer:
                 self.offload_megatron_optimizer()
+                self.is_optimizer_offloaded = True
             self.reshard_state_dict = self._get_rollout_model_state_dict()
             if self.offload_weight:
                 self.offload_model_weights_and_grad(offload_grad=self.offload_grad)
+                self.is_weight_offloaded = True
 
             handle = {k: reduce_tensor(v) for k, v in self.reshard_state_dict.items()}
-            self.send(
-                handle, self._rollout_group_name, self._weight_dst_rank_in_rollout
-            )
+            self.send(handle, self.rollout_group_name, self._weight_dst_rank_in_rollout)
         else:
             assert (
                 self.component_placement._placement_mode == PlacementMode.DISAGGREGATED
@@ -931,75 +809,48 @@ class MegatronActor(MegatronModelManager, Worker):
             for weight_dst_rank in self._weight_dst_rank_in_rollout:
                 self.send(
                     self.reshard_state_dict,
-                    self._rollout_group_name,
+                    self.rollout_group_name,
                     weight_dst_rank,
                 )
 
-    def _get_rollout_result(self, rollout_channel: Channel):
-        """Receive rollout results."""
-        num_results_per_actor_dp = (
-            self.component_placement.rollout_dp_size
-            // self.component_placement.actor_dp_size
+    def _compute_rollout_metrics(self, batch):
+        rollout_metrics, total_prompt_lengths, total_decode_lengths = (
+            compute_rollout_metrics(
+                batch, self.cfg.data.max_prompt_length, self.response_len
+            )
         )
 
-        # Retrieve rollout results
-        if self._is_data_io_rank:
-            rollout_results = []
-            for _ in range(num_results_per_actor_dp):
-                # Each result is a list of RolloutResult because of rollout_batch_size_per_gpu
-                rollout_result = rollout_channel.get()
-                rollout_results.append(rollout_result)
-        else:
-            rollout_results = [None] * num_results_per_actor_dp
+        rollout_metrics = cpu_dict(rollout_metrics)
 
-        # Broadcast in MP
-        # NOTE: Use CPU broadcast to avoid NCCL's SM contention with rollout
-        rollout_results = self.broadcast(rollout_results, ranks=self._mp_group_ranks)
+        if self.cfg.actor.get("calculate_flops", False):
+            rollout_tflops = self.flops_calculator.flops_generate(
+                total_prompt_lengths, total_decode_lengths
+            )
+            rollout_tflops = rollout_tflops.float().sum().item() / 1e12
+            inference_tflops = self.flops_calculator.flops_inference(
+                total_prompt_lengths + total_decode_lengths
+            )
+            inference_tflops = inference_tflops.float().sum().item() / 1e12
 
-        # Broadcast in CP
-        context_parallel_src_rank = parallel_state.get_context_parallel_global_ranks()[
-            0
-        ]
-        torch.distributed.broadcast_object_list(
-            rollout_results,
-            src=context_parallel_src_rank,
-            group=parallel_state.get_context_parallel_group(),
-        )
-
-        # Flatten rollout results
-        rollout_results = [
-            rollout_result
-            for rollout_dp_results in rollout_results
-            for rollout_result in rollout_dp_results
-        ]
-        rollout_result = RolloutResult.merge_result_list(rollout_results)
-        self.log_debug(f"Received {rollout_result.num_sequence} responses")
-
-        return rollout_result
-
-    def process_rollout_result(self, input_channel: Channel):
-        rollout_result = self._get_rollout_result(input_channel)
-        self.rollout_batches = rollout_result.to_actor_batch(
-            self.cfg.data.max_prompt_length,
-            self.cfg.actor.model.encoder_seq_length,
-            self.tokenizer.eos_token_id,
-        )
-
-        if not self.cfg.reward.use_reward_model:
-            self.answers = rollout_result.answers
-
-        if self.offload_weight:
-            self.onload_model_weights_and_grad(load_grad=self.offload_grad)
-        if self.offload_optimizer:
-            self.onload_megatron_optimizer()
+            rollout_metrics.update(
+                {
+                    "rollout_tflops": rollout_tflops,
+                    "inference_tflops": inference_tflops,
+                    "training_tflops": inference_tflops * 3,  # factor
+                }
+            )
+        return rollout_metrics
 
     # Reward
-    def _compute_rewards(self, answers: List[str]):
+    def _compute_rewards(
+        self, train_batch: Dict[str, torch.Tensor], answers: List[str]
+    ):
+        """Reward computation using non-model based reward."""
         all_reward_scores = []
         texts = []
         for response, response_len in zip(
-            self.rollout_batches["input_ids"],
-            self.rollout_batches["response_lengths"],
+            train_batch["input_ids"],
+            train_batch["response_lengths"],
         ):
             response = response[
                 self.cfg.data.max_prompt_length : self.cfg.data.max_prompt_length
@@ -1036,8 +887,4 @@ class MegatronActor(MegatronModelManager, Worker):
             broadcast_tensor_within_mp(all_reward_scores).flatten().to("cpu")
         )
 
-        self.rollout_batches.update({"reward_scores": all_reward_scores})
-
-    def compute_rewards(self):
-        if not self.cfg.reward.use_reward_model:
-            self._compute_rewards(self.answers)
+        train_batch.update({"reward_scores": all_reward_scores})

@@ -76,16 +76,6 @@ class WorkerGroup(Generic[WorkerClsType]):
         """Get the list of workers in the group."""
         return self._workers
 
-    @property
-    def data_io_ranks(self) -> List[int]:
-        """Get the ranks of workers that are used for data I/O operations."""
-        if self._data_io_ranks is None:
-            is_data_io_ranks = self.is_data_io_rank().wait()
-            self._data_io_ranks = [
-                idx for idx, is_data_io in enumerate(is_data_io_ranks) if is_data_io
-            ]
-        return self._data_io_ranks
-
     def launch(
         self: "WorkerGroup[WorkerClsType]",
         cluster: Cluster,
@@ -345,7 +335,10 @@ class WorkerGroupFunc:
             )
 
         result = WorkerGroupFuncResult(
-            results, self._func_name, self._worker_group._worker_cls.__name__
+            self._worker_group,
+            results,
+            self._func_name,
+            self._worker_group._worker_cls.__name__,
         )
 
         # Reset execution ranks after execution
@@ -359,6 +352,7 @@ class WorkerGroupFuncResult:
 
     def __init__(
         self,
+        worker_group: WorkerGroup,
         results: List[ray.remote_function.RemoteFunction],
         func_name: str,
         cls_name: str,
@@ -368,11 +362,13 @@ class WorkerGroupFuncResult:
         Upon creation, it starts a thread to wait for the results to complete.
 
         Args:
+            worker_group (WorkerGroup): The worker group that the function was executed on.
             results (List[ray.remote_function.RemoteFunction]): The results of the Ray function execution.
             func_name (str): The name of the function that was executed.
             cls_name (str): The name of the class that the function belongs to.
 
         """
+        self._worker_group: Worker = worker_group
         self._remote_results = results
         self._local_results = None
         self._func_name = func_name
@@ -398,6 +394,16 @@ class WorkerGroupFuncResult:
             os.kill(self._pid, signal.SIGUSR1)
             exit(-1)
         self._wait_done = True
+
+    @property
+    def duration(self):
+        """Get the max execution time of a function across different ranks of a group.
+
+        This implicitly waits for the function to finish.
+        """
+        self.wait()
+        execution_times = self._worker_group.get_execution_time(self._func_name).wait()
+        return max(execution_times)
 
     def wait(self):
         """Wait for all remote results to complete and return the results."""

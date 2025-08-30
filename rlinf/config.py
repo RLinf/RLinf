@@ -486,6 +486,7 @@ def validate_math_cfg(cfg: DictConfig) -> DictConfig:
             "training_batch_size_per_gpu", 1
         )
         cfg.algorithm.n_minibatches = cfg.algorithm.get("n_minibatches", 1)
+        cfg.algorithm.max_num_gen_batches = cfg.algorithm.get("max_num_gen_batches", 1)
         cfg.actor.micro_batch_size = cfg.algorithm.training_batch_size_per_gpu
         cfg.actor.global_batch_size = (
             cfg.data.rollout_batch_size

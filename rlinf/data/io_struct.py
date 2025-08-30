@@ -13,12 +13,18 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import torch
+from megatron.core.num_microbatches_calculator import get_num_microbatches
+from omegaconf import DictConfig
 
 from rlinf.data.datasets import batch_pad_to_fixed_len
-from rlinf.utils.data_iter_utils import get_iterator_k_split, split_list
+from rlinf.utils.data_iter_utils import (
+    get_iterator_dynamic,
+    get_iterator_k_split,
+    split_list,
+)
 
 
 @dataclass
@@ -172,13 +178,14 @@ class RolloutResult:
     """
 
     num_sequence: int
+    group_size: int
     prompt_lengths: List[int]
     prompt_ids: List[List[int]]
     response_lengths: List[int]
     response_ids: List[List[int]]
     is_end: List[bool]
-    rewards: Optional[List[float]] = None
-    advantages: Optional[List[float]] = None
+    rewards: Optional[List[float] | torch.Tensor] = None
+    advantages: Optional[List[float] | torch.Tensor] = None
     prompt_texts: Optional[List[str]] = None
     response_texts: Optional[List[str]] = None
     answers: Optional[List[str]] = None
@@ -188,6 +195,10 @@ class RolloutResult:
     rollout_logprobs: Optional[List[List[float]]] = None
     prev_logprobs: Optional[torch.Tensor] = None
     ref_logprobs: Optional[torch.Tensor] = None
+
+    @property
+    def batch_size(self):
+        return self.num_sequence // self.group_size
 
     @staticmethod
     def _get_attention_masks_and_position_ids(
@@ -229,6 +240,7 @@ class RolloutResult:
     @staticmethod
     def from_engine_results(
         results: List[Dict],
+        group_size: int,
         input_ids: List[List[int]],
         answers: Optional[List[List[int]]] = None,
         return_logprobs: bool = False,
@@ -251,6 +263,7 @@ class RolloutResult:
         ), "Input IDs should be a list of lists."
         result = RolloutResult(
             num_sequence=len(results),
+            group_size=group_size,
             prompt_lengths=[len(input_id) for input_id in input_ids],
             prompt_ids=input_ids,
             response_lengths=[len(res["output_ids"]) for res in results],
@@ -272,14 +285,42 @@ class RolloutResult:
     def merge_result_list(
         rollout_results: List["RolloutResult"],
     ) -> "RolloutResult":
+        assert len(rollout_results) > 0, "No rollout results to merge."
+        if len(rollout_results) == 1:
+            return rollout_results[0]
         merged_result = RolloutResult(
             num_sequence=sum(res.num_sequence for res in rollout_results),
+            group_size=rollout_results[0].group_size,
             prompt_lengths=[],
             prompt_ids=[],
             response_lengths=[],
             response_ids=[],
             is_end=[],
         )
+
+        def merge_tensor(dst_tensor: torch.Tensor, src_tensor: torch.Tensor):
+            assert dst_tensor is None or torch.is_tensor(dst_tensor), (
+                f"Expected tensor, got {type(dst_tensor)}"
+            )
+            assert torch.is_tensor(src_tensor), (
+                f"Expected tensor, got {type(src_tensor)}"
+            )
+            if dst_tensor is None:
+                return src_tensor
+            else:
+                return torch.cat([dst_tensor, src_tensor], dim=0)
+
+        def merge_list(dst_list: List, src_list: List):
+            assert dst_list is None or isinstance(dst_list, list), (
+                f"Expected list, got {type(dst_list)}"
+            )
+            assert isinstance(src_list, list), f"Expected list, got {type(src_list)}"
+            if dst_list is None:
+                return src_list
+            else:
+                dst_list.extend(src_list)
+                return dst_list
+
         for res in rollout_results:
             merged_result.prompt_lengths.extend(res.prompt_lengths)
             merged_result.prompt_ids.extend(res.prompt_ids)
@@ -287,21 +328,46 @@ class RolloutResult:
             merged_result.response_ids.extend(res.response_ids)
             merged_result.is_end.extend(res.is_end)
             if res.answers is not None:
-                if merged_result.answers is None:
-                    merged_result.answers = []
-                merged_result.answers.extend(res.answers)
+                merged_result.answers = merge_list(merged_result.answers, res.answers)
             if res.advantages is not None:
-                if merged_result.advantages is None:
-                    merged_result.advantages = []
-                merged_result.advantages.extend(res.advantages)
+                if isinstance(res.advantages, list):
+                    merged_result.advantages = merge_list(
+                        merged_result.advantages, res.advantages
+                    )
+                elif isinstance(res.advantages, torch.Tensor):
+                    merged_result.advantages = merge_tensor(
+                        merged_result.advantages, res.advantages
+                    )
+                else:
+                    raise ValueError(
+                        f"Wrong type of advantages {type(merged_result.advantages)}"
+                    )
             if res.rewards is not None:
-                if merged_result.rewards is None:
-                    merged_result.rewards = []
-                merged_result.rewards.extend(res.rewards)
+                if isinstance(res.rewards, list):
+                    merged_result.rewards = merge_list(
+                        merged_result.rewards, res.rewards
+                    )
+                elif isinstance(res.rewards, torch.Tensor):
+                    merged_result.rewards = merge_tensor(
+                        merged_result.rewards, res.rewards
+                    )
+                else:
+                    raise ValueError(
+                        f"Wrong type of rewards {type(merged_result.rewards)}"
+                    )
             if res.rollout_logprobs is not None:
-                if merged_result.rollout_logprobs is None:
-                    merged_result.rollout_logprobs = []
-                merged_result.rollout_logprobs.extend(res.rollout_logprobs)
+                merged_result.rollout_logprobs = merge_list(
+                    merged_result.rollout_logprobs, res.rollout_logprobs
+                )
+            if res.prev_logprobs is not None:
+                merged_result.prev_logprobs = merge_tensor(
+                    merged_result.prev_logprobs, res.prev_logprobs
+                )
+            if res.ref_logprobs is not None:
+                merged_result.ref_logprobs = merge_tensor(
+                    merged_result.ref_logprobs, res.ref_logprobs
+                )
+
         return merged_result
 
     def to_actor_batch(
@@ -311,6 +377,8 @@ class RolloutResult:
         pad_token: int,
     ) -> Dict[str, torch.Tensor]:
         """
+        Transform the rollout result into a format suitable for the actor.
+
         Args:
             data_seq_length (int): Maximum prompt length, e.g., 1024.
             training_seq_length (int): Total sequence length for training, e.g., 8192.
@@ -399,20 +467,23 @@ class RolloutResult:
         }
 
         if self.advantages is not None:
-            response_attention_mask = attention_mask[
-                :, -max_response_len:
-            ]  # [B, max_response_len]
-            advantages = torch.tensor(self.advantages, dtype=torch.float32).reshape(
-                -1, 1
-            )  # [B, 1]
-            advantages = response_attention_mask.float() * advantages
-            batch["advantages"] = advantages.cuda()
+            if isinstance(self.advantages, torch.Tensor):
+                batch["advantages"] = self.advantages.cuda()
+            else:
+                response_attention_mask = attention_mask[
+                    :, -max_response_len:
+                ]  # [B, max_response_len]
+                advantages = torch.tensor(self.advantages, dtype=torch.float32).reshape(
+                    -1, 1
+                )  # [B, 1]
+                advantages = response_attention_mask.float().cuda() * advantages.cuda()
+                batch["advantages"] = advantages.cuda()
 
         if self.prev_logprobs is not None:
-            batch["prev_logprobs"] = self.prev_logprobs
+            batch["prev_logprobs"] = self.prev_logprobs.cuda()
 
         if self.ref_logprobs is not None:
-            batch["ref_logprobs"] = self.ref_logprobs
+            batch["ref_logprobs"] = self.ref_logprobs.cuda()
 
         if self.rollout_logprobs is not None:
             logprobs = batch_pad_to_fixed_len(
@@ -428,105 +499,303 @@ class RolloutResult:
         return batch
 
     @staticmethod
-    def to_metrics(results: List["RolloutResult"]) -> Dict[str, torch.Tensor]:
-        batch_size_per_dp = torch.tensor(
-            sum(r.num_sequence for r in results), dtype=torch.int64
-        ).reshape(1, 1)
+    def batch_to_cpu(batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        for k, v in batch.items():
+            if isinstance(v, torch.Tensor):
+                batch[k] = v.cpu()
+        return batch
 
-        prompt_lengths = torch.cat(
-            [
-                torch.tensor(r.prompt_lengths, dtype=torch.int32).reshape(1, -1)
-                for r in results
-            ],
-            dim=0,
-        )
-        response_lengths = torch.cat(
-            [
-                torch.tensor(r.response_lengths, dtype=torch.int32).reshape(1, -1)
-                for r in results
-            ],
-            dim=0,
-        )
-        rewards = torch.cat(
-            [
-                torch.tensor(r.rewards, dtype=torch.float32).reshape(1, -1)
-                for r in results
-            ],
-            dim=0,
-        )
-        is_end = torch.cat(
-            [
-                torch.tensor(r.is_end, dtype=torch.float32).reshape(1, -1)
-                for r in results
-            ],
-            dim=0,
-        )
-        adv = torch.cat(
-            [
-                torch.tensor(r.advantages, dtype=torch.float32).reshape(1, -1)
-                for r in results
-            ],
-            dim=0,
-        )
-
-        return {
-            "batch_size_per_dp": batch_size_per_dp,
-            "prompt_lengths": prompt_lengths,
-            "response_lengths": response_lengths,
-            "total_lengths": prompt_lengths + response_lengths,
-            "rewards": rewards,
-            "is_end": is_end,
-            "advantages": adv,
-        }
+    @staticmethod
+    def batch_to_cuda(batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        for k, v in batch.items():
+            if isinstance(v, torch.Tensor):
+                batch[k] = v.cuda()
+        return batch
 
 
 class BatchResizingIterator:
+    """The iterator for handling getting a batch and split it as a batch iterator with optional dynamic batch size."""
+
     def __init__(
         self,
-        fetch_batch_fn,
+        cfg: DictConfig,
+        get_batch_fn: Callable,
         micro_batch_size: int,
-        global_batch_size_per_dp: int,
+        total_batch_size: int,
+        num_global_batches: int,
+        forward_only: bool,
+        batch_tensor_key: str = "input_ids",
     ):
-        self.fetch_batch_fn = fetch_batch_fn
-        self.micro_batch_size = micro_batch_size
-        self.global_batch_size_per_dp = global_batch_size_per_dp
+        """Initialize the BatchResizingIterator.
 
-        self.micro_batch_counter = 0
-        self.current_batch: RolloutResult = None
-        self.current_iter = iter([])
+        Args:
+            cfg (DictConfig): The configuration object.
+            get_batch_fn (Callable): The function to get the batch.
+            micro_batch_size (int): The size of the micro batch.
+            global_batch_size_per_dp (int): The global batch size per data parallel. Here a global batch means the data required for running a single step of inference/training.
+            batch_tensor_key (str): The key for retrieving a sample batch tensor, which will be used to measure the batch size and sequence length. By default, this is "input_ids", which means the input_ids tensor's shape will be used to determine batch size and sequence length.
+        """
+        self.cfg = cfg
+        self.get_batch_fn = get_batch_fn
+        self.micro_batch_size = micro_batch_size
+        self.num_global_batches = num_global_batches
+        self.total_batch_size = total_batch_size
+        self.global_batch_size = total_batch_size // num_global_batches
+        self.forward_only = forward_only
+        self.batch_tensor_key = batch_tensor_key
+
+        # Dynamic batch size
+        self.cp_world_size = None
+        self.vpp_world_size = None
+        self.max_tokens_per_mbs = None
+        self.microbatch_group_size_per_vp_stage = None
+        self.dbs_total_seqlen = None
+        self.dbs_indices = None
+        self.dbs_n_microbatches = None
+        self.has_enabled_dynamic_batch_size = False
+
+        # Iterator states
+        self.consumed_batch_size = 0
+        self.micro_batch_iter = iter([])
+        self.global_batch_iter = iter([])
+        self.prefetch_micro_batch = None  # Used for computing batch info
+        self.global_batch_done = False
+        self.current_global_batch = []
+        self.previous_global_batch = []
+        self.global_batch_handler = None
+        self.full_batch_handler = None
+
+    def check_finished_global_batch(self):
+        assert self.global_batch_done, (
+            f"Batch iterator has not finished for this global batch, only consumed {self.consumed_batch_size} sequences, expected {self.global_batch_size}"
+        )
+
+    @property
+    def require_global_batch(self):
+        return (
+            self.has_enabled_dynamic_batch_size or self.global_batch_handler is not None
+        )
+
+    @property
+    def require_full_batch(self):
+        return self.full_batch_handler is not None
+
+    def enable_dynamic_batch_size(
+        self,
+        cp_world_size: int,
+        vpp_world_size: int,
+        max_tokens_per_mbs: int,
+        microbatch_group_size_per_vp_stage: int,
+    ):
+        """Configure and enable dynamic batch sizing.
+
+        Args:
+            cp_world_size: The context parallel world size for the model.
+            vpp_world_size: The virtual pipeline parallel world size.
+            max_tokens_per_mbs: The maximum tokens per micro batch.
+            microbatch_group_size_per_vp_stage: The microbatch group size per virtual pipeline stage.
+        """
+        self.has_enabled_dynamic_batch_size = True
+        self.cp_world_size = cp_world_size
+        self.vpp_world_size = vpp_world_size
+        self.max_tokens_per_mbs = max_tokens_per_mbs
+        self.microbatch_group_size_per_vp_stage = microbatch_group_size_per_vp_stage
+
+    def get_batch_info(self, forward_micro_batch_size: int):
+        """Get the total sequence length, number of microbatches, and indices based on the batch information and dynamic batch sizing.
+
+        Args:
+            forward_micro_batch_size: The size of the forward micro batch.
+            forward_only: Whether to only consider the forward pass.
+        """
+        if self.prefetch_micro_batch is None:
+            self.prefetch_micro_batch = next(self)
+        if self.has_enabled_dynamic_batch_size:
+            assert self.dbs_total_seqlen is not None, (
+                "Dynamic batch size is not enabled"
+            )
+            assert self.dbs_indices is not None, "Dynamic batch size is not enabled"
+            assert self.dbs_n_microbatches is not None, (
+                "Dynamic batch size is not enabled"
+            )
+            return self.dbs_total_seqlen, self.dbs_n_microbatches, self.dbs_indices
+        else:
+            n_microbatches = (
+                max(1, self.global_batch_size // forward_micro_batch_size)
+                if self.forward_only
+                else get_num_microbatches()
+            )
+            seqlen = self.prefetch_micro_batch[self.batch_tensor_key].shape[1]
+            total_seqlen = seqlen * forward_micro_batch_size
+            return total_seqlen, n_microbatches, None
+
+    def replay_last_global_batch(self):
+        """Replay the last global batch step from the start. Useful when you wish to run different computations with the last global batch data."""
+        assert self.global_batch_done, (
+            f"The last global batch has not been completed yet. Only {self.consumed_batch_size} sequences have been processed, expected {self.global_batch_size}."
+        )
+        self.micro_batch_iter = iter(self.previous_global_batch)
+
+    def register_global_batch_handler(self, handler: Callable):
+        """This enables processing a global batch before it's splitting into microbatches and consumed.
+
+        Args:
+            handler (Callable): The handler function to process the global batch. This function will receive a single argument, which is the global batch to process, and returns the processed global batch.
+        """
+        self.global_batch_handler = handler
+
+    def register_full_batch_handler(self, handler: Callable):
+        """This enables processing the whole batch intended for this DP before it's splitting into global batches.
+
+        Args:
+            handler (Callable): The handler function to process the whole batch. This function will receive a single argument, which is the batch to process, and returns the processed batch.
+        """
+        self.full_batch_handler = handler
+
+    def _get_next_micro_batch(self):
+        """Retrieve the next micro batch from the current microbatch iterator."""
+        if self.prefetch_micro_batch is not None:
+            # If a microbatch has already been prefetched for batch info computation
+            # Return the prefetched microbatch
+            micro_batch = self.prefetch_micro_batch
+            self.prefetch_micro_batch = None
+        else:
+            micro_batch: Dict[str, torch.Tensor] = next(self.micro_batch_iter)
+            self.global_batch_done = False
+            self.consumed_batch_size += micro_batch[self.batch_tensor_key].shape[0]
+            self.current_global_batch.append(micro_batch)
+            if self.consumed_batch_size == self.global_batch_size:
+                # A global batch has been consumed, store the global batch step history
+                self.previous_global_batch = self.current_global_batch
+                self.current_global_batch = []
+                self.consumed_batch_size = 0
+                self.global_batch_done = True
+            else:
+                assert self.consumed_batch_size < self.global_batch_size, (
+                    f"Recevied batches with a total size of {self.consumed_batch_size}, which exceeds the global batch size per dp {self.global_batch_size}. This suggests that the configured global batch size cannot be divided by the actual batch size."
+                )
+        return micro_batch
+
+    def _dynamic_batch_sizing(
+        self, batch: Dict[str, torch.Tensor]
+    ) -> Dict[str, torch.Tensor]:
+        """Split a batch using dynamic batch sizing."""
+        max_tokens_per_mbs = self.max_tokens_per_mbs * self.cp_world_size
+        vpp_size = self.vpp_world_size
+        if vpp_size is not None and vpp_size > 1:
+            microbatch_group_size_per_vp_stage = self.microbatch_group_size_per_vp_stage
+            data_iter, indices, n_micro_batch = get_iterator_dynamic(
+                batch,
+                num_batches_divided_by=microbatch_group_size_per_vp_stage,
+                max_tokens_per_mbs=max_tokens_per_mbs,
+            )
+            assert n_micro_batch % self.microbatch_group_size_per_vp_stage == 0, (
+                f"micro_batches {data_iter} must be divisible by microbatch_group_size_per_vp_stage {microbatch_group_size_per_vp_stage} for megatron backend"
+            )
+        else:
+            data_iter, indices, n_micro_batch = get_iterator_dynamic(
+                batch, max_tokens_per_mbs=max_tokens_per_mbs
+            )
+        total_seqlen = max_tokens_per_mbs
+        self.dbs_total_seqlen = total_seqlen
+        self.dbs_indices = indices
+        self.dbs_n_microbatches = n_micro_batch
+        return data_iter
+
+    def _merge_batches(
+        self, batch1: Dict[str, torch.Tensor], batch2: Dict[str, torch.Tensor]
+    ) -> Dict[str, torch.Tensor]:
+        """Merge two batches into one."""
+        merged_batch = {}
+        for key in batch1.keys():
+            assert torch.is_tensor(batch1[key]), (
+                f"Expected tensor for key {key} in batch1, got {type(batch1[key])}"
+            )
+            assert torch.is_tensor(batch2[key]), (
+                f"Expected tensor for key {key} in batch2, got {type(batch2[key])}"
+            )
+            merged_batch[key] = torch.cat([batch1[key], batch2[key]], dim=0)
+        return merged_batch
+
+    def _fill_global_batches(self, current_batch: Dict[str, torch.Tensor]):
+        """Keep getting batches until the batch size is multiple of a global batch if requires_global_batch."""
+        current_batch_size = current_batch[self.batch_tensor_key].shape[0]
+        while (
+            current_batch_size < self.global_batch_size
+            and current_batch_size % self.global_batch_size != 0
+        ):
+            new_batch = self.get_batch_fn(self.forward_only)
+            current_batch = self._merge_batches(current_batch, new_batch)
+            current_batch_size = current_batch[self.batch_tensor_key].shape[0]
+        return current_batch
+
+    def _fill_full_batches(self, current_batch: Dict[str, torch.Tensor]):
+        """Keep getting batches until the batch size is the total batch size if requires_full_batch."""
+        current_batch_size = current_batch[self.batch_tensor_key].shape[0]
+        while (
+            current_batch_size < self.total_batch_size
+            and current_batch_size % self.global_batch_size != 0
+        ):
+            new_batch = self.get_batch_fn(self.forward_only)
+            current_batch = self._merge_batches(current_batch, new_batch)
+            current_batch_size = current_batch[self.batch_tensor_key].shape[0]
+        return current_batch
+
+    def _get_global_batches(self):
+        """Split a batch into multiple global batches, each of which will be used for one step of inference/training."""
+        batch = self.get_batch_fn(self.forward_only)
+        batch_size = batch[self.batch_tensor_key].shape[0]
+        if batch_size % self.global_batch_size != 0:
+            # If the batch size is smaller than the global batch size per data parallel group,
+            # we can return the batch as is if requires_full_global_batch is False. This usually occurs in pipelining mode.
+            if self.require_full_batch:
+                batch = self._fill_full_batches(batch)
+                batch = self.full_batch_handler(batch)
+            elif self.require_global_batch:
+                # No need to fill global batches if it's already filled by full batches
+                batch = self._fill_global_batches(batch)
+            else:
+                return iter([batch])
+        batch_size = batch[self.batch_tensor_key].shape[0]
+        num_splits = batch_size // self.global_batch_size
+        return get_iterator_k_split(
+            batch,
+            num_splits=num_splits,
+            shuffle=self.cfg.algorithm.get("shuffle_rollout", True),
+            shuffle_seed=self.cfg.actor.seed,
+        )
 
     def __iter__(self):
+        """Return the iterator object itself."""
         return self
 
     def __next__(self):
+        """Retrieve the next micro batch from the current microbatch iterator."""
         try:
-            result = next(self.current_iter)
-            self.micro_batch_counter += 1
-            return result
+            return self._get_next_micro_batch()
         except StopIteration:
-            # If the current iterator is exhausted, fetch a new batch
-            self.current_batch = self.fetch_batch_fn()
-            fetch_batch_size = self.current_batch[
-                list(self.current_batch.keys())[0]
-            ].shape[0]
-            self.current_iter = get_iterator_k_split(
-                self.current_batch,
-                num_microbatches=fetch_batch_size // self.micro_batch_size,
-            )
+            try:
+                global_batch = next(self.global_batch_iter)
+            except StopIteration:
+                # If both the current micro and global batch iterators are exhausted, fetch a new batch
+                self.global_batch_iter = self._get_global_batches()
+                global_batch = next(self.global_batch_iter)
 
-        self.micro_batch_counter += 1
-        return next(self.current_iter)
+            if self.global_batch_handler is not None:
+                global_batch = self.global_batch_handler(global_batch)
+                assert global_batch is not None, (
+                    f"global batch handler {self.global_batch_handler} must not return None."
+                )
 
-    def finalize(self):
-        assert (
-            self.micro_batch_counter * self.micro_batch_size
-            == self.global_batch_size_per_dp
-        ), (
-            f"{self.__class__.__name__}: micro_batch_counter * micro_batch_size = "
-            f"{self.micro_batch_counter} * {self.micro_batch_size} does not match"
-            f" global batch size ({self.global_batch_size_per_dp})."
-        )
-        self.micro_batch_counter = 0
-        # Here, a global batch is completed.
-        # Should not reset current_iter and current_batch
-        # because global_batch_size_per_dp may not be a multiple of fetch_batch_size
+            if self.has_enabled_dynamic_batch_size:
+                self.micro_batch_iter = self._dynamic_batch_sizing(global_batch)
+            else:
+                global_batch_size = global_batch[self.batch_tensor_key].shape[0]
+                self.micro_batch_iter = get_iterator_k_split(
+                    global_batch,
+                    num_splits=global_batch_size // self.micro_batch_size,
+                    shuffle=self.cfg.algorithm.get("shuffle_rollout", True),
+                    shuffle_seed=self.cfg.actor.seed,
+                )
+
+            return self._get_next_micro_batch()
