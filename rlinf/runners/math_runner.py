@@ -14,7 +14,7 @@
 
 import logging
 import os
-from typing import Dict
+from typing import Dict, Union
 
 import pandas as pd
 import torch
@@ -37,6 +37,7 @@ from rlinf.workers.rollout.sglang.sglang_worker import (
     AsyncSGLangWorker,
     SGLangWorker,
 )
+from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
 
 logging.getLogger().setLevel(logging.INFO)
 
@@ -50,7 +51,7 @@ class MathRunner:
         placement: ModelParallelComponentPlacement,
         train_dataset: Dataset,
         val_dataset: Dataset,
-        rollout: SGLangWorker,
+        rollout: Union[SGLangWorker, VLLMWorker],
         inference: MegatronInference,
         actor: MegatronActor,
         reward=None,

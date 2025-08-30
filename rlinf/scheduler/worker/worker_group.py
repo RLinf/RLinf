@@ -184,6 +184,9 @@ class WorkerGroup(Generic[WorkerClsType]):
                 # Override Ray's control over GPU assignment
                 "RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES": "1",
                 # https://github.com/ray-project/ray/blob/161849364a784442cc659fb9780f1a6adee85fce/python/ray/_private/accelerators/nvidia_gpu.py#L95-L96
+                "VLLM_WORKER_MULTIPROC_METHOD": "spawn",
+                "VLLM_ATTENTION_BACKEND": "FLASH_ATTN",
+                "VLLM_USE_V1": "1",
             }
 
             worker = self._cluster.allocate(
