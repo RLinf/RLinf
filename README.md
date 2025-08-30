@@ -2,7 +2,6 @@
   <img src="docs/source/_static/svg/logo_white.svg" alt="RLinf-logo" width="600"/>
 </div>
 
-
 <div align="center">
 <!-- <a href="TODO"><img src="https://img.shields.io/badge/arXiv-Paper-red?logo=arxiv"></a> -->
 <a href="https://huggingface.co/RLinf"><img src="https://img.shields.io/badge/HuggingFace-yellow?logo=huggingface&logoColor=white" alt="Hugging Face"></a>
