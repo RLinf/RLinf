@@ -508,8 +508,10 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     if cfg.runner.task_type == "math":
         cfg = validate_math_cfg(cfg)
 
-    if cfg.algorithm.adv_type == "grpo":
+    if cfg.algorithm.adv_type in ('grpo', 'reinpp_baseline'):
         assert cfg.algorithm.group_size > 1
+    elif cfg.algorithm.adv_type == 'reinpp':
+        assert cfg.algorithm.group_size == 1
 
     if cfg.actor.training_backend == "megatron":
         cfg.actor = validate_megatron_cfg(cfg.actor)

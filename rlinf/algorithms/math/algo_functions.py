@@ -37,12 +37,89 @@ def compute_grpo_advantages(reward_scores, mask, num_responses):
     return advantages
 
 
-def calculate_adv_and_returns(type, reward_scores, mask, num_responses):
+def compute_reinpp_advantages(
+        reward_scores: torch.FloatTensor,
+        mask: torch.BoolTensor,
+        logprob: torch.FloatTensor,
+        ref_logprob: torch.FloatTensor,
+        num_responses: int,
+        kl_beta: float,
+        kl_penalty_type: str,
+        use_baseline: bool,
+):
+    assert len(reward_scores.shape) == 1
+
+    # first group baseline for reinforce++ baseline
+    if use_baseline:  # reinforce++ baseline
+        grouped_rewards = reward_scores.view(-1, num_responses)  # [num_prompt, num_responses]
+        grouped_rewards -= grouped_rewards.mean(dim=1, keepdims=True)
+        reward_scores = grouped_rewards.view(-1)  # [B]
+
+    # build the reward matrix
+    r_matrix = torch.zeros_like(logprob)  # [B, L]
+
+    # The following code is equivalent to:
+    #
+    # last_reward = torch.zeros_like(kl)
+    # for i in range(last_reward.size(0)):
+    #     for t in reversed(range(last_reward.size(1))):
+    #         if action_mask[i][t] > 0.5:
+    #             last_reward[i][t] = r[i]
+    #             break
+    #
+    eos_indices = mask.size(1) - 1 - mask.long().fliplr().argmax(dim=1, keepdim=True)  # [B, 1]
+    r_matrix = r_matrix.scatter_(dim=1, index=eos_indices, src=reward_scores.unsqueeze(1).to(logprob.dtype))  # [B, L]
+
+    # add kl penalty
+    if kl_beta > 0:
+        kld = kl_penalty(ref_logprob, logprob, kl_penalty=kl_penalty_type)  # [B, L]
+        r_matrix -= kl_beta * kld
+
+    # compute return
+    ret_matrix = torch.zeros_like(r_matrix)  # [B, L]
+
+    ret_cumulative = torch.zeros(r_matrix.shape[0], device=r_matrix.device, dtype=r_matrix.dtype)  # [B]
+    for t in reversed(range(ret_matrix.shape[1])):
+        ret_cumulative = r_matrix[:, t] + ret_cumulative  # gamma = 1
+        ret_matrix[:, t] = ret_cumulative
+
+    # normalize
+    advantages = ret_matrix.clone()
+
+    mean = (advantages * mask).sum() / mask.sum()
+    var = ((advantages - mean).pow(2) * mask).sum() / mask.sum()
+    rstd = var.clamp(min=1e-8).rsqrt()
+
+    advantages = (advantages - mean) * rstd
+
+    return advantages
+
+
+def calculate_adv_and_returns(
+        type,
+        reward_scores,
+        mask,
+        logprob,
+        ref_logprob,
+        num_responses,
+        kl_beta,
+        kl_penalty_type,
+):
     if type == "grpo":
         advantages = compute_grpo_advantages(reward_scores, mask, num_responses)
         returns = None
+    elif type == "reinpp":
+        advantages = compute_reinpp_advantages(
+            reward_scores, mask, logprob, ref_logprob, num_responses, kl_beta, kl_penalty_type, use_baseline=False
+        )
+        returns = None
+    elif type == "reinpp_baseline":
+        advantages = compute_reinpp_advantages(
+            reward_scores, mask, logprob, ref_logprob, num_responses, kl_beta, kl_penalty_type, use_baseline=True
+        )
+        returns = None
     else:
-        raise NotImplementedError("adv_type only support grpo for now!")
+        raise NotImplementedError('adv_type only support grpo/reinpp/reinpp_baseline for now!')
 
     return advantages, returns
 
@@ -52,13 +129,13 @@ def critic_loss_fn():
 
 
 def actor_loss_fn(
-    loss_agg_func: Callable,
-    logprobs: torch.FloatTensor,
-    old_logprobs: torch.FloatTensor,
-    advantages: torch.FloatTensor,
-    eps_clip: float,
-    loss_mask: Optional[torch.BoolTensor] = None,
-    c_clip: Optional[float] = None,
+        loss_agg_func: Callable,
+        logprobs: torch.FloatTensor,
+        old_logprobs: torch.FloatTensor,
+        advantages: torch.FloatTensor,
+        eps_clip: float,
+        loss_mask: Optional[torch.BoolTensor] = None,
+        c_clip: Optional[float] = None,
 ):
     """
     Compute PPO actor loss function.
@@ -109,7 +186,7 @@ def actor_loss_fn(
     dual_clip_mask.logical_and_(loss_mask)
 
     proportion_clipped = (
-        clip_mask.logical_and_(loss_mask).count_nonzero() / loss_mask_count
+            clip_mask.logical_and_(loss_mask).count_nonzero() / loss_mask_count
     )
     approx_kl = approx_kl.sum() / loss_mask_count
 
@@ -126,7 +203,7 @@ def actor_loss_fn(
 
 
 def kl_penalty(
-    logprob: torch.FloatTensor, ref_logprob: torch.FloatTensor, kl_penalty
+        logprob: torch.FloatTensor, ref_logprob: torch.FloatTensor, kl_penalty
 ) -> torch.FloatTensor:
     """
     Compute KL divergence given logprob and ref_logprob.
