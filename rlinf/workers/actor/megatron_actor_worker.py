@@ -349,7 +349,8 @@ class MegatronActor(MegatronModelManager, Worker):
                             )
 
                     kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
-                    if self.kl_beta > 0 and ref_logprobs is not None:
+                    if (self.kl_beta > 0 and ref_logprobs is not None
+                            and self.cfg.algorithm.adv_type not in ('reinpp', 'reinpp_baseline')):
                         kld = kl_penalty(
                             ref_logprobs, curr_logprobs, self.kl_penalty_type
                         )
@@ -811,7 +812,11 @@ class MegatronActor(MegatronModelManager, Worker):
             self.cfg.algorithm.adv_type,
             self.rollout_batches["reward_scores"].cuda(),
             mask.cuda(),
+            self.rollout_batches["prev_logprobs"].cuda(),
+            self.rollout_batches["ref_logprobs"].cuda(),
             self.cfg.algorithm.group_size,
+            self.cfg.algorithm.kl_beta,
+            self.cfg.algorithm.kl_penalty_type,
         )
 
         if self.cfg.algorithm.normalize_advantages:
