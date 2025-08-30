@@ -21,7 +21,7 @@ from rlinf.algorithms.utils import huber_loss
 from rlinf.utils.utils import masked_sum
 
 
-@register_policy_loss("ppo_actor_critic")
+@register_policy_loss("ppo")
 def ppo_actor_critic_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
     """
     Compute PPO actor loss function.
@@ -102,7 +102,7 @@ def ppo_actor_critic_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
     return loss, metrics_data
 
 
-@register_policy_loss("grpo_actor")
+@register_policy_loss("grpo")
 def grpo_actor_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
     """
     Compute actor loss for Group Relative Policy Optimization (GRPO).

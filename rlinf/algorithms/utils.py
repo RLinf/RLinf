@@ -63,9 +63,9 @@ def kl_penalty(
 
 
 def preprocess_loss_inputs(**kwargs) -> dict:
-    logprob_type = kwargs["logprob_type"]
-    entropy_type = kwargs["entropy_type"]
-    single_action_dim = kwargs["single_action_dim"]
+    logprob_type = kwargs.get("logprob_type", None)
+    entropy_type = kwargs.get("entropy_type", None)
+    single_action_dim = kwargs.get("single_action_dim", None)
 
     logprobs = kwargs["logprobs"]
     old_logprobs = kwargs["old_logprobs"]

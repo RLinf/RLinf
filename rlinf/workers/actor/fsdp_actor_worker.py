@@ -21,6 +21,7 @@ from omegaconf import DictConfig
 from torch.distributed.device_mesh import init_device_mesh
 from tqdm import tqdm
 
+import rlinf.algorithms
 from rlinf.algorithms.registry import actor_loss, calculate_adv_and_returns
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
@@ -305,9 +306,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 loss_mask_sum = data.get("loss_mask_sum", None)
 
                 loss, metrics_data = actor_loss(
-                    self.cfg.algorithm.loss_type,
-                    self.cfg.algorithm.logprob_type,
-                    self.cfg.algorithm.entropy_type,
+                    loss_type=self.cfg.algorithm.loss_type,
+                    logprob_type=self.cfg.algorithm.logprob_type,
+                    entropy_type=self.cfg.algorithm.entropy_type,
                     single_action_dim=self.model.action_dim,
                     logprobs=logprobs,
                     entropy=entropy,

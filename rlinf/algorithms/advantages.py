@@ -98,7 +98,6 @@ def compute_grpo_advantages_and_returns(
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """
     Group Relative Policy Optimization (GRPO) advantages.
-    Returns is set to `None` since GRPO only needs normalized group rewards.
     """
 
     rewards = kwargs["rewards"]
@@ -181,7 +180,7 @@ def compute_math_grpo_advantages(**kwargs):
 
     advantages = (torch.zeros_like(mask) + advantages.view(-1, 1)) * mask
 
-    return advantages
+    return advantages, advantages
 
 
 if __name__ == "__main__":
