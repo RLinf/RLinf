@@ -58,23 +58,28 @@ RUN pip install \
     pybind11 \
     torch_memory_saver \
     ray[default]==2.47.0 \
-    transformers==4.40.1 \
     draccus \
     rich \
     tensorflow_graphics \
     peft==0.11.1 \
     timm==0.9.10 \
-    mani_skill \
-    tensordict
+    tensordict \
+    transformers==4.40.1
 
 RUN pip install --no-build-isolation  --use-pep517 flash-attn==2.5.5
 
 WORKDIR /workspace
 
 RUN git clone https://github.com/moojink/openvla-oft.git /workspace/openvla_oft && \
-    git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git /workspace/libero
+    git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git /workspace/libero && \
+    git clone https://github.com/haosulab/ManiSkill.git /workspace/maniskill
+
+RUN cd /workspace/maniskill && \
+    git checkout fa22a46ecf54a4035a762dade27f8cb3f907aa46 && \
+    cd /workspace
 
 RUN pip install \
+    -e /workspace/maniskill \
     -e /workspace/libero \
     -e /workspace/openvla_oft
 
