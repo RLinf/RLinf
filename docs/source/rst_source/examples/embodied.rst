@@ -3,7 +3,7 @@ Agentic RL-VLA
 
 This document provides a comprehensive guide to launching and managing the 
 Vision-Language-Action Models (VLAs) training task within the RLinf framework, 
-focusing on finetuning a VLA model for robotic manipulation in the ManiSkill3 environment. 
+focusing on finetuning a VLA model for robotic manipulation in the ManiSkill3/LIBERO environment. 
 
 The primary objective is to develop a model capable of performing robotic manipulation by:
 
@@ -24,6 +24,16 @@ Environment
   - 3D position control (x, y, z)
   - 3D rotation control (roll, pitch, yaw)
   - Gripper control (open/close)
+
+**LIBERO Environment**
+
+- **Environment**: LIBERO simulation benchmark built on top of *robosuite* (MuJoCo).
+- **Task**: Command a 7-DoF robotic arm to perform a variety of household manipulation skills (pick-and-place, stacking, opening drawers, spatial rearrangement).
+- **Observation**: RGB images (typical resolutions 128 × 128 or 224 × 224) captured by off-screen cameras placed around the workspace.
+- **Action Space**: 7-dimensional continuous actions  
+  - 3D end-effector position control (x, y, z)  
+  - 3D rotation control (roll, pitch, yaw)  
+  - Gripper control (open / close)
 
 **Task Description Format**
 
@@ -54,7 +64,14 @@ Algorithm
 
    - Entropy regularization
 
-2. **Vision-Language-Action Model**
+2. **GRPO (Group Relative Policy Optimization)**
+
+   - For every state / prompt the policy generates *G* independent actions
+
+   - Compute the advantage of each action by subtracting the group’s mean reward.
+
+
+3. **Vision-Language-Action Model**
 
    - OpenVLA architecture with multimodal fusion
 
@@ -108,24 +125,39 @@ You can also reconfigure the placement to achieve complete separation, where env
 
 **2. Configuration Files**
 
-We currently support training two models: OpenVLA and OpenVLA-OFT. Their corresponding configuration files are located at:
+We currently support training in two environments: **ManiSkill3** and **LIBERO**.
 
-- **OpenVLA**: ``examples/embodiment/config/maniskill_ppo_openvla.yaml``
-- **OpenVLA-OFT**: ``examples/embodiment/config/maniskill_ppo_openvlaoft.yaml``
+1. **ManiSkill3 Environment**
+
+   We support two models: **OpenVLA** and **OpenVLA-OFT**, along with two algorithms: **PPO** and **GRPO**.  
+   The corresponding configuration files are:
+
+   - **OpenVLA + PPO**: ``examples/embodiment/config/maniskill_ppo_openvla.yaml``
+   - **OpenVLA-OFT + PPO**: ``examples/embodiment/config/maniskill_ppo_openvlaoft.yaml``
+   - **OpenVLA + GRPO**: ``examples/embodiment/config/maniskill_grpo_openvla.yaml``
+   - **OpenVLA-OFT + GRPO**: ``examples/embodiment/config/maniskill_grpo_openvlaoft.yaml``
+
+2. **LIBERO Environment**
+
+   We support the **OpenVLA-OFT** model with both **PPO** and **GRPO** algorithms.  
+   The corresponding configuration files are:
+
+   - **OpenVLA-OFT + PPO**: ``examples/embodiment/config/libero_10_ppo_openvlaoft.yaml``
+   - **OpenVLA-OFT + GRPO**: ``examples/embodiment/config/libero_10_grpo_openvlaoft.yaml``
 
 **3. Launch Commands**
 
-To launch training with the OpenVLA model, run:
+To start training with a chosen configuration, run the following command:
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla 
+   bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
 
-To launch training with the OpenVLA-OFT model, run:
+For example, to train the OpenVLA model using the PPO algorithm in the ManiSkill3 environment, run:
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla
 
 
 Visualization and Results
@@ -181,7 +213,8 @@ Visualization and Results
          project_name: "RLinf"
          experiment_name: "openvla-maniskill"
 
-On a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) achieved up to 90% accuracy on ManiSkill3’s plate-25-main task, following 48 hours and 24 hours of training, respectively.
+As an illustrative example, we present the training results of the PPO algorithm in the ManiSkill3 environment. 
+Running on a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) achieved up to 90% success on ManiSkill3’s plate-25-main task, after 48 and 24 hours of PPO training, respectively.
 
 .. raw:: html
 
@@ -195,6 +228,44 @@ On a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) achieved 
        <p><em>OpenVLA-OFT (24h training)</em></p>
      </div>
    </div>
+
+Our fine-tuned models achieved the following accuracies on the Vision, Semantic, and Position tasks under out-of-distribution (OOD) evaluation. 
+The best-performing model for each task is highlighted in bold.
+
+.. list-table:: **OpenVLA and OpenVLA-OFT model results**
+   :header-rows: 1
+   :widths: 40 15 15 18 15
+
+   * - Model
+     - Vision
+     - Semantic
+     - Position 
+     - Average
+   * - `rl4vla <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_
+     - 0.77
+     - 0.75
+     - 0.78
+     - 0.76
+   * - GRPO-OpenVLA-OFT
+     - **0.85**
+     - 0.52
+     - 0.43
+     - 0.61
+   * - PPO-OpenVLA-OFT
+     - 0.81
+     - 0.57
+     - 0.56
+     - 0.65
+   * - PPO-OpenVLA
+     - 0.82
+     - **0.81**
+     - **0.89**
+     - **0.82**
+   * - GRPO-OpenVLA
+     - 0.75
+     - 0.74
+     - 0.82
+     - 0.75
 
 
 The animation below shows the results of training the OpenVLA model on ManiSkill3's multi-task benchmark 
