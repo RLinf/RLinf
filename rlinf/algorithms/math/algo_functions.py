@@ -31,6 +31,8 @@ def compute_grpo_advantages(reward_scores, mask, num_responses):
     advantages = advantages / (grouped_reward_std + 1e-6)
     device = mask.device
     advantages = advantages.to(device)
+    grouped_reward_mean = grouped_reward_mean.view(-1, num_responses)
+    grouped_reward_std = grouped_reward_std.view(-1, num_responses)
 
     advantages = (torch.zeros_like(mask) + advantages.view(-1, 1)) * mask
 
@@ -56,7 +58,8 @@ def actor_loss_fn(
     logprobs: torch.FloatTensor,
     old_logprobs: torch.FloatTensor,
     advantages: torch.FloatTensor,
-    eps_clip: float,
+    eps_clip_high: float,
+    eps_clip_low: float,
     loss_mask: Optional[torch.BoolTensor] = None,
     c_clip: Optional[float] = None,
 ):
@@ -88,7 +91,8 @@ def actor_loss_fn(
     ratio = torch.where(loss_mask, torch.exp(logprobs - old_logprobs), 0)
     approx_kl = torch.where(loss_mask, (logprobs - old_logprobs).detach(), 0.0)
 
-    clipped_ratio = torch.clamp(ratio, 1.0 - eps_clip, 1.0 + eps_clip)
+    # DAPO trick 1: clip higher
+    clipped_ratio = torch.clamp(ratio, 1.0 - eps_clip_low, 1.0 + eps_clip_high)
     pg_loss1 = -advantages * ratio
     pg_loss2 = -advantages * clipped_ratio
 
@@ -103,7 +107,7 @@ def actor_loss_fn(
     else:
         dual_clip_mask = torch.zeros_like(clip_mask)
 
-    pg_loss = loss_agg_func(pg_loss, loss_mask)
+    pg_loss = loss_agg_func(torch.max(pg_loss1, pg_loss2), loss_mask)
 
     clip_mask = pg_loss1.detach() < pg_loss2.detach()
     dual_clip_mask.logical_and_(loss_mask)
