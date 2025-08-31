@@ -21,8 +21,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 </div>
 
 ## What's NEW!
-- [2025/08] RLinf is open-sourced. The formal v0.1 will be released soon. The paper [RLinf: A System for Adaptive, Dynamic, Fine-Grained Scheduling in Reinforcement Learning]() will also be released accordingly. 
-
+- [2025/08] RLinf is open-sourced. The formal v0.1 will be released soon. The paper [RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Micro Flow Transformation]() will also be released accordingly. 
 
 ## Key Features
 
