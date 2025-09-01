@@ -114,7 +114,7 @@ class TestAllocationStates:
     def test_allocation_states_initialization(self):
         """Test AllocationStates initialization."""
         components_config = {
-            "trainer": {
+            "actor": {
                 "tensor_model_parallel_size": 2,
                 "pipeline_model_parallel_size": 1,
             },
@@ -126,30 +126,30 @@ class TestAllocationStates:
 
         allocation = AllocationStates(components_config)
 
-        assert "trainer" in allocation.states
+        assert "actor" in allocation.states
         assert "rollout" in allocation.states
         assert allocation.idle_gpus == 0
 
     def test_get_component(self):
         """Test getting component states."""
         components_config = {
-            "trainer": {
+            "actor": {
                 "tensor_model_parallel_size": 2,
                 "pipeline_model_parallel_size": 1,
             },
         }
 
         allocation = AllocationStates(components_config)
-        trainer_state = allocation.get_component("trainer")
+        actor_state = allocation.get_component("actor")
 
-        assert trainer_state is not None
-        assert trainer_state.tensor_model_parallel_size == 2
+        assert actor_state is not None
+        assert actor_state.tensor_model_parallel_size == 2
         assert allocation.get_component("nonexistent") is None
 
     def test_total_and_used_gpus(self):
         """Test GPU counting methods."""
         components_config = {
-            "trainer": {
+            "actor": {
                 "tensor_model_parallel_size": 2,
                 "pipeline_model_parallel_size": 1,
             },
@@ -160,7 +160,7 @@ class TestAllocationStates:
         }
 
         allocation = AllocationStates(components_config)
-        allocation.get_component("trainer").allocation(4)
+        allocation.get_component("actor").allocation(4)
         allocation.get_component("rollout").allocation(2)
         allocation.idle_gpus = 2
 
@@ -174,7 +174,7 @@ class TestResourcePlanner:
     def test_resource_planner_initialization(self):
         """Test ResourcePlanner initialization."""
         components_config = {
-            "trainer": {
+            "actor": {
                 "tensor_model_parallel_size": 2,
                 "pipeline_model_parallel_size": 1,
             },
@@ -187,19 +187,19 @@ class TestResourcePlanner:
         planner = ResourcePlanner(
             components_config=components_config,
             total_gpus=8,
-            valid_trainer_dp_sizes=[1, 2, 4],
+            valid_actor_dp_sizes=[1, 2, 4],
             valid_inference_dp_sizes=[1, 2],
         )
 
         assert planner.total_gpus == 8
         assert len(planner.valid_components) == 2
-        assert "trainer" in planner.valid_components
+        assert "actor" in planner.valid_components
         assert "rollout" in planner.valid_components
 
     def test_generate_states_for_single_component(self):
         """Test generating states for a single component."""
         components_config = {
-            "trainer": {
+            "actor": {
                 "tensor_model_parallel_size": 2,
                 "pipeline_model_parallel_size": 1,
             },
@@ -208,25 +208,25 @@ class TestResourcePlanner:
         planner = ResourcePlanner(
             components_config=components_config,
             total_gpus=8,
-            valid_trainer_dp_sizes=[1, 2, 4],
+            valid_actor_dp_sizes=[1, 2, 4],
             valid_inference_dp_sizes=[],
         )
 
         init_allocation = AllocationStates(components_config)
         states = planner.generate_states_for_single_component(
-            init_allocation, "trainer"
+            init_allocation, "actor"
         )
 
         assert len(states) > 0
         # Should generate states with different data parallel sizes
         for state in states:
-            trainer_state = state.get_component("trainer")
-            assert trainer_state.world_size > 0
+            actor_state = state.get_component("actor")
+            assert actor_state.world_size > 0
 
     def test_generate_all_states(self):
         """Test generating all possible allocation states."""
         components_config = {
-            "trainer": {
+            "actor": {
                 "tensor_model_parallel_size": 2,
                 "pipeline_model_parallel_size": 1,
             },
@@ -239,7 +239,7 @@ class TestResourcePlanner:
         planner = ResourcePlanner(
             components_config=components_config,
             total_gpus=8,
-            valid_trainer_dp_sizes=[1, 2],
+            valid_actor_dp_sizes=[1, 2],
             valid_inference_dp_sizes=[],
         )
 
@@ -250,7 +250,7 @@ class TestResourcePlanner:
     def test_generate_static_states(self):
         """Test generating static states that use all GPUs."""
         components_config = {
-            "trainer": {
+            "actor": {
                 "tensor_model_parallel_size": 2,
                 "pipeline_model_parallel_size": 1,
             },
@@ -263,7 +263,7 @@ class TestResourcePlanner:
         planner = ResourcePlanner(
             components_config=components_config,
             total_gpus=8,
-            valid_trainer_dp_sizes=[1, 2, 4],
+            valid_actor_dp_sizes=[1, 2, 4],
             valid_inference_dp_sizes=[],
         )
 
@@ -297,7 +297,7 @@ class TestResourceAllocationFunctions:
     def test_resource_allocate(self):
         """Test main resource allocation function."""
         components_config = {
-            "trainer": {
+            "actor": {
                 "tensor_model_parallel_size": 2,
                 "pipeline_model_parallel_size": 1,
             },
@@ -325,14 +325,14 @@ class TestResourceAllocationFunctions:
 
         for allocation_state in allocation_states:
             assert allocation_state.used_gpus() == 8
-            trainer_state = allocation_state.get_component("trainer")
+            actor_state = allocation_state.get_component("actor")
             inference_state = allocation_state.get_component("inference")
             rollout_state = allocation_state.get_component("rollout")
-            assert trainer_state.model_parallel_size == 2
+            assert actor_state.model_parallel_size == 2
             assert inference_state.model_parallel_size == 2
             assert rollout_state.model_parallel_size == 1
             assert (
-                trainer_state.world_size != 0
+                actor_state.world_size != 0
                 and inference_state.world_size != 0
                 and rollout_state.world_size != 0
             )
@@ -352,16 +352,16 @@ class TestWorkflowNodes:
 
     def test_component_node(self):
         """Test ComponentNode creation."""
-        component = ComponentNode("trainer")
+        component = ComponentNode("actor")
         component.set_single_batch_instance_cost(20.0)
         component.set_instance_num(4)
 
-        assert component.name == "trainer"
+        assert component.name == "actor"
         assert component.get_single_batch_cost() == 5.0
 
     def test_scc_component_node(self):
         """Test SccComponentNode with multiple components."""
-        component1 = ComponentNode("trainer")
+        component1 = ComponentNode("actor")
         component1.set_single_batch_instance_cost(20.0)
         component1.set_instance_num(4)
 
@@ -371,7 +371,7 @@ class TestWorkflowNodes:
 
         scc_node = SccComponentNode([component1, component2])
 
-        assert "trainer - rollout" in scc_node.name
+        assert "actor - rollout" in scc_node.name
         assert scc_node.get_single_batch_cost() == 15.0  # 5.0 + 10.0
 
 
@@ -380,7 +380,7 @@ class TestWorkflow:
 
     def test_workflow_creation(self):
         """Test workflow creation and basic properties."""
-        node1 = ComponentNode("trainer")
+        node1 = ComponentNode("actor")
         node2 = ComponentNode("rollout")
 
         workflow_dict = {node1: [node2], node2: []}
@@ -393,7 +393,7 @@ class TestWorkflow:
 
     def test_topological_sort(self):
         """Test topological sorting of workflow."""
-        node1 = ComponentNode("trainer")
+        node1 = ComponentNode("actor")
         node2 = ComponentNode("rollout")
         node3 = ComponentNode("inference")
 
@@ -409,7 +409,7 @@ class TestWorkflow:
 
     def test_find_sccs(self):
         """Test finding strongly connected components."""
-        node1 = ComponentNode("trainer")
+        node1 = ComponentNode("actor")
         node2 = ComponentNode("rollout")
 
         # Create a simple cycle
@@ -424,7 +424,7 @@ class TestWorkflow:
 
     def test_compress_sccs(self):
         """Test SCC compression."""
-        node1 = ComponentNode("trainer")
+        node1 = ComponentNode("actor")
         node2 = ComponentNode("rollout")
         node3 = ComponentNode("inference")
 
@@ -446,7 +446,7 @@ class TestWorkflowPartitioner:
 
     def test_workflow_partitioner_creation(self):
         """Test WorkflowPartitioner creation."""
-        node1 = ComponentNode("trainer")
+        node1 = ComponentNode("actor")
         node2 = ComponentNode("rollout")
 
         workflow_dict = {node1: [node2], node2: []}
@@ -458,7 +458,7 @@ class TestWorkflowPartitioner:
 
     def test_partition_generation(self):
         """Test partition generation."""
-        node1 = ComponentNode("trainer")
+        node1 = ComponentNode("actor")
         node2 = ComponentNode("rollout")
         node3 = ComponentNode("inference")
 
@@ -479,7 +479,7 @@ class TestPipelineCostCacl:
 
     def test_pipeline_cost_calculation(self):
         """Test pipeline cost calculation."""
-        node1 = ComponentNode("trainer")
+        node1 = ComponentNode("actor")
         node1.set_single_batch_instance_cost(10.0)
         node1.set_instance_num(1)
 
@@ -506,7 +506,7 @@ class TestPipelineCostCacl:
 
     def test_critical_path_finding(self):
         """Test critical path finding."""
-        node1 = ComponentNode("trainer")
+        node1 = ComponentNode("actor")
         node1.set_single_batch_instance_cost(10.0)
         node1.set_instance_num(1)
 
@@ -533,7 +533,7 @@ class TestWorkflowUtilityFunctions:
         node1.set_single_batch_instance_cost(10.0)
         node1.set_instance_num(1)
 
-        node2 = ComponentNode("trainer")
+        node2 = ComponentNode("actor")
         node2.set_single_batch_instance_cost(10.0)
         node2.set_instance_num(2)
 
@@ -547,7 +547,7 @@ class TestWorkflowUtilityFunctions:
 
     def test_get_workflow_partition(self):
         """Test get_workflow_partition function."""
-        node1 = ComponentNode("trainer")
+        node1 = ComponentNode("actor")
         node2 = ComponentNode("rollout")
 
         workflow_dict = {node1: [node2], node2: []}
@@ -582,10 +582,10 @@ class TestSchedulerTask:
         mock_cfg.runner.seq_length = 2048
 
         profile_data = get_profile_data(
-            mock_cfg, trainer_cost=100.0, inference_cost=50.0, rollout_cost=75.0
+            mock_cfg, actor_cost=100.0, inference_cost=50.0, rollout_cost=75.0
         )
 
-        assert profile_data["trainer"] == (4, 100.0)
+        assert profile_data["actor"] == (4, 100.0)
         assert profile_data["rollout"] == (8, 75.0)
         assert profile_data["inference"] == (4, 50.0)
 
@@ -617,7 +617,7 @@ class TestSchedulerTask:
         assert scheduler_task.is_math is True
         assert scheduler_task.total_gpus == 8
         assert scheduler_task.group_size == 4
-        assert "trainer" in scheduler_task.components_config
+        assert "actor" in scheduler_task.components_config
         assert "rollout" in scheduler_task.components_config
 
 

@@ -19,7 +19,7 @@ cluster:
   num_nodes: 1
   num_gpus_per_node: 8
   component_placement:
-    rollout,trainer: all'
+    rollout,actor: all'
 
 EXPECTED_OUTPUT1='==================================================
 Best placement for this task is:
@@ -28,7 +28,7 @@ cluster:
   num_nodes: 1
   num_gpus_per_node: 8
   component_placement:
-    trainer,rollout: all'
+    actor,rollout: all'
 if [ "$EXPECTED_OUTPUT0" = "$output" ] || [ "$EXPECTED_OUTPUT1" = "$output" ]; then
     echo "Output matches the expected result."
     exit 0

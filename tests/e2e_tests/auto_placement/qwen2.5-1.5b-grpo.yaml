@@ -257,6 +257,6 @@ critic:
   use_critic_model: false
 
 profile_data:
-  trainer_cost: 95.7
+  actor_cost: 95.7
   inference_cost: 30.8
   rollout_cost: 59.9

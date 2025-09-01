@@ -134,7 +134,7 @@ class ResourcePlanner:
         self,
         components_config: Dict[str, Dict[str, int]],
         total_gpus: int,
-        valid_trainer_dp_sizes: List[int],
+        valid_actor_dp_sizes: List[int],
         valid_inference_dp_sizes: List[int],
     ):
         self.components_config = components_config
@@ -142,9 +142,9 @@ class ResourcePlanner:
         self.total_gpus = total_gpus
 
         # Setting valid_dp_sizes is used ​to prune​
-        trainer_state = self.initial_allocation.get_component("trainer")
-        if trainer_state:
-            trainer_state.set_valid_dp_sizes(valid_trainer_dp_sizes)
+        actor_state = self.initial_allocation.get_component("actor")
+        if actor_state:
+            actor_state.set_valid_dp_sizes(valid_actor_dp_sizes)
         inference_state = self.initial_allocation.get_component("inference")
         if inference_state:
             inference_state.set_valid_dp_sizes(valid_inference_dp_sizes)
@@ -234,7 +234,7 @@ def get_valid_dp_sizes(
     rollout_batch_size: int,
     n_minibatches: int,
 ) -> List[int]:
-    """This function is used to get the valid data parallel sizes for the Trainer and Inference based on the constraints of batch and group size.
+    """This function is used to get the valid data parallel sizes for the Actor and Inference based on the constraints of batch and group size.
 
     Args:
         total_gpus (int): The total number of GPUs in the cluster.
@@ -250,7 +250,7 @@ def get_valid_dp_sizes(
     assert global_step_batch_size % n_minibatches == 0, (
         f"global_step_batch_size={global_step_batch_size} must be divisible by train_iter={n_minibatches}"
     )
-    trainer_iter_batch_size = global_step_batch_size // n_minibatches
+    actor_iter_batch_size = global_step_batch_size // n_minibatches
 
     valid_dp_sizes = []
     model_parallel_size = (
@@ -260,7 +260,7 @@ def get_valid_dp_sizes(
     max_dp_size = total_gpus // model_parallel_size
 
     for dp_size in range(1, max_dp_size + 1):
-        if trainer_iter_batch_size % (dp_size * group_size) == 0:
+        if actor_iter_batch_size % (dp_size * group_size) == 0:
             valid_dp_sizes.append(dp_size)
 
     return valid_dp_sizes
@@ -297,14 +297,14 @@ def resource_allocate(
             "tensor_model_parallel_size and pipeline_model_parallel_size must be greater than 0"
         )
 
-    # Generate valid DP sizes for Inference and Trainer
+    # Generate valid DP sizes for Inference and Actor
     valid_inference_dp_sizes: List[int] = []
-    valid_trainer_dp_sizes: List[int] = []
+    valid_actor_dp_sizes: List[int] = []
 
-    if components_config.get("trainer", None) is not None:
-        valid_trainer_dp_sizes: List[int] = get_valid_dp_sizes(
+    if components_config.get("actor", None) is not None:
+        valid_actor_dp_sizes: List[int] = get_valid_dp_sizes(
             total_gpus,
-            components_config["trainer"],
+            components_config["actor"],
             group_size,
             rollout_batch_size,
             n_minibatches,
@@ -323,7 +323,7 @@ def resource_allocate(
 
     planner = ResourcePlanner(
         components_config=components_config,
-        valid_trainer_dp_sizes=valid_trainer_dp_sizes,
+        valid_actor_dp_sizes=valid_actor_dp_sizes,
         valid_inference_dp_sizes=valid_inference_dp_sizes,
         total_gpus=total_gpus,
     )

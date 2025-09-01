@@ -33,7 +33,7 @@ class SchedulerTask:
         assert self.is_math, "Only math task is supported"
 
         self.components_config = {
-            "trainer": {
+            "actor": {
                 "tensor_model_parallel_size": cfg.actor.model.tensor_model_parallel_size,
                 "pipeline_model_parallel_size": cfg.actor.model.pipeline_model_parallel_size,
             },
@@ -50,10 +50,10 @@ class SchedulerTask:
                 cfg.inference.model.pipeline_model_parallel_size
             )
         except Exception:
-            inference_tensor_model_parallel_size = self.components_config["trainer"][
+            inference_tensor_model_parallel_size = self.components_config["actor"][
                 "tensor_model_parallel_size"
             ]
-            inference_pipeline_model_parallel_size = self.components_config["trainer"][
+            inference_pipeline_model_parallel_size = self.components_config["actor"][
                 "pipeline_model_parallel_size"
             ]
         self.components_config["inference"] = {
@@ -70,25 +70,25 @@ class SchedulerTask:
 
         if workflow_graph is None:
             if self.is_math:
-                trainer = ComponentNode("trainer")
+                actor = ComponentNode("actor")
                 inference = ComponentNode("inference")
                 rollout = ComponentNode("rollout")
                 workflow_graph = {
                     rollout: [inference],
-                    inference: [trainer],
-                    trainer: [],
+                    inference: [actor],
+                    actor: [],
                 }
 
             else:
-                trainer = ComponentNode("trainer")
+                actor = ComponentNode("actor")
                 inference = ComponentNode("inference")
                 rollout = ComponentNode("rollout")
                 env = ComponentNode("env")
                 workflow_graph = {
                     env: [rollout],
                     rollout: [env, inference],
-                    inference: [trainer],
-                    trainer: [],
+                    inference: [actor],
+                    actor: [],
                 }
 
         self.workflow = Workflow(workflow_graph)
@@ -232,19 +232,19 @@ class SchedulerTask:
         return min_cost_allocation, min_cost
 
 
-def get_profile_data(cfg, trainer_cost=None, inference_cost=None, rollout_cost=None):
+def get_profile_data(cfg, actor_cost=None, inference_cost=None, rollout_cost=None):
     total_gpus = cfg.cluster.num_gpus_per_node * cfg.cluster.num_nodes
-    collocated_trainer_instance_num = total_gpus // (
+    collocated_actor_instance_num = total_gpus // (
         cfg.actor.model.tensor_model_parallel_size
         * cfg.actor.model.pipeline_model_parallel_size
     )
-    collocated_inference_instance_num = collocated_trainer_instance_num
+    collocated_inference_instance_num = collocated_actor_instance_num
     collocated_rollout_instance_num = total_gpus // (
         cfg.rollout.tensor_parallel_size * cfg.rollout.pipeline_parallel_size
     )
 
     profile_data = {
-        "trainer": (collocated_trainer_instance_num, trainer_cost),
+        "actor": (collocated_actor_instance_num, actor_cost),
         "inference": (collocated_inference_instance_num, inference_cost),
         "rollout": (collocated_rollout_instance_num, rollout_cost),
     }
@@ -256,14 +256,14 @@ def get_profile_data(cfg, trainer_cost=None, inference_cost=None, rollout_cost=N
 def main(cfg):
     cfg = validate_cfg(cfg)
 
-    trainer_cost = getattr(cfg.profile_data, "trainer_cost", None)
+    actor_cost = getattr(cfg.profile_data, "actor_cost", None)
     inference_cost = getattr(cfg.profile_data, "inference_cost", None)
     rollout_cost = getattr(cfg.profile_data, "rollout_cost", None)
 
-    if trainer_cost is None or inference_cost is None or rollout_cost is None:
+    if actor_cost is None or inference_cost is None or rollout_cost is None:
         raise ValueError("Profile data is not provided")
 
-    profile_data = get_profile_data(cfg, trainer_cost, inference_cost, rollout_cost)
+    profile_data = get_profile_data(cfg, actor_cost, inference_cost, rollout_cost)
     scheduler_task = SchedulerTask(cfg)
     scheduler_task.register_profile_data(profile_data)
     res = scheduler_task.run()
