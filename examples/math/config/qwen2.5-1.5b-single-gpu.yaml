@@ -186,8 +186,8 @@ actor:
     min_lr: 2.0e-6
     weight_decay: 0.05
     use_distributed_optimizer: True
-    overlap_grad_reduce: True
-    overlap_param_gather: True
+    overlap_grad_reduce: False
+    overlap_param_gather: False
     optimizer_enable_pin: false
     overlap_param_gather_with_optimizer_step: False
     clip_grad: 0.8
