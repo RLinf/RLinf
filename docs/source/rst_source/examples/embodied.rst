@@ -321,3 +321,8 @@ Furthermore, we trained OpenVLA-OFT in the LIBERO environment using the GRPO alg
      - +73.4%
      - +80.5%
      - +62.4%
+
+For the Libero experiment, we were inspired by 
+`SimpleVLA <https://github.com/PRIME-RL/SimpleVLA-RL>`_, 
+with only minor modifications. We thank the authors for releasing their open-source code, 
+and our results are consistent with theirs.
