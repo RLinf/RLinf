@@ -1,4 +1,4 @@
-name: Math End2End
+name: Math Auto Placement
 
 on:
     push:
@@ -51,4 +51,4 @@ jobs:
             - name: auto-placement
               run: |
                 export REPO_PATH=$(pwd)
-                bash tests/e2e_tests/auto-placement/run_auto_placement.sh
+                bash tests/e2e_tests/auto_placement/run_auto_placement.sh

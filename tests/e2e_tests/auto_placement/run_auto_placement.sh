@@ -28,7 +28,7 @@ cluster:
   num_nodes: 1
   num_gpus_per_node: 8
   component_placement:
-    trainerrollout: all'
+    trainer,rollout: all'
 if [ "$EXPECTED_OUTPUT0" = "$output" ] || [ "$EXPECTED_OUTPUT1" = "$output" ]; then
     echo "Output matches the expected result."
     exit 0
