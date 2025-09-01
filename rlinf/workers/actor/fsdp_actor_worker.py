@@ -21,14 +21,8 @@ from omegaconf import DictConfig
 from torch.distributed.device_mesh import init_device_mesh
 from tqdm import tqdm
 
-from rlinf.algorithms.embodiment.utils import (
-    actor_loss_fn,
-    append_to_dict,
-    calculate_advantages_and_returns,
-    compute_loss_mask,
-    compute_rollout_metrics,
-    compute_split_num,
-)
+import rlinf.algorithms  # noqa: F401
+from rlinf.algorithms.registry import actor_loss, calculate_adv_and_returns
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
 )
@@ -38,6 +32,12 @@ from rlinf.scheduler import Worker
 from rlinf.utils.data_iter_utils import get_iterator_k_split
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.worker_utils import (
+    append_to_dict,
+    compute_loss_mask,
+    compute_rollout_metrics,
+    compute_split_num,
+)
 
 
 class EmbodiedFSDPActor(FSDPModelManager, Worker):
@@ -177,7 +177,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             * env_world_size
             // actor_world_size
         )
-        advantages, returns = calculate_advantages_and_returns(
+        advantages, returns = calculate_adv_and_returns(
             adv_type=self.cfg.algorithm.adv_type,
             rewards=self.rollout_batch["rewards"],
             dones=self.rollout_batch["dones"],
@@ -306,10 +306,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 loss_mask_sum = data.get("loss_mask_sum", None)
                 max_episode_steps = self.cfg.env.train.max_episode_steps
 
-                loss, metrics_data = actor_loss_fn(
-                    self.cfg.algorithm.loss_type,
-                    self.cfg.algorithm.logprob_type,
-                    self.cfg.algorithm.entropy_type,
+                loss, metrics_data = actor_loss(
+                    loss_type=self.cfg.algorithm.loss_type,
+                    logprob_type=self.cfg.algorithm.logprob_type,
+                    entropy_type=self.cfg.algorithm.entropy_type,
                     single_action_dim=self.model.action_dim,
                     logprobs=logprobs,
                     entropy=entropy,
