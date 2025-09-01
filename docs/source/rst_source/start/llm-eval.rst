@@ -32,12 +32,12 @@ If you are using our Docker image, you only need to additionally install:
 Quick Start
 -----------
 
-** Step 1: Convert Checkpoints **
+**Step 1: Convert Checkpoints**
 The checkpoints saved during training are saved in Megatron format. 
 To convert them to Huggingface format for evaluation, use the provided conversion scripts in ``tools/ckpt_convertor/``.
 In ``mg2hf_7b.sh`` and ``mg2hf_1.5b.sh``, set the paths ``CKPT_PATH_MG`` and ``CKPT_PATH_HF`` to your source and target paths, respectively, then run the scripts.
 
-** Step 2: Run Evaluation **
+**Step 2: Run Evaluation**
 
 To run evaluation on a single dataset:
 
