@@ -28,7 +28,7 @@ Add the profile data to your YAML configuration file under the ``profile_data`` 
 .. code-block:: yaml
 
    profile_data:
-     trainer_cost: 95.7    # Training component cost (seconds per iteration)
+     actor_cost: 95.7    # Training component cost (seconds per iteration)
      inference_cost: 30.8  # Inference component cost (seconds per iteration)
      rollout_cost: 59.9    # Rollout component cost (seconds per iteration)
 
@@ -60,7 +60,7 @@ The output of this script is like:
      num_nodes: 1
      num_gpus_per_node: 8
      component_placement:
-       rollout,trainer: all
+       rollout,actor: all
 
 Step 3: Apply the Results
 ^^^^^^^^^^^^^^^^^^^^^^^^^
