@@ -19,7 +19,7 @@ from typing import Dict, List
 
 
 @dataclass
-class ParallelState:
+class ComponentParallelState:
     tensor_model_parallel_size: int
     pipeline_model_parallel_size: int
     world_size: int = 0
@@ -41,7 +41,7 @@ class ParallelState:
             available_gpus (int): Available GPUs
 
         Returns:
-            Idle GPUs
+            the number of left GPUs after allocation
         """
         if available_gpus < self.model_parallel_size:
             return available_gpus
@@ -97,11 +97,11 @@ class ParallelState:
         )
 
 
-class ComponentAllocation:
+class AllocationStates:
     def __init__(self, components_config: Dict[str, Dict[str, int]]):
         self.states = {}
         for component_name, component_config in components_config.items():
-            self.states[component_name] = ParallelState(
+            self.states[component_name] = ComponentParallelState(
                 tensor_model_parallel_size=component_config[
                     "tensor_model_parallel_size"
                 ],
@@ -111,7 +111,7 @@ class ComponentAllocation:
             )
         self.idle_gpus = 0
 
-    def get_component(self, component_name: str) -> ParallelState:
+    def get_component(self, component_name: str) -> ComponentParallelState:
         return self.states.get(component_name)
 
     def total_gpus(self) -> int:
@@ -138,9 +138,10 @@ class ResourcePlanner:
         valid_inference_dp_sizes: List[int],
     ):
         self.components_config = components_config
-        self.initial_allocation = ComponentAllocation(components_config)
+        self.initial_allocation = AllocationStates(components_config)
         self.total_gpus = total_gpus
 
+        # Setting valid_dp_sizes is used ​to prune​
         trainer_state = self.initial_allocation.get_component("trainer")
         if trainer_state:
             trainer_state.set_valid_dp_sizes(valid_trainer_dp_sizes)
@@ -153,15 +154,15 @@ class ResourcePlanner:
             self.valid_components.append(component)
         assert len(self.valid_components) in [1, 2, 3]
 
-    def generate_all_states(self) -> List[ComponentAllocation]:
+    def generate_all_states(self) -> List[AllocationStates]:
         """Generate all possible resource allocation states during training progression."""
 
         self.all_states = []
 
         def trace_recursive(
-            current_allocation: ComponentAllocation,
+            current_allocation: AllocationStates,
             components: List[str],
-        ) -> List[ComponentAllocation]:
+        ) -> List[AllocationStates]:
             if not components:
                 self.all_states.append(current_allocation)
                 return
@@ -178,9 +179,9 @@ class ResourcePlanner:
 
     def generate_states_for_single_component(
         self,
-        init_allocation: ComponentAllocation,
+        init_allocation: AllocationStates,
         component: str,
-    ) -> List[ComponentAllocation]:
+    ) -> List[AllocationStates]:
         avaliable_gpus = self.total_gpus - init_allocation.used_gpus()
         if (
             avaliable_gpus
@@ -208,7 +209,7 @@ class ResourcePlanner:
 
         return states
 
-    def generate_static_states(self) -> List[ComponentAllocation]:
+    def generate_static_states(self) -> List[AllocationStates]:
         if not hasattr(self, "all_states"):
             self.generate_all_states()
 
@@ -231,14 +232,25 @@ def get_valid_dp_sizes(
     parallel_config: Dict[str, int],
     group_size: int,
     rollout_batch_size: int,
-    train_iter: int,
-    is_shared: bool,
+    n_minibatches: int,
 ) -> List[int]:
+    """This function is used to get the valid data parallel sizes for the Trainer and Inference based on the constraints of batch and group size.
+
+    Args:
+        total_gpus (int): The total number of GPUs in the cluster.
+        parallel_config (Dict[str, int]): The parallel configuration of the component.
+        group_size (int): The group size of the component.
+        rollout_batch_size (int): The rollout batch size of the component.
+        n_minibatches (int): The number of training iterations of each global step
+
+    Returns:
+        List[int]: The valid data parallel sizes for the component.
+    """
     global_step_batch_size = rollout_batch_size * group_size
-    assert global_step_batch_size % train_iter == 0, (
-        f"global_step_batch_size={global_step_batch_size} must be divisible by train_iter={train_iter}"
+    assert global_step_batch_size % n_minibatches == 0, (
+        f"global_step_batch_size={global_step_batch_size} must be divisible by train_iter={n_minibatches}"
     )
-    trainer_iter_batch_size = global_step_batch_size // train_iter
+    trainer_iter_batch_size = global_step_batch_size // n_minibatches
 
     valid_dp_sizes = []
     model_parallel_size = (
@@ -246,10 +258,9 @@ def get_valid_dp_sizes(
         * parallel_config["pipeline_model_parallel_size"]
     )
     max_dp_size = total_gpus // model_parallel_size
-    get_batch_size = 1 if is_shared else group_size
 
     for dp_size in range(1, max_dp_size + 1):
-        if trainer_iter_batch_size % (dp_size * get_batch_size) == 0:
+        if trainer_iter_batch_size % (dp_size * group_size) == 0:
             valid_dp_sizes.append(dp_size)
 
     return valid_dp_sizes
@@ -258,12 +269,25 @@ def get_valid_dp_sizes(
 def resource_allocate(
     components_config: Dict[str, Dict[str, int]],
     total_gpus: int,
-    group_size=8,
-    rollout_batch_size=256,
-    train_iter=4,
-    is_shared=False,
+    group_size: int,
+    rollout_batch_size: int,
+    n_minibatches: int,
     inference_instance_max_num: int = 2,
-) -> List[ComponentAllocation]:
+) -> List[AllocationStates]:
+    """Based on the configuration, derive all possible GPU resource allocations for the components.
+
+    Args:
+        components_config (Dict[str, Dict[str, int]]): The component's parallel state configuration
+        total_gpus (int): The total number of GPUs in the cluster.
+        group_size (int): The group size of the component.
+        rollout_batch_size (int): The rollout batch size of the component.
+        n_minibatches (int): The number of training iterations of each global step
+        inference_instance_max_num (int) : The maximum number of inference instances.
+
+    Returns:
+        List[AllocationStates]: The valid data parallel sizes for the component.
+
+    """
     # Check components config
     for parallel_config in components_config.values():
         assert (
@@ -283,8 +307,7 @@ def resource_allocate(
             components_config["trainer"],
             group_size,
             rollout_batch_size,
-            train_iter,
-            is_shared,
+            n_minibatches,
         )
     if components_config.get("inference", None) is not None:
         valid_inference_dp_sizes: List[int] = get_valid_dp_sizes(
@@ -292,8 +315,7 @@ def resource_allocate(
             components_config["inference"],
             group_size,
             rollout_batch_size,
-            train_iter,
-            is_shared,
+            n_minibatches,
         )
         valid_inference_dp_sizes = [
             i for i in valid_inference_dp_sizes if i <= inference_instance_max_num

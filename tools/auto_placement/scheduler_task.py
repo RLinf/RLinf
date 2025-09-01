@@ -16,7 +16,7 @@ from typing import Dict, List, Optional
 
 import hydra
 from omegaconf.omegaconf import OmegaConf
-from resource_allocator import ComponentAllocation, resource_allocate
+from resource_allocator import AllocationStates, resource_allocate
 from workflow import ComponentNode, Workflow, get_workflow_cost, get_workflow_partition
 
 from rlinf.config import validate_cfg
@@ -135,7 +135,7 @@ class SchedulerTask:
         return best_placement
 
     def parse_partition_allocation_to_cfg(
-        self, partition_allocation: Dict[Workflow, ComponentAllocation]
+        self, partition_allocation: Dict[Workflow, AllocationStates]
     ) -> str:
         new_cfg = OmegaConf.create()
         new_cfg.cluster = {}
@@ -205,7 +205,7 @@ class SchedulerTask:
         else:
             inference_instance_max_num = 2
 
-        allocations: List[ComponentAllocation] = resource_allocate(
+        allocations: List[AllocationStates] = resource_allocate(
             sub_components_config,
             self.total_gpus,
             self.group_size,
@@ -234,19 +234,19 @@ class SchedulerTask:
 
 def get_profile_data(cfg, trainer_cost=None, inference_cost=None, rollout_cost=None):
     total_gpus = cfg.cluster.num_gpus_per_node * cfg.cluster.num_nodes
-    shared_trainer_instance_num = total_gpus // (
+    collocated_trainer_instance_num = total_gpus // (
         cfg.actor.model.tensor_model_parallel_size
         * cfg.actor.model.pipeline_model_parallel_size
     )
-    shared_inference_instance_num = shared_trainer_instance_num
-    shared_rollout_instance_num = total_gpus // (
+    collocated_inference_instance_num = collocated_trainer_instance_num
+    collocated_rollout_instance_num = total_gpus // (
         cfg.rollout.tensor_parallel_size * cfg.rollout.pipeline_parallel_size
     )
 
     profile_data = {
-        "trainer": (shared_trainer_instance_num, trainer_cost),
-        "inference": (shared_inference_instance_num, inference_cost),
-        "rollout": (shared_rollout_instance_num, rollout_cost),
+        "trainer": (collocated_trainer_instance_num, trainer_cost),
+        "inference": (collocated_inference_instance_num, inference_cost),
+        "rollout": (collocated_rollout_instance_num, rollout_cost),
     }
 
     return profile_data

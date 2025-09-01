@@ -45,6 +45,8 @@ class ComponentNode(Node):
 
 
 class SccComponentNode(Node):
+    """The SccComponentNode denotes a strongly connected component (SCC) and is comprised of multiple constituent ComponentNodes."""
+
     def __init__(self, Components: List[ComponentNode]):
         super().__init__(" - ".join([component.name for component in Components]))
         self.components = Components

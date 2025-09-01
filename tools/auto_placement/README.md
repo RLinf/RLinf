@@ -14,7 +14,7 @@ The auto placement tool consists of three main components:
 
 ### Step 1: Collect Profile Data
 
-Before running the auto placement tool, you need to collect profile data for your components. This includes measuring the computation time for each component (rollout, inference, training, etc.) in colocate mode for one iteration.
+Before running the auto placement tool, you need to collect profile data for your components. This includes measuring the computation time for each component (rollout, inference, training, etc.) in colocated mode for one iteration.
 
 Add the profile data to your YAML configuration file under the `profile_data` section:
 
@@ -26,7 +26,7 @@ profile_data:
 ```
 
 **How to collect profile data:**
-1. Run your training with origin cluster in colocate mode for several iterations
+1. Run your training with origin cluster in colocated mode for several iterations
 2. Use profiling tools to measure the time each component takes per iteration
 3. Record the average time per iteration for each component
 
@@ -39,7 +39,7 @@ cd examples/math
 ./run_placement_autotune.sh [config_name]
 ```
 
-Where `config_name` is the name of your configuration file (default: `qwen2.5-1.5b-grpo-megatron`).
+Where `config_name` is the name of your configuration file.
 
 The output of this script is like:
 ```
