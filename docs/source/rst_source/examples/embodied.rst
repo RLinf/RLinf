@@ -213,6 +213,9 @@ Visualization and Results
          project_name: "RLinf"
          experiment_name: "openvla-maniskill"
 
+ManiSkill3 Results
+~~~~~~~~~~~~~~~~~~~
+
 As an illustrative example, we present the training results of the PPO algorithm in the ManiSkill3 environment. 
 Running on a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) achieved up to 90% success on ManiSkill3’s plate-25-main task, after 48 and 24 hours of PPO training, respectively.
 
@@ -232,7 +235,10 @@ Running on a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) a
 Our fine-tuned models achieved the following accuracies on the Vision, Semantic, and Position tasks under out-of-distribution (OOD) evaluation. 
 The best-performing model for each task is highlighted in bold.
 
-.. list-table:: **OpenVLA and OpenVLA-OFT model results**
+.. note:: 
+   The same OOD test set used in ``rl4vla`` is adopted here for fair comparison.
+
+.. list-table:: **OpenVLA and OpenVLA-OFT model results on ManiSkill3**
    :header-rows: 1
    :widths: 40 15 15 18 15
 
@@ -242,30 +248,34 @@ The best-performing model for each task is highlighted in bold.
      - Position 
      - Average
    * - `rl4vla <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_
-     - 0.77
-     - 0.75
-     - 0.78
-     - 0.76
+     - 76.6%
+     - 75.4%
+     - 77.6%
+     - 76.1%
    * - GRPO-OpenVLA-OFT
-     - **0.85**
-     - 0.52
-     - 0.43
-     - 0.61
+     - **84.6%**
+     - 51.6%
+     - 42.9%
+     - 61.5%
    * - PPO-OpenVLA-OFT
-     - 0.81
-     - 0.57
-     - 0.56
-     - 0.65
+     - 80.5%
+     - 56.6%
+     - 56.1%
+     - 64.5%
    * - PPO-OpenVLA
-     - 0.82
-     - **0.81**
-     - **0.89**
-     - **0.82**
+     - 82.0%
+     - **80.6%**
+     - **89.3%**
+     - **82.2%**
    * - GRPO-OpenVLA
-     - 0.75
-     - 0.74
-     - 0.82
-     - 0.75
+     - 74.7%
+     - 74.4%
+     - 81.6%
+     - 75.5%
+
+.. note:: 
+   The ``rl4vla`` model refers to PPO combined with OpenVLA under a **small batch size**, and thus should only be compared with our PPO+OpenVLA trained under similar conditions. 
+   In contrast, our PPO+OpenVLA benefits from RLinf's large-scale infrastructure, allowing training with **larger batch sizes**, which we found to significantly improve performance.
 
 
 The animation below shows the results of training the OpenVLA model on ManiSkill3's multi-task benchmark 
@@ -277,3 +287,37 @@ using the PPO algorithm within the RLinf framework.
      <source src="https://github.com/user-attachments/assets/3b709c25-83c0-4568-b286-4d56bbaed26b" type="video/mp4">
      Your browser does not support the video tag.
    </video>
+
+
+LIBERO Results
+~~~~~~~~~~~~~~~~~~~
+
+Furthermore, we trained OpenVLA-OFT in the LIBERO environment using the GRPO algorithm. The improvements achieved through our RL fine-tuning are shown below:
+
+.. list-table:: **OpenVLA-OFT model results on LIBERO**
+   :header-rows: 1
+
+   * - Model
+     - Spatial
+     - Goal
+     - Object
+     - Long
+     - Average
+   * - OpenVLA-OFT-SFT (one-shot)
+     - 56.5%
+     - 45.6%
+     - 25.6%
+     - 11.7%
+     - 34.9%
+   * - OpenVLA-OFT-RLinf
+     - **99.0%**
+     - **99.0%**
+     - **99.0%**
+     - **92.2%**
+     - **97.3%**
+   * - Improvement
+     - +42.5%
+     - +53.4%
+     - +73.4%
+     - +80.5%
+     - +62.4%
