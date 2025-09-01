@@ -213,9 +213,7 @@ class TestResourcePlanner:
         )
 
         init_allocation = AllocationStates(components_config)
-        states = planner.generate_states_for_single_component(
-            init_allocation, "actor"
-        )
+        states = planner.generate_states_for_single_component(init_allocation, "actor")
 
         assert len(states) > 0
         # Should generate states with different data parallel sizes
