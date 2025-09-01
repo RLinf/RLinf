@@ -7,7 +7,7 @@ hydra:
   output_subdir: null
 
 cluster:
-  num_nodes: 16
+  num_nodes: 1
   num_gpus_per_node: 8
   component_placement:
     actor,rollout: all
@@ -83,7 +83,7 @@ rollout:
 
   gpu_memory_utilization: 0.55
 
-  model_dir: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/
+  model_dir: /workspace/dataset/DeepSeek-R1-Distill-Qwen-1.5B
   model_arch: qwen2.5
   enforce_eager: False         # if False, vllm will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
@@ -114,7 +114,7 @@ data:
   type: math
   max_prompt_length: 1024
   filter_prompt_by_length: True
-  rollout_batch_size: 512
+  rollout_batch_size: 128
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: prompt
@@ -255,3 +255,8 @@ reward:
 
 critic:
   use_critic_model: false
+
+profile_data:
+  trainer_cost: 95.7
+  inference_cost: 30.8
+  rollout_cost: 59.9
