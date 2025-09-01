@@ -227,9 +227,6 @@ class AsyncSGLangWorker(SGLangWorker):
             "rollout_batch_size_per_gpu is not supported in AsyncSGLangWorker"
         )
 
-        # True when not set this in config
-        self._calc_reward_blocking = self._cfg.rollout.get("calc_reward_blocking", True)
-
     def init_worker(self):
         self._init_engine()
 
@@ -319,28 +316,13 @@ class AsyncSGLangWorker(SGLangWorker):
 
             if self._completion_info.is_completed(hash_id):
                 results = self._completion_info.get_results(hash_id)
-                if self._calc_reward_blocking:
-                    (
-                        rewards,
-                        advantages,
-                    ) = await self._calculate_reward_and_advantage_processpool(
-                        results,
-                        self._current_request.answers[raw_id],
-                    )
-                else:
-                    try:
-                        async with asyncio.timeout(100):
-                            rewards, advantages = await asyncio.to_thread(
-                                self._calculate_reward_and_advantage,
-                                results,
-                                self._current_request.answers[raw_id],
-                            )
-                    except TimeoutError:
-                        self.log_info(
-                            f"Timeout when calculating reward and advantage for raw_id={raw_id}. Using zero rewards and advantages."
-                        )
-                        rewards = [-1.0] * len(results)
-                        advantages = [0.0] * len(results)
+                (
+                    rewards,
+                    advantages,
+                ) = await self._calculate_reward_and_advantage_processpool(
+                    results,
+                    self._current_request.answers[raw_id],
+                )
 
                 if (
                     all_floats_equal(rewards)
