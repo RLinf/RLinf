@@ -46,7 +46,7 @@ def compute_reinpp_advantages(
         kl_beta: float,
         kl_penalty_type: str,
         use_baseline: bool,
-):
+) -> torch.FloatTensor:
     assert len(reward_scores.shape) == 1
 
     # first group baseline for reinforce++ baseline
@@ -58,6 +58,7 @@ def compute_reinpp_advantages(
     # build the reward matrix
     r_matrix = torch.zeros_like(logprob)  # [B, L]
 
+    # Find EOS indices in the mask for each batch element
     # The following code is equivalent to:
     #
     # last_reward = torch.zeros_like(kl)
@@ -67,7 +68,11 @@ def compute_reinpp_advantages(
     #             last_reward[i][t] = r[i]
     #             break
     #
-    eos_indices = mask.size(1) - 1 - mask.long().fliplr().argmax(dim=1, keepdim=True)  # [B, 1]
+    seq_length = mask.size(1)
+    mask_flipped = mask.long().fliplr()
+    eos_positions = mask_flipped.argmax(dim=1, keepdim=True)  # position of last True in original mask
+    eos_indices = seq_length - 1 - eos_positions  # [B, 1]
+
     r_matrix = r_matrix.scatter_(dim=1, index=eos_indices, src=reward_scores.unsqueeze(1).to(logprob.dtype))  # [B, L]
 
     # add kl penalty
@@ -76,12 +81,7 @@ def compute_reinpp_advantages(
         r_matrix -= kl_beta * kld
 
     # compute return
-    ret_matrix = torch.zeros_like(r_matrix)  # [B, L]
-
-    ret_cumulative = torch.zeros(r_matrix.shape[0], device=r_matrix.device, dtype=r_matrix.dtype)  # [B]
-    for t in reversed(range(ret_matrix.shape[1])):
-        ret_cumulative = r_matrix[:, t] + ret_cumulative  # gamma = 1
-        ret_matrix[:, t] = ret_cumulative
+    ret_matrix = torch.cumsum(r_matrix.flip(dims=[1]), dim=1).flip(dims=[1])
 
     # normalize
     advantages = ret_matrix.clone()
