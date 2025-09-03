@@ -37,35 +37,6 @@ from utils.tensor_operations import Operation, SplitGlu, SplitQKV
 
 torch.set_num_threads(32)
 
-"""
-
-rm -rf /mnt/public/zhuchunyang/debug_ckpt_convert/qwen3_30b_a3b_new_hf
-clear && python /mnt/public/zhuchunyang/megatron-infinigence_qwen2/megatron_infini/examples/convert/general/convert_middle_file_to_hf.py \
-    --load-path /mnt/public/zhuchunyang/debug_ckpt_convert/qwen3_30b_a3b_middle_file \
-    --save-path /mnt/public/zhuchunyang/debug_ckpt_convert/qwen3_30b_a3b_new_hf \
-    --model-type qwen_3_moe \
-    --num-attention-heads 32 \
-    --num-query-groups 4 \
-    --head-dim 128 \
-    --num-experts 128 \
-    --num-layers 48 \
-    --use-gpu-num 0 \
-    --process-num 48
-
-rm -rf /mnt/public/zhuchunyang/debug_ckpt_convert/qwen2_57b_a14b_instruct_new_hf
-clear && python /mnt/public/zhuchunyang/megatron-infinigence_qwen2/megatron_infini/examples/convert/general/convert_middle_file_to_hf.py \
-    --load-path /mnt/public/zhuchunyang/debug_ckpt_convert/qwen2_57b_a14b_instruct_middle_file \
-    --save-path /mnt/public/zhuchunyang/debug_ckpt_convert/qwen2_57b_a14b_instruct_new_hf \
-    --model-type qwen_2_moe \
-    --num-attention-heads 28 \
-    --num-query-groups 4 \
-    --num-experts 64 \
-    --num-layers 28 \
-    --use-gpu-num 8 \
-    --process-num 28
-
-"""
-
 
 def get_args():
     def strtobool(x: str):

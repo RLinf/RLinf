@@ -1,5 +1,5 @@
-CKPT_PATH_MG=/path/to/megatron_checkpoint # example: results/experiment/checkpoints/global_step_50/actor
-CKPT_PATH_HF=/target/path/to/huggingface_checkpoint
+CKPT_PATH_MG=$1
+CKPT_PATH_HF=$2
 CKPT_PATH_MF="$CKPT_PATH_HF"_middle_file
 
 TP_SIZE=2

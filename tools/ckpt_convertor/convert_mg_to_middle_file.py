@@ -35,61 +35,6 @@ from utils.tensor_operations import MergeTpTpe, Operation
 
 torch.set_num_threads(32)
 
-"""
-
-    /mnt/public/zhuchunyang/debug_qwen/ckpt1_tp1ep4/iter_0000001
-    /mnt/public/zhuchunyang/debug_qwen/ckpt1_middle
-
-
-rm -rf /mnt/public/zhuchunyang/debug_qwen/ckpt1_middle
-clear && python /mnt/public/zhuchunyang/megatron-infinigence_qwen/megatron_infini/examples/convert/general/convert_mg_to_middle_file.py \
-    --load-path /mnt/public/zhuchunyang/debug_qwen/ckpt1_tp1ep4/iter_0000001 \
-    --save-path /mnt/public/zhuchunyang/debug_qwen/ckpt1_middle \
-    --model-type qwen_2_moe \
-    --use-shared-experts-gate False \
-    --num-experts 8 \
-    --num-layers 2 \
-    --router-trans bf16_bf16 \
-    --linear-trans bf16_bf16 \
-    --tp-size 1 \
-    --tpe-size 1 \
-    --ep-size 4 \
-    --pp-size 2 \
-    --device 0 \
-    --process-num 1
-
-rm -rf /mnt/public/zhuchunyang/debug_qwen/ckpt2_middle
-clear && python /mnt/public/zhuchunyang/megatron-infinigence_qwen2/megatron_infini/examples/convert/general/convert_mg_to_middle_file.py \
-    --load-path /mnt/public/zhuchunyang/debug_qwen/ckpt2_1f1b/iter_0000001 \
-    --save-path /mnt/public/zhuchunyang/debug_qwen/ckpt2_middle \
-    --model-type qwen_2_moe \
-    --use-shared-experts-gate False \
-    --num-experts 2 \
-    --num-layers 6 \
-    --tp-size 1 \
-    --tpe-size 4 \
-    --ep-size 1 \
-    --pp-size 2 \
-    --process-num 8
-
-rm -rf /mnt/public/zhuchunyang/debug_qwen/ckpt2_middle_dpv
-clear && python /mnt/public/zhuchunyang/megatron-infinigence_qwen2/megatron_infini/examples/convert/general/convert_mg_to_middle_file.py \
-    --load-path /mnt/public/zhuchunyang/debug_qwen/ckpt2_dpv/release \
-    --save-path /mnt/public/zhuchunyang/debug_qwen/ckpt2_middle_dpv \
-    --model-type qwen_2_moe \
-    --use-shared-experts-gate False \
-    --num-experts 2 \
-    --num-layers 6 \
-    --tp-size 1 \
-    --tpe-size 4 \
-    --ep-size 1 \
-    --pp-size 2 \
-    --schedular dualpipev \
-    --pp-stages 1 2 1 2 \
-    --process-num 8
-
-"""
-
 
 def find_only_directory(path):
     """
