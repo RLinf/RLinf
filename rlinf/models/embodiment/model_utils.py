@@ -116,19 +116,28 @@ def prepare_observations_for_vla(
     processor: Any,
     precision: torch.dtype,
     device: torch.device = torch.device("cuda:0"),
+    num_images_in_input: int = 1,
 ):
-    task_descriptions = [
-        f"In: What action should the robot take to {t.lower()}?\nOut: "
-        for t in raw_obs["task_descriptions"]
-    ]
+    if model_name == "pi0":
+        task_descriptions = list(raw_obs["task_descriptions"])
+    else:
+        task_descriptions = [
+            f"In: What action should the robot take to {t.lower()}?\nOut: "
+            for t in raw_obs["task_descriptions"]
+        ]
 
     if simulator_type == "libero":
-        image_tensor = torch.stack(
-            [
+        if num_images_in_input > 1:
+            main_image_tensor = torch.stack([
                 value.clone().to(device).permute(2, 0, 1)
                 for value in raw_obs["images_and_states"]["full_image"]
-            ]
-        )
+            ])
+            wrist_image_tensor = torch.stack([
+                value.clone().to(device).permute(2, 0, 1)
+                for value in raw_obs["images_and_states"]["wrist_image"]
+            ])
+        else:
+            image_tensor = raw_obs["images_and_states"]["full_image"].clone().to(device).permute(2, 0, 1)
     elif simulator_type == "maniskill":
         images = raw_obs["images"]
         image_tensor = images.to(device=device, dtype=precision)
@@ -163,10 +172,28 @@ def prepare_observations_for_vla(
             padding="max_length",
             max_length=max_length,
         )
+    elif model_name == "pi0":
+        to_process_input = {
+            "observation.images.image": main_image_tensor/ 255,
+            "observation.images.wrist_image": wrist_image_tensor/ 255,
+            "observation.state": proprio_states['state'],
+            "task": task_descriptions,
+        }
+        processed_obs = processor(to_process_input)
+        processed_obs.update(
+            {
+                "observation.images.image": main_image_tensor / 255,
+                "observation.images.wrist_image": wrist_image_tensor / 255,
+                "observation.state": proprio_states['state'],
+            }
+        )
 
-    processed_obs = processed_obs.to(device=device, dtype=precision)
+    # processed_obs = processed_obs.to(device=device, dtype=precision)
     for key, value in processed_obs.items():
-        processed_obs[key] = value.contiguous()
+        if isinstance(value, list):
+            processed_obs[key] = [item.to(device=device).contiguous() if torch.is_tensor(item) else item for item in value]
+        elif torch.is_tensor(value):
+            processed_obs[key] = value.to(device=device).contiguous()
 
     return processed_obs
 
@@ -180,8 +207,9 @@ def prepare_observations(
     processor: Any,
     precision: torch.dtype,
     device: torch.device = torch.device("cuda:0"),
+    num_images_in_input: int = 1,
 ):
-    if model_name == "openvla" or model_name == "openvla_oft":
+    if model_name == "openvla" or model_name == "openvla_oft" or model_name == "pi0":
         return prepare_observations_for_vla(
             simulator_type=simulator_type,
             model_name=model_name,
@@ -191,6 +219,7 @@ def prepare_observations(
             processor=processor,
             precision=precision,
             device=device,
+            num_images_in_input=num_images_in_input,
         )
     else:
         raise NotImplementedError

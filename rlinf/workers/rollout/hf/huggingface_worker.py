@@ -22,6 +22,10 @@ from tqdm import tqdm
 from rlinf.algorithms.embodiment.utils import compute_split_num
 from rlinf.config import torch_dtype_from_precision
 from rlinf.models import get_model, get_model_config_and_processor
+from rlinf.models.embodiment.model_namespace import (
+    append_to_buffer,
+    get_model_buffer_namespace,
+)
 from rlinf.models.embodiment.model_utils import (
     default_logits_processor,
     prepare_observations,
@@ -69,11 +73,18 @@ class MultiStepRolloutWorker(Worker):
 
         self.use_proprio = self.cfg.actor.model.get("use_proprio", False)
 
+        # Cache model namespace for buffer operations
+        self.model_name = self.cfg.actor.model.model_name
+        self.buffer_namespace = get_model_buffer_namespace(self.model_name)
+
     def init_worker(self):
         self.hf_model = get_model(self.cfg.rollout.model_dir, self.cfg.actor.model)
         self.hf_model.setup_params(self.model_config, self.cfg)
         self.hf_model.to(self.precision)
         self.hf_model.eval()
+        if self.cfg.actor.model.model_name == "pi0":
+            # NOTE: process function of pi0 is initialized after model is initialized
+            self.input_processor = self.hf_model.prepare_input
         self.setup_sample_params()
         if self.cfg.rollout.get("enable_offload", False):
             self.offload_model()
@@ -103,6 +114,14 @@ class MultiStepRolloutWorker(Worker):
         }
 
     def predict(self, processed_obs, do_sample=True, mode="train"):
+        if self.cfg.actor.model.model_name == "pi0":
+            with torch.no_grad():
+                result = self.hf_model(
+                    processed_obs,
+                    mode=mode,
+                )
+            return result
+
         action_token_len = self.hf_model.action_dim * self.hf_model.num_action_chunks
 
         sample_kwargs = (
@@ -149,8 +168,8 @@ class MultiStepRolloutWorker(Worker):
         chunk_action_tokens = action_tokens.reshape(
             -1, self.hf_model.num_action_chunks, self.hf_model.action_dim
         )
-
-        return chunk_actions, chunk_action_tokens, chunk_logprobs, chunk_values
+        result = {"actions": chunk_actions, "chunk_action_tokens": chunk_action_tokens, "prev_logprobs": chunk_logprobs, "prev_values": chunk_values}
+        return result
 
     def update_env_batch(self, i, env_batch):
         # first step for env_batch
@@ -184,7 +203,8 @@ class MultiStepRolloutWorker(Worker):
                         processor=self.input_processor,
                         precision=self.precision,
                     )
-                    _, _, _, _final_values = self.predict(processed_obs)
+                    result = self.predict(processed_obs)
+                    _final_values = result["chunk_values"]
                 final_values = torch.zeros_like(_final_values[:, 0])  # [bsz, ]
                 last_step_dones = dones[:, -1]  # [bsz, ]
 
@@ -219,29 +239,22 @@ class MultiStepRolloutWorker(Worker):
                         processor=self.input_processor,
                         precision=self.precision,
                     )
-                    chunk_actions, chunk_action_token, chunk_logprobs, chunk_values = (
-                        self.predict(processed_obs)
-                    )
-                    await self.send_chunk_actions(chunk_actions)
+                    result = self.predict(processed_obs)
+                # Extract actions for sending
+                chunk_actions = result["actions"]
 
-                    self.buffer_list[i]["input_ids"].append(
-                        processed_obs["input_ids"].cpu().contiguous()
-                    )
-                    self.buffer_list[i]["pixel_values"].append(
-                        processed_obs["pixel_values"].cpu().contiguous()
-                    )
-                    self.buffer_list[i]["attention_mask"].append(
-                        processed_obs["attention_mask"].bool().cpu().contiguous()
-                    )
-                    self.buffer_list[i]["action_tokens"].append(
-                        chunk_action_token.cpu().contiguous()
-                    )
-                    self.buffer_list[i]["prev_logprobs"].append(
-                        chunk_logprobs.cpu().contiguous()
-                    )
-                    self.buffer_list[i]["prev_values"].append(
-                        chunk_values.cpu().contiguous()
-                    )
+                # Automatically append data to buffer based on cached namespace
+                append_to_buffer(
+                    buffer_list=self.buffer_list,
+                    stage_idx=i,
+                    namespace=self.buffer_namespace,
+                    processed_obs=processed_obs,
+                    result=result
+                )
+
+
+                await self.send_chunk_actions(chunk_actions)
+
 
             for i in range(self.stage_num):
                 env_batch = await self.recv_env_batch()
