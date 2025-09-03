@@ -7,6 +7,11 @@
   let modeBadge, modePanel;
   let currentMode = 'quick';
   let isInitialized = false;
+  
+  // IME state variables
+  let isComposing = false;
+  let justFinishedComposition = false;
+  const JUST_FINISHED_MS = 80;
 
   // Initialize services when dependencies are loaded
   function initializeServices() {
@@ -409,27 +414,68 @@
     // Load existing messages
     loadMessages(messagesContainer);
     
+    // Add IME composition listeners
+    textarea.addEventListener('compositionstart', () => {
+      isComposing = true;
+    });
+    textarea.addEventListener('compositionend', () => {
+      isComposing = false;
+      justFinishedComposition = true;
+      setTimeout(() => { justFinishedComposition = false; }, JUST_FINISHED_MS);
+    });
+    
+    // Optional: beforeinput for enhanced IME detection
+    textarea.addEventListener('beforeinput', (e) => {
+      const t = e.inputType || '';
+      if (t === 'insertCompositionText') {
+        isComposing = true;
+      } else if (t === 'insertFromComposition' || t === 'deleteCompositionText') {
+        justFinishedComposition = true;
+        setTimeout(() => { justFinishedComposition = false; }, JUST_FINISHED_MS);
+      }
+    });
+    
     // Submit message
     submitBtn.addEventListener('click', () => {
-      sendMessage(textarea.value.trim(), currentMode, messagesContainer, textarea);
+      if (isComposing || justFinishedComposition) {
+        textarea.focus();
+        return;
+      }
+      const content = textarea.value.trim();
+      if (!content) {
+        textarea.focus();
+        return;
+      }
+      sendMessage(content, currentMode, messagesContainer, textarea);
     });
     
     // Enter key handling
     textarea.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage(textarea.value.trim(), currentMode, messagesContainer, textarea);
+      if (e.key !== 'Enter') return;
+      if (e.shiftKey) return; // Shift+Enter for newline
+      if (isComposing || e.isComposing || justFinishedComposition) {
+        return; // Let IME handle Enter
       }
+      e.preventDefault();
+      const content = textarea.value.trim();
+      if (!content) return;
+      sendMessage(content, currentMode, messagesContainer, textarea);
     });
     
     // Auto-resize textarea
-    textarea.addEventListener('input', () => {
-      textarea.style.height = 'auto';
-      const minHeight = 44; // Match CSS height
-      const maxHeight = 120;
-      const newHeight = Math.max(minHeight, Math.min(textarea.scrollHeight, maxHeight));
-      textarea.style.height = newHeight + 'px';
-    });
+    const autoResize = () => {
+      requestAnimationFrame(() => {
+        const minHeight = 44;
+        const maxHeight = 120;
+        const prevOverflow = textarea.style.overflowY;
+        textarea.style.overflowY = 'hidden';
+        textarea.style.height = 'auto';
+        const newHeight = Math.max(minHeight, Math.min(textarea.scrollHeight, maxHeight));
+        textarea.style.height = newHeight + 'px';
+        textarea.style.overflowY = prevOverflow || 'auto';
+      });
+    };
+    textarea.addEventListener('input', autoResize);
     
     // Show empty state if no messages
     if (!messageManager.hasMessages()) {
@@ -832,10 +878,20 @@
 
     closeBtn.addEventListener('click', handleModalClose);
     overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) handleModalClose();
+      if (e.target === overlay) {
+        if (isComposing || justFinishedComposition) {
+          const textarea = modal.querySelector('textarea');
+          textarea.focus();
+          return;
+        }
+        handleModalClose();
+      }
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && overlay.classList.contains('show')) {
+        if (isComposing || justFinishedComposition || document.activeElement === modal.querySelector('textarea')) {
+          return;
+        }
         handleModalClose();
       }
     });

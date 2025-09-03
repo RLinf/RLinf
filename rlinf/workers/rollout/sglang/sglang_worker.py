@@ -323,6 +323,7 @@ class AsyncSGLangWorker(SGLangWorker):
                     results,
                     self._current_request.answers[raw_id],
                 )
+
                 if (
                     all_floats_equal(rewards)
                     and self._cfg.algorithm.get("max_num_gen_batches", 1) > 1
