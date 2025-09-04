@@ -97,12 +97,6 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False):
         "transformer_layer_cls_to_wrap", default_transformer_cls_names_to_wrap
     )
 
-    # Handle size-based policy
-    min_num_params = config.get("min_num_params", 0)
-    if min_num_params > 0:
-        return functools.partial(
-            size_based_auto_wrap_policy, min_num_params=min_num_params
-        )
 
     # Build policies list
     policies = []
@@ -116,13 +110,7 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False):
         vit_wrap_policy = functools.partial(
             _module_wrap_policy, module_classes={VisionTransformer}
         )
-        transformer_block_policy = functools.partial(
-            transformer_auto_wrap_policy, transformer_layer_cls={Block}
-        )
-        vision_fsdp_wrapping_policy = functools.partial(
-            _or_policy, policies=[vit_wrap_policy, transformer_block_policy]
-        )
-        policies.append(vision_fsdp_wrapping_policy)
+        policies.append(vit_wrap_policy)
 
         # Prismatic projector policy for VLA models
         prismatic_fsdp_wrapping_policy = functools.partial(
@@ -130,6 +118,14 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False):
             module_classes={PrismaticProjector},
         )
         policies.append(prismatic_fsdp_wrapping_policy)
+        
+        if hasattr(module, "value_head"):
+            from rlinf.models.embodiment.modules.value_head import ValueHead
+            value_head_policy = functools.partial(
+                _module_wrap_policy,
+                module_classes={ValueHead}
+            )
+            policies.append(value_head_policy)
 
     # Add transformer layer policies
     if fsdp_transformer_layer_cls_to_wrap is not None:
