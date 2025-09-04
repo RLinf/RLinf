@@ -308,11 +308,11 @@ rollout
 .. code:: yaml
 
   rollout:
-    enforce_eager: False         # if False, vllm will capture cuda graph, which will take more time to initialize.
+    enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
     distributed_executor_backend: mp   # ray or mp
     disable_log_stats: False
     detokenize: False            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
-    padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for vllm rollout
+    padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
     eos: null                   # will be tokenizer.eos_token_id if null.
 
     attention_backend: triton
@@ -322,10 +322,10 @@ rollout
     
     validate_weight: False # whether to send all weights at first for weight comparison.
     validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
-    print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of inference engine.
+    print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
 
     sglang_decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
-    max_running_requests: 64 # the maximum number of running requests in the inference engine.
+    max_running_requests: 64 # the maximum number of running requests in the rollout engine.
     cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
 
     use_torch_compile: False # enable torch_compile in SGLang for rollout.
