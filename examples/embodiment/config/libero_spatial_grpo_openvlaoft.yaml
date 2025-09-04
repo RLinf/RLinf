@@ -1,6 +1,6 @@
 defaults:
-  - env/train: libero_10_grpo
-  - env/eval: libero_10
+  - env/train: libero_spatial
+  - env/eval: libero_spatial
   - override hydra/job_logging: stdout
 
 hydra:
@@ -99,8 +99,7 @@ rollout:
     queue_size: 0
   mode: "colocate"
   generation_backend: "huggingface"
-  model_dir: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
-
+  model_dir: "/path/to/model/Openvla-oft-SFT-libero-spatial-traj1/"
   enable_offload: False
   pipeline_stage_num: 1
 
@@ -111,7 +110,7 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
+  checkpoint_load_path: "/path/to/model/Openvla-oft-SFT-libero-spatial-traj1/"
   checkpoint_save_path: "../results"
   micro_batch_size: 32
   global_batch_size: 8192
@@ -124,7 +123,7 @@ actor:
     action_dim: 7
     num_action_chunks: 8
     use_proprio: False
-    unnorm_key: libero_10_no_noops
+    unnorm_key: libero_spatial_no_noops
     center_crop: True
 
     precision: "bf16"
@@ -152,7 +151,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
+    tokenizer_model: "/path/to/model/Openvla-oft-SFT-libero-spatial-traj1/"
     use_fast: False
     trust_remote_code: True
     padding_side: "right"
