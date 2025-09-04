@@ -7,7 +7,7 @@
 <a href="https://huggingface.co/RLinf"><img src="https://img.shields.io/badge/HuggingFace-yellow?logo=huggingface&logoColor=white" alt="Hugging Face"></a>
 <a href="https://rlinf.readthedocs.io/en/latest/"><img src="https://img.shields.io/badge/Documentation-Purple?color=8A2BE2&logo=readthedocs"></a>
 <a href="https://deepwiki.com/RLinf/RLinf"><img src="https://img.shields.io/badge/Ask%20DeepWiki-1DA1F2?logo=databricks&logoColor=white&color=00ADEF" alt="Ask DeepWiki"></a>
-<a href="https://github.com/user-attachments/assets/e4443113-73e5-4b28-aaa7-7af61172eddd"><img src="https://img.shields.io/badge/微信-green?logo=wechat&amp"></a>
+<a href="https://github.com/Lin-xs/RLinf-community/blob/main/wechat-QR.jpeg?raw=true"><img src="https://img.shields.io/badge/微信-green?logo=wechat&amp"></a>
 </div>
 
 <h1 align="center">
