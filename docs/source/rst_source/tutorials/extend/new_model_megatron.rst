@@ -204,7 +204,7 @@
 
 ..    # Tokeniser
 ..    tokenizer:
-..      tokenizer_model: /mnt/public/hf_models/DeepSeek-R1-Distill-Qwen-1.5B
+..      tokenizer_model: /path/to/models/DeepSeek-R1-Distill-Qwen-1.5B
 ..      use_fast: False
 ..      trust_remote_code: True
 ..      padding_side: 'right'

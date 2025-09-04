@@ -97,8 +97,8 @@ Bash example
     set -x
     export CUDA_DEVICE_MAX_CONNECTIONS=1 
 
-    math_train_path=/mnt/public/wangxiangyuan/dataset/boba.parquet
-    math_test_path=/mnt/public/wangxiangyuan/dataset/test_mini.parquet
+    math_train_path=/path/to/dataset/boba.parquet
+    math_test_path=/path/to/dataset/test_mini.parquet
 
     python3 -m verl.trainer.main_ppo \
         algorithm.adv_estimator=grpo \
@@ -109,7 +109,7 @@ Bash example
         data.max_response_length=27648 \
         data.filter_overlong_prompts=True \
         data.truncation='error' \
-        actor_rollout_ref.model.path=/mnt/public/hf_models/DeepSeek-R1-Distill-Qwen-7B \
+        actor_rollout_ref.model.path=/path/to/models/DeepSeek-R1-Distill-Qwen-7B \
         actor_rollout_ref.actor.optim.lr=1e-6 \
         actor_rollout_ref.actor.ppo_mini_batch_size=32 \
         actor_rollout_ref.ref.fsdp_config.param_offload=True \
