@@ -32,7 +32,6 @@ import torch
 from accelerate import init_empty_weights
 from prismatic.extern.hf.modeling_prismatic import PrismaticProjector
 from torch.distributed.fsdp.wrap import (
-    size_based_auto_wrap_policy,
     transformer_auto_wrap_policy,
 )
 from transformers.trainer_pt_utils import get_module_class_from_name
@@ -97,13 +96,12 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False):
         "transformer_layer_cls_to_wrap", default_transformer_cls_names_to_wrap
     )
 
-
     # Build policies list
     policies = []
 
     # Add vision transformer policies for VLA models
     if is_vla_model:
-        from timm.models.vision_transformer import Block, VisionTransformer
+        from timm.models.vision_transformer import VisionTransformer
         from torch.distributed.fsdp.wrap import _module_wrap_policy, _or_policy
 
         # Vision transformer policies
@@ -118,12 +116,12 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False):
             module_classes={PrismaticProjector},
         )
         policies.append(prismatic_fsdp_wrapping_policy)
-        
+
         if hasattr(module, "value_head"):
             from rlinf.models.embodiment.modules.value_head import ValueHead
+
             value_head_policy = functools.partial(
-                _module_wrap_policy,
-                module_classes={ValueHead}
+                _module_wrap_policy, module_classes={ValueHead}
             )
             policies.append(value_head_policy)
 
