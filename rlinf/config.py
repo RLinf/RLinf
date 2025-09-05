@@ -39,7 +39,7 @@ except ImportError:
     HAVE_TE = False
 
 SUPPORTED_MODEL_ARCHS = ["qwen2.5", "openvla", "openvla_oft"]
-
+SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
 __all__ = ["build_config"]
 
 
@@ -143,6 +143,45 @@ def activation_to_func(
         activation_func = squared_relu
 
     return activation_func
+
+
+def validate_rollout_cfg(cfg):
+    def validate_sglang_cfg(cfg):
+        assert cfg is not None, (
+            "sglang config must be specified if rollout_backend is sglang."
+        )
+        cfg.attention_backend = cfg.get("attention_backend", "triton")
+        cfg.decode_log_interval = cfg.get("decode_log_interval", 500000)
+        cfg.use_torch_compile = cfg.get("use_torch_compile", False)
+        cfg.torch_compile_max_bs = cfg.get("torch_compile_max_bs", 128)
+        return cfg
+
+    def valid_vllm_cfg(cfg):
+        assert cfg is not None, (
+            "vllm config must be specified if rollout_backend is vllm."
+        )
+        cfg.attention_backend = cfg.get("attention_backend", "FLASH_ATTN")
+        cfg.enable_chunked_prefill = cfg.get("enable_chunked_prefill", True)
+        cfg.enable_prefix_caching = cfg.get("enable_prefix_caching", True)
+        cfg.enable_flash_infer_sampler = cfg.get("enable_flash_infer_sampler", True)
+        return cfg
+
+    with open_dict(cfg):
+        cfg.gpu_memory_utilization = cfg.get("gpu_memory_utilization", 0.65)
+        assert cfg.model_dir is not None, "model_dir must be specified for rollout."
+        assert cfg.model_arch in SUPPORTED_MODEL_ARCHS, (
+            f"model_arch must be one of {SUPPORTED_MODEL_ARCHS}"
+        )
+        cfg.disable_log_stats = cfg.get("disable_log_stats", False)
+        cfg.detokenize = cfg.get("detokenize", False)
+        cfg.rollout_backend = cfg.get("rollout_backend", "sglang")
+        assert cfg.rollout_backend in SUPPORTED_ROLLOUT_BACKENDS, (
+            f"rollout_backend must be one of {SUPPORTED_ROLLOUT_BACKENDS}."
+        )
+        cfg.sglang = validate_sglang_cfg(cfg.sglang)
+        cfg.vllm = valid_vllm_cfg(cfg.vllm)
+
+    return cfg
 
 
 def validate_model_cfg_by_hf_config(cfg, hf_model_path):
@@ -497,6 +536,8 @@ def validate_math_cfg(cfg: DictConfig) -> DictConfig:
         assert cfg.runner.seq_length > cfg.data.max_prompt_length, (
             f"runner.seq_length ({cfg.runner.seq_length}) must be greater than data.max_prompt_length ({cfg.data.max_prompt_length})"
         )
+
+    cfg.rollout = validate_rollout_cfg(cfg.rollout)
     return cfg
 
 

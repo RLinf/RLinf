@@ -22,8 +22,10 @@ from enum import IntEnum
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
+from omegaconf import DictConfig
 from torch.utils.tensorboard import SummaryWriter
 
+from rlinf.scheduler.worker.worker import Worker
 from rlinf.utils.placement import PlacementMode
 
 if typing.TYPE_CHECKING:
@@ -511,3 +513,28 @@ def get_rank_mapper_cls(
         f"Unsupported mode: {mode}. Supported modes: {list(mode_to_cls.keys())}"
     )
     return mode_to_cls.get(mode)
+
+
+def get_rollout_backend_worker(cfg: DictConfig) -> Worker:
+    from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
+    from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
+
+    rollout_backend = cfg.rollout.get("rollout_backend", "not_assigned")
+    if rollout_backend == "vllm":
+        return VLLMWorker
+    elif rollout_backend == "sglang":
+        return SGLangWorker
+    else:
+        raise ValueError(f"Unsupported rollout backend: {rollout_backend}")
+
+
+def get_async_rollout_backend_worker(cfg: DictConfig) -> Worker:
+    from rlinf.workers.rollout.sglang.sglang_worker import AsyncSGLangWorker
+
+    rollout_backend = cfg.rollout.get("rollout_backend", "not_assigned")
+    if rollout_backend == "vllm":
+        raise ValueError("vLLM does not support async rollout worker currently.")
+    elif rollout_backend == "sglang":
+        return AsyncSGLangWorker
+    else:
+        raise ValueError(f"Unsupported rollout backend: {rollout_backend}")

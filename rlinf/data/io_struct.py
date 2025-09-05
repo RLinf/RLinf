@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import torch
+from vllm.outputs import RequestOutput as VllmRequestOutput
 
 from rlinf.data.datasets import batch_pad_to_fixed_len
 from rlinf.utils.data_iter_utils import get_iterator_k_split, split_list
@@ -227,7 +228,46 @@ class RolloutResult:
         return attention_mask, position_ids
 
     @staticmethod
-    def from_engine_results(
+    def from_vllm_results(
+        results: List[VllmRequestOutput],
+        answers: Optional[List[List[int]]] = None,
+        return_logprobs: bool = False,
+    ) -> "RolloutResult":
+        num_sequences = len(results)
+
+        prompt_lengths = []
+        prompt_ids = []
+        response_lengths = []
+        response_ids = []
+        logprobs = []
+        is_end = []
+        for index, res in enumerate(results):
+            if res.prompt_token_ids is not None:
+                prompt_ids.append(res.prompt_token_ids)
+                prompt_lengths.append(len(res.prompt_token_ids))
+            else:
+                return NotImplementedError("should tokenize prompt.")
+            response_id = list(res.outputs[0].token_ids)
+            response_ids.append(response_id)
+            response_lengths.append(len(response_id))
+            is_end.append(res.finished)
+
+        result: RolloutResult = RolloutResult(
+            num_sequence=num_sequences,
+            answers=answers,
+            prompt_ids=prompt_ids,
+            prompt_lengths=prompt_lengths,
+            response_ids=response_ids,
+            response_lengths=response_lengths,
+            is_end=is_end,
+        )
+        if return_logprobs:
+            result.rollout_logprobs = logprobs
+            raise NotImplementedError("should compute logprobs.")
+        return result
+
+    @staticmethod
+    def from_sglang_results(
         results: List[Dict],
         input_ids: List[List[int]],
         answers: Optional[List[List[int]]] = None,
