@@ -154,16 +154,19 @@ def grpo_actor_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
         pg_loss = pg_loss.mean()
         pg_clipfrac = torch.gt(pg_losses2, pg_losses).float() * loss_mask
         pg_clipfrac = pg_clipfrac.mean()
+        ppo_kl = (-logratio * loss_mask).mean()
     else:
         # Take the maximum of clipped and unclipped losses
         pg_loss = torch.max(pg_losses, pg_losses2).mean()  # float
         pg_clipfrac = torch.gt(pg_losses2, pg_losses).float().mean()  # float
+        ppo_kl = (-logratio).mean()
 
     # Compile metrics for logging
     metrics_data = {
         "actor/raw_loss": pg_loss.detach().item(),
         "actor/policy_loss": pg_loss.detach().item(),
         "actor/policy_clipfrac": pg_clipfrac.detach().item(),
+        "actor/ppo_kl": ppo_kl.detach().item(),
     }
     return pg_loss, metrics_data
 

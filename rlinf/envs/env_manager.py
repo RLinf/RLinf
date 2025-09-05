@@ -157,9 +157,10 @@ def recursive_to_own(obj):
 
 
 class EnvManager:
-    def __init__(self, cfg, rank, env_cls, enable_offload=False):
+    def __init__(self, cfg, rank, world_size, env_cls, enable_offload=False):
         self.cfg = cfg
         self.rank = rank
+        self.world_size = world_size
         self.process: Optional[mp.Process] = None
         self.command_queue: Optional[mp.Queue] = None
         self.result_queue: Optional[mp.Queue] = None
@@ -180,7 +181,7 @@ class EnvManager:
             self.env = None
         else:
             self.env_cls = env_cls
-            self.env = self.env_cls(cfg, rank)
+            self.env = self.env_cls(cfg, rank, world_size)
 
     def start_simulator(self):
         """Start simulator process with shared memory queues"""
@@ -201,6 +202,7 @@ class EnvManager:
             args=(
                 self.cfg,
                 self.rank,
+                self.world_size,
                 self.env_cls,
                 self.command_queue,
                 self.result_queue,
@@ -275,6 +277,7 @@ class EnvManager:
         if name in [
             "cfg",
             "rank",
+            "world_size",
             "process",
             "command_queue",
             "result_queue",
@@ -316,7 +319,14 @@ class EnvManager:
 
 
 def _simulator_worker(
-    cfg, rank, env_cls, command_queue, result_queue, state_buffer, bind_numa=True
+    cfg,
+    rank,
+    world_size,
+    env_cls,
+    command_queue,
+    result_queue,
+    state_buffer,
+    bind_numa=True,
 ):
     """Worker process for simulator"""
     from rlinf.envs.offload_wrapper.base import EnvOffloadMixin
@@ -330,7 +340,7 @@ def _simulator_worker(
     omegaconf_register()
 
     try:
-        simulator = env_cls(cfg, rank)
+        simulator = env_cls(cfg, rank, world_size)
         assert isinstance(simulator, EnvOffloadMixin), (
             f"Environment class {env_cls.__name__} must inherit from EnvOffloadMixin"
         )

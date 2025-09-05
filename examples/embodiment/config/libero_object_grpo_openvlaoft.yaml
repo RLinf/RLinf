@@ -79,6 +79,10 @@ algorithm:
     max_length: 1024
     min_length: 1
 
+  filter_rewards: True
+  rewards_lower_bound: 0.5
+  rewards_upper_bound: 4.5
+
 env:
   group_name: "EnvGroup"
   channel:
@@ -138,10 +142,10 @@ actor:
     trust_remote_code: True
 
   optim:
-    lr: 5.0e-6
+    lr: 2.0e-5
     value_lr: 3.0e-3
     adam_beta1: 0.9
-    adam_beta2: 0.95
+    adam_beta2: 0.999
     adam_eps: 1.0e-05
     clip_grad: 1.0
 

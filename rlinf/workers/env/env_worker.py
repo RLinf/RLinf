@@ -101,6 +101,7 @@ class EnvWorker(Worker):
                         EnvManager(
                             self.cfg.env.train,
                             rank=self._rank,
+                            world_size=self._world_size,
                             env_cls=ManiskillEnv,
                             enable_offload=enable_offload,
                         )
@@ -111,6 +112,7 @@ class EnvWorker(Worker):
                         EnvManager(
                             self.cfg.env.eval,
                             rank=self._rank,
+                            world_size=self._world_size,
                             env_cls=ManiskillEnv,
                             enable_offload=enable_offload,
                         )
@@ -124,6 +126,7 @@ class EnvWorker(Worker):
                         EnvManager(
                             self.cfg.env.train,
                             rank=self._rank,
+                            world_size=self._world_size,
                             env_cls=LiberoEnv,
                             enable_offload=enable_offload,
                         )
@@ -134,6 +137,7 @@ class EnvWorker(Worker):
                         EnvManager(
                             self.cfg.env.eval,
                             rank=self._rank,
+                            world_size=self._world_size,
                             env_cls=LiberoEnv,
                             enable_offload=enable_offload,
                         )
@@ -145,7 +149,6 @@ class EnvWorker(Worker):
     def _init_simulator(self):
         for i in range(self.stage_num):
             self.simulator_list[i].start_simulator()
-            self.simulator_list[i].update_reset_state_ids()
             extracted_obs, rewards, terminations, truncations, infos = (
                 self.simulator_list[i].step()
             )

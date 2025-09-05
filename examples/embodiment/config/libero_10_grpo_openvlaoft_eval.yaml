@@ -27,7 +27,7 @@ runner:
   max_epochs: 1000
   max_steps: -1
 
-  only_eval: False
+  only_eval: True
   val_check_interval: -1
   save_interval: 25
   seq_length: 4096
@@ -137,6 +137,7 @@ actor:
     image_size: [224, 224]
     is_lora: False
     lora_rank: 32
+    ckpt_path: null
     num_images_in_input: 1
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
