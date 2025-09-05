@@ -34,10 +34,10 @@ from resource_allocator import (
 from workflow import (
     ComponentNode,
     Node,
-    PipelineCostCacl,
     SccComponentNode,
     Workflow,
     WorkflowPartitioner,
+    WorkflowProfiler,
     get_workflow_cost,
     get_workflow_partition,
 )
@@ -342,35 +342,52 @@ class TestWorkflowNodes:
     def test_node_creation(self):
         """Test basic node creation and methods."""
         node = Node("test_node")
-        node.set_single_batch_instance_cost(10.0)
+        node.set_profile_data(2, 10.0, 10)
         node.set_instance_num(2)
 
         assert node.name == "test_node"
-        assert node.get_single_batch_cost() == 5.0
+        assert node.get_single_batch_cost() == 1.0
 
-    def test_component_node(self):
-        """Test ComponentNode creation."""
-        component = ComponentNode("actor")
-        component.set_single_batch_instance_cost(20.0)
-        component.set_instance_num(4)
+    def test_disaggregated_profile_ratio_func(self):
+        """Test basic node creation and methods."""
+        node = Node("test_node")
+        collocated_instance_num = 16
 
-        assert component.name == "actor"
-        assert component.get_single_batch_cost() == 5.0
+        def get_disaggregated_profile_ratio_func(instance_num: int):
+            instance_ratio = collocated_instance_num // instance_num
+            if instance_ratio >= 4:
+                return 0.7
+            elif instance_ratio >= 2:
+                return 0.8
+            return 1
+
+        node.set_profile_data(
+            collocated_instance_num, 36, 16, get_disaggregated_profile_ratio_func
+        )
+
+        node.set_instance_num(10)
+        assert node.get_single_batch_cost() == 3.6
+
+        node.set_instance_num(8)
+        assert node.get_single_batch_cost() == 3.6
+
+        node.set_instance_num(4)
+        assert node.get_single_batch_cost() == 6.3
 
     def test_scc_component_node(self):
         """Test SccComponentNode with multiple components."""
         component1 = ComponentNode("actor")
-        component1.set_single_batch_instance_cost(20.0)
+        component1.set_profile_data(16, 36, 16)
         component1.set_instance_num(4)
 
         component2 = ComponentNode("rollout")
-        component2.set_single_batch_instance_cost(30.0)
-        component2.set_instance_num(3)
+        component2.set_profile_data(32, 40, 16)
+        component2.set_instance_num(20)
 
         scc_node = SccComponentNode([component1, component2])
 
         assert "actor - rollout" in scc_node.name
-        assert scc_node.get_single_batch_cost() == 15.0  # 5.0 + 10.0
+        assert scc_node.get_single_batch_cost() == 4.0 + 9.0
 
 
 class TestWorkflow:
@@ -472,25 +489,25 @@ class TestWorkflowPartitioner:
         assert all(isinstance(partition, dict) for partition in partitions)
 
 
-class TestPipelineCostCacl:
-    """Tests for the PipelineCostCacl class."""
+class TestWorkflowProfiler:
+    """Tests for the WorkflowProfiler class."""
 
-    def test_pipeline_cost_calculation(self):
-        """Test pipeline cost calculation."""
+    def test_workflow_profiler(self):
+        """Test workflow profiler"""
         node1 = ComponentNode("actor")
-        node1.set_single_batch_instance_cost(10.0)
+        node1.set_profile_data(16, 10.0, 16)
         node1.set_instance_num(1)
 
         node2 = ComponentNode("rollout")
-        node2.set_single_batch_instance_cost(20.0)
-        node2.set_instance_num(1)
+        node2.set_profile_data(32, 20.0, 16)
+        node2.set_instance_num(2)
 
         workflow_dict = {node1: [node2], node2: []}
 
         workflow = Workflow(workflow_dict)
-        cost_calc = PipelineCostCacl(workflow)
+        profiler = WorkflowProfiler(workflow)
 
-        result = cost_calc.calculate_total_time(total_data_size=100, batch_size=10)
+        result = profiler.profile(total_data_size=100, batch_size=10)
 
         assert "total_time" in result
         assert "startup_time" in result
@@ -500,25 +517,24 @@ class TestPipelineCostCacl:
         assert "throughput" in result
 
         assert result["total_time"] == 30.0 + 20.0 * 9
-        assert result["num_batches"] == 10
 
     def test_critical_path_finding(self):
         """Test critical path finding."""
         node1 = ComponentNode("actor")
-        node1.set_single_batch_instance_cost(10.0)
+        node1.set_profile_data(1, 1, 1)
         node1.set_instance_num(1)
 
         node2 = ComponentNode("rollout")
-        node2.set_single_batch_instance_cost(5.0)
+        node2.set_profile_data(1, 1, 1)
         node2.set_instance_num(1)
 
         workflow_dict = {node1: [node2], node2: []}
 
         workflow = Workflow(workflow_dict)
-        cost_calc = PipelineCostCacl(workflow)
+        profiler = WorkflowProfiler(workflow)
 
-        assert len(cost_calc.critical_path) > 0
-        assert node1 in cost_calc.critical_path and node2 in cost_calc.critical_path
+        assert len(profiler.critical_path) > 0
+        assert node1 in profiler.critical_path and node2 in profiler.critical_path
 
 
 class TestWorkflowUtilityFunctions:
@@ -528,11 +544,11 @@ class TestWorkflowUtilityFunctions:
         """Test get_workflow_cost function."""
 
         node1 = ComponentNode("rollout")
-        node1.set_single_batch_instance_cost(10.0)
-        node1.set_instance_num(1)
+        node1.set_profile_data(4, 20.0, 8)
+        node1.set_instance_num(2)
 
         node2 = ComponentNode("actor")
-        node2.set_single_batch_instance_cost(10.0)
+        node2.set_profile_data(4, 10.0, 8)
         node2.set_instance_num(2)
 
         workflow_dict = {node1: [node2], node2: []}
@@ -541,7 +557,7 @@ class TestWorkflowUtilityFunctions:
         cost = get_workflow_cost(workflow, batch_size=10, total_data_size=100)
 
         assert isinstance(cost, (int, float))
-        assert int(cost) == 15 + 90
+        assert cost == (5 + 2.5) + 5 * 9
 
     def test_get_workflow_partition(self):
         """Test get_workflow_partition function."""
@@ -579,13 +595,15 @@ class TestSchedulerTask:
         mock_cfg.data.rollout_batch_size = 16
         mock_cfg.runner.seq_length = 2048
 
-        profile_data = get_profile_data(
-            mock_cfg, actor_cost=100.0, inference_cost=50.0, rollout_cost=75.0
-        )
+        mock_cfg.profile_data.actor_cost = 100.0
+        mock_cfg.profile_data.inference_cost = 50.0
+        mock_cfg.profile_data.rollout_cost = 75.0
 
-        assert profile_data["actor"] == (4, 100.0)
-        assert profile_data["rollout"] == (8, 75.0)
-        assert profile_data["inference"] == (4, 50.0)
+        profile_data = get_profile_data(mock_cfg)
+
+        assert profile_data["actor"][:2] == (4, 100.0)
+        assert profile_data["rollout"][:2] == (8, 75.0)
+        assert profile_data["inference"][:2] == (4, 50.0)
 
     @patch("scheduler_task.validate_cfg")
     def test_scheduler_task_initialization(self, mock_validate):

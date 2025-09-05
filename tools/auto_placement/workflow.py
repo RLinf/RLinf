@@ -15,7 +15,7 @@
 import itertools
 import math
 from collections import defaultdict, deque
-from typing import Dict, List
+from typing import Callable, Dict, List, Optional
 
 
 class Node:
@@ -26,14 +26,29 @@ class Node:
     def add_neighbor(self, neighbor: "Node"):
         self.neighbors.append(neighbor)
 
-    def set_single_batch_instance_cost(self, single_batch_instance_cost: float):
-        self.single_batch_instance_cost = single_batch_instance_cost
+    def set_profile_data(
+        self,
+        collocated_instance_num: int,
+        signle_iter_cost: float,
+        num_of_batches: int,
+        disaggregated_profile_ratio_func: Optional[Callable[[int], float]] = None,
+    ):
+        self.single_batch_instance_cost = (
+            signle_iter_cost * collocated_instance_num / num_of_batches
+        )
+
+        self.collocated_instance_num = collocated_instance_num
+        self.disaggregated_profile_ratio_func = disaggregated_profile_ratio_func
 
     def set_instance_num(self, instance_num: int):
         self.instance_num = instance_num
 
     def get_single_batch_cost(self) -> float:
-        return self.single_batch_instance_cost / self.instance_num
+        if self.disaggregated_profile_ratio_func is not None:
+            ratio = self.disaggregated_profile_ratio_func(self.instance_num)
+        else:
+            ratio = 1
+        return (self.single_batch_instance_cost / self.instance_num) * ratio
 
     def __repr__(self):
         return self.name
@@ -281,7 +296,7 @@ class WorkflowPartitioner:
         return Workflow(subgraph_dict)
 
 
-class PipelineCostCacl:
+class WorkflowProfiler:
     def __init__(
         self,
         workflow: Workflow,
@@ -295,7 +310,7 @@ class PipelineCostCacl:
 
         if has_scc_compressed:
             raise NotImplementedError(
-                "SCC compressed nodes are not yet supported in PipelineCostCacl"
+                "SCC compressed nodes are not yet supported in WorkflowProfiler"
             )
 
         self.topological_order = self.workflow.topological_sort()
@@ -337,7 +352,7 @@ class PipelineCostCacl:
 
         return list(reversed(path))
 
-    def calculate_total_time(self, total_data_size: int, batch_size: int):
+    def profile(self, total_data_size: int, batch_size: int):
         """Calculate total time to process N data items"""
         num_batches = math.ceil(total_data_size / batch_size)
 
@@ -366,20 +381,13 @@ class PipelineCostCacl:
             "throughput": total_data_size / total_time if total_time > 0 else 0,
         }
 
-    def print_analysis(self, total_data_size: int, batch_size: int):
+    def print_analysis(self, result: Dict[str, float]):
         """Print time analysis"""
-        result = self.calculate_total_time(total_data_size, batch_size)
-
         print(f"Subgraph: {self.workflow.nodes}")
-        print(
-            f"Data size: {total_data_size}, Number of batches: {result['num_batches']}"
-        )
+        print(f"Number of batches: {result['num_batches']}")
         critical_path_str = ""
         for path in result["critical_path"]:
-            if isinstance(path, SccComponentNode):
-                critical_path_str += f"{path}"
-            else:
-                critical_path_str += f"{path}"
+            critical_path_str += f"{path}"
             if path != self.critical_path[-1]:
                 critical_path_str += " -> "
         print(f"Critical path: {critical_path_str}")
@@ -391,15 +399,21 @@ class PipelineCostCacl:
         )
 
 
+WORKFLOW_PROFILER_DICT = {}
+
+
 def get_workflow_cost(
     workflow: Workflow,
     batch_size: int,
     total_data_size: int,
 ) -> float:
-    """Calculate total cost of workflow"""
-    return PipelineCostCacl(workflow).calculate_total_time(total_data_size, batch_size)[
-        "total_time"
-    ]
+    """Get workflow profile"""
+    if workflow not in WORKFLOW_PROFILER_DICT:
+        WORKFLOW_PROFILER_DICT[workflow] = WorkflowProfiler(workflow)
+    profile_result = WORKFLOW_PROFILER_DICT[workflow].profile(
+        total_data_size, batch_size
+    )
+    return profile_result["total_time"]
 
 
 def get_workflow_partition(workflow: Workflow) -> List[Dict[str, Workflow]]:
