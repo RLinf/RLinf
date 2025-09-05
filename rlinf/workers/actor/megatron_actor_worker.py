@@ -26,12 +26,12 @@ from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig
 from torch.multiprocessing.reductions import reduce_tensor
 
-from rlinf.algorithms.math.algo_functions import (
-    actor_loss_fn,
+import rlinf.algorithms  # noqa: F401
+from rlinf.algorithms.registry import (
+    actor_loss,
     calculate_adv_and_returns,
-    kl_penalty,
 )
-from rlinf.algorithms.math.verifier.verify import math_verify_call
+from rlinf.algorithms.utils import kl_penalty
 from rlinf.data.io_struct import BatchResizingIterator, RolloutResult
 from rlinf.hybrid_engines.megatron.megatron_model_manager import (
     MegatronModelManager,
@@ -77,6 +77,7 @@ from rlinf.workers.rollout.utils import (
     DisaggRankMapper,
     HybridRankMapper,
 )
+from tools.math_verifier.verify import math_verify_call
 
 
 class MegatronActor(MegatronModelManager, Worker):
@@ -327,13 +328,14 @@ class MegatronActor(MegatronModelManager, Worker):
                         ratios,
                         cliped_ratio,
                         dual_cliped_ratio,
-                    ) = actor_loss_fn(
-                        self.loss_agg_func,
-                        curr_logprobs,
-                        prev_logprobs,
-                        advantages,
-                        self.ratio_eps,
-                        mask,
+                    ) = actor_loss(
+                        loss_type=self.cfg.algorithm.loss_type,
+                        loss_agg_func=self.loss_agg_func,
+                        logprobs=curr_logprobs,
+                        old_logprobs=prev_logprobs,
+                        advantages=advantages,
+                        eps_clip=self.ratio_eps,
+                        loss_mask=mask,
                     )
 
                     logging_loss = loss.detach()
@@ -808,10 +810,10 @@ class MegatronActor(MegatronModelManager, Worker):
         assert self.rollout_batches is not None
         mask = self.rollout_batches["attention_mask"][:, -self.response_len :]
         advantages, returns = calculate_adv_and_returns(
-            self.cfg.algorithm.adv_type,
-            self.rollout_batches["reward_scores"].cuda(),
-            mask.cuda(),
-            self.cfg.algorithm.group_size,
+            adv_type=self.cfg.algorithm.adv_type,
+            reward_scores=self.rollout_batches["reward_scores"].cuda(),
+            mask=mask.cuda(),
+            num_responses=self.cfg.algorithm.group_size,
         )
 
         if self.cfg.algorithm.normalize_advantages:

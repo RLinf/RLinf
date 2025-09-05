@@ -23,7 +23,7 @@ from sympy import N, simplify
 from sympy.parsing.latex import parse_latex
 from sympy.parsing.sympy_parser import parse_expr
 
-from rlinf.algorithms.math.verifier.parser import extract_answer
+from tools.math_verifier.parser import extract_answer
 
 
 def choice_answer_clean(pred: str):
