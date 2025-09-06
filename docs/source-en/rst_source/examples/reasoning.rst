@@ -106,11 +106,11 @@ The following plots show training curves.
 
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/user-attachments/assets/66b79012-f2e7-4b1d-9785-5d8f4f7d9025" style="width: 100%;"/>
+       <img src="https://github.com/RLinf/misc/raw/main/pic/1.5b-loss-curve.jpg" style="width: 100%;"/>
        <p><em>MATH 1.5B</em></p>
      </div>
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/user-attachments/assets/37afd9f1-c503-49ec-8657-1f8f883a85c5" style="width: 100%;"/>
+       <img src="https://github.com/RLinf/misc/raw/main/pic/7b-loss-curve.jpg" style="width: 100%;"/>
        <p><em>MATH 7B</em></p>
      </div>
    </div>

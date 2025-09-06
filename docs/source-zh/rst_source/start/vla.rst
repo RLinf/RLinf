@@ -80,4 +80,4 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
 
 .. raw:: html
 
-   <img src="https://github.com/user-attachments/assets/90269207-b638-478b-bf5e-95bd8e2bfb36" width="800"/>
+   <img src="https://github.com/RLinf/misc/raw/main/pic/embody-quickstart-metric.jpg" width="800"/>

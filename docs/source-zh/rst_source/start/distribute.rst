@@ -40,13 +40,13 @@
 
 .. raw:: html
 
-   <img src="https://github.com/user-attachments/assets/7d74a914-6a02-47b3-aebe-f62f505d6eb6" width="800"/>
+   <img src="https://github.com/RLinf/misc/raw/main/pic/start-0.jpg" width="800"/>
 
 每个 **worker 节点** 上的终端输出如下：
 
 .. raw:: html
 
-   <img src="https://github.com/user-attachments/assets/d1b3ca82-0449-4720-a9fc-fb4265944273" width="800"/>
+   <img src="https://github.com/RLinf/misc/raw/main/pic/start-1.jpg" width="800"/>
 
 当所有四个启动脚本都打印出 *Ray started*，**保持在 head 节点终端中**，并检查集群是否已正确连接（此例为 ``4 × 8 = 32`` 张 GPU）：
 
@@ -62,7 +62,7 @@
 
 .. raw:: html
 
-   <img src="https://github.com/user-attachments/assets/28e8d7e3-0794-4072-911c-bbd7b509d107" width="800"/>
+   <img src="https://github.com/RLinf/misc/raw/main/pic/check.jpg" width="800"/>
 
 注意：为简洁起见，本文使用的是 2 节点 16 GPU 的截图。
 

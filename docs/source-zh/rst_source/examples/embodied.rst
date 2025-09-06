@@ -215,11 +215,11 @@ ManiSkill3 结果
 
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/user-attachments/assets/c641471f-2ee0-4ecc-b152-f20b5946651f" style="width: 100%;"/>
+       <img src="https://github.com/RLinf/misc/raw/main/pic/embody-loss-1.jpeg" style="width: 100%;"/>
        <p><em>OpenVLA (48h training)</em></p>
      </div>
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/user-attachments/assets/460de75c-e4ed-4926-b8c7-dc2e493afcf0" style="width: 100%;"/>
+       <img src="https://github.com/RLinf/misc/raw/main/pic/embody-loss-2.jpeg" style="width: 100%;"/>
        <p><em>OpenVLA-OFT (24h training)</em></p>
      </div>
    </div>
@@ -274,7 +274,7 @@ ManiSkill3 结果
 .. raw:: html
 
    <video controls autoplay loop muted playsinline preload="metadata" width="720">
-     <source src="https://github.com/user-attachments/assets/3b709c25-83c0-4568-b286-4d56bbaed26b" type="video/mp4">
+     <source src=https://github.com/RLinf/misc/raw/main/pic/embody.mp4 type="video/mp4">
      Your browser does not support the video tag.
    </video>
 

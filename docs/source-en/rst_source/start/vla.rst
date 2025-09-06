@@ -80,4 +80,4 @@ Key metrics to pay attention to include
 
 .. raw:: html
 
-   <img src="https://github.com/user-attachments/assets/90269207-b638-478b-bf5e-95bd8e2bfb36" width="800"/>
+   <img src="https://github.com/RLinf/misc/raw/main/pic/embody-quickstart-metric.jpg" width="800"/>

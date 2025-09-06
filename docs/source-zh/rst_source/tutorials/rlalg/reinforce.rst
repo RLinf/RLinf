@@ -83,7 +83,7 @@ REINFORCE++ 基线
      rollout_batch_size: 512
 
 4. 注意事项
----------
+-----------
 
 - REINFORCE++ 使用的是所谓的 :math:`k_1` KL。  
 - GRPO 算法使用的是 :math:`k_3` 形式，它混合了 on-policy 和参考策略的概率，但该估计是有偏的。  

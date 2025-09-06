@@ -44,13 +44,13 @@ Once the scripts run successfully, the terminal on the **head node** should disp
 
 .. raw:: html
 
-   <img src="https://github.com/user-attachments/assets/7d74a914-6a02-47b3-aebe-f62f505d6eb6" width="800"/>
+   <img src="https://github.com/RLinf/misc/raw/main/pic/start-0.jpg" width="800"/>
 
 On each **worker node**, the terminal should display:
 
 .. raw:: html
 
-   <img src="https://github.com/user-attachments/assets/d1b3ca82-0449-4720-a9fc-fb4265944273" width="800"/>
+   <img src="https://github.com/RLinf/misc/raw/main/pic/start-1.jpg" width="800"/>
 
 After all four startup scripts print *Ray started*, **remain** in the head node terminal and verify the total cluster size (in this example, ``4 × 8 = 32`` GPUs):
 
@@ -67,7 +67,7 @@ If successful, your terminal should show:
 
 .. raw:: html
 
-   <img src="https://github.com/user-attachments/assets/28e8d7e3-0794-4072-911c-bbd7b509d107" width="800"/>
+   <img src="https://github.com/RLinf/misc/raw/main/pic/check.jpg" width="800"/>
 
 Note: For simplicity, the images in this example only show a 2-node setup with 16 GPUs.
 

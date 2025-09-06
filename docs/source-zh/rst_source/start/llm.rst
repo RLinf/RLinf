@@ -92,4 +92,4 @@
 
 .. raw:: html
 
-   <img src="https://github.com/user-attachments/assets/818b013d-18e9-4edb-ba0b-db0e58b53536" width="800"/>
+   <img src="https://github.com/RLinf/misc/raw/main/pic/math-quickstart-metric.jpg" width="800"/>
