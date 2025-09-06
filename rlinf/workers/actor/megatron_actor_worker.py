@@ -140,9 +140,7 @@ class MegatronActor(MegatronModelManager, Worker):
         self.is_weight_offloaded = False
         self.is_optimizer_offloaded = False
         self.ref_policy_state_dict = None
-        self.is_pipeline = (
-            self.component_placement.placement_mode == PlacementMode.DISAGGREGATED
-        )
+        self.is_pipeline = self.component_placement.is_disaggregated
 
         # Reward configurations
         if not self.cfg.reward.use_reward_model:
@@ -909,6 +907,10 @@ class MegatronActor(MegatronModelManager, Worker):
             input_channel: The input channel to read from.
             output_channel: The output channel to send results to.
         """
+        if self.is_pipeline:
+            # In pipeline mode, rewards are computed in the rollout
+            with self.worker_timer():
+                return
         recv_batch_size = 0
         while recv_batch_size < self.total_batch_size_per_dp:
             batch, rollout_result = self.get_batch(input_channel)
@@ -980,6 +982,10 @@ class MegatronActor(MegatronModelManager, Worker):
             input_channel: The input channel to read from.
             output_channel: The output channel to send results to.
         """
+        if self.is_pipeline:
+            # In pipeline mode, advantages are computed in the rollout
+            with self.worker_timer():
+                return
         clear_memory()
         recv_batch_size = 0
         while recv_batch_size < self.total_batch_size_per_dp:
