@@ -56,6 +56,7 @@ class MathRunner:
         """"""
         self.cfg = cfg
         self.component_placement = placement
+        self.is_pipeline = self.component_placement.is_disaggregated
         self.has_dedicated_inference = inference is not None
         self.has_dedicated_reward = reward is not None
 
@@ -347,8 +348,13 @@ class MathRunner:
                     )
 
                     # Actor training
+                    actor_input_channel = self.actor_channel
+                    if self.is_pipeline:
+                        # In pipeline mode, the rollout already contains the advantages and returns
+                        # So the above two steps are in fact no-ops, and we should directly use the inference channel as the input
+                        actor_input_channel = inference_channel
                     actor_handle: Handle = self.actor.run_training(
-                        input_channel=self.actor_channel,
+                        input_channel=actor_input_channel,
                     )
 
                     metrics = actor_handle.wait()
