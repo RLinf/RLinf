@@ -1,25 +1,21 @@
-Evaluation 1: Embodied Agent Scenario
+评估 1：具身智能体场景
 ========================================
 
-Introduction
+简介
 ------------
-RLinf ships with **turn-key evaluation scripts** to benchmark a trained
-embodied agent in both *in-distribution* and *out-of-distribution*
-settings.  
-Two simulation suites are currently supported:
+RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* 与 *训练分布外* 的任务中评估具身智能体的表现。  
+目前支持以下两个模拟器：
 
 - `ManiSkill3 <https://github.com/haosulab/ManiSkill>`_
 - `LIBERO <https://github.com/Lifelong-Robot-Learning/LIBERO>`_
 
-All helper scripts reside in ``examples/embodiment/``;
-only the obvious placeholders (checkpoint paths, GPU IDs, etc.) must be
-edited before running.
+所有辅助脚本位于 ``examples/embodiment/`` 目录下；  
+你只需要根据需要修改 checkpoint 路径、GPU ID 等配置即可运行。
 
-
-Quick Start — ManiSkill3
+快速开始 — ManiSkill3
 ------------------------
 
-**Full launch script**
+**完整启动脚本**
 
 .. code-block:: bash
 
@@ -35,7 +31,7 @@ Quick Start — ManiSkill3
 
    EVAL_NAME=grpo-openvlaoft
    CKPT_PATH=YOUR_CKPT_PATH
-   CONFIG_NAME=YOUR_CFG_NAME      # env.eval must be maniskill_ood_template
+   CONFIG_NAME=YOUR_CFG_NAME      # 其中 env.eval 必须为 maniskill_ood_template
 
    for env_id in \
        "PutOnPlateInScene25VisionImage-v1" "PutOnPlateInScene25VisionTexture03-v1" \
@@ -77,15 +73,13 @@ Quick Start — ManiSkill3
        ${CMD} 2>&1 | tee -a "${MEGA_LOG_FILE}"
    done
 
-The script first evaluates twelve **OOD** tasks, then three
-**ID** tasks, and writes each log to
-``logs/eval/<EVAL_NAME>/…/run_ppo.log``.
+该脚本首先评估 12 个 **分布外（OOD）任务**，然后评估 3 个 **分布内（ID）任务**，  
+所有日志保存在 ``logs/eval/<EVAL_NAME>/…/run_ppo.log``。
 
+快速开始 — LIBERO
+------------------------
 
-Quick Start — LIBERO
---------------------
-
-**Full launch script**
+**完整启动脚本**
 
 .. code-block:: bash
 
@@ -99,7 +93,7 @@ Quick Start — LIBERO
    export PYOPENGL_PLATFORM="osmesa"
    export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 
-   # path to the LIBERO repo
+   # LIBERO 仓库路径
    export LIBERO_REPO_PATH="/root/LIBERO"
    export LIBERO_CONFIG_PATH=${LIBERO_REPO_PATH}
    export PYTHONPATH=${LIBERO_REPO_PATH}:$PYTHONPATH
@@ -120,7 +114,7 @@ Quick Start — LIBERO
    echo ${CMD}
    ${CMD} 2>&1 | tee "${MEGA_LOG_FILE}"
 
-**Model-path settings**
+**模型路径设置**
 
 .. code-block:: yaml
 
@@ -133,25 +127,24 @@ Quick Start — LIBERO
      tokenizer:
        tokenizer_model: "/path/to/sft_base_model/"
 
-**Key YAML fields**
+**关键 YAML 配置字段**
 
-Main YAML + ``config/env/eval/libero_goal.yaml``:
+主 YAML + ``config/env/eval/libero_goal.yaml`` 配置文件中：
 
 ==========================  =============================================
-Field                       Purpose
+字段名                      作用
 ==========================  =============================================
-``simulator_type``          Must be ``libero``
-``task_suite_name``         LIBERO split (e.g. ``libero_goal``)
-``max_episode_steps``       Episode horizon (default 512)
-``seed``                    Environment seed
-``num_envs``                Parallel evaluation episodes (e.g. 500)
+``simulator_type``          必须为 ``libero``
+``task_suite_name``         LIBERO 任务分支名（如 ``libero_goal``）
+``max_episode_steps``       每个 episode 的最大步数（默认 512）
+``seed``                    环境随机种子
+``num_envs``                并行评估环境数量（例如 500）
 ==========================  =============================================
 
+评估结果
+--------
 
-Results
--------
-
-Both launch scripts end with a **summary line** in the logs:
+两个评估脚本运行结束后，日志中会输出一条 **结果总结行**：
 
 .. code-block:: javascript
 
@@ -163,25 +156,21 @@ Both launch scripts end with a **summary line** in the logs:
        'eval/env_info/success_at_end': 0.859375
    }
 
-``success_once`` is the **success rate** (task succeeded at least once
-within an episode).  
-Metrics are also written to TensorBoard if enabled.
+字段 ``success_once`` 表示 **成功率** （即在一次 episode 中至少完成一次任务）。  
+如果启用了 TensorBoard，这些指标也会记录到 TensorBoard 中。
 
+评估环境列表
+------------------------
 
-Environments
-------------
-
-.. list-table:: Supported Embodied-Agent Suites
+.. list-table:: 支持的具身智能体环境
    :header-rows: 1
    :widths: 20 80
 
-   * - Environment
-     - Brief Description
+   * - 环境
+     - 简要说明
    * - ``ManiSkill3``
-     - A high-fidelity MuJoCo-based simulator covering diverse
-       manipulation skills (grasp, place, push).  Evaluation focuses on
-       **Put-on-Plate** tasks with multiple OOD texture/object splits.
+     - 基于 MuJoCo 的高保真模拟器，覆盖多种操作技能（如抓取、放置、推送）。  
+       本次评估专注于 **Put-on-Plate** 系列任务，包含多个分布外纹理/物体组合。
    * - ``LIBERO``
-     - A large-scale benchmark (built on *robosuite*) targeting lifelong
-       household manipulation.  The **Goal** suite comprises four tasks
-       requiring goal-conditioned reasoning and long-horizon control.
+     - 基于 *robosuite* 构建的大规模终身学习基准，专注于家庭任务的操控。  
+       其中 **Goal** 分支包含四个任务，要求具备目标条件下的推理能力和长时间控制能力。

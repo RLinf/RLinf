@@ -1,31 +1,26 @@
-High-Level Programming Flow
+高层次编程流程概览
 ===========================
 
-This section walks you through RLinf’s top-level programming logic.
-We avoid low-level details and focus on the highest-level APIs so you can
-understand the overall control flow and customize your own algorithms or projects.
+本节将带你了解 RLinf 的顶层编程逻辑。  
+我们不会涉及底层细节，而是聚焦于最高层的 API，帮助你理解整体控制流程，  
+并能够定制你自己的算法或项目。
 
-The running example highlights RLinf’s core capability: **hybrid mode with fine-grained pipelining**
-for training VLA models in an embodied-intelligence environment.
+我们的示例突出展示了 RLinf 的核心能力：  
+**混合式模式下的细粒度流水线训练**，用于训练具身智能环境中的 VLA 模型。
 
-
-YAML Configuration 
+YAML 配置
 -----------------------
 
-Before launching any training script, the most important step is to prepare
-the configuration file.
-For example:
+在启动任何训练脚本之前，最重要的步骤是准备好配置文件（YAML）。例如：
 
-- Configs for training a **VLA** agent in embodied tasks live under
-  ``examples/embodiment/config``.
-- Configs for training an **LLM** on math reasoning live under
-  ``examples/math/config``.
+- 针对 **VLA** agent 的具身任务训练配置在  
+  ``examples/embodiment/config``  
+- 针对数学推理的 **LLM** 模型训练配置在  
+  ``examples/math/config``  
 
-As a starting point, we recommend getting familiar with the YAML structure of
-these examples, then iterating toward your custom task. Key options include
-(but are not limited to):
+建议你先熟悉这些示例 YAML 的结构，然后逐步迭代以适配你的任务。关键选项包括（但不限于）：
 
-**1. Execution mode and the number of nodes/GPUs to use**
+**1. 执行模式，以及使用的节点/GPU 数量**
 
 .. code:: yaml
 
@@ -37,49 +32,48 @@ these examples, then iterating toward your custom task. Key options include
        env: 0-3
        rollout: 4-7
 
-**2. Models, tokenizer, optional checkpoint paths, and output locations**
+**2. 模型、tokenizer、可选的 checkpoint 路径，以及输出路径**
 
-- ``rollout.model_dir``
-- ``actor.tokenizer.tokenizer_model``
-- ``actor.checkpoint_load_path``
-- ``runner.logger.log_path``
-- ``actor.checkpoint_save_path``
+- ``rollout.model_dir``  
+- ``actor.tokenizer.tokenizer_model``  
+- ``actor.checkpoint_load_path``  
+- ``runner.logger.log_path``  
+- ``actor.checkpoint_save_path``  
 
-**3. Training hyperparameters such as max steps and batch sizes**
+**3. 训练超参数，例如最大训练步数、批大小等**
 
-- ``runner.max_epochs``
-- ``runner.max_steps``
-- ``actor.global_batch_size``
-- ``actor.micro_batch_size``
+- ``runner.max_epochs``  
+- ``runner.max_steps``  
+- ``actor.global_batch_size``  
+- ``actor.micro_batch_size``  
 
-As a first run, keep the defaults and iterate. For a full parameter reference,
-see :doc:`yaml`.
+第一次运行建议使用默认参数，然后逐步调整。完整参数说明请参考 :doc:`yaml`。
 
-Worker Launch Orchestration
+Worker 启动调度流程
 ---------------------------
 
-The following Python snippet is distilled from
-``examples/embodiment/train_embodied_agent.py`` and mirrors the pattern used by
-all RLinf ``main`` entry points:
+以下 Python 代码节选自  
+``examples/embodiment/train_embodied_agent.py``，  
+它代表了所有 RLinf 项目 ``main`` 入口的标准模式：
 
 .. code:: python
 
    cluster = Cluster(num_nodes, num_gpus_per_node)
    component_placement = HybridComponentPlacement(cfg)
 
-   # Create actor worker group
+   # 创建 actor worker 组
    actor_placement = component_placement.get_strategy("actor")
    actor_group = EmbodiedFSDPActor.create_group(cfg).launch(
        cluster, placement_strategy=actor_placement
    )
 
-   # Create rollout worker group
+   # 创建 rollout worker 组
    rollout_placement = component_placement.get_strategy("rollout")
    rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
        cluster, placement_strategy=rollout_placement
    )
 
-   # Create env worker group
+   # 创建 env worker 组
    env_placement = component_placement.get_strategy("env")
    env_group = EnvWorker.create_group(cfg).launch(
        cluster, placement_strategy=env_placement
@@ -94,21 +88,18 @@ all RLinf ``main`` entry points:
    runner.init_workers()
    runner.run()
 
-The entry point performs three major tasks:
+该入口流程主要完成以下三件事：
 
-1. Initializes the ``Cluster`` (global resource view) and
-   ``HybridComponentPlacement`` (GPU placement for all RL workers) from config.
-2. Creates the **actor**, **rollout**, and **env** worker groups and manages
-   them via ``WorkerGroup``.
-3. Builds an ``EmbodiedRunner`` and starts the main training loop via
-   ``runner.run()``.
+1. 从配置文件初始化 ``Cluster`` （集群资源视图）和  
+   ``HybridComponentPlacement`` （所有 RL worker 的 GPU 分布策略）  
+2. 创建 **actor**、**rollout** 和 **env** 的 WorkerGroup，并统一管理  
+3. 构建 ``EmbodiedRunner``，并通过 ``runner.run()`` 启动主训练循环
 
+训练循环概览
+------------------------
 
-Training Loop Overview
-----------------------
-
-The high-level logic inside ``runner.run()`` (from
-``rlinf/runners/embodied_runner.py``) looks like:
+``runner.run()`` 的高层逻辑（定义于  
+``rlinf/runners/embodied_runner.py``）大致如下：
 
 .. code:: python
 
@@ -120,9 +111,9 @@ The high-level logic inside ``runner.run()`` (from
 
        actor_group.run_training()
 
-It consists of four steps:
+这个训练循环包含四个核心阶段：
 
-1. **Model sync between actor and rollout** via ``update_rollout_weights()``:
+1. **actor 和 rollout 模型同步**，调用 ``update_rollout_weights()``：
 
    .. code:: python
 
@@ -132,7 +123,7 @@ It consists of four steps:
           actor_futures.wait()
           rollout_futures.wait()
 
-2. **Fine-grained rollout pipeline** in hybrid mode via ``generate_rollouts()``:
+2. **混合式模式下的细粒度 rollout 流水线**，调用 ``generate_rollouts()``：
 
    .. code:: python
 
@@ -144,15 +135,14 @@ It consists of four steps:
           actor_futures.wait()
           rollout_futures.wait()
 
-   Here, the crucial pieces are ``env_group.interact()`` and
-   ``rollout_group.generate()``, which connect through two producer–consumer
-   queues to implement **fine-grained pipelining** for fast rollout.
-   See :doc:`../mode/hybrid` for details.
+   这里最关键的两步是 ``env_group.interact()`` 和  
+   ``rollout_group.generate()``，它们通过两个生产者-消费者队列连接，  
+   实现了 **细粒度流水线加速 rollout** 的能力。  
+   详见 :doc:`../mode/hybrid`。
 
-3. **Advantage/return computation** with
-   ``actor_group.compute_advantages_and_returns()`` based on the collected
-   rollouts.
+3. **优势值与回报计算**，通过  
+   ``actor_group.compute_advantages_and_returns()``，  
+   基于上一步收集的 rollout 数据进行处理。
 
-4. **Policy update** with
-   ``actor_group.run_training()`` using rollouts plus the computed advantages
-   and returns.
+4. **策略更新**，通过  
+   ``actor_group.run_training()``，使用 rollout 数据和计算好的 advantage/return，执行训练。

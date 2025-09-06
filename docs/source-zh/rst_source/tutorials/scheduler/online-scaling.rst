@@ -1,49 +1,47 @@
-Online Scaling Mechanism
+自动扩缩机制
 ========================
 
+自动扩缩（也称为弹性训练）  
+是一项强大的功能，可以在 1 秒内完成 GPU 切换，实现训练资源的动态扩缩。  
+通过这一能力，你可以根据集群可用性、任务需求或资源优化目标，实时调整训练所使用的 GPU 和节点数量。
 
-Online scaling (also known as elastic training)  
-is a powerful feature that enables dynamic scaling of training resources, with GPU swithching performed within 1 seconds.
-This capability allows you to adjust the number of GPUs and nodes used for training in real time,  
-based on cluster availability, workload demands, or resource optimization goals.
-
-What is Online Scaling?
+什么是自动扩缩？
 -----------------------
 
-Online scaling refers to the ability to **scale up** (add more resources) or **scale down** (remove resources)  
-during training while maintaining training continuity and model state consistency.  
+自动扩缩指的是在训练过程中能够 **向上扩缩** （增加更多资源）或 **向下缩减** （释放部分资源），  
+同时保持训练的连续性和模型状态的一致性。  
 
-In the context of RL training with Megatron-LM, this involves:
+在使用 Megatron-LM 进行 RL 训练时，这包括：
 
-- **Scaling up**: Adding nodes/GPUs to increase training throughput  
-- **Scaling down**: Releasing nodes/GPUs to free up resources for other tasks  
-- **Parallel strategy adjustment**: Dynamically changing Megatron's parallel strategies (TP/PP/DP/CP)
+- **向上扩缩** ：增加节点/GPU 来提升训练吞吐量  
+- **向下缩减** ：释放节点/GPU，将资源腾出来给其他任务  
+- **并行策略调整** ：动态改变 Megatron 的并行策略（TP/PP/DP/CP）
 
-The system automatically handles:
+系统会自动处理以下内容：
 
-- Model parameter redistribution across the new parallel configuration  
-- Optimizer state migration  
-- Communication group reconstruction  
-- Training state synchronization  
+- 模型参数在新的并行配置中的重新分布  
+- 优化器状态的迁移  
+- 通信组的重建  
+- 训练状态的同步  
 
-Why is Online Scaling Important?
+为什么自动扩缩很重要？
 --------------------------------
 
-When using RLinf's disaggregated mode with fine-grained pipelining,  
-the rollout and inference stages are completed before the actor stage finishes.  
-At this point, the resources used for rollout and inference can be reallocated to the actor stage **within seconds**,  
-accelerating actor training and improving overall system performance.
+当使用 RLinf 的分离式模式并结合细粒度流水线时，  
+rollout 和 inference 阶段通常会在 actor 阶段结束前就完成。  
+此时，可以在 **几秒内** 将 rollout 和 inference 所使用的资源重新分配给 actor 阶段，  
+从而加速 actor 的训练，并提升整个系统的性能。
 
-Benefits and Effects
+优势与效果
 --------------------
 
-**Performance Benefits:**
+**性能优势：**
 
-- **Increased Throughput**: Adding more GPUs can significantly speed up training  
-- **Better Resource Utilization**: Dynamic resource allocation ensures optimal usage  
-- **Reduced Training Time**: Efficient scaling can reduce overall training time by 20–50%  
+- **更高的吞吐量**：增加更多 GPU 可以显著提升训练速度  
+- **更好的资源利用率**：动态分配资源确保资源使用最优  
+- **缩短训练时间**：高效扩缩可减少 20–50% 的整体训练时间  
 
-**Operational Benefits:**
+**运维优势：**
 
-- **Zero Training Interruption**: Scaling occurs seamlessly without halting training  
-- **Consistent Training Progress**: Maintains convergence and model continuity throughout scaling  
+- **零训练中断**：扩缩过程无缝进行，不会中断训练  
+- **一致的训练进展**：在扩缩过程中保持收敛性和模型连续性  

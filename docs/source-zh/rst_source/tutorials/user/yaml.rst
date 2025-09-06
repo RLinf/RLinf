@@ -1,20 +1,18 @@
-YAML Configuration
+YAML 配置
 =====================
 
+下面给出 RLinf 使用的配置文件的完整参考说明。  
+我们对 YAML 中每个重要键做了说明，便于你针对自己的集群、模型或研究需求进行调整。  
+各参数按顶层键分组组织。
 
-Below is a complete reference for the configuration file used in the RLinf
-Every important key in the YAML is documented below so that you can confidently adapt the file to your own cluster, model, or research ideas.  
-Parameters are grouped exactly by their top-level key.
-
-For clarity, this section includes the following three main parts: 
-**Basic Configuration**, **MATH-specific Configuration**, and **Embody-specific Configuration**.
-Therefore, users can find the corresponding configuration information according to their own needs.
+为便于查阅，本节分为三部分：**基础配置**、**MATH 专用配置** 与 **具身智能（Embodied）专用配置**。  
+你可根据实际需求查找对应的小节。
 
 .. contents::
    :depth: 1
    :local:
 
-Basic Configuration
+基础配置
 ---------------------
 
 hydra
@@ -27,9 +25,9 @@ hydra
       dir: .
     output_subdir: null 
 
-``hydra.run.dir``: Working directory for Hydra runs.
+``hydra.run.dir``：Hydra 运行的工作目录。
 
-``hydra.output_subdir``: Output subdirectory (null disables subdirectory creation).
+``hydra.output_subdir``：输出子目录（设为 null 则不创建子目录）。
 
 
 cluster
@@ -43,18 +41,16 @@ cluster
     component_placement:
       actor,inference,rollout: all
 
+``cluster.num_nodes``：用于训练的物理节点数量。
 
-``cluster.num_nodes``: Physical nodes to use for training.
+``cluster.num_gpus_per_node``：每个节点可供放置策略使用的 GPU 数量。
 
-``cluster.num_gpus_per_node``: GPUs per node that the placement strategy should assume are free. 
+``cluster.component_placement``：  
+各组件（进程）的 *放置策略*。  
+每行形如 ``actor,inference: 0-4``，表示 actor 与 inference 组共同占用 0～4 号 GPU。  
+也可使用 “all” 表示占用 **全部** 可见 GPU。
 
-``cluster.component_placement``: 
-The *placement strategy* for each processes.
-Each line of component placement config looks like: ``actor,inference: 0-4``, 
-which means both the actor and inference groups occupy GPU 0 to 4
-Alternatively, "all" can be used to specify all GPUs
-
-See more details in :doc:`../mode/index`.
+更多细节见 :doc:`../mode/index`。
 
 runner
 ~~~~~~~~~~~~~~~
@@ -81,30 +77,29 @@ runner
     experiment_name: grpo-1.5b
     output_dir: ../results
 
-``runner.task_type``: Task type identifier, math or embodied.
+``runner.task_type``：任务类型标识（math 或 embodied）。
 
-**logger:**
+**logger：**
 
-``runner.logger.log_path``: Base directory for log files.
+``runner.logger.log_path``：日志输出的根目录。  
 
-``runner.logger.project_name``: Project name for experiment tracking.
+``runner.logger.project_name``：实验跟踪的项目名。  
 
-``runner.logger.experiment_name``: Specific experiment name.
+``runner.logger.experiment_name``：实验名称。  
 
-``runner.logger.logger_backends``: List of logging backends (tensorboard, wandb, swanlab).
+``runner.logger.logger_backends``：日志后端（tensorboard、wandb、swanlab）。
 
-See more details about logger backends in :doc:`../advance/logger`.
+关于日志后端详见 :doc:`../advance/logger`。
 
-``runner.max_epochs``: Maximum number of training epochs.
+``runner.max_epochs``：最大训练 epoch 数。  
 
-``runner.max_steps``: Maximum training steps. If set to -1, this defaults to set automatially based on the ``runner.max_epochs``.
+``runner.max_steps``：最大全局步数；为 -1 时，依据 ``runner.max_epochs`` 自动确定。  
 
-``runner.val_check_interval``: How often to launch a validation rollout (-1 to disable).
+``runner.val_check_interval``：验证 rollout 的触发频率（-1 关闭）。  
 
-``runner.save_interval``: Checkpoint frequency in trainer steps.
+``runner.save_interval``：保存 checkpoint 的步数间隔。  
 
-``runner.seq_length``: Total sequence length (prompt + generated response) fed into models.
-
+``runner.seq_length``：输入到模型的总序列长度（提示 + 生成）。
 
 algorithm
 ~~~~~~~~~~~~~~~
@@ -139,48 +134,45 @@ algorithm
       top_p: 1.0
       repetition_penalty: 1.0
 
+``algorithm.group_size``：每个提示采样的响应个数（>1 时启用组基线）。  
 
-``algorithm.group_size``: Responses per prompt (set > 1 to enable group baselines).
+``algorithm.logprob_forward_micro_batch_size``：log-prob 前向的微批大小。
 
-``algorithm.logprob_forward_micro_batch_size``: Micro-batch size for log-prob forward passes.
+``algorithm.val_rollout_batch_size_per_gpu``：验证阶段每 GPU 的 rollout 微批大小。
 
-``algorithm.val_rollout_batch_size_per_gpu``: Validation rollout micro-batch per GPU.
+``algorithm.loss_type``：策略损失类型（如 ppo）。  
 
-``algorithm.loss_type``: Policy loss type (e.g., ppo).
+``algorithm.loss_agg_func``：token 损失的聚合方式（如 token-mean）。  
 
-``algorithm.loss_agg_func``: How to aggregate token losses (e.g., token-mean).
+``algorithm.kl_beta``：加入到奖励中的 KL 权重。  
 
-``algorithm.kl_beta``: Weight of KL penalty added to rewards.
+``algorithm.kl_penalty_type``：KL 形态（如 low_var_kl）。  
 
-``algorithm.kl_penalty_type``: KL shaping variant (e.g., low_var_kl).
+``algorithm.ratio_clip_eps``：PPO 比率裁剪阈值。  
 
-``algorithm.ratio_clip_eps``: PPO clipping epsilon for importance ratios.
+``algorithm.entropy_bonus``：熵奖励系数。  
 
-``algorithm.entropy_bonus``: Entropy reward coefficient.
+``algorithm.calculate_entropy``：是否计算/记录熵项。  
 
-``algorithm.calculate_entropy``: Whether to compute/persist entropy terms.
+``algorithm.adv_type``：优势函数估计类型（如 grpo）。  
 
-``algorithm.adv_type``: Advantage estimator type (e.g., grpo).
+``algorithm.normalize_advantages``：是否对优势进行归一化。  
 
-``algorithm.normalize_advantages``: Normalize advantages across the batch.
+``algorithm.early_stop_imp_ratio``：当重要性比超出阈值时提前终止本次更新。 
 
-``algorithm.early_stop_imp_ratio``: Stop an update early if ratios exceed this threshold.
+``algorithm.use_valid_token_scale``：是否按有效 token 掩码缩放损失/优势。
 
-``algorithm.use_valid_token_scale``: Scale losses/advantages by valid-token masks.
+**sampling_params：**
 
-**sampling_params:**
+``algorithm.sampling_params.use_greedy``：True 时使用贪心解码。
+ 
+``algorithm.sampling_params.temperature``：采样温度。  
 
-``algorithm.sampling_params.use_greedy``: Deterministic decoding if True.
+``algorithm.sampling_params.top_k``：top-k 截断（设很大值等于禁用）。  
 
-``algorithm.sampling_params.temperature``: Softmax temperature during sampling.
+``algorithm.sampling_params.top_p``：nucleus 采样阈值。  
 
-``algorithm.sampling_params.top_k``: Top-k cutoff (use a very large value to disable).
-
-``algorithm.sampling_params.top_p``: Nucleus sampling threshold.
-
-``algorithm.sampling_params.repetition_penalty``: Penalize repeated tokens.
-
-
+``algorithm.sampling_params.repetition_penalty``：重复惩罚系数。
 
 rollout
 ~~~~~~~~~~~~~~~
@@ -197,23 +189,20 @@ rollout
 
     recompute_logprobs: True
 
-``rollout.gpu_memory_utilization``: Target GPU memory utilization fraction.
+``rollout.gpu_memory_utilization``：目标 GPU 显存占用比例。  
 
-``rollout.group_name``: Logical name for rollout/inference workers.
+``rollout.group_name``：rollout / inference worker 的逻辑分组名。  
 
-``rollout.model_dir``: Path to the HF model used by the generation backend.
+``rollout.model_dir``：生成后端所用 HF 模型路径。  
 
-``rollout.model_arch``: Internal architecture tag used by the backend (e.g., qwen2.5).
+``rollout.model_arch``：后端内部使用的模型架构标记（如 qwen2.5）。  
 
-``rollout.recompute_logprobs``: Recompute log-probs for sampled sequences.
-
-
+``rollout.recompute_logprobs``：是否为采样序列重新计算对数概率。
 
 actor
 ~~~~~~~~~~~~~~~
 
 .. code:: yaml
-
 
   actor:
     group_name: "ActorGroup"
@@ -222,14 +211,13 @@ actor
 
     seed: 1234
 
+**顶层：**
 
-**Top-level**
+``actor.group_name``：训练（actor）worker 的逻辑分组名。  
 
-``actor.group_name``: Logical name for the training (actor) workers.
+``actor.checkpoint_load_path``：训练前加载的 checkpoint 路径。 
 
-``actor.checkpoint_load_path``: Path to a checkpoint to load before training.
-
-``actor.seed``: Global seed for reproducibility.
+``actor.seed``：全局随机种子，便于复现。
 
 reward
 ~~~~~~~~~~~~~~~
@@ -239,7 +227,7 @@ reward
   reward:
     use_reward_model: false
 
-``reward.use_reward_model``: Whether to use a reward model.
+``reward.use_reward_model``：是否使用奖励模型。
 
 critic
 ~~~~~~~~~~~~~~~
@@ -249,12 +237,9 @@ critic
   critic:
     use_critic_model: false
 
+``critic.use_critic_model``：是否使用价值网络（critic）。
 
-``critic.use_critic_model``: Whether to use a critic model.
-
-
-
-MATH-specific Configuration
+MATH 专用配置
 ----------------------------
 
 runner
@@ -266,9 +251,9 @@ runner
     enable_dynamic_batch_size: False
     max_tokens_per_mbs: 2048
 
-``runner.enable_dynamic_batch_size``: Whether to user dynamic batch size when training by Megatron.
+``runner.enable_dynamic_batch_size``：使用 Megatron 训练时是否启用动态批大小。 
 
-``runner.max_tokens_per_mbs``: Upper limit of tokens in a Megatron microbatch when dynamic batching is enabled.
+``runner.max_tokens_per_mbs``：启用动态批时每个微批的 token 上限。
 
 
 algorithm
@@ -286,21 +271,18 @@ algorithm
       max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
       min_new_tokens: 1
 
-``algorithm.n_minibatches``: Number of gradient update per batch.
+``algorithm.n_minibatches``：每个 batch 的梯度更新次数。  
 
-``algorithm.training_batch_size_per_gpu``: Micro-batch size on each actor GPU.
+``algorithm.training_batch_size_per_gpu``：每张 actor GPU 的训练微批大小。  
 
-``algorithm.rollout_batch_size_per_gpu``: Inference micro-batch per GPU; null divides the global rollout batch evenly.
-
-
-**sampling_params:**
+``algorithm.rollout_batch_size_per_gpu``：每 GPU 的推理微批大小；为 null 时按全局大小平均分配。
 
 
-``algorithm.sampling_params.max_new_tokens``: Max generated tokens; computed from runner.seq_length and data.max_prompt_length.
+**sampling_params：**
 
-``algorithm.sampling_params.min_new_tokens``: Minimum generated tokens.
+``algorithm.sampling_params.max_new_tokens``：最大生成长度（由 runner.seq_length 与 data.max_prompt_length 计算）。  
 
-
+``algorithm.sampling_params.min_new_tokens``：最小生成长度。
 
 rollout
 ~~~~~~~~~~~~~~~
@@ -308,68 +290,64 @@ rollout
 .. code:: yaml
 
   rollout:
-    enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
-    distributed_executor_backend: mp   # ray or mp
+    enforce_eager: False         # 若为 False，rollout 引擎将使用 CUDA graph，初始化更久但运行更快
+    distributed_executor_backend: mp   # 可选 ray 或 mp
     disable_log_stats: False
-    detokenize: False            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
-    padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
-    eos: null                   # will be tokenizer.eos_token_id if null.
+    detokenize: False            # 是否反词元化输出；RL 训练通常只需 token id。调试可设 True
+    padding: null               # 为空则使用 tokenizer.pad_token_id；用于过滤 megatron 的 padding
+    eos: null                   # 为空则使用 tokenizer.eos_token_id
 
     attention_backend: triton
 
     tensor_parallel_size: 1
     pipeline_parallel_size: 1
     
-    validate_weight: False # whether to send all weights at first for weight comparison.
-    validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
-    print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
+    validate_weight: False # 是否在开始时发送全部权重进行一致性校验
+    validate_save_dir: null # 若启用校验，保存用于比对的权重目录
+    print_outputs: False         # 是否打印 rollout 引擎的输出（token id/文本等）
 
-    sglang_decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
-    max_running_requests: 64 # the maximum number of running requests in the rollout engine.
-    cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
+    sglang_decode_log_interval: 500000 # SGLang 打印解码耗时与统计信息的间隔
+    max_running_requests: 64 # rollout 引擎内最大并发请求数
+    cuda_graph_max_bs: 128 # 使用 CUDA graph 的最大 batch size；超过则不使用
 
-    use_torch_compile: False # enable torch_compile in SGLang for rollout.
-    torch_compile_max_bs: 128 # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.
+    use_torch_compile: False # 在 SGLang 中为 rollout 启用 torch.compile
+    torch_compile_max_bs: 128 # 启用 torch.compile 的最大 batch size；超过则不使用
 
+``rollout.enforce_eager``：True 时禁用 CUDA graph，加快预热启动。  
 
+``rollout.distributed_executor_backend``：rollout worker 的启动后端（mp 或 ray）。
 
-``rollout.enforce_eager``: If True, disable CUDA graph capture to shorten warm-up.
+``rollout.disable_log_stats``：是否关闭后端周期性统计日志。  
 
-``rollout.distributed_executor_backend``: Backend for launching rollout workers (mp or ray).
+``rollout.detokenize``：是否将输出 detokenize（调试用）。  
 
-``rollout.disable_log_stats``: Suppress periodic backend stats logging.
+``rollout.padding``：pad token id 重载；null 则用 tokenizer 的 pad id。  
 
-``rollout.detokenize``: Detokenize outputs for debugging (RL usually uses token ids only).
+``rollout.eos``：EOS token id 重载；null 则用 tokenizer 的 eos id。  
 
-``rollout.padding``: Pad token id override; null uses tokenizer.pad id.
+``rollout.attention_backend``：注意力算子后端（如 triton）。  
 
-``rollout.eos``: EOS token id override; null uses tokenizer.eos id.
+``rollout.tensor_parallel_size``：生成后端的张量并行度（TP）。  
 
-``rollout.attention_backend``: Attention kernel backend (e.g., triton). 
+``rollout.pipeline_parallel_size``：生成后端的流水并行度（PP）。  
 
-``rollout.tensor_parallel_size``: TP degree inside the generation backend.
+并行化细节见 :doc:`../advance/5D`。
 
-``rollout.pipeline_parallel_size``: PP degree inside the generation backend.
+``rollout.validate_weight``：是否发送完整权重进行校验。  
 
-See more details about the parallelism in :doc:`../advance/5D`.
+``rollout.validate_save_dir``：启用校验时的权重保存目录。  
 
-``rollout.validate_weight``: Send full weights once for cross-check/validation.
+``rollout.print_outputs``：是否打印调试输出。  
 
-``rollout.validate_save_dir``: Directory to store weights for comparison when validation is enabled.
+``rollout.sglang_decode_log_interval``：SGLang 解码统计的间隔。 
+ 
+``rollout.max_running_requests``：最大并发解码请求数。  
 
-``rollout.print_outputs``: Print token ids/texts from the engine for debugging.
+``rollout.cuda_graph_max_bs``：可使用 CUDA graph 的最大批大小。
 
-``rollout.sglang_decode_log_interval``: Interval for SGLang to log decode stats.
+``rollout.use_torch_compile``：启用 torch.compile。  
 
-``rollout.max_running_requests``: Max concurrent decode requests.
-
-``rollout.cuda_graph_max_bs``: Max batch size eligible for CUDA graph.
-
-``rollout.use_torch_compile``: Enable torch.compile inside SGLang.
-
-``rollout.torch_compile_max_bs``: Max batch size eligible for torch.compile.
-
-
+``rollout.torch_compile_max_bs``：可使用 torch.compile 的最大批大小。
 
 data
 ~~~~~~~~~~~~~~~
@@ -389,33 +367,32 @@ data
     train_data_paths: ["../../data/boba/AReaL-boba-106k.jsonl"]
     val_data_paths: ["../../data/boba/AReaL-boba-106k.jsonl"]
 
-``data.type``: Dataset/task family (e.g., math).
+``data.type``：数据集/任务类型（如 math）。  
 
-``data.max_prompt_length``: Maximum tokens allowed for prompts.
+``data.max_prompt_length``：提示的最大 token 数。  
 
-``data.rollout_batch_size``: Global rollout batch size across engines.
+``data.rollout_batch_size``：全局 rollout 批大小。  
 
-``data.val_rollout_batch_size``: Global validation rollout batch size; null falls back to data.rollout_batch_size.
+``data.val_rollout_batch_size``：全局验证批大小；为 null 则回退到 ``data.rollout_batch_size``。 
 
-``data.num_workers``: Data loader workers per actor rank.
+``data.num_workers``：每个 actor rank 的数据加载进程数。  
 
-``data.prompt_key``: JSONL key that stores the prompt text.
+``data.prompt_key``：JSONL 中提示文本的键名。  
 
-``data.shuffle``: Shuffle training data each epoch.
+``data.shuffle``：训练数据是否每 epoch 乱序。  
 
-``data.validation_shuffle``: Shuffle validation data (usually keep True for on-policy eval variety).
+``data.validation_shuffle``：验证数据是否乱序（on-policy 评估通常建议 True）。  
 
-``data.seed``: RNG seed for loaders and sampling.
+``data.seed``：数据加载与采样用的随机种子。  
 
-``data.train_data_paths``: List of training JSONL file paths.
+``data.train_data_paths``：训练 JSONL 文件列表。  
 
-``data.val_data_paths``: List of validation JSONL file paths.
+``data.val_data_paths``：验证 JSONL 文件列表。
 
 actor
 ~~~~~~~~~~~~~~~
 
 .. code:: yaml
-
 
   actor:
     training_backend: megatron
@@ -499,182 +476,153 @@ actor
 
     megatron:
       ddp_bucket_size: null
-      distributed_backend: nccl # Support 'nccl' and 'gloo'
+      distributed_backend: nccl # 支持 'nccl' 与 'gloo'
       distributed_timeout_minutes: 30
       ckpt_format: torch
       use_dist_ckpt: False
       tp_comm_bootstrap_backend: nccl
       tp_comm_overlap_cfg: null 
-      use_hf_ckpt: True # if true, will transfer hf model to generate megatron checkpoint and use it for training.
+      use_hf_ckpt: True # 为 True 时将 HF 模型转为 Megatron checkpoint 并用于训练
       
-      ckpt: # config for ckpt convertor
+      ckpt: # checkpoint 转换器配置
         model: DeepSeek-R1-Distill-Qwen-1.5B
-        model_type: null # will be set by hf model's config if null
-        hf_model_path: ${rollout.model_dir} # path to the hf model
+        model_type: null # 若为 null，将由 HF 配置推断
+        hf_model_path: ${rollout.model_dir} # HF 模型所在路径
         save_path: ${runner.output_dir}/${runner.experiment_name}/actor/megatron_ckpt_from_hf
         use_gpu_num : 0
         use_gpu_index: null # 
-        process_num: 16 # number of processes to use for checkpointing
+        process_num: 16 # 转换使用的进程数
         tensor_model_parallel_size: ${actor.model.tensor_model_parallel_size}
         pipeline_model_parallel_size: ${actor.model.pipeline_model_parallel_size}
 
-**Top-level**
+**顶层：**
 
+``actor.training_backend``：训练后端（megatron）。  
 
-``actor.training_backend``: Training backend (megatron).
+``actor.mcore_gpt``：是否使用 Megatron-Core GPT 栈。  
 
-``actor.mcore_gpt``: Use Megatron-Core GPT stack. 
+``actor.spec_name``：模型规格/预设（如 decoder_gpt）。  
 
-``actor.spec_name``: Model spec/preset name (e.g., decoder-only GPT). 
+``actor.offload_optimizer/weight/grad``：将优化器/权重/梯度尽可能下放到 CPU 以节省显存。  
 
-``actor.offload_optimizer``: Offload optimizer state to CPU to reduce GPU memory.
+``actor.enable_dp_load_balance``：是否启用数据并行负载均衡。  
 
-``actor.offload_weight``: Offload model weights to CPU when possible (ZeRO-style). 
+``actor.calculate_flops``：是否计算并记录 FLOPs（分析用）。
 
-``actor.offload_grad``: Offload gradients to CPU to reduce GPU memory.
+**Model 子项：**
 
-``actor.enable_dp_load_balance``: Enable data-parallel load balancing. 
+``actor.model.precision``：训练数值精度（fp16 等）。  
 
-``actor.calculate_flops``: Compute and log FLOPs for profiling.
+``actor.model.add_bias_linear``：线性层是否带 bias。  
 
+``actor.model.tensor_model_parallel_size``：actor 端 TP 并行度。  
 
-**Model sub-section**
+``actor.model.pipeline_model_parallel_size``：actor 端 PP 并行度。  
 
-``actor.model.precision``: Numerical precision for training (e.g., fp16).
+``actor.model.activation``：激活函数（如 swiglu）。  
 
-``actor.model.add_bias_linear``: Add bias terms to linear layers.
+``actor.model.sequence_parallel``：启用序列并行（需配合 TP）。  
 
-``actor.model.tensor_model_parallel_size``: TP degree for actor.
+``actor.model.recompute_method/granularity/num_layers``：重计算策略/粒度/层数。  
 
-``actor.model.pipeline_model_parallel_size``: PP degree for actor.
+``actor.model.seq_length / encoder_seq_length``：训练时解码/编码序列长度。  
 
-``actor.model.activation``: Activation function (e.g., swiglu).
+``actor.model.normalization``：归一化层类型（rmsnorm）。  
 
-``actor.model.sequence_parallel``: Enable sequence parallelism (requires TP).
+``actor.model.position_embedding_type``：位置编码类型（rope）。  
 
-``actor.model.recompute_method``: Activation recompute strategy (e.g., block).
+``actor.model.apply_rope_fusion``：是否使用融合的 RoPE 内核。  
 
-``actor.model.recompute_granularity``: Recompute scope (e.g., full or selective).
+``actor.model.*fusion``：若干算子融合开关。  
 
-``actor.model.recompute_num_layers``: Number of layers to checkpoint/recompute.
+``actor.model.attention_softmax_in_fp32``：注意力 softmax 用 FP32 保稳。  
 
-``actor.model.seq_length``: Decoder context length for training.
+``actor.model.batch_p2p_comm``：跨层批量 P2P 通信。  
 
-``actor.model.encoder_seq_length``: Encoder length (for encoder-decoder; mirrors seq_length here).
+``actor.model.variable_seq_lengths``：允许不同微批序列长度。  
 
-``actor.model.normalization``: Norm layer type (e.g., rmsnorm).
+``actor.model.gradient_accumulation_fusion``：梯度累积融合。  
 
-``actor.model.position_embedding_type``: Positional embedding type (e.g., rope).
+``actor.model.moe_token_dispatcher_type``：MoE token 分发方式（如 alltoall）。  
 
-``actor.model.apply_rope_fusion``: Use fused RoPE kernels if available.
+``actor.model.use_cpu_initialization``：在 CPU 上初始化权重以降低 GPU 峰值。
 
-``actor.model.bias_dropout_fusion``: Fuse bias + dropout kernels. 
+**优化器：**
 
-``actor.model.persist_layer_norm``: Persist LN params in higher precision. 
+``actor.optim.optimizer``：优化器选择（如 adam）。
 
-``actor.model.bias_activation_fusion``: Fuse bias + activation kernels. 
+``actor.optim.bf16 / actor.optim.fp16``：混合精度训练相关开关。
 
-``actor.model.attention_softmax_in_fp32``: Compute attention softmax in FP32 for stability.
+``actor.optim.lr``：基础学习率（Base learning rate）。
 
-``actor.model.batch_p2p_comm``: Batch P2P communications across layers. 
+``actor.optim.adam_beta1 / adam_beta2 / adam_eps``：Adam 优化器的超参数。
 
-``actor.model.variable_seq_lengths``: Allow variable sequence lengths per micro-batch.
+``actor.optim.min_lr``：最小学习率（适用于 LR 衰减低于基准 LR 的情况）。
 
-``actor.model.gradient_accumulation_fusion``: Fused gradient accumulation. 
+``actor.optim.weight_decay``：L2 正则化权重衰减。
 
-``actor.model.moe_token_dispatcher_type``: MoE token dispatcher (e.g., alltoall).
+``actor.optim.use_distributed_optimizer``：是否使用 Megatron 分布式优化器。
 
-``actor.model.use_cpu_initialization``: Initialize weights on CPU to reduce GPU spikes.
+``actor.optim.overlap_grad_reduce``：是否在反向传播时与梯度归约操作重叠执行。
 
-**Optimizer**
+``actor.optim.overlap_param_gather``：是否在前向传播时与参数 all-gather 重叠执行。
 
-``actor.optim.optimizer``: Optimizer choice (adam).
+``actor.optim.optimizer_enable_pin``：是否固定优化器的内存位置。
 
-``actor.optim.bf16 / actor.optim.fp16``: Mixed precision flags.
+``actor.optim.overlap_param_gather_with_optimizer_step``：是否在执行优化器 step 时与参数 all-gather 重叠。
 
-``actor.optim.lr``: Base learning rate.
+``actor.optim.clip_grad``：全局梯度裁剪范数（Gradient clipping norm）。
 
-``actor.optim.adam_beta1 / adam_beta2 / adam_eps``: Adam hyper-parameters.
+``actor.optim.loss_scale_window``：FP16 的动态 loss scaling 窗口。
 
-``actor.optim.min_lr``: Minimum LR (for schedulers that decay below base LR).
+**学习率调度：**
 
-``actor.optim.weight_decay``: L2 weight decay.
+``actor.lr_sched.lr_warmup_fraction``：学习率预热阶段占总迭代的比例。
 
-``actor.optim.use_distributed_optimizer``: Use Megatron distributed optimizer.
+``actor.lr_sched.lr_warmup_init``：预热初始学习率值。
 
-``actor.optim.overlap_grad_reduce``: Overlap gradient reduction with backward pass.
+``actor.lr_sched.lr_warmup_iters``：学习率预热的迭代次数（>0 时覆盖上面比例设置）。
 
-``actor.optim.overlap_param_gather``: Overlap parameter all-gather with forward pass.
+``actor.lr_sched.max_lr / min_lr``：学习率调度的上限 / 下限。
 
-``actor.optim.optimizer_enable_pin``: Pin optimizer memory. 
+``actor.lr_sched.lr_decay_style``：学习率衰减策略（如 constant）。
 
-``actor.optim.overlap_param_gather_with_optimizer_step``: Overlap param gather with step. 
+``actor.lr_sched.lr_decay_iters``：学习率衰减持续的总迭代次数。
 
-``actor.optim.clip_grad``: Global gradient clipping norm.
+**分词器：**
 
-``actor.optim.loss_scale_window``: Dynamic loss scale window for FP16. 
+``actor.tokenizer.tokenizer_model``：分词器路径/名称。  
 
-**LR schedule**
+``actor.tokenizer.use_fast``：是否使用 fast tokenizer。  
 
-``actor.lr_sched.lr_warmup_fraction``: Warm-up as a fraction of total iters.
+``actor.tokenizer.trust_remote_code``：允许自定义分词器代码。  
 
-``actor.lr_sched.lr_warmup_init``: Initial LR value during warm-up.
+``actor.tokenizer.padding_side``：填充方向（left/right）。
 
-``actor.lr_sched.lr_warmup_iters``: Warm-up iterations (overrides fraction when > 0).
+**Megatron 集成：**
 
-``actor.lr_sched.max_lr / min_lr``: LR bounds for schedulers.
+``actor.megatron.*``：分布式后端、超时、checkpoint 格式、HF checkpoint 转换等设置。
 
-``actor.lr_sched.lr_decay_style``: Decay policy (e.g., constant).
+**Megatron checkpoint 转换器：**
 
-``actor.lr_sched.lr_decay_iters``: Total decay iterations.
+``actor.megatron.ckpt.model``：转换器元信息中的模型名称。
 
-**Tokenizer**
+``actor.megatron.ckpt.model_type``：模型类型；为 null 时会从 HF 配置中推断。
 
-``actor.tokenizer.tokenizer_model``: Path/name of the tokenizer.
+``actor.megatron.ckpt.hf_model_path``：源 HF 模型路径。
 
-``actor.tokenizer.use_fast``: Use HF fast tokenizer.
+``actor.megatron.ckpt.save_path``：转换后 Megatron checkpoint 保存目录。
 
-``actor.tokenizer.trust_remote_code``: Allow custom tokenizer code.
+``actor.megatron.ckpt.use_gpu_num``：转换使用的 GPU 数量。
 
-``actor.tokenizer.padding_side``: left or right padding.
+``actor.megatron.ckpt.use_gpu_index``：指定使用的 GPU 索引。
 
-**Megatron integration**
+``actor.megatron.ckpt.process_num``：转换过程使用的 CPU 进程数。
 
-``actor.megatron.ddp_bucket_size``: DDP gradient bucket size. 
+``actor.megatron.ckpt.tensor_model_parallel_size``：转换后 checkpoint 的张量并行度（TP）。
 
-``actor.megatron.distributed_backend``: Distributed backend (nccl or gloo).
+``actor.megatron.ckpt.pipeline_model_parallel_size``：转换后 checkpoint 的流水线并行度（PP）。
 
-``actor.megatron.distributed_timeout_minutes``: Backend communication timeout.
-
-``actor.megatron.ckpt_format``: Checkpoint format (e.g., torch).
-
-``actor.megatron.use_dist_ckpt``: Use distributed checkpointing (sharded). 
-
-``actor.megatron.tp_comm_bootstrap_backend``: Backend used for TP bootstrap (e.g., nccl).
-
-``actor.megatron.tp_comm_overlap_cfg``: YAML path for TP comm/compute overlap. 
-
-``actor.megatron.use_hf_ckpt``: Convert/load from a HuggingFace checkpoint for training.
-
-**Megatron checkpoint converter**
-
-``actor.megatron.ckpt.model``: Model name for the converter metadata.
-
-``actor.megatron.ckpt.model_type``: Model type; inferred from HF config when null.
-
-``actor.megatron.ckpt.hf_model_path``: Source HF model path.
-
-``actor.megatron.ckpt.save_path``: Target directory to write Megatron checkpoints.
-
-``actor.megatron.ckpt.use_gpu_num``: Number of GPUs to use for conversion. 
-
-``actor.megatron.ckpt.use_gpu_index``: Specific GPU index to use. 
-
-``actor.megatron.ckpt.process_num``: CPU processes for conversion work.
-
-``actor.megatron.ckpt.tensor_model_parallel_size``: TP degree for converted checkpoints.
-
-``actor.megatron.ckpt.pipeline_model_parallel_size``: PP degree for converted checkpoints.
 
 
 reward
@@ -686,15 +634,12 @@ reward
     reward_type: math
     reward_scale: 5.0
 
+``reward.reward_type``：训练所使用的奖励类型。  
 
-``reward.reward_type``: Which reward type to use for the training.
+``reward.reward_scale``：答对奖励为 ``reward_scale``，答错为 ``-reward_scale``。
 
-``reward.reward_scale``: when the answer is correct, it receives ``reward_scale``; when it is incorrect, it receives ``-reward_scale``.
-
-
-Embody-specific Configuration
+具身智能（Embodied）专用配置
 -------------------------------
-
 
 defaults
 ~~~~~~~~~~~~~~~
@@ -705,7 +650,7 @@ defaults
     - env/train: PutCarrotOnPlateInScene
     - env/eval: PutCarrotOnPlateInScene
 
-``defaults``: Hydra configuration inheritance. Specifies which environment configurations to load for training and evaluation.
+``defaults``：Hydra 配置继承。指定训练与评估加载的环境配置。
 
 hydra
 ~~~~~~~~~~~~~~~
@@ -716,8 +661,7 @@ hydra
     searchpath:
       - file://${oc.env:REPO_PATH}/config/
 
-``hydra.searchpath``: Additional search paths for configuration files.
-
+``hydra.searchpath``：额外的配置文件搜索路径。
 
 runner
 ~~~~~~~~~~~~~~~
@@ -728,9 +672,9 @@ runner
     only_eval: False
     max_prompt_length: 30
 
-``runner.only_eval``: Run evaluation only without training.
+``runner.only_eval``：只运行评估，不进行训练。  
 
-``runner.max_prompt_length``: Maximum prompt length in tokens.
+``runner.max_prompt_length``：最大提示长度（token 数）。
 
 algorithm
 ~~~~~~~~~~~~~~~
@@ -755,47 +699,46 @@ algorithm
     logprob_type: token_level
     entropy_type: token_level
 
-
     length_params:
       max_new_token: null
       max_length: 1024
       min_length: 1
 
-``algorithm.auto_reset``: Automatically reset environments when episodes terminate.
+``algorithm.auto_reset``：是否在 episode 结束时自动重置环境。
 
-``algorithm.ignore_terminations``: Ignore episode terminations during training.
+``algorithm.ignore_terminations``：训练时是否忽略 episode 的终止信号。
 
-``algorithm.use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO.
+``algorithm.use_fixed_reset_state_ids``：是否使用固定 reset 状态 ID（GRPO 推荐 True，PPO 默认为 False，旨在随机化）。
 
-``algorithm.require_values``: Whether value function computation is required.
+``algorithm.require_values``：是否需要同时计算值函数。
 
-``algorithm.normalize_advantages``: Normalize advantages across the batch.
+``algorithm.normalize_advantages``：是否对优势值归一化处理。
 
-``algorithm.kl_penalty``: KL divergence estimation method (kl or kl_penalty).
+``algorithm.kl_penalty``：KL 散度的估算方式（kl 或 kl_penalty）。
 
-``algorithm.n_chunk_steps``: Number of action steps per chunk.
+``algorithm.n_chunk_steps``：每个 chunk 的动作步数。
 
-``algorithm.n_eval_chunk_steps``: Number of action steps per evaluation chunk.
+``algorithm.n_eval_chunk_steps``：评估模式下每个 chunk 的动作步数。
 
-``algorithm.rollout_micro_batch_size``: Micro-batch size for rollout generation.
+``algorithm.rollout_micro_batch_size``：Rollout 生成时的微批大小。
 
-``algorithm.num_group_envs``: Number of environment groups.
+``algorithm.num_group_envs``：环境组数量（用于并行）。
 
-``algorithm.rollout_epoch``: Number of rollout epochs per training step.
+``algorithm.rollout_epoch``：每个训练步骤前的 rollout 轮数。
 
-``algorithm.reward_type``: Reward aggregation level (chunk_level, token_level, step_level).
+``algorithm.reward_type``：奖励聚合层级（chunk_level、token_level、step_level）。
 
-``algorithm.logprob_type``: Log probability computation level.
+``algorithm.logprob_type``：对数概率的计算层级。
 
-``algorithm.entropy_type``: Entropy computation level.
+``algorithm.entropy_type``：熵的计算层级。
 
-**length_params:**
+**length_params：**
 
-``algorithm.length_params.max_new_token``: Maximum new tokens to generate.
+``algorithm.length_params.max_new_token``：最大新增 token 数。  
 
-``algorithm.length_params.max_length``: Maximum total sequence length.
+``algorithm.length_params.max_length``：最大总序列长度。  
 
-``algorithm.length_params.min_length``: Minimum sequence length.
+``algorithm.length_params.min_length``：最小序列长度。
 
 env
 ~~~~~~~~~~~~~~~
@@ -810,15 +753,15 @@ env
       queue_size: 0
     enable_offload: True
 
-``env.group_name``: Logical name for environment worker group.
+``env.group_name``：环境 worker 组的逻辑名称。  
 
-``env.channel.name``: Shared memory channel name for inter-process communication.
+``env.channel.name``：进程间通信的共享内存通道名。  
 
-``env.channel.queue_name``: Queue name for observation buffer.
+``env.channel.queue_name``：观测缓冲区队列名。  
 
-``env.channel.queue_size``: Queue size (0 for unlimited).
+``env.channel.queue_size``：队列大小（0 表示不限制）。  
 
-``env.enable_offload``: Enable environment offloading to reduce memory usage.
+``env.enable_offload``：启用环境侧的下放以降低内存占用。
 
 rollout
 ~~~~~~~~~~~~~~~
@@ -836,22 +779,21 @@ rollout
     enable_offload: True
     pipeline_stage_num: 2
 
+``rollout.channel.name``：共享内存通道（继承自 env）。  
 
-``rollout.channel.name``: Shared memory channel (inherits from env).
+``rollout.channel.queue_name``：动作缓冲区队列名。  
 
-``rollout.channel.queue_name``: Queue name for action buffer.
+``rollout.channel.queue_size``：队列大小。  
 
-``rollout.channel.queue_size``: Queue size.
+``rollout.mode``：rollout 模式（collocate 表示**共享式**使用 GPU）。  
 
-``rollout.mode``: Rollout mode (collocate for shared GPU).
+``rollout.backend``：模型后端（huggingface、vllm）。  
 
-``rollout.backend``: Model backend (huggingface, vllm).
+``rollout.enforce_eager``：禁用 CUDA graph，以更快完成初始化。  
 
-``rollout.enforce_eager``: Disable CUDA graph capture for faster initialization.
+``rollout.enable_offload``：启用模型下放以降低内存占用。  
 
-``rollout.enable_offload``: Enable model offloading to reduce memory usage.
-
-``rollout.pipeline_stage_num``: Number of pipeline stages for model parallelism.
+``rollout.pipeline_stage_num``：模型并行的流水线阶段数。
 
 actor
 ~~~~~~~~~~~~~~~
@@ -912,118 +854,105 @@ actor
       adam_eps: 1.0e-05
       clip_grad: 10.0
 
+``actor.channel.name``：共享内存通道（继承自 env）。  
 
-``actor.channel.name``: Shared memory channel (inherits from env).
+``actor.channel.queue_name``：回放缓冲区队列名。  
 
-``actor.channel.queue_name``: Queue name for replay buffer.
+``actor.training_backend``：训练后端（分布式 FSDP）。  
 
-``actor.training_backend``: Training backend (fsdp for distributed training).
+``actor.micro_batch_size``：每张 GPU 的微批大小。  
 
-``actor.micro_batch_size``: Micro-batch size per GPU.
+``actor.global_batch_size``：全局批大小（跨所有 GPU）。  
 
-``actor.global_batch_size``: Global batch size across all GPUs.
+``actor.enable_offload``：启用模型下放以降低内存占用。
 
-``actor.enable_offload``: Enable model offloading to reduce memory usage.
+**模型配置：**
 
-**Model Configuration:**
+``actor.model.model_name``：模型结构名（openvla_oft）。  
 
-``actor.model.model_name``: Model architecture name (openvla_oft).
+``actor.model.action_dim``：动作空间维度。  
 
-``actor.model.action_dim``: Action space dimensionality.
+``actor.model.num_action_chunks``：每条序列的动作块数量。  
 
-``actor.model.num_action_chunks``: Number of action chunks per sequence.
+``actor.model.use_proprio``：是否使用本体感知信息。  
 
-``actor.model.use_proprio``: Whether to use proprioceptive information.
+``actor.model.unnorm_key``：动作反归一化的键。  
 
-``actor.model.unnorm_key``: Key for action normalization.
+``actor.model.value_type``：价值函数类型（继承自 algorithm.reward_type）。  
 
-``actor.model.value_type``: Value function type (inherits from algorithm.reward_type).
+``actor.model.val_micro_batch_size``：价值函数计算的微批大小。  
 
-``actor.model.val_micro_batch_size``: Micro-batch size for value function computation.
+``actor.model.center_crop``：是否对输入图像做中心裁剪。  
 
-``actor.model.center_crop``: Whether to center crop input images.
+``actor.model.do_sample``：推理时是否采样。  
 
-``actor.model.do_sample``: Whether to use sampling during inference.
+``actor.model.precision``：数值精度（bf16/fp16/fp32）。  
 
-``actor.model.precision``: Numerical precision (bf16, fp16, fp32).
+``actor.model.add_bias_linear / add_qkv_bias``：线性/QKV 是否加 bias。  
 
-``actor.model.add_bias_linear``: Add bias to linear layers.
+``actor.model.vocab_size / hidden_size``：词表大小与隐藏维度。  
 
-``actor.model.add_qkv_bias``: Add bias to QKV projections.
+``actor.model.policy_setup``：策略配置（widowx_bridge）。  
 
-``actor.model.vocab_size``: Vocabulary size.
+``actor.model.vh_mode``：视觉头模式（a0）。  
 
-``actor.model.hidden_size``: Hidden dimension size.
+``actor.model.image_size``：输入图像尺寸 [H, W]。  
 
-``actor.model.policy_setup``: Policy configuration (widowx_bridge).
+``actor.model.is_lora / lora_rank / lora_path``：是否使用 LoRA、秩与权重路径。  
 
-``actor.model.vh_mode``: Vision-head mode (a0).
+``actor.model.ckpt_path``：模型 checkpoint 路径。  
 
-``actor.model.image_size``: Input image dimensions [height, width].
+``actor.model.num_images_in_input``：输入的图像数量。  
 
-``actor.model.is_lora``: Whether to use LoRA fine-tuning.
+``actor.model.attn_implementation``：注意力实现（flash_attention_2）。  
 
-``actor.model.lora_rank``: LoRA rank for low-rank adaptation.
+``actor.model.low_cpu_mem_usage``：低内存初始化。  
 
-``actor.model.lora_path``: Path to LoRA weights.
+``actor.model.trust_remote_code``：加载模型时信任远程代码。
 
-``actor.model.ckpt_path``: Path to model checkpoint.
+**分词器配置：**
 
-``actor.model.num_images_in_input``: Number of images in model input.
+``actor.tokenizer.tokenizer_type``：分词器类型（HuggingFaceTokenizer）。  
 
-``actor.model.attn_implementation``: Attention implementation (flash_attention_2).
+``actor.tokenizer.tokenizer_model``：分词器模型路径。  
 
-``actor.model.low_cpu_mem_usage``: Use low CPU memory initialization.
+``actor.tokenizer.extra_vocab_size``：额外词表大小。  
 
-``actor.model.trust_remote_code``: Trust remote code in model loading.
+``actor.tokenizer.use_fast``：是否使用 fast 版本。  
 
-**Tokenizer Configuration:**
+``actor.tokenizer.trust_remote_code``：信任远程代码。  
 
-``actor.tokenizer.tokenizer_type``: Tokenizer type (HuggingFaceTokenizer).
+``actor.tokenizer.padding_side``：填充方向（left/right）。
 
-``actor.tokenizer.tokenizer_model``: Path to tokenizer model.
+**优化器配置：**
 
-``actor.tokenizer.extra_vocab_size``: Additional vocabulary size.
+``actor.optim.lr``：策略网络学习率。  
 
-``actor.tokenizer.use_fast``: Use fast tokenizer implementation.
+``actor.optim.value_lr``：价值网络学习率。  
 
-``actor.tokenizer.trust_remote_code``: Trust remote code in tokenizer.
+``actor.optim.adam_beta1/beta2/eps``：Adam 超参数。  
 
-``actor.tokenizer.padding_side``: Padding side (left or right).
+``actor.optim.clip_grad``：梯度裁剪阈值。
 
-**Optimizer Configuration:**
+基于环境的配置
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``actor.optim.lr``: Learning rate for policy network.
+以下示例以 Libero-10 为例说明环境关键参数。
 
-``actor.optim.value_lr``: Learning rate for value function.
+路径为 
 
-``actor.optim.adam_beta1/beta2``: Adam optimizer beta parameters.
-
-``actor.optim.adam_eps``: Adam optimizer epsilon.
-
-``actor.optim.clip_grad``: Gradient clipping norm.
-
-
-
-Env-based 
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The following configuration describes the key parameters of the environment, using Libero-10 as an example.
-
-The path is 
-
-**Environment Type**
+**环境类型**
 
 .. code:: yaml
 
   simulator_type: libero
   task_suite_name: libero_10
 
-``simulator_type``: Specifies the simulator type (libero for Libero benchmark).
+``simulator_type``：模拟器类型（libero 表示 Libero 基准）。  
 
-``task_suite_name``: Specifies the task suite (libero_10 for 10-task benchmark).
+``task_suite_name``：任务集合（libero_10 表示 10 个任务的基准）。
 
-**Episode Configuration**
+**Episode 配置**
 
 .. code:: yaml
 
@@ -1031,24 +960,24 @@ The path is
   ignore_terminations: ${algorithm.ignore_terminations}
   max_episode_steps: 512
 
-``auto_reset``: Automatically reset environment when episode terminates (inherits from algorithm config).
+``auto_reset``：episode 结束时是否自动重置（继承自 algorithm）。  
 
-``ignore_terminations``: Ignore episode terminations during training (inherits from algorithm config).
+``ignore_terminations``：训练时是否忽略终止（继承自 algorithm）。  
 
-``max_episode_steps``: Maximum number of steps per episode (512 for complex Libero tasks).
+``max_episode_steps``：每个 episode 的最大步数（复杂 Libero 任务通常取 512）。
 
-**Reward Configuration**
+**奖励配置**
 
 .. code:: yaml
 
   use_rel_reward: true
   reward_coef: 5.0
 
-``use_rel_reward``: Use relative rewards (difference between current and previous step rewards).
+``use_rel_reward``：使用相对奖励（当前步与前一状态的差值）。  
 
-``reward_coef``: Reward coefficient for scaling rewards (5.0 for amplified reward signals).
+``reward_coef``：奖励缩放系数（如 5.0 强化奖励信号）。
 
-**Randomization and Groups**
+**随机化与分组**
 
 .. code:: yaml
 
@@ -1058,33 +987,33 @@ The path is
   group_size: ${algorithm.group_size}
   use_fixed_reset_state_ids: ${algorithm.use_fixed_reset_state_ids}
 
-``seed``: Random seed for environment initialization (0 for reproducibility).
+``seed``：环境初始化随机种子（0 便于复现）。  
 
-``num_task``: Number of tasks to use (inherits from algorithm.num_group_envs).
+``num_task``：任务数量（继承自 algorithm.num_group_envs）。  
 
-``num_group``: Number of environment groups (inherits from algorithm.num_group_envs).
+``num_group``：环境分组数量（继承自 algorithm.num_group_envs）。  
 
-``group_size``: Number of environments per group (inherits from algorithm.group_size).
+``group_size``：每个分组的环境数（继承自 algorithm.group_size）。  
 
-``use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO (inherits from algorithm.use_fixed_reset_state_ids).
+``use_fixed_reset_state_ids``：是否使用固定 reset 状态（GRPO 为 True，PPO 默认 False）。
 
-**Input Configuration**
+**输入配置**
 
 .. code:: yaml
 
   num_images_in_input: 1
 
-``num_images_in_input``: Number of images in model input (1 for single camera view).
+``num_images_in_input``：模型输入的图像数量（单相机视角为 1）。
 
-**Environment Scaling**
+**环境规模**
 
 .. code:: yaml
 
   num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
 
-``num_envs``: Total number of environments (calculated as group_size × num_group_envs).
+``num_envs``：总环境数（= group_size × num_group_envs）。
 
-**Video Recording**
+**视频记录**
 
 .. code:: yaml
 
@@ -1093,13 +1022,13 @@ The path is
     info_on_video: true
     video_base_dir: ${runner.logger.log_path}/video/train
 
-``video_cfg.save_video``: Enable video recording during training.
+``video_cfg.save_video``：训练时保存视频。  
 
-``video_cfg.info_on_video``: Overlay training information on videos.
+``video_cfg.info_on_video``：在视频上叠加训练信息。  
 
-``video_cfg.video_base_dir``: Directory to save training videos.
+``video_cfg.video_base_dir``：视频保存目录。
 
-**Camera Configuration**
+**相机配置**
 
 .. code:: yaml
 
@@ -1107,6 +1036,6 @@ The path is
     camera_heights: 256
     camera_widths: 256
 
-``init_params.camera_heights``: Camera image height in pixels (256).
+``init_params.camera_heights``：相机图像高度（像素）。  
 
-``init_params.camera_widths``: Camera image width in pixels (256).
+``init_params.camera_widths``：相机图像宽度（像素）。

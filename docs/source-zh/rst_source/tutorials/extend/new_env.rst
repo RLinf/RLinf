@@ -1,21 +1,20 @@
-Adding New Environment 
+添加新环境
 ============================
 
-This document provides detailed instructions on how to add new environments to the RLinf framework.  
-RLinf supports various reinforcement learning environments, including robotic manipulation (e.g., ManiSkill3, LIBERO) and others.
+本文档提供了在 RLinf 框架中添加新环境的详细说明。  
+RLinf 支持多种强化学习环境，包括机器人操作（例如 ManiSkill3、LIBERO）等。  
 
-The RLinf environment system consists of the following components:
+RLinf 的环境系统由以下组件构成：
 
-- **EnvManager**: Manages the environment lifecycle (creation, reset, shutdown).
-- **Base Environment Classes**: Concrete implementations inheriting from ``gym.Env``.
-- **Environment Wrappers**: Add-on wrappers that provide extra functionality.
-- **Task Variants**: Implementations of specific tasks or scenarios.
+- **EnvManager**：管理环境生命周期（创建、重置、关闭）。  
+- **基础环境类**：继承自 ``gym.Env`` 的具体实现。  
+- **环境封装器（Wrappers）**：提供额外功能的扩展封装器。  
+- **任务变体**：实现特定任务或场景。  
 
-
-1. Create Base Environment Class
+1. 创建基础环境类
 -----------------------------------
 
-1.1 Inherit from ``gym.Env``
+1.1 继承 ``gym.Env``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: python
@@ -31,36 +30,36 @@ The RLinf environment system consists of the following components:
            self.ret_device = ret_device
            self.seed = self.cfg.seed + rank
 
-           # Initialize environment-related parameters
+           # 初始化环境相关参数
            self.num_envs = self.cfg.num_envs
            self.group_size = self.cfg.group_size
            self.num_group = self.cfg.num_group
 
-           # Initialize environment internals
+           # 初始化环境内部
            self._init_environment()
            self._init_reset_state_ids()
 
        def _init_environment(self):
-           """Initialize the specific environment instance."""
-           # Initialize based on environment type
+           """初始化具体的环境实例。"""
+           # 根据环境类型初始化
            pass
 
        def _init_reset_state_ids(self):
-           """Initialize reset state IDs and RNG."""
+           """初始化重置状态 ID 和随机数发生器。"""
            self._generator = torch.Generator()
            self._generator.manual_seed(self.seed)
-           # Set up reset-state logic
+           # 设置重置状态逻辑
            pass
 
        def reset(self, options={}):
-           """Reset the environment."""
-           # Implement environment reset logic
+           """重置环境。"""
+           # 实现环境重置逻辑
            obs = self._get_observation()
            return obs, {}
 
        def step(self, actions):
-           """Execute actions."""
-           # Implement action execution logic
+           """执行动作。"""
+           # 实现动作执行逻辑
            obs = self._get_observation()
            reward = self._calculate_reward()
            terminated = self._check_termination()
@@ -69,55 +68,55 @@ The RLinf environment system consists of the following components:
            return obs, reward, terminated, truncated, info
 
        def _get_observation(self):
-           """Retrieve observation."""
-           # Implement observation retrieval logic
+           """获取观测。"""
+           # 实现观测获取逻辑
            pass
 
        def _calculate_reward(self):
-           """Compute reward."""
-           # Implement reward calculation logic
+           """计算奖励。"""
+           # 实现奖励计算逻辑
            pass
 
        def _check_termination(self):
-           """Check termination conditions."""
-           # Implement termination condition checks
+           """检查终止条件。"""
+           # 实现终止条件逻辑
            pass
 
        def _check_truncation(self):
-           """Check truncation conditions."""
-           # Implement truncation condition checks
+           """检查截断条件。"""
+           # 实现截断条件逻辑
            pass
 
        def _get_info(self):
-           """Retrieve info dict."""
-           # Implement information retrieval logic
+           """获取信息字典。"""
+           # 实现信息获取逻辑
            pass
 
-1.2 Implement Required Properties
+1.2 实现必要的属性
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: python
 
    @property
    def total_num_group_envs(self):
-       """Total number of environment groups."""
-       # Implement based on your environment
+       """环境组的总数量。"""
+       # 根据你的环境实现
        pass
 
    @property
    def num_envs(self):
-       """Number of vectorized environments."""
+       """向量化环境的数量。"""
        return self.env.unwrapped.num_envs
 
    @property
    def device(self):
-       """Active device."""
+       """当前使用的设备。"""
        return self.env.unwrapped.device
 
-2. Implement Environment Offload Support (Optional)
+2. 实现环境的 Offload 支持（可选）
 ----------------------------------------------------------------------
 
-If you need to support saving/restoring environment state, inherit from ``EnvOffloadMixin``:
+如果需要支持保存/恢复环境状态，可以继承 ``EnvOffloadMixin``：
 
 .. code-block:: python
 
@@ -127,45 +126,45 @@ If you need to support saving/restoring environment state, inherit from ``EnvOff
 
    class YourCustomEnv(gym.Env, EnvOffloadMixin):
        def get_state(self) -> bytes:
-           """Serialize environment state to bytes."""
+           """序列化环境状态为字节。"""
            state = {
                "env_state": self.env.get_state(),
                "rng_state": self._generator.get_state(),
-               # Add other states as needed
+               # 根据需要添加其他状态
            }
            buffer = io.BytesIO()
            torch.save(state, buffer)
            return buffer.getvalue()
 
        def load_state(self, state_buffer: bytes):
-           """Restore environment state from bytes."""
+           """从字节恢复环境状态。"""
            buffer = io.BytesIO(state_buffer)
            state = torch.load(buffer, map_location="cpu")
            self.env.set_state(state["env_state"])
            self._generator.set_state(state["rng_state"])
-           # Restore other states as needed
+           # 根据需要恢复其他状态
 
-3. Create Environment Wrapper
+3. 创建环境封装器
 -----------------------------------
 
-If you implement offload functionality, create a corresponding wrapper:
+如果实现了 offload 功能，需要创建对应的封装器：
 
 .. code-block:: python
 
-   # In env_offload_wrapper.py
+   # 在 env_offload_wrapper.py 中
    class YourCustomEnv(BaseYourCustomEnv, EnvOffloadMixin):
        def get_state(self) -> bytes:
-           # Implement state saving
+           # 实现状态保存
            pass
 
        def load_state(self, state_buffer: bytes):
-           # Implement state restoration
+           # 实现状态恢复
            pass
 
-4. Add Action Processing Tools
+4. 添加动作处理工具
 -----------------------------------
 
-Add action processing utilities in ``action_utils.py``:
+在 ``action_utils.py`` 中添加动作处理函数：
 
 .. code-block:: python
 
@@ -176,8 +175,8 @@ Add action processing utilities in ``action_utils.py``:
        action_scale,
        policy,
    ):
-       """Prepare actions for your environment."""
-       # Implement action processing logic
+       """为你的环境准备动作。"""
+       # 实现动作处理逻辑
        pass
 
    def prepare_actions(
@@ -196,13 +195,13 @@ Add action processing utilities in ``action_utils.py``:
                action_scale=action_scale,
                policy=policy,
            )
-       # ... other environment types
+       # ... 其他环境类型
        return chunk_actions
 
-5. Create Task Variants (Optional)
+5. 创建任务变体（可选）
 -----------------------------------
 
-If you require specific task variants, place them under ``envs/YOUR_ENV/tasks/variants/``:
+如果需要特定任务变体，可以将其放在 ``envs/YOUR_ENV/tasks/variants/`` 下：
 
 .. code-block:: python
 
@@ -212,21 +211,21 @@ If you require specific task variants, place them under ``envs/YOUR_ENV/tasks/va
            self.config = config
 
        def setup_task(self):
-           """Set up task assets and initial state."""
+           """设置任务资源和初始状态。"""
            pass
 
        def get_task_description(self):
-           """Return a natural-language task description."""
+           """返回任务的自然语言描述。"""
            pass
 
        def check_success(self, obs, action):
-           """Return True if the task is successful."""
+           """任务成功时返回 True。"""
            pass
 
-6. Update Configuration Files
+6. 更新配置文件
 -----------------------------------
 
-Add your environment configuration:
+添加你的环境配置：
 
 .. code-block:: yaml
 
@@ -236,21 +235,21 @@ Add your environment configuration:
      group_size: 4
      num_group: 2
      seed: 42
-     # Other environment-specific settings
+     # 其他环境特定设置
 
-7. Register Environment
+7. 注册环境
 -----------------------------------
 
-Expose the new environment in the package:
+在包中暴露新环境：
 
 .. code-block:: python
 
-   # In __init__.py or the relevant module
+   # 在 __init__.py 或相关模块中
    from .your_custom_env import YourCustomEnv
 
    __all__ = ["YourCustomEnv"]
 
-Testing and Validation
+测试与验证
 -----------------------------------
 
 .. code-block:: python
@@ -258,7 +257,7 @@ Testing and Validation
    import numpy as np
 
    def test_your_env():
-       """Basic smoke test for your environment."""
+       """对环境的基本测试。"""
        cfg = get_test_config()
        env = YourCustomEnv(cfg, rank=0)
 
@@ -271,4 +270,3 @@ Testing and Validation
        obs, reward, terminated, truncated, info = env.step(action)
        assert obs is not None
        assert isinstance(reward, (float, np.ndarray))
-

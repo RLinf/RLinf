@@ -1,99 +1,96 @@
-Installation
+安装说明
 ============
 
-RLinf supports multiple backend engines for both training and inference. As of now, the following configurations are available:
+RLinf 支持多种后端引擎，用于训练和推理。目前支持以下配置：
 
-- **Megatron** and **SGLang/vLLM** for training LLMs on MATH tasks.
-- **FSDP** and **Huggingface** for training VLAs on LIBERO and ManiSkill3.
+- **Megatron** 和 **SGLang/vLLM**：用于训练 MATH 任务中的大语言模型（LLM）。
+- **FSDP** 和 **Huggingface**：用于训练 LIBERO 和 ManiSkill3 环境下的 VLA 模型。
 
-Backend Engines
+后端引擎
 ---------------
 
-1. **Training Engines**
+1. **训练引擎**
 
-   - **FSDP**: A simple and efficient training engine that is beginner-friendly, widely compatible, easy to use, and supports native PyTorch modules.
+   - **FSDP**：简单高效、适合初学者，兼容性强，使用便捷，支持原生 PyTorch 模块。
 
-   - **Megatron**: Designed for experienced developers seeking maximum performance. It supports a variety of parallel configurations and offers SOTA training speed and scalability.
+   - **Megatron**：为追求极致性能的开发者设计，支持多种并行配置，具备先进的训练速度和可扩展性。
 
-2. **Inference Engines**
+2. **推理引擎**
 
-   - **SGLang/vLLM**: A mature and widely adopted inference engine that offers many advanced features and optimizations.
+   - **SGLang/vLLM**：成熟且广泛使用，具备许多高级功能和优化能力。
 
-   - **Huggingface**: Easy to use, with native APIs provided by the Huggingface ecosystem.
+   - **Huggingface**：简单易用，配套 Huggingface 生态提供的原生 API。
 
-Installation Methods
+安装方式
 --------------------
 
-RLinf provides two installation options. We **recommend using Docker**, as it provides the fastest and most reproducible environment.
-However, if your system is incompatible with the Docker image, you can also install RLinf manually in a Python environment.
+RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可以提供最快速、最可复现的环境。  
+如果你的系统无法使用 Docker 镜像，也可以选择在本地 Python 环境中手动安装。
 
-Hardware Requirements
+硬件要求
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-The following hardware configuration has been extensively tested:
+以下是经过充分测试的硬件配置：
 
 .. list-table::
    :header-rows: 1
    :widths: 30 70
 
-   * - Component
-     - Configuration
+   * - 组件
+     - 配置
    * - GPU
-     - 8xH100 per node
+     - 每个节点 8 块 H100
    * - CPU
-     - 192 cores per node
-   * - Memory
-     - 1.8TB per node
-   * - Network
-     - NVLink + RoCE / IB 3.2 Tbps 
-   * - Storage
-     - | 1TB local storage for single-node experiments
-       | 10TB shared storage (NAS) for distributed experiments
+     - 每个节点 192 核心
+   * - 内存
+     - 每个节点 1.8TB
+   * - 网络
+     - NVLink + RoCE / IB，带宽 3.2 Tbps
+   * - 存储
+     - | 单节点实验使用 1TB 本地存储  
+       | 分布式实验使用 10TB 共享存储（NAS）
 
-
-Software Requirements
+软件要求
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
    :widths: 30 70
 
-   * - Component
-     - Version
-   * - Operating System
+   * - 组件
+     - 版本
+   * - 操作系统
      - Ubuntu 22.04
-   * - NVIDIA Driver
+   * - NVIDIA 驱动
      - 535.183.06
    * - CUDA
-     - 12.4 
+     - 12.4
    * - Docker
      - 26.0.0
    * - NVIDIA Container Toolkit
      - 1.17.8
 
-
-Install from Docker Image
+使用 Docker 镜像安装
 -------------------------
 
-We provide two official Docker images optimized for different backend configurations:
+我们提供了两个官方镜像，分别针对不同后端配置进行了优化：
 
-- **Megatron + SGLang/vLLM**:  
+- **Megatron + SGLang/vLLM**：
 
-  - ``rlinf/rlinf:math-rlinf0.1-torch2.5.1-sglang0.4.4-vllm0.7.1-megatron0.11.0-te2.1`` (used for enhancing LLM reasoning on MATH tasks)
+  - ``rlinf/rlinf:math-rlinf0.1-torch2.5.1-sglang0.4.4-vllm0.7.1-megatron0.11.0-te2.1`` （用于增强大语言模型在 MATH 任务中的推理能力）
 
-- **FSDP + Huggingface**:  
+- **FSDP + Huggingface**：
 
-  - ``rlinf/rlinf:agentic-openvla-rlinf0.1-torch2.5.1`` (for the OpenVLA model)  
-  - ``rlinf/rlinf:agentic-openvlaoft-rlinf0.1-torch2.5.1`` (for the OpenVLA-OFT model)
+  - ``rlinf/rlinf:agentic-openvla-rlinf0.1-torch2.5.1`` （适用于 OpenVLA 模型）  
+  - ``rlinf/rlinf:agentic-openvlaoft-rlinf0.1-torch2.5.1`` （适用于 OpenVLA-OFT 模型）
 
-
-Once you've identified the appropriate image for your setup, pull the Docker image:
+确认适合你任务的镜像后，拉取镜像：
 
 .. code-block:: bash
 
    docker pull rlinf/rlinf:CHOSEN_IMAGE
 
-Then, start the container using the pulled image:
+然后启动容器：
 
 .. code-block:: bash
 
@@ -104,7 +101,7 @@ Then, start the container using the pulled image:
       --name rlinf \
       rlinf/rlinf:CHOSEN_IMAGE /bin/bash
 
-Inside the container, clone the RLinf repository:
+进入容器后，克隆 RLinf 仓库：
 
 .. code-block:: bash
 
@@ -113,31 +110,29 @@ Inside the container, clone the RLinf repository:
 
 .. tip::
 
-   For multi-node training, make sure to clone the repository in shared storage so that every node has access to it.
+   如果进行多节点训练，请将仓库克隆到共享存储路径，确保每个节点都能访问该代码。
 
-
-
-Install from Custom Environment
+自定义环境安装
 -------------------------------
 
-Installation is divided into three parts depending on the type of experiments you plan to run.
+根据你的实验类型，安装分为三步进行：
 
-First, for all experiments, follow the :ref:`Common Dependencies <common-dependencies>` section to install the shared dependencies.  
-This already includes the full backend setup for **FSDP + Huggingface**.
+第一步，对于所有实验，请先完成 :ref:`共同依赖 <common-dependencies>` 中的依赖安装，  
+这一步已经包括了 **FSDP + Huggingface** 的完整配置。
 
-Second, for experiments using **Megatron** and **SGLang/vLLM** backends,  
-follow the :ref:`Megatron and SGLang/vLLM Dependencies <megatron-and-sglang-vllm-dependencies>` section to install all required packages.  
+第二步，如果你的实验使用的是 **Megatron 和 SGLang/vLLM** 后端，  
+请参考 :ref:`Megatron 及 SGLang/vLLM 依赖 <megatron-and-sglang-vllm-dependencies>` 安装相应依赖。
 
-Third, for embodied intelligence experiments (e.g., OpenVLA, OpenVLA-OFT and Pi0),  
-follow the :ref:`Embodied Dependencies <embodied-dependencies>` section to install their specific dependencies.
+第三步，如果你要运行具身智能相关实验（如 OpenVLA、OpenVLA-OFT、Pi0），  
+请参考 :ref:`具身智能依赖 <embodied-dependencies>` 安装专用依赖项。
 
 .. _common-dependencies:
 
-Common Dependencies
+通用依赖安装
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-We recommend using `uv <https://docs.astral.sh/uv/>`_ to install the required Python packages.  
-If you are using `conda <https://docs.conda.io/projects/conda/en/latest/user-guide/getting-started.html>`_, you can install ``uv`` via ``pip``.
+我们推荐使用 `uv <https://docs.astral.sh/uv/>`_ 工具来安装所需的 Python 包。  
+如果你使用的是 `conda <https://docs.conda.io/projects/conda/en/latest/user-guide/getting-started.html>`_，可以通过 `pip` 安装 ``uv``。
 
 .. code-block:: shell
 
@@ -145,7 +140,7 @@ If you are using `conda <https://docs.conda.io/projects/conda/en/latest/user-gui
    conda activate rlinf
    pip install --upgrade uv
 
-After installing ``uv``, create a virtual environment and install PyTorch along with the common dependencies:
+安装 ``uv`` 后，创建虚拟环境并安装 PyTorch 与通用依赖：
 
 .. code-block:: shell
 
@@ -155,10 +150,10 @@ After installing ``uv``, create a virtual environment and install PyTorch along 
 
 .. _megatron-and-sglang-vllm-dependencies:
 
-Megatron and SGLang/vLLM Dependencies
+Megatron 和 SGLang/vLLM 依赖
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Run the following commands to install Megatron, SGLang/vLLM, and their dependencies:
+运行以下命令，安装 Megatron、SGLang/vLLM 及其所需依赖：
 
 .. code-block:: shell
 
@@ -166,7 +161,7 @@ Run the following commands to install Megatron, SGLang/vLLM, and their dependenc
    mkdir -p /opt && git clone https://github.com/NVIDIA/Megatron-LM.git -b core_r0.11.0 /opt/Megatron-LM
    APEX_CPP_EXT=1 APEX_CUDA_EXT=1 uv pip install -r requirements/megatron.txt --no-build-isolation
 
-Before using Megatron, ensure its path is added to the ``PYTHONPATH`` environment variable:
+使用 Megatron 前，请将其路径加入 ``PYTHONPATH`` 环境变量：
 
 .. code-block:: shell
 
@@ -174,23 +169,22 @@ Before using Megatron, ensure its path is added to the ``PYTHONPATH`` environmen
 
 .. _embodied-dependencies:
 
-Additional Embodied Dependencies
+具身智能相关依赖
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-For embodied experiments, first install the necessary system dependencies (currently only supported on Debian/Ubuntu via ``apt``):
+若你运行的是具身智能实验，首先通过 apt 安装必要的系统依赖（仅支持 Debian/Ubuntu 系统）：
 
 .. code-block:: shell
 
    bash requirements/install_embodied_deps.sh
    uv sync --extra embodied
 
-Then, depending on the experiment type, install the required packages for ``openvla``, ``openvla-oft`` and ``pi0``:
+接着，根据具体实验类型安装对应的 Python 包：
 
 .. code-block:: shell
 
-   # For OpenVLA/OpenVLA-oft experiments
+   # OpenVLA / OpenVLA-OFT 实验所需依赖
    UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla.txt --no-build-isolation
 
-   # For Pi0 experiments
+   # Pi0 实验所需依赖
    UV_TORCH_BACKEND=auto uv pip install -r requirements/pi0.txt --no-build-isolation
-

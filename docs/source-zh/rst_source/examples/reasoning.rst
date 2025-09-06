@@ -1,20 +1,19 @@
-Reasoning RL-LLM
+推理 RL-LLM
 =================
 
-This document introduces how we train large language models (LLMs) for mathematical reasoning using reinforcement learning (RL) in the RLinf framework.
-Compared with supervised fine-tuning (SFT), RL encourages the model to explore diverse reasoning paths while prioritizing correct final answers.
+本文档介绍了如何在 RLinf 框架下，使用强化学习（RL）来训练大语言模型（LLM）以进行数学推理。  
+与监督微调（SFT）相比，RL 能够鼓励模型探索多样化的推理路径，同时优先保证最终答案的正确性。  
 
-Our goal is to improve the model's ability to solve challenging math problems by optimizing both its reasoning process and its final answers.
+我们的目标是提升模型解决复杂数学问题的能力，同时优化推理过程和最终答案。
 
-
-Dataset
+数据集
 -------------
 
-We use the dataset from `AReaL-boba-Data <https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/>`_.  
-This dataset integrates data from DeepScaleR, Open-Reasoner-Zero, Light-R1, DAPO, NuminaMath (AoPS/Olympiad subsets), and ZebraLogic.  
-Overly simple problems are filtered out to ensure dataset quality and effectiveness.
+我们使用 `AReaL-boba-Data <https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/>`_ 数据集。  
+该数据集整合了 DeepScaleR、Open-Reasoner-Zero、Light-R1、DAPO、NuminaMath（AoPS/Olympiad 子集）和 ZebraLogic。  
+过于简单的问题会被过滤，以保证数据集质量和有效性。  
 
-An example training sample looks like:
+一个训练样例如下：
 
 .. code-block:: json
 
@@ -25,41 +24,41 @@ An example training sample looks like:
       "solutions": ["\\boxed{x}"]
    }
 
-Algorithm
+算法
 ---------
 
-We adopt GRPO (Group Relative Policy Optimization) with the following modifications:
+我们采用 GRPO（Group Relative Policy Optimization），并做了如下改进：  
 
-- Token-level loss: Instead of averaging loss over the entire response sequence, we compute the average over tokens, as in DAPO.  
-  This prevents excessively long responses from dominating training and reduces their gradient impact.
+- **Token 级别的损失**：不是在整个响应序列上平均损失，而是在 token 级别上平均（类似 DAPO）。  
+  这样可以避免过长的回答主导训练，减少它们对梯度的影响。  
 
-- Minibatch early-stop: If the importance ratio within a minibatch becomes too large, we discard that minibatch to stabilize training.
+- **小批次提前停止**：如果一个 minibatch 中的重要性比率过大，则丢弃该批次，以稳定训练。  
 
-Reward function:
+奖励函数：  
 
-- +5 if the final boxed/numeric answer is correct;
-- -5 if incorrect.
+- 最终 boxed/数值答案正确：+5  
+- 错误：-5  
 
-Running the Script
+运行脚本
 ---------------------
 
-**1. Key Parameters Configuration**
+**1. 关键参数配置**
 
-Before launching, check the configuration file. Key fields include:
+在启动前，检查配置文件。主要字段包括：  
 
-- Cluster setup: ``cluster.num_nodes`` (number of nodes), ``cluster.num_gpus_per_node`` (GPUs per node).  
-- Paths: ``runner.output_dir`` (the path to save training logs & checkpoints), ``rollout.model_dir`` (the path that saves base model), ``data.train_data_paths`` (the path that save training data), etc.  
+- 集群设置：``cluster.num_nodes`` （节点数）、``cluster.num_gpus_per_node`` （每节点 GPU 数）。  
+- 路径：``runner.output_dir`` （保存训练日志与检查点的路径）、``rollout.model_dir`` （基础模型保存路径）、``data.train_data_paths`` （训练数据路径）等。  
 
-**2. Configuration File**
+**2. 配置文件**
 
-Recommended configurations can be found in:
+推荐配置示例：  
 
 - ``examples/math/config/qwen2.5-1.5b-grpo-megatron.yaml``  
 - ``examples/math/config/qwen2.5-7b-grpo-megatron.yaml``  
 
-**3. Launch Command**
+**3. 启动命令**
 
-Run the following commands to start the Ray cluster and begin training:
+运行以下命令以启动 Ray 集群并开始训练：  
 
 .. code-block:: bash
 
@@ -68,9 +67,9 @@ Run the following commands to start the Ray cluster and begin training:
    export TOKENIZERS_PARALLELISM=false
    bash start_ray.sh;
    if [ "$RANK" -eq 0 ]; then
-       bash check_ray.sh 128; # set to cluster.num_nodes*cluster.num_gpus_per_node
+       bash check_ray.sh 128; # 设置为 cluster.num_nodes*cluster.num_gpus_per_node
        cd /path_to_RLinf;
-       bash examples/math/qwen2.5/run_main_math_grpo_megatron.sh grpo-1.5b-megatron # change config file
+       bash examples/math/qwen2.5/run_main_math_grpo_megatron.sh grpo-1.5b-megatron # 修改配置文件
    else
      if [ "$RANK" -eq 1 ]; then
          sleep 3m
@@ -80,27 +79,27 @@ Run the following commands to start the Ray cluster and begin training:
 
    sleep 10d
 
-Results
+结果
 -------
 
-We trained both 1.5B and 7B models based on DeepSeek-R1-Distill-Qwen.  
+我们基于 DeepSeek-R1-Distill-Qwen 训练了 1.5B 和 7B 模型。  
 
-After successfully launched your training, you can monitor the metrics with:
+启动训练后，你可以通过以下命令监控指标：  
 
 .. code-block:: bash
 
    tensorboard --logdir ./logs --port 6006
 
-Key metrics to track:
+关键监控指标：  
 
-- ``rollout/rewards``: Accuracy of model responses on training data. Higher scores normally suggest stronger reasoning ability.  
-- ``rollout/response_length``: Average response length for the training dataset. RL often causes verbosity, and DAPO-like strategies mitigate this problem.  
-- ``train/entropy_loss``: Representing the exploration ability of the model. Entropy should decrease and slowly converge.  
+- ``rollout/rewards``：模型在训练数据上的准确率。更高的分数通常意味着更强的推理能力。  
+- ``rollout/response_length``：训练数据集上的平均响应长度。RL 往往会导致回答过长，DAPO 类似的方法可以缓解此问题。  
+- ``train/entropy_loss``：表示模型的探索能力。熵值应逐渐降低并收敛。  
 
-Training Curve
+训练曲线
 ~~~~~~~~~~~~~~
 
-The following plots show training curves.
+下面展示训练曲线。
 
 .. raw:: html
 
@@ -115,24 +114,23 @@ The following plots show training curves.
      </div>
    </div>
 
-
-Final Performance
+最终性能
 ~~~~~~~~~~~~~~~~~
 
-We provide an evaluation `toolkit <https://github.com/RLinf/LLMEvalKit>`_ and corresponding :doc:`evaluation documentation <../start/eval>`.
+我们提供了一个评估 `工具包 <https://github.com/RLinf/LLMEvalKit>`_ 以及相应的 :doc:`评估文档 <../start/llm-eval>`。  
 
-Measured performance on AIME24, AIME25, and GPQA-diamond shows RLinf achieves SOTA performance.
+在 AIME24、AIME25 和 GPQA-diamond 上的评测结果表明，RLinf 达到了 SOTA 性能。  
 
-.. list-table:: **1.5 B model results**
+.. list-table:: **1.5 B 模型结果**
    :header-rows: 1
    :widths: 45 15 15 25 15
 
-   * - Model
+   * - 模型
      - AIME 24
      - AIME 25
      - GPQA-diamond
-     - Average
-   * - `DeepSeek-R1-Distill-Qwen-1.5B (base model) <https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B>`_
+     - 平均值
+   * - `DeepSeek-R1-Distill-Qwen-1.5B (基础模型) <https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B>`_
      - 28.33
      - 24.90
      - 27.45
@@ -168,18 +166,18 @@ Measured performance on AIME24, AIME25, and GPQA-diamond shows RLinf achieves SO
      - **38.46**
      - **40.84**
 
-\* We retrain the model using the default settings for 600 steps.
+\* 我们使用默认配置对模型进行了 600 步重训。  
 
-.. list-table:: **7 B model results**
+.. list-table:: **7 B 模型结果**
    :header-rows: 1
    :widths: 45 15 15 25 15
 
-   * - Model
+   * - 模型
      - AIME 24
      - AIME 25
      - GPQA-diamond
-     - Average
-   * - `DeepSeek-R1-Distill-Qwen-7B (base model) <https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B>`_
+     - 平均值
+   * - `DeepSeek-R1-Distill-Qwen-7B (基础模型) <https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B>`_
      - 54.90
      - 40.20
      - 45.48
@@ -210,11 +208,10 @@ Measured performance on AIME24, AIME25, and GPQA-diamond shows RLinf achieves SO
      - **48.18**
      - **56.23**
 
-
-Public Checkpoints
+公开检查点
 ------------------
 
-We release trained models on Hugging Face for public use:
+我们在 Hugging Face 上发布了训练好的模型，供大家使用：  
 
 - `RLinf-math-1.5B <https://huggingface.co/RLinf/RLinf-math-1.5B>`_  
 - `RLinf-math-7B <https://huggingface.co/RLinf/RLinf-math-7B>`_  

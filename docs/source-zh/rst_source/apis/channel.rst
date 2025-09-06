@@ -1,8 +1,8 @@
-Channel Interface
+Channel 接口
 ======================
 
-This section provides a detailed introduction to the **channel** in RLinf,  
-a higher-level abstraction for asynchronous communication implemented as a producer–consumer queue.  
+本节详细介绍 RLinf 中的 **Channel**，  
+它是一种用于异步通信的高层抽象，实现形式为生产者–消费者队列。  
 
 Channel
 --------

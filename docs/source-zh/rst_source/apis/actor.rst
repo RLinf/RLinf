@@ -1,9 +1,11 @@
-Actor Interface
+Actor 接口
 =================
 
-This section provides the key APIs of the **Actor** classes in the RLinf framework.  
-It includes implementations based on both **Megatron** and **FSDP** backends.  
-In addition, information about the `ModelManager` is provided. As the parent class of the Actor classes, it manages the underlying model as well as critical APIs for parameter onload/offload.
+本节介绍 RLinf 框架中 **Actor** 类的关键 API。  
+其实现包括基于 **Megatron** 和 **FSDP** 两种后端。  
+
+此外，还提供了关于 `ModelManager` 的信息。  
+`ModelManager` 作为 Actor 类的父类，负责管理底层模型，并提供参数加载 / 卸载等关键 API。  
 
 MegatronActor
 ---------------

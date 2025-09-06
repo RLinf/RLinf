@@ -1,18 +1,17 @@
-Quickstart 2: GRPO Training of LLMs on MATH
+快速上手 2：使用 GRPO 训练 LLM 进行 MATH 推理
 ==============================================
 
-This quick-start walks you through training
-`DeepSeek-R1-Distill-Qwen-1.5B <https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B>`_
-on the
-`AReaL-boba <https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data>`_
-math-reasoning dataset with **RLinf**.  
-For maximum simplicity, you can run the following scripts within a single GPU.
+本快速教程将带你使用 **RLinf** 在数学推理数据集  
+`AReaL-boba <https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data>`_  
+上训练  
+`DeepSeek-R1-Distill-Qwen-1.5B <https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B>`_ 模型。
 
-Dataset Introduction
+为简化流程，你可以在单卡 GPU 上直接运行以下脚本完成训练。
+
+数据集简介
 --------------------
 
-*AReaL-boba* covers a broad spectrum of mathematical and logical
-problems. A example is shown below.
+*AReaL-boba* 涵盖了多种数学与逻辑推理问题。以下是一个示例：
 
 .. code-block:: text
 
@@ -29,31 +28,29 @@ problems. A example is shown below.
    ------
    [ "\\boxed{e}" ]
 
-Launch Training
------------------
+开始训练
+--------------------
 
-**Step 1: Download the model and the datasets:**
+**步骤 1：下载模型和数据集**
 
 .. code-block:: bash
 
-   # model
+   # 下载模型
    hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B \
    --local-dir /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B
 
-   # dataset
+   # 下载数据集
    hf download inclusionAI/AReaL-boba-Data --repo-type=dataset \
    --local-dir /path/to/dataset/boba
 
-**Step 2: Execute the provided launch script:**
+**步骤 2：运行官方提供的训练脚本**
 
-For user convenience, our configuration file is set up to run with a single GPU by default.  
-However, if you have multiple GPUs and wish to accelerate the quickstart process,  
-we highly recommend updating the following configuration option in  
-``./examples/math/config/qwen2.5-1.5b-single-gpu.yaml``:  
-``cluster.num_gpus_per_node``.
+为方便用户，我们提供的配置文件默认支持单卡训练。  
+如果你拥有多张 GPU 并希望加快训练过程，  
+我们推荐你修改配置文件  
+``./examples/math/config/qwen2.5-1.5b-single-gpu.yaml`` 中的参数 ``cluster.num_gpus_per_node``。
 
-
-You can dynamically set it to **1, 2, 4, or 8** depending on your available resources.
+你可以根据资源情况将其动态设置为 **1, 2, 4 或 8**。
 
 .. code-block:: yaml
 
@@ -63,38 +60,36 @@ You can dynamically set it to **1, 2, 4, or 8** depending on your available reso
      component_placement:
         actor,rollout: all
 
-Finally, before running the script, you need to modify the corresponding configuration options in the YAML file according to the download paths of the model and dataset. Specifically, update:
+在运行脚本之前，请根据你的模型和数据集下载路径，  
+在 YAML 配置文件中修改以下字段：
 
-- ``rollout.model_dir``
-- ``data.train_data_paths``
-- ``data.val_data_paths``
+- ``rollout.model_dir``  
+- ``data.train_data_paths``  
+- ``data.val_data_paths``  
 - ``actor.tokenizer.tokenizer_model``
 
-After these modifications, launch the following script to start training!
-
+完成以上修改后，运行以下脚本即可启动训练：
 
 .. code-block:: bash
 
    bash examples/math/run_main_math_grpo_megatron.sh qwen2.5-1.5b-single-gpu
 
-**Step 3: View the results:**
+**步骤 3：查看训练结果**
 
-* Final checkpoints & metrics: ``../results``
-
-* TensorBoard summaries: ``../results/grpo-1.5b/tensorboard/``  
-  Launch with:
+- 最终模型与指标文件位于：``../results``  
+- TensorBoard 日志位于：``../results/grpo-1.5b/tensorboard/``  
+  启动方式如下：
 
   .. code-block:: bash
 
      tensorboard --logdir ../results/grpo-1.5b/tensorboard/ --port 6006
 
+打开 TensorBoard 后，你会看到如下界面：  
+推荐关注的关键指标包括：
 
-Open TensorBoard, and you should see an interface similar to the one below.  
-Key metrics to pay attention to include  
-``rollout/response_length`` and ``rollout/reward_scores``.  
+- ``rollout/response_length``  
+- ``rollout/reward_scores``  
 
 .. raw:: html
 
    <img src="https://github.com/user-attachments/assets/818b013d-18e9-4edb-ba0b-db0e58b53536" width="800"/>
-
-

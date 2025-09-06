@@ -1,10 +1,10 @@
-Worker Interface
+Worker 接口
 ===================================
 
-This section provides a detailed introduction to the unified interface design of Worker and WorkerGroup in RLinf.  
-The **Worker** is the fundamental unit of execution in RLinf. Different stages of RL training will inherit from it in order to achieve unified communication and scheduling.  
-The **WorkerGroup** is a collection of multiple Workers, allowing users to avoid dealing with the complexities of distributed training directly.  
-With WorkerGroup, users can more easily manage and schedule multiple Workers, enabling more efficient distributed training.
+本节将详细介绍 RLinf 中 **Worker** 与 **WorkerGroup** 的统一接口设计。  
+**Worker** 是 RLinf 中最基本的执行单元。RL 训练的不同阶段都会继承自 Worker，从而实现统一的通信与调度。  
+**WorkerGroup** 则是多个 Worker 的集合，它让用户无需直接处理分布式训练的复杂性。  
+通过 WorkerGroup，用户可以更方便地管理和调度多个 Worker，从而实现更高效的分布式训练。  
 
 Worker
 -------

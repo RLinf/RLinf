@@ -1,16 +1,14 @@
-Checkpoint Resume
+检查点恢复
 =================
 
-Unexpected events—network errors, power loss, node pre-emptions—can
-interrupt a long-running distributed job.  
-To tackle this challenge, RLinf saves a full checkpoint every ``runner.save_interval`` steps and lets
-you resume from the most recent snapshot with minimal loss of work.
+意外情况 —— 网络错误、断电、节点被抢占 —— 都可能中断一个长时间运行的分布式任务。  
+为了解决这一问题，RLinf 会在每隔 ``runner.save_interval`` 步时保存一个完整的检查点，  
+并允许你从最近的快照恢复，最大限度减少工作损失。  
 
-
-Checkpoint layout
+检查点布局
 -----------------
 
-Assume the following YAML fragment:
+假设有如下 YAML 片段：
 
 .. code-block:: yaml
 
@@ -25,8 +23,8 @@ Assume the following YAML fragment:
      experiment_name: grpo-1.5b
      output_dir: ./logs
 
-Checkpoints will appear under
-``./logs/grpo-1.5b/checkpoints/``:
+检查点会出现在  
+``./logs/grpo-1.5b/checkpoints/`` 下：
 
 .. code-block:: text
 
@@ -46,48 +44,36 @@ Checkpoints will appear under
    └── global_step_100/
        └── …
 
-Key points
+关键点
 ~~~~~~~~~~
 
-* **Sharded weights** – files inside ``mp_rank_*`` follow the Megatron
-  tensor-parallel layout; each GPU only reloads its own slice.
-* **Optimizer / RNG state** – *both* the Adam parameters
-  (``distrib_optim.pt``) *and* random-number generators are captured,
-  guaranteeing bit-for-bit reproducibility after resume.
-* **Data sampler** – ``data.pt`` stores dataloader, so no
-  samples are skipped or repeated.
+* **分片权重** —— ``mp_rank_*`` 中的文件遵循 Megatron 的张量并行布局；每个 GPU 只会重新加载属于自己的分片。  
+* **优化器 / RNG 状态** —— *同时* 保存了 Adam 参数（``distrib_optim.pt``）和随机数生成器，确保恢复后可以比特级复现。  
+* **数据采样器** —— ``data.pt`` 存储了 dataloader，保证不会遗漏或重复样本。  
 
-
-Resuming training
+恢复训练
 -----------------
 
-1. **Choose the latest checkpoint**
+1. **选择最新的检查点**
 
-   If ``global_step_150/`` is the highest numbered directory it is the
-   newest snapshot.
+   如果 ``global_step_150/`` 是编号最高的目录，它就是最新的快照。  
 
-2. **Edit the YAML**
+2. **修改 YAML**
 
    .. code-block:: yaml
 
       runner:
         resume_dir: ${runner.output_dir}/${runner.experiment_name}/checkpoints/global_step_150
 
+3. **完全按原方式重新启动**
 
-3. **Relaunch exactly as before**
+   启动 Ray，然后运行相同的 ``run_main_*.sh`` 启动脚本。  
+   RLinf 会自动检测到 ``resume_dir`` 并：  
 
-   Start Ray, then the same ``run_main_*.sh`` launcher. 
-   RLinf will automatically detect the ``resume_dir`` and:
-
-   * Restores model shards, optimizer, RNG and dataloader state on every
-     node/rank.
-   * Continues step counting from ``global_step_150`` — your next saved
-     checkpoint will be ``global_step_200`` (because ``save_interval`` is
-     50).
+   * 在每个节点/rank 上恢复模型分片、优化器、RNG 和 dataloader 状态。  
+   * 从 ``global_step_150`` 继续计数 —— 下一个保存的检查点将是 ``global_step_200`` （因为 ``save_interval`` 为 50）。  
 
 .. tip::
 
-   To verify resumption, look for the log line.  
-   If the next training step starts at 150, then the resume is working well!
-
-
+   想验证恢复是否成功，可以查看日志行。  
+   如果下一次训练从 step 150 开始，就说明恢复正常！  

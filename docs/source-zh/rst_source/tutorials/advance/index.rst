@@ -1,31 +1,31 @@
-Advanced Features
+高级特性
 ==============================
 
-This chapter provides a step-by-step deep dive into how RLinf achieves **highly efficient execution**,  
-offering practical guidance to help you fully optimize your RL post-training workflows.
+本章将逐步深入讲解 RLinf 如何实现 **高效执行**，  
+并提供实用指南，帮助你充分优化 RL 后训练工作流。
 
 - :doc:`5D`  
-   Explains how RLinf supports Megatron-style 5D parallelism, including:  
-   Tensor Parallelism (TP), Data Parallelism (DP), Pipeline Parallelism (PP),  
-   Sequence Parallelism (SP), and Context Parallelism (CP).  
-   Learn how to configure and combine these dimensions to scale large models efficiently.
+   解释 RLinf 如何支持 Megatron 风格的 5D 并行，包括：  
+   张量并行 (TP)、数据并行 (DP)、流水线并行 (PP)、  
+   序列并行 (SP) 和上下文并行 (CP)。  
+   学习如何配置和组合这些维度，以高效扩展大模型。  
 
 - :doc:`lora`  
-   Demonstrates how to integrate Low-Rank Adaptation (LoRA) into RLinf,  
-   enabling parameter-efficient fine-tuning for large-scale models with minimal compute overhead.
+   展示如何在 RLinf 中集成低秩适配 (LoRA)，  
+   以极小的计算开销实现参数高效的微调。  
 
 - :doc:`version`  
-   Describes how to dynamically switch between different SGLang versions  
-   to accommodate varying compatibility needs or experimental requirements.
+   描述如何在不同的 SGLang 版本之间动态切换，  
+   以满足不同的兼容性需求或实验要求。  
 
 - :doc:`resume`  
-   Covers how to resume training from saved checkpoints,  
-   ensuring fault tolerance and seamless continuation for long-running or interrupted training jobs.
+   讲解如何从保存的检查点恢复训练，  
+   以确保容错性，并为长时间或中断的训练任务提供无缝衔接。  
 
 - :doc:`logger`  
-   Introduces how to visualize and track key metrics during your training process.  
-   Currently, we support three backends for experiment tracking and visualization: 
-   TensorBoard, Weights & Biases (wandb), and SwanLab.
+   介绍如何在训练过程中可视化和跟踪关键指标。  
+   目前，我们支持三种实验追踪与可视化后端：  
+   TensorBoard、Weights & Biases (wandb) 和 SwanLab。  
 
 
 .. toctree::

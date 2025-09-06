@@ -1,13 +1,15 @@
-Channel Queuing for Pipelining
+流水线中的 Channel 队列
 ===============================
 
-The channel module provides a high-level **distributed producer–consumer queue** abstraction for workers to exchange data asynchronously.  
-A ``Channel`` allows one or more producer workers to ``put`` items into a named queue and one or more consumer workers to ``get`` them, optionally accumulating **batches** based on per-item weights.
+channel 模块为 Worker 之间的异步数据交换提供了一个高层次的 **分布式生产者–消费者队列** 抽象。  
+一个 ``Channel`` 允许一个或多个生产者 Worker 向命名队列中 ``put`` 数据项，  
+并允许一个或多个消费者 Worker ``get`` 这些数据项，  
+同时可以选择基于每个数据项的权重来累积 **批次**。
 
-Channel Creation and Connection
+Channel 的创建与连接
 --------------------------------
 
-A new channel can be created using::
+可以通过如下方式创建一个新的 channel::
 
     Worker.create_channel(
         channel_name,
@@ -16,61 +18,68 @@ A new channel can be created using::
         maxsize=0
     )
 
-This method:
+该方法：
 
-- **Determines placement** — If ``group_affinity`` or ``group_rank_affinity`` are not specified, the channel is hosted in the current worker’s **group** and **rank** (same node and GPU).
-- **Launches a dedicated channel actor** — Uses ``PackedPlacementStrategy`` to start a ``ChannelWorker`` (that actually holds the queue) with ``num_processes=1`` on the selected node/GPU.
-- **Returns** a ``Channel`` object that wraps the actor. The channel actor’s address is ``channel_name:0``.
+- **确定放置位置** — 如果未指定 ``group_affinity`` 或 ``group_rank_affinity``，则 channel 会托管在当前 Worker 的 **group** 和 **rank** 上（即相同节点和 GPU）。  
+- **启动专用的 channel actor** — 使用 ``PackedPlacementStrategy`` 在所选节点/GPU 上启动一个 ``ChannelWorker`` （实际持有队列），并设置 ``num_processes=1``。  
+- **返回** 一个 ``Channel`` 对象，用于封装该 actor。channel actor 的地址为 ``channel_name:0``。  
 
-To connect to an existing channel from another worker, use::
+若要从其他 Worker 连接到已存在的 channel，请使用::
 
     Worker.connect_channel(channel_name)
 
-This looks up the channel actor in the Ray namespace and returns a ``Channel`` object bound to both the actor and the current worker.
+该方法会在 Ray 命名空间中查找对应的 channel actor，并返回一个与该 actor 和当前 Worker 绑定的 ``Channel`` 对象。  
 
 
-
-Putting Items into the Channel
+向 Channel 中放入数据
 --------------------------------
 
-Use ``channel.put(item, weight=0, queue_name="default", async_op=False)`` to send data.
+使用 ``channel.put(item, weight=0, queue_name="default", async_op=False)`` 发送数据。
 
-- The sending worker first transmits the ``item`` to the ``ChannelWorker`` that actually owns the target queue.  
-- The ``ChannelWorker`` receives the data, wraps it as a ``WeightedItem`` (with the given ``weight``), and enqueues it into the specified queue.  
-  If the queue has a size limit (``maxsize`` > 0) and is full, the enqueue will block until space becomes available.
+- 发送 Worker 首先将 ``item`` 传输给实际拥有目标队列的 ``ChannelWorker``。  
+- ``ChannelWorker`` 接收数据后，将其封装为一个带有指定 ``weight`` 的 ``WeightedItem``，并放入指定队列。  
+  如果队列设置了大小限制（``maxsize`` > 0）且已满，则入队会阻塞，直到队列有空间可用。  
 
-Getting Items from the Channel
+
+从 Channel 中获取数据
 --------------------------------
 
-Use ``channel.get(queue_name="default", async_op=False)`` to retrieve data which is essentially the reverse of ``put``.  
+使用 ``channel.get(queue_name="default", async_op=False)`` 获取数据，这实际上是 ``put`` 的逆过程。  
 
-- The ``ChannelWorker`` first dequeues an item from the specified queue.  
-- It then sends this item to the worker that requested it, where it is returned to the caller.
+- ``ChannelWorker`` 会先从指定队列中取出一个数据项。  
+- 然后将该数据项发送给请求的 Worker，并最终返回给调用者。  
 
-Batch Retrieval
+
+批量获取
 --------------------------------
 
-Use ``channel.get_batch(batch_weight, queue_name="default", async_op=False)`` to retrieve multiple items at once.
+使用 ``channel.get_batch(batch_weight, queue_name="default", async_op=False)`` 一次获取多个数据。
 
-- The ``ChannelWorker`` repeatedly dequeues items from the queue, summing their weight values.  
-- Once the accumulated weight reaches or exceeds ``batch_weight``, it stops.  
-- All dequeued items are combined into a list and sent to the requesting worker in one message.
+- ``ChannelWorker`` 会不断从队列中取出数据项，并累加其权重值。  
+- 当累计权重达到或超过 ``batch_weight`` 时，停止取数。  
+- 所有取出的数据项会组合成一个列表，并通过一次消息发送给请求的 Worker。  
 
-This feature is useful for dynamically forming batches of experiences or workers to process, where each item has a cost or size (the weight) and you want to process roughly uniform batch sizes. 
+该功能适合在处理体验或任务时动态形成批次，  
+当每个数据项有不同的开销或大小（权重）时，可以保证批次大致均匀。  
 
-Load Balancing
+
+负载均衡
 --------------
 
-During the Rollout stage, trajectories often vary significantly in length. If these are distributed to each data parallel (DP) training group without any design, it can result in severe load imbalance.
+在 Rollout 阶段，轨迹长度往往差异较大。  
+如果不加设计地直接分配到各个数据并行（DP）训练组，会导致严重的负载不均。
 
-To address this issue, we implement a channel-based load balancing mechanism. Specifically, all generators in the generation stage sequentially ``put`` complete rollout trajectories into a shared ``rollout_output_queue``. 
-Since the trajectories are inserted in temporal order, the sequence lengths in the ``rollout_output_queue`` tend to grow over time.
+为了解决这一问题，我们实现了基于 channel 的负载均衡机制。  
+具体来说，生成阶段的所有生成器会依次将完整的 rollout 轨迹 ``put`` 到共享的 ``rollout_output_queue`` 中。  
+由于轨迹按时间顺序插入，``rollout_output_queue`` 中的序列长度会随时间逐渐增长。
 
-Using a round-robin strategy, we continuously ``get`` trajectories from the ``rollout_output_queue`` and assign them to each DP training group in turn. This method helps approximate balanced workload distribution across all training DP groups, ensuring better utilization and efficiency during training.
+然后使用轮询策略，我们不断从 ``rollout_output_queue`` 中 ``get`` 轨迹，  
+并依次分配给每个 DP 训练组。  
+这种方式能够近似实现各个 DP 训练组之间的工作量均衡，  
+从而确保训练过程中的更好利用率和效率。  
 
 
-
-Example
+示例
 --------
 
 .. autoclass:: rlinf.scheduler.channel.Channel
@@ -78,15 +87,10 @@ Example
    :no-inherited-members:
    :exclude-members: __init__, __new__
 
-Summary
+
+总结
 --------------------------------
 
-The `Channel` component offers a distributed producer-consumer queue for worker communication. 
-It wraps the collective send/recv mechanism with an intuitive interface supporting priority and batching, 
-enabling decoupled, asynchronous data flow—ideal for reinforcement learning scenarios with parallel data collection and batched consumption.
-
-
-
-
-
-
+`Channel` 组件为 Worker 通信提供了一个分布式生产者–消费者队列。  
+它在集体通信 send/recv 机制的基础上进行了封装，提供了直观的接口，支持优先级和批处理，  
+实现了解耦的、异步的数据流，非常适合在并行数据采集与批量消费的强化学习场景中使用。  

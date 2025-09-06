@@ -1,4 +1,4 @@
-Collocated Mode
+共享式模式
 ===============
 
 .. image:: ../../../_static/svg/collocate.svg
@@ -6,22 +6,22 @@ Collocated Mode
    :align: center
    :class: col-img
 
-All workers are scheduled on the *same* set of GPUs.  During any stage
-only one type of worker runs and occupies the entire devices' computation capability until that
-stage finishes. There two execution modes: residing in GPU memory simultaneously or switching residence in GPU memory with offloading/reloading.
+所有 Worker 都被调度到 **同一组** GPU 上。在任意阶段，
+只有一种类型的 Worker 运行，并占用整个设备的计算能力，直到该阶段结束。
+这里有两种执行模式：同时常驻于 GPU 内存，或者通过卸载/重新加载在 GPU 内存中切换驻留。
 
-**Pros**
+**优点**
 
-* Simple design; no complex data-dependency management.
+* 设计简单；无需复杂的数据依赖管理。
 
-**Cons**
+**缺点**
 
-* Often requiring offloading/reloading implementation for each component.
-* Long-tail latency in the rollout stage extends end2end RL training time.
+* 通常需要为每个组件实现卸载/重新加载。
+* rollout 阶段的长尾延迟会延长端到端 RL 训练时间。
 
-**Example configuration**
+**示例配置**
 
-The following is an example of placing workers. There are two nodes for this training job, each node has 8 GPUs. `actor` uses all the 16 GPUs and `rollout` also uses all the 16 GPUs:
+下面是一个 Worker 放置的示例配置。本次训练任务有两个节点，每个节点有 8 个 GPU。`actor` 使用所有 16 个 GPU，`rollout` 也使用所有 16 个 GPU：
 
 .. code:: yaml
 
@@ -31,7 +31,8 @@ The following is an example of placing workers. There are two nodes for this tra
      component_placement:
        actor,rollout: all # or 0-15
 
-Additonally, some workers support offloading to release GPUs to other workers during some time period. For example, math RL actor support some offloading options:
+另外，一些 Worker 支持卸载，以在某些时间段释放 GPU 给其他 Worker 使用。
+例如，math RL actor 支持一些卸载选项：
 
 .. code:: yaml
 
@@ -40,12 +41,14 @@ Additonally, some workers support offloading to release GPUs to other workers du
      offload_weight: True
      offload_grad: True
 
-If offloading is enabled for actor, the actor is loaded into GPU memory before it runs, then it is offloaded into CPU memory after it finishes its execution. If offloading is not enabled, the collocated workers (assuming workers run on GPUs) will compete for GPU memory, which may lead to OOM error. 
-Refer to :doc:`../user/yaml` for the complete configuration.
+如果为 actor 启用了卸载，actor 会在运行前被加载到 GPU 内存中，运行结束后再被卸载到 CPU 内存。
+如果没有启用卸载，共享式的 Worker（假设运行在 GPU 上）会争夺 GPU 内存，可能导致 OOM 错误。
+完整配置请参考 :doc:`../user/yaml`。
 
-**ComponentPlacement programming**
+**ComponentPlacement 编程**
 
-Given the above placement configuration, users can use proper `ComponentPlacement` class to parse the configuration and enforce the placement to the workers as below.
+基于以上的放置配置，用户可以使用合适的 `ComponentPlacement` 类来解析配置，
+并将放置策略应用到 Worker，如下所示：
 
 .. code:: python
 
@@ -59,5 +62,7 @@ Given the above placement configuration, users can use proper `ComponentPlacemen
         placement_strategy=rollout_placement_strategy,
     )
 
-`ModelParallelComponentPlacement` supports two types of placement: collocated and disaggregated. More importantly, it deals with rank arrangement that allows efficient model weight update from training to rollout. It parses the configuration and generates placements for different components. The generated placement is then enforced during worker launching.
-Refer to `Math RL training python script <https://github.com/RLinf/RLinf/blob/main/examples/math/main_math.py>`_ for the complete code.
+`ModelParallelComponentPlacement` 支持两种放置方式：共享式和分离式。
+更重要的是，它会处理 rank 的排列，从而实现从训练到 rollout 的高效模型权重更新。
+它会解析配置并为不同组件生成放置策略。生成的放置策略会在 Worker 启动时生效。
+完整代码请参考 `Math RL 训练代码 <https://github.com/RLinf/RLinf/blob/main/examples/math/main_math.py>`_。

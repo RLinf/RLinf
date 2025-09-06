@@ -1,78 +1,73 @@
-Ray-Based Cluster Launching
+基于 Ray 的集群启动
 ===============================
 
-The **Cluster** class manages the connection to the Ray cluster and the launching of management actors and worker actors. 
-It serves as a singleton representing the entire cluster’s resources and provides methods to allocate workers on specific nodes and GPUs. 
-By encapsulating Ray initialization and node information, it simplifies distributed setup for the rest of the framework.
+**Cluster** 类负责连接 Ray 集群，并启动管理 actor 与 worker actor。  
+它作为整个集群资源的单例入口，提供了在特定节点和 GPU 上分配 worker 的方法。  
+通过封装 Ray 的初始化与节点信息，它简化了整个框架的分布式部署流程。
 
 .. note::
 
-   **Ray version requirement**: RLinf requires ``ray>=2.47.0`` (enforced at import time).  
-   Do **not** call ``ray.init`` before creating a :class:`Cluster`; premature initialization can interfere with the namespace and logging configuration.
-   
-Initialization and Ray Setup
+   **Ray 版本要求**：RLinf 需要 ``ray>=2.47.0`` （在导入时强制检查）。  
+   请 **不要** 在创建 :class:`Cluster` 之前调用 ``ray.init`` ，  
+   否则可能会破坏命名空间和日志配置。
+
+初始化与 Ray 设置
 ----------------------------
 
-When a `Cluster` object is created, it performs the following steps in its initialization:
+当创建一个 `Cluster` 实例时，其初始化过程包括以下步骤：
 
-- **Ray Initialization** : If Ray is not already started, it calls `ray.init()` with the namespace `Cluster.NAMESPACE`. 
+- **Ray 初始化**：如果 Ray 尚未启动，将使用命名空间 `Cluster.NAMESPACE` 调用 `ray.init()`。
 
-- **Waiting for Nodes** : After Ray initialization, `Cluster` waits until the expected number of nodes (`num_nodes`) have registered with Ray. 
+- **等待节点就绪**：Ray 初始化后，`Cluster` 会等待 `num_nodes` 个节点在 Ray 中注册完成。
 
-- **Gathering Node Information** : Once the nodes are ready, `Cluster` constructs a list of `NodeInfo` objects (Ray ID, IP, CPU and GPU counts).
-  The 'master' node is placed first; remaining nodes are sorted by IP.
+- **收集节点信息**：节点就绪后，`Cluster` 会构造一个 `NodeInfo` 列表（包含 Ray ID、IP、CPU 和 GPU 数量）。  
+  “主节点”排在列表首位，其余节点按 IP 排序。
 
-- **Master Address and Port** : The master node's IP is stored and a free TCP port is chosen for collective communications. 
+- **主地址与端口**：记录主节点的 IP，并选择一个空闲的 TCP 端口用于集体通信。
 
-- **Global Manager Actors** : A key part of initialization is launching three singleton manager actors:
+- **全局管理器 actor**：初始化阶段还会启动三个全局管理器 actor：
 
-  * `WorkerManager` : tracks every worker's metadata.  
-  * `CollectiveManager` : stores collective-group information, including
-    rendezvous ports.  
-  * `NodeManager` : provides node layout (IP, GPU count, master port) to workers.
+  * `WorkerManager`：追踪每个 worker 的元信息  
+  * `CollectiveManager`：存储集体组信息，包括通信端口等  
+  * `NodeManager`：为 workers 提供节点布局（IP、GPU 数、主端口）
 
-
-Using Cluster to Allocate Workers
+使用 Cluster 分配 Worker
 -----------------------------------
 
-``Cluster.allocate()`` starts a Ray actor of class ``cls`` on a **specific node** with a controlled runtime environment:
+``Cluster.allocate()`` 会在 **指定节点** 上以受控环境启动一个 Ray actor：
 
 .. code-block:: python
 
    handle = Cluster.allocate(
-       cls,            # The actor class to launch
-       worker_name,    # A unique, human-readable name for the actor
-       node_id,        # Index into Cluster's node list (0 is master)
-       gpu_id,         # Local GPU index on that node (used for env isolation)
-       env_vars,       # Dict of environment variables for this actor (e.g., CUDA_VISIBLE_DEVICES)
-       cls_args=[],    # Positional args to the actor's constructor
-       cls_kwargs={},  # Keyword args to the actor's constructor
+       cls,            # 要启动的 actor 类
+       worker_name,    # 该 actor 的唯一可读名称
+       node_id,        # 节点在 Cluster 列表中的索引（0 表示主节点）
+       gpu_id,         # 节点内的本地 GPU 编号（用于隔离）
+       env_vars,       # 该 actor 的环境变量（如 CUDA_VISIBLE_DEVICES）
+       cls_args=[],    # 传给构造函数的位置参数
+       cls_kwargs={},  # 传给构造函数的关键字参数
    )
 
-What it does:
+该方法执行以下操作：
 
-- Validates ``node_id`` and ``gpu_id`` against discovered topology.
+- 验证 ``node_id`` 与 ``gpu_id`` 是否存在于已发现的集群拓扑中。
+- 使用 ``ray.remote(cls)`` 包装传入的类。
+- 应用如下运行配置：
 
-- Wraps ``cls`` via ``ray.remote(cls)``.
+  - ``runtime_env={"env_vars": env_vars}`` （传递变量如 ``CUDA_VISIBLE_DEVICES``、``rank`` 等）
+  - ``name=worker_name`` （使 actor 可通过名称发现）
+  - ``scheduling_strategy=NodeAffinitySchedulingStrategy(node_id=<Ray NodeID>, soft=False)``  
+    （将 actor 固定调度到指定的 **物理节点**）
 
-- Applies options:
+最后，调用 ``.remote(*cls_args, **cls_kwargs)`` 异步启动 actor，并返回该 actor 的句柄。
 
-  - ``runtime_env={"env_vars": env_vars}`` (propagates variables like ``CUDA_VISIBLE_DEVICES``, ``rank``... )
+连接已有集群
+----------------------------
 
-  - ``name=worker_name`` (makes the actor discoverable by name)
+当不带参数创建 ``Cluster`` 时，它会自动附着到当前运行的集群：
 
-  - ``scheduling_strategy=NodeAffinitySchedulingStrategy(node_id=<Ray NodeID>, soft=False)`` (pins the actor to the requested **physical node**)
-
-Finally, it invokes ``.remote(*cls_args, **cls_kwargs)`` to launch the actor asynchronously and returns the actor handle.
-
-
-Attaching to an Existing Cluster
---------------------------------
-
-When a ``Cluster`` is created without arguments, it attaches to the running cluster:
-
-- Ensures Ray is initialized with ``address="auto"`` and the known namespace.
-- Retrieves the existing managers and shared state from ``NodeManager``:
+- 确保 Ray 以 ``address="auto"`` 和指定命名空间初始化；
+- 从 ``NodeManager`` 获取现有管理器与共享状态：
 
   .. code-block:: python
 
@@ -83,13 +78,13 @@ When a ``Cluster`` is created without arguments, it attaches to the running clus
      self._master_port      = self._node_manager.get_master_port()
      self._num_gpus_per_node= self._node_manager.get_num_gpus_per_node()
 
-This guarantees that every process using the same namespace observes the same cluster view.
+这可以确保所有使用相同命名空间的进程观察到相同的集群视图。
 
-
-Summary
+总结
 -------
 
-The `Cluster` singleton centralizes Ray initialization, node discovery, and manager-actor lifecycle under a stable namespace.  
-Driver code initializes once (launching managers and selecting a master), while subsequent processes simply attach and retrieve the shared view.  
-With ``allocate()``, users can reliably place actors on specific nodes and set the environment variables accordingly, 
-keeping distributed orchestration predictable and consistent across the framework.
+`Cluster` 单例统一管理 Ray 初始化、节点发现、以及管理器 actor 生命周期，并维持在一个稳定命名空间下。  
+主驱动程序只需初始化一次（启动管理器、选定主节点），  
+后续所有进程只需附着连接，并共享该集群视图。  
+通过 ``allocate()`` 方法，用户可以可靠地将 actor 安置在指定节点，并设置其环境变量，  
+从而在整个框架中保持分布式调度的稳定性与一致性。

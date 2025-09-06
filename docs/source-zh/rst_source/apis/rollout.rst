@@ -1,10 +1,9 @@
-Rollout Interface
+Rollout 接口
 =================
 
-This section provides the key APIs of the **Rollout** classes in the RLinf framework.  
-It includes implementations based on both **SGLang** and **Hugging Face** backends.  
-For SGLang, we provide two designs: one based on synchronous execution and another based on asynchronous execution.
-
+本节介绍 RLinf 框架中 **Rollout** 类的关键 API。  
+它包含基于 **SGLang** 和 **Hugging Face** 后端的实现。  
+对于 SGLang，我们提供了两种设计：一种基于同步执行，另一种基于异步执行。  
 
 SGLang
 ---------

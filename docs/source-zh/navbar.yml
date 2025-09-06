@@ -1,13 +1,13 @@
 - file: rst_source/quickstart
-  title: "Quickstart"
+  title: "快速开始"
 - file: rst_source/tutorials/index
-  title: "Tutorials"
+  title: "教程"
 - file: rst_source/examples/index
-  title: "Example Gallery"
+  title: "示例库"
 - file: rst_source/blog/index
-  title: "Blog"
+  title: "博客"
 - file: rst_source/apis/index
-  title: "APIs"
+  title: "API手册"
 - file: rst_source/faq
-  title: "FAQs"
+  title: "常见问题"
 

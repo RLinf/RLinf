@@ -1,129 +1,103 @@
-Worker-Based Programming Interface
+基于 Worker 的编程接口
 ===================================
 
-In this section, we introduce the most fundamental components of the RLinf framework — **Worker** and **WorkerGroup** — 
-the building blocks upon which the entire framework is constructed.
-
-
-.. The **Worker** module defines the primary abstractions for distributed workers and their identification within a hierarchy of worker groups. 
-.. It provides classes to represent worker information, address workers in a group structure, and manage the execution context of Workers.
-.. This module also includes **WorkerGroup** for launching and managing groups of Workers collectively.
-
+本节介绍 RLinf 框架中最基本的组件 —— **Worker** 和 **WorkerGroup**，它们是构建整个框架的基石。
 
 Worker 
 ------------
 
-A **Worker** represents a single remote process or computational unit.  
-By inheriting from :class:`Worker`, a worker or processor class gains the ability to:
+一个 **Worker** 表示一个远程进程或计算单元。  
+通过继承 :class:`Worker`，一个 Worker 或处理器类将具备以下能力：
 
-- Run remotely across nodes in a distributed environment.
+- 在分布式环境中的多个节点上远程运行。
+- 与集群中的其他 Workers 通信。
+- 自动接收如 ``MASTER_ADDR``、``MASTER_PORT``、``RANK``、``LOCAL_RANK`` 和 ``WORLD_SIZE`` 等必要的环境变量。
 
-- Communicate with other workers in the cluster.
-
-- Automatically receive essential environment variables such as ``MASTER_ADDR``, ``MASTER_PORT``, ``RANK``, ``LOCAL_RANK``, and ``WORLD_SIZE``.
-
-These features enable the seamless creation of process groups and simplify distributed training setup.  
-A Worker encapsulates the logic for an individual execution unit, making it easy to scale tasks across multiple GPUs and nodes.
-
-
-.. The `Worker` class encapsulates a remote or local unit of computation. In a Ray-based setup, each `Worker` typically runs as a Ray actor on a specific node and GPU. 
-
-.. **Initialization**  
-.. - **Environment Variables and Context**: When a `Worker` actor is created, Ray injects environment variables such as `RANK`, `WORLD_SIZE`, `NODE_ID`, `GPU_ID`, etc. The `Worker`’s constructor uses `_env_setup_before_init()` (called in `__new__`) to read these and initialize internal fields like `_rank` (the Worker’s index in its group), `_world_size` (total Workers in the group), `_Worker_name` (string form of its address), and `_Worker_address` (the `WorkerAddress` object). If the worker is not running under Ray (e.g. spawned as a subprocess), these variables might not be set by Ray, so in such cases the code handles initialization differently (passing explicit parent address and rank to the constructor). 
-
-.. - **Ray Actor vs. Non-Actor Mode**: The `Worker` class can represent both Ray actors and regular processes. It uses an `_is_ray_actor` flag to differentiate. If running as a Ray actor, certain setup steps are performed: for example, registering signal handlers in the main thread (`_register_signal_handlers`) to log stack traces on crashes, and isolating the GPU visibility if required. The method `_setup_local_rank_world_size()` uses the provided `NODE_LOCAL_RANK` and `NODE_LOCAL_WORLD_SIZE` (or sets them) to configure local rank (which GPU index the worker should consider as device 0) and how many Workers share the node. `_setup_gpu_info()` determines which CUDA devices are available to this worker process (it queries `torch.cuda.device_count()` and collects each device’s UUID if accessible). This helps detect if two Workers share the same physical GPU, which is used later to optimize peer-to-peer communication.
-
-.. - **Manager Proxy and Collective Initialization**: Each worker needs to register itself and participate in collective operations. `_init_ray_and_proxies()` is responsible for connecting to the global coordination services. It ensures that Ray is initialized (in case the worker process was forked outside of Ray’s direct control) in the correct **namespace** (the cluster’s namespace), and obtains a proxy to the `WorkerManager` (a global manager actor). The worker then calls `WorkerManager.register_Worker` via this proxy to record its existence and `WorkerInfo` in a central registry. It also creates a `Collective` instance (`self._collective = Collective(self)`) for orchestrating distributed communications involving this worker. After this point, the worker is ready to send and receive data to/from other Workers using collective groups.
-
-.. - **Logging Setup**: The worker configures a logger with a name corresponding to its worker address (making it easier to trace messages per worker). The logging format includes the worker name, timestamps, and code location, which is helpful for debugging in a distributed context.
+这些功能使得进程组的创建变得简单，并简化了分布式训练的设置流程。  
+一个 Worker 封装了单个执行单元的逻辑，使得在多个 GPU 和节点间扩展任务变得容易。
 
 WorkerInfo 
 ~~~~~~~~~~~
 
-The `WorkerInfo` dataclass **captures key properties of a worker** at runtime. 
+`WorkerInfo` 数据类 **在运行时捕获 Worker 的关键属性**。
 
-.. It includes attributes like the Worker’s `address` (a `WorkerAddress`), its `rank` in the group, the `node_id` and `gpu_id` where it runs, the node’s IP (`node_ip`), and a list of `available_gpus` (identifiers of GPUs visible to that worker). 
-.. This structure allows convenient local access to a Worker’s metadata without needing remote calls. For example, when setting up communication, Workers can share their `WorkerInfo` so peers know each other’s locations and GPU availability.
+.. list-table:: WorkerInfo 属性说明
+   :header-rows: 1
+   :widths: 25 75
 
-+---------------------+-----------------------------------------------+
-| Attribute           | Description                                   |
-+=====================+===============================================+
-| ``address``         | WorkerAddress of the worker                   |
-+---------------------+-----------------------------------------------+
-| ``rank``            | Rank of the worker within its group           |
-+---------------------+-----------------------------------------------+
-| ``node_id``         | Identifier of the node hosting the worker     |
-+---------------------+-----------------------------------------------+
-| ``gpu_id``          | Identifier of the GPU assigned to the worker  |
-+---------------------+-----------------------------------------------+
-| ``node_ip``         | IP address of the node hosting the worker     |
-+---------------------+-----------------------------------------------+
-| ``available_gpus``  | List of CUDA device IDs available to worker   |
-+---------------------+-----------------------------------------------+
+   * - 属性
+     - 描述
+   * - ``address``
+     - Worker 的 WorkerAddress
+   * - ``rank``
+     - Worker 在其所属组内的编号（rank）
+   * - ``node_id``
+     - 承载该 Worker 的节点标识符
+   * - ``gpu_id``
+     - 分配给该 Worker 的 GPU 编号
+   * - ``node_ip``
+     - 承载该 Worker 的节点的 IP 地址
+   * - ``available_gpus``
+     - 该 Worker 可用的 CUDA 设备编号列表
+
 
 
 WorkerAddress
 ~~~~~~~~~~~~~
 
-The `WorkerAddress` class **provides a hierarchical naming scheme** for Workers. 
-It combines a root group name with an ordered path of ranks to uniquely identify a worker in a worker group structure. 
+`WorkerAddress` 类 **为 Workers 提供了层级化的命名机制**。  
+它通过将根组名与一系列 rank 路径组合在一起，为 Worker 群体中的每一个 Worker 提供唯一标识。
 
-For instance, a root worker group might be named `"Worker_group_MyWorker"`, and Workers within it have addresses like `"Worker_group_MyWorker:0"`, `"Worker_group_MyWorker:1"`, etc. 
-If those Workers spawn their own sub-Workers, additional ranks are appended (e.g. `"Worker_group_MyWorker:0:0"` for a child of rank 0). 
-The `WorkerAddress` supports operations to navigate this hierarchy: one can get a string name via `get_name()`, retrieve the parent’s rank or address (`get_parent_rank()`, `get_parent_address()`), or derive a child’s address (`get_child_address(rank)`). 
+例如，根 WorkerGroup 可能命名为 `"Worker_group_MyWorker"`，其中的 Worker 地址如 `"Worker_group_MyWorker:0"`、`"Worker_group_MyWorker:1"` 等。  
+若这些 Worker 创建了子 worker，则地址会继续追加 rank（例如 `"Worker_group_MyWorker:0:0"` 表示 rank 0 的子 worker）。  
+`WorkerAddress` 提供了一些函数用于在层级结构中导航：可通过 `get_name()` 获取字符串形式的地址，通过 `get_parent_rank()` 或 `get_parent_address()` 获取上级信息，或通过 `get_child_address(rank)` 获取某个 rank 的子地址。
 
-This address system is crucial for identifying Workers across the cluster in a nested scenario—any worker can refer to another by its address, even across different groups, enabling flexible communication patterns.
+这种地址系统在嵌套结构的集群中尤为关键 —— 任意 Worker 可通过地址引用其他 worker，即使它们不在同一个组内，从而实现灵活的通信模式。
 
-
-Communication Methods
+通信方法
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Once initialized, a `Worker` exposes high-level methods to communicate with other Workers:
+一旦初始化完成，`Worker` 提供了多个高级方法用于与其他 Worker 通信：
 
-- `send(object, dst_group_name, dst_rank, async_op=False)` and the counterpart `recv(src_group_name, src_rank, async_op=False)` allow transferring arbitrary Python objects or tensors between Workers. 
-  Under the hood, these calls construct a `WorkerAddress` for the peer and use an appropriate collective group to perform point-to-point communication. 
+- `send(object, dst_group_name, dst_rank, async_op=False)` 和 `recv(src_group_name, src_rank, async_op=False)` 可实现任意 Python 对象或张量的传输。  
+  底层通过构造 `WorkerAddress` 并使用合适的 collective group 执行点对点通信。
 
-- Optimized tensor operations: `send_tensor(tensor, dst_group_name, dst_rank, async_op=False)` and `recv_tensor(tensor, src_group_name, src_rank, async_op=False)` are specialized for sending a single tensor efficiently. 
-  They avoid sending extra metadata about tensor shapes and types by assuming the receiver is already prepared with a correctly sized tensor buffer. 
+- 针对张量传输进行了优化：`send_tensor(tensor, dst_group_name, dst_rank, async_op=False)` 和 `recv_tensor(tensor, src_group_name, src_rank, async_op=False)` 提供了高效传输单个张量的能力。  
+  由于假设接收端已准备好合适尺寸的缓冲区，因此可避免发送额外的张量形状和类型信息。
 
-The `Worker` does not handle communication directly; instead, it delegates the actual communication to a `CollectiveGroup`.  
-See :ref:`collectivegroup_p2p` for more details.
+`Worker` 本身并不直接处理通信，而是将通信委托给 `CollectiveGroup`。  
+详细内容请见 :ref:`collectivegroup_p2p`。
 
-.. These should not be mixed with the generic send/recv in the same pairing, as the protocols differ (the generic send transmits type information first, whereas `send_tensor` does not).
+除了点对点通信外，`Worker` 还支持用于 Worker 间数据交换的 **通道（Channel）** 接口，这是一种先进先出（FIFO）的队列机制：
 
+- 使用 `create_channel(name, group_affinity=None, group_rank_affinity=None, maxsize=0)` 创建新通道，  
+  使用 `connect_channel(name)` 允许其他 Worker 按名称连接到已存在的通道。
 
+- 一旦连接成功，可通过 `put()`、`get()` 和 `get_batch()` 等方法存入或提取数据。
 
-In addition to pairwise communications, the `Worker` also provides an interface for **Channels**, which are FIFO queues for exchanging data between Workers:
-
-- `create_channel(name, group_affinity=None, group_rank_affinity=None, maxsize=0)` sets up a new channel. 
-  `connect_channel(name)` allows other Workers to connect to an existing channel by name. 
-  
-- Once a channel is connected, data can be stored and retrieved through it using methods such as `put()`, `get()`, and `get_batch()`.
-
-These channel methods show how Workers coordinate higher-level workflows: 
-the actual data transfer in channels still relies on the Worker’s `send` and `recv` methods, 
-while the channel abstraction takes care of queuing data and controlling the flow (see :doc:`../communication/channel` for details).
+这些通道方法展示了 Worker 如何协调更高级别的工作流程：  
+通道的数据传输仍然基于 Worker 的 `send` 和 `recv` 方法完成，  
+而通道的抽象则管理队列行为和流量控制（详细内容见 :doc:`../communication/channel`）。
 
 
 
 WorkerGroup
 ------------
 
-`WorkerGroup` is a utility for creating and managing a collection of Workers of the same type. 
-It simplifies the process of launching multiple Workers across the cluster and executing methods on them in parallel. Key aspects of `WorkerGroup` include:
+`WorkerGroup` 是一个用于创建和管理一组同类 Worker 的工具类。  
+它简化了在集群中启动多个 Worker 并在其上并行执行方法的流程。其核心特性包括：
 
-- **Group Creation**: Calling `MyWorker.create_group().launch(cluster, placement)` creates a group of `MyWorker` instances on the cluster's resources.  
-  The placement strategy defines how many workers are launched and the specific node/GPU each will occupy (see :doc:`placement` for details).  
-  During this process, the environment variables required for distributed execution are set automatically, 
-  and `Cluster.allocate(...)` is invoked to start each Ray actor on the designated node and GPU with those variables.
+- **组创建**：通过 `MyWorker.create_group().launch(cluster, placement)` 可在集群资源上创建一组 `MyWorker` 实例。  
+  placement 策略定义了启动的 Worker 数量以及它们分配到的具体节点/GPU（详见 :doc:`placement`）。  
+  在这一过程中，所需的环境变量将自动设置，  
+  并调用 `Cluster.allocate(...)` 以使用这些变量在指定节点和 GPU 上启动每个 Ray actor。
 
-- **Collective Execution of Methods**: One powerful feature of `WorkerGroup` is the ability to call a method on all Workers as if it were a single call. 
-  After creating the group, the `WorkerGroup` instance dynamically attaches all the methods of the underlying `Worker` class onto itself. 
-  When you call one of these methods on the `WorkerGroup`, it will internally invoke that method on each worker in parallel (via Ray remote calls). 
+- **方法的并行执行**：`WorkerGroup` 的强大之处在于可以像调用一个函数那样一次性在所有 workers 上调用同一个方法。  
+  创建 group 后，`WorkerGroup` 会自动绑定底层 `Worker` 类中的所有方法。  
+  当你调用其中一个方法时，它将在所有 Worker 上并行执行该方法（通过 Ray 的远程调用实现）。
 
-.. - **Selective Execution**: By default, the proxy methods execute on all Workers in the group. However, you can restrict execution to a subset of worker ranks by using `WorkerGroup.execute_on(ranks)`. Calling this will make the next method invocation apply only to the specified ranks, after which the WorkerGroup resets to broadcasting to all ranks. This is useful for scenarios where only one worker (e.g., rank 0) should perform a certain operation or when splitting work among different subsets of Workers.
 
-Example
+示例
 --------
 
 .. autoclass:: rlinf.scheduler.worker.worker.Worker
@@ -132,12 +106,12 @@ Example
    :exclude-members: __init__, __new__
    :noindex:
 
-Summary
+总结
 --------
 
-In summary, the **Worker** module provides the foundation for distributed execution. 
-`WorkerAddress` gives each worker a unique identity in a potentially nested group structure, 
-`WorkerInfo` holds runtime metadata, 
-and the `Worker` class manages the lifecycle of each distributed worker. On top of this, 
-`WorkerGroup` groups multiple Workers, handling their placement and collective method execution. 
-These abstractions hide much of the Ray-specific details and low-level environment setup, allowing users to focus on the higher-level logic of their distributed reinforcement learning algorithm.
+总而言之，**Worker** 模块是分布式执行的基础。  
+`WorkerAddress` 为每个 Worker 提供唯一标识，支持嵌套结构；  
+`WorkerInfo` 保存运行时的元信息；  
+`Worker` 类管理每个分布式 Worker 的生命周期。  
+在此之上，`WorkerGroup` 可创建并管理多个 worker，负责其 placement 及方法的并行执行。  
+这些抽象隐藏了大量与 Ray 和底层环境设置相关的细节，使用户可以更专注于构建高层的分布式强化学习算法逻辑。

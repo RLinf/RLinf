@@ -1,95 +1,95 @@
-Comparison with VeRL
+与 VeRL 的对比
 =======================
 
-Last updated: 08/04/2025.
+最后更新：08/04/2025。
 
-This document provides a comprehensive guide for benchmarking VeRL, including environment setup, configuration options, and performance results.
-VeRL is a high-performance framework for training large language models using reinforcement learning techniques (GRPO, PPO, etc.).
-However, VeRL currently supports only the collocated mode, so we compare it with RLinf in collocated mode as well to ensure a fair evaluation.
+本文档提供了针对 VeRL 的完整基准测试指南，包括环境搭建、配置项说明与性能结果。  
+VeRL 是一个用于通过强化学习（GRPO、PPO 等）训练大语言模型的高性能框架。  
+但目前 VeRL 仅支持 **共享式（collocated）** 模式，因此为公平起见，我们也在 **共享式** 模式下与 RLinf 进行对比。
 
-Environment Setup
+环境搭建
 ------------------
 
-For streamlined deployment, we recommend using Docker images for training setup. This approach ensures consistent environments and reduces configuration complexity.
-For detailed environment configuration and alternative installation methods, please refer to the `VeRL documentation <https://verl.readthedocs.io/en/latest/start/install.html>`_.
+为便于部署，推荐使用 Docker 镜像进行训练环境搭建。该方式能确保环境一致性并降低配置复杂度。  
+更详细的环境配置及其他安装方式，请参考 `VeRL 文档 <https://verl.readthedocs.io/en/latest/start/install.html>`_。
 
-Community Image
+社区镜像
 ~~~~~~~~~~~~~~~
 
-VeRL provides several pre-built Docker images optimized for different inference backends and training configurations:
+VeRL 提供了多种预构建的 Docker 镜像，面向不同的推理后端与训练配置进行了优化：
 
-- vLLM with FSDP and Megatron: ``verlai/verl:app-verl0.4-vllm0.8.5-mcore0.12.1``, with Deep-EP support: ``verlai/verl:app-verl0.4-vllm0.8.5-mcore0.12.1-deepep``.
-- SGLang with FSDP and Megatron: ``verlai/verl:app-verl0.4-sglang0.4.6.post5-vllm0.8.5-mcore0.12.1`` (need vLLM support, but can have some package conflicts), with Deep-EP support: ``verlai/verl:app-verl0.4-sglang0.4.6.post5-vllm0.8.5-mcore0.12.1-deepep``.
-- Preview version of SGLang with FSDP and Megatron, CUDA 12.6: ``verlai/verl:app-verl0.5-sglang0.4.8-mcore0.12.1``
-- Preview version of SGLang with FSDP and Megatron, CUDA 12.8: ``verlai/verl:app-preview-verl0.5-sglang0.4.8-mcore0.12.1``
+- vLLM + FSDP + Megatron：``verlai/verl:app-verl0.4-vllm0.8.5-mcore0.12.1``，带 Deep-EP 支持：``verlai/verl:app-verl0.4-vllm0.8.5-mcore0.12.1-deepep``。  
+- SGLang + FSDP + Megatron：``verlai/verl:app-verl0.4-sglang0.4.6.post5-vllm0.8.5-mcore0.12.1`` （需要 vLLM 支持，但可能存在包冲突），带 Deep-EP 支持：``verlai/verl:app-verl0.4-sglang0.4.6.post5-vllm0.8.5-mcore0.12.1-deepep``。  
+- SGLang + FSDP + Megatron 预览版，CUDA 12.6：``verlai/verl:app-verl0.5-sglang0.4.8-mcore0.12.1``  
+- SGLang + FSDP + Megatron 预览版，CUDA 12.8：``verlai/verl:app-preview-verl0.5-sglang0.4.8-mcore0.12.1``
 
-Docker Installation and Setup
+Docker 安装与启动
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Follow these steps to set up your VeRL environment using Docker:
+按照以下步骤基于 Docker 搭建 VeRL 环境：
 
-**1. Launch Docker Container**
+**1. 启动容器**
 
 .. code-block:: bash
 
-    # Create and start the container with GPU support
+    # 创建并以 GPU 支持启动容器
     docker create --runtime=nvidia --gpus all --net=host --shm-size="10g" \
         --cap-add=SYS_ADMIN -v .:/workspace/verl --name verl <image:tag> sleep infinity
     docker start verl
     docker exec -it verl bash
 
-**2. Install VeRL Framework**
+**2. 安装 VeRL 框架**
 
-For pre-built images, install only VeRL without dependencies:
+对于预构建镜像，只需安装 VeRL 本体（不装依赖）：
 
 .. code-block:: bash
 
-    # Install the nightly version (recommended for latest features)
+    # 安装 nightly 版本（推荐，功能更新更快）
     git clone https://github.com/volcengine/verl && cd verl
     pip3 install --no-deps -e .
 
-Dataset Preparation
+数据集准备
 -------------------
 
-VeRL requires datasets in Parquet format with a specific schema. The framework expects structured data that includes prompts, ground truth information, and metadata for reward modeling.
+VeRL 需要 **Parquet** 格式的数据集，并满足特定 schema。框架期望结构化数据，包含 prompt、标准答案信息以及用于奖励建模的元数据。
 
-**Required Data Format:**
+**必需的数据格式：**
 
 .. code-block:: python
 
     data = {
-        "data_source": data_source,           # Source identifier for the dataset
-        "prompt": [                           # Conversation format prompt
+        "data_source": data_source,           # 数据来源标识
+        "prompt": [                           # 对话格式的 prompt
             {
                 "role": "user",
-                "content": question,          # The actual question/prompt
+                "content": question,          # 实际问题 / 提示
             }
         ],
-        "ability": "math",                    # Task category (e.g., "math", "coding", "reasoning")
-        "reward_model": {                     # Reward model configuration
-            "style": "rule",                  # Reward calculation method
-            "ground_truth": solution          # Expected correct answer
+        "ability": "math",                    # 任务类别（如 "math"、"coding"、"reasoning"）
+        "reward_model": {                     # 奖励模型配置
+            "style": "rule",                  # 奖励计算方式
+            "ground_truth": solution          # 期望的正确答案
         },
-        "extra_info": {                       # Additional metadata
-            "split": split,                   # Dataset split (train/val/test)
-            "index": idx,                     # Sample index
-            "answer": answer_raw,             # Raw answer
-            "question": question_raw,         # Original question text
+        "extra_info": {                       # 额外元信息
+            "split": split,                   # 数据集划分（train/val/test）
+            "index": idx,                     # 样本索引
+            "answer": answer_raw,             # 原始答案
+            "question": question_raw,         # 原始问题文本
         },
     }
 
-**Data Conversion Tips:**
+**数据转换提示：**
 
-- Convert your existing datasets to this format
-- Ensure all required fields are present
-- Validate data types and formats before training
+- 将你已有的数据集转换为上述格式；  
+- 确保所有必需字段齐全；  
+- 训练前校验字段类型与格式。
 
-Configuration
+配置
 -------------
 
-VeRL and our framework have many differences in parameter configuration. Here we provide an example and explain the meaning of some configurations.
+VeRL 与我们的框架在参数配置上有不少差异。下面给出一个示例，并解释部分配置项含义。
 
-Bash example
+Bash 示例
 ~~~~~~~~~~~~
 
 .. code-block:: bash
@@ -150,147 +150,141 @@ Bash example
         trainer.test_freq=-1 \
         trainer.total_epochs=15000 $@
 
-Parameter Categories and Explanations
+参数类别与说明
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Batch Size Configuration
+批量大小（Batch Size）配置
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
-These parameters control how data flows through the training pipeline:
+以下参数决定了数据在训练流水线中的流动方式：
 
-- ``data.train_batch_size``: **Global training batch size** - The global number of prompts processed in one training iteration across all GPUs
-- ``actor_rollout_ref.actor.ppo_mini_batch_size``: **PPO mini-batch size** - The global number of prompts used for each gradient update step within a training iteration across all GPUs
-- ``actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu``: **Actor micro-batch size** - Batch size of samples for one forward_backward pass per GPU
-- ``actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu``: **Reference model micro-batch size** - Batch size of samples for reference model log prob calculations per GPU
-- ``actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu``: **Rollout micro-batch size** - Batch size of samples for rollout phase log prob calculations per GPU
+- ``data.train_batch_size``：**全局训练批量** —— 单次训练迭代在所有 GPU 上合计处理的 prompt 数量  
+- ``actor_rollout_ref.actor.ppo_mini_batch_size``：**PPO mini-batch** —— 单次迭代内、每次梯度更新所用的全局 prompt 数量  
+- ``actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu``：**Actor micro-batch** —— 每张 GPU 上单次正反传处理的样本数  
+- ``actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu``：**Reference micro-batch** —— 参考模型 log prob 计算的每 GPU 样本数  
+- ``actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu``：**Rollout micro-batch** —— rollout 阶段 log prob 计算的每 GPU 样本数  
 
-**Dynamic Batch Size Management:**
+**动态批量管理：**
 
-- ``actor_rollout_ref.actor.use_dynamic_bsz``: Enable dynamic batch sizing for actor training
-- ``actor_rollout_ref.actor.ppo_max_token_len_per_gpu``: Maximum token count per GPU for actor training
-- ``actor_rollout_ref.ref.log_prob_use_dynamic_bsz``: Enable dynamic batch sizing for reference model computations
-- ``actor_rollout_ref.ref.log_prob_max_token_len_per_gpu``: Maximum token count per GPU for reference log prob calculations
-- ``actor_rollout_ref.rollout.log_prob_use_dynamic_bsz``: Enable dynamic batch sizing for rollout log prob calculations
-- ``actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu``: Maximum token count per GPU for rollout phase
+- ``actor_rollout_ref.actor.use_dynamic_bsz``：启用 Actor 训练的动态批量  
+- ``actor_rollout_ref.actor.ppo_max_token_len_per_gpu``：Actor 训练每 GPU 的最大 token 数  
+- ``actor_rollout_ref.ref.log_prob_use_dynamic_bsz``：启用参考模型计算的动态批量  
+- ``actor_rollout_ref.ref.log_prob_max_token_len_per_gpu``：参考模型 log prob 每 GPU 的最大 token 数  
+- ``actor_rollout_ref.rollout.log_prob_use_dynamic_bsz``：启用 rollout 计算的动态批量  
+- ``actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu``：rollout 阶段每 GPU 的最大 token 数
 
-FSDP (Fully Sharded Data Parallel) Configuration
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FSDP（Fully Sharded Data Parallel）配置
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-FSDP enables training of large models by sharding parameters across multiple GPUs:
+FSDP 通过在多张 GPU 上分片参数，支持大模型训练：
 
-- ``actor_rollout_ref.model.use_remove_padding``: **Remove padding optimization** - Eliminates padding tokens to improve computational efficiency and reduce memory usage
-- ``actor_rollout_ref.actor.ulysses_sequence_parallel_size``: **Sequence parallelism size** - Number of GPUs to split sequence dimensions across 
-- ``actor_rollout_ref.model.enable_gradient_checkpointing``: **Gradient checkpointing** - Trade computation for memory by recomputing activations during backward pass
+- ``actor_rollout_ref.model.use_remove_padding``：**移除 padding 优化** —— 去除 padding token，提升效率并降低显存占用  
+- ``actor_rollout_ref.actor.ulysses_sequence_parallel_size``：**Sequence 并行规模** —— 将序列维度划分到多少张 GPU  
+- ``actor_rollout_ref.model.enable_gradient_checkpointing``：**梯度检查点** —— 以计算换显存，反向阶段重算激活
 
-**Memory Optimization Options:**
+**内存优化选项：**
 
-- ``actor_rollout_ref.ref.fsdp_config.param_offload``: Offload reference model parameters to CPU memory 
-- ``actor_rollout_ref.actor.fsdp_config.param_offload``: Offload actor model parameters to CPU memory
-- ``actor_rollout_ref.actor.fsdp_config.optimizer_offload``: Offload optimizer states to CPU memory
+- ``actor_rollout_ref.ref.fsdp_config.param_offload``：将参考模型参数 offload 到 CPU  
+- ``actor_rollout_ref.actor.fsdp_config.param_offload``：将 Actor 模型参数 offload 到 CPU  
+- ``actor_rollout_ref.actor.fsdp_config.optimizer_offload``：将优化器状态 offload 到 CPU
 
-Model and Algorithm Configuration
+模型与算法配置
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-- ``actor_rollout_ref.model.path``: **Base model path** - HuggingFace model path or local directory containing the pre-trained model
-- ``actor_rollout_ref.actor.optim.lr``: **Learning rate** - Learning rate for the optimizer
-- ``algorithm.adv_estimator``: **Advantage estimator** - Algorithm type, support ``["gae", "grpo", "reinforce_plus_plus", "reinforce_plus_plus_baseline", "rloo"]``
+- ``actor_rollout_ref.model.path``：**基础模型路径** —— HuggingFace 路径或本地预训练模型目录  
+- ``actor_rollout_ref.actor.optim.lr``：**学习率**  
+- ``algorithm.adv_estimator``：**优势估计器** —— 支持 ``["gae", "grpo", "reinforce_plus_plus", "reinforce_plus_plus_baseline", "rloo"]``
 
-**KL Divergence and Regularization:**
+**KL 与正则化：**
 
-- ``actor_rollout_ref.actor.use_kl_loss``: Enable KL divergence loss to prevent the model from deviating too far from the reference policy
-- ``actor_rollout_ref.actor.kl_loss_coef``: KL loss coefficient 
-- ``actor_rollout_ref.actor.kl_loss_type``: Type of KL loss computation ``["kl (k1)", "abs", "mse (k2)", "low_var_kl (k3)", "full"]``
-- ``actor_rollout_ref.actor.entropy_coeff``: Entropy coefficient for exploration 
+- ``actor_rollout_ref.actor.use_kl_loss``：启用 KL 损失以约束策略偏移  
+- ``actor_rollout_ref.actor.kl_loss_coef``：KL 系数  
+- ``actor_rollout_ref.actor.kl_loss_type``：KL 计算方式 ``["kl (k1)", "abs", "mse (k2)", "low_var_kl (k3)", "full"]``  
+- ``actor_rollout_ref.actor.entropy_coeff``：探索用熵系数
 
-Rollout and Inference Configuration
+Rollout 与推理配置
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-- ``actor_rollout_ref.rollout.name``: **Inference backend** - Include ``["hf", "sglang", "vllm]"`` 
-- ``actor_rollout_ref.rollout.tensor_model_parallel_size``: **Tensor parallelism** - TP size for rollout. Only effective for vllm
-- ``actor_rollout_ref.rollout.gpu_memory_utilization``: **GPU memory usage** - Fraction of GPU memory to use for inference 
-- ``actor_rollout_ref.rollout.n``: **Samples per prompt** - Number of responses to generate for each prompt during rollout
+- ``actor_rollout_ref.rollout.name``：**推理后端** —— 可选 ``["hf", "sglang", "vllm]"``  
+- ``actor_rollout_ref.rollout.tensor_model_parallel_size``：**张量并行（TP）规模** ——（仅 vLLM 生效）  
+- ``actor_rollout_ref.rollout.gpu_memory_utilization``：**GPU 显存占比** —— 推理阶段使用的显存比  
+- ``actor_rollout_ref.rollout.n``：**每个 prompt 的采样数** —— rollout 时每个 prompt 生成的响应数量
 
-**Generation Parameters:**
+**生成相关参数：**
 
-- ``actor_rollout_ref.rollout.temperature``: Controls randomness in generation 
-- ``actor_rollout_ref.rollout.top_k``: Top-k sampling parameter 
-- ``actor_rollout_ref.rollout.top_p``: Top-p sampling parameter
+- ``actor_rollout_ref.rollout.temperature``：随机性控制  
+- ``actor_rollout_ref.rollout.top_k``：Top-k 采样  
+- ``actor_rollout_ref.rollout.top_p``：Top-p 采样
 
-Training Control Parameters
+训练控制参数
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-- ``trainer.logger``: **Logging backends** - Available options: ``["wandb", "mlflow", "swanlab", "vemlp_wandb", "tensorboard", "console", "clearml"]``
-- ``trainer.project_name``: Project name for experiment tracking
-- ``trainer.experiment_name``: Specific experiment identifier
-- ``trainer.n_gpus_per_node``: Number of GPUs per compute node
-- ``trainer.nnodes``: Number of compute nodes in the cluster
-- ``trainer.total_epochs``: Maximum number of training epochs
-- ``trainer.save_freq``: Model checkpoint saving frequency (every N steps)
-- ``trainer.test_freq``: Validation frequency (-1 disables periodic validation)
-  
-Multi-Node Training Setup
+- ``trainer.logger``：**日志后端** —— 可选 ``["wandb", "mlflow", "swanlab", "vemlp_wandb", "tensorboard", "console", "clearml"]``  
+- ``trainer.project_name``：实验追踪项目名  
+- ``trainer.experiment_name``：具体实验名  
+- ``trainer.n_gpus_per_node``：单节点 GPU 数  
+- ``trainer.nnodes``：集群节点数  
+- ``trainer.total_epochs``：最大训练 epoch 数  
+- ``trainer.save_freq``：保存检查点的步频（每 N 步）  
+- ``trainer.test_freq``：验证频率（-1 表示关闭周期验证）
+
+多节点训练
 -------------------------
 
-For large-scale training across multiple nodes, VeRL uses Ray for distributed coordination. This section covers cluster setup and management.
+对于多机大规模训练，VeRL 使用 Ray 进行分布式协调。本节简述集群初始化与管理。
 
-Ray Cluster Initialization
+Ray 集群初始化
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**Manual Ray Setup:**
+**手动启动 Ray：**
 
-1. **Start Head Node:**
+1. **启动 Head 节点：**
    
    .. code-block:: bash
    
        ray start --head --dashboard-host=0.0.0.0
 
-2. **Start Worker Nodes:**
+2. **启动 Worker 节点：**
    
    .. code-block:: bash
    
        ray start --address=<head_node_ip:port>
 
-For detailed multi-node setup instructions, refer to the `VeRL Multi-node Documentation <https://verl.readthedocs.io/en/latest/start/multinode.html>`_.
+更详细的多节点说明，见 `VeRL 多节点部署文档 <https://verl.readthedocs.io/en/latest/start/multinode.html>`_。
 
-Automated Ray Cluster Script
+自动化 Ray 集群脚本
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Use this script for automated cluster initialization across multiple nodes:
+使用下面的脚本可在多节点上自动初始化集群：
 
 .. code-block:: bash
 
     #!/bin/bash
 
-    # Parameter validation
+    # 参数校验
     if [ -z "$RANK" ]; then
         echo "Error: RANK environment variable not set!"
         exit 1
     fi
 
-    # Configuration file path (modify according to actual requirements)
+    # 配置（按需修改）
     SCRIPT_PATH="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
     REPO_PATH=$(dirname "$SCRIPT_PATH")
     RAY_HEAD_IP_FILE=$REPO_PATH/ray_utils/ray_head_ip.txt
-    RAY_PORT=$MASTER_PORT  # Ray default port, can be modified as needed
+    RAY_PORT=$MASTER_PORT  # Ray 默认端口，可按需修改
 
-    # Head node startup logic
+    # Head 节点启动逻辑
     if [ "$RANK" -eq 0 ]; then
-        # Get local IP address (assuming internal network IP)
         IP_ADDRESS=$(hostname -I | awk '{print $1}')
-        # Start Ray head node
         echo "Starting Ray head node on rank 0, IP: $IP_ADDRESS"
         # export VLLM_ATTENTION_BACKEND=XFORMERS
         # export VLLM_USE_V1=0
         ray start --head --memory=461708984320 --port=29500
         
-        # Write IP to file
         echo "$IP_ADDRESS" > $RAY_HEAD_IP_FILE
         echo "Head node IP written to $RAY_HEAD_IP_FILE"
     else
-        # Worker node startup logic
         echo "Waiting for head node IP file..."
-        
-        # Wait for file to appear (maximum 360 seconds)
         for i in {1..360}; do
             if [ -f $RAY_HEAD_IP_FILE ]; then
                 HEAD_ADDRESS=$(cat $RAY_HEAD_IP_FILE)
@@ -312,106 +306,56 @@ Use this script for automated cluster initialization across multiple nodes:
         ray start --memory=461708984320 --address="$HEAD_ADDRESS:29500"
     fi
 
-
-Benchmark Results
+基准结果
 -----------------
 
-.. Performance evaluation of VeRL using the Boba mathematical reasoning dataset with DeepSeek-R1-Distill-Qwen-7B model. Testing conducted on July 22, 2025, using the `latest VeRL <https://github.com/volcengine/verl>`_.
 
-.. **Test Configuration:**
-.. - **VeRL Commit ID**: f252da3
-.. - **Model**: DeepSeek-R1-Distill-Qwen-7B
-.. - **Dataset**: Boba mathematical reasoning dataset
-.. - **Hardware**: 8 nodes × 8 GPUs
-.. - **Algorithm**: GRPO 
+基于 **DeepSeek-R1-Distill-Qwen-1.5B** 模型、Boba 数学推理数据集，对 **VeRL** 与 **RLinf** 在 **共享式** 模式下进行对比评测（测试日期：2025-08-04）。
 
-.. ================== ============ ========
-.. Metric             Value        Unit    
-.. ================== ============ ========
-.. generate_sequences 316.959756   seconds 
-.. reshard            4.191206     seconds 
-.. gen                325.086604   seconds 
-.. reward             5.143515     seconds 
-.. old_log_prob       21.583357    seconds 
-.. ref                20.738621    seconds 
-.. adv                0.465133     seconds 
-.. update_actor       73.008971    seconds 
-.. step               447.358303   seconds 
-.. response_length    10425.773048 tokens  
-.. save_checkpoint    6.603002     seconds 
-.. ================== ============ ========
+两者共同的关键参数如下：
 
+.. list-table:: **共同训练参数**
+   :header-rows: 1
+   :widths: 32 68
 
+   * - 参数
+     - 数值
+   * - Model
+     - DeepSeek-R1-Distill-Qwen-1.5B
+   * - Dataset
+     - Boba math reasoning dataset
+   * - Hardware
+     - 1 nodes × 8 H100 GPUs
+   * - Tensor Parallelism
+     - 2
+   * - Data Parallelism
+     - 4
+   * - Pipeline Parallelism
+     - 1
+   * - Context Length
+     - 28672
+   * - MaxPrompt Length
+     - 1024
+   * - Batch Size Per DP
+     - 128
+   * - recompute
+     - 20 blocks
 
-Performance evaluation of VeRL using the Boba mathematical reasoning dataset with DeepSeek-R1-Distill-Qwen-1.5B model. Testing conducted on Aug 4, 2025, using `VeRL <https://github.com/volcengine/verl>`_.
+下面的表格汇总了 **RLinf** 与 **VeRL** 的对比结果。  
+VeRL 测试基于 **Commit ID 8fdc4d3（v0.5.0 release）**。
 
+一般而言，时间相关指标越小越好；吞吐相关指标越大越好；响应长度通常没有绝对优劣结论。  
+表中，RLinf 相比 VeRL 的 **改进** 用 :red:`红色` 高亮，**回退** 用 :green:`绿色` 高亮。
 
-Both RLinf and VeRL are using params belows:
-
-==================== ===============================
-Params               Value
-==================== ===============================
-Model                DeepSeek-R1-Distill-Qwen-1.5B
-Dataset              Boba math reasoning dataset
-Hardware             1 nodes × 8 H100 GPUs 
-Tensor Parallelism   2
-Data Parallelism     4
-Pipeline Parallelism 1
-Context Length       28672
-MaxPrompt Length     1024
-Batch Size Per DP    128
-recompute            20 blocks
-==================== ===============================
-
-.. VeRL benchmark results are as follows:
-
-.. ======================= =============== ====================
-.. Metric                  Value           Unit    
-.. ======================= =============== ====================
-.. response length         14254.837890625 tokens
-.. generation time         260.922         seconds 
-.. prev logprob time       17.513          seconds 
-.. training time           61.125          seconds 
-.. step time               363.545         seconds 
-.. gen throughput          3533.27         per-GPU tokens/s
-.. prev logprob throughput 52635.84        per-GPU tokens/s
-.. step throughput         20022.92        total tokens/s
-.. ======================= =============== ====================
-
-
-.. RLinf benchmark results are as follows:
-
-.. ======================= =============== ====================
-.. Metric                  Value           Unit    
-.. ======================= =============== ====================
-.. response length         13975.00        tokens
-.. generation time         266.083         seconds 
-.. prev logprob time       17.783          seconds 
-.. training time           61.125          seconds 
-.. step time               346.33          seconds 
-.. gen throughput          3361.35         per-GPU tokens/s
-.. prev logprob throughput 50835.06        per-GPU tokens/s
-.. step throughput         19850.13        total tokens/s
-.. ======================= =============== ====================
-
-.. **Note**: RLinf results below does not count ref logprob time. 
-
-
-The following benchmark results compare **RLinf** with **VeRL**.  
-Tests for VeRL were conducted using **Commit ID 8fdc4d3 (v0.5.0 release)**.
-
-In general, for time-related metrics, smaller values are better; for throughput-related metrics, larger values are better; and for response length, there is usually no clear conclusion.
-In the table below, improvements of RLinf over VeRL are highlighted in :red:`red`, while regressions are highlighted in :green:`green`.
-
-.. list-table::
+.. list-table:: **RLinf vs VeRL 对比（共享式模式）**
    :header-rows: 1
    :widths: 27 12 12 15 20
 
-   * - Metric
+   * - 指标（Metric）
      - RLinf
      - VeRL
-     - RLinf vs VeRL
-     - Unit
+     - RLinf 相比 VeRL
+     - 单位
    * - response length
      - 13975.00
      - 14254.84
@@ -453,7 +397,7 @@ In the table below, improvements of RLinf over VeRL are highlighted in :red:`red
      - :green:`↓ 0.87%`
      - total tokens/s
 
-**Note**: RLinf results below does not count ref logprob time. 
+.. note::
+   上述 RLinf 结果未计入 **ref logprob** 时间。
 
-In conclusion, the overall training efficiency is comparable, 
-but our approach achieves a significant reduction in **training time** compared to VeRL.
+结论：两者整体训练效率接近，但在 **training time** 上，RLinf 相比 VeRL 有明显降低与优势。

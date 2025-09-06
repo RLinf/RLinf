@@ -1,29 +1,27 @@
-Decoupled Clip and Dynamic sAmpling Policy Optimization (DAPO)
+解耦裁剪与动态采样策略优化 (DAPO)
 ==============================================================
 
-1. Introduction
+1. 引言
 ---------------
 
-Decoupled Clip and Dynamic sAmpling Policy Optimization (DAPO) is a
-recent reinforcement learning algorithm for large-scale LLM training.  
-It extends GRPO with four key techniques:  
+解耦裁剪与动态采样策略优化 (DAPO) 是一种最近提出的用于大规模 LLM 训练的强化学习算法。  
+它在 GRPO 的基础上扩展了四项关键技术：  
 
-1. **Clip-Higher**: asymmetric clipping with a higher upper bound.  
-2. **Dynamic Sampling**: resampling until a group contains both correct and incorrect answers.  
-3. **Token-Level Policy Gradient Loss**: loss computed at the token level instead of the sequence level.  
-4. **Overlong Reward Shaping**: penalizing excessively long responses.  
+1. **Clip-Higher**：非对称裁剪，设置更高的上限。  
+2. **动态采样**：重新采样直到一个组中同时包含正确和错误的答案。  
+3. **基于 Token 的策略梯度损失**：在 token 级别而不是序列级别计算损失。  
+4. **过长奖励塑形**：对过长的回答进行惩罚。  
 
-These improvements make DAPO more stable and efficient, especially for
-long chain-of-thought (CoT) reasoning tasks.  
+这些改进使得 DAPO 在长链式思维 (CoT) 推理任务中更加稳定和高效。  
 
-For further details, see the original paper:  
-`DAPO <https://arxiv.org/abs/2503.14476>`_.
+更多细节请参考原始论文：  
+`DAPO <https://arxiv.org/abs/2503.14476>`_  
 
 
-2. Objective Function
+2. 目标函数
 ----------------------
 
-DAPO maximizes the following objective:
+DAPO 最大化以下目标函数：  
 
 .. math::
 
@@ -38,84 +36,79 @@ DAPO maximizes the following objective:
          \Big)
      \right],
 
-where
+其中：  
 
-- :math:`r_{i,t}(\theta)` is the importance sampling ratio,  
-- :math:`\varepsilon_{\mathrm{low}}, \varepsilon_{\mathrm{high}}` define the decoupled clipping range,  
-- and :math:`\hat{A}_{i,t}` is the group-relative advantage.  
+- :math:`r_{i,t}(\theta)` 是重要性采样比率，  
+- :math:`\varepsilon_{\mathrm{low}}, \varepsilon_{\mathrm{high}}` 定义了解耦裁剪范围，  
+- :math:`\hat{A}_{i,t}` 是组相对优势。  
 
-**Dynamic Sampling.**  
-Instead of accepting arbitrary groups of responses, DAPO enforces that each group contains both correct and incorrect answers.  
-This is expressed as:
+**动态采样**  
+与其接受任意的回答组，DAPO 要求每个组中必须同时包含正确和错误的回答：  
 
 .. math::
 
    0 \;<\; \big\lvert \{\, o_i \mid \mathrm{is\_equivalent}(a, o_i) \,\} \big\rvert \;<\; G.
 
-This constraint prevents trivial groups (all correct or all incorrect),  
-improving training efficiency and stability.  
+该约束避免了平凡组（全对或全错），从而提升训练效率和稳定性。  
 
-**Clip-Higher.**  
-DAPO adopts an asymmetric clipping strategy with a larger upper bound  
-(:math:`\varepsilon_{\mathrm{high}} > \varepsilon_{\mathrm{low}}`).  
-This reduces premature suppression of potentially useful exploratory updates,  
-encourages diversity, and mitigates entropy collapse.  
+**Clip-Higher**  
+DAPO 采用非对称裁剪策略，设置更高的上限  
+(:math:`\varepsilon_{\mathrm{high}} > \varepsilon_{\mathrm{low}}`)。  
+这能减少对潜在有用的探索性更新过早抑制，鼓励多样性，并缓解熵坍缩。  
 
-**Token-Level Loss.**  
-Instead of computing gradients only at the *sequence level*,  
-DAPO applies policy gradient loss at the *token level*.  
-This reduces bias caused by variable response lengths,  
-which is crucial in long-CoT RL training.  
+**基于 Token 的损失**  
+与只在 *序列级别* 计算梯度不同，DAPO 在 *token 级别* 应用策略梯度损失。  
+这样能减少因回答长度不同带来的偏差，对长 CoT 强化学习任务尤其重要。  
 
-**Overlong Reward Shaping.**  
-To stabilize training and avoid noisy optimization from excessively long responses,  
-DAPO introduces a length penalty.  
-- Responses longer than :math:`\texttt{safe\_length}` are penalized.  
-- The penalty grows linearly with length, up to a maximum cutoff.  
-- The length reward lies within :math:`[-1, 0]`.  
+**过长奖励塑形**  
+为了稳定训练，避免过长回答带来的噪声优化，DAPO 引入了长度惩罚：  
 
-This ensures that spurious long answers do not dominate optimization.
+- 当回答长度超过 :math:`\texttt{safe\_length}` 时开始惩罚；  
+- 惩罚随长度线性增长，直到最大截断值；  
+- 长度奖励范围在 :math:`[-1, 0]`。  
+
+这样可以确保虚假的长回答不会主导优化过程。  
 
 
-3. Configuration
+3. 配置
 -----------------
 
-Currently, the framework supports DAPO for LLM math tasks.  
+目前，该框架支持在 LLM 数学任务中使用 DAPO。  
 
 .. code-block:: yaml
 
   algorithm:
-    # Core DAPO settings (recommended not to change)
+    # 核心 DAPO 设置（建议不要修改）
     adv_type: grpo
     loss_type: ppo
     loss_agg_func: "token-mean"
-    use_valid_token_scale: True # Divide advantage by valid token count → token-level loss
+    use_valid_token_scale: True # 优势除以有效 token 数 → token 级损失
 
-    # Algorithm parameters (typically require tuning)
-    group_size: 16              # Number of responses sampled per prompt
-    clip_ratio_high: 0.28       # epsilon_high (asymmetric clipping upper bound)
-    clip_ratio_low: 0.20        # epsilon_low (clipping lower bound)
+    # 算法参数（通常需要调优）
+    group_size: 16              # 每个提示采样的回答数量
+    clip_ratio_high: 0.28       # epsilon_high（非对称裁剪上限）
+    clip_ratio_low: 0.20        # epsilon_low（裁剪下限）
 
-    len_reward_penalty: 0.1     # Length penalty coefficient
-    safe_length: 16384          # Safe length threshold (beyond this → penalty applied)
-    max_length: 20480           # Hard cutoff: responses longer than this are discarded
-    max_resample: 5             # Maximum resampling attempts for dynamic sampling
+    len_reward_penalty: 0.1     # 长度惩罚系数
+    safe_length: 16384          # 安全长度阈值（超过该值 → 应用惩罚）
+    max_length: 20480           # 硬截断：超过该长度的回答会被丢弃
+    max_resample: 5             # 动态采样最大重采样次数
 
-    kl_beta: 0.0                # KL penalty coefficient
-    kl_penalty_type: low_var_kl # Options: low_var_kl, kl, abs, mse
+    kl_beta: 0.0                # KL 惩罚系数
+    kl_penalty_type: low_var_kl # 可选：low_var_kl, kl, abs, mse
 
-    calculate_entropy: False    # Optional: encourage exploration
+    calculate_entropy: False    # 可选：鼓励探索
     entropy_bonus: 0.0
 
     normalize_advantages: True
-    early_stop_imp_ratio: 5.0   # Drop minibatches with extreme importance ratios
+    early_stop_imp_ratio: 5.0   # 丢弃重要性比率极端的 minibatch
 
 
-4. Notes
+4. 注意事项
 ---------
 
-- Always ensure dynamic sampling is enabled; trivial groups reduce effectiveness.  
-- Use token-level loss (enabled via ``use_valid_token_scale=True``) for long-CoT tasks.  
-- Tune :math:`\varepsilon_{\mathrm{low}}, \varepsilon_{\mathrm{high}}` carefully:  
-  smaller gaps → more conservative updates, larger gaps → more exploration.  
-- Length shaping is critical for preventing runaway long responses in LLMs.  
+- 始终确保动态采样开启；平凡组会降低效果。  
+- 对于长 CoT 任务，请使用基于 token 的损失（通过 ``use_valid_token_scale=True`` 启用）。  
+- 小心调节 :math:`\varepsilon_{\mathrm{low}}, \varepsilon_{\mathrm{high}}`：  
+  较小的间隔 → 更新更保守；较大的间隔 → 更多探索。  
+- 长度塑形对于防止 LLM 出现失控的长回答至关重要。  

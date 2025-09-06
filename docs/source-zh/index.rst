@@ -5,12 +5,9 @@
 
 .. raw:: html
 
-   <h1 style="text-align: center;">Welcome to <b>RLinf</b>!</h1>
+   <h1 style="text-align: center;">欢迎来到 <b>RLinf</b>！</h1>
 
-
-这个是中文版1！！！！
-
-RLinf is a flexible and scalable open-source infrastructure designed for post-training foundation models via reinforcement learning. The 'inf' in RLinf stands for `Infrastructure`, highlighting its role as a robust backbone for next-generation training. It also stands for `Infinite`, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
+RLinf 是一个灵活且可扩展的开源基础架构，专为通过强化学习对基础模型进行后训练而设计。名称中的 "inf" 代表 Infrastructure（基础架构），强调其作为新一代训练强大支撑系统的角色；同时也代表 Infinite（无限），象征该系统支持开放式学习、持续泛化和智能发展的无限可能性。
 
 ----------------
 
@@ -21,41 +18,40 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 ----------------
 
-**RLinf is unique with:**
+**RLinf 的独特之处在于：**
 
-- Macro-to-Micro Flow: a new paradigm M2Flow, which executes macro-level logical flows through micro-level execution flows, decoupling logical workflow construction (programmable) from physical communication and scheduling (efficiency).
+- 宏观到微观流程（Macro-to-Micro Flow）：一种新范式 M2Flow，通过微观级的执行流程完成宏观级的逻辑流程，**解耦逻辑工作流构建（可编程）与物理通信调度（高效执行）**。
 
-- Flexible Execution Modes
+- 灵活的执行模式
 
-  - Collocated mode: shares all GPUs across all workers.
-  - Disaggregated mode: enables fine-grained pipelining.
-  - Hybrid mode: a customizable combination of different placement modes, integrating both collocated and disaggregated modes.
+  - **共享式**：所有任务共享全部 GPU。
+  - **分离式**：支持细粒度流水线。
+  - **混合式**：可定制的混合部署，结合了共享式和分离式两种模式。
 
-- Auto-scheduling Strategy: automatically selects the most suitable execution mode based on the training workload, without the need for manual resource allocation.
-  
-- Embodied Agent Support
+- 自动调度策略：根据训练任务自动选择最合适的执行模式，无需手动资源分配。
 
-  - Fast adaptation support for mainstream VLA models: `OpenVLA`_, `OpenVLA-OFT`_, `π₀`_
-  - Support for mainstream CPU & GPU-based simulators via standardized RL interfaces: `ManiSkill3`_, `LIBERO`_
-  - Enabling the first RL fine-tuning of the π₀ model family with a flow-matching action expert.
+- 具身智能支持
 
-**RLinf is fast with:**
+  - 快速适配主流 VLA 模型：`OpenVLA`_, `OpenVLA-OFT`_, `π₀`_
+  - 通过标准化 RL 接口支持主流基于 CPU 和 GPU 的模拟器：`ManiSkill3`_、`LIBERO`_
+  - 支持 π₀ 模型族首次基于 flow-matching 动作专家进行的强化学习微调。
 
-- Hybrid mode with fine-grained pipelining: achieves a **120%+** throughput improvement compared to other frameworks.
-- Automatic Online Scaling Strategy: dynamically scales training resources, with GPU switching completed within seconds, further improving efficiency by 20–40% while preserving the on-policy nature of RL algorithms.
+**RLinf 拥有出色的训练速度：**
 
-**RLinf is flexible and easy to use with:**
+- 结合细粒度流水线的混合式：相比其他框架，**吞吐率提升超过 120%**。
+- 自动在线扩缩策略：训练资源动态扩展，GPU 切换只需数秒，**进一步提高效率 20–40%**，同时保持 RL 算法的 on-policy 特性。
 
-- Multiple Backend Integrations
+**RLinf 同时兼具灵活性与易用性：**
 
-  .. - A single unified interface drives two complementary backends, allowing seamless switching without code changes.
-  
-  - FSDP + Hugging Face: rapid adaptation to new models and algorithms, ideal for beginners and fast prototyping.
-  - Megatron + SGLang: optimized for large-scale training, delivering maximum efficiency for expert users with demanding workloads.
+- 多种后端集成支持
 
-- Adaptive communication via the asynchronous communication channel
+  - 统一接口可驱动两种互补的后端，无需修改代码即可无缝切换。
+  - **FSDP + Hugging Face**：快速适配新模型与算法，适合初学者与快速原型开发。
+  - **Megatron + SGLang**：优化大规模训练效率，适用于对性能要求极高的专家用户。
 
-- Built-in support for popular RL methods, including `PPO`_ , `GRPO`_ , `DAPO`_ , `Reinforce++`_ , and more.
+- 通过异步通信通道实现自适应通信
+
+- 内建对多种主流强化学习方法的支持，包括 `PPO`_、`GRPO`_、`DAPO`_、`Reinforce++`_ 等。
 
 .. _PPO: https://arxiv.org/abs/1707.06347
 .. _GRPO: https://arxiv.org/abs/2402.03300
@@ -134,20 +130,20 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 .. _contribution-guidelines:
 
-Contribution Guidelines
+贡献指南
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Great! We are always on the lookout for more contributors to our code base.
+太棒了！我们一直欢迎新的贡献者加入我们的代码库。
 
-Firstly, if you are unsure or afraid of anything, just ask or submit the issue or pull request anyways. You won't be yelled at for giving your best effort. The worst that can happen is that you'll be politely asked to change something. We appreciate any sort of contributions and don't want a wall of rules to get in the way of that.
+首先，即使你不确定或者担心出错，也请大胆提 issue 或提交 pull request。我们不会因为你的努力尝试而批评你。最坏的情况也不过是我们礼貌地建议你修改一些内容。我们欢迎各种形式的贡献，不希望一堆规则阻碍你的参与。
 
-However, for those individuals who want a bit more guidance on the best way to contribute to the project, read on. This document will cover all the points we're looking for in your contributions, raising your chances of quickly merging or addressing your contributions.
+当然，如果你希望了解更明确的贡献方式，可以继续阅读本指南。它将介绍我们对贡献的基本要求，帮助你更快通过审核或得到反馈。
 
-There are a few simple guidelines that you need to follow before providing your hacks.
+以下是你在提交代码前需要遵循的一些简单指南。
 
-**Code Linting and Formatting**
+**代码格式检查与规范**
 
-We use **pre-commit** and **ruff** to enforce code formatting and quality checks. To install them, run:
+我们使用 **pre-commit** 和 **ruff** 来统一代码风格并进行质量检查。安装方式如下：
 
 .. code:: bash
 
@@ -155,18 +151,18 @@ We use **pre-commit** and **ruff** to enforce code formatting and quality checks
    pip install ruff
    pre-commit install
 
-After making changes to the code and before opening a PR, we recommend running:
+修改代码后，在提交 PR 前建议运行以下命令：
 
 .. code:: bash
 
    ruff check . --fix --preview
 
-This will check if your code follows the formatting rules.  
-If there are issues (e.g., indentation problems), it will fix them automatically
+这将检查代码是否符合格式规范。  
+如果存在如缩进错误等问题，它会自动进行修复。
 
-**Creating a Pull Request**
+**创建 Pull Request**
 
-Once your code passes the checks, you can open a PR. Please ensure your commits and branches follow the required standards. Otherwise, our CI tests will reject your submission.
+当你的代码通过了格式检查后，就可以提交 PR 了。请确保你的 commit 信息和分支命名符合规范，否则 CI 测试会拒绝合并。
 
-- **Commit message guidelines**: See the `Conventional Commits specification <https://www.conventionalcommits.org/en/v1.0.0/>`_.
-- **Branch naming guidelines**: See the `Conventional Branch guidelines <https://conventional-branch.github.io/#summary>`_.
+- **提交信息规范**：参见 `规范化 Commits 约定 <https://www.conventionalcommits.org/en/v1.0.0/>`_。
+- **分支命名规范**：参见 `规范化分支约定 <https://conventional-branch.github.io/#summary>`_。

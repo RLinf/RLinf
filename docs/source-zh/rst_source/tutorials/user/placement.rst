@@ -1,137 +1,77 @@
-GPU Resource Placement Strategy
+GPU 资源部署策略
 ========================================
 
-The placement module defines how workers are distributed across the hardware resources (nodes and GPUs) of the cluster. 
-A **PlacementStrategy** encapsulates a particular policy for assigning workers to GPUs and nodes. 
-This allows flexibility in how a set of workers (e.g., a `WorkerGroup`) utilizes the available GPUs. 
-For each strategy, a list of `Placement` objects is returned by the `get_placement(num_gpus_per_node, isolate_gpu)` method. Each `Placement` includes:
+Placement 模块定义了 Worker 在集群的硬件资源（节点和 GPU）上的分布方式。  
+一个 **PlacementStrategy** 表示一种将 Worker 分配到 GPU 和节点的策略。  
+这样，像 `WorkerGroup` 这样的 Worker 集合就可以灵活地使用可用的 GPU。  
+每种策略通过 `get_placement(num_gpus_per_node, isolate_gpu)` 方法返回一个 `Placement` 对象列表。每个 `Placement` 包含：
 
-+---------------------------+-----------------------------------------------+
-| Property                  | Description                                   |
-+===========================+===============================================+
-| `rank`                    | Unique global worker index                    | 
-+---------------------------+-----------------------------------------------+
-| `node_id`                 | Identifier of the node where the worker runs  |
-+---------------------------+-----------------------------------------------+
-| `node_rank`               | Index of the node within the cluster          |
-+---------------------------+-----------------------------------------------+
-| `local_gpu_id`            | GPU index assigned to the worker on that node |
-+---------------------------+-----------------------------------------------+
-| `local_rank`              | Worker’s index among workers on the same node |
-+---------------------------+-----------------------------------------------+
-| `local_world_size`        | Total number of workers on the same node      |
-+---------------------------+-----------------------------------------------+
-| `cuda_visible_devices`    | List of GPU IDs visible to the worker         |
-+---------------------------+-----------------------------------------------+
-| `isolate_gpu`             | Whether the worker is restricted to those GPUs|
-+---------------------------+-----------------------------------------------+
+.. list-table:: Placement 属性说明
+   :header-rows: 1
+   :widths: 25 75
+
+   * - 属性
+     - 描述
+   * - ``rank``
+     - Worker 的全局唯一编号（global index）
+   * - ``node_id``
+     - 运行该 Worker 的节点标识符
+   * - ``node_rank``
+     - 节点在整个集群中的编号
+   * - ``local_gpu_id``
+     - 分配给该 Worker 的节点内 GPU 编号
+   * - ``local_rank``
+     - 该 Worker 在当前节点中所属的编号
+   * - ``local_world_size``
+     - 当前节点上的总 Worker 数量
+   * - ``cuda_visible_devices``
+     - 该 Worker 可见的 GPU ID 列表
+   * - ``isolate_gpu``
+     - 是否限制该 Worker 只使用指定的 GPU
 
 PackedPlacementStrategy
 -----------------------
 
-This unified placement strategy that can:
+这是一种统一的部署策略，支持：
 
-* **Pack GPUs contiguously** (`stride = 1`) – the classic “close-packed”
-  behaviour; or
-* **Assign GPUs in a fixed-stride pattern** (`stride > 1`) – the former
-  “strided” mode, e.g. `0, 2, 4` for `stride = 2`.
+* **连续分配 GPU** （`stride = 1`）—— 即传统的“紧密打包”方式；或
+* **固定步长分配 GPU** （`stride > 1`）—— 类似早期的“跨步分配”模式，例如当 `stride = 2` 时为 `0, 2, 4`
 
-By tuning a **single** parameter (`stride`) you can therefore express
-both placement styles while keeping one coherent implementation.
+通过调整一个参数（`stride`），即可在两种部署风格之间切换，同时保持代码实现的一致性。
 
-Required inputs
+必要输入参数
 ~~~~~~~~~~~~~~~~~
 
-* ``start_gpu_id`` – first *global* GPU index to consider.  
-* ``end_gpu_id`` – last *global* GPU index (inclusive).  
-* ``num_gpus_per_process`` – number of GPUs given to **each** process.  
-* ``stride`` – distance between successive GPUs *inside one process*
-  (``1`` = contiguous; ``>1`` = strided).  
-* ``isolate_gpu`` – whether to set ``CUDA_VISIBLE_DEVICES`` so the
-  process only “sees” its assigned GPUs (defaults to ``True``).  
+* ``start_gpu_id`` – 起始的 *全局* GPU 编号  
+* ``end_gpu_id`` – 结束的 *全局* GPU 编号（包含）  
+* ``num_gpus_per_process`` – 每个进程分配的 GPU 数量  
+* ``stride`` – 同一进程内部，连续 GPU 编号之间的间隔（`1` 表示连续分配，`>1` 表示跨步分配）  
+* ``isolate_gpu`` – 是否通过设置 ``CUDA_VISIBLE_DEVICES`` 来限制进程只看到分配给它的 GPU（默认为 ``True``）  
 
-Placement principle
+部署原则
 ~~~~~~~~~~~~~~~~~~~~~
 
-Starting at ``start_gpu_id`` the scheduler walks forward through the
-GPU IDs:
+调度器从 ``start_gpu_id`` 开始，按以下规则向前遍历 GPU：
 
-1. **Allocate a block** of
-   ``num_gpus_per_process × stride`` consecutive global IDs.  
-2. **Select every stride-th** ID inside that block; those become the
-   GPUs for the current rank  
-   (e.g. ``[0, 1, 2, 3]`` → stride 2 → ``[0, 2]``).  
-3. Repeat until **all** IDs up to ``end_gpu_id`` are consumed, wrapping
-   to the next node when a node’s GPU count is exceeded.
+1. **分配一个块**：包含 ``num_gpus_per_process × stride`` 个连续的全局 GPU ID  
+2. **每隔 stride 个取一个 GPU**：作为当前 Worker 使用的设备  
+   （例如 ``[0, 1, 2, 3]`` 配合 `stride = 2` 得到 ``[0, 2]``）  
+3. 重复直到所有 ID 被分配完，如遇某节点 GPU 不足则切换到下一个节点
 
-The constructor enforces  
-``total_GPUs % (num_gpus_per_process × stride) == 0`` so every process
-obtains a full GPU set without spilling across node boundaries.
+构造函数强制要求  
+``total_GPUs % (num_gpus_per_process × stride) == 0``  
+这样可以确保每个进程获得一整块完整的 GPU 集合，避免跨节点分配。
 
-When ``isolate_gpu=True`` the generated placement also sets
-``CUDA_VISIBLE_DEVICES`` to the local (node-relative) GPU list, ensuring
-library calls see only those devices.
+当 ``isolate_gpu=True`` 时，会设置 ``CUDA_VISIBLE_DEVICES`` 变量为节点内对应的 GPU 编号，确保库调用只会“看到”这些设备。
 
-Purpose
+用途
 ~~~~~~~~~~~~~
 
-* **Contiguous mode** (`stride = 1`) remains the default for
-  data-parallel or per-rank model-parallel jobs that expect sequential
-  device IDs.
-* **Strided mode** (`stride > 1`) is useful to colocation placement of rollout and training models that places model parallel source 
-  ranks on the same GPUs, enabling fast zero-copy-cudaIPC-based weight synchronization
+* **连续模式** （`stride = 1`）是默认选项，适用于数据并行或模型并行等依赖连续设备 ID 的任务  
+* **跨步模式** （`stride > 1`）适合用于 **共享式部署 rollout 与训练模型**，可以将模型并行源 rank 放在同一个 GPU 上，  
+  从而启用 **zero-copy、CUDA IPC 权重同步**
 
-
-
-
-.. PackedPlacementStrategy
-.. -----------------------
-
-.. This strategy places processes onto GPUs in a close-packed, contiguous fashion.
-
-.. **Required inputs**
-
-.. - ``master_node`` — start node
-.. - One of ``num_nodes`` or ``num_processes`` (mutually exclusive)
-.. - ``master_gpu`` — start GPU on the master node
-.. - ``num_gpus_per_process`` — contiguous GPUs per process
-.. - ``isolate_gpu`` — Whether the worker is restricted to those GPUs
-
-.. **Placement principle**
-
-.. Starting at ``(master_node, master_gpu)``, the scheduler assigns each process a contiguous block of size ``num_gpus_per_process`` on the current node, 
-.. moving linearly across GPU indices. When a node’s GPUs are exhausted, 
-.. it advances to the next node. If ``num_nodes`` is provided, the total ``num_processes`` is derived from available GPUs and the per-process width. 
-.. Optionally, ``CUDA_VISIBLE_DEVICES`` is set so each process only “sees” its assigned GPUs.
-
-.. **Purpose**
-
-.. A straightforward default placement strategy that aligns with frameworks expecting contiguous device IDs per process, 
-.. while also allowing execution from an offset subset specified by ``(master_node, master_gpu)`` without occupying the entire cluster.
-
-
-.. StridedPlacementStrategy
-.. ------------------------
-
-.. This strategy assigns multiple GPUs per process in a fixed-stride pattern (e.g., ``0, 2, 4`` for stride 2), spreading a process’s devices across the node’s GPU index space.
-
-.. **Required inputs**
-
-.. - ``master_node`` — start node
-.. - ``num_nodes`` — span of nodes starting at master
-.. - ``stride`` — GPU index stride
-.. - ``num_gpus_per_process`` — GPUs per process
-.. - ``isolate_gpu`` — must be ``True`` (enforced)
-
-.. **Placement principle**
-
-.. The total GPU pool over the selected nodes is conceptually partitioned into equal “groups” of size ``stride × num_gpus_per_process``. Within each group, ``stride`` processes are interleaved, and each process receives GPUs ``[g, g+stride, …]``. Groups are then tightly filled across nodes, subject to divisibility and fit constraints to ensure every process’s last GPU index is in range.
-
-.. **Purpose**
-
-.. Useful to colocation placement of rollout and training models that places model parallel source ranks on the same GPUs, enabling fast zero-copy-cudaIPC-based weight synchronization
-
-Example
+示例
 ---------
 
 .. autoclass:: rlinf.scheduler.placement.PlacementStrategy
@@ -139,8 +79,8 @@ Example
    :no-inherited-members:
    :exclude-members: __init__, __new__
 
-Summary
+总结
 --------
 
-In summary, the **placement** component ensures that workers are deployed in a way that matches the desired parallel execution pattern and resource usage policy, which is crucial for performance and correctness in distributed training.
-
+总之，**Placement** 模块用于确保 Worker 被合理地部署到 GPU 和节点上，  
+以匹配所需的并行执行模式和资源使用策略。这对于分布式训练的性能和正确性至关重要。

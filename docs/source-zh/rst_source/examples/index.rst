@@ -1,19 +1,16 @@
-Example Gallery
+示例库
 ===============
 
-This section presents the collection of **examples currently supported by RLinf**, 
-showcasing how the framework can be applied across different scenarios and 
-demonstrating its efficiency in practice.
+本节展示了 **RLinf 目前支持的示例集合**，  
+展示该框架如何应用于不同场景，并演示其在实际中的高效性。  
 
-At present, we provide two major categories of examples:
+目前，我们提供两大类示例：  
 
-- **Embodied Agent Scenario**: Training **VLA** models for embodied intelligence.  
-  See :doc:`embodied`.
-- **Reasoner Scenario**: Training **LLM** models for advanced reasoning tasks.  
-  See :doc:`reasoning`.
+- **具身智能场景**：训练 **VLA** 模型用于具身智能。参见 :doc:`embodied`。  
+- **推理场景**：训练 **LLM** 模型用于高级推理任务。参见 :doc:`reasoning`。  
 
-The example gallery will continue to expand with new scenarios and tasks over time, 
-illustrating the versatility and scalability of RLinf.
+示例库会随着时间不断扩展，涵盖新的场景和任务，  
+以展示 RLinf 的多样性和可扩展性。  
 
 .. toctree::
    :hidden:

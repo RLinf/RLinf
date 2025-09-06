@@ -1,15 +1,15 @@
-Automatic Scheduling
+自动调度
 =====================
 
-This chapter introduces how automatic scheduling is implemented in RLinf.  
-It explains both the design philosophy and the practical configuration required to make it work.
+本章介绍 RLinf 中自动调度的实现方式。  
+内容包括设计理念以及让其正常工作的实际配置方法。
 
 - :doc:`online-scaling`  
-   Provides an overview of the mechanism, focusing on the design principles behind RLinf’s adaptive scaling capabilities.
+   概述该机制，重点介绍 RLinf 自动扩缩能力背后的设计原理。
 
 - :doc:`auto-scheduling`  
-   Details the concrete implementation of automatic scheduling in RLinf,  
-   including how to configure it properly to enable dynamic scheduling.
+   详细说明 RLinf 中自动调度的具体实现，  
+   包括如何正确配置以启用动态调度。
 
 
 .. toctree::

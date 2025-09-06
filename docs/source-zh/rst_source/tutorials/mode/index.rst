@@ -1,40 +1,26 @@
-Flexible Execution Modes
+灵活的执行模式
 ========================
 
-.. Conventional RL post-training systems can typically be categorized—based on their GPU placement strategy—into two primary modes: :doc:`collocated` and :doc:`disaggregated`.
+传统的 RL 后训练系统通常根据其 GPU 部署策略分为两种主要模式：:doc:`collocated` 和 :doc:`disaggregated`。
 
-.. In collocated mode, all major components (i.e., workers), such as generator, actor inference, and actor training, share the same set of GPUs or nodes. 
-.. In contrast, disaggregated mode places these components on separate GPUs or nodes. 
+在 **共享式** 模式下，所有主要组件（如 generator、actor inference 和 actor training）共享同一组 GPU 或节点。  
+相反，在 **分离式** 模式下，这些组件会被分配到不同的 GPU 或节点。
 
-.. However, these modes cannot well deal with the RL workload such as embodied intelligence, which has more components (e.g., simulators) and more complex communication among components, e.g., fine-grained interactions between the **simulator** and **generator**.
+然而，这两种模式都不太适合复杂的 RL 工作负载，例如具身智能任务，因为这类任务涉及更多的组件（如 simulators）和更复杂的通信模式 —— 例如 **simulator** 和 **generator** 之间的细粒度交互。
 
-.. To efficiently adapt to variable RL workloads, RLinf supports flexible component placement and execution mode, enabling diverse component orchestration. 
-.. The components can be placed on any GPUs. 
+为了更好地支持多样化和动态的 RL 工作负载，**RLinf** 提供了灵活的组件部署和执行模式，  
+允许用户以高度可配置的方式调度组件。特别地，组件可以部署在 **任意 GPU** 上，并结合不同的执行策略：
 
-.. - When two components are placed on the same set of GPUs, users can configure either the two components are resident in GPU memory or the two components swith the usage of the GPUs based on offloading/reloading mechanism. 
+- **部署在相同 GPU 上（共享式**：  
+  用户可以配置两个组件是否同时常驻 GPU 显存，  
+  或者通过卸载/重新加载机制交替使用 GPU。
 
-.. - When the two components use separate GPUs, they can run sequentially one after the other, which induces GPU idle time, or they can run in a pipelined manner, so all GPUs stay busy. 
+- **部署在不同 GPU 上（分离式**：  
+  组件可以顺序运行（可能导致 GPU 空闲），  
+  也可以采用流水线方式执行，以确保所有 GPU 都保持忙碌状态。
 
-.. :doc:`hybrid` enables flexible configuration of placement and execution mode.
-
-Conventional RL post-training systems are typically classified—based on their GPU placement strategy—into two primary modes: :doc:`collocated` and :doc:`disaggregated`.
-
-In the **collocated** mode, all major components (e.g., generator, actor inference, and actor training) share the same set of GPUs or nodes.  
-In contrast, the **disaggregated** mode assigns these components to separate GPUs or nodes.
-
-However, neither mode is well-suited for complex RL workloads such as embodied intelligence, which involve more components (e.g., simulators) and more intricate communication patterns—for instance, the fine-grained interactions between the **simulator** and the **generator**.
-
-To better accommodate diverse and dynamic RL workloads, **RLinf** supports flexible component placement and execution modes, enabling users to orchestrate components in a highly adaptable way.  
-In particular, components can be placed on **any GPUs** with configurable execution strategies:
-
-- **Collocated on the same GPUs:**  
-  Users may configure whether both components remain resident in GPU memory, or whether they switch usage of the GPUs via an offloading/reloading mechanism.
-
-- **Distributed on separate GPUs:**  
-  Components may either run sequentially—potentially causing GPU idle time—or execute in a pipelined fashion, ensuring that all GPUs remain busy.
-
-The :doc:`hybrid` mode further extends this flexibility by supporting customized combinations of placement and execution strategies.
-
+**混合式** 模式进一步扩展了这种灵活性，  
+支持对部署与执行策略进行自定义组合。
 
 .. toctree::
    :hidden:

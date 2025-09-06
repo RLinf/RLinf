@@ -1,18 +1,18 @@
-Supported RL Algorithms
+支持的强化学习算法
 =================================
 
-In this section, we provide an overview of each algorithm, including their core characteristics, loss functions, and key configuration options required to run them effectively using RLinf.
+本节将概述每种算法，包括其核心特点、损失函数以及在 RLinf 中高效运行所需的关键配置选项。  
 
-Each algorithm is implemented with flexibility in mind, allowing researchers and practitioners to apply them to a variety of reinforcement learning tasks. Whether you're exploring standard benchmarks or designing custom environments, RLinf offers streamlined interfaces for training and evaluation.
+每种算法的实现都考虑了灵活性，研究人员和实践者可以将它们应用到各种强化学习任务中。无论是探索标准基准任务，还是设计自定义环境，RLinf 都提供了简化的接口来支持训练和评估。  
 
-As of now, RLinf supports four widely-used reinforcement learning algorithms:
+目前，RLinf 支持以下四种常用的强化学习算法：  
 
-- :doc:`Proximal Policy Optimization (PPO) <ppo>`
-- :doc:`Group Relative Policy Optimization (GRPO) <grpo>`
-- :doc:`Domain-Adaptive Policy Optimization (DAPO) <dapo>`
-- :doc:`REINFORCE++ <reinforce>` 
+- :doc:`近端策略优化 (PPO) <ppo>`  
+- :doc:`组相对策略优化 (GRPO) <grpo>`  
+- :doc:`解耦裁剪与动态采样策略优化 (DAPO) <dapo>`  
+- :doc:`REINFORCE++ <reinforce>`  
 
-We are continuously working to expand the selection of supported algorithms in future releases. Stay tuned for upcoming additions!
+我们会持续扩展未来版本中支持的算法，敬请期待后续的更新！  
 
 .. toctree::
    :maxdepth: 1

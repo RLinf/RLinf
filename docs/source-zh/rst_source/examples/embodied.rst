@@ -1,88 +1,80 @@
-Agentic RL-VLA
+具身智能 RL-VLA
 ========================
 
-This document provides a comprehensive guide to launching and managing the 
-Vision-Language-Action Models (VLAs) training task within the RLinf framework, 
-focusing on finetuning a VLA model for robotic manipulation in the ManiSkill3/LIBERO environment. 
+本文档给出在 RLinf 框架内启动与管理 **Vision-Language-Action Models (VLAs)** 训练任务的完整指南，  
+重点是在 ManiSkill3/LIBERO 环境中微调 VLA 模型以完成机器人操作。
 
-The primary objective is to develop a model capable of performing robotic manipulation by:
+主要目标是让模型具备以下能力：
 
-1. **Visual Understanding**: Processing RGB images from the robot's camera.
-2. **Language Comprehension**: Interpreting natural-language task descriptions.
-3. **Action Generation**: Producing precise robotic actions (position, rotation, gripper control).
-4. **Reinforcement Learning**: Optimizing the policy via the PPO with environment feedback.
+1. **视觉理解**：处理来自机器人相机的 RGB 图像。  
+2. **语言理解**：理解自然语言的任务描述。  
+3. **动作生成**：产生精确的机器人动作（位置、旋转、夹爪控制）。  
+4. **强化学习**：结合环境反馈，使用 PPO 优化策略。
 
-Environment
+环境
 -----------------------
 
-**ManiSkill3 Environment**
+**ManiSkill3 环境**
 
-- **Environment**: ManiSkill3 simulation platform
-- **Task**: Control a robotic arm to grasp a variety of objects
-- **Observation**: RGB images (224×224) from a third-person camera
-- **Action Space**: 7-dimensional continuous actions
-  - 3D position control (x, y, z)
-  - 3D rotation control (roll, pitch, yaw)
-  - Gripper control (open/close)
+- **Environment**：ManiSkill3 仿真平台  
+- **Task**：控制机械臂抓取多种物体  
+- **Observation**：第三人称相机的 RGB 图像（224×224）  
+- **Action Space**：7 维连续动作  
+  - 三维位置控制（x, y, z）  
+  - 三维旋转控制（roll, pitch, yaw）  
+  - 夹爪控制（开/合）
 
-**LIBERO Environment**
+**LIBERO 环境**
 
-- **Environment**: LIBERO simulation benchmark built on top of *robosuite* (MuJoCo).
-- **Task**: Command a 7-DoF robotic arm to perform a variety of household manipulation skills (pick-and-place, stacking, opening drawers, spatial rearrangement).
-- **Observation**: RGB images (typical resolutions 128 × 128 or 224 × 224) captured by off-screen cameras placed around the workspace.
-- **Action Space**: 7-dimensional continuous actions  
-  - 3D end-effector position control (x, y, z)  
-  - 3D rotation control (roll, pitch, yaw)  
-  - Gripper control (open / close)
+- **Environment**：基于 *robosuite*（MuJoCo）的 LIBERO 仿真基准  
+- **Task**：指挥一台 7 自由度机械臂完成多种家居操作技能（抓取放置、叠放、开抽屉、空间重排等）  
+- **Observation**：工作区周围离屏相机采集的 RGB 图像（常见分辨率 128×128 或 224×224）  
+- **Action Space**：7 维连续动作  
+  - 末端执行器三维位置控制（x, y, z）  
+  - 三维旋转控制（roll, pitch, yaw）  
+  - 夹爪控制（开/合）
 
-**Task Description Format**
+**任务描述格式**
 
 .. code-block:: text
 
    In: What action should the robot take to [task_description]?
    Out: 
 
-**Data Structure**
+**数据结构**
 
-- **Images**: RGB tensors ``[batch_size, 3, 224, 224]``
-- **Task Descriptions**: Natural-language instructions
-- **Actions**: Normalized continuous values converted to discrete tokens
-- **Rewards**: Step-level rewards based on task completion
+- **Images**：RGB 张量 ``[batch_size, 3, 224, 224]``  
+- **Task Descriptions**：自然语言指令  
+- **Actions**：归一化的连续值，转换为离散 tokens  
+- **Rewards**：基于任务完成度的逐步奖励
 
-Algorithm
+算法
 -----------------------------------------
 
-**Core Algorithm Components**
+**核心算法组件**
 
-1. **PPO (Proximal Policy Optimization)**
+1. **PPO（Proximal Policy Optimization）**
 
-   - Advantage estimation using GAE (Generalized Advantage Estimation)
+   - 使用 GAE（Generalized Advantage Estimation）进行优势估计  
+   - 基于比率的策略裁剪  
+   - 价值函数裁剪  
+   - 熵正则化
 
-   - Policy clipping with ratio limits
+2. **GRPO（Group Relative Policy Optimization）**
 
-   - Value function clipping
+   - 对于每个状态/提示，策略生成 *G* 个独立动作  
+   - 以组内平均奖励为基线，计算每个动作的相对优势
 
-   - Entropy regularization
+3. **Vision-Language-Action 模型**
 
-2. **GRPO (Group Relative Policy Optimization)**
+   - OpenVLA 架构，多模态融合  
+   - 动作 token 化与反 token 化  
+   - 带 Value Head 的 Critic 功能
 
-   - For every state / prompt the policy generates *G* independent actions
-
-   - Compute the advantage of each action by subtracting the group’s mean reward.
-
-
-3. **Vision-Language-Action Model**
-
-   - OpenVLA architecture with multimodal fusion
-
-   - Action tokenization and de-tokenization
-
-   - Value head for critic function
-
-Running the Script
+运行脚本
 -------------------
 
-**1. Key Parameters Configuration**
+**1. 关键参数配置**
 
 .. code-block:: yaml
 
@@ -97,9 +89,9 @@ Running the Script
    rollout:
       pipeline_stage_num: 2
 
-Here you can flexibly configure the GPU count for env, rollout, and actor components.
-Using the above configuration, you can achieve pipeline overlap between env and rollout, and sharing with actor.
-Additionally, by setting `pipeline_stage_num = 2` in the configuration, you can achieve pipeline overlap between rollout and actor, improving rollout efficiency.
+你可以灵活配置 env、rollout、actor 三个组件使用的 GPU 数量。  
+使用上述配置，可以让 env 与 rollout 之间流水线重叠，并与 actor 共享。  
+此外，在配置中设置 `pipeline_stage_num = 2`，可实现 **rollout 与 actor** 之间的流水线重叠，从而提升 rollout 效率。
 
 .. code-block:: yaml
    
@@ -109,7 +101,7 @@ Additionally, by setting `pipeline_stage_num = 2` in the configuration, you can 
       component_placement:
          env,rollout,actor: all
 
-You can also reconfigure the placement to achieve complete sharing, where env, rollout, and actor components all share all GPUs.
+你也可以重新配置 Placement，实现 **完全共享**：env、rollout、actor 三个组件共享全部 GPU。
 
 .. code-block:: yaml
 
@@ -121,79 +113,79 @@ You can also reconfigure the placement to achieve complete sharing, where env, r
          rollout: 4-7
          actor: 8-15
 
-You can also reconfigure the placement to achieve complete separation, where env, rollout, and actor components each use their own GPUs without interference, eliminating the need for offload functionality.
+你还可以重新配置 Placement，实现 **完全分离**：env、rollout、actor 各用各的 GPU、互不干扰，  
+这样就不需要 offload 功能。
 
-**2. Configuration Files**
+**2. 配置文件**
 
-We currently support training in two environments: **ManiSkill3** and **LIBERO**.
+当前我们支持两个环境：**ManiSkill3** 与 **LIBERO**。
 
-1. **ManiSkill3 Environment**
+1. **ManiSkill3 环境**
 
-   We support two models: **OpenVLA** and **OpenVLA-OFT**, along with two algorithms: **PPO** and **GRPO**.  
-   The corresponding configuration files are:
+   支持两种模型：**OpenVLA** 与 **OpenVLA-OFT**；两种算法：**PPO** 与 **GRPO**。  
+   对应配置文件：
 
-   - **OpenVLA + PPO**: ``examples/embodiment/config/maniskill_ppo_openvla.yaml``
-   - **OpenVLA-OFT + PPO**: ``examples/embodiment/config/maniskill_ppo_openvlaoft.yaml``
-   - **OpenVLA + GRPO**: ``examples/embodiment/config/maniskill_grpo_openvla.yaml``
-   - **OpenVLA-OFT + GRPO**: ``examples/embodiment/config/maniskill_grpo_openvlaoft.yaml``
+   - **OpenVLA + PPO**：``examples/embodiment/config/maniskill_ppo_openvla.yaml``  
+   - **OpenVLA-OFT + PPO**：``examples/embodiment/config/maniskill_ppo_openvlaoft.yaml``  
+   - **OpenVLA + GRPO**：``examples/embodiment/config/maniskill_grpo_openvla.yaml``  
+   - **OpenVLA-OFT + GRPO**：``examples/embodiment/config/maniskill_grpo_openvlaoft.yaml``
 
-2. **LIBERO Environment**
+2. **LIBERO 环境**
 
-   We support the **OpenVLA-OFT** model with both **PPO** and **GRPO** algorithms.  
-   The corresponding configuration files are:
+   支持 **OpenVLA-OFT** 模型，算法为 **PPO** 与 **GRPO**。  
+   对应配置文件：
 
-   - **OpenVLA-OFT + PPO**: ``examples/embodiment/config/libero_10_ppo_openvlaoft.yaml``
-   - **OpenVLA-OFT + GRPO**: ``examples/embodiment/config/libero_10_grpo_openvlaoft.yaml``
+   - **OpenVLA-OFT + PPO**：``examples/embodiment/config/libero_10_ppo_openvlaoft.yaml``  
+   - **OpenVLA-OFT + GRPO**：``examples/embodiment/config/libero_10_grpo_openvlaoft.yaml``
 
-**3. Launch Commands**
+**3. 启动命令**
 
-To start training with a chosen configuration, run the following command:
+选择配置后，运行以下命令开始训练：
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
 
-For example, to train the OpenVLA model using the PPO algorithm in the ManiSkill3 environment, run:
+例如，在 ManiSkill3 环境中使用 PPO 训练 OpenVLA 模型：
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla
 
-
-Visualization and Results
+可视化与结果
 -------------------------
 
-**1. TensorBoard Logging**
+**1. TensorBoard 日志**
 
 .. code-block:: bash
 
-   # Start TensorBoard
+   # 启动 TensorBoard
    tensorboard --logdir ./logs --port 6006
 
-**2. Key Metrics Tracked**
+**2. 关键监控指标**
 
-- **Training Metrics**:
+- **训练指标**：
 
-  - ``actor/loss``: PPO policy loss
-  - ``actor/value_loss``: Value function loss
-  - ``actor/entropy``: Policy entropy
-  - ``actor/grad_norm``: Gradient norm
-  - ``actor/lr``: Learning rate
+  - ``actor/loss``：PPO 策略损失  
+  - ``actor/value_loss``：价值函数损失  
+  - ``actor/entropy``：策略熵  
+  - ``actor/grad_norm``：梯度范数  
+  - ``actor/lr``：学习率  
 
-- **Rollout Metrics**:
+- **Rollout 指标**：
 
-  - ``rollout/reward_mean``: Average episode reward
-  - ``rollout/reward_std``: Reward standard deviation
-  - ``rollout/episode_length``: Average episode length
-  - ``rollout/success_rate``: Task completion rate
+  - ``rollout/reward_mean``：平均回合奖励  
+  - ``rollout/reward_std``：奖励标准差  
+  - ``rollout/episode_length``：平均回合长度  
+  - ``rollout/success_rate``：任务完成率  
 
-- **Environment Metrics**:
+- **环境指标**：
 
-  - ``env/success_rate``: Success rate across environments
-  - ``env/step_reward``: Step-by-step reward
-  - ``env/termination_rate``: Episode termination rate
+  - ``env/success_rate``：各环境的成功率  
+  - ``env/step_reward``：逐步奖励  
+  - ``env/termination_rate``：回合终止率  
 
-**3. Video Generation**
+**3. 视频生成**
 
 .. code-block:: yaml
 
@@ -202,7 +194,7 @@ Visualization and Results
      info_on_video: True
      video_base_dir: ./logs/video/train
 
-**4. WandB Integration**
+**4. WandB 集成**
 
 .. code-block:: yaml
 
@@ -213,11 +205,11 @@ Visualization and Results
          project_name: "RLinf"
          experiment_name: "openvla-maniskill"
 
-ManiSkill3 Results
+ManiSkill3 结果
 ~~~~~~~~~~~~~~~~~~~
 
-As an illustrative example, we present the training results of the PPO algorithm in the ManiSkill3 environment. 
-Running on a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) achieved up to 90% success on ManiSkill3’s plate-25-main task, after 48 and 24 hours of PPO training, respectively.
+以下以 ManiSkill3 环境下的 PPO 训练为例：  
+在单机 8×H100 的设置下，OpenVLA（左）与 OpenVLA-OFT（右）在 plate-25-main 任务上，分别在 48 小时与 24 小时的 PPO 训练后，成功率最高达到 90%。
 
 .. raw:: html
 
@@ -232,21 +224,21 @@ Running on a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) a
      </div>
    </div>
 
-Our fine-tuned models achieved the following accuracies on the Vision, Semantic, and Position tasks under out-of-distribution (OOD) evaluation. 
-The best-performing model for each task is highlighted in bold.
+我们在 OOD（分布外）评估下，对 Vision、Semantic、Position 三类任务进行测试，  
+每类任务最优模型以粗体标注。
 
-.. note:: 
-   The same OOD test set used in ``rl4vla`` is adopted here for fair comparison.
+.. note::
+   为公平对比，这里采用与 ``rl4vla`` 相同的 OOD 测试集。
 
-.. list-table:: **OpenVLA and OpenVLA-OFT model results on ManiSkill3**
+.. list-table:: **ManiSkill3 上 OpenVLA 与 OpenVLA-OFT 的模型结果**
    :header-rows: 1
    :widths: 40 15 15 18 15
 
-   * - Model
+   * - 模型
      - Vision
      - Semantic
-     - Position 
-     - Average
+     - Position
+     - 平均值
    * - `rl4vla <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_
      - 76.6%
      - 75.4%
@@ -273,13 +265,11 @@ The best-performing model for each task is highlighted in bold.
      - 81.6%
      - 75.5%
 
-.. note:: 
-   The ``rl4vla`` model refers to PPO combined with OpenVLA under a **small batch size**, and thus should only be compared with our PPO+OpenVLA trained under similar conditions. 
-   In contrast, our PPO+OpenVLA benefits from RLinf's large-scale infrastructure, allowing training with **larger batch sizes**, which we found to significantly improve performance.
+.. note::
+   ``rl4vla`` 指在 **小 batch** 条件下，使用 PPO + OpenVLA 的设置，仅应与我们在类似条件下的 PPO+OpenVLA 对比。  
+   而我们的 PPO+OpenVLA 受益于 RLinf 的大规模基础设施，能够使用 **更大的 batch** 进行训练，我们观察到这能显著提升性能。
 
-
-The animation below shows the results of training the OpenVLA model on ManiSkill3's multi-task benchmark 
-using the PPO algorithm within the RLinf framework.
+下面的动图展示了在 RLinf 框架中，使用 PPO 在 ManiSkill3 多任务基准上训练 OpenVLA 模型的效果。
 
 .. raw:: html
 
@@ -288,21 +278,21 @@ using the PPO algorithm within the RLinf framework.
      Your browser does not support the video tag.
    </video>
 
-
-LIBERO Results
+LIBERO 结果
 ~~~~~~~~~~~~~~~~~~~
 
-Furthermore, we trained OpenVLA-OFT in the LIBERO environment using the GRPO algorithm. The improvements achieved through our RL fine-tuning are shown below:
+此外，我们在 LIBERO 环境中使用 GRPO 训练了 OpenVLA-OFT。  
+通过 RL 微调所获得的改进如下：
 
-.. list-table:: **OpenVLA-OFT model results on LIBERO**
+.. list-table:: **LIBERO 上 OpenVLA-OFT 的模型结果**
    :header-rows: 1
 
-   * - Model
+   * - 模型
      - Spatial
      - Goal
      - Object
      - Long
-     - Average
+     - 平均值
    * - OpenVLA-OFT-SFT (one-shot)
      - 56.5%
      - 45.6%
@@ -315,14 +305,13 @@ Furthermore, we trained OpenVLA-OFT in the LIBERO environment using the GRPO alg
      - **99.0%**
      - **94.4%**
      - **97.8%**
-   * - Improvement
+   * - 提升
      - +42.5%
      - +53.4%
      - +73.4%
      - +80.5%
      - +62.4%
 
-For the Libero experiment, we were inspired by 
-`SimpleVLA <https://github.com/PRIME-RL/SimpleVLA-RL>`_, 
-with only minor modifications. We thank the authors for releasing their open-source code, 
-and our results are consistent with theirs.
+在 Libero 实验中，我们参考了  
+`SimpleVLA <https://github.com/PRIME-RL/SimpleVLA-RL>`_，仅做了少量改动。  
+感谢作者开源代码，我们的结果与其一致。

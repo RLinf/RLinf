@@ -1,25 +1,24 @@
-Extending the Framework
+扩展框架
 ========================
 
-For advanced users seeking deeper customization, this chapter demonstrates how to extend RLinf  
-by integrating custom environments and new model architectures.
+对于希望进行更深层次定制的高级用户，本章演示如何通过集成自定义环境和新的模型架构来扩展 RLinf。  
 
-You will learn how to:
+你将学习如何：
 
-- Integrate a :doc:`new environment <new_env>` into RLinf’s task system  
-- Add a :doc:`new model <new_model_fsdp>` using the FSDP + HuggingFace backend  
-- Add a :doc:`new model <new_model_megatron>` using the Megatron + SGLang backend  
+- 将一个 :doc:`新环境 <new_env>` 集成到 RLinf 的任务系统中  
+- 添加一个使用 FSDP + HuggingFace 后端的 :doc:`新模型 <new_model_fsdp>`  
+- 添加一个使用 Megatron + SGLang 后端的 :doc:`新模型 <new_model_megatron>`  
 
-RLinf supports multiple backends for model training, each with its own initialization logic and execution flow.  
-This guide provides step-by-step instructions on how to:
+RLinf 支持多种模型训练后端，每种后端都有自己的初始化逻辑和执行流程。  
+本指南提供了逐步说明，帮助你完成以下任务：
 
-- Register and load custom models in RLinf  
-- Configure YAML files to reference your new model or environment  
-- Extend backend-specific code if your model type is not yet supported  
-- Adapt environment wrappers and interfaces to integrate new simulators or APIs
+- 在 RLinf 中注册并加载自定义模型  
+- 配置 YAML 文件以引用你的新模型或环境  
+- 如果你的模型类型尚未被支持，扩展特定后端的代码  
+- 调整环境封装器和接口以集成新的模拟器或 API  
 
-Whether you're training a novel model architecture or experimenting with a custom RL environment,  
-this section gives you the tools to plug directly into RLinf’s modular design.
+无论你是要训练一种新的模型架构，还是要在自定义 RL 环境中进行实验，  
+本节都将提供工具，帮助你直接接入 RLinf 的模块化设计。  
 
 .. toctree::
    :hidden:

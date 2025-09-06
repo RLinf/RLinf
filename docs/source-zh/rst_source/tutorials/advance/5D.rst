@@ -1,38 +1,36 @@
-5D Parallelism Configuration
+5D 并行配置
 ================================
 
-RLinf employs **NVIDIA Megatron-LM** as its large-scale Transformer training
-backend and exposes five orthogonal parallelism modes:
+RLinf 使用 **NVIDIA Megatron-LM** 作为大规模 Transformer 训练的后端，  
+并提供五种相互独立的并行模式：
 
-1. **Tensor Parallelism (TP)**
-2. **Data Parallelism (DP)**
-3. **Pipeline Parallelism (PP)**
-4. **Sequence Parallelism (SP)**
-5. **Context Parallelism (CP)**
+1. **Tensor Parallelism (TP)** 张量并行  
+2. **Data Parallelism (DP)** 数据并行  
+3. **Pipeline Parallelism (PP)** 流水线并行  
+4. **Sequence Parallelism (SP)** 序列并行  
+5. **Context Parallelism (CP)** 上下文并行  
 
-A suitable combination lets the system scale from single-node to
-hundreds-GPU clusters while balancing memory, communication, and
-utilisation. 
+合适的组合可以让系统从单节点扩展到数百 GPU 的集群，  
+同时在内存、通信和利用率之间取得平衡。  
 
-Below is a detailed introduction to the five parallel modes, as well as instructions on how to configure them for startup.
+下面将详细介绍这五种并行模式，并给出启动时的配置方法。
 
-1. Tensor Parallelism (TP)
+1. 张量并行 (TP)
 --------------------------
 
-**Definition**
+**定义**
 
-*Tensor Parallelism* shards the model’s **weight matrices** across a
-process group. Each GPU holds and computes only its slice.
+*张量并行* 将模型的 **权重矩阵** 切分到一个进程组中。每个 GPU 仅保存并计算自己负责的部分。  
 
-**Mechanics**
+**机制**
 
-* Linear layers  
-  – split ``Linear(h, 4h)`` **by columns**  
-  – split ``Linear(4h, h)`` **by rows**  
-* Attention projections – shard :math:`Q,K,V` along the head dimension  
-* Results are fused via *all-reduce* after every sharded operation.
+* 线性层  
+  – ``Linear(h, 4h)`` 按 **列** 切分  
+  – ``Linear(4h, h)`` 按 **行** 切分  
+* 注意力投影 – :math:`Q,K,V` 按 head 维度切分  
+* 每次切分计算后通过 *all-reduce* 将结果合并  
 
-**Sample YAML**
+**YAML 示例**
 
 .. code-block:: yaml
 
@@ -40,31 +38,30 @@ process group. Each GPU holds and computes only its slice.
      model:
        tensor_model_parallel_size: 2    # tp_size = 2
 
-**Pros**
+**优点**
 
-* Bypasses single-GPU memory limits.  
-* Balances compute across GPUs.
+* 避免单 GPU 内存瓶颈  
+* 在 GPU 之间平衡计算  
 
-**Cons**
+**缺点**
 
-* All-reduce after almost every layer → high latency.  
-* Scalability bounded by hidden-size width.
+* 几乎每层后都需要 all-reduce → 高延迟  
+* 扩展性受限于隐藏层宽度  
 
-2. Data Parallelism (DP)
+2. 数据并行 (DP)
 ------------------------
 
-**Definition**
+**定义**
 
-*Data Parallelism* partitions the **minibatch**; every replica stores a
-full copy of the model.
+*数据并行* 将 **小批量数据 (minibatch)** 切分，每个副本都存储完整的模型。  
 
-**Mechanics**
+**机制**
 
-* Split the global batch across DP ranks.  
-* Each rank computes forward/backward locally.  
-* Gradients are synchronised with an all-reduce before the optimiser step.
+* 全局 batch 在 DP rank 间切分  
+* 每个 rank 独立计算前向/反向  
+* 在优化器更新前通过 all-reduce 同步梯度  
 
-**Sizing Example**
+**规模示例**
 
 .. code-block:: yaml
 
@@ -74,37 +71,35 @@ full copy of the model.
 
    actor:
      model:
-       tensor_model_parallel_size: 2  # TP
-       pipeline_model_parallel_size: 2  # PP
-       context_parallel_size: 2        # CP
+       tensor_model_parallel_size: 2     # TP
+       pipeline_model_parallel_size: 2   # PP
+       context_parallel_size: 2          # CP
      # dp_size = 128 / 2 / 2 / 2 = 16
 
-**Pros**
+**优点**
 
-* Simple and model-agnostic.  
-* Perfect for scaling dataset size.
+* 简单，模型无关  
+* 非常适合扩展数据集规模  
 
-**Cons**
+**缺点**
 
-* Full-model replica on every GPU → memory heavy.  
-* Gradient all-reduce over the entire parameter set.  
-* Usually combined with TP/PP/CP to fit larger models.
+* 每个 GPU 都保存完整模型 → 内存开销大  
+* 梯度 all-reduce 覆盖全部参数  
+* 通常需要与 TP/PP/CP 结合来支持更大模型  
 
-3. Pipeline Parallelism (PP)
+3. 流水线并行 (PP)
 ----------------------------
 
-**Definition**
+**定义**
 
-*Pipeline Parallelism* places **different layer stacks** on different
-ranks to form a computation pipeline.
+*流水线并行* 将 **不同的层堆栈** 分配到不同的 rank 上，组成计算流水线。  
 
-**Mechanics**
+**机制**
 
-* Evenly split layers across ``pp_size`` stages.  
-* Use *1F1B* (one-forward-one-backward) or similar schedulers to overlap
-  compute.
+* 将层均匀分配到 ``pp_size`` 个阶段  
+* 使用 *1F1B*（一前一后）或类似调度器来重叠计算  
 
-**Schedule Illustration**
+**调度示意**
 
 ::
 
@@ -113,10 +108,9 @@ ranks to form a computation pipeline.
    GPU 2:          [F1][F2][F3][F4][B4][B3][B2][B1]
    GPU 3:               [F1][F2][F3][F4][B4][B3][B2][B1]
 
-F = forward micro-batch, B = backward micro-batch, index = micro-batch
-ID.
+F = 前向 micro-batch，B = 反向 micro-batch，index = micro-batch 编号。  
 
-**Sample YAML**
+**YAML 示例**
 
 .. code-block:: yaml
 
@@ -124,67 +118,63 @@ ID.
      model:
        pipeline_model_parallel_size: 2
 
-**Pros**
+**优点**
 
-* Reduces memory for very **deep** models.  
-* Only neighbour-to-neighbour communication (activations).
+* 降低超 **深** 模型的内存需求  
+* 只需相邻间通信（激活）  
 
-**Cons**
+**缺点**
 
-* Pipeline bubbles (idle slots) may lower utilisation.
+* 流水线气泡（空闲槽位）可能降低利用率  
 
-4. Sequence Parallelism (SP)
+4. 序列并行 (SP)
 ----------------------------
 
-**Definition**
+**定义**
 
-Megatron’s *Sequence Parallelism* augments TP to reduce memory for
-**long-context** attention and MLP blocks.
+Megatron 的 *序列并行* 在 TP 的基础上扩展，用于减少 **长上下文** 注意力和 MLP 模块的内存。  
 
-**Mechanics**
+**机制**
 
-* Must be enabled **with TP**; both use the same process group.  
-* Inputs/outputs of attention and MLP are partitioned across the
-  sequence dimension while weight shards stay identical to TP.
+* 必须与 **TP 一起启用**；两者使用相同进程组  
+* 注意力和 MLP 的输入/输出在序列维度上切分，而权重切分与 TP 保持一致  
 
-**Sample YAML**
+**YAML 示例**
 
 .. code-block:: yaml
 
    actor:
      model:
-       tensor_model_parallel_size: 2     # TP is active
-       sequence_parallel: True           # enable SP
+       tensor_model_parallel_size: 2     # 启用 TP
+       sequence_parallel: True           # 启用 SP
 
-   # If TP = 1, SP must be disabled
+   # 如果 TP = 1，则必须关闭 SP
    actor:
      model:
        tensor_model_parallel_size: 1
        sequence_parallel: False
 
-**Pros**
+**优点**
 
-* Significant memory relief for long sequences.  
+* 对长序列显著减少内存占用  
 
-**Cons**
+**缺点**
 
-* Extra communication on sequence-dim shuffles.
+* 序列维度 shuffle 带来额外通信  
 
-5. Context Parallelism (CP)
+5. 上下文并行 (CP)
 ---------------------------
 
-**Definition**
+**定义**
 
-*Context Parallelism* targets **ultra-long sequences** by chunking the
-entire attention computation along the sequence axis; all tensors are
-sharded in that dimension.
+*上下文并行* 面向 **超长序列**，通过将整个注意力计算在序列维度上切分，所有张量在该维度上分片。  
 
-**Mechanics**
+**机制**
 
-* Split :math:`Q,K,V` and logits into *context* chunks.  
-* Use ring attention to communicate and incrementally accumulate output.
+* 将 :math:`Q,K,V` 和 logits 切分为 *context* 块  
+* 使用环形注意力进行通信，并逐步累积输出  
 
-**Sample YAML**
+**YAML 示例**
 
 .. code-block:: yaml
 
@@ -192,21 +182,17 @@ sharded in that dimension.
      model:
        context_parallel_size: 2
 
-**Pros**
+**优点**
 
-* Breaks memory wall for 100k+ token contexts.  
-* Pairs well with dynamic batch sizing.
+* 打破 100k+ token 上下文的内存瓶颈  
+* 与动态 batch 大小搭配良好  
 
-**Cons**
+**缺点**
 
-* High bandwidth cost; parameters are **not** sharded, so model memory is
-  replicated.
+* 带宽开销大；参数 **不** 被切分，模型内存依然完全复制  
 
-Summary
+总结
 -------
 
-Megatron-LM’s flexible combination of **TP, DP, PP, SP, and CP** enables
-RLinf to scale models by *width* (TP), *data volume* (DP),
-*depth* (PP), or *context length* (SP / CP).  
-Select sizes based on model architecture, target sequence length, GPU
-memory, and interconnect topology for best throughput.
+Megatron-LM 灵活组合 **TP、DP、PP、SP 和 CP**，使 RLinf 可以通过 *宽度* （TP）、*数据规模* （DP）、*深度* （PP）或 *上下文长度* （SP / CP）来扩展模型。  
+选择合适的规模取决于模型结构、目标序列长度、GPU 内存和互联拓扑，以获得最佳吞吐量。  

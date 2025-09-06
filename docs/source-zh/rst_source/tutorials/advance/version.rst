@@ -1,57 +1,55 @@
-Switch SGLang Versions
+切换 SGLang 版本
 ======================
 
-RLinf can plug different *generation backends* into its
-reinforcement-learning pipeline. For the current release **only
-SGLang** is supported; vLLM integration is under development.
+RLinf 可以将不同的 *generation backends* 接入其强化学习流水线。  
+在当前版本中 **仅支持 SGLang**；vLLM 的集成正在开发中。  
 
 .. note::
 
-   RLinf is compatible with **SGLang 0.4.4 → 0.4.9**.  
-   No manual patching is required – the framework detects the installed
-   version and loads the matching shim automatically.
+   RLinf 兼容 **SGLang 0.4.4 → 0.4.9**。  
+   不需要手动打补丁 —— 框架会自动检测已安装的版本并加载匹配的 shim。  
 
-Installation Requirements
+安装要求
 -------------------------
 
-* **CUDA** ≥ 11.8 (or 12.x matching your PyTorch build)  
+* **CUDA** ≥ 11.8（或与 PyTorch 构建版本匹配的 12.x）  
 * **Python** ≥ 3.8  
-* Sufficient **GPU memory** for the chosen model  
-* Compatible versions of **PyTorch** and *transformers*
+* 所选模型需要足够的 **GPU 内存**  
+* 兼容版本的 **PyTorch** 和 *transformers*  
 
 .. note::
 
-   Mismatched CUDA / PyTorch wheels are the most common installation
-   issue.  Verify both before installing SGLang.
+   CUDA / PyTorch 版本不匹配是最常见的安装问题。  
+   安装 SGLang 前请先确认二者版本一致。  
 
-Install via pip
+通过 pip 安装
 ~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
 
-   # Reference version
+   # 参考版本
    pip install sglang==0.4.4
 
-   # Recommended for production
+   # 推荐用于生产
    pip install sglang==0.4.8
 
-   # Latest supported
+   # 最新支持版本
    pip install sglang==0.4.9
 
-Install from Source
+从源码安装
 ~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
 
    git clone https://github.com/sgl-project/sglang.git
    cd sglang
-   git checkout v0.4.8          # pick the tag you need
+   git checkout v0.4.8          # 选择需要的 tag
    pip install -e .
 
 .. note::
 
-   Building from source can be time-consuming and heavy on disk space;
-   prefer the pre-built wheels unless you need bleeding-edge fixes.
+   从源码构建可能耗时且占用大量磁盘空间；  
+   除非需要最新修复，否则推荐使用预编译的 wheels。  
 
 ----------------------------
 
@@ -59,57 +57,57 @@ Install from Source
 
     ....
     rollout:
-        group_name: "RolloutGroup" # SGLang Generation Group Name, used for communication
+        group_name: "RolloutGroup" # SGLang Generation Group 名称，用于通信
 
-        gpu_memory_utilization: 0.55 # SGLang's parameter, which decides how much vram is used for static memory pool
+        gpu_memory_utilization: 0.55 # SGLang 参数，决定静态内存池使用的显存比例
 
-        model_dir: /model/path # model path
-        model_arch: qwen2.5 # model arch
-        enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
-        distributed_executor_backend: mp   # ray or mp
-        disable_log_stats: False     # if true will log sglang's output
-        detokenize: False            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
-        padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
-        eos: null                   # will be tokenizer.eos_token_id if null.
+        model_dir: /model/path # 模型路径
+        model_arch: qwen2.5    # 模型架构
+        enforce_eager: False   # 若为 False，rollout 引擎会捕获 cuda graph，会增加初始化时间
+        distributed_executor_backend: mp   # ray 或 mp
+        disable_log_stats: False     # 若为 True，则关闭 sglang 输出日志
+        detokenize: False            # 是否反解码输出。在 RL 训练中通常不需要反解码，可设为 True 进行调试
+        padding: null                # 若为 null，则使用 tokenizer.pad_token_id；用于过滤 Megatron 的 padding
+        eos: null                    # 若为 null，则使用 tokenizer.eos_token_id
 
-        attention_backend: triton # attention backend used by SGLang
-        recompute_logprobs: True # whether SGLang will compute log probs
+        attention_backend: triton    # SGLang 使用的注意力后端
+        recompute_logprobs: True     # 是否计算 log probs
 
-        tensor_parallel_size: 1 # tp_size
-        pipeline_parallel_size: 1 # pp_size
+        tensor_parallel_size: 1      # tp_size
+        pipeline_parallel_size: 1    # pp_size
         
-        validate_weight: False # whether to send all weights at first for weight comparison.
-        validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
-        print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
+        validate_weight: False       # 是否在开始时发送所有权重用于对比
+        validate_save_dir: null      # 保存权重对比文件的目录
+        print_outputs: False         # 是否打印 rollout 引擎的输出（token ids, texts 等）
 
-        sglang_decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
-        max_running_requests: 64 # the maximum number of running requests in the rollout engine.
-        cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
+        sglang_decode_log_interval: 500000 # SGLang 打印解码时间和统计信息的间隔
+        max_running_requests: 64     # rollout 引擎的最大并发请求数
+        cuda_graph_max_bs: 128       # cuda graph 的最大 batch size，超过则不使用 cuda graph
 
-        use_torch_compile: False # enable torch_compile in SGLang for rollout.
-        torch_compile_max_bs: 128 # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.
+        use_torch_compile: False     # 是否在 SGLang rollout 中启用 torch_compile
+        torch_compile_max_bs: 128    # torch compile 的最大 batch size，超过则不使用
 
     ...
 
 
-Internal Version Routing
+内部版本路由
 ------------------------
 
-Directory layout::
+目录结构::  
 
    rlinf/hybrid_engines/sglang/
-   ├── __init__.py               # Version detection and routing
-   ├── sglang_worker.py          # Main worker implementation
-   ├── sglang_0_4_4/             # SGLang 0.4.4 specific implementation
+   ├── __init__.py               # 版本检测与路由
+   ├── sglang_worker.py          # 主 Worker 实现
+   ├── sglang_0_4_4/             # SGLang 0.4.4 专用实现
    │   ├── __init__.py
-   │   ├── io_struct.py          # I/O structures for 0.4.4
-   │   ├── sgl_engine.py         # Engine implementation for 0.4.4
-   │   ├── sgl_scheduler.py      # Scheduler for 0.4.4
-   │   └── tokenizer_manager.py  # Tokenizer management for 0.4.4
-   └── sglang_0_4_x/             # Future version implementations
+   │   ├── io_struct.py          # 0.4.4 的 I/O 结构
+   │   ├── sgl_engine.py         # 0.4.4 的引擎实现
+   │   ├── sgl_scheduler.py      # 0.4.4 的调度器
+   │   └── tokenizer_manager.py  # 0.4.4 的分词器管理
+   └── sglang_0_4_x/             # 未来版本实现
        └── ...
 
-The loader in ``__init__.py`` resolves the installed package:
+``__init__.py`` 中的加载器会解析已安装的包版本：  
 
 .. code-block:: python
 

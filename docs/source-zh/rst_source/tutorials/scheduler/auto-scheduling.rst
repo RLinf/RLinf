@@ -1,56 +1,58 @@
-Auto Scheduling Strategy
+自动调度策略
 ================================
 
-Auto Placement before RL training
--------------------------------
+RL 训练前的自动放置
+---------------------------------
 
-This tool automatically generates optimal component placement configurations for RL training workflows. It analyzes the computational costs of different components (rollout, inference, training, etc.) and determines the best placement strategy to minimize overall training time.
+该工具会自动为 RL 训练流程生成最优的组件放置配置。  
+它会分析不同组件（rollout、inference、training 等）的计算开销，并确定最佳放置策略，从而最小化整体训练时间。
 
-Overview
+概览
 ~~~~~~~~
 
-The auto placement tool consists of three main components in `tools/auto_placement`:
+自动放置工具由 `tools/auto_placement` 下的三个主要组件构成：
 
-- **scheduler_task.py**: Main scheduler that performs time and space division multiplexing to find optimal placements
-- **resource_allocator.py**: Handles resource allocation for different components
-- **workflow.py**: Manages workflow graphs and cost calculations
+- **scheduler_task.py**：主调度器，执行时间与空间的分时复用以寻找最优放置方案  
+- **resource_allocator.py**：负责不同组件的资源分配  
+- **workflow.py**：管理工作流图和成本计算  
 
-Usage
+使用方法
 ~~~~~
 
-Step 1: Collect Profile Data
+步骤 1：收集 Profile 数据
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Before running the auto placement tool, you need to collect profile data for your components. This includes measuring the computation time for each component (rollout, inference, training, etc.) in collocated mode for one iteration.
+在运行自动放置工具之前，你需要收集组件的 Profile 数据。  
+这包括测量各组件（rollout、inference、training 等）在共享式模式下一次迭代的计算时间。
 
-Add the profile data to your YAML configuration file under the ``profile_data`` section:
+将 Profile 数据添加到 YAML 配置文件的 ``profile_data`` 部分：
 
 .. code-block:: yaml
 
    profile_data:
-     actor_cost: 95.7    # Training component cost (seconds per iteration)
-     inference_cost: 30.8  # Inference component cost (seconds per iteration)
-     rollout_cost: 59.9    # Rollout component cost (seconds per iteration)
+     actor_cost: 95.7      # Training 组件耗时（每次迭代秒数）
+     inference_cost: 30.8  # Inference 组件耗时（每次迭代秒数）
+     rollout_cost: 59.9    # Rollout 组件耗时（每次迭代秒数）
 
-**How to collect profile data:**
+**如何收集 Profile 数据：**
 
-1. Run your training with origin cluster in collocated mode for several iterations
-2. Use profiling tools to measure the time each component takes per iteration
-3. Record the average time per iteration for each component
+1. 使用原始集群在共享式模式下运行训练若干次迭代  
+2. 使用分析工具测量每个组件每次迭代的耗时  
+3. 记录每个组件的平均迭代耗时  
 
-Step 2: Run Auto Placement
+步骤 2：运行自动放置
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Use the provided shell script to run the auto placement tool:
+使用提供的 shell 脚本运行自动放置工具：
 
 .. code-block:: bash
 
    cd examples/math
    ./run_placement_autotune.sh [config_name]
 
-Where ``config_name`` is the name of your configuration file.
+其中 ``config_name`` 是你的配置文件名称。
 
-The output of this script is like:
+脚本的输出类似如下：
 
 .. code-block:: text
 
@@ -62,21 +64,22 @@ The output of this script is like:
      component_placement:
        rollout,actor: all
 
-Step 3: Apply the Results
+步骤 3：应用结果
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The tool will output a new configuration with optimized component placement. Copy the ``cluster.component_placement`` section from the output and replace the corresponding section in your original YAML file.
+该工具会输出一个新的包含优化组件放置的配置。  
+将输出中的 ``cluster.component_placement`` 部分复制，替换掉原始 YAML 文件中的对应部分。
 
-Replace the ``cluster.component_placement`` section in your original configuration file with this optimized placement.
+即用优化后的 ``cluster.component_placement`` 替换原始配置文件里的这一部分。
 
-Troubleshooting
+故障排查
 ~~~~~~~~~~~~~~~
 
-1. **Profile data not provided error**: Ensure your YAML file includes the ``profile_data`` section with all three cost values.
+1. **缺少 Profile 数据错误**：确保 YAML 文件包含 ``profile_data`` 部分，并包含三个组件的耗时数值。  
 
-2. **Invalid placement**: Check that the total GPU allocation doesn't exceed your cluster capacity.
+2. **无效放置**：检查 GPU 总分配是否超过集群容量。  
 
-Auto Scheduling during RL training
+RL 训练中的自动调度
 ---------------------------------
 
-To be updated.
+待更新。

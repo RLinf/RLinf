@@ -2,7 +2,7 @@ Auto Scheduling Strategy
 ================================
 
 Auto Placement before RL training
--------------------------------
+-----------------------------------
 
 This tool automatically generates optimal component placement configurations for RL training workflows. It analyzes the computational costs of different components (rollout, inference, training, etc.) and determines the best placement strategy to minimize overall training time.
 
@@ -77,6 +77,6 @@ Troubleshooting
 2. **Invalid placement**: Check that the total GPU allocation doesn't exceed your cluster capacity.
 
 Auto Scheduling during RL training
----------------------------------
+------------------------------------
 
 To be updated.

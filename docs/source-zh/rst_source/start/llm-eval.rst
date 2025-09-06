@@ -1,51 +1,55 @@
-Evaluation 2: Reasoner Scenario
+评估 2：数学推理场景
 =================================
 
-Introduction
+简介
 ------------
-We provide an integrated evaluation toolkit for long chain-of-thought (CoT) mathematical reasoning.  
-The `toolkit <https://github.com/RLinf/LLMEvalKit>`_ includes both code and datasets, allowing researchers to benchmark trained LLMs on math-related reasoning tasks.  
 
-**Acknowledgements:** This evaluation toolkit is adapted from `Qwen2.5-Math <https://github.com/QwenLM/Qwen2.5-Math>`_.
+我们提供了一套集成评估工具，用于长链式（CoT）数学推理任务。  
+该工具包 `toolkit <https://github.com/RLinf/LLMEvalKit>`_ 同时包含了代码和数据集，  
+便于研究人员对训练后的大语言模型在数学推理方面进行评估。
 
-Environment Setup
+**致谢：** 本评估工具改编自 `Qwen2.5-Math <https://github.com/QwenLM/Qwen2.5-Math>`_ 项目。
+
+环境准备
 -----------------
-First, clone the repository:
+
+首先，克隆该仓库：
 
 .. code-block:: bash
 
    git clone https://github.com/RLinf/LLMEvalKit.git 
 
-To use the package, install the required dependencies:
+安装依赖：
 
 .. code-block:: bash
 
    pip install -r requirements.txt 
 
-If you are using our Docker image, you only need to additionally install:
+如果你正在使用我们的 Docker 镜像，仅需额外安装：
 
 .. code-block:: bash
 
    pip install Pebble
    pip install timeout-decorator
 
-Quick Start
------------
-To run evaluation on a single dataset:
+快速开始
+-----------------
+
+如果你想在单个数据集上运行评估，可以执行如下命令：
 
 .. code-block:: bash
 
-   MODEL_NAME_OR_PATH=/model/path  # replace with your model path
+   MODEL_NAME_OR_PATH=/model/path  # 替换为你的模型路径
    OUTPUT_DIR=${MODEL_NAME_OR_PATH}/math_eval
    SPLIT="test"
    NUM_TEST_SAMPLE=-1
    export CUDA_VISIBLE_DEVICES="0"
 
-   DATA_NAME="aime24"  # options: aime24, aime25, gpqa_diamond
+   DATA_NAME="aime24"  # 可选项包括：aime24, aime25, gpqa_diamond
    PROMPT_TYPE="r1-distilled-qwen"
-   # NOTE:
-   # for aime24 and aime25, use PROMPT_TYPE="r1-distilled-qwen";
-   # for gpqa_diamond, use PROMPT_TYPE="r1-distilled-qwen-gpqa".
+   # 注意：
+   # 如果是 aime24 或 aime25，请使用 PROMPT_TYPE="r1-distilled-qwen"
+   # 如果是 gpqa_diamond，请使用 PROMPT_TYPE="r1-distilled-qwen-gpqa"
 
    TOKENIZERS_PARALLELISM=false \
    python3 -u math_eval.py \
@@ -58,24 +62,25 @@ To run evaluation on a single dataset:
        --use_vllm \
        --save_outputs
 
-For **batch evaluation**, run:
+若进行 **批量评估**，可运行：
 
 .. code-block:: bash
 
    bash main_eval.sh
 
-You must set ``MODEL_NAME_OR_PATH`` and ``CUDA_VISIBLE_DEVICES`` in the script.  
-This will sequentially evaluate the model on AIME24, AIME25, and GPQA-diamond datasets.  
+你需要在脚本中设置 ``MODEL_NAME_OR_PATH`` 和 ``CUDA_VISIBLE_DEVICES``，  
+该脚本将依次在 AIME24、AIME25 和 GPQA-diamond 数据集上进行评估。
 
-Results
--------
-The results are printed to the console and stored in ``OUTPUT_DIR``.  
-Stored outputs include:
+评估结果
+-----------------
 
-1. Metadata (``xx_metrics.json``): summary statistics.  
-2. Full model outputs (``xx.jsonl``): complete reasoning traces and predictions.  
+结果会被打印在终端，并保存在 ``OUTPUT_DIR`` 中。  
+结果内容包括：
 
-Example Metadata:
+1. 元信息（``xx_metrics.json``）：统计摘要  
+2. 完整模型输出（``xx.jsonl``）：包含完整推理过程和预测结果  
+
+元信息示例：
 
 .. code-block:: javascript
 
@@ -89,9 +94,9 @@ Example Metadata:
        "time_use_in_minite": "62:06"
    }
 
-``acc`` reports the **average accuracy across all sampled responses**, which serves as the main evaluation metric.  
+字段 ``acc`` 表示 **所有采样回答的平均准确率**，是主要评估指标。
 
-Example Model Output:
+模型输出示例：
 
 .. code-block:: javascript
 
@@ -99,55 +104,56 @@ Example Model Output:
       "idx": 0, 
       "question": "Find the number of...", 
       "gt_cot": "None", 
-      "gt": "204", // ground truth answer
-      "solution": "... . Thus, we have the equation $(240-t)(s) = 540$ ..., ", // standard solution
-      "answer": "204", // ground truth answer
-      "code": ["Alright, so I need to figure out ... . Thus, the number of ... is \\(\\boxed{204}\\)."], // generated reasoning chains
-      "pred": ["204"], // extracted answers from reasoning chains
+      "gt": "204", // 标准答案
+      "solution": "... . Thus, we have the equation $(240-t)(s) = 540$ ..., ", // 标准解法
+      "answer": "204", // 标准答案
+      "code": ["Alright, so I need to figure out ... . Thus, the number of ... is \\(\\boxed{204}\\)."], // 模型生成的推理链
+      "pred": ["204"], // 从推理链中提取的最终答案
       "report": [null], 
-      "score": [true] // whether the extracted answers are correct
+      "score": [true] // 是否预测正确
    }
 
-Datasets
---------
-The toolkit currently supports the following evaluation datasets:
+支持数据集
+-----------------
 
-.. list-table:: Supported Datasets
+该工具目前支持以下评估数据集：
+
+.. list-table:: 支持的数据集
    :header-rows: 1
    :widths: 20 80
 
-   * - Dataset
-     - Description
+   * - 数据集
+     - 简介
    * - ``aime24``
-     - Problems from the **American Invitational Mathematics Examination (AIME) 2024**, focusing on high-school Olympiad-level mathematics reasoning.
+     - 来自 **AIME 2024** （美国数学邀请赛）的题目，主要关注高中奥数级别的数学推理。
    * - ``aime25``
-     - Problems from the **AIME 2025**, same format as AIME24 but with different test set.
+     - 来自 **AIME 2025**，与 AIME24 格式一致但测试集不同。
    * - ``gpqa_diamond``
-     - A subset of **GPQA (Graduate-level Google-Proof Q&A)** with the most challenging questions (Diamond split). Covers multi-disciplinary topics (e.g., mathematics, physics, computer science) requiring deep reasoning beyond memorization.
+     - **GPQA（研究生级别 Google-Proof 问答）** 中难度最高的子集（Diamond 分支），  
+       包含跨学科问题（如数学、物理、计算机），要求具备深度推理能力而非记忆。
 
-Configuration
--------------
-The main configurable parameters are:
+参数配置
+-----------------
 
-.. list-table:: Configuration Parameters
+主要可配置参数如下：
+
+.. list-table:: 配置参数说明
    :header-rows: 1
    :widths: 20 80
 
-   * - Name
-     - Description
+   * - 参数名
+     - 说明
    * - ``data_name``
-     - Dataset to evaluate. Supported: ``aime24``, ``aime25``, ``gpqa_diamond``.
+     - 要评估的数据集，支持：``aime24``、``aime25``、``gpqa_diamond``
    * - ``prompt_type``
-     - Prompt template. Use ``r1-distilled-qwen`` for AIME datasets, ``r1-distilled-qwen-gpqa`` for GPQA.
+     - 所用提示词模板。AIME 数据集用 ``r1-distilled-qwen``，GPQA 用 ``r1-distilled-qwen-gpqa``
    * - ``temperature``
-     - Sampling temperature. Recommended: ``0.6`` for 1.5B models, ``1.0`` for 7B models.
+     - 采样温度。推荐值：1.5B 模型用 ``0.6``，7B 模型用 ``1.0``
    * - ``top_p``
-     - Nucleus sampling parameter. Default: ``0.95``.
+     - nucleus sampling 的参数，默认值为 ``0.95``
    * - ``n_sampling``
-     - Number of responses sampled per question, used to compute average accuracy. Default: ``32``.
+     - 每道题采样回答的数量，用于计算平均准确率，默认值为 ``32``
    * - ``max_tokens_per_call``
-     - Maximum tokens generated per call. Default: ``32768``.
+     - 每次生成的最大 token 数，默认值为 ``32768``
    * - ``output_dir``
-     - Output directory for results. Default: ``./outputs``.
-
-
+     - 保存结果的输出目录，默认是 ``./outputs``

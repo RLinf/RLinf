@@ -1,4 +1,4 @@
-Hybrid Mode
+混合式模式
 ===========
 
 .. image:: ../../../_static/svg/hybrid.svg
@@ -6,15 +6,16 @@ Hybrid Mode
    :align: center
    :class: hyb-img
 
-RLinf further augments the collocated mode and disaggregated mode, by introducing hybrid mode: some tasks share the same set of GPUs and some tasks use separate GPUs.
+RLinf 在共享式模式和分离式模式的基础上，进一步引入了混合式模式：  
+有些任务共享同一组 GPU，而有些任务使用独立的 GPU。
 
-The above figure shows a concrete placement and execution example for an embodied RL training. 
-Simulation workers are placed on GPU 0-1, generation workers are placed on GPU 2-3. Two *data queues* decouple producer and consumer rates, 
-helping to smooth the pipeline, balance the load, and virtually eliminate performance bottlenecks.After the rollout stage (i.e., simulation+generation), Inference workers are placed and executed on GPU 0-3, and training workers are also on GPU 0-3 afterward. You can see that hybrid mode combines collocated mode and disaggregated mode. The communication utilities (:doc:`../communication/index`) in RLinf facilitate such flexible placement and execution mode.
+上图展示了一个具身 RL 训练的具体放置与执行示例。  
+仿真 Worker 被放置在 GPU 0-1 上，生成 Worker 被放置在 GPU 2-3 上。两个 *数据队列* 将生产者和消费者的速率解耦，帮助平滑流水线、平衡负载，并几乎消除性能瓶颈。在 rollout 阶段（即仿真+生成）结束后，推理 Worker 被放置并运行在 GPU 0-3 上，随后训练 Worker 也运行在 GPU 0-3 上。可以看到，混合式模式结合了共享式和分离式模式。RLinf 中的通信工具 (:doc:`../communication/index`) 支持这种灵活的放置和执行方式。
 
-**Example configuration**
+**示例配置**
 
-The configuration style of hybrid mode is consistent to collocated/disaggregated mode as shown below. `env` (i.e., simulator workers) is placed on GPU 0-3, `rollout` (i.e., generation workers) is placed on GPU 4-7. They run with pipelining. `actor` (i.e., training workers) are placed on GPU 0-7. When the rollout stage is finished, `env` and `rollout` are offloaded to CPU memory, `actor` is loaded into GPU memory.
+混合式模式的配置风格与共享式/分离式模式一致，如下所示：  
+`env` （即仿真 Worker）放置在 GPU 0-3 上，`rollout` （即生成 Worker）放置在 GPU 4-7 上，它们通过流水线运行。`actor` （即训练 Worker）放置在 GPU 0-7 上。当 rollout 阶段结束后，`env` 和 `rollout` 会卸载到 CPU 内存，`actor` 会加载到 GPU 内存。
 
 .. code:: yaml
 
@@ -26,7 +27,7 @@ The configuration style of hybrid mode is consistent to collocated/disaggregated
       env: 0-3
       rollout: 4-7
 
-In most cases, `env`, `rollout`, and `actor` should enable offloading as below to avoid OOM error.
+在大多数情况下，`env`、`rollout` 和 `actor` 应该启用如下的卸载功能，以避免 OOM 错误。
 
 .. code:: yaml
 
@@ -37,21 +38,23 @@ In most cases, `env`, `rollout`, and `actor` should enable offloading as below t
    actor:
      enable_offload: True
 
-Refer to :doc:`../user/yaml` for compete configuration.
+完整配置请参考 :doc:`../user/yaml`。
 
-**ComponentPlacement programming**
+**ComponentPlacement 编程**
 
-Different from collocated and disaggregated modes, hybrid mode uses `HybridComponentPlacement`, which has less constraints on worker placement.
+与共享式和分离式模式不同，混合式模式使用 `HybridComponentPlacement`，  
+它对 Worker 放置的限制更少。
 
 .. code:: python 
 
    from rlinf.utils.placement import HybridComponentPlacement
 
    component_placement = HybridComponentPlacement(cfg)
-   # Create actor worker group
+   # 创建 actor Worker 组
    actor_placement = component_placement.get_strategy("actor")
    actor_group = FSDPActor.create_group(cfg).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
     )
 
-Refer to `training embodied agent <https://github.com/RLinf/RLinf/blob/main/examples/embodiment/train_embodied_agent.py>`_ for complete code.
+完整代码请参考  
+`具身模型训练 <https://github.com/RLinf/RLinf/blob/main/examples/embodiment/train_embodied_agent.py>`_。
