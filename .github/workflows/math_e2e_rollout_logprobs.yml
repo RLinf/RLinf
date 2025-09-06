@@ -1,0 +1,59 @@
+name: Math End2End Rollout Logprobs
+
+on:
+    push:
+        branches:
+          - 'v[0-9].[0-9]'
+          - main
+        paths:
+          - '**/*.py'
+          - 'tests/**'
+          - '.github/workflows/*.yml'
+          - '!docs/**'
+          - '!README.md'
+          - '!*.yaml'
+          - '!*.toml'
+
+    pull_request:
+        branches:
+          - 'v[0-9].[0-9]'
+          - main
+        paths:
+          - '**/*.py'
+          - 'tests/**'
+          - '.github/workflows/*.yml'
+          - '!docs/**'
+          - '!README.md'
+          - '*.yaml'
+          - '*.toml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+    qwen-grpo-test:
+        runs-on: rlinf
+        container:
+            image: rlinf/rlinf:math-rlinf0.1-torch2.5.1-sglang0.4.4-vllm0.7.1-megatron0.11.0-te2.1
+            volumes:
+                - /mnt/public/dataset:/workspace/dataset
+                - /mnt/public/tokenizer:/workspace/tokenizer
+            options: --gpus="all" --shm-size=80g
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Collocated mode
+              run: |
+                export REPO_PATH=$(pwd)
+                bash tests/e2e_tests/math/run_collocated.sh qwen2.5-1.5b-grpo-collocated-rollout-logprobs.yaml
+
+            - name: Pipeline mode
+              run: |
+                export REPO_PATH=$(pwd)
+                bash tests/e2e_tests/math/run_pipeline.sh qwen2.5-1.5b-grpo-pipeline-rollout-logprobs.yaml

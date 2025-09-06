@@ -28,4 +28,3 @@ jobs:
           merge-base: false
           imperative: false
           job-summary: true
-        #   pr-comments: ${{ github.event_name == 'pull_request' }}

@@ -85,10 +85,6 @@ algorithm:
 inference:
   model_arch: ${rollout.model_arch}
   group_name: "InferenceGroup"
-  channel:
-    name: ${actor.channel.name}
-    queue_name: "inference_input_queue"
-    queue_size: 0
   load_from_actor: True
   model:
     tensor_model_parallel_size: 2
@@ -97,21 +93,16 @@ inference:
 
 rollout:
   group_name: "RolloutGroup"
-  channel:
-    name: ${actor.channel.name}
-    queue_name: "rollout_input_queue"
-    output_queue_name: "rollout_output_queue"
-    queue_size: 64
 
   gpu_memory_utilization: 0.55
 
   model_dir: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/
   model_arch: qwen2.5
-  enforce_eager: False         # if False, vllm will capture cuda graph, which will take more time to initialize.
+  enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
   detokenize: False            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
-  padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for vllm rollout
+  padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
   eos: null                   # will be tokenizer.eos_token_id if null.
 
   attention_backend: triton
@@ -122,10 +113,10 @@ rollout:
   
   validate_weight: False # whether to send all weights at first for weight comparison.
   validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
-  print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of inference engine.
+  print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
 
   sglang_decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
-  max_running_requests: 64 # the maximum number of running requests in the inference engine.
+  max_running_requests: 64 # the maximum number of running requests in the rollout engine.
   cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
 
   use_torch_compile: False # enable torch_compile in SGLang for rollout.
@@ -150,11 +141,6 @@ actor:
   training_backend: megatron
   mcore_gpt: True
   spec_name: decoder_gpt
-
-  channel:
-    name: "dataserver"
-    queue_name: "actor_input_queue"
-    queue_size: 0
 
   checkpoint_load_path: null
 
@@ -213,8 +199,8 @@ actor:
     min_lr: 2.0e-6
     weight_decay: 0.05
     use_distributed_optimizer: True
-    overlap_grad_reduce: True
-    overlap_param_gather: True
+    overlap_grad_reduce: False
+    overlap_param_gather: False
     optimizer_enable_pin: false
     overlap_param_gather_with_optimizer_step: False
     clip_grad: 0.8

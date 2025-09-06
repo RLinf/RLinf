@@ -17,9 +17,11 @@ import os
 import signal
 import sys
 import threading
+import warnings
 from dataclasses import dataclass
 from typing import Generic, List, Optional, Type
 
+import numpy as np
 import ray
 import ray.remote_function
 
@@ -75,16 +77,6 @@ class WorkerGroup(Generic[WorkerClsType]):
     def worker_info_list(self) -> List[WorkerInfo]:
         """Get the list of workers in the group."""
         return self._workers
-
-    @property
-    def data_io_ranks(self) -> List[int]:
-        """Get the ranks of workers that are used for data I/O operations."""
-        if self._data_io_ranks is None:
-            is_data_io_ranks = self.is_data_io_rank().wait()
-            self._data_io_ranks = [
-                idx for idx, is_data_io in enumerate(is_data_io_ranks) if is_data_io
-            ]
-        return self._data_io_ranks
 
     def launch(
         self: "WorkerGroup[WorkerClsType]",
@@ -142,6 +134,21 @@ class WorkerGroup(Generic[WorkerClsType]):
         self._execution_ranks = list(ranks)
         return self
 
+    def _nccl_env_vars(self):
+        """Set the environment variables for NCCL. This is intended to align NCCL configurations of various workers."""
+        env_vars = {
+            "NCCL_CUMEM_ENABLE": "0",
+            "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",
+        }
+        if os.environ.get("NCCL_CUMEM_ENABLE", "0") != "0":
+            warnings.warn(
+                f"NCCL_CUMEM_ENABLE is set to {os.environ['NCCL_CUMEM_ENABLE']}. However, "
+                "This may increase memory overhead with cudagraph+allreduce: "
+                "https://github.com/NVIDIA/nccl/issues/1234, and thus set to 0 by both vLLM and SGLang, see https://github.com/vllm-project/vllm/pull/24141.",
+            )
+            env_vars["NCCL_CUMEM_ENABLE"] = os.environ["NCCL_CUMEM_ENABLE"]
+        return env_vars
+
     def _close(self):
         """Close the worker group and release resources. This method is called when the worker group is no longer needed."""
         for worker_info in self._workers:
@@ -185,6 +192,7 @@ class WorkerGroup(Generic[WorkerClsType]):
                 "RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES": "1",
                 # https://github.com/ray-project/ray/blob/161849364a784442cc659fb9780f1a6adee85fce/python/ray/_private/accelerators/nvidia_gpu.py#L95-L96
             }
+            env_vars.update(self._nccl_env_vars())
 
             worker = self._cluster.allocate(
                 cls=self._worker_cls,
@@ -345,7 +353,10 @@ class WorkerGroupFunc:
             )
 
         result = WorkerGroupFuncResult(
-            results, self._func_name, self._worker_group._worker_cls.__name__
+            self._worker_group,
+            results,
+            self._func_name,
+            self._worker_group._worker_cls.__name__,
         )
 
         # Reset execution ranks after execution
@@ -359,6 +370,7 @@ class WorkerGroupFuncResult:
 
     def __init__(
         self,
+        worker_group: WorkerGroup,
         results: List[ray.remote_function.RemoteFunction],
         func_name: str,
         cls_name: str,
@@ -368,11 +380,13 @@ class WorkerGroupFuncResult:
         Upon creation, it starts a thread to wait for the results to complete.
 
         Args:
+            worker_group (WorkerGroup): The worker group that the function was executed on.
             results (List[ray.remote_function.RemoteFunction]): The results of the Ray function execution.
             func_name (str): The name of the function that was executed.
             cls_name (str): The name of the class that the function belongs to.
 
         """
+        self._worker_group: Worker = worker_group
         self._remote_results = results
         self._local_results = None
         self._func_name = func_name
@@ -398,6 +412,19 @@ class WorkerGroupFuncResult:
             os.kill(self._pid, signal.SIGUSR1)
             exit(-1)
         self._wait_done = True
+
+    def consume_duration(self, reduction_type: str = "max"):
+        """Get the max execution time of a function across different ranks of a group.
+
+        This implicitly waits for the function to finish.
+
+        Args:
+            reduction_type (str): The type of reduction to apply. Can be "max", "min", or "mean".
+        """
+        self.wait()
+        execution_times = self._worker_group.pop_execution_time(self._func_name).wait()
+        reduction_func = getattr(np, reduction_type)
+        return reduction_func(execution_times)
 
     def wait(self):
         """Wait for all remote results to complete and return the results."""

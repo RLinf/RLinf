@@ -88,15 +88,13 @@ class FSDPModelManager:
 
         if self._cfg.model.sharding_strategy == "full_shard":
             sharding_strategy = ShardingStrategy.FULL_SHARD
-            auto_wrap_policy = get_fsdp_wrap_policy(
-                module=module, config=None, is_lora=self._cfg.model.is_lora
-            )
         elif self._cfg.model.sharding_strategy == "shard_grad_op":
             sharding_strategy = ShardingStrategy.SHARD_GRAD_OP
-            auto_wrap_policy = None
         else:
             sharding_strategy = ShardingStrategy.NO_SHARD
-            auto_wrap_policy = None
+        auto_wrap_policy = get_fsdp_wrap_policy(
+            module=module, config=None, is_lora=self._cfg.model.is_lora
+        )
 
         betas = (self._cfg.optim.adam_beta1, self._cfg.optim.adam_beta2)
 

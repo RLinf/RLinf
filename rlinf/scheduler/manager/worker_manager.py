@@ -83,10 +83,16 @@ class WorkerAddress:
 
     def __eq__(self, other: "WorkerAddress"):
         """Check if two WorkerAddress instances are equal."""
+        if other is None:
+            return False
         return (
             self.root_group_name == other.root_group_name
             and self.rank_path == other.rank_path
         )
+
+    def __ne__(self, value):
+        """Check if two WorkerAddress instances are not equal."""
+        return not self.__eq__(value)
 
     def __hash__(self):
         """Hash function for WorkerAddress."""

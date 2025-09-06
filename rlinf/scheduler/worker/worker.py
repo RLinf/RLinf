@@ -22,6 +22,7 @@ import threading
 import time
 import traceback
 import warnings
+from contextlib import contextmanager
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -350,6 +351,7 @@ class Worker(metaclass=WorkerMeta):
 
         self._actor = None
         self._has_initialized = False
+        self._timer_metrics: Dict[str, float] = {}
         set_new_omegaconf_resolvers()
 
     def __init__(
@@ -386,6 +388,13 @@ class Worker(metaclass=WorkerMeta):
 
         Worker.PID = os.getpid()
         self._thread = threading.current_thread()
+
+        # Reset Cluster.NAMESPACE for this Worker process according to the environment variable
+        namespace = os.environ.get("CLUSTER_NAMESPACE", None)
+        assert namespace is not None, (
+            "CLUSTER_NAMESPACE environment variable must be set before initializing Worker."
+        )
+        Cluster.NAMESPACE = namespace
 
         if self._is_ray_actor and parent_address is not None:
             # The Worker is a Ray actor launched inside a Worker
@@ -581,17 +590,17 @@ class Worker(metaclass=WorkerMeta):
     def create_channel(
         self,
         channel_name: str,
-        group_affinity: Optional[str] = None,
-        group_rank_affinity: Optional[int | List[int]] = None,
+        gpu_id: int = 0,
         maxsize: int = 0,
+        local: bool = False,
     ):
         """Create a new channel with the specified placement rank and maximum size.
 
         Args:
             channel_name (str): The name of the channel.
-            group_affinity (str): The name of the group you wish to place the channel data. Defaults to None, which means the channel will be placed on the first rank.
-            group_rank_affinity (int | List[int]): The rank of the group you wish to place the channel data.
+            gpu_id (int): The global ID of the GPU in the cluster where the channel will be created.
             maxsize (int): The maximum size of the channel queue. Defaults to 0 (unbounded).
+            local (bool): Create the channel for intra-process communication. Cannot be connected by other workers.
 
         Returns:
             Channel: A new instance of the Channel class.
@@ -599,12 +608,8 @@ class Worker(metaclass=WorkerMeta):
         """
         from ..channel.channel import Channel
 
-        return Channel._create_in_worker(
-            current_worker=self,
-            channel_name=channel_name,
-            group_name_affinity=group_affinity,
-            group_rank_affinity=group_rank_affinity,
-            maxsize=maxsize,
+        return Channel.create(
+            name=channel_name, gpu_id=gpu_id, maxsize=maxsize, local=local
         )
 
     def connect_channel(self, channel_name: str):
@@ -683,6 +688,35 @@ class Worker(metaclass=WorkerMeta):
         """Log at the error level."""
         self._logger.error(msg, stacklevel=self._stacklevel)
 
+    def pop_execution_time(self, tag: str):
+        """Retrieve the execution time of a function.
+
+        Args:
+            tag (str): The name of the timer to retrieve the execution time for.
+        """
+        if tag not in self._timer_metrics:
+            raise ValueError(f"Timer '{tag}' has not been recorded.")
+        return self._timer_metrics.pop(tag)
+
+    @contextmanager
+    def worker_timer(self, tag: Optional[str] = None):
+        """Context manager to time the execution of a worker function.
+
+        Args:
+            tag (str): The name of the timer to record the execution time for. Default is the current function name.
+        """
+        if tag is None:
+            frame_num = 2
+            frame = inspect.stack()[frame_num]
+            tag = frame.function
+        assert tag is not None, "Timer tag must be provided."
+        try:
+            start_time = time.perf_counter()
+            yield
+        finally:
+            duration = time.perf_counter() - start_time
+            self._timer_metrics[tag] = self._timer_metrics.get(tag, 0.0) + duration
+
     def _check_initialized(self):
         """Check if the Worker has been initialized.
 
@@ -697,13 +731,6 @@ class Worker(metaclass=WorkerMeta):
         """When the Worker is not a Ray actor, we need to initialize Ray if it is not already initialized."""
         from ..collective import Collective
         from ..manager import WorkerManager
-
-        # Reset Cluster.NAMESPACE for this Worker process according to the environment variable
-        namespace = os.environ.get("CLUSTER_NAMESPACE", None)
-        assert namespace is not None, (
-            "CLUSTER_NAMESPACE environment variable must be set before initializing Worker."
-        )
-        Cluster.NAMESPACE = namespace
 
         if not ray.is_initialized():
             # Initialize Ray if not already initialized
@@ -772,13 +799,19 @@ class Worker(metaclass=WorkerMeta):
 
     def _setup_gpu_info(self) -> int:
         num_available_gpus = torch.cuda.device_count()
+        cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+        cluster = Cluster()
+        if cuda_devices is None:
+            cuda_devices = list(range(cluster.num_gpus_per_node))
+        else:
+            cuda_devices = [int(d) for d in cuda_devices.split(",")]
+
+        self.global_gpu_ids = [
+            cuda_device + self._node_id * cluster.num_gpus_per_node
+            for cuda_device in cuda_devices
+        ]
+
         if not self._is_ray_actor:
-            cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", None)
-            if cuda_devices is None:
-                cluster = Cluster()
-                cuda_devices = list(range(cluster.num_gpus_per_node))
-            else:
-                cuda_devices = [int(d) for d in cuda_devices.split(",")]
             self._gpu_id = cuda_devices[0]
 
         # Find available GPUs visible to the worker
@@ -887,14 +920,4 @@ class Worker(metaclass=WorkerMeta):
             node_ip=node_ip,
             node_port=node_port,
             available_gpus=self._available_gpus,
-        )
-
-    def is_data_io_rank(self) -> bool:
-        """Check if the worker is the rank for performing data I/O.
-
-        Returns:
-            bool: True if the worker is the data I/O rank, False otherwise.
-        """
-        raise NotImplementedError(
-            f"{self.is_data_io_rank.__name__} should be implemented in the a worker class. It is used to determine if the worker is the data I/O rank. Usually this means the model parallel source rank."
         )

@@ -10,35 +10,33 @@ cluster:
   num_nodes: 1
   num_gpus_per_node: 8
   component_placement:
-    rollout: 0-3
-    inference: 4-5
-    actor: 6-7
+    actor,rollout: all
 
 runner:
   task_type: math
   logger:
-    log_path: /workspace/results/
+    log_path: ${runner.output_dir}/${runner.experiment_name}
     project_name: rlinf
-    experiment_name: "ci-test"
+    experiment_name: ${runner.experiment_name}
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 1
-  max_steps: 3
+  max_epochs: 5
+  max_steps: -1
 
   val_check_interval: 1
-  save_interval: -1
+  save_interval: 50
 
-  seq_length: 1024
+  seq_length: 28672
 
   enable_dynamic_batch_size: False
-  max_tokens_per_mbs: 1024
+  max_tokens_per_mbs: 28672
 
   resume_dir: null
   experiment_name: grpo-1.5b
-  output_dir: /workspace/results
+  output_dir: ../results
 
 algorithm:
-  group_size: 2
+  group_size: 16
 
   n_minibatches: 4
   training_batch_size_per_gpu: 1 # micro batch size
@@ -55,8 +53,6 @@ algorithm:
   recompute_logprobs: True
   shuffle_rollout: False
 
-  max_num_gen_batches: 1
-
   # GRPO loss params
   loss_type: ppo
   loss_agg_func: "token-mean"
@@ -64,13 +60,13 @@ algorithm:
   kl_penalty_type: low_var_kl
   ratio_clip_eps: 0.2
   entropy_bonus: 0.0
-  calculate_entropy: True
+  calculate_entropy: False
   clip_ratio_c: null # 3.0
 
   adv_type: grpo
-  normalize_advantages: False
+  normalize_advantages: True
   early_stop_imp_ratio: 5.0
-  use_valid_token_scale: True
+  use_valid_token_scale: False
 
   # params for rollout
   sampling_params:
@@ -81,15 +77,6 @@ algorithm:
     repetition_penalty: 1.0
     max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
     min_new_tokens: 1
-
-inference:
-  model_arch: ${rollout.model_arch}
-  group_name: "InferenceGroup"
-  load_from_actor: True
-  model:
-    tensor_model_parallel_size: 2
-    pipeline_model_parallel_size: 1
-    sequence_parallel: True
 
 rollout:
   group_name: "RolloutGroup"
@@ -106,6 +93,7 @@ rollout:
   eos: null                   # will be tokenizer.eos_token_id if null.
 
   attention_backend: triton
+
   return_logprobs: ${not:${algorithm.recompute_logprobs}}
 
   tensor_parallel_size: 1
@@ -124,16 +112,17 @@ rollout:
 
 data:
   type: math
-  max_prompt_length: 256
-  rollout_batch_size: 8
+  max_prompt_length: 1024
+  filter_prompt_by_length: True
+  rollout_batch_size: 128
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: prompt
   shuffle: True
   validation_shuffle: True
-  seed: 1
-  train_data_paths: ["/workspace/dataset/boba_106k_0319_prompt_1024.jsonl"]
-  val_data_paths: ["/workspace/dataset/boba_106k_0319_prompt_1024.jsonl"]
+  seed: 1234
+  train_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
+  val_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
 
 actor:
   group_name: "ActorGroup"
@@ -149,7 +138,7 @@ actor:
 
   enable_dp_load_balance: False
 
-  calculate_flops: True
+  calculate_flops: False
 
   seed: 1234
 
@@ -198,12 +187,13 @@ actor:
     min_lr: 2.0e-6
     weight_decay: 0.05
     use_distributed_optimizer: True
-    overlap_grad_reduce: True
-    overlap_param_gather: True
-    optimizer_enable_pin: false
+    overlap_grad_reduce: False
+    overlap_param_gather: False
+    optimizer_enable_pin: False
     overlap_param_gather_with_optimizer_step: False
     clip_grad: 0.8
     loss_scale: 65536
+
   lr_sched:
     lr_warmup_fraction: 0.01
     lr_warmup_init: 0.0
@@ -214,7 +204,7 @@ actor:
     lr_decay_iters: 10
 
   tokenizer:
-    tokenizer_model: /workspace/dataset/DeepSeek-R1-Distill-Qwen-1.5B
+    tokenizer_model: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'
@@ -227,7 +217,7 @@ actor:
     use_dist_ckpt: False
     tp_comm_bootstrap_backend: nccl
     tp_comm_overlap_cfg: null # tp_comm_overlap_cfg.yaml
-    use_hf_ckpt: False # if true, will transfer hf model to generate megatron checkpoint and use it for training.
+    use_hf_ckpt: True # if true, will transfer hf model to generate megatron checkpoint and use it for training.
     use_profiler: False # if true, will enable torch profiler when training, pay attention it has influence on performance
 
     ckpt_convertor: # config for ckpt convertor
@@ -265,3 +255,8 @@ reward:
 
 critic:
   use_critic_model: false
+
+profile_data:
+  actor_cost: 95.7
+  inference_cost: 30.8
+  rollout_cost: 59.9

@@ -25,3 +25,5 @@ video_cfg:
 init_params:
   camera_heights: 256
   camera_widths: 256
+
+use_ordered_reset_state_ids: True

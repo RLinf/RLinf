@@ -11,8 +11,7 @@ cluster:
   num_gpus_per_node: 8
   component_placement:
     rollout: 0-3
-    inference: 4-5
-    actor: 6-7
+    actor: 4-7
 
 runner:
   task_type: math
@@ -52,7 +51,7 @@ algorithm:
   # val rollout mbs
   val_rollout_batch_size_per_gpu: 4 # ${.rollout_batch_size_per_gpu}
 
-  recompute_logprobs: True
+  recompute_logprobs: False
   shuffle_rollout: False
 
   max_num_gen_batches: 1
@@ -82,15 +81,6 @@ algorithm:
     max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
     min_new_tokens: 1
 
-inference:
-  model_arch: ${rollout.model_arch}
-  group_name: "InferenceGroup"
-  load_from_actor: True
-  model:
-    tensor_model_parallel_size: 2
-    pipeline_model_parallel_size: 1
-    sequence_parallel: True
-
 rollout:
   group_name: "RolloutGroup"
 
@@ -98,11 +88,11 @@ rollout:
 
   model_dir: /workspace/dataset/DeepSeek-R1-Distill-Qwen-1.5B
   model_arch: qwen2.5
-  enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
+  enforce_eager: False         # if False, vllm will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
   detokenize: False            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
-  padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
+  padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for vllm rollout
   eos: null                   # will be tokenizer.eos_token_id if null.
 
   attention_backend: triton
@@ -113,10 +103,10 @@ rollout:
   
   validate_weight: False # whether to send all weights at first for weight comparison.
   validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
-  print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
+  print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of inference engine.
 
   sglang_decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
-  max_running_requests: 64 # the maximum number of running requests in the rollout engine.
+  max_running_requests: 64 # the maximum number of running requests in the inference engine.
   cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
 
   use_torch_compile: False # enable torch_compile in SGLang for rollout.

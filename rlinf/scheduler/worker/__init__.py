@@ -13,11 +13,12 @@
 # limitations under the License.
 
 from .worker import Worker, WorkerAddress
-from .worker_group import WorkerGroup, WorkerGroupFunc
+from .worker_group import WorkerGroup, WorkerGroupFunc, WorkerGroupFuncResult
 
 __all__ = [
     "Worker",
     "WorkerAddress",
     "WorkerGroup",
     "WorkerGroupFunc",
+    "WorkerGroupFuncResult",
 ]

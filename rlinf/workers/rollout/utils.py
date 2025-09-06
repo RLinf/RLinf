@@ -19,12 +19,12 @@ import typing
 import weakref
 from contextlib import contextmanager
 from enum import IntEnum
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from rlinf.utils.placement import PlacementMode
+from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 
 if typing.TYPE_CHECKING:
     from vllm.outputs import RequestOutput
@@ -49,14 +49,6 @@ def color_print(rank, *args, **kwargs):
 
 def green(text: str):
     return f"\033[32m{text}\033[0m"
-
-
-def split_sequence(sequence, n):
-    """Split a sequence into n parts.
-    First m parts have len(sequence) // n + 1 elements
-    the rest have len(sequence) // n elements."""
-    k, m = divmod(len(sequence), n)
-    return [sequence[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)] for i in range(n)]
 
 
 @contextmanager
@@ -331,14 +323,99 @@ class TimeProfiler:
             self.writer.add_scalar(self.tag, self.time_cost, self.step)
 
 
-class HybridRankMapper:
+class RankMapper:
+    @classmethod
+    def get_actor_rank_to_rollout_rank_map(
+        cls,
+        placement: ModelParallelComponentPlacement,
+    ) -> Dict[int, List[Tuple[int, int]]]:
+        return cls._get_rank_mapper(
+            placement.placement_mode
+        ).get_actor_rank_to_rollout_rank_map(
+            placement.actor_tp_size,
+            placement.actor_pp_size,
+            placement.actor_world_size,
+            placement.rollout_tp_size,
+            placement.rollout_world_size,
+        )
+
+    @classmethod
+    def get_rollout_rank_to_actor_rank_map(
+        cls, placement: ModelParallelComponentPlacement
+    ) -> Dict[Tuple[int, int], int]:
+        return cls._get_rank_mapper(
+            placement.placement_mode
+        ).get_rollout_rank_to_actor_rank_map(
+            placement.actor_tp_size,
+            placement.actor_pp_size,
+            placement.actor_world_size,
+            placement.rollout_tp_size,
+            placement.rollout_world_size,
+        )
+
     @staticmethod
-    def get_actor_rank_to_rollout_rank(
-        actor_rank: int,
+    def _get_rank_mapper(
+        placement_mode: PlacementMode,
+    ):
+        """
+        Get the rank mapper class based on the mode.
+        """
+        if placement_mode == PlacementMode.COLLOCATED:
+            return CollocateRankMapper
+        elif placement_mode == PlacementMode.DISAGGREGATED:
+            return DisaggRankMapper
+        else:
+            raise ValueError(f"Unsupported mode: {placement_mode}.")
+
+
+class CollocateRankMapper(RankMapper):
+    @classmethod
+    def get_actor_rank_to_rollout_rank_map(
+        cls,
         actor_tp_size: int,
         actor_pp_size: int,
+        actor_world_size: int,
         rollout_tp_size: int,
-        world_size: int,
+        rollout_world_size: int,
+    ) -> Dict[int, Tuple[int, int]]:
+        """
+        Get the global mapping from actor 1D rank to rollout 2D rank as dict.
+        """
+        rank_map = {}
+        for actor_rank in range(actor_world_size):
+            rank_map[actor_rank] = cls._get_actor_rank_to_rollout_rank(
+                actor_rank,
+                actor_tp_size,
+                rollout_tp_size,
+            )
+        return rank_map
+
+    @classmethod
+    def get_rollout_rank_to_actor_rank_map(
+        cls,
+        actor_tp_size: int,
+        actor_pp_size: int,
+        actor_world_size: int,
+        rollout_tp_size: int,
+        rollout_world_size: int,
+    ):
+        """
+        Get the global mapping from rollout 2D rank to actor 1D rank as dict.
+        """
+        rank_map = cls.get_actor_rank_to_rollout_rank_map(
+            actor_tp_size,
+            actor_pp_size,
+            actor_world_size,
+            rollout_tp_size,
+            rollout_world_size,
+        )
+        return {v: k for k, v in rank_map.items()}
+
+    @staticmethod
+    def _get_actor_rank_to_rollout_rank(
+        actor_rank: int,
+        actor_tp_size: int,
+        rollout_tp_size: int,
     ):
         """
         Get the mapping from actor 1D rank to rollout 2D rank.
@@ -363,42 +440,8 @@ class HybridRankMapper:
 
         return (weight_dst_dp_rank_in_rollout, weight_dst_tp_rank_in_rollout)
 
-    @classmethod
-    def get_actor_rank_to_rollout_rank_map(
-        cls,
-        actor_tp_size: int,
-        actor_pp_size: int,
-        rollout_tp_size: int,
-        world_size: int,
-    ) -> Dict[int, Tuple[int, int]]:
-        """
-        Get the global mapping from actor 1D rank to rollout 2D rank as dict.
-        """
-        rank_map = {}
-        for actor_rank in range(world_size):
-            rank_map[actor_rank] = cls.get_actor_rank_to_rollout_rank(
-                actor_rank, actor_tp_size, actor_pp_size, rollout_tp_size, world_size
-            )
-        return rank_map
 
-    @classmethod
-    def get_rollout_rank_to_actor_rank_map(
-        cls,
-        actor_tp_size: int,
-        actor_pp_size: int,
-        rollout_tp_size: int,
-        world_size: int,
-    ):
-        """
-        Get the global mapping from rollout 2D rank to actor 1D rank as dict.
-        """
-        rank_map = cls.get_actor_rank_to_rollout_rank_map(
-            actor_tp_size, actor_pp_size, rollout_tp_size, world_size
-        )
-        return {v: k for k, v in rank_map.items()}
-
-
-class DisaggRankMapper:
+class DisaggRankMapper(RankMapper):
     """
     A mapper for disaggregated ranks.
     This is used to map the disaggregated ranks to the actor ranks.
@@ -406,31 +449,8 @@ class DisaggRankMapper:
     Assume that actor_tp_size = n * rollout_tp_size
     """
 
-    @staticmethod
-    def get_actor_rank_to_rollout_rank(
-        actor_rank: int,
-        actor_tp_size: int,
-        actor_pp_size: int,
-        rollout_tp_size: int,
-        world_size: int,
-    ) -> Tuple[int, int]:
-        assert actor_tp_size % rollout_tp_size == 0, (
-            "actor_tp_size must be a multiple of rollout_tp_size"
-        )
-
-        num_rollout_dp_ranks_per_actor_tp_group = actor_tp_size // rollout_tp_size
-        actor_tp_rank = actor_rank % actor_tp_size
-        corresponding_rollout_dp_rank = (
-            actor_tp_rank % num_rollout_dp_ranks_per_actor_tp_group
-        )
-        corresponding_rollout_tp_rank = (
-            actor_tp_rank // num_rollout_dp_ranks_per_actor_tp_group
-        )
-
-        return (corresponding_rollout_dp_rank, corresponding_rollout_tp_rank)
-
     @classmethod
-    def get_actor_rank_to_rollout_ranks(
+    def get_actor_rank_to_rollout_rank_map(
         cls,
         actor_tp_size: int,
         actor_pp_size: int,
@@ -460,12 +480,10 @@ class DisaggRankMapper:
                 # dp_rank > 0 will not send weight to any rollout rank
                 rank_map[actor_rank] = []
                 continue
-            gen_dp, gen_tp = cls.get_actor_rank_to_rollout_rank(
+            gen_dp, gen_tp = cls._get_actor_rank_to_rollout_rank(
                 actor_rank,
                 actor_tp_size,
-                actor_pp_size,
                 rollout_tp_size,
-                rollout_world_size,
             )
             rank_map[actor_rank] = [
                 (gen_dp + i * stride, gen_tp)
@@ -483,7 +501,7 @@ class DisaggRankMapper:
         rollout_tp_size: int,
         rollout_world_size: int,
     ) -> Dict[Tuple[int, int], int]:
-        rank_map = cls.get_actor_rank_to_rollout_ranks(
+        rank_map = cls.get_actor_rank_to_rollout_rank_map(
             actor_tp_size,
             actor_pp_size,
             actor_world_size,
@@ -496,18 +514,23 @@ class DisaggRankMapper:
                 result_map[rollout_2d_rank] = actor_rank
         return result_map
 
+    @staticmethod
+    def _get_actor_rank_to_rollout_rank(
+        actor_rank: int,
+        actor_tp_size: int,
+        rollout_tp_size: int,
+    ) -> Tuple[int, int]:
+        assert actor_tp_size % rollout_tp_size == 0, (
+            "actor_tp_size must be a multiple of rollout_tp_size"
+        )
 
-def get_rank_mapper_cls(
-    mode: PlacementMode,
-) -> Union[HybridRankMapper, DisaggRankMapper]:
-    """
-    Get the rank mapper class based on the mode.
-    """
-    mode_to_cls = {
-        PlacementMode.COLLOCATED: HybridRankMapper,
-        PlacementMode.DISAGGREGATED: DisaggRankMapper,
-    }
-    assert mode in mode_to_cls, (
-        f"Unsupported mode: {mode}. Supported modes: {list(mode_to_cls.keys())}"
-    )
-    return mode_to_cls.get(mode)
+        num_rollout_dp_ranks_per_actor_tp_group = actor_tp_size // rollout_tp_size
+        actor_tp_rank = actor_rank % actor_tp_size
+        corresponding_rollout_dp_rank = (
+            actor_tp_rank % num_rollout_dp_ranks_per_actor_tp_group
+        )
+        corresponding_rollout_tp_rank = (
+            actor_tp_rank // num_rollout_dp_ranks_per_actor_tp_group
+        )
+
+        return (corresponding_rollout_dp_rank, corresponding_rollout_tp_rank)

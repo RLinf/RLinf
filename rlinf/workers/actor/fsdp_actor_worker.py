@@ -161,6 +161,55 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             rollout_batch["loss_mask"] = loss_mask
             rollout_batch["loss_mask_sum"] = loss_mask_sum
 
+        # filter data by rewards
+        if self.cfg.algorithm.get("filter_rewards", False):
+            rewards = rollout_batch[
+                "rewards"
+            ]  # [n_chunk_step, batch, num_action_chunks]
+            if self.rollout_batch.get("loss_mask", None) is not None:
+                rewards = rewards * rollout_batch["loss_mask"]
+            n_chunk_step, batch_size, num_action_chunks = rewards.shape
+
+            group_size = self.cfg.algorithm.group_size
+            assert batch_size % group_size == 0, (
+                f"batch {batch_size} not divisible by group_size {group_size}"
+            )
+            n_prompts = batch_size // group_size
+
+            # calculate rewards by prompt
+            rewards = rewards.transpose(
+                0, 1
+            )  # [batch, n_chunk_step, num_action_chunks]
+            rewards = rewards.reshape(rewards.shape[0], -1)  # [batch, n_step]
+            reward_matrix = rewards.reshape(
+                n_prompts, group_size, rewards.shape[-1]
+            )  # [n_prompts, group_size, n_step]
+            reward_matrix = reward_matrix.sum(dim=-1)  # [n_prompts, group_size]
+            mean_reward_in_group = reward_matrix.mean(dim=1)  # [n_prompts]
+
+            # mask
+            reward_filter_mask = (
+                mean_reward_in_group >= self.cfg.algorithm.rewards_lower_bound
+            ) & (
+                mean_reward_in_group <= self.cfg.algorithm.rewards_upper_bound
+            )  # [n_prompts]
+
+            # extend mask dimension
+            reward_filter_mask = reward_filter_mask.repeat_interleave(
+                group_size
+            )  # [batch]
+            reward_filter_mask = (
+                reward_filter_mask.unsqueeze(0).expand(n_chunk_step, -1).unsqueeze(-1)
+            )  # [n_chunk_step, batch, 1]
+
+            # update loss_mask
+            if self.rollout_batch.get("loss_mask", None) is not None:
+                rollout_batch["loss_mask"] = (
+                    reward_filter_mask & self.rollout_batch["loss_mask"]
+                )
+            else:
+                rollout_batch["loss_mask"] = reward_filter_mask
+
         return rollout_batch
 
     def compute_logprobs(self):

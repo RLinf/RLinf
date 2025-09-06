@@ -10,9 +10,7 @@ cluster:
   num_nodes: 1
   num_gpus_per_node: 8
   component_placement:
-    rollout: 0-3
-    inference: 4-5
-    actor: 6-7
+    actor,rollout: all
 
 runner:
   task_type: math
@@ -30,7 +28,7 @@ runner:
 
   seq_length: 1024
 
-  enable_dynamic_batch_size: False
+  enable_dynamic_batch_size: True
   max_tokens_per_mbs: 1024
 
   resume_dir: null
@@ -52,10 +50,8 @@ algorithm:
   # val rollout mbs
   val_rollout_batch_size_per_gpu: 4 # ${.rollout_batch_size_per_gpu}
 
-  recompute_logprobs: True
+  recompute_logprobs: False
   shuffle_rollout: False
-
-  max_num_gen_batches: 1
 
   # GRPO loss params
   loss_type: ppo
@@ -64,13 +60,13 @@ algorithm:
   kl_penalty_type: low_var_kl
   ratio_clip_eps: 0.2
   entropy_bonus: 0.0
-  calculate_entropy: True
+  calculate_entropy: False
   clip_ratio_c: null # 3.0
 
   adv_type: grpo
-  normalize_advantages: False
+  normalize_advantages: True
   early_stop_imp_ratio: 5.0
-  use_valid_token_scale: True
+  use_valid_token_scale: False
 
   # params for rollout
   sampling_params:
@@ -82,15 +78,6 @@ algorithm:
     max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
     min_new_tokens: 1
 
-inference:
-  model_arch: ${rollout.model_arch}
-  group_name: "InferenceGroup"
-  load_from_actor: True
-  model:
-    tensor_model_parallel_size: 2
-    pipeline_model_parallel_size: 1
-    sequence_parallel: True
-
 rollout:
   group_name: "RolloutGroup"
 
@@ -98,14 +85,15 @@ rollout:
 
   model_dir: /workspace/dataset/DeepSeek-R1-Distill-Qwen-1.5B
   model_arch: qwen2.5
-  enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
+  enforce_eager: False         # if False, vllm will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
   detokenize: False            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
-  padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
+  padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for vllm rollout
   eos: null                   # will be tokenizer.eos_token_id if null.
 
   attention_backend: triton
+
   return_logprobs: ${not:${algorithm.recompute_logprobs}}
 
   tensor_parallel_size: 1
@@ -113,10 +101,10 @@ rollout:
   
   validate_weight: False # whether to send all weights at first for weight comparison.
   validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
-  print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
+  print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of inference engine.
 
   sglang_decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
-  max_running_requests: 64 # the maximum number of running requests in the rollout engine.
+  max_running_requests: 64 # the maximum number of running requests in the inference engine.
   cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
 
   use_torch_compile: False # enable torch_compile in SGLang for rollout.
@@ -125,6 +113,7 @@ rollout:
 data:
   type: math
   max_prompt_length: 256
+  filter_prompt_by_length: True
   rollout_batch_size: 8
   val_rollout_batch_size: null
   num_workers: 2
@@ -159,6 +148,7 @@ actor:
 
     tensor_model_parallel_size: 2
     pipeline_model_parallel_size: 1
+    context_parallel_size: 2
 
     activation: swiglu
     sequence_parallel: True
@@ -204,6 +194,7 @@ actor:
     overlap_param_gather_with_optimizer_step: False
     clip_grad: 0.8
     loss_scale: 65536
+
   lr_sched:
     lr_warmup_fraction: 0.01
     lr_warmup_init: 0.0
@@ -227,9 +218,9 @@ actor:
     use_dist_ckpt: False
     tp_comm_bootstrap_backend: nccl
     tp_comm_overlap_cfg: null # tp_comm_overlap_cfg.yaml
-    use_hf_ckpt: False # if true, will transfer hf model to generate megatron checkpoint and use it for training.
+    use_hf_ckpt: True # if true, will transfer hf model to generate megatron checkpoint and use it for training.
     use_profiler: False # if true, will enable torch profiler when training, pay attention it has influence on performance
-
+    
     ckpt_convertor: # config for ckpt convertor
       model: DeepSeek-R1-Distill-Qwen-1.5B
       model_type: null # will be set by hf model's config if null

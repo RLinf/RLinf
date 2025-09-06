@@ -38,10 +38,10 @@ from rlinf.envs.libero.venv import ReconfigureSubprocEnv
 
 
 class LiberoEnv(gym.Env):
-    def __init__(self, cfg, rank):
+    def __init__(self, cfg, rank, world_size):
         self.rank = rank
         self.cfg = cfg
-        self.rank = rank
+        self.world_size = world_size
         self.seed = self.cfg.seed + rank
         self._is_start = True
         self.num_envs = self.cfg.num_envs
@@ -53,10 +53,13 @@ class LiberoEnv(gym.Env):
         self.auto_reset = cfg.auto_reset
 
         self._generator = np.random.default_rng(seed=self.seed)
+        self._generator_ordered = np.random.default_rng(seed=0)
+        self.start_idx = 0
 
         self.task_suite: Benchmark = get_benchmark(cfg.task_suite_name)()
 
         self._compute_total_num_group_envs()
+        self.reset_state_ids_all = self.get_reset_state_ids_all()
         self.update_reset_state_ids()
         self._init_task_and_trial_ids()
         self._init_env()
@@ -125,7 +128,7 @@ class LiberoEnv(gym.Env):
         self.cumsum_trial_id_bins = np.cumsum(self.trial_id_bins)
 
     def update_reset_state_ids(self):
-        if self.cfg.only_eval:
+        if self.cfg.only_eval or self.cfg.use_ordered_reset_state_ids:
             reset_state_ids = self._get_ordered_reset_state_ids(self.num_group)
         else:
             reset_state_ids = self._get_random_reset_state_ids(self.num_group)
@@ -142,11 +145,22 @@ class LiberoEnv(gym.Env):
         )
         return reset_state_ids
 
+    def get_reset_state_ids_all(self):
+        reset_state_ids = np.arange(self.total_num_group_envs)
+        valid_size = len(reset_state_ids) - (len(reset_state_ids) % self.world_size)
+        self._generator_ordered.shuffle(reset_state_ids)
+        reset_state_ids = reset_state_ids[:valid_size]
+        reset_state_ids = reset_state_ids.reshape(self.world_size, -1)
+        return reset_state_ids
+
     def _get_ordered_reset_state_ids(self, num_reset_states):
-        start_idx = self.rank * num_reset_states
-        reset_state_ids = torch.tensor(
-            list(range(start_idx, start_idx + num_reset_states)), dtype=torch.int32
-        )
+        reset_state_ids = self.reset_state_ids_all[self.rank][
+            self.start_idx : self.start_idx + num_reset_states
+        ]
+        self.start_idx = self.start_idx + num_reset_states
+        if self.start_idx >= len(self.reset_state_ids_all[0]):
+            self.reset_state_ids_all = self.get_reset_state_ids_all()
+            self.start_idx = 0
         return reset_state_ids
 
     def _get_task_and_trial_ids_from_reset_state_ids(self, reset_state_ids):
@@ -282,6 +296,8 @@ class LiberoEnv(gym.Env):
             env_fn_params = self.get_env_fn_params(reconfig_env_idx)
             self.env.reconfigure_env_fns(env_fn_params, reconfig_env_idx)
 
+        self.env.seed([0] * len(env_idx))
+        self.env.reset(id=env_idx)
         init_state = self._get_reset_states(env_idx=env_idx)
         self.env.set_init_state(init_state=init_state, id=env_idx)
 
@@ -300,7 +316,6 @@ class LiberoEnv(gym.Env):
 
         self._reconfigure(reset_state_ids, env_idx)
 
-        raw_obs = self.env.reset(id=env_idx, **options)
         for _ in range(10):
             zero_actions = np.zeros((self.num_envs, 7))
             raw_obs, _reward, terminations, info_lists = self.env.step(zero_actions)

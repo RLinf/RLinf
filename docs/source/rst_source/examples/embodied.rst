@@ -313,8 +313,8 @@ Furthermore, we trained OpenVLA-OFT in the LIBERO environment using the GRPO alg
      - **99.0%**
      - **99.0%**
      - **99.0%**
-     - **92.2%**
-     - **97.3%**
+     - **94.4%**
+     - **97.8%**
    * - Improvement
      - +42.5%
      - +53.4%

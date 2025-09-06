@@ -57,29 +57,31 @@ class SGLangWorker(Worker):
                 * self._cfg.rollout.pipeline_parallel_size
             )
 
-    def _validate_weight_at_first(self):
-        """
-        Run a test prompt batch and print its output.
-        """
-        validate_sampling_params = {"temperature": 0, "max_new_tokens": 32}
-        prompts = [
+        self._validate_sampling_params = {"temperature": 0, "max_new_tokens": 32}
+        self._validate_prompts = [
             "Hello, my name is",
             "The president of the United States is",
             "The capital of France is",
             "The future of AI is",
         ]
 
+    def _validate_weight_at_first(self):
+        """
+        Run a test prompt batch and print its output.
+        """
         if self._cfg.rollout.detokenize:
-            outputs = self._engine.generate(prompts, validate_sampling_params)
-            for prompt, output in zip(prompts, outputs):
+            outputs = self._engine.generate(
+                self._validate_prompts, self._validate_sampling_params
+            )
+            for prompt, output in zip(self._validate_prompts, outputs):
                 print("===============================")
                 print(f"Prompt: {prompt}\nGenerated text: {output['text']}")
         else:
-            prompt_ids = self._tokenizer(prompts).input_ids
+            prompt_ids = self._tokenizer(self._validate_prompts).input_ids
             outputs = self._engine.generate(
-                input_ids=prompt_ids, sampling_params=validate_sampling_params
+                input_ids=prompt_ids, sampling_params=self._validate_sampling_params
             )
-            print_sglang_outputs(prompts, outputs, self._tokenizer)
+            print_sglang_outputs(self._validate_prompts, outputs, self._tokenizer)
         print("===============================", flush=True)
 
     def _init_engine(self):
@@ -163,37 +165,45 @@ class SGLangWorker(Worker):
         self._engine.sync_hf_weight()
 
     def rollout(self, input_channel: Channel, output_channel: Channel):
-        while True:
-            request: RolloutRequest = input_channel.get()
+        request: RolloutRequest = input_channel.get()
 
-            # Check if rollout has ended
-            if request is None:
-                self._stop()
-                break
+        # Repeat prompts based on the group_size config
+        requests = request.repeat_and_split(self._rollout_batch_size)
 
-            # Repeat prompts based on the group_size config
-            requests = request.repeat_and_split(self._rollout_batch_size)
-
-            rollout_results = []
-            for request in requests:
-                # Generate outputs using the SGLang engine.
+        # Acquire the GPUs to ensure no one is using them during rollout
+        output_channel.gpu_lock.acquire()
+        rollout_results = []
+        for request in requests:
+            # Generate outputs using the SGLang engine.
+            with self.worker_timer():
                 results = self._engine.generate(
                     input_ids=request.input_ids,
                     sampling_params=self._sampling_params,
                     return_logprob=self._return_logprobs,
                 )
 
-                # Create RolloutResult from the outputs.
-                rollout_result = RolloutResult.from_engine_results(
-                    results, request.input_ids, request.answers, self._return_logprobs
-                )
-                rollout_results.append(rollout_result)
+            # Create RolloutResult from the outputs.
+            rollout_result = RolloutResult.from_engine_results(
+                results,
+                request.n,
+                request.input_ids,
+                request.answers,
+                self._return_logprobs,
+            )
+            rollout_results.append(rollout_result)
 
-                # Put and print results
-                if self._cfg.rollout.print_outputs:
-                    prompts = self._tokenizer.batch_decode(request.input_ids)
-                    print_sglang_outputs(prompts, results, self._tokenizer)
-            output_channel.put(rollout_results)
+            # Put and print results
+            if self._cfg.rollout.print_outputs:
+                prompts = self._tokenizer.batch_decode(request.input_ids)
+                print_sglang_outputs(prompts, results, self._tokenizer)
+
+        # Stop and offload SGLang first before putting into channel
+        # This avoids running SGLang and Megatron simultaneously
+        self._stop()
+        # Release the GPUs once the engine has offloaded
+        output_channel.gpu_lock.release()
+        rollout_result = RolloutResult.merge_result_list(rollout_results)
+        output_channel.put(rollout_result)
 
 
 def all_floats_equal(float_list: list[float], epsilon: float = 1e-9) -> bool:
@@ -217,39 +227,35 @@ class AsyncSGLangWorker(SGLangWorker):
         self._sync_weight_end_event = asyncio.Event()
 
         self._reward_model = MathRewardModel(scale=self._cfg.reward.reward_scale)
-
-        self._channel = self.connect_channel(self._cfg.rollout.channel.name)
-
-        # all sglang dp will get input from the same queue, and put the results to another same queue.
-        self._input_queue_name = self._cfg.rollout.channel.queue_name
-        self._output_queue_name = self._cfg.rollout.channel.output_queue_name
         assert self._rollout_batch_size is None, (
             "rollout_batch_size_per_gpu is not supported in AsyncSGLangWorker"
         )
 
-    def init_worker(self):
+    async def _validate_weight_at_first(self):
+        """
+        Run a test prompt batch and print its output.
+        """
+        if self._cfg.rollout.detokenize:
+            outputs = await self._engine.async_generate(
+                self._validate_prompts, self._validate_sampling_params
+            )
+            for prompt, output in zip(self._validate_prompts, outputs):
+                print("===============================")
+                print(f"Prompt: {prompt}\nGenerated text: {output['text']}")
+        else:
+            prompt_ids = self._tokenizer(self._validate_prompts).input_ids
+            outputs = await self._engine.async_generate(
+                input_ids=prompt_ids, sampling_params=self._validate_sampling_params
+            )
+            print_sglang_outputs(self._validate_prompts, outputs, self._tokenizer)
+        print("===============================", flush=True)
+
+    async def init_worker(self):
         self._init_engine()
+        if self._cfg.rollout.validate_weight:
+            await self._validate_weight_at_first()
 
-    def _calculate_reward_and_advantage(self, engine_results: List[Dict], answer: str):
-        answers = [answer] * len(engine_results)
-        texts: List[str] = []
-        for res in engine_results:
-            if hasattr(res, "text"):
-                texts.append(res["text"])
-            else:
-                texts.append(
-                    self._tokenizer.decode(res["output_ids"], skip_special_tokens=True)
-                )
-
-        rewards = self._reward_model.get_reward(texts, answers)
-        rewards_tensor = torch.tensor(rewards)
-        mean = rewards_tensor.mean()
-        std = rewards_tensor.std()
-        advantages = (rewards_tensor - mean) / (std + 1e-6)
-
-        return rewards, advantages.tolist()
-
-    async def _calculate_reward_and_advantage_processpool(
+    async def _compute_reward_and_advantage(
         self, engine_results: List[Dict], answer: str
     ):
         answers = [answer] * len(engine_results)
@@ -278,79 +284,91 @@ class AsyncSGLangWorker(SGLangWorker):
         result = await self._engine.async_generate(
             input_ids=input_ids,
             sampling_params=sampling_params,
+            return_logprob=self._return_logprobs,
         )
+
+        if self._cfg.rollout.print_outputs:
+            prompts = self._tokenizer.batch_decode(input_ids)
+            print_sglang_outputs(prompts, [result], self._tokenizer)
+
         # SGLang does not return input_ids, so we need to pass them for further usage.
         return raw_id, input_ids, result
 
-    async def _put_result_to_output_queue(self, result: RolloutResult):
-        await self._channel.put(
-            item=result, queue_name=self._output_queue_name, async_op=True
-        ).async_wait()
+    async def _put_result(self, result: RolloutResult, output_channel: Channel):
+        await output_channel.put(item=result, async_op=True).async_wait()
 
-    async def rollout(self):
-        rollout_request: RolloutRequest = await self._channel.get(
-            queue_name=self._input_queue_name, async_op=True
+    async def rollout(self, input_channel: Channel, output_channel: Channel):
+        rollout_request: RolloutRequest = await input_channel.get(
+            async_op=True
         ).async_wait()
         self._current_request = rollout_request
         self._completion_info.clear_and_set(rollout_request)
 
-        rollout_tasks = [
-            asyncio.create_task(
-                self._async_generate(raw_id, input_ids, self._sampling_params)
-            )
-            for raw_id, input_ids in enumerate(rollout_request.input_ids)
-            for _ in range(rollout_request.n)
-        ]
-        return_tasks = []
-        total_reqs = len(rollout_tasks)
-        required_reqs = total_reqs // self._cfg.algorithm.max_num_gen_batches
-
-        droped_reqs = 0
-        finished_reqs = 0
-        abort_flag = False
-
-        for future in asyncio.as_completed(rollout_tasks):
-            raw_id, input_ids, result = await future
-            hash_id = self._completion_info.hash(input_ids)
-            self._completion_info.record_result(input_ids, result)
-
-            if self._completion_info.is_completed(hash_id):
-                results = self._completion_info.get_results(hash_id)
-                (
-                    rewards,
-                    advantages,
-                ) = await self._calculate_reward_and_advantage_processpool(
-                    results,
-                    self._current_request.answers[raw_id],
+        with self.worker_timer():
+            rollout_tasks = [
+                asyncio.create_task(
+                    self._async_generate(raw_id, input_ids, self._sampling_params)
                 )
-                if (
-                    all_floats_equal(rewards)
-                    and self._cfg.algorithm.get("max_num_gen_batches", 1) > 1
-                ):
-                    if (total_reqs - droped_reqs) > required_reqs:
-                        droped_reqs += rollout_request.n
-                        continue
+                for raw_id, input_ids in enumerate(rollout_request.input_ids)
+                for _ in range(rollout_request.n)
+            ]
+            return_tasks = []
+            total_reqs = len(rollout_tasks)
+            required_reqs = total_reqs // self._cfg.algorithm.max_num_gen_batches
 
-                input_ids = [input_ids] * len(results)
-                rollout_result = RolloutResult.from_engine_results(results, input_ids)
-                rollout_result.rewards = rewards
-                rollout_result.advantages = advantages
-                return_tasks.append(
-                    asyncio.create_task(
-                        self._put_result_to_output_queue(rollout_result)
+            droped_reqs = 0
+            finished_reqs = 0
+            abort_flag = False
+
+            for future in asyncio.as_completed(rollout_tasks):
+                raw_id, input_ids, result = await future
+                hash_id = self._completion_info.hash(input_ids)
+                self._completion_info.record_result(input_ids, result)
+
+                if self._completion_info.is_completed(hash_id):
+                    results = self._completion_info.get_results(hash_id)
+                    (
+                        rewards,
+                        advantages,
+                    ) = await self._compute_reward_and_advantage(
+                        results,
+                        self._current_request.answers[raw_id],
                     )
-                )
+                    if (
+                        all_floats_equal(rewards)
+                        and self._cfg.algorithm.get("max_num_gen_batches", 1) > 1
+                    ):
+                        if (total_reqs - droped_reqs) > required_reqs:
+                            droped_reqs += rollout_request.n
+                            continue
 
-                finished_reqs += rollout_request.n
-                if finished_reqs == required_reqs:
-                    abort_flag = True
-                    break
+                    input_ids = [input_ids] * len(results)
+                    rollout_result = RolloutResult.from_engine_results(
+                        results,
+                        rollout_request.n,
+                        input_ids,
+                        return_logprobs=self._return_logprobs,
+                    )
+                    rollout_result.rewards = torch.tensor(
+                        rewards, dtype=torch.float32
+                    ).reshape(1, -1)
+                    rollout_result.advantages = advantages
+                    return_tasks.append(
+                        asyncio.create_task(
+                            self._put_result(rollout_result, output_channel)
+                        )
+                    )
 
-        if abort_flag:
-            # abort all req (running and waiting)
-            await self._engine.tokenizer_manager.pause_generation()
+                    finished_reqs += rollout_request.n
+                    if finished_reqs == required_reqs:
+                        abort_flag = True
+                        break
 
-        await asyncio.gather(*return_tasks)
+            if abort_flag:
+                # abort all req (running and waiting)
+                await self._engine.tokenizer_manager.pause_generation()
+
+            await asyncio.gather(*return_tasks)
 
     async def offload_engine(self):
         """

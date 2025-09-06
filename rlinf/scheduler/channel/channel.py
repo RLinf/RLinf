@@ -13,16 +13,20 @@
 # limitations under the License.
 
 import time
-from typing import Any, Dict, List, Optional
+from contextlib import AbstractContextManager
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import ray
 import ray.actor
 
 from ..cluster import Cluster
 from ..collective import AsyncChannelWork, AsyncWork
-from ..manager import WorkerAddress, WorkerInfo, WorkerManager
+from ..manager import WorkerAddress
 from ..placement import PackedPlacementStrategy
 from ..worker import Worker, WorkerGroup
+
+if TYPE_CHECKING:
+    from .channel_worker import LocalChannel
 
 DEFAULT_QUEUE_NAME = "default_queue"
 
@@ -119,108 +123,56 @@ class Channel:
 
     """
 
+    local_channel_map: Dict[int, "LocalChannel"] = {}
+
     @classmethod
-    def create(cls, name: str, gpu_id: int = 0, maxsize: int = 0) -> "Channel":
+    def create(
+        cls, name: str, gpu_id: int = 0, maxsize: int = 0, local: bool = False
+    ) -> "Channel":
         """Create a new channel with the specified name, node ID, and GPU ID.
 
         Args:
             name (str): The name of the channel.
             gpu_id (int): The global ID of the GPU in the cluster where the channel will be created.
             maxsize (int): The maximum size of the channel queue. Defaults to 0 (unbounded).
+            local (bool): Create the channel for intra-process communication. A local channel cannot be connected by other workers, and its data cannot be shared among different processes.
 
         Returns:
             Channel: A new instance of the Channel class.
 
         """
+        from .channel_worker import ChannelWorker, LocalChannel
+
         cluster = Cluster()
+        channel = cls()
+        if local:
+            local_channel = LocalChannel(maxsize=maxsize)
+            channel._initialize(
+                name,
+                None,
+                None,
+                Worker.current_worker,
+                local_channel=local_channel,
+                maxsize=maxsize,
+            )
+            return channel
+
         placement = PackedPlacementStrategy(
             start_gpu_id=gpu_id,
             end_gpu_id=gpu_id,
         )
         try:
-            from .channel_worker import ChannelWorker
-
             channel_worker_group = ChannelWorker.create_group(maxsize=maxsize).launch(
                 cluster=cluster, name=name, placement_strategy=placement
             )
         except ValueError:
-            raise ValueError(f"Channel named {name} already exists!")
-        channel = cls()
+            Worker.logger.warning(f"Channel {name} already exists, connecting to it.")
+            return cls.connect(name, Worker.current_worker)
         channel._initialize(
             name,
             channel_worker_group,
             channel_worker_group.worker_info_list[0].worker,
             Worker.current_worker,
-            maxsize=maxsize,
-        )
-        return channel
-
-    @classmethod
-    def _create_in_worker(
-        cls,
-        current_worker: Worker,
-        channel_name: str,
-        group_name_affinity: Optional[str] = None,
-        group_rank_affinity: Optional[int | List[int]] = None,
-        maxsize: int = 0,
-    ) -> "Channel":
-        """Create a new channel with the specified placement rank and maximum size.
-
-        Args:
-            channel_name (str): The name of the channel.
-            current_worker (Worker): The current worker that is creating the channel.
-            group_name_affinity (str | None): The name of the group you wish to place the channel. Defaults is the current group.
-            group_name_affinity (str): The name of the group you wish to place the channel data. Defaults is the current group.
-            group_rank_affinity (int | List[int]): The rank of the group you wish to place the channel data. Default is the current worker's rank.
-            maxsize (int): The maximum size of the channel queue. Defaults to 0 (unbounded).
-
-        Returns:
-            Channel: A new instance of the Channel class.
-
-        """
-        if group_name_affinity is None:
-            group_name_affinity = current_worker.worker_address.root_group_name
-        if group_rank_affinity is None:
-            group_rank_affinity = current_worker.worker_address.rank_path
-
-        affine_worker_address = WorkerAddress(
-            root_group_name=group_name_affinity, ranks=group_rank_affinity
-        )
-        worker_manager = WorkerManager.get_proxy()
-        affine_worker_info: WorkerInfo = None
-        count = 0
-        while affine_worker_info is None:
-            affine_worker_info = worker_manager.get_worker_info(affine_worker_address)
-            time.sleep(0.001)
-            count += 1
-            if count % Cluster.TIMEOUT_WARN_TIME == 0:
-                Worker.logger.warning(
-                    f"Waiting for {affine_worker_address} to be up for {count // 1000} seconds..."
-                )
-        master_node = affine_worker_info.node_id
-        master_gpu = affine_worker_info.gpu_id
-
-        cluster = Cluster()
-        global_gpu_id = master_node * cluster.num_gpus_per_node + master_gpu
-        placement = PackedPlacementStrategy(
-            start_gpu_id=global_gpu_id,
-            end_gpu_id=global_gpu_id,
-        )
-        try:
-            from .channel_worker import ChannelWorker
-
-            channel_worker_group = ChannelWorker.create_group(maxsize=maxsize).launch(
-                cluster=cluster, name=channel_name, placement_strategy=placement
-            )
-        except ValueError:
-            current_worker._logger.warning("Channel already exists, connecting to it.")
-            return cls.connect(channel_name, current_worker)
-        channel = cls()
-        channel._initialize(
-            channel_name,
-            channel_worker_group,
-            channel_worker_group.worker_info_list[0].worker,
-            current_worker,
             maxsize=maxsize,
         )
         return channel
@@ -273,13 +225,31 @@ class Channel:
         channel_worker_group: WorkerGroup,
         channel_worker_actor: ray.actor.ActorHandle,
         current_worker: Worker,
+        local_channel: Optional["LocalChannel"] = None,
         maxsize: int = 0,
     ):
         self._channel_name = channel_name
         self._channel_worker_group = channel_worker_group
         self._channel_worker_actor = channel_worker_actor
         self._current_worker = current_worker
+        self._local_channel = local_channel
         self._maxsize = maxsize
+        self._gpu_lock = GPULockProxy(self)
+        if self._local_channel is not None:
+            self._local_channel_id = id(self._local_channel)
+            Channel.local_channel_map[self._local_channel_id] = self._local_channel
+        else:
+            self._local_channel_id = None
+
+    @property
+    def is_local(self):
+        """Check if the channel is a local channel."""
+        return self._local_channel is not None
+
+    @property
+    def gpu_lock(self):
+        """Get the GPU lock for the channel."""
+        return self._gpu_lock
 
     def create_queue(self, queue_name: str, maxsize: int = 0):
         """Create a new queue in the channel. No effect if a queue with the same name already exists.
@@ -289,6 +259,8 @@ class Channel:
             maxsize (int): The maximum size of the queue. Defaults to 0 (unbounded).
 
         """
+        if self._local_channel is not None:
+            return self._local_channel.create_queue(queue_name, maxsize)
         return ray.get(
             self._channel_worker_actor.create_queue.remote(queue_name, maxsize)
         )
@@ -303,6 +275,8 @@ class Channel:
             int: The number of items in the channel queue.
 
         """
+        if self._local_channel is not None:
+            return self._local_channel.qsize(queue_name)
         return ray.get(self._channel_worker_actor.qsize.remote(queue_name))
 
     def empty(self, queue_name: str = DEFAULT_QUEUE_NAME) -> bool:
@@ -315,6 +289,8 @@ class Channel:
             bool: True if the channel queue is empty, False otherwise.
 
         """
+        if self._local_channel is not None:
+            return self._local_channel.empty(queue_name)
         return ray.get(self._channel_worker_actor.empty.remote(queue_name))
 
     def full(self, queue_name: str = DEFAULT_QUEUE_NAME) -> bool:
@@ -327,6 +303,8 @@ class Channel:
             bool: True if the channel queue is full, False otherwise.
 
         """
+        if self._local_channel is not None:
+            return self._local_channel.full(queue_name)
         return ray.get(self._channel_worker_actor.full.remote(queue_name))
 
     def put(
@@ -345,6 +323,11 @@ class Channel:
             async_op (bool): Whether to perform the operation asynchronously.
 
         """
+        if self._local_channel is not None:
+            assert async_op is False, "Local channel does not support async put."
+            self._local_channel.put(item, weight, queue_name)
+            return
+
         # First run async put to avoid send blocking put
         if self._current_worker is not None:
             put_work = AsyncChannelWork(
@@ -385,6 +368,10 @@ class Channel:
             asyncio.QueueFull: If the queue is full.
 
         """
+        if self._local_channel is not None:
+            self._local_channel.put(item, weight, queue_name, nowait=True)
+            return
+
         if self._current_worker is not None:
             put_work = AsyncChannelWork(
                 self._channel_worker_actor.put.remote(
@@ -417,6 +404,10 @@ class Channel:
             Any: The item retrieved from the channel queue.
 
         """
+        if self._local_channel is not None:
+            assert async_op is False, "Local channel does not support async get."
+            return self._local_channel.get(queue_name)
+
         if self._current_worker is not None:
             self._channel_worker_actor.get.remote(
                 self._current_worker.worker_address, queue_name=queue_name
@@ -444,6 +435,9 @@ class Channel:
             asyncio.QueueEmpty: If the queue is empty.
 
         """
+        if self._local_channel is not None:
+            return self._local_channel.get(queue_name, nowait=True)
+
         if self._current_worker is not None:
             self._channel_worker_actor.get.remote(
                 self._current_worker.worker_address, queue_name=queue_name, nowait=True
@@ -476,6 +470,10 @@ class Channel:
             List[Any]: A list of items retrieved from the channel queue.
 
         """
+        if self._local_channel is not None:
+            assert async_op is False, "Local channel does not support async get_batch."
+            return self._local_channel.get_batch(target_weight, queue_name)
+
         if self._current_worker is not None:
             self._channel_worker_actor.get_batch.remote(
                 self._current_worker.worker_address, target_weight, queue_name
@@ -494,6 +492,8 @@ class Channel:
 
     def __str__(self, queue_name: str = DEFAULT_QUEUE_NAME) -> str:
         """Get a all the items in the channel queue as a string."""
+        if self._local_channel is not None:
+            return str(self._local_channel.get_all(queue_name))
         async_work = AsyncChannelWork(
             self._channel_worker_actor.get_all.remote(queue_name=queue_name)
         )
@@ -503,5 +503,66 @@ class Channel:
     def __setstate__(self, state_dict: Dict[str, Any]):
         """Set current worker when the channel is unpickled."""
         self.__dict__.update(state_dict)
+        # Set local channel
+        if self._local_channel_id is not None and self._local_channel is not None:
+            local_channel = Channel.local_channel_map.get(
+                self._local_channel_id, self._local_channel
+            )
+            self._local_channel = local_channel
+            Channel.local_channel_map[self._local_channel_id] = self._local_channel
         if self._current_worker is None:
             self._current_worker = Worker.current_worker
+
+
+class GPULockProxy(AbstractContextManager):
+    """The proxy to manage GPU locks for the channel."""
+
+    def __init__(self, channel: Channel):
+        """Initialize the GPU lock proxy."""
+        self._channel = channel
+
+    def acquire(self):
+        """Lock GPUs for the current worker.
+
+        This is useful for resource isolation, e.g., GPU memory and computation resources, when multiple workers run on the same GPUs.
+        """
+        if self._channel._current_worker is not None and not self._channel.is_local:
+            ray.get(
+                self._channel._channel_worker_actor.acquire_gpus.remote(
+                    self._channel._current_worker.worker_address,
+                    self._channel._current_worker.global_gpu_ids,
+                )
+            )
+        elif self._channel.is_local:
+            # Ignore local channel, which already suggests that the channel is used by the same process
+            # And thus no synchronization is required.
+            pass
+        else:
+            raise ValueError(
+                "Cannot lock GPUs when the channel is not used in a worker."
+            )
+
+    def release(self):
+        """Unlock GPUs for the current worker."""
+        if self._channel._current_worker is not None and not self._channel.is_local:
+            ray.get(
+                self._channel._channel_worker_actor.release_gpus.remote(
+                    self._channel._current_worker.worker_address,
+                    self._channel._current_worker.global_gpu_ids,
+                )
+            )
+        elif self._channel.is_local:
+            pass
+        else:
+            raise ValueError(
+                "Cannot unlock GPUs when the channel is not used in a worker."
+            )
+
+    def __enter__(self):
+        """Enter the runtime context related to this object."""
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        """Exit the runtime context related to this object."""
+        self.release()
