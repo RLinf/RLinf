@@ -12,4 +12,4 @@ build:
       - uv pip install --no-build-isolation -r docs/no_build.txt
 
 sphinx:
-  configuration: docs/source/conf.py
+  configuration: docs/source-zh/conf.py

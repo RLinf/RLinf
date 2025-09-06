@@ -1,0 +1,212 @@
+5D Parallelism Configuration
+================================
+
+RLinf employs **NVIDIA Megatron-LM** as its large-scale Transformer training
+backend and exposes five orthogonal parallelism modes:
+
+1. **Tensor Parallelism (TP)**
+2. **Data Parallelism (DP)**
+3. **Pipeline Parallelism (PP)**
+4. **Sequence Parallelism (SP)**
+5. **Context Parallelism (CP)**
+
+A suitable combination lets the system scale from single-node to
+hundreds-GPU clusters while balancing memory, communication, and
+utilisation. 
+
+Below is a detailed introduction to the five parallel modes, as well as instructions on how to configure them for startup.
+
+1. Tensor Parallelism (TP)
+--------------------------
+
+**Definition**
+
+*Tensor Parallelism* shards the model’s **weight matrices** across a
+process group. Each GPU holds and computes only its slice.
+
+**Mechanics**
+
+* Linear layers  
+  – split ``Linear(h, 4h)`` **by columns**  
+  – split ``Linear(4h, h)`` **by rows**  
+* Attention projections – shard :math:`Q,K,V` along the head dimension  
+* Results are fused via *all-reduce* after every sharded operation.
+
+**Sample YAML**
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       tensor_model_parallel_size: 2    # tp_size = 2
+
+**Pros**
+
+* Bypasses single-GPU memory limits.  
+* Balances compute across GPUs.
+
+**Cons**
+
+* All-reduce after almost every layer → high latency.  
+* Scalability bounded by hidden-size width.
+
+2. Data Parallelism (DP)
+------------------------
+
+**Definition**
+
+*Data Parallelism* partitions the **minibatch**; every replica stores a
+full copy of the model.
+
+**Mechanics**
+
+* Split the global batch across DP ranks.  
+* Each rank computes forward/backward locally.  
+* Gradients are synchronised with an all-reduce before the optimiser step.
+
+**Sizing Example**
+
+.. code-block:: yaml
+
+   cluster:
+     num_nodes: 16
+     num_gpus_per_node: 8            # 16 × 8 = 128 GPUs
+
+   actor:
+     model:
+       tensor_model_parallel_size: 2  # TP
+       pipeline_model_parallel_size: 2  # PP
+       context_parallel_size: 2        # CP
+     # dp_size = 128 / 2 / 2 / 2 = 16
+
+**Pros**
+
+* Simple and model-agnostic.  
+* Perfect for scaling dataset size.
+
+**Cons**
+
+* Full-model replica on every GPU → memory heavy.  
+* Gradient all-reduce over the entire parameter set.  
+* Usually combined with TP/PP/CP to fit larger models.
+
+3. Pipeline Parallelism (PP)
+----------------------------
+
+**Definition**
+
+*Pipeline Parallelism* places **different layer stacks** on different
+ranks to form a computation pipeline.
+
+**Mechanics**
+
+* Evenly split layers across ``pp_size`` stages.  
+* Use *1F1B* (one-forward-one-backward) or similar schedulers to overlap
+  compute.
+
+**Schedule Illustration**
+
+::
+
+   GPU 0: [F1][F2][F3][F4][B4][B3][B2][B1]
+   GPU 1:     [F1][F2][F3][F4][B4][B3][B2][B1]
+   GPU 2:          [F1][F2][F3][F4][B4][B3][B2][B1]
+   GPU 3:               [F1][F2][F3][F4][B4][B3][B2][B1]
+
+F = forward micro-batch, B = backward micro-batch, index = micro-batch
+ID.
+
+**Sample YAML**
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       pipeline_model_parallel_size: 2
+
+**Pros**
+
+* Reduces memory for very **deep** models.  
+* Only neighbour-to-neighbour communication (activations).
+
+**Cons**
+
+* Pipeline bubbles (idle slots) may lower utilisation.
+
+4. Sequence Parallelism (SP)
+----------------------------
+
+**Definition**
+
+Megatron’s *Sequence Parallelism* augments TP to reduce memory for
+**long-context** attention and MLP blocks.
+
+**Mechanics**
+
+* Must be enabled **with TP**; both use the same process group.  
+* Inputs/outputs of attention and MLP are partitioned across the
+  sequence dimension while weight shards stay identical to TP.
+
+**Sample YAML**
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       tensor_model_parallel_size: 2     # TP is active
+       sequence_parallel: True           # enable SP
+
+   # If TP = 1, SP must be disabled
+   actor:
+     model:
+       tensor_model_parallel_size: 1
+       sequence_parallel: False
+
+**Pros**
+
+* Significant memory relief for long sequences.  
+
+**Cons**
+
+* Extra communication on sequence-dim shuffles.
+
+5. Context Parallelism (CP)
+---------------------------
+
+**Definition**
+
+*Context Parallelism* targets **ultra-long sequences** by chunking the
+entire attention computation along the sequence axis; all tensors are
+sharded in that dimension.
+
+**Mechanics**
+
+* Split :math:`Q,K,V` and logits into *context* chunks.  
+* Use ring attention to communicate and incrementally accumulate output.
+
+**Sample YAML**
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       context_parallel_size: 2
+
+**Pros**
+
+* Breaks memory wall for 100k+ token contexts.  
+* Pairs well with dynamic batch sizing.
+
+**Cons**
+
+* High bandwidth cost; parameters are **not** sharded, so model memory is
+  replicated.
+
+Summary
+-------
+
+Megatron-LM’s flexible combination of **TP, DP, PP, SP, and CP** enables
+RLinf to scale models by *width* (TP), *data volume* (DP),
+*depth* (PP), or *context length* (SP / CP).  
+Select sizes based on model architecture, target sequence length, GPU
+memory, and interconnect topology for best throughput.

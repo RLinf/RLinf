@@ -74,7 +74,8 @@ napoleon_preprocess_types = True
 
 
 # -- HTML Output Options -------------------------------------------------------
-
+language = "zh_CN"
+html_search_language = "zh"
 html_theme = "pydata_sphinx_theme"
 html_show_sourcelink = False  # Hide “View page source” link
 html_baseurl = "https://rlinf.readthedocs.io/en/latest/index.html"
