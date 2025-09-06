@@ -74,7 +74,7 @@ napoleon_preprocess_types = True
 
 
 # -- HTML Output Options -------------------------------------------------------
-language = "zh_CN"
+language = "zh"
 html_search_language = "zh"
 html_theme = "pydata_sphinx_theme"
 html_show_sourcelink = False  # Hide “View page source” link
