@@ -1,0 +1,49 @@
+{%- extends "!layout.html" %}
+
+{%- block extrahead %}
+{{ super() }}
+<script>
+// Sphinx AI Configuration - Injected during build process
+window.SPHINX_AI_CONFIG = {
+  typesense: {
+    host: '{{ typesense_host | default("localhost") }}',
+    port: {{ typesense_port | default(8108) }},
+    protocol: '{{ typesense_protocol | default("http") }}',
+    apiKey: '{{ typesense_api_key | default("") }}',
+    collectionName: '{{ typesense_collection | default("sphinx_docs") }}'
+  },
+  build: {
+    environment: '{{ sphinx_env | default("development") }}',
+    debug: {{ 'true' if sphinx_debug == 'true' else 'false' }},
+    buildTime: new Date().toISOString()
+  },
+  debug: {{ 'true' if sphinx_debug == 'true' else 'false' }}
+};
+
+// Status logging
+(function() {
+  const config = window.SPHINX_AI_CONFIG;
+  const hasTypesense = !!(config.typesense.apiKey && config.typesense.apiKey.trim());
+  
+  if (config.debug) {
+    console.log('Sphinx AI Configuration:', {
+      environment: config.build.environment,
+      typesenseConfigured: hasTypesense,
+      debug: config.debug
+    });
+  }
+  
+  // Display mode message
+  if (!hasTypesense) {
+    console.log('🔧 Sphinx AI: Running in demo mode - configure Typesense API key for full functionality');
+  } else {
+    console.log('✅ Sphinx AI: Typesense configured and ready');
+  }
+})();
+</script>
+{%- endblock %} 
+
+{%- block navbar_end %}
+  {{ super() }}
+  {%- include "askai.html" -%}
+{%- endblock %}

@@ -1,0 +1,130 @@
+切换 SGLang 版本
+======================
+
+RLinf 可以将不同的 *generation backends* 接入其强化学习流水线。  
+在当前版本中 **仅支持 SGLang**；vLLM 的集成正在开发中。  
+
+.. note::
+
+   RLinf 兼容 **SGLang 0.4.4 → 0.4.9**。  
+   不需要手动打补丁 —— 框架会自动检测已安装的版本并加载匹配的 shim。  
+
+安装要求
+-------------------------
+
+* **CUDA** ≥ 11.8（或与 PyTorch 构建版本匹配的 12.x）  
+* **Python** ≥ 3.8  
+* 所选模型需要足够的 **GPU 内存**  
+* 兼容版本的 **PyTorch** 和 *transformers*  
+
+.. note::
+
+   CUDA / PyTorch 版本不匹配是最常见的安装问题。  
+   安装 SGLang 前请先确认二者版本一致。  
+
+通过 pip 安装
+~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   # 参考版本
+   pip install sglang==0.4.4
+
+   # 推荐用于生产
+   pip install sglang==0.4.8
+
+   # 最新支持版本
+   pip install sglang==0.4.9
+
+从源码安装
+~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   git clone https://github.com/sgl-project/sglang.git
+   cd sglang
+   git checkout v0.4.8          # 选择需要的 tag
+   pip install -e .
+
+.. note::
+
+   从源码构建可能耗时且占用大量磁盘空间；  
+   除非需要最新修复，否则推荐使用预编译的 wheels。  
+
+----------------------------
+
+.. code-block:: yaml
+
+    ....
+    rollout:
+        group_name: "RolloutGroup" # SGLang Generation Group 名称，用于通信
+
+        gpu_memory_utilization: 0.55 # SGLang 参数，决定静态内存池使用的显存比例
+
+        model_dir: /model/path # 模型路径
+        model_arch: qwen2.5    # 模型架构
+        enforce_eager: False   # 若为 False，rollout 引擎会捕获 cuda graph，会增加初始化时间
+        distributed_executor_backend: mp   # ray 或 mp
+        disable_log_stats: False     # 若为 True，则关闭 sglang 输出日志
+        detokenize: False            # 是否反解码输出。在 RL 训练中通常不需要反解码，可设为 True 进行调试
+        padding: null                # 若为 null，则使用 tokenizer.pad_token_id；用于过滤 Megatron 的 padding
+        eos: null                    # 若为 null，则使用 tokenizer.eos_token_id
+
+        attention_backend: triton    # SGLang 使用的注意力后端
+        recompute_logprobs: True     # 是否计算 log probs
+
+        tensor_parallel_size: 1      # tp_size
+        pipeline_parallel_size: 1    # pp_size
+        
+        validate_weight: False       # 是否在开始时发送所有权重用于对比
+        validate_save_dir: null      # 保存权重对比文件的目录
+        print_outputs: False         # 是否打印 rollout 引擎的输出（token ids, texts 等）
+
+        sglang_decode_log_interval: 500000 # SGLang 打印解码时间和统计信息的间隔
+        max_running_requests: 64     # rollout 引擎的最大并发请求数
+        cuda_graph_max_bs: 128       # cuda graph 的最大 batch size，超过则不使用 cuda graph
+
+        use_torch_compile: False     # 是否在 SGLang rollout 中启用 torch_compile
+        torch_compile_max_bs: 128    # torch compile 的最大 batch size，超过则不使用
+
+    ...
+
+
+内部版本路由
+------------------------
+
+目录结构::  
+
+   rlinf/hybrid_engines/sglang/
+   ├── __init__.py               # 版本检测与路由
+   ├── sglang_worker.py          # 主 Worker 实现
+   ├── sglang_0_4_4/             # SGLang 0.4.4 专用实现
+   │   ├── __init__.py
+   │   ├── io_struct.py          # 0.4.4 的 I/O 结构
+   │   ├── sgl_engine.py         # 0.4.4 的引擎实现
+   │   ├── sgl_scheduler.py      # 0.4.4 的调度器
+   │   └── tokenizer_manager.py  # 0.4.4 的分词器管理
+   └── sglang_0_4_x/             # 未来版本实现
+       └── ...
+
+``__init__.py`` 中的加载器会解析已安装的包版本：  
+
+.. code-block:: python
+
+   from importlib.metadata import PackageNotFoundError, version
+
+   def get_version(pkg):
+       try:
+           return version(pkg)
+       except PackageNotFoundError:
+           return None
+
+   package_name = "sglang"
+   package_version = get_version(package_name)
+   
+   if package_version == "0.4.4":
+       sglang_version = "0.4.4"
+       from .sglang_0_4_4 import io_struct
+       from .sglang_0_4_4.sgl_engine import Engine
+   else:
+       raise ValueError(f"sglang version {package_version} not supported")

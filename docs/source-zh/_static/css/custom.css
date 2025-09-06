@@ -1,0 +1,32 @@
+/* Custom CSS to enforce a purple-themed color scheme */
+html[data-theme="light"] {
+  --pst-color-primary: #673ab7;
+  --pst-color-secondary: #ab47bc;
+}
+
+html[data-theme="dark"] {
+  --pst-color-primary: #BB86FC;
+  --pst-color-secondary: #CF9BFF;
+}
+
+a.reference,
+a.reference.external,
+a.reference.internal {
+  font-weight: bold !important;
+  text-decoration: none !important;
+}
+
+img.logo-img {
+    margin-top: 30px;
+    margin-bottom: 30px;
+}
+
+.red { color: red; font-weight: bold; }
+.green { color: green; }
+
+/* if you want also to remove underline on hover
+a.reference:hover,
+a.reference.external:hover,
+a.reference.internal:hover {
+  text-decoration: none !important;
+} */

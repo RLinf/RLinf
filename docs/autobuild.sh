@@ -1,1 +1,1 @@
-sphinx-autobuild source build/html
+sphinx-autobuild source-zh build/html
