@@ -288,10 +288,10 @@ LIBERO 结果
    :header-rows: 1
 
    * - 模型
-     - Spatial
-     - Goal
-     - Object
-     - Long
+     - `Spatial <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-spatial>`_
+     - `Goal <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-goal>`_
+     - `Object <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-object>`_
+     - `Long <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-long>`_
      - 平均值
    * - OpenVLA-OFT-SFT (one-shot)
      - 56.5%

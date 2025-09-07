@@ -298,10 +298,10 @@ Furthermore, we trained OpenVLA-OFT in the LIBERO environment using the GRPO alg
    :header-rows: 1
 
    * - Model
-     - Spatial
-     - Goal
-     - Object
-     - Long
+     - `Spatial <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-spatial>`_
+     - `Goal <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-goal>`_
+     - `Object <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-object>`_
+     - `Long <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-long>`_
      - Average
    * - OpenVLA-OFT-SFT (one-shot)
      - 56.5%
