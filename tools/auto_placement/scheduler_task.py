@@ -96,16 +96,17 @@ class SchedulerTask:
 
     def register_profile_data(self, profile_data: Dict[str, float]):
         for component_node in self.workflow.nodes:
-            component_node_name = component_node.name
-            instance_num, signle_iter_cost = profile_data[component_node_name]
-            signle_batch_cost = (
-                signle_iter_cost * instance_num / self.rollout_batch_size
+            (
+                collocated_instance_num,
+                signle_iter_cost,
+                disaggregated_profile_ratio_func,
+            ) = profile_data[component_node.name]
+            component_node.set_profile_data(
+                collocated_instance_num,
+                signle_iter_cost,
+                self.rollout_batch_size,
+                disaggregated_profile_ratio_func,
             )
-
-            assert signle_batch_cost > 0
-
-            component_node.set_single_batch_instance_cost(signle_batch_cost)
-
         self.profile_data_registed = True
 
     def run(self) -> str:
@@ -232,7 +233,15 @@ class SchedulerTask:
         return min_cost_allocation, min_cost
 
 
-def get_profile_data(cfg, actor_cost=None, inference_cost=None, rollout_cost=None):
+def get_profile_data(cfg):
+    try:
+        actor_cost = cfg.profile_data.actor_cost
+        inference_cost = cfg.profile_data.inference_cost
+        rollout_cost = cfg.profile_data.rollout_cost
+    except Exception as e:
+        print("[Error] : profile data is not provided, please check your config")
+        raise e
+
     total_gpus = cfg.cluster.num_gpus_per_node * cfg.cluster.num_nodes
     collocated_actor_instance_num = total_gpus // (
         cfg.actor.model.tensor_model_parallel_size
@@ -243,10 +252,33 @@ def get_profile_data(cfg, actor_cost=None, inference_cost=None, rollout_cost=Non
         cfg.rollout.tensor_parallel_size * cfg.rollout.pipeline_parallel_size
     )
 
+    # TODO:: Implement the disaggregated profile ratio function
+    def get_actor_disaggregated_profile_ratio(instance_num: int):
+        return 1
+
+    def get_inference_disaggregated_profile_ratio(instance_num: int):
+        return 1
+
+    def get_rollout_disaggregated_profile_ratio(instance_num: int):
+        """In disaggregated mode, rollout profiler will be affected by seq_length."""
+        return 1
+
     profile_data = {
-        "actor": (collocated_actor_instance_num, actor_cost),
-        "inference": (collocated_inference_instance_num, inference_cost),
-        "rollout": (collocated_rollout_instance_num, rollout_cost),
+        "actor": (
+            collocated_actor_instance_num,
+            actor_cost,
+            get_actor_disaggregated_profile_ratio,
+        ),
+        "inference": (
+            collocated_inference_instance_num,
+            inference_cost,
+            get_inference_disaggregated_profile_ratio,
+        ),
+        "rollout": (
+            collocated_rollout_instance_num,
+            rollout_cost,
+            get_rollout_disaggregated_profile_ratio,
+        ),
     }
 
     return profile_data
@@ -255,15 +287,7 @@ def get_profile_data(cfg, actor_cost=None, inference_cost=None, rollout_cost=Non
 @hydra.main(version_base="1.1")
 def main(cfg):
     cfg = validate_cfg(cfg)
-
-    actor_cost = getattr(cfg.profile_data, "actor_cost", None)
-    inference_cost = getattr(cfg.profile_data, "inference_cost", None)
-    rollout_cost = getattr(cfg.profile_data, "rollout_cost", None)
-
-    if actor_cost is None or inference_cost is None or rollout_cost is None:
-        raise ValueError("Profile data is not provided")
-
-    profile_data = get_profile_data(cfg, actor_cost, inference_cost, rollout_cost)
+    profile_data = get_profile_data(cfg)
     scheduler_task = SchedulerTask(cfg)
     scheduler_task.register_profile_data(profile_data)
     res = scheduler_task.run()

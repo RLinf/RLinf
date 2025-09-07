@@ -124,7 +124,16 @@ class AllocationStates:
         return sum(state.world_size for state in self.states.values())
 
     def __str__(self) -> str:
-        return f"total_used_gpus={self.used_gpus()}\n{self.states}"
+        _str = f"total_gpu={self.total_gpus()}, used_gpus={self.used_gpus()}, idle_gpus={self.idle_gpus}\n"
+        for key, value in self.states.items():
+            _str += f"{key}: {value}\n"
+        return _str
+
+    def __eq__(self, other: "AllocationStates") -> bool:
+        return str(other) == str(self)
+
+    def __hash__(self) -> int:
+        return hash(str(self))
 
 
 class ResourcePlanner:
@@ -195,7 +204,7 @@ class ResourcePlanner:
             // init_allocation.get_component(component).model_parallel_size
         )
 
-        states = []
+        states = set()
         for instance_num in range(min_instance_num, max_instance_num + 1):
             cur_allocation = deepcopy(init_allocation)
             gpu_needed = (
@@ -204,10 +213,9 @@ class ResourcePlanner:
             )
             if gpu_needed <= avaliable_gpus:
                 cur_allocation.get_component(component).allocation(gpu_needed)
-                if cur_allocation not in states:
-                    states.append(cur_allocation)
+                states.add(cur_allocation)
 
-        return states
+        return list(states)
 
     def generate_static_states(self) -> List[AllocationStates]:
         if not hasattr(self, "all_states"):
