@@ -126,7 +126,9 @@ class Cluster:
         try:
             # First try to connect to an existing Ray cluster
             ray.init(
-                address="auto",
+                # TODO : zhihao : local for debug
+                # address="auto",
+                address="local",
                 logging_level=Cluster.LOGGING_LEVEL,
                 namespace=Cluster.NAMESPACE,
                 runtime_env={"env_vars": dict(os.environ)},

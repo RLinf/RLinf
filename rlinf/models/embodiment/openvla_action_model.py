@@ -582,7 +582,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
 
     def preprocess_for_train(self, data):
         input_ids = data["input_ids"]
-        action_tokens = data["action_tokens"]
+        action_tokens = data["chunk_action_tokens"]
         attention_mask = data["attention_mask"]
 
         action_tokens = action_tokens.reshape(action_tokens.shape[0], self.action_dim)

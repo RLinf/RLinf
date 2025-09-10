@@ -214,14 +214,16 @@ class EnvWorker(Worker):
             self.eval_simulator_list[stage_id].chunk_step(chunk_actions)
         )
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
-
         if chunk_dones.any():
-            final_info = infos["final_info"]
-            for key in final_info["episode"]:
-                env_info_list[key] = final_info["episode"][key][
-                    chunk_dones[:, -1]
-                ].cpu()
-
+            if "episode" in infos:
+                for key in infos["episode"]:
+                    env_info_list[key] = infos["episode"][key].cpu()
+        # elif chunk_dones.any():
+        #     final_info = infos["final_info"]
+        #     for key in final_info["episode"]:
+        #         env_info_list[key] = final_info["episode"][key][
+        #             chunk_dones[:, -1]
+        #         ].cpu()
         env_batch = create_env_batch(
             obs=extracted_obs, rews=None, dones=None, infos=infos, meta=env_info_list
         )

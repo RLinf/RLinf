@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 import os
 
 import torch
@@ -19,6 +20,7 @@ import torch.optim as optim
 from omegaconf import DictConfig
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import MixedPrecision, ShardingStrategy, StateDictType
+from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 from transformers import AutoModelForCausalLM
 
 from rlinf.config import torch_dtype_from_precision
@@ -27,6 +29,24 @@ from rlinf.hybrid_engines.fsdp.utils import (
     init_fn,
 )
 from rlinf.utils.utils import clear_memory
+
+
+def should_wrap(module):
+    # return False
+    # TODO: zhihao: add PaliGemmaForConditionalGeneration to the should_wrap function
+    # TODO cannot import name 'PaliGemmaForConditionalGeneration' from 'transformers' in transformers 4.40.1
+    # return True
+    from transformers import PaliGemmaForConditionalGeneration
+    from transformers.models.gemma.modeling_gemma import GemmaDecoderLayer
+    from lerobot.common.policies.normalize import Normalize, Unnormalize
+    if isinstance(module, PaliGemmaForConditionalGeneration):
+        return True
+    elif isinstance(module, Normalize) or isinstance(module, Unnormalize):
+        return True
+    elif isinstance(module,GemmaDecoderLayer): 
+        return True
+    else:
+        return False
 
 
 class FSDPModelManager:
@@ -69,8 +89,8 @@ class FSDPModelManager:
             )
             if torch.cuda.is_available():
                 model = model.cuda()
-            if self.torch_dtype == torch.float16:
-                model = model.half()
+            # if self.torch_dtype == torch.float16:
+            #     model = model.half()
 
         return model
 
@@ -78,7 +98,8 @@ class FSDPModelManager:
         """Setup model and optimizer."""
         module = self.model_provider_func()
 
-        module.gradient_checkpointing_enable()
+        if hasattr(module, 'gradient_checkpointing_enable'):
+            module.gradient_checkpointing_enable()
 
         mixed_precision = MixedPrecision(
             param_dtype=self.torch_dtype,
@@ -86,57 +107,53 @@ class FSDPModelManager:
             buffer_dtype=self.torch_dtype,
         )
 
-        if self._cfg.model.sharding_strategy == "full_shard":
-            sharding_strategy = ShardingStrategy.FULL_SHARD
-        elif self._cfg.model.sharding_strategy == "shard_grad_op":
-            sharding_strategy = ShardingStrategy.SHARD_GRAD_OP
-        else:
-            sharding_strategy = ShardingStrategy.NO_SHARD
-        auto_wrap_policy = get_fsdp_wrap_policy(
-            module=module, config=None, is_lora=self._cfg.model.is_lora
-        )
+        # if self._cfg.model.sharding_strategy == "full_shard":
+        #     sharding_strategy = ShardingStrategy.FULL_SHARD
+        #     auto_wrap_policy = get_fsdp_wrap_policy(
+        #         module=module, config=None, is_lora=self._cfg.model.is_lora
+        #     )
+        # elif self._cfg.model.sharding_strategy == "shard_grad_op":
+        #     sharding_strategy = ShardingStrategy.SHARD_GRAD_OP
+        #     auto_wrap_policy = None
+        # else:
+        #     sharding_strategy = ShardingStrategy.NO_SHARD
+        #     auto_wrap_policy = None
+
+        # TODO: zhihao: change to no_shard
+        sharding_strategy = ShardingStrategy.NO_SHARD
+        auto_wrap_policy = functools.partial(lambda_auto_wrap_policy, lambda_fn=should_wrap)
 
         betas = (self._cfg.optim.adam_beta1, self._cfg.optim.adam_beta2)
-
         self.model = FSDP(
             module,
-            param_init_fn=init_fn,
+            # param_init_fn=init_fn,
             use_orig_params=True,
             auto_wrap_policy=auto_wrap_policy,
             device_id=int(os.environ["LOCAL_RANK"]),
             sharding_strategy=sharding_strategy,  # zero3
-            mixed_precision=mixed_precision,
+            # mixed_precision=mixed_precision,
             sync_module_states=True,
         )
 
-        # NOTE: Currently we assume that only the value head contains "value_head" in its name.
-        # The value head only serves for value prediction in RL algorithms like PPO.
-        param_groups = [
-            {
-                "params": [
-                    p
-                    for n, p in self.model.named_parameters()
-                    if "value_head" not in n and p.requires_grad
-                ],
-                "lr": self._cfg.optim.lr,
-                "betas": betas,
-            },
-        ]
-
-        if self._cfg.model.vh_mode in ["a", "a0", "a6"]:
-            param_groups.append(
-                {
-                    "params": [
-                        p
-                        for n, p in self.model.named_parameters()
-                        if "value_head" in n and p.requires_grad
-                    ],
-                    "lr": self._cfg.optim.value_lr,
-                    "betas": betas,
-                }
-            )
-
-        self.optimizer = optim.AdamW(param_groups)
+        params_actor = []
+        params_critic = []
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                if 'model.value_proj' in name or 'model.value_head' in name:
+                    params_critic.append(param)
+                else:
+                    params_actor.append(param)
+        if len(params_critic) > 0:
+            self.optimizer = optim.AdamW([
+                {'params': params_actor, 'lr': self._cfg.optim.lr, 'betas': betas},
+                {'params': params_critic, 'lr': self._cfg.optim.value_lr, 'betas': betas},
+            ])
+            # raise NotImplementedError("PI0 DEBUG")
+        else:
+            # self.optimizer = optim.AdamW([
+            #     {'params': params_actor, 'lr': self._cfg.optim.lr, 'betas': betas},
+            # ])
+            self.optimizer = optim.Adam(params_actor, lr = self._cfg.optim.lr)
 
     def get_model_state_dict(self):
         with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT):

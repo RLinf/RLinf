@@ -22,30 +22,39 @@ import torch.distributed
 def compute_split_num(num, split_num):
     return math.lcm(num, split_num) // split_num
 
-
 def compute_evaluate_metrics(eval_metrics_list):
     """
     List of evaluate metrics, list length stands for rollout process
     """
+    per_task_metrics = {}
+    for i in range(len(eval_metrics_list)):
+        task_i_keys = [key for key in eval_metrics_list[i].keys() if "task_" in key]
+        for key in task_i_keys:
+            if key not in per_task_metrics:
+                per_task_metrics[key] = eval_metrics_list[i][key]
+            else:
+                per_task_metrics[key] += eval_metrics_list[i][key]
+            eval_metrics_list[i].pop(key)
+
+    for key in per_task_metrics:
+        per_task_metrics[key] = per_task_metrics[key].float().mean().numpy()
     all_eval_metrics = {}
+    # remaining is keys without "task_"
     env_info_keys = eval_metrics_list[0].keys()
 
     for env_info_key in env_info_keys:
         all_eval_metrics[env_info_key] = [
             eval_metrics[env_info_key] for eval_metrics in eval_metrics_list
         ]
-
     for key in all_eval_metrics:
-        all_eval_metrics[key] = (
-            torch.concat(all_eval_metrics[key]).float().mean().numpy()
-        )
+        all_eval_metrics[key] = torch.concat(all_eval_metrics[key]).float().mean().numpy()
 
+    all_eval_metrics.update(per_task_metrics)
     return all_eval_metrics
-
 
 def compute_rollout_metrics(data_buffer: Dict) -> Dict:
     rollout_metrics = {}
-
+    rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
     if "rewards" in data_buffer:
         rewards = data_buffer["rewards"].clone()
         mean_rewards = torch.mean(rewards).to(torch.cuda.current_device())
@@ -57,17 +66,17 @@ def compute_rollout_metrics(data_buffer: Dict) -> Dict:
         rollout_metrics.update(rewards_metrics)
 
     if "advantages" in data_buffer:
-        advantages = data_buffer["advantages"]
+        advantages = data_buffer['advantages']
         mean_adv = torch.mean(advantages).to(torch.cuda.current_device())
-        torch.distributed.all_reduce(mean_adv, op=torch.distributed.ReduceOp.AVG)
+        torch.distributed.all_reduce(
+            mean_adv, op=torch.distributed.ReduceOp.AVG
+        )
         max_adv = torch.max(advantages).detach().item()
         min_adv = torch.min(advantages).detach().item()
         reduce_adv_tensor = torch.as_tensor(
             [-min_adv, max_adv], device=torch.cuda.current_device(), dtype=torch.float32
         )
-        torch.distributed.all_reduce(
-            reduce_adv_tensor, op=torch.distributed.ReduceOp.MAX
-        )
+        torch.distributed.all_reduce(reduce_adv_tensor, op=torch.distributed.ReduceOp.MAX)
         min_adv, max_adv = reduce_adv_tensor.tolist()
 
         advantages_metrics = {
@@ -77,18 +86,16 @@ def compute_rollout_metrics(data_buffer: Dict) -> Dict:
         }
         rollout_metrics.update(advantages_metrics)
 
-    if "returns" in data_buffer:
+    if "returns" in data_buffer and data_buffer["returns"] is not None:
         returns = data_buffer["returns"]
         mean_ret = torch.mean(returns).to(torch.cuda.current_device())
         torch.distributed.all_reduce(mean_ret, op=torch.distributed.ReduceOp.AVG)
         max_ret = torch.max(returns).detach().item()
-        min_ret = torch.min(returns).detach().item()
+        min_ret= torch.min(returns).detach().item()
         reduce_ret_tensor = torch.as_tensor(
             [-min_ret, max_ret], device=torch.cuda.current_device(), dtype=torch.float32
         )
-        torch.distributed.all_reduce(
-            reduce_ret_tensor, op=torch.distributed.ReduceOp.MAX
-        )
+        torch.distributed.all_reduce(reduce_ret_tensor, op=torch.distributed.ReduceOp.MAX)
         min_ret, max_ret = reduce_ret_tensor.tolist()
 
         returns_metrics = {
@@ -98,28 +105,30 @@ def compute_rollout_metrics(data_buffer: Dict) -> Dict:
         }
         rollout_metrics.update(returns_metrics)
 
+
     env_info_keys = [key for key in data_buffer if key.startswith("env_info/")]
     for env_info_key in env_info_keys:
         value = data_buffer.pop(env_info_key)
         value = value.float().mean().to(torch.cuda.current_device())
+        if env_info_key == "env_info/success_once":
+            rollout_metrics[f"per_task_rollout/task_{rank}"] = value.item()
         torch.distributed.all_reduce(value, op=torch.distributed.ReduceOp.AVG)
-        rollout_metrics[env_info_key] = value.item()
+        rollout_metrics[f"rollout/{env_info_key}"] = value.item()
 
     return rollout_metrics
 
-
 def huber_loss(error: torch.Tensor, delta: float) -> torch.Tensor:
     return torch.where(
-        error.abs() < delta, 0.5 * error**2, delta * (error.abs() - 0.5 * delta)
+        error.abs() < delta,
+        0.5 * error ** 2,
+        delta * (error.abs() - 0.5 * delta)
     )
-
 
 def append_to_dict(data, new_data):
     for key, val in new_data.items():
         if key not in data:
             data[key] = []
         data[key].append(val)
-
 
 def compute_loss_mask(dones):
     _, actual_bsz, num_action_chunks = dones.shape
@@ -149,64 +158,63 @@ def calculate_advantages_and_returns(
     adv_type,
     rewards: torch.Tensor,
     dones: torch.Tensor,
+    dones_terminated: torch.Tensor,
     normalize_advantages: bool = True,
     values: torch.Tensor = None,
     gamma: float = 1.0,
     gae_lambda: float = 1.0,
-    num_group_envs: int = 1,
-    group_size: int = 2,
-    reward_type: Optional[str] = None,
-    loss_mask: Optional[torch.Tensor] = None,
+    num_group_envs: int= 1,
+    group_size: int= 2,
+    num_action_chunks: int = 1,
     rollout_epoch: int = 1,
+    reward_type: Optional[str] = None,
+    loss_mask: torch.Tensor = None
 ):
+    # TODO: reward max to solve the bug on the action chunk
     if reward_type == "chunk_level":
-        rewards = rewards.sum(dim=-1, keepdim=True)
-        dones = dones[..., -1:]
+        rewards = rewards.max(dim=-1, keepdim=True)[0]
+        dones = dones.max(dim=-1, keepdim=True)[0]
+        loss_mask = loss_mask.max(dim=-1, keepdim=True)[0]
 
+    # TODO: HERE FOR SIMPLE TEST
+    # TODO: ADV CALCULATION BUG & DONE REWARD MATCHING
     if adv_type == "grpo":
         from rlinf.algorithms.embodiment.grpo_functions import (
-            compute_advantages,
             compute_advantages_with_loss_mask,
         )
+        # breakpoint()
+        advantages = compute_advantages_with_loss_mask(
+            rewards=rewards,
+            dones=dones,
+            num_group_envs=num_group_envs,
+            group_size=group_size,
+            normalize_advantages=normalize_advantages,
+            rollout_epoch=rollout_epoch,
+            loss_mask=loss_mask
+        )
+        return advantages, None
+        # rewards_max = rewards[:,:,0].max(dim=0)[0]
+        # advs = rewards_max.reshape(8,8)
+        # adv_mean = advs.mean(dim=1, keepdim=True)
+        # adv_std = advs.std(dim=1, keepdim=True)
+        # advs = (advs - adv_mean) / (adv_std + 1e-6)
+        # return advs, None
 
-        if loss_mask is not None:
-            advantages = compute_advantages_with_loss_mask(
-                rewards=rewards,
-                dones=dones,
-                num_group_envs=num_group_envs,
-                group_size=group_size,
-                normalize_advantages=normalize_advantages,
-                loss_mask=loss_mask,
-                rollout_epoch=rollout_epoch,
-            )
-        else:
-            advantages = compute_advantages(
-                rewards=rewards,
-                dones=dones,
-                num_group_envs=num_group_envs,
-                group_size=group_size,
-                normalize_advantages=normalize_advantages,
-                loss_mask=loss_mask,
-                rollout_epoch=rollout_epoch,
-            )
-        return advantages, advantages
     elif adv_type == "ppo":
         from rlinf.algorithms.embodiment.ppo_functions import (
             compute_advantages_and_returns,
         )
-
         advantages, returns = compute_advantages_and_returns(
             rewards=rewards,
             values=values,
             dones=dones,
             gamma=gamma,
             gae_lambda=gae_lambda,
-            normalize_advantages=normalize_advantages,
+            normalize_advantages=normalize_advantages
         )
         return advantages, returns
     else:
         raise ValueError(f"Advantage type {adv_type} not supported")
-
 
 def actor_loss_fn(
     loss_type,
@@ -227,7 +235,7 @@ def actor_loss_fn(
     entropy_bonus: float,
     loss_mask: Optional[torch.Tensor] = None,
     loss_mask_sum: Optional[torch.Tensor] = None,
-    max_episode_steps: Optional[int] = None,
+    use_norm_adv: bool = False,
 ) -> Tuple[torch.Tensor, Dict]:
     bsz = logprobs.shape[0]
     # logprobs.shape: [bsz, token-len]
@@ -236,24 +244,31 @@ def actor_loss_fn(
         logprobs = logprobs.reshape(bsz, -1, single_action_dim)
         old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim)
         advantages = advantages.unsqueeze(-1)
-        if loss_mask is not None:
+        if loss_mask is not None: # TODO: zhihao : here loss_mask is the summation of token counts, so times single_action_dim to get the token-level loss_mask
             loss_mask = loss_mask.unsqueeze(-1)
+            loss_mask_sum *= single_action_dim
             loss_mask_sum = loss_mask_sum.unsqueeze(-1)
 
     elif logprob_type == "action_level":
         logprobs = logprobs.reshape(bsz, -1, single_action_dim).sum(dim=-1)
         old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim).sum(dim=-1)
     elif logprob_type == "chunk_level":
-        logprobs = logprobs.sum(dim=-1)
-        old_logprobs = old_logprobs.sum(dim=-1)
-        advantages = advantages.sum(dim=-1)
+        # logprobs = logprobs.sum(dim=-1)
+        # old_logprobs = old_logprobs.sum(dim=-1)
+        # advantages = advantages.sum(dim=-1)
+        # TODO: zhihao : here we use mean to synthesizie the token-level logprobs and advantages into chunk-level logprobs and advantages
+        logprobs = logprobs.reshape(bsz, -1, single_action_dim).mean(dim=[1,2])
+        old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim).mean(dim=[1,2])
+        advantages = advantages.mean(dim=-1)
+        loss_mask = loss_mask.max(dim=-1)[0]
+        # n_chunk_step = loss_mask_sum.shape[1]
+        # loss_mask_sum = loss_mask_sum.float().mean(dim=-1)
+        # loss_mask_sum = loss_mask_sum / n_chunk_step
+        # loss_mask_sum = torch.ceil(loss_mask_sum)
 
     if loss_type == "grpo":
         from rlinf.algorithms.embodiment.grpo_functions import actor_loss_fn
 
-        loss_mask_ratio = (
-            (loss_mask_sum * 1.0) / max_episode_steps if loss_mask is not None else None
-        )
         return actor_loss_fn(
             log_probs=logprobs,
             old_log_prob=old_logprobs,
@@ -261,7 +276,8 @@ def actor_loss_fn(
             clip_ratio_high=clip_ratio_high,
             clip_ratio_low=clip_ratio_low,
             loss_mask=loss_mask,
-            loss_mask_ratio=loss_mask_ratio,
+            loss_mask_sum=loss_mask_sum,
+            use_norm_adv=use_norm_adv,
         )
     elif loss_type == "ppo":
         from rlinf.algorithms.embodiment.ppo_functions import actor_critic_loss_fn
@@ -286,4 +302,6 @@ def actor_loss_fn(
             value_clip=value_clip,
             huber_delta=huber_delta,
             entropy_bonus=entropy_bonus,
+            use_norm_adv=use_norm_adv,
+            loss_mask=loss_mask,
         )
