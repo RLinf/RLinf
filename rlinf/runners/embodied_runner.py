@@ -99,7 +99,14 @@ class EmbodiedRunner:
                 with self.timer("eval"):
                     self.update_rollout_weights()
                     eval_metrics = self.evaluate()
+                    per_task_eval_metrics = {}
+                    all_keys = list(eval_metrics.keys())
+                    for key in all_keys:
+                        if "task_" in key:
+                            per_task_eval_metrics[key] = eval_metrics[key]
+                            eval_metrics.pop(key)
                     eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
+                    eval_metrics.update(per_task_eval_metrics)
                     self.metric_logger.log(data=eval_metrics, step=_step)
 
             with self.timer("step"):
@@ -133,16 +140,40 @@ class EmbodiedRunner:
 
             time_metrics = self.timer.consume_durations()
 
-            rollout_metrics = {
-                f"rollout/{k}": v for k, v in actor_rollout_metrics[0].items()
+            # rollout_metrics = {
+            #     f"rollout/{k}": v for k, v in actor_rollout_metrics[0].items()
+            # }
+            per_task_metrics = {}
+            for i in range(len(actor_rollout_metrics)):
+                task_i_keys = [key for key in actor_rollout_metrics[i].keys() if "task_" in key]
+                for key in task_i_keys:
+                    per_task_metrics[key] = actor_rollout_metrics[i][key]
+                    actor_rollout_metrics[i].pop(key)
+
+            actor_rollout_metrics = {
+                key: sum(metrics[key] for metrics in actor_rollout_metrics) / len(actor_rollout_metrics)
+                for key in actor_rollout_metrics[0].keys()
             }
+            actor_rollout_metrics.update(per_task_metrics)
+            actor_rollout_metrics.update({"batch_size": self.cfg.actor.global_batch_size})
+            per_task_metrics = {}
+            for i in range(len(actor_training_metrics)):
+                task_i_keys = [key for key in actor_training_metrics[i].keys() if "task_" in key]
+                for key in task_i_keys:
+                    per_task_metrics[key] = actor_training_metrics[i][key]
+                    actor_training_metrics[i].pop(key)
+            actor_training_metrics = {
+                key: sum(metrics[key] for metrics in actor_training_metrics) / len(actor_training_metrics)
+                for key in actor_training_metrics[0].keys()
+            }
+            actor_training_metrics.update(per_task_metrics)
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
-            training_metrics = {
-                f"train/{k}": v for k, v in actor_training_metrics[0].items()
-            }
-            self.metric_logger.log(rollout_metrics, _step)
+            # training_metrics = {
+            #     f"train/{k}": v for k, v in actor_training_metrics[0].items()
+            # }
+            self.metric_logger.log(actor_rollout_metrics, _step)
             self.metric_logger.log(time_metrics, _step)
-            self.metric_logger.log(training_metrics, _step)
+            self.metric_logger.log(actor_training_metrics, _step)
 
         self.metric_logger.finish()
 

@@ -32,8 +32,18 @@ from rlinf.utils.utils import clear_memory
 
 
 def should_wrap(module):
+    # return False
+    # TODO: zhihao: add PaliGemmaForConditionalGeneration to the should_wrap function
+    # TODO cannot import name 'PaliGemmaForConditionalGeneration' from 'transformers' in transformers 4.40.1
+    # return True
     from transformers import PaliGemmaForConditionalGeneration
+    from transformers.models.gemma.modeling_gemma import GemmaDecoderLayer
+    from lerobot.common.policies.normalize import Normalize, Unnormalize
     if isinstance(module, PaliGemmaForConditionalGeneration):
+        return True
+    elif isinstance(module, Normalize) or isinstance(module, Unnormalize):
+        return True
+    elif isinstance(module,GemmaDecoderLayer): 
         return True
     else:
         return False
@@ -79,8 +89,8 @@ class FSDPModelManager:
             )
             if torch.cuda.is_available():
                 model = model.cuda()
-            if self.torch_dtype == torch.float16:
-                model = model.half()
+            # if self.torch_dtype == torch.float16:
+            #     model = model.half()
 
         return model
 
@@ -97,28 +107,31 @@ class FSDPModelManager:
             buffer_dtype=self.torch_dtype,
         )
 
-        if self._cfg.model.sharding_strategy == "full_shard":
-            sharding_strategy = ShardingStrategy.FULL_SHARD
-        elif self._cfg.model.sharding_strategy == "shard_grad_op":
-            sharding_strategy = ShardingStrategy.SHARD_GRAD_OP
-        else:
-            sharding_strategy = ShardingStrategy.NO_SHARD
-        auto_wrap_policy = get_fsdp_wrap_policy(
-            module=module, config=None, is_lora=self._cfg.model.is_lora
-        )
+        # if self._cfg.model.sharding_strategy == "full_shard":
+        #     sharding_strategy = ShardingStrategy.FULL_SHARD
+        #     auto_wrap_policy = get_fsdp_wrap_policy(
+        #         module=module, config=None, is_lora=self._cfg.model.is_lora
+        #     )
+        # elif self._cfg.model.sharding_strategy == "shard_grad_op":
+        #     sharding_strategy = ShardingStrategy.SHARD_GRAD_OP
+        #     auto_wrap_policy = None
+        # else:
+        #     sharding_strategy = ShardingStrategy.NO_SHARD
+        #     auto_wrap_policy = None
 
+        # TODO: zhihao: change to no_shard
+        sharding_strategy = ShardingStrategy.NO_SHARD
         auto_wrap_policy = functools.partial(lambda_auto_wrap_policy, lambda_fn=should_wrap)
 
         betas = (self._cfg.optim.adam_beta1, self._cfg.optim.adam_beta2)
-
         self.model = FSDP(
             module,
-            param_init_fn=init_fn,
+            # param_init_fn=init_fn,
             use_orig_params=True,
             auto_wrap_policy=auto_wrap_policy,
             device_id=int(os.environ["LOCAL_RANK"]),
             sharding_strategy=sharding_strategy,  # zero3
-            mixed_precision=mixed_precision,
+            # mixed_precision=mixed_precision,
             sync_module_states=True,
         )
 
@@ -130,16 +143,17 @@ class FSDPModelManager:
                     params_critic.append(param)
                 else:
                     params_actor.append(param)
-
-        if len(params_actor) > 0:
+        if len(params_critic) > 0:
             self.optimizer = optim.AdamW([
                 {'params': params_actor, 'lr': self._cfg.optim.lr, 'betas': betas},
-                # {'params': params_critic, 'lr': self._cfg.optim.value_lr, 'betas': betas},
-            ])
-        else:
-            self.optimizer = optim.AdamW([
                 {'params': params_critic, 'lr': self._cfg.optim.value_lr, 'betas': betas},
             ])
+            # raise NotImplementedError("PI0 DEBUG")
+        else:
+            # self.optimizer = optim.AdamW([
+            #     {'params': params_actor, 'lr': self._cfg.optim.lr, 'betas': betas},
+            # ])
+            self.optimizer = optim.Adam(params_actor, lr = self._cfg.optim.lr)
 
     def get_model_state_dict(self):
         with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT):

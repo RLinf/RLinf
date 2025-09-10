@@ -17,7 +17,7 @@ import os
 
 import torch
 from omegaconf import DictConfig
-from peft import LoraConfig, PeftModel, get_peft_model
+# from peft import LoraConfig, PeftModel, get_peft_model
 from transformers import (
     AutoConfig,
     AutoImageProcessor,
@@ -185,6 +185,7 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
         from .embodiment.pi0_action_model import Pi0ForRLActionPrediction
         AutoConfig.register("pi0", PI0Config)
         # Load policy configuration from pretrained path
+        # actor_model_config: PI0Config = PreTrainedConfig.from_pretrained(model_path)
         actor_model_config: PI0Config = PreTrainedConfig.from_pretrained(model_path)
         actor_model_config.pretrained_path = model_path
         override_config_kwargs = cfg
@@ -195,9 +196,10 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
         dataset_meta = LeRobotDatasetMetadata(
             f"lerobot/{model_dir_name}", root=f"data/{model_dir_name}"
         )
-        # Create the Pi0 wrapper model and set the policy
+        # TODO: replace the raw make_policy without the metadata. Create the Pi0 wrapper model and set the policy
         model = make_policy(actor_model_config, policy_class=Pi0ForRLActionPrediction, ds_meta=dataset_meta)
-        model = model.to(torch_dtype)
+        # TODO: solve fsdp bug
+        model.model.paligemma_with_expert.replace_gemma_decoder_layer() 
     else:
         return None
     if torch.cuda.is_available():

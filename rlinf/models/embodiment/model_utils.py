@@ -126,6 +126,8 @@ def prepare_observations_for_vla(
             for t in raw_obs["task_descriptions"]
         ]
 
+    # print(f"raw_obs keys: {raw_obs.keys()}")
+
     if simulator_type == "libero":
         if num_images_in_input > 1:
             main_image_tensor = torch.stack([
@@ -137,7 +139,12 @@ def prepare_observations_for_vla(
                 for value in raw_obs["images_and_states"]["wrist_image"]
             ])
         else:
-            image_tensor = raw_obs["images_and_states"]["full_image"].clone().to(device).permute(2, 0, 1)
+            image_tensor = torch.stack(
+                [
+                    value.clone().to(device).permute(2, 0, 1)
+                    for value in raw_obs["images_and_states"]["full_image"]
+                ]
+            )
     elif simulator_type == "maniskill":
         images = raw_obs["images"]
         image_tensor = images.to(device=device, dtype=precision)
@@ -173,18 +180,19 @@ def prepare_observations_for_vla(
             max_length=max_length,
         )
     elif model_name == "pi0":
+        # TODO: zhihao: change to float32
         to_process_input = {
-            "observation.images.image": main_image_tensor/ 255,
-            "observation.images.wrist_image": wrist_image_tensor/ 255,
-            "observation.state": proprio_states['state'],
+            "observation.images.image": main_image_tensor.to(torch.float32)/ 255,
+            "observation.images.wrist_image": wrist_image_tensor.to(torch.float32)/ 255,
+            "observation.state": proprio_states['state'].to(torch.float32),
             "task": task_descriptions,
         }
         processed_obs = processor(to_process_input)
         processed_obs.update(
             {
-                "observation.images.image": main_image_tensor / 255,
-                "observation.images.wrist_image": wrist_image_tensor / 255,
-                "observation.state": proprio_states['state'],
+                "observation.images.image": main_image_tensor.to(torch.float32) / 255,
+                "observation.images.wrist_image": wrist_image_tensor.to(torch.float32) / 255,
+                "observation.state": proprio_states['state'].to(torch.float32),
             }
         )
 

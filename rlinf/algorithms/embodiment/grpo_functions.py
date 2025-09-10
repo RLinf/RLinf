@@ -242,6 +242,7 @@ def actor_loss_fn(
     clip_ratio_low: float,
     loss_mask: Optional[torch.Tensor] = None,
     loss_mask_ratio: Optional[torch.Tensor] = None,
+    use_norm_adv: bool = False,
 ) -> Tuple[torch.Tensor, Dict]:
     """
     Compute actor loss for Group Relative Policy Optimization (GRPO).
@@ -267,31 +268,51 @@ def actor_loss_fn(
     """
     logratio = log_probs - old_log_prob
     ratio = torch.exp(logratio)
-
+    if use_norm_adv:
+        if loss_mask is not None:
+            adv_mean = advantages[loss_mask].mean()
+            adv_std = advantages[loss_mask].std()  
+        else:
+            adv_mean = advantages.mean()
+            adv_std = advantages.std()  
+        if adv_std < 1e-8:
+            advantages = torch.zeros_like(advantages)
+        else:
+            advantages = (advantages - adv_mean) / (adv_std + 1e-8)
     # Compute clipped and unclipped policy gradient losses
     pg_losses = -advantages * ratio
     pg_losses2 = -advantages * torch.clamp(
         ratio, 1.0 - clip_ratio_low, 1.0 + clip_ratio_high
     )
-
-    if loss_mask is not None:
-        # Take the maximum of clipped and unclipped losses
-        pg_loss = (torch.max(pg_losses, pg_losses2) / loss_mask_ratio) * loss_mask
-        pg_loss = pg_loss.mean()
-        pg_clipfrac = torch.gt(pg_losses2, pg_losses).float() * loss_mask
-        pg_clipfrac = pg_clipfrac.mean()
-        ppo_kl = (-logratio * loss_mask).mean()
-    else:
-        # Take the maximum of clipped and unclipped losses
-        pg_loss = torch.max(pg_losses, pg_losses2).mean()  # float
-        pg_clipfrac = torch.gt(pg_losses2, pg_losses).float().mean()  # float
-        ppo_kl = (-logratio * loss_mask).mean()
+    pg_loss = torch.mean(torch.max(pg_losses, pg_losses2)[loss_mask])
+    pg_clipfrac = torch.mean(torch.gt(pg_losses2, pg_losses).float()[loss_mask])
+    approx_kl = torch.mean(((ratio - 1) - logratio)[loss_mask])
+    # if loss_mask is not None:
+    #     # Take the maximum of clipped and unclipped losses
+    #     pg_loss = (
+    #         masked_sum(torch.max(pg_losses, pg_losses2) / loss_mask_sum, loss_mask)
+    #         / bsz
+    #     )  # float
+    #     pg_clipfrac = (
+    #         masked_sum(
+    #             torch.gt(pg_losses2, pg_losses).float() / loss_mask_sum, loss_mask
+    #         )
+    #         / bsz
+    #     )  # float
+    # else:
+    #     # Take the maximum of clipped and unclipped losses
+    #     pg_loss = torch.max(pg_losses, pg_losses2).mean()  # float
+    #     pg_clipfrac = torch.gt(pg_losses2, pg_losses).float().mean()  # float
 
     # Compile metrics for logging
     metrics_data = {
         "actor/raw_loss": pg_loss.detach().item(),
         "actor/policy_loss": pg_loss.detach().item(),
         "actor/policy_clipfrac": pg_clipfrac.detach().item(),
-        "actor/ppo_kl": ppo_kl.detach().item(),
+        "actor/approx_kl": approx_kl.detach().item(),
+        "actor/ratio_mean": ratio.mean().detach().item(),
+        "actor/ratio_max": ratio.max().detach().item(),
+        "actor/ratio_min": ratio.min().detach().item(),
+        "valid_sample_num": loss_mask.sum().detach().item(),
     }
     return pg_loss, metrics_data

@@ -103,6 +103,8 @@ def actor_critic_loss_fn(
     value_clip: float,
     huber_delta: float,
     entropy_bonus: float,
+    use_norm_adv: bool,
+    loss_mask: torch.Tensor,
 ) -> Tuple[torch.Tensor, Dict]:
     """
     Compute PPO actor loss function.
@@ -126,6 +128,14 @@ def actor_critic_loss_fn(
     """
     logratio = logprobs - old_logprobs
     ratio = torch.exp(logratio)
+    # loss-mask
+    ratio = ratio[loss_mask]
+    advantages = advantages[loss_mask]
+    returns = returns[loss_mask]
+    prev_values = prev_values[loss_mask]
+    values = values[loss_mask]
+    if use_norm_adv:
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
     surr1 = ratio * advantages
     surr2 = torch.clamp(ratio, 1 - clip_ratio_low, 1 + clip_ratio_high) * advantages
@@ -138,13 +148,18 @@ def actor_critic_loss_fn(
         raise NotImplementedError
 
     # Value loss
+    # TODO: ppo align, pre_values [bs,1] values [bs]
+    prev_values = prev_values[:,0]
     value_pred_clipped = prev_values + (values - prev_values).clamp(
         -value_clip, value_clip
     )  # [bsz, ] | [bsz, chunk-step]
     error_clipped = returns - value_pred_clipped  # [bsz, ] | [bsz, chunk-step]
     error_original = returns - values  # [bsz, ] | [bsz, chunk-step]
-    value_loss_clipped = huber_loss(error_clipped, huber_delta)
-    value_loss_original = huber_loss(error_original, huber_delta)
+    # TODO: ppo
+    value_loss_clipped = (error_clipped).pow(2)
+    value_loss_original = (error_original).pow(2)
+    # value_loss_clipped = huber_loss(error_clipped, huber_delta)
+    # value_loss_original = huber_loss(error_original, huber_delta)
     value_loss = torch.max(value_loss_original, value_loss_clipped)
 
     value_clip_indicator = (value_pred_clipped - prev_values).abs() > value_clip
@@ -153,9 +168,12 @@ def actor_critic_loss_fn(
     value_loss = value_loss.mean()
 
     # Entropy loss
-    entropy_loss = entropy.mean()
+    # entropy_loss = entropy.mean()
+    entropy_loss = torch.tensor(0)
 
-    loss = policy_loss + value_loss - entropy_bonus * entropy_loss
+    # loss = policy_loss + value_loss - entropy_bonus * entropy_loss
+    loss = policy_loss + value_loss
+    explained_variance = torch.nan if torch.var(returns) == 0 else 1 - torch.var(returns - values) / torch.var(returns)
 
     # Metrics
     metrics_data = {

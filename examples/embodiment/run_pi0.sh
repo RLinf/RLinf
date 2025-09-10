@@ -5,9 +5,9 @@ export SRC_FILE="${EMBODIED_PATH}/train_embodied_agent.py"
 
 export MUJOCO_GL="egl"
 export PYOPENGL_PLATFORM="egl"
-export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
+export PYTHONPATH=${REPO_PATH}
 # NOTE: set LIBERO_REPO_PATH to the path of the LIBERO repo
-export PYTHONPATH="/mnt/public/mjwei/repo/LIBERO":$PYTHONPATH
+export PYTHONPATH="/mnt/mnt/public/mjwei/repo/LIBERO":$PYTHONPATH
 # NOTE: set LIBERO_CONFIG_PATH for libero/libero/__init__.py
 # export LIBERO_CONFIG_PATH=${LIBERO_REPO_PATH}
 echo "LIBERO_CONFIG_PATH: ${LIBERO_CONFIG_PATH}"
@@ -24,9 +24,9 @@ else
     CONFIG_NAME=$1
 fi
 
-LOG_DIR="${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')" #/$(date +'%Y%m%d-%H:%M:%S')"
+LOG_DIR="${REPO_PATH}/logs/pi0_4GPU_$(date +'%Y%m%d-%H:%M:%S')" #/$(date +'%Y%m%d-%H:%M:%S')"
 MEGA_LOG_FILE="${LOG_DIR}/run_ppo.log"
 mkdir -p "${LOG_DIR}"
-CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME} trainer.logger.path=${LOG_DIR}"
+CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME} runner.logger.log_path=${LOG_DIR}"
 echo ${CMD}
 ${CMD} 2>&1 | tee ${MEGA_LOG_FILE}
