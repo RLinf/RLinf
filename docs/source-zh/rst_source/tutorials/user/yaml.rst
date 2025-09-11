@@ -901,7 +901,7 @@ actor
 
 ``actor.model.policy_setup``：策略配置（widowx_bridge）。  
 
-``actor.model.vh_mode``：视觉头模式（a0）。  
+``actor.model.vh_mode``：价值头模式（a0）。  
 
 ``actor.model.image_size``：输入图像尺寸 [H, W]。  
 

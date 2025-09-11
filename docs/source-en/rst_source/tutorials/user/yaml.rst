@@ -963,7 +963,7 @@ actor
 
 ``actor.model.policy_setup``: Policy configuration (widowx_bridge).
 
-``actor.model.vh_mode``: Vision-head mode (a0).
+``actor.model.vh_mode``: Value-head mode (a0).
 
 ``actor.model.image_size``: Input image dimensions [height, width].
 
