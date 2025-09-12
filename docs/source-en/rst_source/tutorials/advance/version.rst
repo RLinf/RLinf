@@ -83,7 +83,7 @@ Install from Source
         sglang: # used when rollout_backend is sglang
             attention_backend: triton # [flashinfer, triton] for more, see sglang's doc
             decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
-            use_torch_compile: True # enable torch_compile in SGLang for rollout.
+            use_torch_compile: False # enable torch_compile in SGLang for rollout.
             torch_compile_max_bs: 128 # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.
 
         vllm: # used when rollout_backend is vllm
