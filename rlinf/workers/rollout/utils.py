@@ -553,9 +553,7 @@ def get_rollout_backend_worker(
         if placement.placement_mode == PlacementMode.COLLOCATED:
             return VLLMWorker
         elif placement.placement_mode == PlacementMode.DISAGGREGATED:
-            raise NotImplementedError(
-                "vLLM rollout backend does not support the pipeline mode."
-            )
+            return AsyncVLLMWorker
         else:
             raise ValueError(f"Unsupported placement mode: {placement.placement_mode}")
     elif rollout_backend == "sglang":
