@@ -252,6 +252,60 @@ class RolloutResult:
         return attention_mask, position_ids
 
     @staticmethod
+    def from_vllm_result(
+        group_size: int,
+        vllm_result: VllmRequestOutput,
+        answer: str,
+        return_logprobs: bool = False,
+    ) -> "RolloutResult":
+        def get_logprobs(
+            response_ids: List[int], output: CompletionOutput
+        ) -> List[float]:
+            logprobs = []
+            returned_logprobs = output.logprobs
+            assert logprobs is not None, (
+                "vllm returned None logprobs, while return_logprobs is set."
+            )
+            for i, logprob in enumerate(returned_logprobs):
+                logprobs.append(logprob[response_ids[i]].logprob)
+            return logprobs
+
+        assert len(vllm_result.outputs) == group_size, (
+            f"Expected {group_size} outputs and finished, got {len(vllm_result.outputs)} and finished={vllm_result.finished}"
+        )
+        assert vllm_result.prompt_token_ids is not None, (
+            "prompt_token_ids should not be None because input_ids is provided."
+        )
+        prompt_ids = [vllm_result.prompt_token_ids] * group_size
+        prompt_lengths = [len(vllm_result.prompt_token_ids)] * group_size
+
+        response_ids = []
+        response_lengths = []
+        logprobs = []
+        for output in vllm_result.outputs:
+            response_id = list(output.token_ids)
+            response_ids.append(response_id)
+            response_lengths.append(len(response_id))
+            if return_logprobs:
+                logprobs.append(get_logprobs(response_id, output))
+        is_end = [vllm_result.finished] * group_size
+
+        rollout_result: RolloutResult = RolloutResult(
+            group_size=group_size,
+            num_sequence=1,
+            answers=[answer],
+            prompt_ids=prompt_ids,
+            prompt_lengths=prompt_lengths,
+            response_ids=response_ids,
+            response_lengths=response_lengths,
+            is_end=is_end,
+        )
+        if return_logprobs:
+            rollout_result.rollout_logprobs = logprobs
+
+        return rollout_result
+
+    @staticmethod
     def from_vllm_results(
         group_size: int,
         results: List[VllmRequestOutput],
