@@ -79,7 +79,7 @@ from rlinf.utils.utils import (
     seq_mean_token_sum,
 )
 from rlinf.workers.rollout.utils import RankMapper
-from tools.math_verifier.verify import math_verify_call
+from toolkits.math_verifier.verify import math_verify_call
 
 
 class MegatronActor(MegatronModelManager, Worker):
