@@ -66,3 +66,21 @@ jobs:
               run: |
                 export REPO_PATH=$(pwd)
                 bash tests/e2e_tests/math/sglang/run_pipeline.sh
+
+    qwen-grpo-test-sglang0.4.4:
+        runs-on: rlinf
+        container:
+            image: rlinf/rlinf:math-rlinf0.1-torch2.5.1-sglang0.4.4-vllm0.7.1-megatron0.11.0-te2.1
+            volumes:
+                - /mnt/public/dataset:/workspace/dataset
+                - /mnt/public/tokenizer:/workspace/tokenizer
+            options: --gpus="all" --shm-size=80g
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: SGLang Collocated mode
+              run: |
+                export REPO_PATH=$(pwd)
+                bash tests/e2e_tests/math/sglang/run_collocated.sh
