@@ -999,7 +999,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     mask = batch["attention_mask"][:, -self.response_len :]
                     advantages, returns = calculate_adv_and_returns(
                         adv_type=self.cfg.algorithm.adv_type,
-                        reward_scores=self.rollout_batches["reward_scores"].cuda(),
+                        reward_scores=batch["rewards"].cuda(),
                         mask=mask.cuda(),
                         num_responses=self.cfg.algorithm.group_size,
                     )
