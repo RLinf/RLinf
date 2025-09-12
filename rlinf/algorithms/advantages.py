@@ -158,11 +158,9 @@ def compute_grpo_advantages_and_returns(
 
 @register_advantage("grpo-math")
 def compute_math_grpo_advantages(**kwargs):
-    reward_scores, mask, num_responses = (
-        kwargs["reward_scores"],
-        kwargs["mask"],
-        kwargs["num_responses"],
-    )
+    reward_scores = kwargs["reward_scores"]
+    mask = kwargs["mask"]
+    num_responses = kwargs["num_responses"]
 
     grouped_rewards = reward_scores.view(-1, num_responses)
     # compute median
@@ -180,7 +178,7 @@ def compute_math_grpo_advantages(**kwargs):
 
     advantages = (torch.zeros_like(mask) + advantages.view(-1, 1)) * mask
 
-    return advantages, advantages
+    return advantages, None
 
 
 if __name__ == "__main__":

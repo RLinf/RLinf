@@ -809,7 +809,7 @@ class MegatronActor(MegatronModelManager, Worker):
         clear_memory()
         assert self.rollout_batches is not None
         mask = self.rollout_batches["attention_mask"][:, -self.response_len :]
-        advantages, returns = calculate_adv_and_returns(
+        advantages, _ = calculate_adv_and_returns(
             adv_type=self.cfg.algorithm.adv_type,
             reward_scores=self.rollout_batches["reward_scores"].cuda(),
             mask=mask.cuda(),
