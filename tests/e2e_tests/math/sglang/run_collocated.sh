@@ -14,4 +14,4 @@ else
     CONFIG_NAME=$1
 fi
 
-python ${REPO_PATH}/examples/math/main_math.py --config-path $REPO_PATH/tests/e2e_tests/math  --config-name $CONFIG_NAME
+python ${REPO_PATH}/examples/math/main_math.py --config-path $REPO_PATH/tests/e2e_tests/math/sglang  --config-name $CONFIG_NAME

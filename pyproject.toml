@@ -24,7 +24,7 @@ dependencies = [
     # Core System
     "accelerate",
     "ray[default]>=2.47.0",
-    "torch==2.5.1",
+    "torch==2.6.0",
 
     # Data processing
     "pylatexenc",
@@ -51,10 +51,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-sgl_vllm = [
-    "transformers==4.48.3",
-    "sglang[all]==0.4.4",
-    "vllm==0.7.1",
+sglang = [
+    "transformers==4.51.1",
+    "sglang[all]==0.4.6.post5",
+]
+vllm = [
+    "transformers==4.51.1",
+    "vllm==0.8.5",
 ]
 embodied = [
     "prismatic",
@@ -73,7 +76,8 @@ embodied = [
 prerelease = "allow"
 conflicts = [
     [
-      { extra = "sgl_vllm" },
+      { extra = "sglang" },
+      { extra = "vllm" },
       { extra = "embodied" },
     ],
 ]

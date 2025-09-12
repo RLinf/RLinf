@@ -1,0 +1,56 @@
+FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git vim libibverbs-dev openssh-server sudo runit runit-systemd tmux \
+    build-essential python3-dev cmake pkg-config \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN python -m pip install -i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple --upgrade pip setuptools wheel
+RUN pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+
+ENV HF_HOME=/opt/.cache/huggingface
+RUN mkdir -p $HF_HOME
+
+WORKDIR /opt
+RUN git clone https://github.com/NVIDIA/Megatron-LM.git && cd Megatron-LM && git checkout core_r0.13.0
+WORKDIR /opt
+RUN git clone --depth=1 https://github.com/RLinf/latex2sympy2.git && cd latex2sympy2 && pip install -e .
+
+RUN pip install hydra-core==1.4.0.dev1 torchdata word2number vllm==0.8.5 \
+    datasets sentencepiece regex einops scipy wandb tensorboard nvitop accelerate pylatexenc pybind11 \
+    torch_memory_saver swanlab ray[default]==2.47.0
+
+ENV CUDNN_PATH=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/
+RUN pip install 'transformer_engine[pytorch]==2.1.0'
+
+WORKDIR /opt
+RUN git clone --depth=1 https://github.com/NVIDIA/apex && cd apex && \
+    pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation \
+        --config-settings "--build-option=--cpp_ext" \
+        --config-settings "--build-option=--cuda_ext" ./
+
+# RUN pip install 'flash-attn'==2.7.4.post1 --no-build-isolation
+RUN pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
+
+
+RUN pip install 'sglang[all]==0.4.6.post5'
+
+RUN pip install flashinfer-python==0.2.2 
+
+RUN pip install triton==3.1.0
+
+RUN pip uninstall pynvml -y
+
+ENV PATH=/opt/conda/bin:$PATH
+ENV PYTHONPATH=/opt/Megatron-LM:$PYTHONPATH
+WORKDIR /workspace
+
+RUN python - <<'PY'
+import torch, vllm, flash_attn_cuda
+import apex
+print("Torch:", torch.__version__, "CUDA:", torch.version.cuda)
+print("CUDA available:", torch.cuda.is_available())
+PY
+
+CMD ["/bin/bash"]

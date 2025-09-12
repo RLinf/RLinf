@@ -18,7 +18,7 @@ from copy import deepcopy
 
 from omegaconf.dictconfig import DictConfig
 
-from tools.ckpt_convertor.config import ConvertorConfig, load_convertor_config
+from toolkits.ckpt_convertor.config import ConvertorConfig, load_convertor_config
 
 from .convert_hf_to_middle_file import (
     convert_layer_loadsave,

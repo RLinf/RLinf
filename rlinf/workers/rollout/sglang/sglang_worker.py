@@ -97,9 +97,9 @@ class SGLangWorker(Worker):
             tp_size=self._cfg.rollout.tensor_parallel_size,
             mem_fraction_static=self._cfg.rollout.gpu_memory_utilization,
             enable_memory_saver=use_cudagraph,
-            enable_torch_compile=self._cfg.rollout.use_torch_compile,
+            enable_torch_compile=self._cfg.rollout.sglang.use_torch_compile,
             torch_compile_max_bs=min(
-                self._cfg.rollout.torch_compile_max_bs,
+                self._cfg.rollout.sglang.torch_compile_max_bs,
                 self._cfg.rollout.max_running_requests,
             ),
             load_format="dummy" if not self._cfg.rollout.validate_weight else "auto",
@@ -109,8 +109,8 @@ class SGLangWorker(Worker):
             # text is not needed in RL training, so set to True can save time.
             skip_tokenizer_init=not self._cfg.rollout.detokenize,
             # sglang will print statistics every decode_log_interval decode steps.
-            decode_log_interval=self._cfg.rollout.sglang_decode_log_interval,
-            attention_backend=self._cfg.rollout.attention_backend,
+            decode_log_interval=self._cfg.rollout.sglang.decode_log_interval,
+            attention_backend=self._cfg.rollout.sglang.attention_backend,
             log_level="info",
             max_running_requests=self._cfg.rollout.max_running_requests,
             dist_init_addr=f"127.0.0.1:{str(Cluster.find_free_port())}",
@@ -183,7 +183,7 @@ class SGLangWorker(Worker):
                 )
 
             # Create RolloutResult from the outputs.
-            rollout_result = RolloutResult.from_engine_results(
+            rollout_result = RolloutResult.from_sglang_results(
                 results,
                 request.n,
                 request.input_ids,
@@ -343,7 +343,7 @@ class AsyncSGLangWorker(SGLangWorker):
                             continue
 
                     input_ids = [input_ids] * len(results)
-                    rollout_result = RolloutResult.from_engine_results(
+                    rollout_result = RolloutResult.from_sglang_results(
                         results,
                         rollout_request.n,
                         input_ids,

@@ -92,7 +92,19 @@ rollout:
   padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for vllm rollout
   eos: null                   # will be tokenizer.eos_token_id if null.
 
-  attention_backend: triton
+  rollout_backend: sglang     # [sglang, vllm]
+
+  sglang:
+    attention_backend: triton # [flashinfer, triton] for more, see sglang's doc
+    decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
+    use_torch_compile: False # enable torch_compile in SGLang for rollout.
+    torch_compile_max_bs: 128 # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.
+
+  vllm:
+    attention_backend: FLASH_ATTN #[FLASH_ATTN,XFORMERS] for more, see vllm's doc
+    enable_chunked_prefill: True  # enable vllm to use chunked_prefill.
+    enable_prefix_caching: True   # enable vllm to use prefix_caching.
+    enable_flash_infer_sampler: True # if True, vllm will use flashinfer to do sampling.
 
   return_logprobs: ${not:${algorithm.recompute_logprobs}}
 
@@ -103,12 +115,8 @@ rollout:
   validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
   print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of inference engine.
 
-  sglang_decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
   max_running_requests: 64 # the maximum number of running requests in the inference engine.
   cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
-
-  use_torch_compile: False # enable torch_compile in SGLang for rollout.
-  torch_compile_max_bs: 128 # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.
 
 data:
   type: math

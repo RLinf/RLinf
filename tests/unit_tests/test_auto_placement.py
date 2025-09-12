@@ -20,7 +20,7 @@ import pytest
 
 # Add auto_placement tools to path for testing
 sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), "../../tools/auto_placement")
+    0, os.path.join(os.path.dirname(__file__), "../../toolkits/auto_placement")
 )
 # Add RLinf to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))

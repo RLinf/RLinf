@@ -26,7 +26,7 @@ from typing import List, Tuple
 
 import torch
 
-from tools.ckpt_convertor.config import ConvertorConfig
+from toolkits.ckpt_convertor.config import ConvertorConfig
 
 from .utils.fp8_utils import dict_push
 from .utils.safetensors_loader import STLoader, STLoaderLazy

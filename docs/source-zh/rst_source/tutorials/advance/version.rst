@@ -2,11 +2,11 @@
 ======================
 
 RLinf 可以将不同的 *generation backends* 接入其强化学习流水线。  
-在当前版本中 **仅支持 SGLang**；vLLM 的集成正在开发中。  
+在当前版本中 **支持 SGLang与vLLM**。
 
 .. note::
 
-   RLinf 兼容 **SGLang 0.4.4 → 0.4.9**。  
+   RLinf 兼容 **SGLang 0.4.4 → 0.4.9**, **vLLM 0.8.5  → 0.8.5.post1**  
    不需要手动打补丁 —— 框架会自动检测已安装的版本并加载匹配的 shim。  
 
 安装要求
@@ -23,7 +23,7 @@ RLinf 可以将不同的 *generation backends* 接入其强化学习流水线。
    安装 SGLang 前请先确认二者版本一致。  
 
 通过 pip 安装
-~~~~~~~~~~~~~~~~~
+
 
 .. code-block:: bash
 
@@ -36,14 +36,23 @@ RLinf 可以将不同的 *generation backends* 接入其强化学习流水线。
    # 最新支持版本
    pip install sglang==0.4.9
 
+   # 安装vLLM
+   pip install vllm==0.8.5
+
+
 从源码安装
-~~~~~~~~~~~~~~~~~~~
+
 
 .. code-block:: bash
-
+   # 安装 SGLang
    git clone https://github.com/sgl-project/sglang.git
    cd sglang
    git checkout v0.4.8          # 选择需要的 tag
+   pip install -e "python[all]"
+
+   git clone https://github.com/vllm-project/vllm.git
+   cd vllm
+   git checkout v0.8.5          # 选择需要的 tag
    pip install -e .
 
 .. note::
@@ -70,8 +79,19 @@ RLinf 可以将不同的 *generation backends* 接入其强化学习流水线。
         padding: null                # 若为 null，则使用 tokenizer.pad_token_id；用于过滤 Megatron 的 padding
         eos: null                    # 若为 null，则使用 tokenizer.eos_token_id
 
-        attention_backend: triton    # SGLang 使用的注意力后端
-        recompute_logprobs: True     # 是否计算 log probs
+        rollout_backend: sglang     # [sglang, vllm] 在这里选择所使用的 rollout 引擎,目前支持SGLang与vLLM
+
+        sglang:
+            attention_backend: triton # [flashinfer, triton] SGLang 使用的注意力后端,更多信息见 SGLang 文档
+            decode_log_interval: 500000 # SGLang 打印解码时间和统计信息的间隔
+            use_torch_compile: True # 是否在 SGLang rollout 中启用 torch_compile
+            torch_compile_max_bs: 128 # torch compile 的最大 batch size，超过则不使用
+
+        vllm:
+            attention_backend: FLASH_ATTN # [FLASH_ATTN,XFORMERS] VLLM 使用的注意力后端,更多信息见 vLLM 文档
+            enable_chunked_prefill: True  # 是否在 vLLM 中启用 chunked_prefill
+            enable_prefix_caching: True   # 是否在 vLLM 中启用 prefix_caching
+            enable_flash_infer_sampler: True # 是否在 vLLM 中使用flashinfer 代替原有Pytorch实现的采样
 
         tensor_parallel_size: 1      # tp_size
         pipeline_parallel_size: 1    # pp_size
@@ -80,12 +100,8 @@ RLinf 可以将不同的 *generation backends* 接入其强化学习流水线。
         validate_save_dir: null      # 保存权重对比文件的目录
         print_outputs: False         # 是否打印 rollout 引擎的输出（token ids, texts 等）
 
-        sglang_decode_log_interval: 500000 # SGLang 打印解码时间和统计信息的间隔
         max_running_requests: 64     # rollout 引擎的最大并发请求数
         cuda_graph_max_bs: 128       # cuda graph 的最大 batch size，超过则不使用 cuda graph
-
-        use_torch_compile: False     # 是否在 SGLang rollout 中启用 torch_compile
-        torch_compile_max_bs: 128    # torch compile 的最大 batch size，超过则不使用
 
     ...
 
@@ -93,7 +109,7 @@ RLinf 可以将不同的 *generation backends* 接入其强化学习流水线。
 内部版本路由
 ------------------------
 
-目录结构::  
+SGLang 目录结构::  
 
    rlinf/hybrid_engines/sglang/
    ├── __init__.py               # 版本检测与路由

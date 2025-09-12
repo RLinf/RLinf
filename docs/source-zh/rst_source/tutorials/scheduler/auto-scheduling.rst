@@ -10,7 +10,7 @@ RL 训练前的自动放置
 概览
 ~~~~~~~~
 
-自动放置工具由 `tools/auto_placement` 下的三个主要组件构成：
+自动放置工具由 `toolkits/auto_placement` 下的三个主要组件构成：
 
 - **scheduler_task.py**：主调度器，执行时间与空间的分时复用以寻找最优放置方案  
 - **resource_allocator.py**：负责不同组件的资源分配  

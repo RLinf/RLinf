@@ -4,7 +4,7 @@ set -x
 tabs 4
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 
-output=$(python ${REPO_PATH}/tools/auto_placement/scheduler_task.py --config-path $REPO_PATH/tests/e2e_tests/auto_placement  --config-name qwen2.5-1.5b-grpo)
+output=$(python ${REPO_PATH}/toolkits/auto_placement/scheduler_task.py --config-path $REPO_PATH/tests/e2e_tests/auto_placement  --config-name qwen2.5-1.5b-grpo)
 exit_code=$?
 
 if [ $exit_code -ne 0 ]; then

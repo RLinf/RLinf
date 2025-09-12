@@ -2,12 +2,11 @@ Switch SGLang Versions
 ======================
 
 RLinf can plug different *generation backends* into its
-reinforcement-learning pipeline. For the current release **only
-SGLang** is supported; vLLM integration is under development.
+reinforcement-learning pipeline. For the current release **SGLang and vLLM** is supported;
 
 .. note::
 
-   RLinf is compatible with **SGLang 0.4.4 → 0.4.9**.  
+   RLinf is compatible with **SGLang 0.4.4 → 0.4.9**, **vLLM 0.8.5  → 0.8.5.post1**.  
    No manual patching is required – the framework detects the installed
    version and loads the matching shim automatically.
 
@@ -38,16 +37,23 @@ Install via pip
    # Latest supported
    pip install sglang==0.4.9
 
+   # Install vLLM
+   pip install vllm==0.8.5
 Install from Source
 ~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
-
+   # Install SGLang
    git clone https://github.com/sgl-project/sglang.git
    cd sglang
    git checkout v0.4.8          # pick the tag you need
-   pip install -e .
+   pip install -e "python[all]"
 
+   # Install vLLM
+   git clone https://github.com/vllm-project/vllm.git
+   cd vllm
+   git checkout v0.8.5          # pick the tag you need
+   pip install -e .
 .. note::
 
    Building from source can be time-consuming and heavy on disk space;
@@ -72,8 +78,19 @@ Install from Source
         padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
         eos: null                   # will be tokenizer.eos_token_id if null.
 
-        attention_backend: triton # attention backend used by SGLang
-        recompute_logprobs: True # whether SGLang will compute log probs
+        rollout_backend: sglang     # [sglang, vllm] here to choose which rollout backend to use.
+
+        sglang: # used when rollout_backend is sglang
+            attention_backend: triton # [flashinfer, triton] for more, see sglang's doc
+            decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
+            use_torch_compile: True # enable torch_compile in SGLang for rollout.
+            torch_compile_max_bs: 128 # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.
+
+        vllm: # used when rollout_backend is vllm
+            attention_backend: FLASH_ATTN # [FLASH_ATTN,XFORMERS] attention backend used by vLLM, for more info,see vLLM's doc
+            enable_chunked_prefill: True  # enable vllm to use chunked_prefill.
+            enable_prefix_caching: True  # enable vllm to use prefix_caching.
+            enable_flash_infer_sampler: True #  # if True, vllm will use flashinfer to do sampling.
 
         tensor_parallel_size: 1 # tp_size
         pipeline_parallel_size: 1 # pp_size
@@ -82,12 +99,8 @@ Install from Source
         validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
         print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
 
-        sglang_decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
         max_running_requests: 64 # the maximum number of running requests in the rollout engine.
         cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
-
-        use_torch_compile: False # enable torch_compile in SGLang for rollout.
-        torch_compile_max_bs: 128 # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.
 
     ...
 

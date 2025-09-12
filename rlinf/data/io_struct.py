@@ -17,6 +17,8 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import torch
 from omegaconf import DictConfig
+from vllm.outputs import CompletionOutput
+from vllm.outputs import RequestOutput as VllmRequestOutput
 
 from rlinf.data.datasets import batch_pad_to_fixed_len
 from rlinf.utils.data_iter_utils import (
@@ -250,7 +252,60 @@ class RolloutResult:
         return attention_mask, position_ids
 
     @staticmethod
-    def from_engine_results(
+    def from_vllm_results(
+        group_size: int,
+        results: List[VllmRequestOutput],
+        answers: Optional[List[List[int]]] = None,
+        return_logprobs: bool = False,
+    ) -> "RolloutResult":
+        def get_logprobs(
+            response_ids: List[int], output: CompletionOutput
+        ) -> List[float]:
+            logprobs = []
+            returned_logprobs = output.logprobs
+            assert logprobs is not None, (
+                "vllm returned None logprobs, while return_logprobs is set."
+            )
+            for i, logprob in enumerate(returned_logprobs):
+                logprobs.append(logprob[response_ids[i]].logprob)
+            return logprobs
+
+        num_sequences = len(results)
+
+        prompt_lengths = []
+        prompt_ids = []
+        response_lengths = []
+        response_ids = []
+        logprobs = []
+        is_end = []
+        for _, res in enumerate(results):
+            if res.prompt_token_ids is not None:
+                prompt_ids.append(res.prompt_token_ids)
+                prompt_lengths.append(len(res.prompt_token_ids))
+            else:
+                return NotImplementedError("vllm should return tokenized prompt.")
+            response_id = list(res.outputs[0].token_ids)
+            response_ids.append(response_id)
+            response_lengths.append(len(response_id))
+            is_end.append(res.finished)
+            if return_logprobs:
+                logprobs.append(get_logprobs(response_id, res.outputs[0]))
+        result: RolloutResult = RolloutResult(
+            group_size=group_size,
+            num_sequence=num_sequences,
+            answers=answers,
+            prompt_ids=prompt_ids,
+            prompt_lengths=prompt_lengths,
+            response_ids=response_ids,
+            response_lengths=response_lengths,
+            is_end=is_end,
+        )
+        if return_logprobs:
+            result.rollout_logprobs = logprobs
+        return result
+
+    @staticmethod
+    def from_sglang_results(
         results: List[Dict],
         group_size: int,
         input_ids: List[List[int]],
