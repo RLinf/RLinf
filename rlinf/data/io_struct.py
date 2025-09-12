@@ -263,7 +263,7 @@ class RolloutResult:
         ) -> List[float]:
             logprobs = []
             returned_logprobs = output.logprobs
-            assert logprobs is not None, (
+            assert returned_logprobs is not None, (
                 "vllm returned None logprobs, while return_logprobs is set."
             )
             for i, logprob in enumerate(returned_logprobs):
@@ -292,7 +292,7 @@ class RolloutResult:
 
         rollout_result: RolloutResult = RolloutResult(
             group_size=group_size,
-            num_sequence=1,
+            num_sequence=group_size,
             answers=[answer],
             prompt_ids=prompt_ids,
             prompt_lengths=prompt_lengths,

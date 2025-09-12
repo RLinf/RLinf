@@ -292,7 +292,7 @@ class AsyncVLLMWorker(VLLMWorker):
         """
         Validate the model weights before starting to rollout formally.
         """
-        return NotImplementedError("Async validate is not implemented yet.")
+        raise NotImplementedError("Async validate is not implemented yet.")
 
     async def offload_model_weights(self) -> None:
         """
@@ -402,7 +402,6 @@ class AsyncVLLMWorker(VLLMWorker):
         )
 
         self.log_info(f"[LLM dp {self._rank}] VLLM engine initialized.")
-        await self.offload_model_weights()
 
     async def _put_result(self, result: RolloutResult, output_channel: Channel) -> None:
         await output_channel.put(result, async_op=True).async_wait()
@@ -440,7 +439,6 @@ class AsyncVLLMWorker(VLLMWorker):
         rollout_request: RolloutRequest = await input_channel.get(
             async_op=True
         ).async_wait()
-
         answers: Dict[str, str] = {}
         with self.worker_timer():
             rollout_tasks = []
@@ -470,7 +468,7 @@ class AsyncVLLMWorker(VLLMWorker):
             for future in asyncio.as_completed(rollout_tasks):
                 request_id, request_output = await future
                 rewards, advantages = await self._compute_reward_and_advantage(
-                    output=request_output, answer=rollout_request.answers
+                    output=request_output, answer=answers[request_id]
                 )
 
                 if (
