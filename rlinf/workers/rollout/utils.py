@@ -548,7 +548,7 @@ def get_rollout_backend_worker(
         )
 
     if rollout_backend == "vllm":
-        from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
+        from rlinf.workers.rollout.vllm.vllm_worker import AsyncVLLMWorker, VLLMWorker
 
         if placement.placement_mode == PlacementMode.COLLOCATED:
             return VLLMWorker
