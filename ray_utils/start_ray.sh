@@ -18,8 +18,6 @@ if [ "$RANK" -eq 0 ]; then
     IP_ADDRESS=$(hostname -I | awk '{print $1}')
     # Start Ray head node
     echo "Starting Ray head node on rank 0, IP: $IP_ADDRESS"
-    # export VLLM_ATTENTION_BACKEND=XFORMERS
-    # export VLLM_USE_V1=0
     ray start --head --memory=461708984320 --port=29500
     
     # Write IP to file
@@ -29,7 +27,7 @@ else
     # Worker node startup logic
     echo "Waiting for head node IP file..."
     
-    # Wait for file to appear (wait up to 60 seconds)
+    # Wait for file to appear (wait up to 360 seconds)
     for i in {1..360}; do
         if [ -f $RAY_HEAD_IP_FILE ]; then
             HEAD_ADDRESS=$(cat $RAY_HEAD_IP_FILE)
@@ -46,7 +44,5 @@ else
     fi
     
     echo "Starting Ray worker node connecting to head at $HEAD_ADDRESS"
-    # export VLLM_ATTENTION_BACKEND=XFORMERS
-    export VLLM_USE_V1=0
     ray start --memory=461708984320 --address="$HEAD_ADDRESS:29500"
 fi

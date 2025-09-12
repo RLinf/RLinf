@@ -85,10 +85,6 @@ algorithm:
 inference:
   model_arch: ${rollout.model_arch}
   group_name: "InferenceGroup"
-  channel:
-    name: ${actor.channel.name}
-    queue_name: "inference_input_queue"
-    queue_size: 0
   load_from_actor: True
   model:
     tensor_model_parallel_size: 2
@@ -97,11 +93,6 @@ inference:
 
 rollout:
   group_name: "RolloutGroup"
-  channel:
-    name: ${actor.channel.name}
-    queue_name: "rollout_input_queue"
-    output_queue_name: "rollout_output_queue"
-    queue_size: 64
 
   gpu_memory_utilization: 0.55
 
@@ -150,11 +141,6 @@ actor:
   training_backend: megatron
   mcore_gpt: True
   spec_name: decoder_gpt
-
-  channel:
-    name: "dataserver"
-    queue_name: "actor_input_queue"
-    queue_size: 0
 
   checkpoint_load_path: null
 

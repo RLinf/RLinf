@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "full_version": "v1",
+  "docs_versions": [
+    {
+      "version": "latest",
+      "title": "Latest (development)",
+      "aliases": []
+    },
+    {
+      "version": "v1",
+      "title": "v1 (stable)",
+      "aliases": []
+    }
+  ]
+}

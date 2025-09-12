@@ -18,7 +18,11 @@ from typing import Dict, List, overload
 
 from omegaconf import DictConfig
 
-from rlinf.scheduler.placement import PackedPlacementStrategy, PlacementStrategy
+from rlinf.scheduler.placement import (
+    FlexiblePlacementStrategy,
+    PackedPlacementStrategy,
+    PlacementStrategy,
+)
 
 
 class PlacementMode(Enum):
@@ -53,34 +57,7 @@ class ComponentPlacement:
             components_gpus: str = self._placement_config[components]
             components = components.split(",")
             components = [c.strip() for c in components]
-            if components_gpus == "all":
-                start_gpu = 0
-                end_gpu = self._cluster_num_gpus - 1
-            else:
-                components_gpus = components_gpus.split("-")
-                try:
-                    if len(components_gpus) == 1:
-                        start_gpu = int(components_gpus[0])
-                        end_gpu = start_gpu
-                    elif len(components_gpus) == 2:
-                        start_gpu = int(components_gpus[0])
-                        end_gpu = int(components_gpus[1])
-                    else:
-                        raise ValueError
-                except (ValueError, IndexError):
-                    raise ValueError(
-                        f"Invalid GPU range for components {components}: {components_gpus}, expected format: start-end"
-                    )
-            assert end_gpu >= start_gpu, (
-                f"Start GPU ID {start_gpu} must be less than or equal to end GPU ID {end_gpu}."
-            )
-            assert start_gpu < self._cluster_num_gpus, (
-                f"Start GPU ID {start_gpu} must be less than total number of GPUs {self._cluster_num_gpus}."
-            )
-            assert end_gpu < self._cluster_num_gpus, (
-                f"End GPU ID {end_gpu} must be less than total number of GPUs {self._cluster_num_gpus}."
-            )
-            components_gpus = list(range(start_gpu, end_gpu + 1))
+            components_gpus = self._parse_gpu_ids(components_gpus, components)
 
             for component in components:
                 self._components.append(component)
@@ -88,6 +65,58 @@ class ComponentPlacement:
 
             self._placements: Dict[str, PlacementStrategy] = {}
             self._placement_mode: PlacementMode = None
+
+    def _parse_gpu_ids(
+        self, components_gpus: str, component_names: List[str]
+    ) -> List[int]:
+        """Parse a string of GPU IDs into a list of integers.
+
+        Args:
+            components_gpus (str): A string representing GPU IDs. The string can either be "all", representing all GPUs, or a comma-separated list of GPU IDs and ranges (e.g., "0,1,2-4").
+            component_names (List[str]): The names of the components for error reporting.
+
+        Returns:
+            List[int]: A list of GPU IDs as integers.
+        """
+        gpu_ids: List[int] = []
+        if components_gpus == "all":
+            gpu_ids = list(range(0, self._cluster_num_gpus))
+        else:
+            # If the GPU placement is a single number
+            # Omegaconf will parse it as an integer instead of a string
+            components_gpus = str(components_gpus)
+            # First split by comma
+            gpu_id_ranges = components_gpus.split(",")
+            for gpu_id_range in gpu_id_ranges:
+                gpu_id_range = gpu_id_range.strip()
+                if gpu_id_range == "":
+                    continue
+                # Then split by hyphen to get the start and end of the range
+                gpu_id_range = gpu_id_range.split("-")
+                try:
+                    if len(gpu_id_range) == 1:
+                        start_gpu = int(gpu_id_range[0])
+                        end_gpu = start_gpu
+                    elif len(gpu_id_range) == 2:
+                        start_gpu = int(gpu_id_range[0])
+                        end_gpu = int(gpu_id_range[1])
+                    else:
+                        raise ValueError
+                except (ValueError, IndexError):
+                    raise ValueError(
+                        f'Invalid GPU placement format for components {component_names}: {components_gpus}, expected format: "a,b,c-d" or "all"'
+                    )
+                assert end_gpu >= start_gpu, (
+                    f"Start GPU ID {start_gpu} must be less than or equal to end GPU ID {end_gpu}."
+                )
+                assert start_gpu < self._cluster_num_gpus, (
+                    f"Start GPU ID {start_gpu} must be less than total number of GPUs {self._cluster_num_gpus}."
+                )
+                assert end_gpu < self._cluster_num_gpus, (
+                    f"End GPU ID {end_gpu} must be less than total number of GPUs {self._cluster_num_gpus}."
+                )
+                gpu_ids.extend(list(range(start_gpu, end_gpu + 1)))
+        return gpu_ids
 
     @property
     def placement_mode(self):
@@ -134,7 +163,7 @@ class ComponentPlacement:
 
 
 class HybridComponentPlacement(ComponentPlacement):
-    """Hybrid component placement that allows components to run on any sets of continuous GPUs."""
+    """Hybrid component placement that allows components to run on any sets of GPUs."""
 
     def __init__(self, config: DictConfig):
         """Initialize HybridComponentPlacement
@@ -147,15 +176,17 @@ class HybridComponentPlacement(ComponentPlacement):
 
     def _generate_placements(self):
         for component_name, component_gpus in self._component_gpu_map.items():
-            self._placements[component_name] = PackedPlacementStrategy(
-                start_gpu_id=component_gpus[0], end_gpu_id=component_gpus[-1]
+            self._placements[component_name] = FlexiblePlacementStrategy(
+                [[gpu_id] for gpu_id in component_gpus]
             )
 
 
 class ModelParallelComponentPlacement(ComponentPlacement):
     """Component placement for model-parallel components.
 
-    The components must be actor, rollout, and optionally inference. This placement supports both collocated and disaggregated modes.
+    The components must be actor, rollout, and optionally inference, whose GPUs must be continuous.
+
+    This placement supports both collocated and disaggregated modes.
 
     In the collocated mode, all components share the same set of GPUs. In particular, the rollout group is specially placed in a strided manner to enable fast cudaIPC-based weight sync.
     In the disaggregated mode, each component has its own dedicated set of GPUs.
@@ -180,6 +211,16 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         assert self._rollout_gpus is not None, (
             "Rollout GPUs must be specified in the component_placement config."
         )
+        assert self._actor_gpus == list(
+            range(self._actor_gpus[0], self._actor_gpus[-1] + 1)
+        ), f"Actor GPUs {self._actor_gpus} must be continuous."
+        assert self._rollout_gpus == list(
+            range(self._rollout_gpus[0], self._rollout_gpus[-1] + 1)
+        ), f"Rollout GPUs {self._rollout_gpus} must be continuous."
+        if self._inference_gpus is not None:
+            assert self._inference_gpus == list(
+                range(self._inference_gpus[0], self._inference_gpus[-1] + 1)
+            ), f"Inference GPUs {self._inference_gpus} must be continuous."
 
         self._actor_num_gpus = len(self._actor_gpus)
         self._inference_num_gpus = (
@@ -191,12 +232,19 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             assert self.actor_tp_size >= self.rollout_tp_size, (
                 f"Actor TP size {self.actor_tp_size} must be greater or equal to Rollout TP size {self.rollout_tp_size}."
             )
+            assert self._inference_gpus is None, (
+                "Inference GPUs must not be specified in collocated mode."
+            )
             self._placement_mode = PlacementMode.COLLOCATED
             logging.info("Running in collocated mode")
         elif self._is_disaggregated():
-            assert self.inference_tp_size <= self.inference_world_size, (
-                f"Inference TP size {self.inference_tp_size} must be less than or equal to Inference world size {self.inference_world_size}."
-            )
+            if self._inference_gpus is not None:
+                assert self.inference_tp_size <= self.inference_world_size, (
+                    f"Inference TP size {self.inference_tp_size} must be less than or equal to Inference world size {self.inference_world_size}."
+                )
+                assert self._config.algorithm.recompute_logprobs, (
+                    f"algorithm.recompute_logprobs has been set to false, which disables inference. So inference GPUs {self._inference_gpus} must not be specified."
+                )
             self._placement_mode = PlacementMode.DISAGGREGATED
             logging.info("Running in disaggregated mode")
         else:
@@ -218,16 +266,16 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         return False
 
     def _is_disaggregated(self):
-        if self._inference_gpus is not None:
-            actor_gpu_set = set(self._actor_gpus)
-            rollout_gpu_set = set(self._rollout_gpus)
-            inference_gpu_set = set(self._inference_gpus)
-            return (
-                actor_gpu_set.isdisjoint(rollout_gpu_set)
-                and actor_gpu_set.isdisjoint(inference_gpu_set)
-                and rollout_gpu_set.isdisjoint(inference_gpu_set)
-            )
-        return False
+        actor_gpu_set = set(self._actor_gpus)
+        rollout_gpu_set = set(self._rollout_gpus)
+        inference_gpu_set = (
+            [] if self._inference_gpus is None else set(self._inference_gpus)
+        )
+        return (
+            actor_gpu_set.isdisjoint(rollout_gpu_set)
+            and actor_gpu_set.isdisjoint(inference_gpu_set)
+            and rollout_gpu_set.isdisjoint(inference_gpu_set)
+        )
 
     def _generate_placements(self):
         if self._placement_mode == PlacementMode.COLLOCATED:
@@ -258,12 +306,24 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 self._rollout_gpus[-1],
                 num_gpus_per_process=num_gpus_per_rollout_dp,
             )
-            self._placements["inference"] = PackedPlacementStrategy(
-                self._inference_gpus[0], self._inference_gpus[-1]
-            )
+            if self._inference_gpus is not None:
+                self._placements["inference"] = PackedPlacementStrategy(
+                    self._inference_gpus[0], self._inference_gpus[-1]
+                )
             self._placements["actor"] = PackedPlacementStrategy(
                 self._actor_gpus[0], self._actor_gpus[-1]
             )
+
+    @property
+    def is_disaggregated(self):
+        return self._placement_mode == PlacementMode.DISAGGREGATED
+
+    @property
+    def has_dedicated_inference(self):
+        return (
+            self._placement_mode == PlacementMode.DISAGGREGATED
+            and self._inference_gpus is not None
+        )
 
     @property
     def actor_dp_size(self) -> int:
@@ -287,14 +347,22 @@ class ModelParallelComponentPlacement(ComponentPlacement):
 
     @property
     def inference_tp_size(self) -> int:
-        if hasattr(self._config.inference.model, "tensor_model_parallel_size"):
+        if (
+            hasattr(self._config, "inference")
+            and hasattr(self._config.inference, "model")
+            and hasattr(self._config.inference.model, "tensor_model_parallel_size")
+        ):
             return self._config.inference.model.tensor_model_parallel_size
         else:
             return self.actor_tp_size
 
     @property
     def inference_pp_size(self) -> int:
-        if hasattr(self._config.inference.model, "pipeline_model_parallel_size"):
+        if (
+            hasattr(self._config, "inference")
+            and hasattr(self._config.inference, "model")
+            and hasattr(self._config.inference.model, "pipeline_model_parallel_size")
+        ):
             return self._config.inference.model.pipeline_model_parallel_size
         else:
             return self.actor_pp_size

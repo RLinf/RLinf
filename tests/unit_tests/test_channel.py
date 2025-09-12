@@ -74,8 +74,7 @@ class ProducerWorker(Worker):
     def create_with_affinity(self, channel_name: str):
         channel = self.create_channel(
             channel_name=channel_name,
-            group_affinity=self._worker_address.root_group_name,
-            group_rank_affinity=self._rank,
+            gpu_id=2,
         )
         channel.put("affinity_item", 1)
         return True

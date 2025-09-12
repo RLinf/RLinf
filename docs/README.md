@@ -36,7 +36,7 @@ With your environment ready, build the documentation using Sphinx. Source files 
 Run this command to build the documentation:
 
 ```bash
-sphinx-build source build/html
+sphinx-build source-en build/html # change to source-zh for Chinese docs
 ```
 
 ### Using `sphinx-autobuild` for Live Reloading
@@ -44,7 +44,7 @@ sphinx-build source build/html
 For a smoother development experience, use `sphinx-autobuild` to rebuild the documentation automatically when source files change:
 
 ```bash
-sphinx-autobuild source build/html
+sphinx-autobuild source-en build/html # change to source-zh for Chinese docs
 ```
 
 This starts a local server and updates the documentation on file changes.

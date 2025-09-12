@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .flexible import FlexiblePlacementStrategy
 from .packed import PackedPlacementStrategy
 from .placement import Placement, PlacementStrategy
 
 __all__ = [
+    "FlexiblePlacementStrategy",
     "PackedPlacementStrategy",
     "Placement",
     "PlacementStrategy",

@@ -64,15 +64,21 @@ def split_list(inputs, num_chunks, enforce_divisible_batch: Optional[bool] = Tru
     """
     Split a list into equal sized chunks
     """
-    chunk_size = len(inputs) // num_chunks
     if enforce_divisible_batch:
+        chunk_size = len(inputs) // num_chunks
         assert len(inputs) % chunk_size == 0, "Issue with batch size configuration!"
-    return [inputs[i : i + chunk_size] for i in range(0, len(inputs), chunk_size)]
+        return [inputs[i : i + chunk_size] for i in range(0, len(inputs), chunk_size)]
+    else:
+        k, m = divmod(len(inputs), num_chunks)
+        return [
+            inputs[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)]
+            for i in range(num_chunks)
+        ]
 
 
 def get_iterator_k_split(
     batch: Union[Dict, List[torch.Tensor]],
-    num_microbatches: int,
+    num_splits: int,
     enforce_divisible_batch: Optional[bool] = True,
     shuffle: bool = False,
     shuffle_seed: Optional[int] = None,
@@ -157,14 +163,12 @@ def get_iterator_k_split(
         # Split tensor items
         items = list(tensor_items.items())
         if enforce_divisible_batch:
-            assert items[0][1].shape[0] % num_microbatches == 0, (
+            assert items[0][1].shape[0] % num_splits == 0, (
                 "Issue with batch size configuration!"
             )
-        split_batch = [
-            torch.tensor_split(item[1], num_microbatches, dim=0) for item in items
-        ]
+        split_batch = [torch.tensor_split(item[1], num_splits, dim=0) for item in items]
         # handle the case where the batch size from dynamic bucketting is not divisible
-        if items[0][1].shape[0] % num_microbatches != 0:
+        if items[0][1].shape[0] % num_splits != 0:
             chunk_size = split_batch[0][-1].shape[0]
             split_batch = [[j[:chunk_size] for j in i] for i in split_batch]
 
@@ -172,7 +176,7 @@ def get_iterator_k_split(
             # Only have tensor items
             microbatches = [
                 [(items[i][0], split_batch[i][j]) for i in range(len(items))]
-                for j in range(num_microbatches)
+                for j in range(num_splits)
             ]
         else:
             # Split list items
@@ -180,7 +184,7 @@ def get_iterator_k_split(
             split_list_batch = [
                 split_list(
                     item[1],
-                    num_microbatches,
+                    num_splits,
                     enforce_divisible_batch=enforce_divisible_batch,
                 )
                 for item in list_items
@@ -190,33 +194,32 @@ def get_iterator_k_split(
             all_split_batch = split_batch + split_list_batch
             microbatches = [
                 [(all_keys[i], all_split_batch[i][j]) for i in range(len(all_keys))]
-                for j in range(num_microbatches)
+                for j in range(num_splits)
             ]
         microbatches = [dict(elem) for elem in microbatches]
     else:
         # Split a list of torch tensors
-        assert batch[0].shape[0] % num_microbatches == 0, (
+        assert batch[0].shape[0] % num_splits == 0, (
             "Issue with batch size configuration!"
         )
         split_batch = []
         for item in batch:
             if torch.is_tensor(item):
-                split_batch.append(torch.tensor_split(item, num_microbatches, dim=0))
+                split_batch.append(torch.tensor_split(item, num_splits, dim=0))
             elif isinstance(item, list):
                 if isinstance(item[0], torch.Tensor):
                     split_tensors = [
-                        torch.tensor_split(elem, num_microbatches, dim=0)
-                        for elem in item
+                        torch.tensor_split(elem, num_splits, dim=0) for elem in item
                     ]
                     split_tuple = []
-                    for mbi in range(num_microbatches):
+                    for mbi in range(num_splits):
                         split_tuple.append(
                             [split_tensors[i][mbi] for i in range(len(split_tensors))]
                         )
                     split_tuple = tuple(split_tuple)
                     split_batch.append(split_tuple)
                 else:
-                    split_batch.append(split_list(item, num_microbatches))
+                    split_batch.append(split_list(item, num_splits))
             elif item is None:
                 split_batch.append(item)
             else:
@@ -224,7 +227,7 @@ def get_iterator_k_split(
 
         microbatches = [
             [elem[i] if elem is not None else elem for elem in split_batch]
-            for i in range(num_microbatches)
+            for i in range(num_splits)
         ]
 
     return itertools.chain(microbatches)
@@ -565,6 +568,34 @@ def get_iterator_dynamic(
             microbatches.append(curr_batch)
     n_micro_batch = len(microbatches)
     return itertools.chain(microbatches), partitions, n_micro_batch
+
+
+def split_dynamic_batch_size(
+    batch: Dict[str, torch.Tensor],
+    cp_world_size: int,
+    vpp_world_size: int,
+    max_tokens_per_mbs: int,
+    microbatch_group_size_per_vp_stage: int,
+):
+    """Split a global batch using dynamic batch sizing."""
+    max_tokens_per_mbs = max_tokens_per_mbs * cp_world_size
+    vpp_size = vpp_world_size
+    if vpp_size is not None and vpp_size > 1:
+        microbatch_group_size_per_vp_stage = microbatch_group_size_per_vp_stage
+        data_iter, indices, n_micro_batch = get_iterator_dynamic(
+            batch,
+            num_batches_divided_by=microbatch_group_size_per_vp_stage,
+            max_tokens_per_mbs=max_tokens_per_mbs,
+        )
+        assert n_micro_batch % microbatch_group_size_per_vp_stage == 0, (
+            f"micro_batches {data_iter} must be divisible by microbatch_group_size_per_vp_stage {microbatch_group_size_per_vp_stage} for megatron backend"
+        )
+    else:
+        data_iter, indices, n_micro_batch = get_iterator_dynamic(
+            batch, max_tokens_per_mbs=max_tokens_per_mbs
+        )
+    total_seqlen = max_tokens_per_mbs
+    return data_iter, total_seqlen, n_micro_batch, indices
 
 
 def get_reverse_idx(idx_map):

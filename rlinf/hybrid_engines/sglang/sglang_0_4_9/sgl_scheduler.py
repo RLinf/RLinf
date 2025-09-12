@@ -41,8 +41,7 @@ from sglang.utils import get_exception_traceback
 from rlinf.scheduler import Worker, WorkerAddress
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.workers.rollout.utils import (
-    DisaggRankMapper,
-    HybridRankMapper,
+    RankMapper,
     get_module_from_name,
     rebind_param_attr,
     swap_tensor_pointer,
@@ -106,31 +105,9 @@ class Scheduler(_Scheduler, Worker):
 
         self._actor_group_name = self.cfg.actor.group_name
         self.placement_mode = placement.placement_mode
-        if self.placement_mode == PlacementMode.COLLOCATED:
-            self.actor_weight_rank = (
-                HybridRankMapper.get_rollout_rank_to_actor_rank_map(
-                    self.cfg.actor.model.tensor_model_parallel_size,
-                    self.cfg.actor.model.pipeline_model_parallel_size,
-                    self.cfg.rollout.tensor_parallel_size,
-                    self.cfg.cluster.num_nodes * self.cfg.cluster.num_gpus_per_node,
-                )[(self.get_parent_rank(), self._rank)]
-            )
-        else:
-            assert self.placement_mode == PlacementMode.DISAGGREGATED, (
-                f"Unsupported placement mode: {self.placement_mode}"
-            )
-            rank_map = DisaggRankMapper.get_rollout_rank_to_actor_rank_map(
-                actor_tp_size=self.cfg.actor.model.tensor_model_parallel_size,
-                actor_pp_size=self.cfg.actor.model.pipeline_model_parallel_size,
-                actor_world_size=placement.actor_world_size,
-                rollout_tp_size=self.cfg.rollout.tensor_parallel_size,
-                rollout_world_size=placement.rollout_world_size,
-            )
-            self._logger.info(
-                f"Rollout rank to actor rank mapping: {rank_map}, try to get {(self.get_parent_rank(), self._rank)}"
-            )
-
-            self.actor_weight_rank = rank_map[(self.get_parent_rank(), self._rank)]
+        self.actor_weight_rank = RankMapper.get_rollout_rank_to_actor_rank_map(
+            placement
+        )[(self.get_parent_rank(), self._rank)]
         # it's important to use load_weight to load resharded weight from megatron
         for _, module in self.tp_worker.worker.model_runner.model.named_modules():
             if hasattr(module, "use_presharded_weights"):

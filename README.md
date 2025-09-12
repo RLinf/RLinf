@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/source/_static/svg/logo_white.svg" alt="RLinf-logo" width="600"/>
+  <img src="docs/source-en/_static/svg/logo_white.svg" alt="RLinf-logo" width="600"/>
 </div>
 
 <div align="center">
@@ -7,7 +7,7 @@
 <a href="https://huggingface.co/RLinf"><img src="https://img.shields.io/badge/HuggingFace-yellow?logo=huggingface&logoColor=white" alt="Hugging Face"></a>
 <a href="https://rlinf.readthedocs.io/en/latest/"><img src="https://img.shields.io/badge/Documentation-Purple?color=8A2BE2&logo=readthedocs"></a>
 <a href="https://deepwiki.com/RLinf/RLinf"><img src="https://img.shields.io/badge/Ask%20DeepWiki-1DA1F2?logo=databricks&logoColor=white&color=00ADEF" alt="Ask DeepWiki"></a>
-<a href="https://github.com/Lin-xs/RLinf-community/blob/main/wechat-QR.jpeg?raw=true"><img src="https://img.shields.io/badge/微信-green?logo=wechat&amp"></a>
+<a href="https://github.com/RLinf/misc/blob/main/pic/wechat.jpeg?raw=true"><img src="https://img.shields.io/badge/微信-green?logo=wechat&amp"></a>
 </div>
 
 <h1 align="center">
@@ -17,7 +17,7 @@
 RLinf is a flexible and scalable open-source infrastructure designed for post-training foundation models via reinforcement learning. The 'inf' in RLinf stands for `Infrastructure`, highlighting its role as a robust backbone for next-generation training. It also stands for `Infinite`, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
 
 <div align="center">
-  <img src="docs/source/_static/svg/overview.svg" alt="RLinf-overview"/>
+  <img src="docs/source-en/_static/svg/overview.svg" alt="RLinf-overview"/>
 </div>
 
 ## What's NEW!

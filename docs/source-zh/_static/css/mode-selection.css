@@ -1,0 +1,453 @@
+/* VitePress-Style Mode Selection CSS for Sphinx AI Widget */
+/* Uses design system from sphinx-modal.css for consistency */
+
+/* Mode Badge Styles */
+.sphinx-mode-badge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-md) var(--space-lg);
+  border-radius: var(--radius-md);
+  background: var(--sphinx-background);
+  border: 2px solid var(--sphinx-border);
+  color: var(--sphinx-text-primary);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  font-family: var(--sphinx-font-sans);
+  user-select: none;
+  flex-shrink: 0;
+  box-shadow: var(--shadow-inset);
+  height: 44px;
+  min-width: auto;
+}
+
+.sphinx-mode-badge:hover {
+  background: var(--sphinx-primary-50);
+  color: var(--sphinx-primary-600);
+  border-color: var(--sphinx-primary-200);
+  transform: none;
+  box-shadow: 0 0 0 3px var(--sphinx-shadow-color);
+}
+
+.sphinx-mode-badge:active {
+  transform: scale(0.98);
+}
+
+/* Mode Badge Icon */
+.sphinx-mode-badge-icon {
+  width: var(--space-sm);
+  height: var(--space-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.sphinx-mode-icon-svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Mode Badge Text */
+.sphinx-mode-badge-text {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Mode Chevron */
+.sphinx-mode-chevron {
+  width: var(--space-md);
+  height: var(--space-md);
+  transform: rotate(90deg);
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.sphinx-mode-badge-open .sphinx-mode-chevron {
+  transform: rotate(270deg);
+  opacity: 1;
+}
+
+/* Mode Panel Styles */
+.sphinx-mode-panel {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  z-index: 1000;
+  margin-bottom: var(--space-md);
+  backdrop-filter: blur(20px) saturate(180%);
+  background: hsla(0, 0%, 100%, 0.9);
+  padding: var(--space-sm);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xl);
+  border: 1px solid var(--sphinx-grey-200);
+  opacity: 0;
+  transform: translateY(var(--space-sm));
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+  width: 320px;
+  min-width: 280px;
+  max-width: 400px;
+}
+
+.sphinx-mode-panel-visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* Mode Panel Content */
+.sphinx-mode-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  border-radius: var(--radius-xl);
+}
+
+/* Mode Option Styles */
+.sphinx-mode-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  color: var(--sphinx-text-primary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+  box-shadow: var(--shadow-xs);
+}
+
+.sphinx-mode-option:hover {
+  background: var(--sphinx-grey-100);
+  box-shadow: var(--shadow-md);
+}
+
+.sphinx-mode-option:active {
+  background: var(--sphinx-grey-200);
+}
+
+.sphinx-mode-option-active {
+  background: var(--sphinx-primary-50);
+  font-weight: 600;
+  box-shadow: var(--shadow-md);
+}
+
+.sphinx-mode-option-active:hover {
+  background: var(--sphinx-primary-100);
+}
+
+/* Mode Option Content */
+.sphinx-mode-option-content {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  flex: 1;
+  min-width: 0;
+}
+
+/* Mode Icon */
+.sphinx-mode-icon {
+  width: var(--space-xl);
+  height: var(--space-xl);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Mode Info */
+.sphinx-mode-info {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.sphinx-mode-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-xs);
+}
+
+.sphinx-mode-label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: var(--leading-tight);
+  color: var(--sphinx-text-primary);
+}
+
+.sphinx-mode-time {
+  display: flex;
+  height: var(--space-lg);
+  align-items: center;
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-xs);
+  font-size: var(--text-xs);
+  background: var(--sphinx-grey-200);
+  color: var(--sphinx-text-secondary);
+  font-weight: 500;
+  flex-shrink: 0;
+  line-height: var(--leading-tight);
+}
+
+.sphinx-mode-description {
+  font-size: var(--text-xs);
+  color: var(--sphinx-text-tertiary);
+  line-height: var(--leading-snug);
+  margin: 0;
+}
+
+/* Mode Radio Button */
+.sphinx-mode-radio {
+  display: flex;
+  width: var(--space-xl);
+  height: var(--space-xl);
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid var(--sphinx-text-secondary);
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.sphinx-mode-radio-selected {
+  border-color: var(--sphinx-primary-500);
+}
+
+.sphinx-mode-radio-dot {
+  width: var(--space-sm);
+  height: var(--space-sm);
+  border-radius: 50%;
+  background: var(--sphinx-primary-500);
+  transition: all 0.2s ease;
+}
+
+/* Input Bar Layout Updates */
+.sphinx-input-left-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+  height: 44px;
+}
+
+/* Container for mode selection system */
+.sphinx-mode-selector-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 44px;
+}
+
+/* Dark Mode Styles */
+@media (prefers-color-scheme: dark) {
+  .sphinx-mode-badge {
+    background: var(--sphinx-primary-100);
+    border-color: var(--sphinx-primary-200);
+    color: var(--sphinx-primary-600);
+  }
+  
+  .sphinx-mode-badge:hover {
+    background: var(--sphinx-primary-500);
+    color: white;
+    box-shadow: var(--shadow-md);
+  }
+  
+  .sphinx-mode-panel {
+    background: hsla(220, 20%, 15%, 0.9);
+    border-color: var(--sphinx-grey-200);
+  }
+  
+  .sphinx-mode-option:hover {
+    background: var(--sphinx-grey-200);
+  }
+  
+  .sphinx-mode-option:active {
+    background: var(--sphinx-grey-300);
+  }
+  
+  .sphinx-mode-option-active {
+    background: var(--sphinx-primary-100);
+  }
+  
+  .sphinx-mode-option-active:hover {
+    background: var(--sphinx-primary-200);
+  }
+  
+  .sphinx-mode-label {
+    color: var(--sphinx-text-primary);
+  }
+  
+  .sphinx-mode-time {
+    background: var(--sphinx-grey-300);
+    color: var(--sphinx-text-secondary);
+  }
+  
+  .sphinx-mode-description {
+    color: var(--sphinx-text-tertiary);
+  }
+  
+  .sphinx-mode-radio {
+    border-color: var(--sphinx-text-secondary);
+  }
+  
+  .sphinx-mode-radio-selected {
+    border-color: var(--sphinx-primary-500);
+  }
+  
+  .sphinx-mode-radio-dot {
+    background: var(--sphinx-primary-500);
+  }
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .sphinx-mode-badge {
+    padding: var(--space-sm) var(--space-md);
+    gap: var(--space-xs);
+    height: 40px;
+    font-size: var(--text-xs);
+  }
+  
+  .sphinx-mode-badge-text {
+    display: none;
+  }
+  
+  .sphinx-mode-chevron {
+    width: var(--space-sm);
+    height: var(--space-sm);
+  }
+  
+  .sphinx-mode-panel {
+    margin-bottom: var(--space-sm);
+    padding: var(--space-xs);
+    width: 280px;
+    min-width: 260px;
+    max-width: 320px;
+  }
+  
+  .sphinx-mode-option {
+    padding: var(--space-md);
+    gap: var(--space-md);
+  }
+  
+  .sphinx-mode-option-content {
+    gap: var(--space-md);
+  }
+  
+  .sphinx-mode-icon {
+    width: var(--space-lg);
+    height: var(--space-lg);
+  }
+  
+  .sphinx-mode-label {
+    font-size: var(--text-xs);
+  }
+  
+  .sphinx-mode-description {
+    font-size: 11px;
+  }
+  
+  .sphinx-mode-time {
+    font-size: 9px;
+    padding: 0 var(--space-xs);
+  }
+  
+  .sphinx-mode-radio {
+    width: var(--space-lg);
+    height: var(--space-lg);
+  }
+  
+  .sphinx-mode-radio-dot {
+    width: var(--space-xs);
+    height: var(--space-xs);
+  }
+}
+
+@media (max-width: 480px) {
+  .sphinx-mode-badge {
+    padding: var(--space-xs) var(--space-sm);
+    height: 36px;
+    font-size: 11px;
+  }
+  
+  .sphinx-mode-panel {
+    left: calc(-1 * var(--space-sm));
+    margin-bottom: var(--space-xs);
+    width: 240px;
+    min-width: 220px;
+    max-width: calc(100vw - var(--space-3xl));
+  }
+  
+  .sphinx-mode-option {
+    padding: var(--space-sm);
+  }
+  
+  .sphinx-mode-header {
+    gap: var(--space-xs);
+  }
+}
+
+/* Animation Keyframes */
+@keyframes sphinx-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Backdrop Filter Fallback */
+@supports not (backdrop-filter: blur(20px)) {
+  .sphinx-mode-panel {
+    background: rgba(255, 255, 255, 0.95);
+  }
+  
+  @media (prefers-color-scheme: dark) {
+    .sphinx-mode-panel {
+      background: rgba(30, 41, 59, 0.95);
+    }
+  }
+}
+
+/* Focus States for Accessibility */
+.sphinx-mode-badge:focus-visible {
+  outline: 2px solid var(--sphinx-primary-500);
+  outline-offset: 2px;
+  box-shadow: var(--shadow-md);
+}
+
+.sphinx-mode-option:focus-visible {
+  outline: 2px solid var(--sphinx-primary-500);
+  outline-offset: -2px;
+  background: var(--sphinx-primary-50);
+  box-shadow: var(--shadow-md);
+}
+
+/* Reduced Motion Support */
+@media (prefers-reduced-motion: reduce) {
+  .sphinx-mode-badge,
+  .sphinx-mode-panel,
+  .sphinx-mode-option,
+  .sphinx-mode-chevron,
+  .sphinx-mode-radio,
+  .sphinx-mode-radio-dot {
+    transition: none;
+  }
+  
+  .sphinx-mode-badge:hover {
+    transform: none;
+  }
+} 

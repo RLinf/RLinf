@@ -6,7 +6,6 @@ if [ $# -ne 1 ]; then
     exit 1
 fi
 
-# required_gpu="256.0" for dapo
 required_gpu=$(printf "%.1f" "$1")
 
 while true; do

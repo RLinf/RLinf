@@ -8,4 +8,10 @@ export TOKENIZERS_PARALLELISM=false
 
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 
-python ${REPO_PATH}/examples/math/main_math.py --config-path $REPO_PATH/tests/e2e_tests/math  --config-name qwen2.5-1.5b-grpo-collocated
+if [ -z "$1" ]; then
+    CONFIG_NAME="qwen2.5-1.5b-grpo-collocated"
+else
+    CONFIG_NAME=$1
+fi
+
+python ${REPO_PATH}/examples/math/main_math.py --config-path $REPO_PATH/tests/e2e_tests/math  --config-name $CONFIG_NAME
