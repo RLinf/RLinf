@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 from omegaconf import DictConfig
@@ -49,12 +49,14 @@ class RolloutRequest:
     n: Number of completions to generate for each input
     idx: List of unique identifiers for the requests, used for tracking
     input_lengths: List of lengths of the input sequences, corresponding to input_ids
+    image_data: list of image data (bytes or URLs) for multimodal inputs
     answers: Optional list of answers for the requests, if available
     """
 
     n: int
     input_ids: List[List[int]]
     answers: List[str]
+    image_data: Union[List[List[bytes]], List[List[str]]]
 
     def repeat(self) -> "RolloutRequest":
         """Repeat each input in the RolloutRequest a specified number of times.
@@ -113,14 +115,20 @@ class RolloutRequest:
     def repeat_and_split(
         self, rollout_batch_size: Optional[int] = None
     ) -> List["RolloutRequest"]:
-        input_ids, answers = zip(
+        input_ids, answers, image_data = zip(
             *[
-                (input_id, answer)
-                for input_id, answer in zip(self.input_ids, self.answers)
+                (input_id, answer, image_data)
+                for input_id, answer, image_data in zip(
+                    self.input_ids, self.answers, self.image_data
+                )
                 for _ in range(self.n)
             ]
         )
-        input_ids, answers = (list(input_ids), list(answers))
+        input_ids, answers, image_data = (
+            list(input_ids),
+            list(answers),
+            list(image_data),
+        )
 
         # Split input ids based on rollout_batch_size_per_gpu
         if rollout_batch_size is None:
@@ -134,14 +142,16 @@ class RolloutRequest:
         splitted_requests = []
         input_ids_split_list = split_list(input_ids, num_batches)
         answers_split_list = split_list(answers, num_batches)
+        image_data_split_list = split_list(image_data, num_batches)
 
-        for input_ids_batch, answers_batch in zip(
-            input_ids_split_list, answers_split_list
+        for input_ids_batch, answers_batch, image_data_batch in zip(
+            input_ids_split_list, answers_split_list, image_data_split_list
         ):
             request = RolloutRequest(
                 n=self.n,
                 input_ids=input_ids_batch,
                 answers=answers_batch,
+                image_data=image_data_batch,
             )
             splitted_requests.append(request)
 
@@ -257,7 +267,7 @@ class RolloutResult:
     prompt_texts: Optional[List[str]] = None
     response_texts: Optional[List[str]] = None
     answers: Optional[List[str]] = None
-
+    image_data: Optional[Union[List[List[bytes]], List[List[str]]]] = None
     # Inference
     # Only set when recompute_logprobs is False
     rollout_logprobs: Optional[List[List[float]]] = None
@@ -380,6 +390,7 @@ class RolloutResult:
         group_size: int,
         input_ids: List[List[int]],
         answers: Optional[List[List[int]]] = None,
+        image_data: Optional[Union[List[List[bytes]], List[List[str]]]] = None,
         return_logprobs: bool = False,
     ) -> "RolloutResult":
         """Create a MathRolloutResult from the given results and input IDs.
@@ -406,6 +417,7 @@ class RolloutResult:
             response_lengths=[len(res["output_ids"]) for res in results],
             response_ids=[res["output_ids"] for res in results],
             answers=answers,
+            image_data=image_data,
             is_end=[
                 res["meta_info"]["finish_reason"]["type"] == "stop" for res in results
             ],

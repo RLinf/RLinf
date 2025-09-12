@@ -169,7 +169,6 @@ class SGLangWorker(Worker):
 
     def rollout(self, input_channel: Channel, output_channel: Channel):
         request: RolloutRequest = input_channel.get()
-
         # Repeat prompts based on the group_size config
         requests = request.repeat_and_split(self._rollout_batch_size)
 
@@ -181,6 +180,8 @@ class SGLangWorker(Worker):
             with self.worker_timer():
                 results = self._engine.generate(
                     input_ids=request.input_ids,
+                    # 0.4.4 has modality bug,can't pass non-None image_data
+                    image_data=request.image_data if any(request.image_data) else None,
                     sampling_params=self._sampling_params,
                     return_logprob=self._return_logprobs,
                 )
@@ -191,6 +192,7 @@ class SGLangWorker(Worker):
                 request.n,
                 request.input_ids,
                 request.answers,
+                request.image_data,
                 self._return_logprobs,
             )
             rollout_results.append(rollout_result)

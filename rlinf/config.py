@@ -199,8 +199,16 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         qkv_bias = getattr(hf_config, "attention_bias", False)
 
     with open_dict(cfg):
-        if hf_config.rope_scaling is not None:
-            cfg.model.seq_len_interpolation_factor = hf_config.rope_scaling["factor"]
+        rs = getattr(hf_config, "rope_scaling", None)
+        if isinstance(rs, dict):
+            rtype = rs.get("type", "")
+            if rtype in {"linear", "dynamic", "ntk", "yarn"}:
+                f = rs.get("factor")
+                if f is not None:
+                    cfg.model.seq_len_interpolation_factor = float(f)
+            else:
+                # mrope
+                cfg.model.seq_len_interpolation_factor = None
         cfg.model.override_vocab_size = hf_config.vocab_size
         cfg.model.max_position_embeddings = hf_config.max_position_embeddings
         cfg.model.rotary_base = hf_config.rope_theta

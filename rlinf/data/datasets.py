@@ -15,11 +15,12 @@
 import json
 import logging
 import os
-from collections import defaultdict
-from typing import List
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-import numpy as np
+import pandas as pd
 import torch
+from omegaconf import DictConfig
 from torch.utils.data import Dataset
 
 
@@ -58,6 +59,18 @@ def batch_pad_to_fixed_len(
             ]
         )
     return batch_pad
+
+
+@dataclass
+class DatasetItem:
+    prompt: torch.Tensor
+    length: int
+    answer: str
+    idx: int
+    solution: Optional[str] = None
+    image_data: Optional[List[Union[bytes, str]]] = None
+    prompt_text: Optional[str] = None
+    meta: Optional[Dict[str, Any]] = None
 
 
 class MathDataset(Dataset):
@@ -151,14 +164,158 @@ class MathDataset(Dataset):
             self.tokenizer.eos_token_id,
             left_pad=True,
         )[0]
-
-        output = {
-            "prompt": prompt_tokens_tensor,
-            "length": prompt_length,
-            "answer": answer,
-            "idx": idx,
-        }
+        output = DatasetItem(
+            prompt=prompt_tokens_tensor,
+            length=prompt_length,
+            answer=answer,
+            idx=idx,
+            image_data=[],
+        )
         return output
+
+
+class VisionLanguageDataset(Dataset):
+    def __init__(
+        self, data_paths: Union[List[str], str], config: DictConfig, tokenizer
+    ):
+        super().__init__()
+        self.data_paths = data_paths
+        self.use_chat_template = config.use_chat_template
+
+        self.image_keys = config.image_keys
+        self.prompt_key = config.prompt_key
+        self.choice_key = config.choice_key
+        self.answer_key = config.answer_key
+        self.solution_key = config.solution_key
+
+        if isinstance(self.data_paths, str):
+            self.data_paths = [self.data_paths]
+
+        self.max_prompt_length = config.max_prompt_length
+        self.tokenizer = tokenizer
+        self.data = self._load_data()
+        self.post_process()
+
+    def post_process(self) -> None:
+        def get_image_list(
+            dataitem: Dict, image_keys: Optional[List[str]]
+        ) -> List[Union[bytes, str]]:
+            image_list: List[Union[bytes, str]] = []
+            if image_keys:
+                for key in image_keys:
+                    image_content = dataitem.get(key, None)
+                    if image_content is None:
+                        continue
+                    if isinstance(image_content, dict) and "bytes" in image_content:
+                        image_content = image_content["bytes"]
+                        assert isinstance(image_content, bytes), (
+                            f"image content should be bytes, but got {type(image_content)} , content is {image_content}"
+                        )
+                    image_list.append(image_content)
+            return image_list
+
+        def process_prompt(
+            data_item: Dict, image_count: int
+        ) -> Tuple[str, List[int], int]:
+            question = data_item.get(self.prompt_key, "")
+            options = data_item.get(self.choice_key, [])
+            if not isinstance(options, list):
+                options = [options]
+            prompt_text = question
+            if options:
+                prompt_text += f"{options}\n"
+            if self.use_chat_template:
+                message_content: List = []
+                for i in range(image_count):
+                    message_content.append({"type": "image"})
+                message_content.append({"type": "text", "text": prompt_text})
+                messages = [{"role": "user", "content": message_content}]
+                prompt_text = self.tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
+                prompt_ids = self.tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=True,
+                    add_generation_prompt=True,
+                    return_tensors="pt",
+                )
+                if isinstance(prompt_ids, torch.Tensor):
+                    if prompt_ids.dim() == 2 and prompt_ids.size(0) == 1:
+                        prompt_ids = prompt_ids.squeeze(0)  # [L]
+                    prompt_ids = prompt_ids.to(dtype=torch.long)
+                else:
+                    prompt_ids = torch.tensor(prompt_ids, dtype=torch.long)
+                prompt_length = len(prompt_ids)
+
+                return prompt_text, prompt_ids, prompt_length
+            else:
+                raise NotImplementedError("Non-chat template not implemented yet.")
+
+        processed_data: List[DatasetItem] = []
+        for idx, item in enumerate(self.data):
+            image_list: List[Union[bytes, str]] = get_image_list(item, self.image_keys)
+            prompt_text, prompt_ids, prompt_length = process_prompt(
+                item, len(image_list)
+            )
+
+            if prompt_length > self.max_prompt_length:
+                print(
+                    f"prompt_ids length {prompt_length} exceeds the max_prompt_length {self.max_prompt_length}",
+                )
+                prompt_ids = prompt_ids[: self.max_prompt_length]
+                prompt_length = self.max_prompt_length
+            prompt_ids = batch_pad_to_fixed_len(
+                [prompt_ids],
+                self.max_prompt_length,
+                self.tokenizer.eos_token_id,
+                left_pad=True,
+            )[0]
+            answer = item.get(self.answer_key, None)
+            solution = item.get(self.solution_key, None)
+
+            data_item = DatasetItem(
+                prompt_text=prompt_text,
+                prompt=prompt_ids,
+                length=prompt_length,
+                image_data=image_list,
+                answer=answer,
+                solution=solution,
+                idx=idx,
+            )
+            processed_data.append(data_item)
+        self.data = processed_data
+
+    def _load_data(self) -> List:
+        merged_data = []
+        for path in self.data_paths:
+            _, file_extension = os.path.splitext(path)
+            try:
+                pass
+                if file_extension == ".parquet":
+                    loaded_data: List = pd.read_parquet(path).to_dict(orient="records")
+                    merged_data.extend(loaded_data)
+                elif file_extension == ".jsonl":
+                    with open(path, "r", encoding="utf-8") as file:
+                        loaded_data = [json.loads(line.strip()) for line in file]
+                        merged_data.extend(loaded_data)
+                elif file_extension == ".json":
+                    with open(path, "r", encoding="utf-8") as file:
+                        content = json.load(file)
+                        if isinstance(content, list):
+                            merged_data.extend(content)
+                        else:
+                            merged_data.append(content)
+                else:
+                    print(f"Unsupport {file_extension}, skip: {path}")
+            except Exception as e:
+                raise RuntimeError(f"Load data error: {e}")
+        return merged_data
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+    def __getitem__(self, index):
+        return self.data[index]
 
 
 def create_rl_dataset(data_config, tokenizer):
@@ -176,6 +333,8 @@ def create_rl_dataset(data_config, tokenizer):
 
     if data_config.type == "math":
         dataset_cls = MathDataset
+    elif data_config.type == "vision_language":
+        dataset_cls = VisionLanguageDataset
     else:
         return None, None
 
@@ -197,32 +356,46 @@ def create_rl_dataset(data_config, tokenizer):
     return train_dataset, val_dataset
 
 
-def collate_fn(data_list: list[dict]) -> dict:
-    r"""
-    Collate a batch of sample dicts into batched tensors and arrays.
+def collate_fn(data_list: List["DatasetItem"]) -> Dict[str, Any]:
+    prompts = []
+    lens = []
+    for it in data_list:
+        p = (
+            it.prompt
+            if isinstance(it.prompt, torch.Tensor)
+            else torch.as_tensor(it.prompt, dtype=torch.long)
+        )
+        if p.dim() == 2 and p.size(0) == 1:
+            p = p.squeeze(0)
+        assert p.dim() == 1, (
+            f"DatasetItem.prompt must be 1-D tensor, current shape is: {p.shape}"
+        )
+        prompts.append(p)
+        lens.append(p.numel())
 
-    Args:
-        data_list: List of dicts mapping feature names to torch.Tensor or other values.
+    if len(set(lens)) == 1:
+        target_len = lens[0]
+    else:
+        target_len = min(lens)
+        prompts = [p[-target_len:] if p.numel() > target_len else p for p in prompts]
 
-    Returns:
-        Dict where tensor entries are stacked into a torch.Tensor of shape
-        (batch_size, \*dims) and non-tensor entries are converted to
-        np.ndarray of dtype object with shape (batch_size,).
-    """
-    tensors = defaultdict(list)
-    non_tensors = defaultdict(list)
+    batch_prompt = torch.stack(prompts, dim=0)  # [B, L]
+    batch_length = torch.tensor(
+        [min(int(it.length), target_len) for it in data_list], dtype=torch.long
+    )
 
-    for data in data_list:
-        for key, val in data.items():
-            if isinstance(val, torch.Tensor):
-                tensors[key].append(val)
-            else:
-                non_tensors[key].append(val)
+    batch_idx = torch.tensor([int(it.idx) for it in data_list], dtype=torch.long)
 
-    for key, val in tensors.items():
-        tensors[key] = torch.stack(val, dim=0)
-
-    for key, val in non_tensors.items():
-        non_tensors[key] = np.array(val, dtype=object)
-
-    return {**tensors, **non_tensors}
+    batch: Dict[str, Any] = {
+        "prompt": batch_prompt,  # [B, L]
+        "length": batch_length,  # [B]
+        "answer": [it.answer for it in data_list],  # List[str]
+        "idx": batch_idx,  # [B]
+        "solution": [it.solution for it in data_list],  # List[Optional[str]]
+        "image_data": [
+            it.image_data for it in data_list
+        ],  # List[Optional[List[bytes|str]]]
+        "prompt_text": [it.prompt_text for it in data_list],  # List[Optional[str]]
+        "meta": [it.meta for it in data_list],  # List[Optional[dict]]
+    }
+    return batch
