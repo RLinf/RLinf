@@ -559,13 +559,10 @@ def get_rollout_backend_worker(
         else:
             raise ValueError(f"Unsupported placement mode: {placement.placement_mode}")
     elif rollout_backend == "sglang":
-        from rlinf.workers.rollout.sglang.sglang_worker import (
-            AsyncSGLangWorker,
-            SGLangWorker,
-        )
+        from rlinf.workers.rollout.sglang.sglang_worker import AsyncSGLangWorker
 
         if placement.placement_mode == PlacementMode.COLLOCATED:
-            return SGLangWorker
+            return AsyncSGLangWorker
         elif placement.placement_mode == PlacementMode.DISAGGREGATED:
             return AsyncSGLangWorker
         else:
