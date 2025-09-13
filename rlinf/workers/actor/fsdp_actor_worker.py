@@ -18,7 +18,6 @@ import os
 import numpy as np
 import torch
 from omegaconf import DictConfig
-from torch.distributed.device_mesh import init_device_mesh
 from tqdm import tqdm
 
 from rlinf.algorithms.embodiment.utils import (
@@ -43,15 +42,11 @@ from rlinf.utils.placement import HybridComponentPlacement
 class EmbodiedFSDPActor(FSDPModelManager, Worker):
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
-        super().__init__(cfg.actor)
+        super().__init__(cfg.actor, self._world_size, self.logger)
 
         self.cfg = cfg
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
         self.device = torch.cuda.current_device()
-        world_size = self._world_size
-        self.device_mesh = init_device_mesh(
-            "cuda", mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
-        )
 
         self._env_group_name = cfg.env.group_name
         self._rollout_group_name = cfg.rollout.group_name
@@ -385,18 +380,14 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
             torch.cuda.empty_cache()
 
-            grad_norm = self.model.clip_grad_norm_(
-                max_norm=self.cfg.actor.optim.clip_grad
-            )
-            self.optimizer.step()
+            _, grad_norm, lrs = self.optimizer_step()
 
-            self.optimizer.zero_grad()
             data = {
-                "actor/grad_norm": grad_norm.detach().item(),
-                "actor/lr": self.optimizer.param_groups[0]["lr"],
+                "actor/grad_norm": grad_norm,
+                "actor/lr": lrs[0],
             }
             if self.cfg.algorithm.adv_type == "ppo":
-                data["critic/lr"] = self.optimizer.param_groups[1]["lr"]
+                data["critic/lr"] = lrs[1]
             append_to_dict(metrics, data)
 
         mean_metric_dict = {key: np.mean(value) for key, value in metrics.items()}
@@ -410,13 +401,3 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         torch.cuda.empty_cache()
 
         return mean_metric_dict
-
-    def save_checkpoint(self, save_base_path, step):
-        torch.distributed.barrier()
-        model_state = self.get_model_state_dict()
-        optim_state = self.get_optimizer_state_dict()
-        if self._rank == 0:
-            os.makedirs(save_base_path, exist_ok=True)
-            torch.save(model_state, os.path.join(save_base_path, "model.pt"))
-            torch.save(optim_state, os.path.join(save_base_path, "optim.pt"))
-        torch.distributed.barrier()

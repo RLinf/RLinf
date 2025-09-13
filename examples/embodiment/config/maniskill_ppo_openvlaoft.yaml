@@ -117,8 +117,34 @@ actor:
   seed: 1234
   enable_offload: True
 
+  fsdp_config:
+    # FSDP strategy: "fsdp" or "fsdp2"
+    strategy: "fsdp"
+
+    # Sharding strategy: "full_shard" (shard parameters, gradients, optimizer states),
+    # "shard_grad_op" (shard gradients and optimizer states only), 
+    # "hybrid_shard" (combines data parallelism and model parallelism - sharding within FSDP groups, replicate across DDP groups),
+    # "no_shard" (no sharding)
+    sharding_strategy: "full_shard"
+
+    # Number of GPUs per FSDP group for hybrid sharding
+    # -1 means use all available GPUs in a single FSDP group
+    # For hybrid sharding: DDP groups = world_size // fsdp_size
+    fsdp_size: -1
+
+    # Whether to reshard parameters after forward pass to save memory
+    # false: keep parameters sharded (saves memory, may impact performance)
+    # true: unshard parameters after forward (uses more memory, better performance)
+    reshard_after_forward: false
+    
+    # Wrap policy configuration for module sharding
+    wrap_policy:
+      # Whether to disable automatic module wrapping
+      disable: false
+
   model:
     model_name: "openvla_oft"
+    is_vla_model: True
     value_type: ${algorithm.reward_type}  # 'action' or 'token'
     action_dim: 7
     num_action_chunks: 8

@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from functools import partial, wraps
 
 import torch
+import torch.nn.functional as F
 
 
 def clear_memory(sync=True):
@@ -121,6 +122,28 @@ def seq_mean_token_mean(values, mask):
     )  # token-mean
     loss = torch.mean(seq_losses)  # seq-mean
     return loss
+
+
+def compute_logprobs_from_logits(logits, target):
+    logprobs = -F.cross_entropy(
+        logits, target=target, reduction="none"
+    )  # [B, action-dim]
+    return logprobs
+
+
+def compute_entropy_from_logits(logits, epsilon=1e-10):
+    """
+    Compute entropy by logits.
+
+    Args:
+        logits: [B, vocab-size, seq-len]
+    Returns:
+        entropy: [B, seq-len]
+    """
+    all_probs = F.softmax(logits, dim=1)  # [B, vocab-size, seq-len]
+    all_log_probs = torch.log(all_probs + epsilon)
+    entropy = -torch.sum(all_probs * all_log_probs, dim=1)  # [B, seq-len]
+    return entropy
 
 
 class DualOutput:

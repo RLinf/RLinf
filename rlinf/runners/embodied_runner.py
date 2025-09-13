@@ -152,8 +152,8 @@ class EmbodiedRunner:
             f"checkpoints/global_step_{self.global_step}",
         )
         actor_save_path = os.path.join(base_output_dir, "actor")
-        save_futures = self.actor.save_checkpoint(actor_save_path, self.global_step)
-        save_futures.wait()
+        os.makedirs(actor_save_path)
+        self.actor.save_checkpoint(actor_save_path).wait()
 
     def set_max_steps(self):
         self.num_steps_per_epoch = 1
