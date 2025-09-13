@@ -84,7 +84,7 @@ RLinf 可以将不同的 *generation backends* 接入其强化学习流水线。
         sglang:
             attention_backend: triton # [flashinfer, triton] SGLang 使用的注意力后端,更多信息见 SGLang 文档
             decode_log_interval: 500000 # SGLang 打印解码时间和统计信息的间隔
-            use_torch_compile: True # 是否在 SGLang rollout 中启用 torch_compile
+            use_torch_compile: False # 是否在 SGLang rollout 中启用 torch_compile
             torch_compile_max_bs: 128 # torch compile 的最大 batch size，超过则不使用
 
         vllm:

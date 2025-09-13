@@ -42,6 +42,15 @@ explict_model:
     te_ln_linear_qkv: True
     te_ln_linear_mlp_fc1: True
     te_ln_add_extra_state: True # pay attention if precision is fp8 mixture
+  'DeepSeek-R1-Distill-Qwen-32B':
+    model_type: qwen_2
+    num_attention_heads: 40
+    num_query_groups: 8
+    head_dim: 128
+    num_layers: 64
+    te_ln_linear_qkv: True
+    te_ln_linear_mlp_fc1: True
+    te_ln_add_extra_state: True # pay attention if precision is fp8 mixture
   'Qwen3-30B-A3B':
     model_type: qwen_3_moe
     num_attention_heads: 32

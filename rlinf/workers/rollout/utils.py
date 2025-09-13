@@ -18,7 +18,6 @@ import time
 import typing
 import weakref
 from contextlib import contextmanager
-from enum import IntEnum
 from typing import Dict, List, Optional, Tuple
 
 import torch
@@ -30,12 +29,6 @@ from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 
 if typing.TYPE_CHECKING:
     from vllm.outputs import RequestOutput
-
-
-class SendRecvRank(IntEnum):
-    SENDER_RANK = 0
-    RECVER_RANK = 1
-    WOLRD_SIZE = 2
 
 
 COLOR_END = "\033[0m"
@@ -538,17 +531,25 @@ class DisaggRankMapper(RankMapper):
         return (corresponding_rollout_dp_rank, corresponding_rollout_tp_rank)
 
 
+SUPPORTED_LLM_ROLLOUT_BACKENDS = ["vllm", "sglang"]
+
+
 def get_rollout_backend_worker(
     cfg: DictConfig, placement: ModelParallelComponentPlacement
 ) -> Worker:
-    from rlinf.workers.rollout.sglang.sglang_worker import (
-        AsyncSGLangWorker,
-        SGLangWorker,
-    )
-    from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
+    rollout_backend = cfg.rollout.get("rollout_backend", None)
+    if rollout_backend is None:
+        raise ValueError(
+            f"rollout_backend must be specified in the config. Support {', '.join(SUPPORTED_LLM_ROLLOUT_BACKENDS)}."
+        )
+    if rollout_backend not in SUPPORTED_LLM_ROLLOUT_BACKENDS:
+        raise ValueError(
+            f"rollout_backend {rollout_backend} is not supported. Support {', '.join(SUPPORTED_LLM_ROLLOUT_BACKENDS)}."
+        )
 
-    rollout_backend = cfg.rollout.get("rollout_backend", "not_assigned")
     if rollout_backend == "vllm":
+        from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
+
         if placement.placement_mode == PlacementMode.COLLOCATED:
             return VLLMWorker
         elif placement.placement_mode == PlacementMode.DISAGGREGATED:
@@ -558,11 +559,14 @@ def get_rollout_backend_worker(
         else:
             raise ValueError(f"Unsupported placement mode: {placement.placement_mode}")
     elif rollout_backend == "sglang":
+        from rlinf.workers.rollout.sglang.sglang_worker import (
+            AsyncSGLangWorker,
+            SGLangWorker,
+        )
+
         if placement.placement_mode == PlacementMode.COLLOCATED:
             return SGLangWorker
         elif placement.placement_mode == PlacementMode.DISAGGREGATED:
             return AsyncSGLangWorker
         else:
             raise ValueError(f"Unsupported placement mode: {placement.placement_mode}")
-    else:
-        raise ValueError(f"Unsupported rollout backend: {rollout_backend}")

@@ -197,6 +197,7 @@ class Scheduler(_Scheduler, Worker):
             # disaggregate mode, recv tensor directly
             for name, tensor in state_dict.items():
                 model.load_weights([(name, tensor)])
+        self.flush_cache()
         self.sync_in_tp("sync_hf_weight")
         return SyncHFWeightOutput()
 
