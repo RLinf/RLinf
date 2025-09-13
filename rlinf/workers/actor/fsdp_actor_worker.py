@@ -31,13 +31,13 @@ from rlinf.models.embodiment.model_utils import custom_forward
 from rlinf.scheduler import Worker
 from rlinf.utils.data_iter_utils import get_iterator_k_split
 from rlinf.utils.distributed import all_reduce_dict
-from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.utils.worker_utils import (
+from rlinf.utils.metric_utils import (
     append_to_dict,
     compute_loss_mask,
     compute_rollout_metrics,
     compute_split_num,
 )
+from rlinf.utils.placement import HybridComponentPlacement
 
 
 class EmbodiedFSDPActor(FSDPModelManager, Worker):
