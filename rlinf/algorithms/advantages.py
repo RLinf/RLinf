@@ -156,7 +156,7 @@ def compute_grpo_advantages_and_returns(
     return advantages, advantages
 
 
-@register_advantage("grpo-math")
+@register_advantage("math_grpo")
 def compute_math_grpo_advantages(**kwargs):
     reward_scores = kwargs["reward_scores"]
     mask = kwargs["mask"]

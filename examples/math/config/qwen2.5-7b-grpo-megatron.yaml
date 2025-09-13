@@ -63,7 +63,7 @@ algorithm:
   calculate_entropy: False
   clip_ratio_c: null # 3.0
 
-  adv_type: grpo-math
+  adv_type: math_grpo
   normalize_advantages: True
   early_stop_imp_ratio: 5.0
   use_valid_token_scale: True
