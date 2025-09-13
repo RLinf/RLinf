@@ -150,7 +150,9 @@ def grpo_actor_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
 
     if loss_mask is not None:
         # Take the maximum of clipped and unclipped losses
-        policy_loss = (torch.max(policy_loss, policy_loss2) / loss_mask_ratio) * loss_mask
+        policy_loss = (
+            torch.max(policy_loss, policy_loss2) / loss_mask_ratio
+        ) * loss_mask
         policy_loss = policy_loss.mean()
         clip_fraction = torch.gt(policy_loss2, policy_loss).float() * loss_mask
         clip_fraction = clip_fraction.mean()
@@ -229,9 +231,7 @@ def math_actor_loss_fn(**kwargs):
     clip_mask = policy_loss1.detach() < policy_loss2.detach()
     dual_clip_mask.logical_and_(loss_mask)
 
-    clip_fraction = (
-        clip_mask.logical_and_(loss_mask).count_nonzero() / loss_mask_count
-    )
+    clip_fraction = clip_mask.logical_and_(loss_mask).count_nonzero() / loss_mask_count
     approx_kl = approx_kl.sum() / loss_mask_count
 
     dual_cliped_ratio = torch.where(dual_clip_mask, ratio, 0)
