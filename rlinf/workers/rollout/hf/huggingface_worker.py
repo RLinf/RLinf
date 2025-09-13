@@ -19,7 +19,6 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
-from rlinf.algorithms.embodiment.utils import compute_split_num
 from rlinf.config import torch_dtype_from_precision
 from rlinf.models import get_model, get_model_config_and_processor
 from rlinf.models.embodiment.model_utils import (
@@ -27,6 +26,7 @@ from rlinf.models.embodiment.model_utils import (
     prepare_observations,
 )
 from rlinf.scheduler import Worker
+from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.placement import HybridComponentPlacement
 
 

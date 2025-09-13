@@ -17,9 +17,9 @@ import os
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
-from rlinf.algorithms.embodiment.utils import compute_evaluate_metrics
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
+from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.utils.runner_utils import check_progress
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 from rlinf.workers.env.env_worker import EnvWorker

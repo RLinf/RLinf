@@ -22,7 +22,6 @@ from omegaconf import DictConfig
 from sglang.srt.server_args import ServerArgs
 from transformers import AutoTokenizer
 
-from rlinf.algorithms.math.verifier.verify import MathRewardModel, math_verify_call
 from rlinf.config import torch_dtype_from_precision
 from rlinf.data.io_struct import (
     CompletionInfo,
@@ -35,6 +34,7 @@ from rlinf.workers.rollout.sglang import Engine, io_struct
 from rlinf.workers.rollout.utils import (
     print_sglang_outputs,
 )
+from toolkits.math_verifier.verify import MathRewardModel, math_verify_call
 
 
 class SGLangWorker(Worker):
