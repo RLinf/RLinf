@@ -142,6 +142,36 @@ class EnvWorker(Worker):
                             enable_offload=enable_offload,
                         )
                     )
+        elif self.cfg.env.train.simulator_type == "robotwin":
+            from rlinf.envs.robotwin.RoboTwin_env import RoboTwin
+
+            if not only_eval:
+                for _ in range(self.stage_num):
+                    self.simulator_list.append(
+                        EnvManager(
+                            self.cfg.env.train,
+                            rank=self._rank,
+                            world_size=self._world_size,
+                            env_cls=RoboTwin,
+                            enable_offload=enable_offload,
+                        )
+                        # RoboTwin(self.cfg.env.train, rank=self._rank, world_size=self._world_size)
+                    )
+            if self.cfg.runner.val_check_interval > 0 or only_eval:
+                for _ in range(self.stage_num):
+                    self.eval_simulator_list.append(
+                        EnvManager(
+                            self.cfg.env.eval,
+                            rank=self._rank,
+                            world_size=self._world_size,
+                            env_cls=RoboTwin,
+                            enable_offload=enable_offload,
+                        )
+                    )
+        else:
+            raise NotImplementedError(
+                f"Simulator type {self.cfg.env.train.simulator_type} not implemented"
+            )
 
         if not only_eval:
             self._init_simulator()
@@ -183,11 +213,12 @@ class EnvWorker(Worker):
                         for key in infos["episode"]:
                             env_info_list[key] = infos["episode"][key].cpu()
         elif chunk_dones.any():
-            final_info = infos["final_info"]
-            for key in final_info["episode"]:
-                env_info_list[key] = final_info["episode"][key][
-                    chunk_dones[:, -1]
-                ].cpu()
+            if "final_info" in infos:
+                final_info = infos["final_info"]
+                for key in final_info["episode"]:
+                    env_info_list[key] = final_info["episode"][key][
+                        chunk_dones[:, -1]
+                    ].cpu()
 
         env_batch = create_env_batch(
             obs=extracted_obs,

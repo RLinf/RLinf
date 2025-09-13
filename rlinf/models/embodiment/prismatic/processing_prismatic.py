@@ -37,13 +37,16 @@ class PrismaticImageProcessor(PrismaticImageProcessorOrginal):
     def apply_transform(self, img: torch.Tensor) -> torch.Tensor:
         """
         Apply `functional` variant of TIMM's Transform = Compose([Resize -> CenterCrop -> ToTensor -> Normalize])
-        img: [B, C, H, W]
+        img: [B, num_images, C, H, W]
         """
         if self.tvf_do_letterbox:
             raise NotImplementedError("Letterbox padding is not yet supported!")
 
         # [Contract] Fused Backbones expect "channel-stacked" inputs; we'll unpack on the model side!
         imgs_t = []
+        batch_size = img.shape[0]
+        img = img.reshape(-1, *img.shape[2:])
+
         for idx in range(len(self.input_sizes)):
             img_idx = TVF.resize(img, **self.tvf_resize_params[idx])
             img_idx = TVF.center_crop(img_idx, **self.tvf_crop_params[idx])
@@ -56,8 +59,11 @@ class PrismaticImageProcessor(PrismaticImageProcessorOrginal):
 
             imgs_t.append(img_idx)
 
-        # [Contract] `imgs_t` is a list of Tensors of shape [B, C, H, W]; stack along dim C
-        img_t = torch.cat(imgs_t, dim=1)  # [B, C * n, H, W]
+        # [Contract] `imgs_t` is a list of Tensors of shape [B, num_images, C, H, W]; stack along dim C
+        img_t = torch.cat(imgs_t, dim=1)
+        img_t = img_t.reshape(
+            batch_size, -1, *img_t.shape[1:]
+        )  # [B, num_images, C * n, H, W]
 
         return img_t
 

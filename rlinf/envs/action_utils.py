@@ -23,6 +23,7 @@ def prepare_actions_for_maniskill(
     action_scale,
     policy,
 ) -> torch.Tensor:
+    # TODO only suitable for action_dim = 7
     reshaped_actions = raw_chunk_actions.reshape(-1, action_dim)
     batch_size = reshaped_actions.shape[0]
     raw_actions = {
@@ -86,6 +87,8 @@ def prepare_actions(
             action_scale=action_scale,
             policy=policy,
         )
+    elif simulator_type == "robotwin":
+        chunk_actions = raw_chunk_actions
     else:
         raise NotImplementedError
 

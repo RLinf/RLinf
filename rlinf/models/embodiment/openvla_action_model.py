@@ -171,10 +171,15 @@ class OpenVLAForBatchActionPrediction(OpenVLAForActionPrediction):
             )
 
             # Visual Feature Extraction
+            pixel_values = pixel_values.reshape(-1, *pixel_values.shape[2:])
             patch_features = self.vision_backbone(pixel_values)
 
             # Projection Logic =>> Update Attention Mask
             projected_patch_embeddings = self.projector(patch_features)
+            projected_patch_embeddings = projected_patch_embeddings.reshape(
+                input_ids.shape[0], -1, *projected_patch_embeddings.shape[2:]
+            )
+
             projected_patch_attention_mask = None
             if attention_mask is not None:
                 projected_patch_attention_mask = torch.full(

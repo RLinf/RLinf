@@ -1,0 +1,30 @@
+simulator_type: robotwin
+auto_reset: ${algorithm.auto_reset}
+ignore_terminations: ${algorithm.ignore_terminations}
+use_rel_reward: True
+seed: 0
+num_group: ${algorithm.num_group_envs}
+group_size: ${algorithm.group_size}
+use_fixed_reset_state_ids: ${algorithm.use_fixed_reset_state_ids}
+max_episode_steps: 80
+only_eval: False
+image_size: [224, 224]
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  id: "PutCarrotOnPlateInScene-v2"
+  num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
+  obs_mode: "rgb+segmentation"
+  control_mode: None
+  sim_backend: "gpu"
+  sim_config:
+    sim_freq: 500
+    control_freq: 5
+  max_episode_steps: ${env.train.max_episode_steps}
+  sensor_configs:
+    shader_pack: "default"
+  render_mode: all

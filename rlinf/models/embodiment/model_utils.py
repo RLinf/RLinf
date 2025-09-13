@@ -132,6 +132,9 @@ def prepare_observations_for_vla(
     elif simulator_type == "maniskill":
         images = raw_obs["images"]
         image_tensor = images.to(device=device, dtype=precision)
+    elif simulator_type == "robotwin":
+        images = raw_obs["images"]
+        image_tensor = images.to(device=device, dtype=precision)
     else:
         raise NotImplementedError
 
@@ -146,6 +149,11 @@ def prepare_observations_for_vla(
             )
             for key in proprio_keys
         }
+
+    # Add num_images dimension
+    if image_tensor.ndim == 4:
+        image_tensor = image_tensor.unsqueeze(1)
+    assert image_tensor.ndim == 5
 
     if model_name == "openvla":
         processed_obs = processor(
