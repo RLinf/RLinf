@@ -35,6 +35,26 @@
 快速开始
 -----------------
 
+模型转换
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+在训练过程中，模型以 Megatron 格式被存储下来。 你可以使用位于 ``toolkits/ckpt_convertor/`` 的转换脚本将其转换为 Huggingface 格式。
+
+你有两种方式使用脚本：
+**方式一：编辑脚本文件**
+手动打开 ``mg2hf_7b.sh`` 或 ``mg2hf_1.5b.sh``，将 ``CKPT_PATH_MG``（Megatron checkpoint路径）和 ``CKPT_PATH_HF``（Huggingface目标路径）变量设置为你想要的路径。
+**方式二：命令行参数**
+更灵活的方式是直接通过命令行参数传入路径。
+.. code-block:: bash
+
+   # 对于1.5B模型
+   bash mg2hf_1.5b.sh /path/to/megatron_checkpoint /target/path/to/huggingface_checkpoint
+
+   # 对于7B模型
+   bash mg2hf_7b.sh /path/to/megatron_checkpoint /target/path/to/huggingface_checkpoint
+
+运行评测脚本
+^^^^^^^^^^^^^^^^^^^^^^
+
 如果你想在单个数据集上运行评估，可以执行如下命令：
 
 .. code-block:: bash

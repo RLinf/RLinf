@@ -31,7 +31,37 @@ If you are using our Docker image, you only need to additionally install:
 
 Quick Start
 -----------
-To run evaluation on a single dataset:
+
+Step 1: Convert Checkpoints
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Checkpoints saved during model training are in Megatron format. To facilitate evaluation, you can convert them to Huggingface format using the provided conversion scripts located in ``toolkits/ckpt_convertor/``.
+
+You have two options for using the scripts:
+
+**Method 1: Edit the Script Files**
+
+Manually open either ``mg2hf_7b.sh`` or ``mg2hf_1.5b.sh`` and set the ``CKPT_PATH_MG`` (Megatron checkpoint path) and ``CKPT_PATH_HF`` (Huggingface target path) variables to your desired locations.
+
+**Method 2: Command-Line Arguments**
+
+A more flexible approach is to pass the paths directly as command-line arguments.
+
+.. code-block:: bash
+
+   # For 1.5B models
+   bash mg2hf_1.5b.sh /path/to/megatron_checkpoint /target/path/to/huggingface_checkpoint
+
+   # For 7B models
+   bash mg2hf_7b.sh /path/to/megatron_checkpoint /target/path/to/huggingface_checkpoint
+
+Step 2: Run Evaluation
+^^^^^^^^^^^^^^^^^^^^^^
+
+Once your checkpoints are converted, you can run evaluations.
+
+**Single Dataset Evaluation**
+To evaluate the model on a single dataset, use the following command. Make sure to replace the placeholder paths and variables with your own.
 
 .. code-block:: bash
 
@@ -58,14 +88,14 @@ To run evaluation on a single dataset:
        --use_vllm \
        --save_outputs
 
-For **batch evaluation**, run:
+**Batch Evaluation**
+For an automated batch evaluation on multiple datasets, use the ``main_eval.sh`` script.
 
 .. code-block:: bash
 
    bash main_eval.sh
 
-You must set ``MODEL_NAME_OR_PATH`` and ``CUDA_VISIBLE_DEVICES`` in the script.  
-This will sequentially evaluate the model on AIME24, AIME25, and GPQA-diamond datasets.  
+Note: Before running, you must set the ``MODEL_NAME_OR_PATH`` and ``CUDA_VISIBLE_DEVICES`` variables directly within the ``main_eval.sh`` script. This will sequentially evaluate the model on the AIME24, AIME25, and GPQA-diamond datasets.
 
 Results
 -------
