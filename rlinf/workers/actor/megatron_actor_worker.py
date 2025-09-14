@@ -375,15 +375,7 @@ class MegatronActor(MegatronModelManager, Worker):
 
                 mask = batch["attention_mask"][:, -response_len:]
 
-                # Calculate clipped PPO surrogate loss function.
-                (
-                    loss,
-                    proportion_clipped,
-                    approx_kl,
-                    ratios,
-                    cliped_ratio,
-                    dual_cliped_ratio,
-                ) = actor_loss(
+                loss, metrics_data = actor_loss(
                     loss_type=self.cfg.algorithm.loss_type,
                     loss_agg_func=self.loss_agg_func,
                     logprobs=curr_logprobs,
@@ -393,7 +385,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     loss_mask=mask,
                 )
 
-                logging_loss = loss.detach()
+                # logging_loss = loss.detach()
                 entropy_loss = torch.zeros(1, device=loss.device)
                 if self.calculate_entropy:
                     entropy = output["entropy"][:, -response_len - 1 : -1].contiguous()
@@ -408,7 +400,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     loss = loss + kl_loss * self.kl_beta
 
                 # Logging and early stopping according to KL (logp vs ref) or importance ratio (new logp vs old logp).
-                _imp = (ratios.detach().float() * mask).sum()
+                _imp = metrics_data["ratio"]
                 torch.distributed.all_reduce(
                     _imp, group=parallel_state.get_data_parallel_group()
                 )
@@ -417,6 +409,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     _n_valid_tokens, group=parallel_state.get_data_parallel_group()
                 )
                 _imp /= _n_valid_tokens
+
                 # Early stopping.
                 if (
                     self.cfg.algorithm.early_stop_imp_ratio is not None
@@ -427,6 +420,7 @@ class MegatronActor(MegatronModelManager, Worker):
                         f"than early stop threshold {self.cfg.algorithm.early_stop_imp_ratio}. Abandon this microbatch."
                     )
                     loss = loss * 0.0
+
                 if self.cfg.algorithm.use_valid_token_scale:
                     loss_scale = (
                         mask.sum()
@@ -436,49 +430,20 @@ class MegatronActor(MegatronModelManager, Worker):
                     )
                     loss *= loss_scale.item()
 
-                with torch.no_grad():
-                    ratios = masked_mean(ratios.detach(), mask)
-                    cliped_ratio = masked_mean(cliped_ratio.detach(), mask)
-                    dual_cliped_ratio = masked_mean(dual_cliped_ratio.detach(), mask)
-                    entropy_loss = entropy_loss.detach()
-                    kl_loss = kl_loss.detach()
-                    approx_kl = approx_kl.detach()
-                    proportion_clipped = proportion_clipped.detach()
-
-                (
-                    reduced_actor_loss,
-                    ratios,
-                    cliped_ratio,
-                    dual_cliped_ratio,
-                    entropy_loss,
-                    kl_loss,
-                    approx_kl,
-                    proportion_clipped,
-                ) = average_losses_across_data_parallel_group(
-                    [
-                        logging_loss,
-                        ratios,
-                        cliped_ratio,
-                        dual_cliped_ratio,
-                        entropy_loss,
-                        kl_loss,
-                        approx_kl,
-                        proportion_clipped,
-                    ]
-                )
-                return (
-                    loss,
+                # add to log
+                metrics_data.update(
                     {
-                        "loss": reduced_actor_loss,
-                        "ratio": ratios,
-                        "cliped_ratio": cliped_ratio,
-                        "dual_cliped_ratio": dual_cliped_ratio,
-                        "entropy_loss": entropy_loss,
-                        "kl_loss": kl_loss,
-                        "approx_kl": approx_kl,
-                        "proportion_clipped": proportion_clipped,
-                    },
+                        "final_loss": loss.detach(),
+                        "entropy_loss": entropy_loss.detach(),
+                        "kl_loss": kl_loss.detach(),
+                    }
                 )
+
+                for k, v in metrics_data.items():
+                    if v is not None:
+                        metrics_data[k] = average_losses_across_data_parallel_group([v])
+
+                return loss, metrics_data
 
             return output, loss_func
 

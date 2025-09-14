@@ -20,7 +20,9 @@ from rlinf.algorithms.registry import register_advantage
 
 
 @register_advantage("embodied_gae")
-def compute_embodied_gae_advantages_and_returns(**kwargs) -> Tuple[torch.Tensor, torch.Tensor]:
+def compute_embodied_gae_advantages_and_returns(
+    **kwargs,
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Calculate advantages and returns for Proximal Policy Optimization (PPO).
     NOTE: currently this function does not support auto-reset.

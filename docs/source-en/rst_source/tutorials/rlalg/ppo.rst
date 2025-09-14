@@ -79,7 +79,7 @@ The algorithm configuration is defined as follows:
       require_values: True
       normalize_advantages: True
       group_size: 1
-      loss_type: embodied_gae
+      adv_type: embodied_gae
       loss_type: embodied_ppo
       loss_agg_func: "token-mean"
 

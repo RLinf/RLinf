@@ -23,6 +23,7 @@ from tqdm import tqdm
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import actor_loss, calculate_adv_and_returns
+from rlinf.algorithms.utils import preprocess_advantages_inputs, preprocess_loss_inputs
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
 )
@@ -226,20 +227,26 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             * env_world_size
             // actor_world_size
         )
-        advantages, returns = calculate_adv_and_returns(
-            adv_type=self.cfg.algorithm.adv_type,
-            rewards=self.rollout_batch["rewards"],
-            dones=self.rollout_batch["dones"],
-            normalize_advantages=self.cfg.algorithm.get("normalize_advantages", True),
-            values=self.rollout_batch.get("prev_values", None),
-            gamma=self.cfg.algorithm.get("gamma", 1),
-            gae_lambda=self.cfg.algorithm.get("gae_lambda", 1),
-            num_group_envs=num_group_envs_for_train,
-            group_size=self.cfg.algorithm.get("group_size", 8),
-            reward_type=self.cfg.algorithm.reward_type,
-            loss_mask=self.rollout_batch.get("loss_mask", None),
-            rollout_epoch=self.cfg.algorithm.get("rollout_epoch", 1),
-        )
+
+        kwargs = {
+            "adv_type": self.cfg.algorithm.adv_type,
+            "rewards": self.rollout_batch["rewards"],
+            "dones": self.rollout_batch["dones"],
+            "normalize_advantages": self.cfg.algorithm.get(
+                "normalize_advantages", True
+            ),
+            "values": self.rollout_batch.get("prev_values", None),
+            "gamma": self.cfg.algorithm.get("gamma", 1),
+            "gae_lambda": self.cfg.algorithm.get("gae_lambda", 1),
+            "num_group_envs": num_group_envs_for_train,
+            "group_size": self.cfg.algorithm.get("group_size", 8),
+            "reward_type": self.cfg.algorithm.reward_type,
+            "loss_mask": self.rollout_batch.get("loss_mask", None),
+            "rollout_epoch": self.cfg.algorithm.get("rollout_epoch", 1),
+        }
+        kwargs = preprocess_advantages_inputs(**kwargs)
+        advantages, returns = calculate_adv_and_returns(**kwargs)
+
         self.rollout_batch.update({"advantages": advantages, "returns": returns})
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
         return rollout_metrics
@@ -344,38 +351,31 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     logits_processor_args=logits_processor_args,
                 )
 
-                logprobs = output_dict["logprobs"]
-                entropy = output_dict["entropy"]
-                values = output_dict.get("values", None)
-                prev_logprobs = data["prev_logprobs"]
-                advantages = data["advantages"]  # [bsz, chunk-step]
-                returns = data["returns"]  # [bsz, chunk-step]
-                prev_values = data["prev_values"]
-                loss_mask = data.get("loss_mask", None)
-                loss_mask_sum = data.get("loss_mask_sum", None)
-                max_episode_steps = self.cfg.env.train.max_episode_steps
+                kwargs = {
+                    "loss_type": self.cfg.algorithm.loss_type,
+                    "logprob_type": self.cfg.algorithm.logprob_type,
+                    "entropy_type": self.cfg.algorithm.entropy_type,
+                    "single_action_dim": self.model.action_dim,
+                    "logprobs": output_dict["logprobs"],
+                    "entropy": output_dict["entropy"],
+                    "values": output_dict.get("values", None),
+                    "old_logprobs": data["prev_logprobs"],
+                    "advantages": data["advantages"],
+                    "returns": data["returns"],
+                    "prev_values": data["prev_values"],
+                    "clip_ratio_high": self.cfg.algorithm.clip_ratio_high,
+                    "clip_ratio_low": self.cfg.algorithm.clip_ratio_low,
+                    "value_clip": self.cfg.algorithm.get("value_clip", None),
+                    "huber_delta": self.cfg.algorithm.get("huber_delta", None),
+                    "entropy_bonus": self.cfg.algorithm.entropy_bonus,
+                    "loss_mask": data.get("loss_mask", None),
+                    "loss_mask_sum": data.get("loss_mask_sum", None),
+                    "max_episode_steps": self.cfg.env.train.max_episode_steps,
+                }
 
-                loss, metrics_data = actor_loss(
-                    loss_type=self.cfg.algorithm.loss_type,
-                    logprob_type=self.cfg.algorithm.logprob_type,
-                    entropy_type=self.cfg.algorithm.entropy_type,
-                    single_action_dim=self.model.action_dim,
-                    logprobs=logprobs,
-                    entropy=entropy,
-                    values=values,
-                    old_logprobs=prev_logprobs,
-                    advantages=advantages,
-                    returns=returns,
-                    prev_values=prev_values,
-                    clip_ratio_high=self.cfg.algorithm.clip_ratio_high,
-                    clip_ratio_low=self.cfg.algorithm.clip_ratio_low,
-                    value_clip=self.cfg.algorithm.get("value_clip", None),
-                    huber_delta=self.cfg.algorithm.get("huber_delta", None),
-                    entropy_bonus=self.cfg.algorithm.entropy_bonus,
-                    loss_mask=loss_mask,
-                    loss_mask_sum=loss_mask_sum,
-                    max_episode_steps=max_episode_steps,
-                )
+                kwargs = preprocess_loss_inputs(**kwargs)
+
+                loss, metrics_data = actor_loss(**kwargs)
 
                 loss /= self.gradient_accumulation
                 loss.backward()

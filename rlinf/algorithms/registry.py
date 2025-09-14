@@ -16,8 +16,6 @@ from typing import Callable, Dict, Optional, Tuple
 
 import torch
 
-from rlinf.algorithms.utils import preprocess_advantages_inputs, preprocess_loss_inputs
-
 ADV_REGISTRY: Dict[str, Callable] = {}
 
 
@@ -61,10 +59,6 @@ def actor_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
     """
     Unified actor loss entry.
     """
-    # Step 1: preprocess
-    kwargs = preprocess_loss_inputs(**kwargs)
-
-    # Step 2: dispatch
     loss_type = kwargs["loss_type"]
     loss_fn = get_policy_loss(loss_type)
     return loss_fn(**kwargs)
@@ -76,11 +70,6 @@ def calculate_adv_and_returns(**kwargs) -> Tuple[torch.Tensor, Optional[torch.Te
     Accepts variable keyword arguments, preprocesses them, then dispatches
     to specific algorithm via registry.
     """
-    # Step 1: preprocess
-    kwargs = preprocess_advantages_inputs(**kwargs)
-
-    # Step 2: dispatch
     adv_type = kwargs["adv_type"]
     fn = get_adv_and_returns(adv_type)
-
     return fn(**kwargs)

@@ -18,6 +18,7 @@ import torch
 
 from rlinf.algorithms.registry import register_policy_loss
 from rlinf.algorithms.utils import huber_loss
+from rlinf.utils.utils import masked_mean
 
 
 @register_policy_loss("embodied_ppo")
@@ -236,14 +237,16 @@ def compute_math_ppo_actor_loss(**kwargs):
 
     dual_cliped_ratio = torch.where(dual_clip_mask, ratio, 0)
 
-    return (
-        policy_loss,
-        clip_fraction,
-        approx_kl,
-        ratio,
-        clipped_ratio,
-        dual_cliped_ratio,
-    )
+    # Compile metrics for logging
+    metrics_data = {
+        "policy_loss": masked_mean(loss.detach(), loss_mask),
+        "ratio": masked_mean(ratio.detach(), loss_mask),
+        "clipped_ratio": masked_mean(clipped_ratio.detach(), loss_mask),
+        "dual_cliped_ratio": masked_mean(dual_cliped_ratio.detach(), loss_mask),
+        "approx_kl": approx_kl.detach(),
+        "clip_fraction": clip_fraction.detach(),
+    }
+    return loss, metrics_data
 
 
 if __name__ == "__main__":
