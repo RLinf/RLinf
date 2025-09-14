@@ -239,14 +239,14 @@ def compute_math_ppo_actor_loss(**kwargs):
 
     # Compile metrics for logging
     metrics_data = {
-        "policy_loss": masked_mean(loss.detach(), loss_mask),
+        "policy_loss": masked_mean(policy_loss.detach(), loss_mask),
         "ratio": masked_mean(ratio.detach(), loss_mask),
         "clipped_ratio": masked_mean(clipped_ratio.detach(), loss_mask),
         "dual_cliped_ratio": masked_mean(dual_cliped_ratio.detach(), loss_mask),
         "approx_kl": approx_kl.detach(),
         "clip_fraction": clip_fraction.detach(),
     }
-    return loss, metrics_data
+    return policy_loss, metrics_data
 
 
 if __name__ == "__main__":

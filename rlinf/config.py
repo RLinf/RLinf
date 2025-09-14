@@ -567,7 +567,10 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     if cfg.runner.task_type == "math":
         cfg = validate_math_cfg(cfg)
 
-    if cfg.algorithm.adv_type == "grpo":
+    if (
+        cfg.algorithm.adv_type == "embodied_grpo"
+        or cfg.algorithm.adv_type == "math_grpo"
+    ):
         assert cfg.algorithm.group_size > 1
 
     if cfg.actor.training_backend == "megatron":

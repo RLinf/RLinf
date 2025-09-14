@@ -344,7 +344,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     attention_mask=attention_mask,
                     pixel_values=pixel_values,
                     action_token_len=action_token_len,
-                    value_model=True if self.cfg.algorithm.adv_type == "ppo" else False,
+                    value_model=True
+                    if self.cfg.algorithm.adv_type == "embodied_gae"
+                    else False,
                     value_head_mode=self.cfg.actor.model.get("vh_mode", None),
                     temperature=self.cfg.algorithm.sampling_params.temperature_train,
                     top_k=self.cfg.algorithm.sampling_params.top_k,
@@ -395,7 +397,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 "actor/grad_norm": grad_norm.detach().item(),
                 "actor/lr": self.optimizer.param_groups[0]["lr"],
             }
-            if self.cfg.algorithm.adv_type == "ppo":
+            if self.cfg.algorithm.adv_type == "embodied_gae":
                 data["critic/lr"] = self.optimizer.param_groups[1]["lr"]
             append_to_dict(metrics, data)
 
