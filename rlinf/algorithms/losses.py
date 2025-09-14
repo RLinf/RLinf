@@ -20,8 +20,8 @@ from rlinf.algorithms.registry import register_policy_loss
 from rlinf.algorithms.utils import huber_loss
 
 
-@register_policy_loss("ppo")
-def ppo_actor_critic_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
+@register_policy_loss("embodied_ppo")
+def compute_embodied_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
     """
     Compute PPO actor loss function.
 
@@ -101,8 +101,8 @@ def ppo_actor_critic_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
     return loss, metrics_data
 
 
-@register_policy_loss("grpo")
-def grpo_actor_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
+@register_policy_loss("embodied_grpo")
+def compute_embodied_grpo_actor_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
     """
     Compute actor loss for Group Relative Policy Optimization (GRPO).
 
@@ -173,8 +173,8 @@ def grpo_actor_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
     return policy_loss, metrics_data
 
 
-@register_policy_loss("math_actor")
-def math_actor_loss_fn(**kwargs):
+@register_policy_loss("math_ppo_actor")
+def compute_math_ppo_actor_loss(**kwargs):
     """
     Compute PPO actor loss function.
 
@@ -271,7 +271,7 @@ if __name__ == "__main__":
         ratio,
         clipped_ratio,
         dual_cliped_ratio,
-    ) = math_actor_loss_fn(**kwargs)
+    ) = compute_math_ppo_actor_loss(**kwargs)
     print(f"{loss=}, {clip_fraction=}, {approx_kl=}")
     print(f"{ratio=}")
     print(f"{clipped_ratio=}")
@@ -296,7 +296,7 @@ if __name__ == "__main__":
         "loss_mask": loss_mask,
         "loss_mask_sum": loss_mask.sum(),
     }
-    loss, metrics_data = grpo_actor_loss_fn(**kwargs)
+    loss, metrics_data = compute_embodied_grpo_actor_loss_fn(**kwargs)
     print(f"{loss=}, {metrics_data=}")
 
     # test ppo_actor_critic_loss_fn
@@ -329,5 +329,5 @@ if __name__ == "__main__":
         "huber_delta": huber_delta,
         "entropy_bonus": entropy_bonus,
     }
-    loss, metrics_data = ppo_actor_critic_loss_fn(**kwargs)
+    loss, metrics_data = compute_embodied_ppo_actor_critic_loss(**kwargs)
     print(f"{loss=}, {metrics_data=}")

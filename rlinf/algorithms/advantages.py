@@ -19,8 +19,8 @@ import torch
 from rlinf.algorithms.registry import register_advantage
 
 
-@register_advantage("ppo")
-def compute_ppo_advantages_and_returns(**kwargs) -> Tuple[torch.Tensor, torch.Tensor]:
+@register_advantage("embodied_gae")
+def compute_embodied_gae_advantages_and_returns(**kwargs) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Calculate advantages and returns for Proximal Policy Optimization (PPO).
     NOTE: currently this function does not support auto-reset.
@@ -92,8 +92,8 @@ def compute_ppo_advantages_and_returns(**kwargs) -> Tuple[torch.Tensor, torch.Te
     return advantages, returns
 
 
-@register_advantage("grpo")
-def compute_grpo_advantages_and_returns(
+@register_advantage("embodied_grpo")
+def compute_embodied_grpo_advantages(
     **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """
@@ -108,9 +108,6 @@ def compute_grpo_advantages_and_returns(
     loss_mask = kwargs.get("loss_mask", None)
     rollout_epoch = kwargs.get("rollout_epoch", 1)
     epsilon = kwargs.get("epsilon", 1e-6)
-
-    # if loss_mask is None:
-    #     loss_mask = torch.ones_like(rewards)
 
     n_chunk_step, actual_bsz, num_action_chunks = rewards.shape
     flattened_rewards = rewards.transpose(1, 2).reshape(
@@ -188,7 +185,7 @@ if __name__ == "__main__":
     values = torch.randn(5, 2, 3)
     dones = torch.zeros(5, 2, 3).bool()
     dones[-1] = 1
-    advantages, returns = compute_ppo_advantages_and_returns(
+    advantages, returns = compute_embodied_gae_advantages_and_returns(
         rewards=rewards, values=values, dones=dones, gamma=0.99, gae_lambda=0.95
     )
     print(advantages.mean())
@@ -200,7 +197,7 @@ if __name__ == "__main__":
     dones = torch.zeros(5, 4, 3).bool()
     loss_mask = torch.rand_like(rewards) > 0.5
     dones[-1] = 1
-    advantages, _ = compute_grpo_advantages_and_returns(
+    advantages, _ = compute_embodied_grpo_advantages(
         rewards=rewards,
         dones=dones,
         loss_mask=loss_mask,

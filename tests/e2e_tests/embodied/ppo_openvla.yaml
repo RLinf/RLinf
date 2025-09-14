@@ -54,8 +54,8 @@ algorithm:
   # memory usage
   logprob_forward_micro_batch_size: 16 # ${.rollout_micro_batch_size}
 
-  adv_type: "ppo"
-  loss_type: "ppo"
+  loss_type: embodied_gae
+  loss_type: embodied_ppo
   reward_type: chunk_level
   logprob_type: "action_level"
   entropy_type: "action_level"
