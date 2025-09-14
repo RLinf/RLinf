@@ -86,8 +86,8 @@ Currently, the framework supports DAPO for LLM math tasks.
 
   algorithm:
     # Core DAPO settings (recommended not to change)
-    adv_type: grpo
-    loss_type: ppo
+    adv_type: math_grpo # math_grpo for math tasks, embodied_grpo for embodied tasks
+    loss_type: math_ppo_actor # math_ppo_actor for math tasks, embodied_grpo for embodied tasks
     loss_agg_func: "token-mean"
     use_valid_token_scale: True # Divide advantage by valid token count → token-level loss
 

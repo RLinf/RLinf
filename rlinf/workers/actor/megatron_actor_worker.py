@@ -385,7 +385,6 @@ class MegatronActor(MegatronModelManager, Worker):
                     loss_mask=mask,
                 )
 
-                # logging_loss = loss.detach()
                 entropy_loss = torch.zeros(1, device=loss.device)
                 if self.calculate_entropy:
                     entropy = output["entropy"][:, -response_len - 1 : -1].contiguous()

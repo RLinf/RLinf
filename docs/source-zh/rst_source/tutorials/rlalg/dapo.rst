@@ -79,8 +79,8 @@ DAPO 采用非对称裁剪策略，设置更高的上限
 
   algorithm:
     # 核心 DAPO 设置（建议不要修改）
-    adv_type: grpo
-    loss_type: ppo
+    adv_type: math_grpo # 推理任务使用 math_grpo, 具身任务使用 embodied_grpo
+    loss_type: math_ppo_actor # 推理任务使用 math_ppo_actor, 具身任务使用 embodied_grpo
     loss_agg_func: "token-mean"
     use_valid_token_scale: True # 优势除以有效 token 数 → token 级损失
 
