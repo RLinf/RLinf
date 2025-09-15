@@ -357,7 +357,7 @@ class RankMapper:
         """
         if placement_mode == PlacementMode.COLLOCATED:
             return CollocateRankMapper
-        elif placement_mode == PlacementMode.DISAGGREGATED:
+        elif placement_mode in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]:
             return DisaggRankMapper
         else:
             raise ValueError(f"Unsupported mode: {placement_mode}.")
@@ -566,7 +566,7 @@ def get_rollout_backend_worker(
 
         if placement.placement_mode == PlacementMode.COLLOCATED:
             return SGLangWorker
-        elif placement.placement_mode == PlacementMode.DISAGGREGATED:
+        elif placement.placement_mode in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]:
             return AsyncSGLangWorker
         else:
             raise ValueError(f"Unsupported placement mode: {placement.placement_mode}")

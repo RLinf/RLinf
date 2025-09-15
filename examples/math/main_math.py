@@ -22,12 +22,13 @@ from rlinf.config import validate_cfg
 from rlinf.data.datasets import create_rl_dataset
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.runners.math_runner import MathRunner
-from rlinf.scheduler import Cluster
+from rlinf.scheduler import Cluster, PackedPlacementStrategy
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
+from rlinf.scheduler.dynamic_scheduler.scheduler_task import SchedulerTask
 
 """Script to start GRPO training"""
 mp.set_start_method("spawn", force=True)
@@ -44,6 +45,14 @@ def main(cfg) -> None:
     )
     component_placement = ModelParallelComponentPlacement(cfg)
 
+    if component_placement._placement_mode == PlacementMode.AUTO:
+        scheduler_placement_strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=0)
+        scheduler_task = SchedulerTask.create_group(cfg, component_placement).launch(
+            cluster=cluster, name='SchedulerTask', placement_strategy=scheduler_placement_strategy
+        )
+    else:
+        scheduler_task = None
+
     rollout_worker_cls = get_rollout_backend_worker(cfg, component_placement)
 
     # Rollout group
@@ -57,7 +66,7 @@ def main(cfg) -> None:
     # Inference group
     inference_group = None
     if (
-        component_placement.placement_mode == PlacementMode.DISAGGREGATED
+        component_placement.placement_mode in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]
         and cfg.algorithm.recompute_logprobs
     ):
         inference_placement_strategy = component_placement.get_strategy("inference")
@@ -86,6 +95,7 @@ def main(cfg) -> None:
         rollout=rollout_group,
         inference=inference_group,
         actor=actor_group,
+        scheduler_task=scheduler_task,
     )
 
     runner.init_workers()

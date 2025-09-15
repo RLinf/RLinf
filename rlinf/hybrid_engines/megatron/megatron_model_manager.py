@@ -60,6 +60,7 @@ except ImportError:
     raise "Could not import Float16Module from megatron"
 from megatron.training.checkpointing import load_checkpoint, save_checkpoint
 from megatron.training.training import (
+    get_args,
     preprocess_common_state_dict,
     setup_model_and_optimizer,
     unwrap_model,
@@ -285,8 +286,10 @@ class MegatronModelManager:
     def save_checkpoint(
         self, checkpoint_save_path, step, num_floating_point_operations_so_far=0
     ):
-        self._cfg.megatron.save = checkpoint_save_path
-        set_megatron_args(self._cfg)
+        if not getattr(self, 'is_running', True):
+            return
+        args = get_args()
+        args.save = checkpoint_save_path
         save_checkpoint(
             iteration=step,
             model=self.model,
@@ -298,8 +301,8 @@ class MegatronModelManager:
         )
 
     def load_checkpoint(self, checkpoint_load_path):
-        self._cfg.megatron.load = checkpoint_load_path
-        set_megatron_args(self._cfg)
+        args = get_args()
+        args.load = checkpoint_load_path
         load_checkpoint(
             self.model,
             self.optimizer,
@@ -561,12 +564,15 @@ class MegatronModelManager:
 
         for _opt in _iter_opts(self.optimizer):
             self.offload_megatron_copy_params(_opt)
-            opt_state_dict_values = _opt.optimizer.state.values()
-            for v in opt_state_dict_values:
+            for v in _opt.optimizer.state.values():
                 if "exp_avg" in v:
-                    v["exp_avg"] = v["exp_avg"].to("cpu", non_blocking=True)
+                    buffer = v["exp_avg"]
+                    buffer.cpu_data = buffer.data.cpu().pin_memory()
+                    buffer.storage().resize_(0)
                 if "exp_avg_sq" in v:
-                    v["exp_avg_sq"] = v["exp_avg_sq"].to("cpu", non_blocking=True)
+                    buffer = v["exp_avg_sq"]
+                    buffer.cpu_data = buffer.data.cpu().pin_memory()
+                    buffer.storage().resize_(0)
         clear_memory()
 
     def onload_megatron_optimizer(self):
@@ -577,14 +583,15 @@ class MegatronModelManager:
 
         for _opt in _iter_opts(self.optimizer):
             self.load_megatron_copy_params(_opt)
-            opt_state_dict_values = _opt.optimizer.state.values()
-            for v in opt_state_dict_values:
+            for v in _opt.optimizer.state.values():
                 if "exp_avg" in v:
-                    v["exp_avg"] = v["exp_avg"].to(
+                    v["exp_avg"].data = v["exp_avg"].cpu_data.to(
                         torch.cuda.current_device(), non_blocking=True
                     )
+                    v["exp_avg"].cpu_data = None
                 if "exp_avg_sq" in v:
-                    v["exp_avg_sq"] = v["exp_avg_sq"].to(
+                    v["exp_avg_sq"].data = v["exp_avg_sq"].cpu_data.to(
                         torch.cuda.current_device(), non_blocking=True
                     )
+                    v["exp_avg_sq"].cpu_data = None
         clear_memory()

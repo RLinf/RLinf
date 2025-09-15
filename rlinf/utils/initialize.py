@@ -79,6 +79,20 @@ def set_megatron_args(cfg):
 
     args.iteration = 0
 
+    args.transformer_impl = "transformer_engine"
+    args.swiglu = True
+    args.untie_embeddings_and_output_weights = True
+    args.padded_vocab_size = cfg.model.override_vocab_size
+    args.make_vocab_size_divisible_by = 1
+    if cfg.model.normalization == "rmsnorm":
+        args.normalization = "RMSNorm"
+    args.tensor_model_parallel_size = cfg.model.tensor_model_parallel_size
+    args.pipeline_model_parallel_size = cfg.model.pipeline_model_parallel_size
+    args.context_parallel_size = cfg.model.context_parallel_size
+    args.ddp_bucket_size = cfg.megatron.ddp_bucket_size
+    args.overlap_grad_reduce = cfg.optim.overlap_grad_reduce
+    args.overlap_param_gather = cfg.optim.overlap_param_gather
+
     set_args(args)
 
     return args

@@ -29,6 +29,7 @@ class PlacementMode(Enum):
     COLLOCATED = auto()
     DISAGGREGATED = auto()
     HYBRID = auto()
+    AUTO = auto()
 
 
 class ComponentPlacement:
@@ -228,7 +229,10 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         )
         self._rollout_num_gpus = len(self._rollout_gpus)
 
-        if self._is_collocated():
+        if self._is_auto():
+            self._placement_mode = PlacementMode.AUTO
+            logging.info("Running in auto mode")
+        elif self._is_collocated():
             assert self.actor_tp_size >= self.rollout_tp_size, (
                 f"Actor TP size {self.actor_tp_size} must be greater or equal to Rollout TP size {self.rollout_tp_size}."
             )
@@ -259,6 +263,9 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         assert self.rollout_tp_size <= self.rollout_world_size, (
             f"Rollout TP size {self.rollout_tp_size} must be less than or equal to Rollout world size {self.rollout_world_size}."
         )
+
+    def _is_auto(self):
+        return getattr(self._config.cluster, 'auto_scheduler', False)
 
     def _is_collocated(self):
         if self._actor_gpus == self._rollout_gpus:
@@ -298,7 +305,8 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 num_gpus_per_process=rollout_tp_size,
                 stride=stride,
             )
-        elif self._placement_mode == PlacementMode.DISAGGREGATED:
+        else:
+            assert self._placement_mode in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO], f"Placement mode {self._placement_mode} is not supported in auto mode"
             # Generate continuous placement strategies for components in a cluster.
             num_gpus_per_rollout_dp = len(self._rollout_gpus) // self.rollout_dp_size
             self._placements["rollout"] = PackedPlacementStrategy(
@@ -310,18 +318,27 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 self._placements["inference"] = PackedPlacementStrategy(
                     self._inference_gpus[0], self._inference_gpus[-1]
                 )
-            self._placements["actor"] = PackedPlacementStrategy(
-                self._actor_gpus[0], self._actor_gpus[-1]
-            )
+            if self._placement_mode == PlacementMode.DISAGGREGATED:
+                self._placements["actor"] = PackedPlacementStrategy(
+                    self._actor_gpus[0], self._actor_gpus[-1]
+                )
+            else:
+                self._placements["actor"] = PackedPlacementStrategy(
+                    0, self._cluster_num_gpus - 1
+                )
 
     @property
     def is_disaggregated(self):
         return self._placement_mode == PlacementMode.DISAGGREGATED
 
     @property
+    def is_pipeline(self):
+        return self.is_disaggregated or self._placement_mode == PlacementMode.AUTO
+
+    @property
     def has_dedicated_inference(self):
         return (
-            self._placement_mode == PlacementMode.DISAGGREGATED
+            self._placement_mode in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]
             and self._inference_gpus is not None
         )
 
