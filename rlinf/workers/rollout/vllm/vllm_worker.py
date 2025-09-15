@@ -18,7 +18,6 @@ import os
 from functools import partial
 from typing import AsyncGenerator, Dict, List, Optional, Tuple, Union
 
-import numpy as np
 import requests
 import torch
 from omegaconf import DictConfig
@@ -39,10 +38,10 @@ from rlinf.scheduler import Channel, Worker
 from rlinf.utils.placement import ComponentPlacement
 from rlinf.workers.rollout.utils import print_vllm_outputs
 
-from . import VLLMEngine, VLLMExecutor
+from . import VLLMExecutor
 
 
-class VLLMWorker(Worker):
+class AsyncVLLMWorker(Worker):
     def __init__(self, config: DictConfig, placement: ComponentPlacement):
         Worker.__init__(self)
         self._cfg = config
@@ -70,6 +69,8 @@ class VLLMWorker(Worker):
             "The capital of France is",
             "The future of AI is",
         ]
+        self._reward_model = MathRewardModel(self._cfg.reward.reward_scale)
+        self.request_counter = Counter()
 
     def _prepare_vllm_environment(self) -> None:
         """
@@ -82,9 +83,9 @@ class VLLMWorker(Worker):
         )
         # use spawn to avoid fork issues with CUDA
         os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
-        # set False to use Inproclient, which uses sync calls.
-        os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
         os.environ["VLLM_ATTENTION_BACKEND"] = self._cfg.rollout.vllm.attention_backend
+        # set True to use AsyncMPClient, which uses async calls.
+        os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "1"
 
     def _get_sampling_params_from_config(self) -> SamplingParams:
         """
@@ -111,150 +112,6 @@ class VLLMWorker(Worker):
                 logprobs=0 if self._return_logprobs else None,
             )
         return sampling_params
-
-    def _validate_weight_at_first(self) -> None:
-        """
-        Validate the model weights before starting to rollout formally.
-        """
-        if self._cfg.rollout.detokenize:
-            outputs = self._vllm_engine.generate(
-                input_ids=None,
-                sampling_params=self._validate_sampling_params,
-                return_logprobs=False,
-                prompt_texts=self._validate_prompts,
-            )
-        else:
-            prompt_ids = self._tokenizer(self._validate_prompts).input_ids
-            outputs = self._vllm_engine.generate(
-                input_ids=prompt_ids,
-                sampling_params=self._validate_sampling_params,
-                return_logprobs=False,
-            )
-        print_vllm_outputs(outputs=outputs)
-        print("===============================", flush=True)
-
-    def sync_model_from_actor(self) -> None:
-        """
-        Use vllm_engine to sync model weights from the actor.
-        """
-        self._vllm_engine.sync_hf_weight()
-
-    def init_worker(self) -> None:
-        """
-        Use EngineArgs and VllmConfig to initialize the VLLM engine.
-        Then offload the model weights, ready to use weights sent from actor.
-        """
-        engine_args: EngineArgs = EngineArgs(
-            model=self._cfg.rollout.model_dir,
-            tensor_parallel_size=self._cfg.rollout.tensor_parallel_size,
-            dtype=torch_dtype_from_precision(self._cfg.actor.model.precision),
-            gpu_memory_utilization=self._cfg.rollout.gpu_memory_utilization,
-            enforce_eager=self._cfg.rollout.enforce_eager,
-            enable_chunked_prefill=self._cfg.rollout.vllm.enable_chunked_prefill,
-            enable_prefix_caching=self._cfg.rollout.vllm.enable_prefix_caching,
-            task="generate",
-            trust_remote_code=self._cfg.actor.tokenizer.trust_remote_code,
-            max_model_len=self._cfg.runner.seq_length,
-            max_num_seqs=self._cfg.rollout.max_running_requests,
-            enable_sleep_mode=True,  # it enables offload weights
-        )
-        vllm_config: VllmConfig = engine_args.create_engine_config()
-
-        # here to set the customed worker class for VLLM engine
-        vllm_worker_cls = "rlinf.hybrid_engines.vllm.vllm_0_8_5.worker.VLLMWorker"
-        vllm_config.parallel_config.worker_cls = vllm_worker_cls
-
-        self.log_info(f"vllm_config is {vllm_config}")
-        self.log_info(f"[LLM dp {self._rank}] start to initialize VLLM engine")
-        self._vllm_engine = VLLMEngine(
-            rlinf_config=self._cfg,
-            vllm_config=vllm_config,
-            log_stats=not self._cfg.rollout.disable_log_stats,
-            multiprocess_model=False,  # use Inproclient
-            parent_address=self.worker_address,
-            placement=self._placement,
-            dp_rank=self._rank,
-        )
-        self.log_info(f"[LLM dp {self._rank}] VLLM engine initialized.")
-        self._vllm_engine.offload_model_weights()
-
-    def _stop(self) -> None:
-        """
-        Helper function to stop the VLLM engine and offload model weights.
-        This should only be called when vllm engine has no more requests to process.
-        """
-        self.log_debug(
-            f"[LLM dp {self._rank}] Received None input tokens, rollout end."
-        )
-        self._vllm_engine.offload_model_weights()
-
-    def rollout(self, input_channel: Channel, output_channel: Channel) -> None:
-        """
-        The main rollout function to interact with the VLLM engine.
-        It receives RolloutRequest from input_channel, and sends back RolloutResult
-        to output_channel.
-
-        Args:
-            input_channel (Channel): The channel to receive RolloutRequest.
-            output_channel (Channel): The channel to send RolloutResult.
-        """
-        request: RolloutRequest = input_channel.get()
-
-        requests: List[RolloutRequest] = request.repeat_and_split(
-            self._rollout_batch_size
-        )
-
-        # Acquire the GPUs to ensure no one is using them during rollout
-        output_channel.device_lock.acquire()
-
-        rollout_results: List[RolloutResult] = []
-        for request in requests:
-            with self.worker_timer():
-                vllm_results = self._vllm_engine.generate(
-                    input_ids=request.input_ids,
-                    sampling_params=self._sampling_params,
-                    return_logprobs=self._return_logprobs,
-                )
-            # should be converted by _vllm_engine side.
-            results = RolloutResult.from_vllm_results(
-                group_size=self._cfg.algorithm.group_size,
-                results=vllm_results,
-                answers=request.answers,
-                return_logprobs=self._return_logprobs,
-            )
-            rollout_results.append(results)
-            if self._cfg.rollout.print_outputs:
-                print_vllm_outputs(outputs=vllm_results)
-
-        # Stop and offload SGLang first before putting into channel
-        # This avoids running SGLang and Megatron simultaneously
-        self._stop()
-        # Release the GPUs once the engine has offloaded
-        output_channel.device_lock.release()
-        rollout_result = RolloutResult.merge_result_list(rollout_results)
-        output_channel.put(rollout_result)
-
-
-def all_floats_equal(float_list: list[float], epsilon: float = 1e-9) -> bool:
-    if len(float_list) <= 1:
-        return True
-    return np.std(float_list) < epsilon
-
-
-class AsyncVLLMWorker(VLLMWorker):
-    def __init__(self, config: DictConfig, placement: ComponentPlacement):
-        super().__init__(config, placement)
-
-        self._reward_model = MathRewardModel(self._cfg.reward.reward_scale)
-        self.request_counter = Counter()
-
-    def _prepare_vllm_environment(self) -> None:
-        """
-        Set up environment variables for VLLM.
-        """
-        super()._prepare_vllm_environment()
-        # set True to use AsyncMPClient, which uses async calls.
-        os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "1"
 
     def _process_image_data(
         self, image_data: Optional[List[Union[bytes, str]]]
@@ -292,7 +149,36 @@ class AsyncVLLMWorker(VLLMWorker):
         """
         Validate the model weights before starting to rollout formally.
         """
-        raise NotImplementedError("Async validate is not implemented yet.")
+        generation_tasks = []
+        if self._cfg.rollout.detokenize:
+            for prompt in self._validate_prompts:
+                request_id = str(next(self.request_counter))
+                generation_tasks.append(
+                    asyncio.create_task(
+                        self._generate(
+                            request_id=request_id,
+                            input_ids=None,
+                            sampling_params=self._validate_sampling_params,
+                            prompt_text=prompt,
+                        )
+                    )
+                )
+        else:
+            prompt_ids = self._tokenizer(self._validate_prompts).input_ids
+            for prompt_id in prompt_ids:
+                request_id = str(next(self.request_counter))
+                generation_tasks.append(
+                    asyncio.create_task(
+                        self._generate(
+                            request_id=request_id,
+                            input_ids=prompt_id,
+                            sampling_params=self._validate_sampling_params,
+                        )
+                    )
+                )
+        for future in asyncio.as_completed(generation_tasks):
+            _, request_output = await future
+            print_vllm_outputs(request_output, self._tokenizer)
 
     async def offload_model_weights(self) -> None:
         """
@@ -317,6 +203,28 @@ class AsyncVLLMWorker(VLLMWorker):
             output = out
         assert output is not None, "Async generator returned no output."
         return output
+
+    def _pre_process_rollout_request(
+        self,
+        request: RolloutRequest,
+    ) -> List[List[RolloutRequest]]:
+        if self._rollout_batch_size is not None:
+            # NOTE:
+            # it's different from sglang, here a request's sample count
+            # instead of sample count x group_size  should be divisible by rollout_batch_size
+            assert len(request.input_ids) % self._rollout_batch_size == 0, (
+                f"rollout_batch_size {self._rollout_batch_size} must divide the total number of requests {len(request.input_ids)}"
+            )
+            num_batch = len(request.input_ids) // self._rollout_batch_size
+        else:
+            num_batch = 1
+
+        split_requests = request.split(num_batch)
+        if self._placement.is_disaggregated:
+            num_prompts_per_request = len(split_requests[0].input_ids)
+            return [r.split(num_prompts_per_request) for r in split_requests]
+        else:
+            return [r.split(1) for r in split_requests]
 
     async def _generate(
         self,
@@ -403,6 +311,9 @@ class AsyncVLLMWorker(VLLMWorker):
 
         self.log_info(f"[LLM dp {self._rank}] VLLM engine initialized.")
 
+        if not self._placement.is_disaggregated:
+            await self.offload_model_weights()
+
     async def _put_result(self, result: RolloutResult, output_channel: Channel) -> None:
         await output_channel.put(result, async_op=True).async_wait()
 
@@ -414,7 +325,8 @@ class AsyncVLLMWorker(VLLMWorker):
         self.log_debug(
             f"[LLM dp {self._rank}] Received None input tokens, rollout end."
         )
-        await self.offload_model_weights()
+        if not self._placement.is_disaggregated:
+            await self.offload_model_weights()
 
     async def _compute_reward_and_advantage(
         self, output: RequestOutput, answer: str
@@ -439,66 +351,56 @@ class AsyncVLLMWorker(VLLMWorker):
         rollout_request: RolloutRequest = await input_channel.get(
             async_op=True
         ).async_wait()
-        answers: Dict[str, str] = {}
+        output_channel.gpu_lock.acquire()
+        batched_requests = self._pre_process_rollout_request(rollout_request)
         with self.worker_timer():
-            rollout_tasks = []
-            for input_id, answer in zip(
-                rollout_request.input_ids, rollout_request.answers
-            ):
-                request_id = str(next(self.request_counter))
-                rollout_tasks.append(
-                    asyncio.create_task(
-                        self._generate(
-                            request_id=request_id,
-                            input_ids=input_id,
-                            sampling_params=self._sampling_params,
+            for requests in batched_requests:
+                # NOTE:
+                # here if placement is disaggregated, requests' length is sample count
+                # Otherwise(in collcated mode), requests' length is 1
+                for request in requests:
+                    rollout_tasks = []
+                    answers: Dict[str, str] = {}
+                    for input_id, answer in zip(request.input_ids, request.answers):
+                        request_id = str(next(self.request_counter))
+                        rollout_tasks.append(
+                            asyncio.create_task(
+                                self._generate(
+                                    request_id=request_id,
+                                    input_ids=input_id,
+                                    sampling_params=self._sampling_params,
+                                )
+                            )
+                        )
+                        answers[request_id] = answer
+                    return_tasks = []
+                    rollout_results: List[RolloutResult] = []
+                    for future in asyncio.as_completed(rollout_tasks):
+                        request_id, request_output = await future
+                        rollout_result: RolloutResult = RolloutResult.from_vllm_result(
+                            group_size=rollout_request.n,
+                            vllm_result=request_output,
+                            answer=answer,
+                            return_logprobs=self._return_logprobs,
+                        )
+                        if self._placement.is_disaggregated:
+                            (
+                                rewards,
+                                advantages,
+                            ) = await self._compute_reward_and_advantage(
+                                output=request_output, answer=answers[request_id]
+                            )
+                            rollout_result.rewards = torch.tensor(
+                                rewards, dtype=torch.float32
+                            ).reshape(-1, 1)
+                            rollout_result.advantages = advantages
+                        rollout_results.append(rollout_result)
+                    merged_result = RolloutResult.merge_result_list(rollout_results)
+                    return_tasks.append(
+                        asyncio.create_task(
+                            self._put_result(merged_result, output_channel)
                         )
                     )
-                )
-                answers[request_id] = answer
-
-            return_tasks = []
-            total_reqs = len(rollout_tasks) * rollout_request.n
-            required_reqs = total_reqs // self._cfg.algorithm.max_num_gen_batches
-
-            dropped_reqs = 0
-            finished_reqs = 0
-            abort_flag = False
-
-            for future in asyncio.as_completed(rollout_tasks):
-                request_id, request_output = await future
-                rewards, advantages = await self._compute_reward_and_advantage(
-                    output=request_output, answer=answers[request_id]
-                )
-
-                if (
-                    all_floats_equal(rewards)
-                    and self._cfg.algorithm.get("max_num_gen_batches", 1) > 1
-                ):
-                    if (total_reqs - dropped_reqs) > required_reqs:
-                        dropped_reqs += rollout_request.n
-                        continue
-
-                answer = answers[request_id]
-                rollout_result: RolloutResult = RolloutResult.from_vllm_result(
-                    group_size=rollout_request.n,
-                    vllm_result=request_output,
-                    answer=answer,
-                    return_logprobs=self._return_logprobs,
-                )
-                rollout_result.rewards = torch.tensor(
-                    rewards, dtype=torch.float32
-                ).reshape(-1, 1)
-                rollout_result.advantages = advantages
-                return_tasks.append(
-                    asyncio.create_task(
-                        self._put_result(rollout_result, output_channel)
-                    )
-                )
-                finished_reqs += rollout_request.n
-                if finished_reqs >= required_reqs:
-                    abort_flag = True
-                    break
-            if abort_flag:
-                await self._async_engine.abort("")
-            await asyncio.gather(*return_tasks)
+                    await asyncio.gather(*return_tasks)
+            await self._stop()
+            output_channel.gpu_lock.release()
