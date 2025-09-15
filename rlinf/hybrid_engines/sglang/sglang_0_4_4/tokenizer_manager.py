@@ -21,12 +21,8 @@ from sglang.srt.managers.tokenizer_manager import _Communicator
 from sglang.srt.server_args import PortArgs, ServerArgs
 
 from .io_struct import (
-    OffloadReqInput,
-    OffloadReqOutput,
     SyncHFWeightInput,
     SyncHFWeightOutput,
-    SyncWeightInput,
-    SyncWeightOutput,
     TaskMethodInput,
     TaskMethodOutput,
 )
@@ -48,12 +44,6 @@ class TokenizerManager(_TokenizerManager):
             self.send_to_scheduler,
             fan_out=server_args.dp_size,
         )
-        self.offload_model_weights_communicator = _Communicator(
-            self.send_to_scheduler, server_args.dp_size
-        )
-        self.sync_weight_communicator = _Communicator(
-            self.send_to_scheduler, server_args.dp_size
-        )
         self.sync_hf_weight_communicator = _Communicator(
             self.send_to_scheduler, server_args.dp_size
         )
@@ -63,14 +53,6 @@ class TokenizerManager(_TokenizerManager):
                 (
                     TaskMethodOutput,
                     self.run_task_method_communicator.handle_recv,
-                ),
-                (
-                    OffloadReqOutput,
-                    self.offload_model_weights_communicator.handle_recv,
-                ),
-                (
-                    SyncWeightOutput,
-                    self.sync_weight_communicator.handle_recv,
                 ),
                 (
                     SyncHFWeightOutput,
@@ -93,16 +75,6 @@ class TokenizerManager(_TokenizerManager):
         res: List[TaskMethodOutput] = await self.run_task_method_communicator(obj)
         return res[0].result
 
-    async def offload_model_weights(
-        self,
-        obj: OffloadReqInput = None,
-        request: Optional[fastapi.Request] = None,
-    ):
-        self.auto_create_handle_loop()
-        if obj is None:
-            obj = OffloadReqInput()
-        await self.offload_model_weights_communicator(obj)
-
     async def sync_hf_weight(
         self,
         obj: SyncHFWeightInput,
@@ -110,14 +82,6 @@ class TokenizerManager(_TokenizerManager):
     ):
         self.auto_create_handle_loop()
         await self.sync_hf_weight_communicator(obj)
-
-    async def sync_weight(
-        self,
-        obj: SyncWeightInput,
-        request: Optional[fastapi.Request] = None,
-    ):
-        self.auto_create_handle_loop()
-        await self.sync_weight_communicator(obj)
 
     def abort_request(self, rid: str):
         if rid != "" and rid not in self.rid_to_state:

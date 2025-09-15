@@ -14,10 +14,12 @@
 
 import asyncio
 import dataclasses
+from dataclasses import dataclass
 from typing import Dict, List
 
 import torch
 from omegaconf import DictConfig
+from sglang.srt.managers.io_struct import ReleaseMemoryOccupationReqInput
 from sglang.srt.server_args import ServerArgs
 from transformers import AutoTokenizer
 
@@ -33,6 +35,17 @@ from rlinf.workers.rollout.utils import (
     print_sglang_outputs,
 )
 from toolkits.math_verifier.verify import MathRewardModel, math_verify_call
+
+
+@dataclass
+class SchedulerStats:
+    num_running_reqs: int = 0
+    max_running_reqs: int = 0
+    num_used_tokens: int = 0
+    max_total_num_tokens: int = 0
+    token_usage: float = 0.0
+    gen_throughput: float = 0.0
+    num_queue_reqs: int = 0
 
 
 class AsyncSGLangWorker(Worker):
@@ -182,7 +195,7 @@ class AsyncSGLangWorker(Worker):
         if not self._placement.is_disaggregated:
             await self.offload_engine()
 
-    async def _compute_reward_and_advantage(
+    def _compute_reward_and_advantage(
         self, engine_results: List[Dict], answers: List[List[str]]
     ):
         texts: List[str] = []
@@ -231,8 +244,8 @@ class AsyncSGLangWorker(Worker):
         """
         Offload the model weights from the SGLang engine.
         """
-        await self._engine.tokenizer_manager.offload_model_weights(
-            io_struct.OffloadReqInput()
+        await self._engine.tokenizer_manager.release_memory_occupation(
+            obj=ReleaseMemoryOccupationReqInput()
         )
 
     async def sync_model_from_actor(self):
@@ -241,6 +254,19 @@ class AsyncSGLangWorker(Worker):
             obj=io_struct.SyncHFWeightInput()
         )
 
+    async def check_running_state(self):
+        state = await self._engine.tokenizer_manager.run_task_method(
+            io_struct.TaskMethodInput(method_name="get_scheduler_running_state")
+        )
+        state = SchedulerStats(**state)
+
+        self.log_info(f"SGLang scheduler running state: {state}")
+
+        if state.num_queue_reqs == 0 and state.num_running_reqs < state.max_running_reqs:
+            # no pending requests in the queue and the running requests is not full
+            return True
+        return False
+
     async def rollout(self, input_channel: Channel, output_channel: Channel):
         request: RolloutRequest = input_channel.get()
         output_channel.gpu_lock.acquire()
@@ -248,7 +274,9 @@ class AsyncSGLangWorker(Worker):
         requests = self._pre_process_rollout_request(request)
 
         self.log_info(
-            f"outer_loop size: {len(requests)}, group_size: {len(requests[0])}"
+            f"Received {len(request.input_ids)} prompts, group_size = {request.n}, "
+            f"total num_req = {len(request.input_ids) * request.n}. "
+            f"Split to {len(requests)} batches, each has {len(requests[0])} group with {len(requests[0][0].input_ids)} sequences."
         )
 
         with self.worker_timer():
@@ -266,32 +294,45 @@ class AsyncSGLangWorker(Worker):
                     for group in request_groups
                 ]
 
-                for future in asyncio.as_completed(tasks):
-                    input_ids, answers, engine_results = await future
-                    rollout_result = RolloutResult.from_sglang_results(
-                        engine_results,
-                        request.n,
-                        input_ids,
-                        answers,
-                        self._return_logprobs,
+                # Enhanced as_completed: support dynamically adding new tasks
+                pending = set(tasks)
+                while pending:
+                    done, pending = await asyncio.wait(
+                        pending, return_when=asyncio.FIRST_COMPLETED
                     )
-                    if self._placement.is_disaggregated:
-                        (
-                            rewards,
-                            advantages,
-                        ) = await self._compute_reward_and_advantage(
+                    for future in done:
+                        input_ids, answers, engine_results = await future
+                        rollout_result = RolloutResult.from_sglang_results(
                             engine_results,
+                            request.n,
+                            input_ids,
                             answers,
+                            self._return_logprobs,
                         )
+                        if self._placement.is_disaggregated:
+                            (
+                                rewards,
+                                advantages,
+                            ) = await asyncio.to_thread(
+                                self._compute_reward_and_advantage,
+                                engine_results,
+                                answers,
+                            )
 
-                        rollout_result.rewards = torch.tensor(
-                            rewards, dtype=torch.float32
-                        ).reshape(-1, 1)
-                        rollout_result.advantages = advantages
+                            rollout_result.rewards = torch.tensor(
+                                rewards, dtype=torch.float32
+                            ).reshape(-1, 1)
+                            rollout_result.advantages = advantages
 
-                    await output_channel.put(
-                        item=rollout_result, async_op=True
-                    ).async_wait()
+                        await output_channel.put(
+                            item=rollout_result, async_op=True
+                        ).async_wait()
+
+                        # If you want to add new tasks dynamically, do it here:
+                        # new_task = asyncio.create_task(...)
+                        # pending.add(new_task)
+                        if await self.check_running_state():
+                            pass
 
         await self._stop()
         output_channel.gpu_lock.release()

@@ -46,7 +46,10 @@ from sglang.srt.utils import (
 from rlinf.scheduler import WorkerAddress
 from rlinf.utils.placement import ComponentPlacement
 
-from .io_struct import OffloadReqInput, SyncHFWeightInput, SyncWeightInput
+from .io_struct import (
+    SyncHFWeightInput,
+    TaskMethodInput,
+)
 from .sgl_scheduler import run_scheduler_process
 from .tokenizer_manager import TokenizerManager
 
@@ -96,24 +99,16 @@ class Engine(_Engine):
         self.tokenizer_manager = tokenizer_manager
         self.scheduler_info = scheduler_info
 
-    def offload_model_weights(self):
-        """Offload model weights to meta."""
-        obj = OffloadReqInput()
-        loop = asyncio.get_event_loop()
-        return loop.run_until_complete(
-            self.tokenizer_manager.offload_model_weights(obj, None)
-        )
-
     def sync_hf_weight(self):
         obj = SyncHFWeightInput()
         loop = asyncio.get_event_loop()
         return loop.run_until_complete(self.tokenizer_manager.sync_hf_weight(obj))
 
-    def sync_weight(self):
-        obj = SyncWeightInput()
+    def run_task_method(self, method_name: str, *args, **kwargs):
+        """Run a method in the tokenizer manager."""
+        obj = TaskMethodInput(method_name=method_name, args=args, kwargs=kwargs)
         loop = asyncio.get_event_loop()
-        return loop.run_until_complete(self.tokenizer_manager.sync_weight(obj))
-
+        return loop.run_until_complete(self.tokenizer_manager.run_task_method(obj))
 
 def _set_envs_and_config(server_args: ServerArgs):
     # Set global environments

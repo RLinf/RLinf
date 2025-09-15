@@ -24,7 +24,6 @@ import torch
 from omegaconf import DictConfig
 from sglang.srt.managers.io_struct import (
     AbortReq,
-    ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
 )
 from sglang.srt.managers.scheduler import Scheduler as _Scheduler
@@ -43,18 +42,11 @@ from rlinf.scheduler import Worker, WorkerAddress
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.workers.rollout.utils import (
     RankMapper,
-    get_module_from_name,
-    rebind_param_attr,
-    swap_tensor_pointer,
 )
 
 from .io_struct import (
-    OffloadReqInput,
-    OffloadReqOutput,
     SyncHFWeightInput,
     SyncHFWeightOutput,
-    SyncWeightInput,
-    SyncWeightOutput,
     TaskMethodInput,
     TaskMethodOutput,
 )
@@ -94,8 +86,6 @@ class Scheduler(_Scheduler, Worker):
         self._request_dispatcher._mapping.extend(
             [
                 (TaskMethodInput, self.run_task_method),
-                (OffloadReqInput, self.offload_model_weights),
-                (SyncWeightInput, self.sync_weight),
                 (SyncHFWeightInput, self.sync_hf_weight),
             ]
         )
@@ -113,7 +103,7 @@ class Scheduler(_Scheduler, Worker):
             if hasattr(module, "use_presharded_weights"):
                 module.use_presharded_weights = True
 
-        self._logger.info(
+        self.log_info(
             f"Running Scheduler dp rank {self.get_parent_rank()}, tp rank {self.tp_rank}, corresponding actor weight rank = {self.actor_weight_rank}"
         )
 
@@ -137,38 +127,6 @@ class Scheduler(_Scheduler, Worker):
             f"{free_gpu_memory=:.2f} GiB, {total_gpu_memory=:.2f} GiB"
         )
 
-    def offload_model_weights(self, recv_req: OffloadReqInput):
-        use_cudagraph = not self.cfg.rollout.enforce_eager
-        colocate = self.placement_mode == PlacementMode.COLLOCATED
-        if not colocate:
-            assert use_cudagraph, "If not colocate, use_cudagraph must be True now."
-
-        if use_cudagraph or not colocate:
-            self.release_memory_occupation(ReleaseMemoryOccupationReqInput())
-            # self.cuda_info("After offload Model weights and kv cache")
-            return OffloadReqOutput()
-
-        # manually offload
-        self.named_buffers = {
-            n: buf.clone()
-            for n, buf in self.tp_worker.worker.model_runner.model.named_buffers()
-        }
-
-        self.binded_attr = {
-            name: param.__dict__
-            for name, param in self.tp_worker.worker.model_runner.model.named_parameters()
-        }
-
-        # offload parameters
-        self.tp_worker.worker.model_runner.model.to("meta")
-
-        # offload kv cache
-        self.tp_worker.worker.model_runner.token_to_kv_pool._clear_buffers()
-
-        self.flush_cache()
-        self.sync_in_tp("offload_model_weights")
-        # self.cuda_info("After offload Model weights and kv cache")
-        return OffloadReqOutput()
 
     def sync_hf_weight(self, recv_req: SyncHFWeightInput):
         use_cudagraph = not self.cfg.rollout.enforce_eager
@@ -203,74 +161,6 @@ class Scheduler(_Scheduler, Worker):
         self.sync_in_tp("sync_hf_weight")
         return SyncHFWeightOutput()
 
-    def sync_weight(self, recv_req: SyncWeightInput):
-        use_cudagraph = not self.cfg.rollout.enforce_eager
-        colocate = self.placement_mode == PlacementMode.COLLOCATED
-        if not colocate:
-            assert use_cudagraph, "If not colocate, use_cudagraph must be True now."
-
-        state_dict = self.recv(
-            src_group_name=self._actor_group_name,
-            src_rank=self.actor_weight_rank,
-        )
-        model = self.tp_worker.worker.model_runner.model
-
-        if use_cudagraph and colocate:
-            self.resume_memory_occupation(ResumeMemoryOccupationReqInput())
-
-        if colocate:
-            if use_cudagraph:
-                for name, handle in state_dict.items():
-                    func, args = handle
-                    list_args = list(args)
-                    # NOTE: the key is to change device id to the current device id
-                    # in case two processes have different CUDA_VISIBLE_DEVICES
-                    list_args[6] = torch.cuda.current_device()
-                    new_weight = func(*list_args)
-
-                    self.tp_worker.worker.model_runner.update_weights_from_tensor(
-                        [(name, new_weight)], load_format="direct"
-                    )
-                    del new_weight
-
-            else:
-                named_params = dict(model.named_parameters())
-                for name, handle in state_dict.items():
-                    rebind_param_attr(model, name, self.binded_attr, materialize=False)
-                    func, args = handle
-                    list_args = list(args)
-                    list_args[6] = torch.cuda.current_device()
-                    new_weight = func(*list_args)
-                    vllm_weight = named_params[name]
-                    assert vllm_weight.shape == new_weight.shape, (
-                        f"{name}: {vllm_weight.shape=}, {new_weight.shape=}"
-                    )
-                    assert vllm_weight.dtype == new_weight.dtype, (
-                        f"{name}: {vllm_weight.dtype=}, {new_weight.dtype=}"
-                    )
-
-                    swap_tensor_pointer(vllm_weight, new_weight)
-                    del new_weight
-
-                for name, buffer in self.named_buffers.items():
-                    vllm_buffer = get_module_from_name(model, name)
-                    assert vllm_buffer.shape == buffer.shape
-                    assert vllm_buffer.dtype == buffer.dtype
-                    swap_tensor_pointer(vllm_buffer, buffer)
-
-                self.named_buffers = {}
-
-                self.tp_worker.worker.model_runner.token_to_kv_pool._create_buffers()
-        else:
-            # disaggregate mode, recv tensor directly
-            named_tensors = [(n, p) for n, p in state_dict.items()]
-            self.tp_worker.worker.model_runner.update_weights_from_tensor(
-                named_tensors, load_format="direct"
-            )
-        self.sync_in_tp("sync_weight")
-
-        return SyncWeightOutput()
-
     def run_task_method(self, obj: TaskMethodInput):
         """
         Run a CommTask method with the given name and arguments.
@@ -300,6 +190,20 @@ class Scheduler(_Scheduler, Worker):
                 logger.debug(f"Abort running request. {req.rid=}")
                 req.to_abort = True
 
+    def get_scheduler_running_state(self):
+        num_used = self.max_total_num_tokens - (
+            self.token_to_kv_pool_allocator.available_size()
+            + self.tree_cache.evictable_size()
+        )
+        num_running_reqs = len(self.running_batch.reqs)
+        return {
+            "num_running_reqs": num_running_reqs,
+            "max_running_reqs": self.max_running_requests,
+            "num_used_tokens": num_used,
+            "max_total_num_tokens": self.max_total_num_tokens,
+            "token_usage": num_used / self.max_total_num_tokens,
+            "num_queue_reqs": len(self.waiting_queue),
+        }
 
 # only modifiy Scheduler's initialization parameters
 def run_scheduler_process(
