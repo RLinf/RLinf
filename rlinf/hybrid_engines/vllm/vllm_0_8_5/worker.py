@@ -83,7 +83,7 @@ class VLLMWorker(_VllmInnerWorker):
             src_group_name=self._actor_group_name, src_rank=self.actor_weight_rank
         )
         if self.placement_mode == PlacementMode.COLLOCATED:
-            # in colocated mode, rollout backend will never offload weights
+            # in disaggregated mode, rollout backend will never offload weights
             # so we don't need to wake up when placement is disaggregated
             super().wake_up()
 

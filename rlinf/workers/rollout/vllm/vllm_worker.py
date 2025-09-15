@@ -31,12 +31,12 @@ from vllm.sampling_params import RequestOutputKind, SamplingParams
 from vllm.utils import Counter
 from vllm.v1.engine.async_llm import AsyncLLM as AsyncLLMEngine
 
-from rlinf.algorithms.math.verifier.verify import MathRewardModel, math_verify_call
 from rlinf.config import torch_dtype_from_precision
 from rlinf.data.io_struct import RolloutRequest, RolloutResult
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.placement import ComponentPlacement
 from rlinf.workers.rollout.utils import print_vllm_outputs
+from toolkits.math_verifier.verify import MathRewardModel, math_verify_call
 
 from . import VLLMExecutor
 
