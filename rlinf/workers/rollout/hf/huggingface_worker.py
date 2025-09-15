@@ -203,10 +203,7 @@ class MultiStepRolloutWorker(Worker):
 
         for rollout_epoch in range(self.cfg.algorithm.rollout_epoch):
             self._logger.info(f"Now epoch is={rollout_epoch}")
-            for step in tqdm(
-                range(self.cfg.algorithm.n_chunk_steps),
-                desc=f"Rollout ID {self._rank} Epoch {rollout_epoch} in Generate Step",
-            ):
+            for _ in range(self.cfg.algorithm.n_chunk_steps):
                 for i in range(self.stage_num):
                     env_batch = await self.recv_env_batch()
                     self.update_env_batch(i, env_batch)
