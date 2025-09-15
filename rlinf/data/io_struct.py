@@ -347,7 +347,7 @@ class RolloutResult:
         rollout_result: RolloutResult = RolloutResult(
             group_size=group_size,
             num_sequence=group_size,
-            answers=[answer],
+            answers=[answer] * group_size,
             prompt_ids=prompt_ids,
             prompt_lengths=prompt_lengths,
             response_ids=response_ids,
@@ -363,7 +363,7 @@ class RolloutResult:
     def from_vllm_results(
         group_size: int,
         results: List[VllmRequestOutput],
-        answers: Optional[List[List[int]]] = None,
+        answers: Optional[List[str]] = None,
         return_logprobs: bool = False,
     ) -> "RolloutResult":
         def get_logprobs(
