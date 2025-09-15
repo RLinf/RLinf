@@ -28,7 +28,7 @@ from rlinf.utils.utils import output_redirector
 from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
-from rlinf.scheduler.dynamic_scheduler.scheduler_task import SchedulerTask
+from rlinf.scheduler.dynamic_scheduler.scheduler_worker import SchedulerWorker
 
 """Script to start GRPO training"""
 mp.set_start_method("spawn", force=True)
@@ -47,8 +47,8 @@ def main(cfg) -> None:
 
     if component_placement._placement_mode == PlacementMode.AUTO:
         scheduler_placement_strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=0)
-        scheduler_task = SchedulerTask.create_group(cfg, component_placement).launch(
-            cluster=cluster, name='SchedulerTask', placement_strategy=scheduler_placement_strategy
+        scheduler_task = SchedulerWorker.create_group(cfg, component_placement).launch(
+            cluster=cluster, name='SchedulerWorker', placement_strategy=scheduler_placement_strategy
         )
     else:
         scheduler_task = None

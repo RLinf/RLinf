@@ -14,7 +14,7 @@ from rlinf.scheduler.dynamic_scheduler.utils import (
 from rlinf.utils.placement import ComponentPlacement
 
 
-class SchedulerTask(Worker):
+class SchedulerWorker(Worker):
     def __init__(self, config: DictConfig, component_placement: ComponentPlacement):
         super().__init__()
         self.cfg = config
@@ -107,9 +107,11 @@ class SchedulerTask(Worker):
         if not self.use_pre_process_policy:
             return
 
+
         assert self.init_actor_gpu_num % self.rollout_model_parallel_size == 0
         migrate_out_instance_num = self.init_actor_gpu_num // self.rollout_model_parallel_size
         await self.rollout_manager.pre_process(migrate_out_instance_num)
+
 
         await self.actor_manager.pre_process()
         await self.inference_manager.pre_process()

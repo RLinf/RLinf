@@ -291,6 +291,7 @@ class RolloutManager(ComponentManager):
             if (instance_id == self.current_instance_num - 1) and (migrate_out_batches_index != migrate_out_batches_len):
                 migrate_in_batches += migrate_out_batches_index[migrate_out_batches_index:]
                 running_tasks += sum(migrate_batch.get_running_tasks() for migrate_batch in migrate_out_batches_index[migrate_out_batches_index:])
+                migrate_out_batches_index = migrate_out_batches_len
                 self._logger.info(f"[Migrate-Info] Error: migrate_out_batches split error, last-rollout instance get all data. running_tasks={running_tasks}")
 
             if len(migrate_in_batches) > 0:

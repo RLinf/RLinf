@@ -27,7 +27,7 @@ from tqdm import tqdm
 from rlinf.data.io_struct import RolloutRequest
 from rlinf.scheduler import Channel, Worker
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
-from rlinf.scheduler.dynamic_scheduler.scheduler_task import SchedulerTask
+from rlinf.scheduler.dynamic_scheduler.scheduler_worker import SchedulerWorker
 from rlinf.utils.data_iter_utils import split_list
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
@@ -57,7 +57,7 @@ class MathRunner:
         inference: Optional[MegatronInference],
         actor: MegatronActor,
         reward: Optional[Worker] = None,
-        scheduler_task: SchedulerTask = None,
+        scheduler_task: SchedulerWorker = None,
     ):
         """"""
         self.cfg = cfg
