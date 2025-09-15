@@ -257,6 +257,9 @@ def middle_file_to_mg(convert_config: ConvertorConfig) -> None:
                                         or key_name.endswith(".bias")
                                     ):
                                         module_base_name = key_name.rsplit(".", 1)[0]
+                                        if module_base_name.endswith('.router'):
+                                            # moe model router.weight don't need _extra_state
+                                            continue
                                         extra_state_key = (
                                             f"{module_base_name}._extra_state"
                                         )

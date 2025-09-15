@@ -822,6 +822,8 @@ class MegatronActor(MegatronModelManager, Worker):
 
     @torch.no_grad()
     def inference_step(self, batch):
+        # set the megatron actor in inference step
+        set_sync_funcs(self, forward_only=True)
         set_eval(self)
         return self.run_forward_backward(batch, forward_only=True)
 
