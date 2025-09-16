@@ -843,11 +843,12 @@ class MegatronActor(MegatronModelManager, Worker):
             self.calc_num_microbatches()
 
     def scheduler_offload_sync(self):
-        if not self.use_auto_scheduler:
+        inference_world_size = self.component_placement.inference_world_size
+        if inference_world_size == 0 or not self.use_auto_scheduler:
             return
         assert not self.is_weight_offloaded
         self.offload_model_weights_and_grad(offload_grad=True)
-        parallel_state.barrier_with_gloo()
+        self.broadcast(None, ranks=list(range(inference_world_size)))
         self.is_weight_offloaded = True
         if self._rank == 0:
             self.schedule_channel.put(None, queue_name=self.scheduler_response_queue, async_op=True).wait()
