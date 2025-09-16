@@ -1,3 +1,17 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import List
@@ -32,31 +46,37 @@ def get_valid_dp_sizes(cfg, model_parallel_size_with_cp) -> List[int]:
 
 
 def get_scheduler_channel(component: str):
+    """Get the scheduler channel name."""
     return f"schedule_channel_{component}"
 
 
 def get_scheduler_request_queue(instance_id: int = 0):
+    """Get the scheduler request queue name."""
     return f"schedule_request_{instance_id}"
 
 
 def get_scheduler_response_queue(instance_id: int = 0):
+    """Get the scheduler response queue name."""
     return f"schedule_response_{instance_id}"
 
 
 # Rollout Communication Related
 @dataclass
 class RolloutMigrateBatch:
+    """Rollout migrate batch."""
     input_ids: list = None
     results: list = None
     abort_results: list = None
     answers: list = None
 
     def get_running_tasks(self) -> int:
+        """Get the number of running tasks."""
         return len(self.abort_results)
 
 
 @dataclass
 class RolloutReport:
+    """Rollout report."""
     total_requests: int = None
     completed_requests: int = None
     total_tasks: int = None
@@ -66,6 +86,7 @@ class RolloutReport:
 
 
 class RolloutAction(Enum):
+    """Rollout action."""
     Default = auto()
     Report = auto()             # Check report
     Migrate_In = auto()         # Abort running tasks
@@ -77,6 +98,7 @@ class RolloutAction(Enum):
 
 @dataclass
 class RolloutScheduleInfo:
+    """Rollout schedule info."""
     instance_id: int = -1
     data: List[RolloutMigrateBatch] = None
     report: RolloutReport = None

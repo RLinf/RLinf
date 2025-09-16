@@ -23,12 +23,12 @@ from rlinf.data.datasets import create_rl_dataset
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.runners.math_runner import MathRunner
 from rlinf.scheduler import Cluster, PackedPlacementStrategy
+from rlinf.scheduler.dynamic_scheduler.scheduler_worker import SchedulerWorker
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
-from rlinf.scheduler.dynamic_scheduler.scheduler_worker import SchedulerWorker
 
 """Script to start GRPO training"""
 mp.set_start_method("spawn", force=True)

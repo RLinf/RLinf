@@ -1,3 +1,17 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import asyncio
 import math
 from logging import Logger
@@ -28,7 +42,25 @@ class ComponentManager:
         use_pre_process_policy: bool = True,
         use_wait_before_last_iter_policy: bool = True,
     ):
+        """Initialize the ComponentManager.
+
+        Args:
+            component_role (str): The role of the component.
+            config (DictConfig): The configuration of this training task.
+            channel (Channel): The channel for inter-worker communication.
+            model_parallel_size (int): The model parallel size.
+            instance_num (int): The number of instances.
+            communication_instance_num (int): The number of communication instances.
+            _logger (Logger): The logger for this training task.
+            use_pre_process_policy (bool): Whether to use the pre-process policy.
+            use_wait_before_last_iter_policy (bool): Whether to use the wait before last iter policy.
+        """
         if component_role == 'dummy':
+            self.component_role = 'dummy'
+            self.cfg = config
+            self._logger = _logger
+            self.model_parallel_size = 0
+            self.reset(instance_num)
             return
         self.component_role = component_role
         self.cfg = config
@@ -49,6 +81,12 @@ class ComponentManager:
         self.reset(instance_num)
 
     def release(self, release_gpu_num: int = 0, release_instance_num: int = 0):
+        """Update the current GPU and instance num after release.
+
+        Args:
+            release_gpu_num (int): The number of GPU resources to release.
+            release_instance_num (int): The number of instances to release.
+        """
         assert release_gpu_num == 0 or release_instance_num == 0
         if release_gpu_num == 0 and release_instance_num == 0:
             return
@@ -66,13 +104,20 @@ class ComponentManager:
             self.current_instance_offset += release_instance_num
 
     async def pre_process(self, *args, **kwargs):
+        """Pre-process the component."""
         pass
 
     async def post_process(self, *args, **kwargs):
+        """Pre-process the component."""
         pass
 
     # main loop
     def reset(self, instance_num: int):
+        """Reset state of ComponentManager.
+
+        Args:
+            instance_num (int): The number of instances.
+        """
         self.current_instance_num = instance_num
         self.current_gpu_num = self.current_instance_num * self.model_parallel_size
         self.current_instance_offset = 0
@@ -81,21 +126,24 @@ class ComponentManager:
         self.init_gpu_num = self.init_instance_num * self.model_parallel_size
 
     async def main_loop_finish(self, *args, **kwargs):
+        """Main loop finish."""
         pass
 
     async def release_resource(self, *args, **kwargs) -> int:
-        """Return the number of released GPU resources
+        """Release the GPU resources.
+
+        Returns:
+            int: The number of released GPU resources.
         """
         return 0
 
     async def allocate_resource(self, *args, **kwargs):
-        """Return the
-        """
+        """Allocate the GPU resources."""
         pass
 
 
 class RolloutManager(ComponentManager):
-    """Manage resource allocation for rollout instances"""
+    """Manage resource allocation for rollout."""
 
     def __init__(
         self,
@@ -108,6 +156,7 @@ class RolloutManager(ComponentManager):
         use_pre_process_policy: bool,
         use_wait_before_last_iter_policy: bool,
     ):
+        """Initialize the RolloutManager."""
         super().__init__(
             component_role="rollout",
             config=config,
@@ -130,6 +179,7 @@ class RolloutManager(ComponentManager):
         self.completed_tasks = 0
 
     async def pre_process(self, migrate_out_instance_num):
+        """Pre-process the rollout instances."""
         assert self.use_pre_process_policy
 
         while True:
@@ -141,6 +191,7 @@ class RolloutManager(ComponentManager):
                 break
 
     async def check_report(self):
+        """Check the report of rollout instances."""
         self.reports = [None for i in range(self.current_instance_num)]
         for instance_id in range(self.current_instance_num):
             rollout_instance_id = instance_id + self.current_instance_offset
@@ -173,6 +224,14 @@ class RolloutManager(ComponentManager):
         return report_str
 
     async def offload(self, action: RolloutAction) -> int:
+        """Offload the rollout instances.
+
+        Args:
+            action (RolloutAction): The action to offload.
+
+        Returns:
+            int: The number of released instances.
+        """
         assert action in [RolloutAction.Finish, RolloutAction.Wait_For_Finish]
         offloaded_instance_ids = []
         for instance_id in range(self.current_instance_num):
@@ -200,14 +259,13 @@ class RolloutManager(ComponentManager):
         return released_instance_num * self.model_parallel_size
 
     async def migrate_policy(self, train_iter: int) -> int:
-        """Return the max number of instances to migrate out.
-        Policy: find the minimum instance num to main_loop_finish rollout before last train iter
+        """Return the max number of rollout instances could migrate out.
 
         Args:
-            train_iter: current train iter
+            train_iter (int): current train iter
 
         Returns:
-            max_migrate_out_instance_num: the max number of instances to migrate out
+            int: the max number of rollout instances could migrate out
         """
         if self.current_instance_num <= 1:
             return 0
@@ -230,6 +288,11 @@ class RolloutManager(ComponentManager):
         return self.current_instance_num - min_instance_num
 
     async def execute_migrate(self, migrate_instance_num: int):
+        """Execute the migration of rollout instances.
+
+        Args:
+            migrate_instance_num (int): The number of rollout instances to migrate out.
+        """
         if migrate_instance_num == 0:
             return
         assert migrate_instance_num < self.current_instance_num
@@ -316,6 +379,17 @@ class RolloutManager(ComponentManager):
             assert response.action == RolloutAction.Offloaded and response.instance_id == rollout_instance_id
 
     async def find_release_instance_num_needed(self, release_instance_num_max: int, actor_valid_dp_sizes: List[int], actor_model_parallel_size: int, actor_current_instance_num: int) -> int:
+        """Find the number of rollout instances needed to release.
+
+        Args:
+            release_instance_num_max (int): The maximum number of rollout instances to release.
+            actor_valid_dp_sizes (List[int]): The valid DP sizes of the actor.
+            actor_model_parallel_size (int): The model parallel size of the actor.
+            actor_current_instance_num (int): The current number of instances of the actor.
+
+        Returns:
+            int: The number of rollout instances needed to release.
+        """
         if release_instance_num_max == 0:
             return 0
 
@@ -339,6 +413,17 @@ class RolloutManager(ComponentManager):
         return release_instance_num_needed
 
     async def release_resource(self, train_iter: int, actor_valid_dp_sizes: List[int], actor_model_parallel_size: int, actor_current_instance_num: int) -> int:
+        """Release the GPU resources.
+
+        Args:
+            train_iter (int): The current train iter.
+            actor_valid_dp_sizes (List[int]): The valid DP sizes of the actor.
+            actor_model_parallel_size (int): The model parallel size of the actor.
+            actor_current_instance_num (int): The current number of instances of the actor.
+
+        Returns:
+            int: The number of released GPU resources.
+        """
         # Step1 : get report
         if self.current_instance_num == 0:
             return 0
@@ -366,8 +451,7 @@ class RolloutManager(ComponentManager):
 
 
 class InferenceManager(ComponentManager):
-    """Manage resource allocation for actor instances
-    """
+    """Manage resource allocation for inference."""
     def __init__(
         self,
         config: DictConfig,
@@ -378,6 +462,7 @@ class InferenceManager(ComponentManager):
         _logger: Logger,
         use_pre_process_policy: bool,
         use_wait_before_last_iter_policy: bool,):
+        """Initialize the InferenceManager."""
         super().__init__(
                     component_role="inference",
                     config=config,
@@ -391,9 +476,14 @@ class InferenceManager(ComponentManager):
                 )
 
     def reset(self, instance_num):
+        """Reset the state of the InferenceManager."""
         super().reset(instance_num)
 
     async def last_iter_release_policy(self) -> int:
+        """Release the GPU resources at the last iter.
+
+        This policy will block training until the inference is finished.
+        """
         while not self.main_loop_finished_handler.done():
             await asyncio.sleep(0.1)
 
@@ -402,9 +492,11 @@ class InferenceManager(ComponentManager):
         return release_gpu_num
 
     async def main_loop_finish(self):
+        """Finish the main loop of the InferenceManager."""
         assert self.main_loop_finished_handler.done()
 
     async def release_resource(self, train_iter: int, all_rollout_offloaded: bool) -> int:
+        """Release the GPU resources."""
         if self.current_instance_num == 0:
             return 0
 
@@ -422,8 +514,7 @@ class InferenceManager(ComponentManager):
 
 
 class ActorManager(ComponentManager):
-    """Manage resource allocation for actor instances
-    """
+    """Manage resource allocation for actor."""
     def __init__(
         self,
         config: DictConfig,
@@ -436,6 +527,7 @@ class ActorManager(ComponentManager):
         use_wait_before_last_iter_policy: bool,
         valid_dp_sizes: List[int]
                 ):
+        """Initialize the ActorManager."""
         super().__init__(
                     component_role="actor",
                     config=config,
@@ -451,12 +543,22 @@ class ActorManager(ComponentManager):
         self.valid_dp_sizes = valid_dp_sizes
 
     async def pre_process(self):
+        """Pre-process the actor instances."""
         await self.channel.put(None, queue_name=get_scheduler_request_queue(), async_op=True).async_wait()
 
     async def main_loop_finish(self):
+        """Finish the main loop of the ActorManager."""
         return self.init_gpu_num
 
     async def try_allocate(self, available_gpu_num: int) -> int:
+        """Try to allocate the GPU resources.
+
+        Args:
+            available_gpu_num (int): The number of available GPU resources.
+
+        Returns:
+            int: The number of allocated GPU resources.
+        """
         if available_gpu_num < self.model_parallel_size:
             return 0
 
@@ -481,6 +583,12 @@ class ActorManager(ComponentManager):
     async def allocate_resource(
         self, available_gpu_num: int, train_iter: int
     ):
+        """Allocate the GPU resources.
+
+        Args:
+            available_gpu_num (int): The number of available GPU resources.
+            train_iter (int): The current train iter.
+        """
         new_gpu_num = self.current_gpu_num
         if train_iter == self.n_minibatches - 1:
             new_gpu_num = await self.main_loop_finish()
@@ -495,4 +603,5 @@ class ActorManager(ComponentManager):
             await self.channel.put(None, queue_name=get_scheduler_request_queue(), async_op=True).async_wait()
 
     async def wait_for_actor_update(self):
+        """Wait for the actor update."""
         await self.channel.get(queue_name=get_scheduler_response_queue(), async_op=True).async_wait()

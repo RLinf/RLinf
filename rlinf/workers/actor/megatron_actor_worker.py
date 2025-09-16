@@ -44,6 +44,12 @@ from rlinf.hybrid_engines.megatron.megatron_model_manager import (
     MegatronModelManager,
 )
 from rlinf.scheduler import Channel, Worker
+from rlinf.scheduler.dynamic_scheduler.utils import (
+    get_scheduler_channel,
+    get_scheduler_request_queue,
+    get_scheduler_response_queue,
+    get_valid_dp_sizes,
+)
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
     get_last_rank,
@@ -82,17 +88,10 @@ from rlinf.utils.utils import (
 from rlinf.workers.rollout.utils import RankMapper
 from toolkits.math_verifier.verify import math_verify_call
 
-from rlinf.scheduler.dynamic_scheduler.utils import (
-    get_scheduler_channel,
-    get_scheduler_request_queue,
-    get_scheduler_response_queue,
-    get_valid_dp_sizes,
-)
 try:
     from params_resharding import resharding_init
     HAVE_RESHARDING = True
 except ImportError:
-    print("can't find params_resharding, resharding is not supported", flush=True)
     HAVE_RESHARDING = False
 
 

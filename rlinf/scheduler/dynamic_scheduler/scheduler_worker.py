@@ -1,3 +1,17 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from omegaconf import DictConfig
 
 from rlinf.scheduler import Worker
@@ -15,7 +29,9 @@ from rlinf.utils.placement import ComponentPlacement
 
 
 class SchedulerWorker(Worker):
+    """Dynamic Scheduler."""
     def __init__(self, config: DictConfig, component_placement: ComponentPlacement):
+        """Initialize the SchedulerWorker."""
         super().__init__()
         self.cfg = config
         self.component_placement = component_placement
@@ -92,13 +108,15 @@ class SchedulerWorker(Worker):
             )
 
     async def run(self):
+        """Run the scheduler."""
         await self.pre_process()
         await self.main_loop()
         await self.post_process()
 
     async def pre_process(self):
-        """Pre process of each global step.
-        Rollout will take over gpu of actor. When running tasks is less than half of global batches, Rollout release those gpu to actor.
+        """Pre process.
+
+        Policy : Allocate resource to rollout first, then allocate resource to actor.
         """
         self.rollout_manager.reset(self.init_rollout_instance_num)
         self.actor_manager.reset(self.init_actor_instance_num)
@@ -107,11 +125,9 @@ class SchedulerWorker(Worker):
         if not self.use_pre_process_policy:
             return
 
-
         assert self.init_actor_gpu_num % self.rollout_model_parallel_size == 0
         migrate_out_instance_num = self.init_actor_gpu_num // self.rollout_model_parallel_size
         await self.rollout_manager.pre_process(migrate_out_instance_num)
-
 
         await self.actor_manager.pre_process()
         await self.inference_manager.pre_process()
@@ -121,12 +137,14 @@ class SchedulerWorker(Worker):
         assert self.rollout_manager.current_instance_offset == migrate_out_instance_num
 
     async def post_process(self):
-        """Post Process.
-        """
+        """Post Process."""
         pass
 
     async def main_loop(self):
-        """Main loop of scheduler
+        """Main loop.
+
+        The signal synchronization granularity is consistent with the actor training granularity.
+        Resource allocation is performed after the actor has completed one execution of optimizer.step().
         """
         for train_iter in range(self.cfg.algorithm.n_minibatches):
             # Wait for actor ready to update
