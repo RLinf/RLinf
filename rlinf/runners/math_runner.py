@@ -305,9 +305,10 @@ class MathRunner:
             self.actor.sync_model_to_inference()
             self.inference.sync_model_from_actor().wait()
 
-        self.actor.sync_model_to_rollout()
+        self.actor.sync_model_to_rollout_offload().wait()
+        self.actor.sync_model_to_rollout_transfer()
         self.rollout.sync_model_from_actor().wait()
-        self.actor.del_reshard_state_dict().wait()
+        # self.actor.del_reshard_state_dict().wait()
 
     def run(self):
         epoch_iter = range(self.epoch, self.cfg.runner.max_epochs)

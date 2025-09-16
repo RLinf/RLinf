@@ -1201,11 +1201,28 @@ class MegatronActor(MegatronModelManager, Worker):
         if hasattr(self, "reshard_state_dict"):
             del self.reshard_state_dict
 
-    def sync_model_to_rollout(self):
-        """Send the model weights to the destination ranks in the rollout task."""
+    def sync_model_to_rollout_transfer(self):
         if not self.is_running:
             return
         if self.component_placement._placement_mode == PlacementMode.COLLOCATED:
+            handle = {k: reduce_tensor(v) for k, v in self.reshard_state_dict.items()}
+            self.send(handle, self.rollout_group_name, self._weight_dst_rank_in_rollout)
+        else:
+            for weight_dst_rank in self._weight_dst_rank_in_rollout:
+                self.send(
+                    self.reshard_state_dict,
+                    self.rollout_group_name,
+                    weight_dst_rank,
+                )
+        torch.cuda.synchronize()
+        self.del_reshard_state_dict()
+        torch.cuda.empty_cache()
+
+    def sync_model_to_rollout_offload(self):
+        """Send the model weights to the destination ranks in the rollout task."""
+        if not self.is_running:
+            return
+        if self.component_placement._placement_mode == PlacementMode.COLLOCATED or self.use_pre_process_policy:
             if self.offload_optimizer:
                 self.offload_megatron_optimizer()
                 self.is_optimizer_offloaded = True
@@ -1213,10 +1230,7 @@ class MegatronActor(MegatronModelManager, Worker):
             if self.offload_weight:
                 self.offload_model_weights_and_grad(offload_grad=self.offload_grad)
                 self.is_weight_offloaded = True
-
-            handle = {k: reduce_tensor(v) for k, v in self.reshard_state_dict.items()}
-            self.send(handle, self.rollout_group_name, self._weight_dst_rank_in_rollout)
-        elif not self.use_pre_process_policy:
+        else:
             assert (
                 self.component_placement._placement_mode in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]
             ), "Unsupported placement mode for sending weights."
@@ -1224,27 +1238,6 @@ class MegatronActor(MegatronModelManager, Worker):
                 f"In disaggregated mode, weight_dst_rank_in_rollout should be a list of ranks, got {type(self._weight_dst_rank_in_rollout)}"
             )
             self.reshard_state_dict = self._get_rollout_model_state_dict()
-            for weight_dst_rank in self._weight_dst_rank_in_rollout:
-                self.send(
-                    self.reshard_state_dict,
-                    self.rollout_group_name,
-                    weight_dst_rank,
-                )
-        else:
-            assert self.component_placement._placement_mode == PlacementMode.AUTO, "Unsupported placement mode for sending weights."
-            if self.offload_optimizer:
-                self.offload_megatron_optimizer()
-                self.is_optimizer_offloaded = True
-            self.reshard_state_dict = self._get_rollout_model_state_dict()
-            if self.offload_weight:
-                self.offload_model_weights_and_grad(offload_grad=self.offload_grad)
-                self.is_weight_offloaded = True
-            for weight_dst_rank in self._weight_dst_rank_in_rollout:
-                self.send(
-                    self.reshard_state_dict,
-                    self.rollout_group_name,
-                    weight_dst_rank,
-                )
 
     def _compute_rollout_metrics(self, batch):
         rollout_metrics_compute_data_group = self.get_rollout_metrics_group(batch)
