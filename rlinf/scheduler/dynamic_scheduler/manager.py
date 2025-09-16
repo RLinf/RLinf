@@ -60,7 +60,7 @@ class ComponentManager:
             self.cfg = config
             self._logger = _logger
             self.model_parallel_size = 0
-            self.reset(instance_num)
+            # self.reset(instance_num)
             return
         self.component_role = component_role
         self.cfg = config
@@ -174,14 +174,9 @@ class RolloutManager(ComponentManager):
             self.cfg.algorithm.group_size * self.cfg.data.rollout_batch_size
         )
 
-        # pre iter/phase remainning running tasks num and cocompleted tasks num
-        self.running_tasks = self.rollout_total_tasks
-        self.completed_tasks = 0
-
     async def pre_process(self, migrate_out_instance_num):
         """Pre-process the rollout instances."""
         assert self.use_pre_process_policy
-
         while True:
             report_str = await self.check_report()
             await asyncio.sleep(1)
@@ -214,11 +209,14 @@ class RolloutManager(ComponentManager):
         total_tasks = sum(report.total_tasks for report in self.reports)
         running_tasks = sum(report.running_tasks for report in self.reports)
 
-        self.completed_tasks = self.running_tasks - running_tasks
-        self.running_tasks = running_tasks
-        self.pre_iter_speed_per_instance = self.completed_tasks // self.current_instance_num
+        if not hasattr(self, 'running_tasks'):
+            self.running_tasks = self.rollout_total_tasks
 
-        report_str = f"Rollout Report:\ncurrent_total_tasks={total_tasks}, current_running_tasks={running_tasks}, pre-iter completed_tasks={self.completed_tasks}, pre_iter_speed_per_instance={self.pre_iter_speed_per_instance}\n"
+        completed_tasks = self.running_tasks - running_tasks
+        self.running_tasks = running_tasks
+        self.pre_iter_speed_per_instance = completed_tasks // self.current_instance_num
+
+        report_str = f"Rollout Report:\ncurrent_total_tasks={total_tasks}, current_running_tasks={running_tasks}, pre-iter completed_tasks={completed_tasks}, pre_iter_speed_per_instance={self.pre_iter_speed_per_instance}\n"
         for i, report in enumerate(self.reports):
             report_str += f"rollout{i + self.current_instance_offset} : total_tasks={report.total_tasks}, running_tasks={report.running_tasks}, completed_tasks={report.completed_tasks}\n"
         return report_str
@@ -256,6 +254,7 @@ class RolloutManager(ComponentManager):
             ).async_wait()
             assert response.action == RolloutAction.Offloaded and response.instance_id == rollout_instance_id
 
+        del self.running_tasks
         return released_instance_num * self.model_parallel_size
 
     async def migrate_policy(self, train_iter: int) -> int:
