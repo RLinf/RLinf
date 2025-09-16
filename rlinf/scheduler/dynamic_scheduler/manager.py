@@ -270,12 +270,13 @@ class RolloutManager(ComponentManager):
 
         for instance_id in range(self.current_instance_num):
             rollout_instance_id = instance_id + self.current_instance_offset
+            is_last_instance = (instance_id == self.current_instance_num - 1)
 
             report = self.reports[instance_id + migrate_instance_num]
             running_tasks = report.running_tasks
 
             # TODO::Need get all running tasks from rollout instance for this kind of case
-            if running_tasks >= instance_running_tasks_expected:
+            if not is_last_instance and running_tasks >= instance_running_tasks_expected:
                 self._logger.info(f"Warning : rollout-{rollout_instance_id} has {running_tasks} running tasks >  expected {instance_running_tasks_expected}")
                 continue
 
@@ -288,9 +289,9 @@ class RolloutManager(ComponentManager):
 
             self._logger.info(f"[Migrate-Info] rollout-{rollout_instance_id} migrate_in_batches: {len(migrate_in_batches)}, running_tasks={report.running_tasks} -> {running_tasks} ~= {instance_running_tasks_expected}")
 
-            if (instance_id == self.current_instance_num - 1) and (migrate_out_batches_index != migrate_out_batches_len):
-                migrate_in_batches += migrate_out_batches_index[migrate_out_batches_index:]
-                running_tasks += sum(migrate_batch.get_running_tasks() for migrate_batch in migrate_out_batches_index[migrate_out_batches_index:])
+            if is_last_instance and (migrate_out_batches_index != migrate_out_batches_len):
+                migrate_in_batches += migrate_out_batches[migrate_out_batches_index:]
+                running_tasks += sum(migrate_batch.get_running_tasks() for migrate_batch in migrate_out_batches[migrate_out_batches_index:])
                 migrate_out_batches_index = migrate_out_batches_len
                 self._logger.info(f"[Migrate-Info] Error: migrate_out_batches split error, last-rollout instance get all data. running_tasks={running_tasks}")
 

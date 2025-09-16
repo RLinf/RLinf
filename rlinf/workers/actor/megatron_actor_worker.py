@@ -202,7 +202,7 @@ class MegatronActor(MegatronModelManager, Worker):
         self._init_profiler()
 
         self.use_auto_scheduler = (self.component_placement._placement_mode == PlacementMode.AUTO)
-        self.use_pre_process_policy = self.cfg.cluster.use_pre_process_policy and self.use_auto_scheduler
+        self.use_pre_process_policy = getattr(self.cfg.cluster, 'use_pre_process_policy', False) and self.use_auto_scheduler
         self.is_running = True
         if self.use_auto_scheduler:
             assert HAVE_RESHARDING, "params_resharding is required for scheduler"
