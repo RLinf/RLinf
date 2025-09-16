@@ -14,7 +14,10 @@
 
 import asyncio
 import dataclasses
-from typing import Dict, List, Tuple
+import json
+import os
+import time
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import torch
@@ -29,12 +32,113 @@ from rlinf.data.io_struct import (
     RolloutResult,
 )
 from rlinf.scheduler import Channel, Cluster, Worker
-from rlinf.utils.placement import ComponentPlacement
+from rlinf.scheduler.dynamic_scheduler.utils import (
+    RolloutAction,
+    RolloutMigrateBatch,
+    RolloutReport,
+    RolloutScheduleInfo,
+    get_scheduler_channel,
+    get_scheduler_request_queue,
+    get_scheduler_response_queue,
+)
+from rlinf.utils.placement import ComponentPlacement, PlacementMode
 from rlinf.workers.rollout.sglang import Engine, io_struct
 from rlinf.workers.rollout.utils import (
     print_sglang_outputs,
 )
 from toolkits.math_verifier.verify import MathRewardModel, math_verify_call
+
+
+class MetaInfoStatsCollector:
+    """Collector for SGLang meta_info statistics
+
+    This collector is only initialized when enabled via configuration.
+    Add the following parameters to your generation config section:
+
+    generation:
+      collect_meta_stats: true  # Enable meta_info statistics collection
+      meta_stats_file: "custom_meta_stats.jsonl"  # Optional: custom output file
+      async_meta_stats_file: "custom_async_meta_stats.jsonl"  # Optional: custom async output file
+      schedule_meta_stats_file: "custom_schedule_meta_stats.jsonl"  # Optional: custom schedule output file
+    """
+
+    def __init__(self, output_file: str = "sglang_meta_stats.jsonl"):
+        self.output_file = output_file
+        self.stats_buffer = []
+        self.buffer_size = 100  # Write to file every 100 records
+
+        # Ensure output directory exists
+        os.makedirs(os.path.dirname(self.output_file) if os.path.dirname(self.output_file) else ".", exist_ok=True)
+
+        # Initialize file with header if it doesn't exist
+        if not os.path.exists(self.output_file):
+            with open(self.output_file, 'w') as f:
+                f.write("")  # Create empty file
+
+    def collect_batch_stats(self, outputs: List[Dict], batch_id: int) -> None:
+        """Collect statistics from a batch of SGLang outputs
+
+        Args:
+            outputs: List of SGLang output dictionaries
+            batch_id: Unique identifier for this batch
+        """
+        current_time = time.time()
+
+        for req_idx, output in enumerate(outputs):
+            try:
+                # Extract meta_info
+                meta_info = output.get('meta_info', {})
+
+                # Extract the specific metrics you requested
+                stats_record = {
+                    'timestamp': current_time,
+                    'batch_id': batch_id,
+                    'request_id': f"batch_{batch_id}_req_{req_idx}",
+                    'prompt_tokens': meta_info.get('prompt_tokens', None),
+                    'completion_tokens': meta_info.get('completion_tokens', None),
+                    'e2e_latency': meta_info.get('e2e_latency', None),
+                    'ttft': meta_info.get('ttft', None),
+                    # Additional useful meta_info fields (if available)
+                    'finish_reason': meta_info.get('finish_reason', {}).get('type', None),
+                    'total_tokens': (meta_info.get('prompt_tokens', 0) + meta_info.get('completion_tokens', 0)) if meta_info.get('prompt_tokens') is not None and meta_info.get('completion_tokens') is not None else None,
+
+                    # Add any other meta_info fields that might be useful
+                    'meta_info_keys': list(meta_info.keys()),  # For debugging/inspection
+                }
+
+                self.stats_buffer.append(stats_record)
+
+            except Exception as e:
+                # Log error but continue processing
+                error_record = {
+                    'timestamp': current_time,
+                    'batch_id': batch_id,
+                    'request_id': f"batch_{batch_id}_req_{req_idx}",
+                    'error': str(e),
+                    'output_keys': list(output.keys()) if isinstance(output, dict) else 'not_dict'
+                }
+                self.stats_buffer.append(error_record)
+
+        # Write to file if buffer is full
+        if len(self.stats_buffer) >= self.buffer_size:
+            self._flush_to_file()
+
+    def _flush_to_file(self) -> None:
+        """Write buffered statistics to file"""
+        if not self.stats_buffer:
+            return
+
+        with open(self.output_file, 'a') as f:
+            for record in self.stats_buffer:
+                f.write(json.dumps(record) + '\n')
+
+        print(f"Written {len(self.stats_buffer)} records to {self.output_file}")
+        self.stats_buffer = []
+
+    def finalize(self) -> None:
+        """Flush any remaining data and close"""
+        self._flush_to_file()
+        print(f"Finalized stats collection. Data saved to {self.output_file}")
 
 
 class SGLangWorker(Worker):
@@ -231,6 +335,32 @@ class AsyncSGLangWorker(SGLangWorker):
             "rollout_batch_size_per_gpu is not supported in AsyncSGLangWorker"
         )
 
+        # Initialize meta_stats_collector for async operations
+        self.collect_meta_stats = getattr(self._cfg.rollout, 'collect_meta_stats', False)
+        if self.collect_meta_stats:
+            async_stats_file = getattr(self._cfg.rollout, 'async_meta_stats_file', f"sglang_meta_stats_async_rank_{self._rank}.jsonl")
+            self.async_meta_stats_collector = MetaInfoStatsCollector(async_stats_file)
+            self.async_batch_counter = 0
+
+        self.use_auto_scheduler = (self._placement._placement_mode == PlacementMode.AUTO)
+        if self.use_auto_scheduler:
+            self.schedule_channel = self.connect_channel(get_scheduler_channel('rollout'))
+            # warmup
+            self.schedule_channel.put(None, async_op=False)
+            self.schedule_channel.get(async_op=False)
+
+            self.scheduler_request_queue = get_scheduler_request_queue(self._rank)
+            self.scheduler_response_queue = get_scheduler_response_queue(self._rank)
+
+            if self.collect_meta_stats:
+                schedule_stats_file = getattr(self._cfg.rollout, 'schedule_meta_stats_file', f"sglang_meta_stats_rank_{self._rank}.jsonl")
+                self.schedule_meta_stats_collector = MetaInfoStatsCollector(schedule_stats_file)
+                self.schedule_batch_counter = 0
+
+            # Initialize report progress
+            self.progress_report_interval = 1.0  # seconds
+            self.last_progress_report = time.time()
+
     async def _validate_weight_at_first(self):
         """
         Run a test prompt batch and print its output.
@@ -255,7 +385,7 @@ class AsyncSGLangWorker(SGLangWorker):
         if self._cfg.rollout.validate_weight:
             await self._validate_weight_at_first()
 
-    async def _compute_reward_and_advantage(
+    def _compute_reward_and_advantage(
         self, engine_results: List[Dict], answer: str
     ):
         answers = [answer] * len(engine_results)
@@ -298,77 +428,63 @@ class AsyncSGLangWorker(SGLangWorker):
         await output_channel.put(item=result, async_op=True).async_wait()
 
     async def rollout(self, input_channel: Channel, output_channel: Channel):
+        self.log_info("Starting async generation...")
+        completion_info = CompletionInfo(self._logger)
+        task_queue = AsyncTaskQueue()
+
         rollout_request: RolloutRequest = await input_channel.get(
             async_op=True
         ).async_wait()
-        self._current_request = rollout_request
-        self._completion_info.clear_and_set(rollout_request)
+        # self._current_request = rollout_request
+        # self._completion_info.clear_and_set(rollout_request)
 
         with self.worker_timer():
-            rollout_tasks = [
-                asyncio.create_task(
-                    self._async_generate(raw_id, input_ids, self._sampling_params)
-                )
-                for raw_id, input_ids in enumerate(rollout_request.input_ids)
-                for _ in range(rollout_request.n)
-            ]
+            # rollout_tasks = [
+            #     asyncio.create_task(
+            #         self._async_generate(raw_id, input_ids, self._sampling_params)
+            #     )
+            #     for raw_id, input_ids in enumerate(rollout_request.input_ids)
+            #     for _ in range(rollout_request.n)
+            # ]
+            completion_info.n_result_each_request = rollout_request.n
+
+            for input_ids, answer in zip(rollout_request.input_ids, rollout_request.answers):
+                unique_id = completion_info.add_unique_id(input_ids, answer)
+                for _ in range(rollout_request.n):
+                    task_queue.put_one(self._async_generate(completion_info, unique_id, input_ids, self._sampling_params))
+
             return_tasks = []
-            total_reqs = len(rollout_tasks)
-            required_reqs = total_reqs // self._cfg.algorithm.max_num_gen_batches
+            all_results = []
 
-            droped_reqs = 0
-            finished_reqs = 0
-            abort_flag = False
-
-            for future in asyncio.as_completed(rollout_tasks):
-                raw_id, input_ids, result = await future
-                hash_id = self._completion_info.hash(input_ids)
-                self._completion_info.record_result(input_ids, result)
-
-                if self._completion_info.is_completed(hash_id):
-                    results = self._completion_info.get_results(hash_id)
-                    (
-                        rewards,
-                        advantages,
-                    ) = await self._compute_reward_and_advantage(
-                        results,
-                        self._current_request.answers[raw_id],
-                    )
-                    if (
-                        all_floats_equal(rewards)
-                        and self._cfg.algorithm.get("max_num_gen_batches", 1) > 1
-                    ):
-                        if (total_reqs - droped_reqs) > required_reqs:
-                            droped_reqs += rollout_request.n
-                            continue
-
-                    input_ids = [input_ids] * len(results)
-                    rollout_result = RolloutResult.from_sglang_results(
-                        results,
-                        rollout_request.n,
-                        input_ids,
-                        return_logprobs=self._return_logprobs,
-                    )
-                    rollout_result.rewards = torch.tensor(
-                        rewards, dtype=torch.float32
-                    ).reshape(-1, 1)
-                    rollout_result.advantages = advantages
+            def post_process_result(result, rollout_result: RolloutResult):
+                all_results.append(result)  # Collect for meta_info stats
+                if rollout_result is not None:
                     return_tasks.append(
                         asyncio.create_task(
                             self._put_result(rollout_result, output_channel)
                         )
                     )
+            loop_handle_rollout_tasks = asyncio.create_task(task_queue.loop_tasks(post_process_result))
 
-                    finished_reqs += rollout_request.n
-                    if finished_reqs == required_reqs:
-                        abort_flag = True
-                        break
+            if self.use_auto_scheduler:
+                scheduler_tasks = asyncio.create_task(self.run_with_scheduler(task_queue, completion_info))
+                await asyncio.gather(loop_handle_rollout_tasks, scheduler_tasks)
+            else:
+                # loop will be finished if unfinished_len is 0
+                task_queue.set_exit_flag()
+                await asyncio.gather(loop_handle_rollout_tasks)
 
-            if abort_flag:
-                # abort all req (running and waiting)
-                await self._engine.tokenizer_manager.pause_generation()
-
+            # wait for send result
             await asyncio.gather(*return_tasks)
+
+            # Collect meta_info statistics for all results only if enabled in config
+            if self.collect_meta_stats and hasattr(self, 'async_meta_stats_collector'):
+                self.async_meta_stats_collector.collect_batch_stats(all_results, self.async_batch_counter)
+                self.async_batch_counter += 1
+
+            self.log_info(f"Async generation and send completed. send results len={len(return_tasks)}")
+            await self.offload_engine()
+            await self.schedule_channel.put(RolloutScheduleInfo(instance_id=self._rank, action=RolloutAction.Offloaded), queue_name=self.scheduler_response_queue, async_op=True).async_wait()
 
     async def offload_engine(self):
         """
@@ -388,6 +504,13 @@ class AsyncSGLangWorker(SGLangWorker):
         """
         Shutdown the SGLang task.
         """
+        # Finalize meta_info statistics collectors if they exist
+        if hasattr(self, 'async_meta_stats_collector'):
+            self.async_meta_stats_collector.finalize()
+
+        if hasattr(self, 'schedule_meta_stats_collector'):
+            self.schedule_meta_stats_collector.finalize()
+
         self.log_info(f"Shutting down SGLang worker {self._rank} ...")
         self._engine.shutdown()
         self.log_info(f"SGLang worker {self._rank} shutdown complete.")
