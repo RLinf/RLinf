@@ -847,6 +847,7 @@ class MegatronActor(MegatronModelManager, Worker):
             return
         assert not self.is_weight_offloaded
         self.offload_model_weights_and_grad(offload_grad=True)
+        parallel_state.barrier_with_gloo()
         self.is_weight_offloaded = True
         if self._rank == 0:
             self.schedule_channel.put(None, queue_name=self.scheduler_response_queue, async_op=True).wait()
@@ -854,6 +855,9 @@ class MegatronActor(MegatronModelManager, Worker):
     def get_rollout_metrics_group(self, batch):
         if not self.use_auto_scheduler:
             return parallel_state.get_data_parallel_group()
+
+        if len(batch) == 0:
+            return None
 
         trained_batch_size = get_batch_size(batch)
 
