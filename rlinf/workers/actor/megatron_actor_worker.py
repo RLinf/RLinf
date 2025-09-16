@@ -857,9 +857,9 @@ class MegatronActor(MegatronModelManager, Worker):
             return parallel_state.get_data_parallel_group()
 
         if len(batch) == 0:
-            return None
-
-        trained_batch_size = get_batch_size(batch)
+            trained_batch_size = 0
+        else:
+            trained_batch_size = get_batch_size(batch)
 
         max_data_parallel_group = parallel_state.get_data_parallel_group_elastic_max()
         max_data_parallel_ranks = torch.distributed.get_process_group_ranks(max_data_parallel_group)
