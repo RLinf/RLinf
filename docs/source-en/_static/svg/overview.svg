@@ -24,9 +24,9 @@
      inkscape:cx="2055.7825"
      inkscape:cy="265.52407"
      inkscape:window-width="2560"
-     inkscape:window-height="1494"
-     inkscape:window-x="-11"
-     inkscape:window-y="-11"
+     inkscape:window-height="1369"
+     inkscape:window-x="-8"
+     inkscape:window-y="-8"
      inkscape:window-maximized="1"
      inkscape:current-layer="g190" /><defs
      id="defs41"><filter
@@ -2577,8 +2577,8 @@
          text-decoration="none"
          id="text51-5-1"
          style="text-decoration:none;text-decoration-line:none"
-         x="1039.7761"
-         y="635.76947">Task Layer </text><path
+         x="999.7749"
+         y="635.76947">Worker Layer </text><path
          d="m 1599.2853,558.30448 c 0,-1.75156 -3.6266,-19.44989 21.9939,-19.44989 h 608.3826 c 27.217,0 16.5753,22.13803 16.6039,23.88948 l 2.0464,126.14727 c 0.029,1.75116 -14.0934,3.17132 -31.4771,3.17132 h -586.0725 c -17.3848,0 -31.4772,-1.42004 -31.4772,-3.17132 z"
          stroke="#6c9f2f"
          stroke-width="2.72895"
