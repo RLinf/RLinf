@@ -42,6 +42,8 @@
 你有两种方式使用脚本：
 **方式一：编辑脚本文件**
 手动打开 ``mg2hf_7b.sh`` 或 ``mg2hf_1.5b.sh``，将 ``CKPT_PATH_MG``（Megatron checkpoint路径）和 ``CKPT_PATH_HF``（Huggingface目标路径）变量设置为你想要的路径。
+传入的Megatron checkpoint路径结构应为如下格式：``results/run_name/checkpoints/global_step_xx/actor/``.  
+
 **方式二：命令行参数**
 更灵活的方式是直接通过命令行参数传入路径。
 .. code-block:: bash

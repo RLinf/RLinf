@@ -42,6 +42,7 @@ You have two options for using the scripts:
 **Method 1: Edit the Script Files**
 
 Manually open either ``mg2hf_7b.sh`` or ``mg2hf_1.5b.sh`` and set the ``CKPT_PATH_MG`` (Megatron checkpoint path) and ``CKPT_PATH_HF`` (Huggingface target path) variables to your desired locations.
+A valid Megatron checkpoint path looks like this: ``results/run_name/checkpoints/global_step_xx/actor/``.  
 
 **Method 2: Command-Line Arguments**
 
