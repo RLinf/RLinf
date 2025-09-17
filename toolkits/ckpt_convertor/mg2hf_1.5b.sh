@@ -1,10 +1,12 @@
 CKPT_PATH_MG=$1
 CKPT_PATH_HF=$2
+CKPT_PATH_ORIGINAL_HF=$3
 CKPT_PATH_MF="$CKPT_PATH_HF"_middle_file
 
 TP_SIZE=2
 PP_SIZE=1
 
+rm -rf $CKPT_PATH_HF
 rm -rf $CKPT_PATH_MF
 python -m convert_mg_to_middle_file \
     --load-path $CKPT_PATH_MG \
@@ -19,7 +21,6 @@ python -m convert_mg_to_middle_file \
     --use-gpu-num 0 \
     --process-num 16
 
-rm -rf $CKPT_PATH_HF
 python -m convert_middle_file_to_hf \
     --load-path $CKPT_PATH_MF \
     --save-path $CKPT_PATH_HF \
@@ -31,4 +32,4 @@ rm -rf $CKPT_PATH_MF
 
 # copy other files to new hf folder
 rm $CKPT_PATH_HF/*.done
-cp $CKPT_PATH_MG/*.json $CKPT_PATH_HF
+cp $CKPT_PATH_ORIGINAL_HF/*.json $CKPT_PATH_HF

@@ -41,8 +41,11 @@ You have two options for using the scripts:
 
 **Method 1: Edit the Script Files**
 
-Manually open either ``mg2hf_7b.sh`` or ``mg2hf_1.5b.sh`` and set the ``CKPT_PATH_MG`` (Megatron checkpoint path) and ``CKPT_PATH_HF`` (Huggingface target path) variables to your desired locations.
-A valid Megatron checkpoint path looks like this: ``results/run_name/checkpoints/global_step_xx/actor/``.  
+Manually open either ``mg2hf_7b.sh`` or ``mg2hf_1.5b.sh`` and set the following variables to your desired locations.
+
+1. ``CKPT_PATH_MG``: Megatron checkpoint path, e.g., ``results/run_name/checkpoints/global_step_xx/actor/``;
+2. ``CKPT_PATH_HF``: Huggingface target path, any place you like;
+3. ``CKPT_PATH_ORIGINAL_HF``: the path to the base model checkpoint, e.g., ``/path/to/DeepSeek-R1-Distill-Qwen-1.5B``.
 
 **Method 2: Command-Line Arguments**
 
@@ -51,10 +54,10 @@ A more flexible approach is to pass the paths directly as command-line arguments
 .. code-block:: bash
 
    # For 1.5B models
-   bash mg2hf_1.5b.sh /path/to/megatron_checkpoint /target/path/to/huggingface_checkpoint
+   bash mg2hf_1.5b.sh /path/to/megatron_checkpoint /target/path/to/huggingface_checkpoint /path/to/base_model_checkpoint
 
    # For 7B models
-   bash mg2hf_7b.sh /path/to/megatron_checkpoint /target/path/to/huggingface_checkpoint
+   bash mg2hf_7b.sh /path/to/megatron_checkpoint /target/path/to/huggingface_checkpoint /path/to/base_model_checkpoint
 
 Step 2: Run Evaluation
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -62,6 +65,7 @@ Step 2: Run Evaluation
 Once your checkpoints are converted, you can run evaluations.
 
 **Single Dataset Evaluation**
+
 To evaluate the model on a single dataset, use the following command. Make sure to replace the placeholder paths and variables with your own.
 
 .. code-block:: bash
@@ -90,13 +94,14 @@ To evaluate the model on a single dataset, use the following command. Make sure 
        --save_outputs
 
 **Batch Evaluation**
-For an automated batch evaluation on multiple datasets, use the ``main_eval.sh`` script.
+
+For an automated batch evaluation on multiple datasets, use the ``main_eval.sh`` script. This will sequentially evaluate the model on the AIME24, AIME25, and GPQA-diamond datasets.
 
 .. code-block:: bash
 
-   bash main_eval.sh
+   bash main_eval.sh /path/to/model_checkpoint
 
-Note: Before running, you must set the ``MODEL_NAME_OR_PATH`` and ``CUDA_VISIBLE_DEVICES`` variables directly within the ``main_eval.sh`` script. This will sequentially evaluate the model on the AIME24, AIME25, and GPQA-diamond datasets.
+Note: you can manually change ``CUDA_VISIBLE_DEVICES`` within the ``main_eval.sh`` script to manage GPU usage flexibly. 
 
 Results
 -------
