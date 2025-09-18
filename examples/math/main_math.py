@@ -45,18 +45,6 @@ def main(cfg) -> None:
     )
     component_placement = ModelParallelComponentPlacement(cfg)
 
-    if component_placement._placement_mode == PlacementMode.AUTO:
-        scheduler_placement_strategy = PackedPlacementStrategy(
-            start_gpu_id=0, end_gpu_id=0
-        )
-        scheduler_task = SchedulerWorker.create_group(cfg, component_placement).launch(
-            cluster=cluster,
-            name="SchedulerWorker",
-            placement_strategy=scheduler_placement_strategy,
-        )
-    else:
-        scheduler_task = None
-
     rollout_worker_cls = get_rollout_backend_worker(cfg, component_placement)
 
     # Rollout group
@@ -88,6 +76,19 @@ def main(cfg) -> None:
     actor_group = MegatronActor.create_group(cfg, component_placement).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement_strategy
     )
+
+    # Dynamic Scheduler group
+    if component_placement._placement_mode == PlacementMode.AUTO:
+        scheduler_placement_strategy = PackedPlacementStrategy(
+            start_gpu_id=0, end_gpu_id=0
+        )
+        scheduler_task = SchedulerWorker.create_group(cfg, component_placement).launch(
+            cluster=cluster,
+            name="SchedulerWorker",
+            placement_strategy=scheduler_placement_strategy,
+        )
+    else:
+        scheduler_task = None
 
     tokenizer = hf_tokenizer(cfg.actor.tokenizer.tokenizer_model)
     train_ds, val_ds = create_rl_dataset(cfg.data, tokenizer)

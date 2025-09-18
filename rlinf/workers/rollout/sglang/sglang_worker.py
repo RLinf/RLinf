@@ -405,9 +405,6 @@ class AsyncSGLangWorker(SGLangWorker):
             self.schedule_channel = self.connect_channel(
                 get_scheduler_channel("rollout")
             )
-            # warmup
-            self.schedule_channel.put(None, async_op=False)
-            self.schedule_channel.get(async_op=False)
 
             self.scheduler_request_queue = get_scheduler_request_queue(self._rank)
             self.scheduler_response_queue = get_scheduler_response_queue(self._rank)

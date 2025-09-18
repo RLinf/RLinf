@@ -55,9 +55,6 @@ class SchedulerWorker(Worker):
             self.component_channels[component] = self.create_channel(
                 get_scheduler_channel(component)
             )
-            # warmup
-            self.component_channels[component].put(None, async_op=False)
-            self.component_channels[component].get(async_op=False)
 
         # Note. mode_parallel_size here represents the number of GPUs, the quantity required for a single instance
         self.init_rollout_instance_num = component_placement.rollout_dp_size

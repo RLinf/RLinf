@@ -305,12 +305,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 num_gpus_per_process=rollout_tp_size,
                 stride=stride,
             )
-        else:
-            assert self._placement_mode in [
-                PlacementMode.DISAGGREGATED,
-                PlacementMode.AUTO,
-            ], f"Placement mode {self._placement_mode} is not supported in auto mode"
-            # Generate continuous placement strategies for components in a cluster.
+        elif self._placement_mode == PlacementMode.DISAGGREGATED:
             num_gpus_per_rollout_dp = len(self._rollout_gpus) // self.rollout_dp_size
             self._placements["rollout"] = PackedPlacementStrategy(
                 self._rollout_gpus[0],
@@ -321,13 +316,35 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 self._placements["inference"] = PackedPlacementStrategy(
                     self._inference_gpus[0], self._inference_gpus[-1]
                 )
-            if self._placement_mode == PlacementMode.DISAGGREGATED:
-                self._placements["actor"] = PackedPlacementStrategy(
-                    self._actor_gpus[0], self._actor_gpus[-1]
-                )
-            else:
-                self._placements["actor"] = PackedPlacementStrategy(
-                    0, self._cluster_num_gpus - 1
+            self._placements["actor"] = PackedPlacementStrategy(
+                self._actor_gpus[0], self._actor_gpus[-1]
+            )
+        else:
+            assert self._placement_mode == PlacementMode.AUTO, (
+                f"Placement mode {self._placement_mode} is not supported in auto mode"
+            )
+            # In AUTO mode, actor will be placed on all GPUs
+            self._placements["actor"] = PackedPlacementStrategy(
+                0, self._cluster_num_gpus - 1
+            )
+
+            use_pre_process_policy = getattr(
+                self._config.cluster, "use_pre_process_policy", False
+            )
+            if use_pre_process_policy:
+                self._rollout_gpus = [0, self._actor_gpus[-1]] + self._rollout_gpus
+                self._rollout_num_gpus = len(self._rollout_gpus)
+
+            num_gpus_per_rollout_dp = len(self._rollout_gpus) // self.rollout_dp_size
+            self._placements["rollout"] = PackedPlacementStrategy(
+                self._rollout_gpus[0],
+                self._rollout_gpus[-1],
+                num_gpus_per_process=num_gpus_per_rollout_dp,
+            )
+
+            if self._inference_gpus is not None:
+                self._placements["inference"] = PackedPlacementStrategy(
+                    self._inference_gpus[0], self._inference_gpus[-1]
                 )
 
     @property

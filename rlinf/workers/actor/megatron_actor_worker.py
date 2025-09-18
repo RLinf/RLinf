@@ -212,10 +212,6 @@ class MegatronActor(MegatronModelManager, Worker):
         if self.use_auto_scheduler:
             assert HAVE_RESHARDING, "params_resharding is required for scheduler"
             self.schedule_channel = self.connect_channel(get_scheduler_channel(role))
-            # warmup
-            self.schedule_channel.put(None, async_op=False)
-            self.schedule_channel.get(async_op=False)
-
             self.scheduler_request_queue = get_scheduler_request_queue(self._rank)
             self.scheduler_response_queue = get_scheduler_response_queue(self._rank)
 
