@@ -1,6 +1,11 @@
 推理 RL-LLM
 =================
 
+.. |huggingface| image:: /_static/svg/hf-logo.svg
+   :width: 16px
+   :height: 16px
+   :class: inline-icon
+
 本文档介绍了如何在 RLinf 框架下，使用强化学习（RL）来训练大语言模型（LLM）以进行数学推理。  
 与监督微调（SFT）相比，RL 能够鼓励模型探索多样化的推理路径，同时优先保证最终答案的正确性。  
 
@@ -130,22 +135,22 @@
      - AIME 25
      - GPQA-diamond
      - 平均值
-   * - `DeepSeek-R1-Distill-Qwen-1.5B (基础模型) <https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B>`_
+   * - |huggingface| `DeepSeek-R1-Distill-Qwen-1.5B (基础模型) <https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B>`_
      - 28.33
      - 24.90
      - 27.45
      - 26.89
-   * - `DeepMath-1.5B <https://huggingface.co/zwhe99/DeepMath-1.5B>`_
+   * - |huggingface| `DeepMath-1.5B <https://huggingface.co/zwhe99/DeepMath-1.5B>`_
      - 37.80
      - 30.42
      - 32.11
      - 33.44
-   * - `DeepScaleR-1.5B-Preview <https://huggingface.co/agentica-org/DeepScaleR-1.5B-Preview>`_
+   * - |huggingface| `DeepScaleR-1.5B-Preview <https://huggingface.co/agentica-org/DeepScaleR-1.5B-Preview>`_
      - 40.41
      - 30.93
      - 27.54
      - 32.96
-   * - `AReaL-1.5B-Preview-Stage-3 <https://huggingface.co/inclusionAI/AReaL-1.5B-Preview-Stage-3>`_
+   * - |huggingface| `AReaL-1.5B-Preview-Stage-3 <https://huggingface.co/inclusionAI/AReaL-1.5B-Preview-Stage-3>`_
      - 40.73
      - 31.56
      - 28.10
@@ -155,12 +160,12 @@
      - 34.27
      - 33.81
      - 37.50
-   * - `FastCuRL-1.5B-V3 <https://huggingface.co/Nickyang/FastCuRL-1.5B-V3>`_
+   * - |huggingface| `FastCuRL-1.5B-V3 <https://huggingface.co/Nickyang/FastCuRL-1.5B-V3>`_
      - 43.65
      - 32.49
      - 35.00
      - 37.05
-   * - `RLinf-math-1.5B <https://huggingface.co/RLinf/RLinf-math-1.5B>`_
+   * - |huggingface| `RLinf-math-1.5B <https://huggingface.co/RLinf/RLinf-math-1.5B>`_
      - **48.44**
      - **35.63**
      - **38.46**
@@ -177,32 +182,32 @@
      - AIME 25
      - GPQA-diamond
      - 平均值
-   * - `DeepSeek-R1-Distill-Qwen-7B (基础模型) <https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B>`_
+   * - |huggingface| `DeepSeek-R1-Distill-Qwen-7B (基础模型) <https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B>`_
      - 54.90
      - 40.20
      - 45.48
      - 46.86
-   * - `AReaL-boba-RL-7B <https://huggingface.co/inclusionAI/AReaL-boba-RL-7B>`_
+   * - |huggingface| `AReaL-boba-RL-7B <https://huggingface.co/inclusionAI/AReaL-boba-RL-7B>`_
      - 61.66
      - 49.38
      - 46.93
      - 52.66
-   * - `Skywork-OR1-7B <https://huggingface.co/Skywork/Skywork-OR1-7B>`_
+   * - |huggingface| `Skywork-OR1-7B <https://huggingface.co/Skywork/Skywork-OR1-7B>`_
      - 66.87
      - 52.49
      - 44.43
      - 54.60
-   * - `Polaris-7B-Preview <https://huggingface.co/POLARIS-Project/Polaris-7B-Preview>`_
+   * - |huggingface| `Polaris-7B-Preview <https://huggingface.co/POLARIS-Project/Polaris-7B-Preview>`_
      - **68.55**
      - 51.24
      - 43.88
      - 54.56
-   * - `AceMath-RL-Nemotron-7B <https://huggingface.co/nvidia/AceMath-RL-Nemotron-7B>`_
+   * - |huggingface| `AceMath-RL-Nemotron-7B <https://huggingface.co/nvidia/AceMath-RL-Nemotron-7B>`_
      - 67.30
      - **55.00**
      - 45.57
      - 55.96
-   * - `RLinf-math-7B <https://huggingface.co/RLinf/RLinf-math-7B>`_
+   * - |huggingface| `RLinf-math-7B <https://huggingface.co/RLinf/RLinf-math-7B>`_
      - 68.33
      - 52.19
      - **48.18**
