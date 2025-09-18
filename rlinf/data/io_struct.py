@@ -101,7 +101,9 @@ class CompletionInfo:
         self.results: Dict[int, List[Dict]] = {}  # hash -> list of results
         self.input_ids_map: Dict[int, List[Dict]] = {}  # unique_id -> input_ids
         self.answers: Dict[int, List[str]] = {}  # unique_id -> answer
-        self.abort_results: Dict[int, List[Dict]] = {}  # unique_id -> list of abort results
+        self.abort_results: Dict[
+            int, List[Dict]
+        ] = {}  # unique_id -> list of abort results
 
         self.num_requests: int = 0
         self.num_completed: int = 0

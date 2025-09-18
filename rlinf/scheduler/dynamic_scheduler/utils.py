@@ -64,6 +64,7 @@ def get_scheduler_response_queue(instance_id: int = 0):
 @dataclass
 class RolloutMigrateBatch:
     """Rollout migrate batch."""
+
     input_ids: list = None
     results: list = None
     abort_results: list = None
@@ -77,6 +78,7 @@ class RolloutMigrateBatch:
 @dataclass
 class RolloutReport:
     """Rollout report."""
+
     total_requests: int = None
     completed_requests: int = None
     total_tasks: int = None
@@ -87,18 +89,20 @@ class RolloutReport:
 
 class RolloutAction(Enum):
     """Rollout action."""
+
     Default = auto()
-    Report = auto()             # Check report
-    Migrate_In = auto()         # Abort running tasks
-    Migrate_Out = auto()        # Recevie running tasks
-    Finish = auto()             # Finish running taks => offload weight
-    Wait_For_Finish = auto()    # Block by rollout
-    Offloaded = auto()          # Rollout offloaded signal
+    Report = auto()  # Check report
+    Migrate_In = auto()  # Abort running tasks
+    Migrate_Out = auto()  # Recevie running tasks
+    Finish = auto()  # Finish running taks => offload weight
+    Wait_For_Finish = auto()  # Block by rollout
+    Offloaded = auto()  # Rollout offloaded signal
 
 
 @dataclass
 class RolloutScheduleInfo:
     """Rollout schedule info."""
+
     instance_id: int = -1
     data: List[RolloutMigrateBatch] = None
     report: RolloutReport = None

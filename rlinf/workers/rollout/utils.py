@@ -566,7 +566,10 @@ def get_rollout_backend_worker(
 
         if placement.placement_mode == PlacementMode.COLLOCATED:
             return SGLangWorker
-        elif placement.placement_mode in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]:
+        elif placement.placement_mode in [
+            PlacementMode.DISAGGREGATED,
+            PlacementMode.AUTO,
+        ]:
             return AsyncSGLangWorker
         else:
             raise ValueError(f"Unsupported placement mode: {placement.placement_mode}")

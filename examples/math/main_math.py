@@ -46,9 +46,13 @@ def main(cfg) -> None:
     component_placement = ModelParallelComponentPlacement(cfg)
 
     if component_placement._placement_mode == PlacementMode.AUTO:
-        scheduler_placement_strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=0)
+        scheduler_placement_strategy = PackedPlacementStrategy(
+            start_gpu_id=0, end_gpu_id=0
+        )
         scheduler_task = SchedulerWorker.create_group(cfg, component_placement).launch(
-            cluster=cluster, name='SchedulerWorker', placement_strategy=scheduler_placement_strategy
+            cluster=cluster,
+            name="SchedulerWorker",
+            placement_strategy=scheduler_placement_strategy,
         )
     else:
         scheduler_task = None
@@ -66,7 +70,8 @@ def main(cfg) -> None:
     # Inference group
     inference_group = None
     if (
-        component_placement.placement_mode in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]
+        component_placement.placement_mode
+        in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]
         and cfg.algorithm.recompute_logprobs
     ):
         inference_placement_strategy = component_placement.get_strategy("inference")

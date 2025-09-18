@@ -134,7 +134,9 @@ class Scheduler(_Scheduler, Worker):
         running_reqs.append(self.running_batch.reqs)
         for req in self.running_batch.reqs:
             req.to_abort = True
-        res = AbortGenerationOutput(waiting_reqs=waiting_reqs, running_reqs=running_reqs)
+        res = AbortGenerationOutput(
+            waiting_reqs=waiting_reqs, running_reqs=running_reqs
+        )
         return res
 
     def sync_in_tp(self, fn: str = ""):
@@ -164,7 +166,9 @@ class Scheduler(_Scheduler, Worker):
             assert use_cudagraph, "If not colocate, use_cudagraph must be True now."
 
         if use_cudagraph:
-            assert not self.is_weight_offloaded, "already offloaded. please do not offload again."
+            assert not self.is_weight_offloaded, (
+                "already offloaded. please do not offload again."
+            )
             self.is_weight_offloaded = True
             self.release_memory_occupation(ReleaseMemoryOccupationReqInput())
             # self.cuda_info("After offload Model weights and kv cache")

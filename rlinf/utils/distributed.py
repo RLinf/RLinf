@@ -92,7 +92,7 @@ def compute_rollout_metrics(
     )
     torch.distributed.all_reduce(
         reduce_tensor,
-    torch.distributed.ReduceOp.MAX,
+        torch.distributed.ReduceOp.MAX,
         group=data_parallel_group,
     )
     adv_min, adv_max = reduce_tensor.tolist()

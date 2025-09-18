@@ -265,7 +265,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         )
 
     def _is_auto(self):
-        return getattr(self._config.cluster, 'auto_scheduler', False)
+        return getattr(self._config.cluster, "auto_scheduler", False)
 
     def _is_collocated(self):
         if self._actor_gpus == self._rollout_gpus:
@@ -306,7 +306,10 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 stride=stride,
             )
         else:
-            assert self._placement_mode in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO], f"Placement mode {self._placement_mode} is not supported in auto mode"
+            assert self._placement_mode in [
+                PlacementMode.DISAGGREGATED,
+                PlacementMode.AUTO,
+            ], f"Placement mode {self._placement_mode} is not supported in auto mode"
             # Generate continuous placement strategies for components in a cluster.
             num_gpus_per_rollout_dp = len(self._rollout_gpus) // self.rollout_dp_size
             self._placements["rollout"] = PackedPlacementStrategy(

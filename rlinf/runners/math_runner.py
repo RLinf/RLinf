@@ -75,7 +75,9 @@ class MathRunner:
 
         # Scheduler task
         self.scheduler_task = scheduler_task
-        self.use_pre_process_policy = getattr(self.cfg.cluster, 'use_pre_process_policy', False) and (scheduler_task is not None)
+        self.use_pre_process_policy = getattr(
+            self.cfg.cluster, "use_pre_process_policy", False
+        ) and (scheduler_task is not None)
 
         # Data channels
         self.dataloader_channel = Channel.create("DataLoader")

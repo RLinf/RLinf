@@ -30,6 +30,7 @@ from rlinf.utils.placement import ComponentPlacement
 
 class SchedulerWorker(Worker):
     """Dynamic Scheduler."""
+
     def __init__(self, config: DictConfig, component_placement: ComponentPlacement):
         """Initialize the SchedulerWorker."""
         super().__init__()
@@ -39,8 +40,12 @@ class SchedulerWorker(Worker):
         self.total_gpus = self.component_placement._cluster_num_gpus
 
         # Set policies for scheduler
-        self.use_pre_process_policy = getattr(self.cfg.cluster, 'use_pre_process_policy', True)
-        self.use_wait_before_last_iter_policy = getattr(self.cfg.cluster, 'use_wait_before_last_iter_policy', True)
+        self.use_pre_process_policy = getattr(
+            self.cfg.cluster, "use_pre_process_policy", True
+        )
+        self.use_wait_before_last_iter_policy = getattr(
+            self.cfg.cluster, "use_wait_before_last_iter_policy", True
+        )
 
         assert "rollout" in self.components, "rollout component is required"
         assert "actor" in self.components, "actor component is required"
@@ -57,18 +62,28 @@ class SchedulerWorker(Worker):
         # Note. mode_parallel_size here represents the number of GPUs, the quantity required for a single instance
         self.init_rollout_instance_num = component_placement.rollout_dp_size
         self.init_rollout_gpu_num = component_placement.rollout_world_size
-        self.rollout_model_parallel_size = self.init_rollout_gpu_num // self.init_rollout_instance_num
+        self.rollout_model_parallel_size = (
+            self.init_rollout_gpu_num // self.init_rollout_instance_num
+        )
 
         self.init_actor_instance_num = component_placement.actor_dp_size
         self.init_actor_gpu_num = component_placement.actor_world_size
-        self.actor_model_parallel_size = self.init_actor_gpu_num // self.init_actor_instance_num
+        self.actor_model_parallel_size = (
+            self.init_actor_gpu_num // self.init_actor_instance_num
+        )
 
         self.init_inference_instance_num = component_placement.inference_world_size
         self.init_inference_gpu_num = component_placement.inference_world_size
-        self.inference_model_parallel_size = 0 if self.init_inference_gpu_num == 0 else (self.init_inference_gpu_num // self.init_inference_instance_num)
+        self.inference_model_parallel_size = (
+            0
+            if self.init_inference_gpu_num == 0
+            else (self.init_inference_gpu_num // self.init_inference_instance_num)
+        )
 
         # Get valid dp size list for actor
-        self.actor_valid_dp_sizes = get_valid_dp_sizes(self.cfg, self.actor_model_parallel_size)
+        self.actor_valid_dp_sizes = get_valid_dp_sizes(
+            self.cfg, self.actor_model_parallel_size
+        )
 
         # Create ComponentManager for each component
         self.rollout_manager = RolloutManager(
@@ -76,10 +91,12 @@ class SchedulerWorker(Worker):
             channel=self.component_channels["rollout"],
             model_parallel_size=self.rollout_model_parallel_size,
             instance_num=self.init_rollout_instance_num,
-            communication_instance_num=(self.total_gpus // self.rollout_model_parallel_size),
+            communication_instance_num=(
+                self.total_gpus // self.rollout_model_parallel_size
+            ),
             _logger=self._logger,
             use_pre_process_policy=self.use_pre_process_policy,
-            use_wait_before_last_iter_policy=self.use_wait_before_last_iter_policy
+            use_wait_before_last_iter_policy=self.use_wait_before_last_iter_policy,
         )
 
         self.actor_manager = ActorManager(
@@ -91,10 +108,12 @@ class SchedulerWorker(Worker):
             _logger=self._logger,
             valid_dp_sizes=self.actor_valid_dp_sizes,
             use_pre_process_policy=self.use_pre_process_policy,
-            use_wait_before_last_iter_policy=self.use_wait_before_last_iter_policy
+            use_wait_before_last_iter_policy=self.use_wait_before_last_iter_policy,
         )
 
-        self.inference_manager = ComponentManager("dummy", None, None, None, None, None, None)
+        self.inference_manager = ComponentManager(
+            "dummy", None, None, None, None, None, None
+        )
         if self.inference_model_parallel_size > 0:
             self.inference_manager = InferenceManager(
                 config=config,
@@ -104,7 +123,7 @@ class SchedulerWorker(Worker):
                 communication_instance_num=1,
                 _logger=self._logger,
                 use_pre_process_policy=self.use_pre_process_policy,
-                use_wait_before_last_iter_policy=self.use_wait_before_last_iter_policy
+                use_wait_before_last_iter_policy=self.use_wait_before_last_iter_policy,
             )
 
     async def run(self):
@@ -126,14 +145,19 @@ class SchedulerWorker(Worker):
             return
 
         assert self.init_actor_gpu_num % self.rollout_model_parallel_size == 0
-        migrate_out_instance_num = self.init_actor_gpu_num // self.rollout_model_parallel_size
+        migrate_out_instance_num = (
+            self.init_actor_gpu_num // self.rollout_model_parallel_size
+        )
         await self.rollout_manager.pre_process(migrate_out_instance_num)
 
         await self.actor_manager.pre_process()
         await self.inference_manager.pre_process()
 
         # Offset may changed by pre_process()
-        assert self.rollout_manager.current_instance_num == self.init_rollout_instance_num - migrate_out_instance_num
+        assert (
+            self.rollout_manager.current_instance_num
+            == self.init_rollout_instance_num - migrate_out_instance_num
+        )
         assert self.rollout_manager.current_instance_offset == migrate_out_instance_num
 
     async def post_process(self):
@@ -153,7 +177,10 @@ class SchedulerWorker(Worker):
 
             # Trying to release the resource of rollout and inference
             rollout_released_gpu_num = await self.rollout_manager.release_resource(
-                train_iter, self.actor_valid_dp_sizes, self.actor_model_parallel_size, self.actor_manager.current_instance_num,
+                train_iter,
+                self.actor_valid_dp_sizes,
+                self.actor_model_parallel_size,
+                self.actor_manager.current_instance_num,
             )
             inference_released_gpu_num = await self.inference_manager.release_resource(
                 train_iter, self.rollout_manager.current_instance_num == 0
