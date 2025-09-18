@@ -85,8 +85,8 @@ rollout:
 
   gpu_memory_utilization: 0.55
 
-  model_dir: /mnt/public/hf_models/Qwen2.5-VL-3B-Instruct
-  model_arch: qwen2.5_vl #qwen2.5
+  model_dir: /mnt/public/hf_models/DeepSeek-R1-Distill-Qwen-1.5B
+  model_arch: qwen2.5
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
@@ -121,23 +121,18 @@ rollout:
   cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
 
 data:
-  type: vision_language
+  type: math
   max_prompt_length: 1024
   filter_prompt_by_length: True
   rollout_batch_size: 8
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: prompt
-  image_keys: ["image"] # some vlm datasets may have multiple image columns
-  choice_key: "choices"
-  answer_key: "answer"
-  solution_key: "solution"
-  use_chat_template: True
   shuffle: True
   validation_shuffle: True
   seed: 1234
-  train_data_paths: ["/mnt/public/guozhen/data/science_qa/train-00000-of-00001-1028f23e353fbe3e.parquet"]
-  val_data_paths: ["/mnt/public/guozhen/data/science_qa/test-00000-of-00001-f0e719df791966ff.parquet"]
+  train_data_paths: ["/mnt/public/guozhen/data/boba_106k_0319_prompt_1024.jsonl"]
+  val_data_paths: ["/mnt/public/guozhen/data/boba_106k_0319_prompt_1024.jsonl"]
 
 actor:
   group_name: "ActorGroup"
@@ -158,20 +153,18 @@ actor:
   seed: 1234
 
   model:
-    precision: bf16
+    precision: fp16
     sharding_strategy: full_shard
     is_lora: False
 
     seq_length: ${runner.seq_length}
     encoder_seq_length: ${runner.seq_length}
-    model_path: /mnt/public/hf_models/Qwen2.5-VL-3B-Instruct/
-
-    model_arch: ${rollout.model_arch}
+    model_path: /mnt/public/hf_models/DeepSeek-R1-Distill-Qwen-1.5B
 
   optim:
     optimizer: adam
-    bf16: True #False
-    fp16: False #True
+    bf16: False
+    fp16: True
     lr: 2e-05
     adam_beta1: 0.9
     adam_beta2: 0.95
@@ -196,7 +189,7 @@ actor:
     lr_decay_iters: 10
 
   tokenizer:
-    tokenizer_model: /mnt/public/hf_models/Qwen2.5-VL-3B-Instruct
+    tokenizer_model: /mnt/public/hf_models/DeepSeek-R1-Distill-Qwen-1.5B
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'

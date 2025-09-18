@@ -424,7 +424,7 @@ class MathRunner:
                     }
                     self.metric_logger.log(training_metrics, logging_steps + i)
 
-                logging_metrics = time_metrics
+                logging_metrics = {f"{k}_time": v for k, v in time_metrics.items()}
 
                 if self.cfg.actor.get("calculate_flops", False):
                     flops_metrics = self._compute_flops_metrics(

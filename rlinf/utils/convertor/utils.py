@@ -447,7 +447,7 @@ def register_mg2hf_convertor(model_arch: str, convertor_cls: Callable) -> None:
 
 
 register_mg2hf_convertor("qwen2.5", Qwen2_5Convertor)
-register_mg2hf_convertor("qwen2.5-vl", Qwen2_5VLConvertor)
+register_mg2hf_convertor("qwen2.5_vl", Qwen2_5VLConvertor)
 
 
 def get_mg2hf_convertor(model_arch: str, config, strict: bool = False) -> BaseConvertor:

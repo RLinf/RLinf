@@ -207,8 +207,9 @@ class SGLangWorker(Worker):
         self._stop()
         # Release the GPUs once the engine has offloaded
         output_channel.device_lock.release()
-        rollout_result = RolloutResult.merge_result_list(rollout_results)
-        output_channel.put(rollout_result)
+        rollout_result_list = RolloutResult.split_result_list_by_group(rollout_results)
+        for rollout_result in rollout_result_list:
+            output_channel.put(rollout_result)
 
 
 def all_floats_equal(float_list: list[float], epsilon: float = 1e-9) -> bool:

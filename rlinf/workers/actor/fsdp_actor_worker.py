@@ -14,31 +14,480 @@
 
 import gc
 import os
+from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
 from omegaconf import DictConfig
 from torch.distributed.device_mesh import init_device_mesh
+from torch.multiprocessing.reductions import reduce_tensor
 from tqdm import tqdm
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import actor_loss, calculate_adv_and_returns
-from rlinf.algorithms.utils import preprocess_advantages_inputs, preprocess_loss_inputs
+from rlinf.algorithms.utils import (
+    kl_penalty,
+    preprocess_advantages_inputs,
+    preprocess_loss_inputs,
+)
+from rlinf.data.io_struct import RolloutResult
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
 )
 from rlinf.models import get_model
 from rlinf.models.embodiment.model_utils import custom_forward
-from rlinf.scheduler import Cluster, Worker
+from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.data_iter_utils import get_iterator_k_split
 from rlinf.utils.distributed import all_reduce_dict
+from rlinf.utils.distributed import (
+    compute_rollout_metrics as compute_math_rollout_metrics,
+)
 from rlinf.utils.metric_utils import (
     append_to_dict,
     compute_loss_mask,
     compute_rollout_metrics,
     compute_split_num,
 )
-from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.placement import (
+    HybridComponentPlacement,
+    ModelParallelComponentPlacement,
+)
+from rlinf.utils.utils import (
+    compute_entropy_from_logits,
+    compute_logprobs_from_logits,
+    masked_mean,
+    seq_mean_token_mean,
+    seq_mean_token_sum,
+)
+from rlinf.workers.rollout.utils import RankMapper
+from toolkits.math_verifier.verify import math_verify_call
+
+
+class FSDPActor(FSDPModelManager, Worker):
+    def __init__(self, cfg: DictConfig, placement: ModelParallelComponentPlacement):
+        Worker.__init__(self)
+        super().__init__(cfg.actor)
+
+        self.cfg = cfg
+
+        self.response_len = (
+            cfg.actor.model.encoder_seq_length - cfg.data.max_prompt_length
+        )
+        self.calculate_entropy = self.cfg.algorithm.calculate_entropy
+        self.calculate_entropy_loss = (
+            self.cfg.algorithm.entropy_bonus > 0 and self.calculate_entropy
+        )
+        self.kl_beta = self.cfg.algorithm.kl_beta
+        self.kl_penalty_type = self.cfg.algorithm.kl_penalty_type
+
+        self.total_batch_size_per_dp = (
+            self.cfg.data.rollout_batch_size
+            * self.cfg.algorithm.group_size
+            // self._world_size
+        )
+
+        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+        self.device = torch.cuda.current_device()
+        world_size = self._world_size
+        self.device_mesh = init_device_mesh(
+            "cuda", mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
+        )
+
+        self._rollout_group_name = cfg.rollout.group_name
+        self._component_placement = placement
+        self.is_data_io_rank = True
+
+        if self.cfg.algorithm.loss_agg_func == "token-mean":
+            self.loss_agg_func = masked_mean
+        elif self.cfg.algorithm.loss_agg_func == "seq-mean-token-sum":
+            self.loss_agg_func = seq_mean_token_sum
+        elif self.cfg.algorithm.loss_agg_func == "seq-mean-token-mean":
+            self.loss_agg_func = seq_mean_token_mean
+        else:
+            raise NotImplementedError(
+                f"algorithm.loss_agg_func={self.cfg.algorithm.loss_agg_func} is not supported!"
+            )
+
+        # Reward configurations
+        if not self.cfg.reward.use_reward_model:
+            assert self.cfg.reward.reward_type == "math", "only support math"
+            self.reward_fn = math_verify_call
+
+    def init_worker(self):
+        self.setup_model_and_optimizer()
+        if self.cfg.actor.get("enable_offload", False):
+            self.offload_fsdp_param_and_grad()
+            self.offload_fsdp_optimizer()
+            torch.cuda.synchronize()
+            gc.collect()
+            torch.cuda.empty_cache()
+        self._setup_rollout_weight_dst_ranks()
+
+    def _setup_rollout_weight_dst_ranks(self):
+        """Setup destination ranks for token and weight communication."""
+        rank_map = RankMapper.get_actor_rank_to_rollout_rank_map(
+            self._component_placement
+        )
+        self._weight_dst_rank_in_rollout = rank_map[self._rank]
+        self.log_info(
+            f"Actor rank {self._rank} will send weights to {self._weight_dst_rank_in_rollout}"
+        )
+
+    def del_reshard_state_dict(self):
+        if hasattr(self, "rollou_state_dict"):
+            del self.rollou_state_dict
+
+    def sync_model_to_rollout(self):
+        if next(self.model.parameters()).is_cpu:
+            self.load_fsdp_param_and_grad(self.device)
+
+        self.rollou_state_dict = self.get_model_state_dict()
+
+        if self._weight_dst_rank_in_rollout is not None:
+
+            def transform_key(k):
+                if k.startswith("model.language_model."):
+                    return "model." + k[21:]
+                elif k.startswith("model."):
+                    return k[6:]
+                else:
+                    return k
+
+            handle = {
+                transform_key(k): reduce_tensor(v)
+                for k, v in self.rollou_state_dict.items()
+            }
+
+            self.send(
+                handle, self._rollout_group_name, self._weight_dst_rank_in_rollout
+            )
+        if self.cfg.actor.get("enable_offload", False):
+            self.offload_fsdp_param_and_grad()
+            torch.cuda.synchronize()
+            gc.collect()
+            torch.cuda.empty_cache()
+
+    def compute_logprobs(self):
+        self.model.eval()
+        self.rollout_batch["logprob"] = self.rollout_batch["prev_logprobs"]
+
+    def get_batch(
+        self, channel: Channel
+    ) -> Tuple[Dict[str, torch.Tensor], RolloutResult]:
+        result: RolloutResult = channel.get()
+
+        batch = result.to_actor_batch(
+            self.cfg.data.max_prompt_length,
+            self.cfg.actor.model.encoder_seq_length,
+            self.tokenizer.eos_token_id,
+        )
+        return batch, result
+
+    def put_result(self, result: RolloutResult, channel: Channel):
+        if channel.is_local:
+            # Local channel, every process will put its own data locally
+            # No need to broadcast
+            channel.put(result)
+        else:
+            if self.is_data_io_rank:
+                channel.put(result)
+
+    def _load_weight_and_optimizer(self, channel: Channel):
+        # Acquire the GPUs to ensure that no one is using them before loading models
+        # Otherwise, it may lead to OOM
+        with channel.gpu_lock:
+            if self.cfg.actor.get("enable_offload", False):
+                self.load_fsdp_param_and_grad(self.device)
+                self.load_fsdp_optimizer(self.device)
+
+    def run_training(self, input_channel: Channel):
+        # Get all batches for this DP
+        batches = []
+        recv_batch_size = 0
+        while recv_batch_size < self.total_batch_size_per_dp:
+            batch, rollout_result = self.get_batch(input_channel)
+            batches.append(batch)
+            recv_batch_size += rollout_result.num_sequence
+        assert recv_batch_size == self.total_batch_size_per_dp, (
+            f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
+        )
+        batch = RolloutResult.merge_batches(batches)
+
+        # Must be called after batch is retrieved, which is when rollout has stopped
+        # Otherwise, loading model might cause OOM
+        self._load_weight_and_optimizer(input_channel)
+
+        global_batches = get_iterator_k_split(
+            batch,
+            num_splits=self.cfg.algorithm.n_minibatches,
+            shuffle=self.cfg.algorithm.get("shuffle_rollout", True),
+            shuffle_seed=self.cfg.actor.seed,
+        )
+
+        self.model.train()
+        assert (
+            self.cfg.actor.global_batch_size
+            % (self.cfg.actor.micro_batch_size * self._world_size)
+            == 0
+        )
+
+        self.gradient_accumulation = (
+            self.cfg.actor.global_batch_size
+            // self.cfg.actor.micro_batch_size
+            // self._world_size
+        )
+
+        training_metrics_list = []
+        # Global batch iterations
+        with self.worker_timer():
+            for global_batch in global_batches:
+                train_global_batch_size = global_batch["input_ids"].shape[0]
+                assert (
+                    train_global_batch_size
+                    == self.cfg.actor.global_batch_size
+                    // torch.distributed.get_world_size()
+                )
+                assert train_global_batch_size % self.cfg.actor.micro_batch_size == 0, (
+                    f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size}"
+                )
+
+                self.gradient_accumulation = (
+                    self.cfg.actor.global_batch_size
+                    // self.cfg.actor.micro_batch_size
+                    // self._world_size
+                )
+                # split batch into micro_batches
+                train_micro_batches = get_iterator_k_split(
+                    global_batch,
+                    train_global_batch_size // self.cfg.actor.micro_batch_size,
+                )
+
+                self.optimizer.zero_grad()
+                metrics = {}
+                for _, m_batch in enumerate(train_micro_batches):
+                    for k, v in m_batch.items():
+                        m_batch[k] = v.to(f"cuda:{int(os.environ['LOCAL_RANK'])}")
+
+                    multi_modal_inputs = {}
+                    if "multi_modal_inputs" in m_batch.keys():
+                        if (
+                            "image_bound" in m_batch["multi_modal_inputs"][0]
+                        ):  # minicpm-o logic
+                            for key in m_batch["multi_modal_inputs"][0].keys():
+                                multi_modal_inputs[key] = [
+                                    inputs[key]
+                                    for inputs in m_batch["multi_modal_inputs"]
+                                ]
+                        else:
+                            for key in m_batch["multi_modal_inputs"][0].keys():
+                                multi_modal_inputs[key] = torch.cat(
+                                    [
+                                        inputs[key]
+                                        for inputs in m_batch["multi_modal_inputs"]
+                                    ],
+                                    dim=0,
+                                )
+
+                    input_ids = m_batch["input_ids"]
+                    attention_mask = m_batch["attention_mask"]
+                    position_ids = m_batch["position_ids"]
+                    prev_logprobs = m_batch["prev_logprobs"]
+                    advantages = m_batch["advantages"]
+                    ref_logprobs = None
+                    if "ref_logprobs" in m_batch:
+                        ref_logprobs = m_batch["ref_logprobs"]
+
+                    loss_mask = m_batch["attention_mask"][:, -self.response_len :]
+
+                    output = self.model(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        position_ids=position_ids,
+                        **multi_modal_inputs,
+                        use_cache=False,
+                    )  # prevent model thinks we are generating
+
+                    logits = output.logits
+
+                    logits.div_(self.cfg.algorithm.sampling_params.temperature)
+
+                    responses = input_ids[:, -self.response_len :]
+                    logits = logits[
+                        :, -self.response_len - 1 : -1, :
+                    ]  # (bsz, response_length, vocab_size)
+                    logprobs = compute_logprobs_from_logits(
+                        logits, responses, task_type=self.cfg.runner.task_type
+                    )
+                    if self.calculate_entropy:
+                        entropy = compute_entropy_from_logits(
+                            logits, task_type=self.cfg.runner.task_type
+                        )  # (bsz, response_length)
+
+                    clip_ratio = self.cfg.algorithm.ratio_clip_eps
+                    clip_ratio_low = (
+                        self.cfg.algorithm.clip_ratio_low
+                        if self.cfg.algorithm.clip_ratio_low is not None
+                        else clip_ratio
+                    )
+                    clip_ratio_high = (
+                        self.cfg.algorithm.clip_ratio_high
+                        if self.cfg.algorithm.clip_ratio_high is not None
+                        else clip_ratio
+                    )
+                    clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
+
+                    loss, mbs_metrics_data = actor_loss(
+                        loss_type=self.cfg.algorithm.loss_type,
+                        loss_agg_func=self.loss_agg_func,
+                        logprobs=logprobs,
+                        old_logprobs=prev_logprobs,
+                        advantages=advantages,
+                        clip_ratio_low=clip_ratio_low,
+                        clip_ratio_high=clip_ratio_high,
+                        clip_ratio_c=clip_ratio_c,
+                        loss_mask=loss_mask,
+                    )
+
+                    entropy_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+                    if self.calculate_entropy:
+                        entropy = output["entropy"][
+                            :, -self.response_len - 1 : -1
+                        ].contiguous()
+                        entropy_loss = self.loss_agg_func(entropy, mask=loss_mask)
+                        if self.calculate_entropy_loss:
+                            loss = (
+                                loss - self.cfg.algorithm.entropy_bonus * entropy_loss
+                            )
+
+                    kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+                    if self.kl_beta > 0 and ref_logprobs is not None:
+                        kld = kl_penalty(ref_logprobs, logprobs, self.kl_penalty_type)
+                        kl_loss = self.loss_agg_func(kld, loss_mask)
+                        loss = loss + kl_loss * self.kl_beta
+
+                    # add to log
+                    mbs_metrics_data.update(
+                        {
+                            "final_loss": loss.detach().cpu(),
+                            "entropy_loss": entropy_loss.detach().cpu(),
+                            "kl_loss": kl_loss.detach().cpu(),
+                        }
+                    )
+
+                    append_to_dict(metrics, mbs_metrics_data)
+
+                mean_metric_dict = {
+                    key: np.mean(value) for key, value in metrics.items()
+                }
+                mean_metric_dict = all_reduce_dict(
+                    mean_metric_dict, op=torch.distributed.ReduceOp.AVG
+                )
+                training_metrics_list.append(mean_metric_dict)
+
+        # Rollout metrics
+        rollout_metrics, _, _ = compute_math_rollout_metrics(
+            batch, self.cfg.data.max_prompt_length, self.response_len, self._world_size
+        )
+
+        return rollout_metrics, training_metrics_list
+
+    def save_checkpoint(self, save_base_path, step):
+        torch.distributed.barrier()
+        model_state = self.get_model_state_dict()
+        optim_state = self.get_optimizer_state_dict()
+        if self._rank == 0:
+            os.makedirs(save_base_path, exist_ok=True)
+            torch.save(model_state, os.path.join(save_base_path, "model.pt"))
+            torch.save(optim_state, os.path.join(save_base_path, "optim.pt"))
+        torch.distributed.barrier()
+
+    def _compute_batch_rewards(
+        self, batch: Dict[str, torch.Tensor], answers: List[str]
+    ):
+        """Reward computation using non-model based reward."""
+        texts = []
+        for response, response_len in zip(
+            batch["input_ids"],
+            batch["response_lengths"],
+        ):
+            response = response[
+                self.cfg.data.max_prompt_length : self.cfg.data.max_prompt_length
+                + response_len
+            ]
+            texts.append(
+                self.tokenizer.decode(response.tolist(), skip_special_tokens=True)
+            )
+        rewards = self.reward_fn(texts, answers)
+        reward_scores = [
+            self.cfg.reward.reward_scale
+            if reward == 1
+            else -self.cfg.reward.reward_scale
+            for reward in rewards
+        ]
+        all_reward_scores = torch.as_tensor(
+            reward_scores,
+            dtype=torch.float,
+            device=torch.device("cpu"),
+        ).view(-1, 1)
+        return all_reward_scores.flatten()
+
+    # Rewards
+    def compute_rewards(self, input_channel: Channel, output_channel: Channel):
+        """Compute rewards.
+
+        Args:
+            input_channel: The input channel to read from.
+            output_channel: The output channel to send results to.
+        """
+        recv_batch_size = 0
+        while recv_batch_size < self.total_batch_size_per_dp:
+            batch, rollout_result = self.get_batch(input_channel)
+            recv_batch_size += rollout_result.num_sequence
+
+            # Compute rule-based reward
+            with self.worker_timer():
+                if rollout_result.rewards is None:
+                    rollout_result.rewards = self._compute_batch_rewards(
+                        batch, rollout_result.answers
+                    )
+
+            self.put_result(rollout_result, output_channel)
+
+        assert recv_batch_size == self.total_batch_size_per_dp, (
+            f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
+        )
+
+    # Advantages and returns
+    def compute_advantages_and_returns(
+        self, input_channel: Channel, output_channel: Channel
+    ):
+        """Compute the advantages and returns.
+
+        Args:
+            input_channel: The input channel to read from.
+            output_channel: The output channel to send results to.
+        """
+        recv_batch_size = 0
+        while recv_batch_size < self.total_batch_size_per_dp:
+            batch, rollout_result = self.get_batch(input_channel)
+            recv_batch_size += rollout_result.num_sequence
+
+            with self.worker_timer():
+                if rollout_result.advantages is None:
+                    mask = batch["attention_mask"][:, -self.response_len :]
+                    advantages, returns = calculate_adv_and_returns(
+                        adv_type=self.cfg.algorithm.adv_type,
+                        reward_scores=batch["rewards"].cuda(),
+                        mask=mask.cuda(),
+                        num_responses=self.cfg.algorithm.group_size,
+                    )
+                    rollout_result.advantages = advantages.cpu()
+
+            self.put_result(rollout_result, output_channel)
+
+        assert recv_batch_size == self.total_batch_size_per_dp, (
+            f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
+        )
 
 
 class EmbodiedFSDPActor(FSDPModelManager, Worker):

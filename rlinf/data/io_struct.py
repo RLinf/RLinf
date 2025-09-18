@@ -519,6 +519,152 @@ class RolloutResult:
 
         return merged_result
 
+    @staticmethod
+    def split_result_list_by_group(
+        rollout_results: List["RolloutResult"],
+    ) -> List["RolloutResult"]:
+        """
+        Split RolloutResult objects by group_size.
+
+        If input has only one RolloutResult, split it into multiple RolloutResult objects by group_size.
+        If input has multiple RolloutResult objects, split each one and merge the results.
+
+        Args:
+            rollout_results: List of input RolloutResult objects
+
+        Returns:
+            List of RolloutResult objects grouped by group_size
+        """
+        assert len(rollout_results) > 0, "No rollout results to split."
+
+        all_split_results = []
+
+        for rollout_result in rollout_results:
+            split_results = RolloutResult._split_single_result_by_group(rollout_result)
+            all_split_results.extend(split_results)
+
+        return all_split_results
+
+    @staticmethod
+    def _split_single_result_by_group(
+        rollout_result: "RolloutResult",
+    ) -> List["RolloutResult"]:
+        """
+        Split a single RolloutResult into multiple RolloutResult objects by group_size.
+
+        Args:
+            rollout_result: The RolloutResult to be split
+
+        Returns:
+            List of split RolloutResult objects
+        """
+        group_size = rollout_result.group_size
+        num_sequence = rollout_result.num_sequence
+
+        assert num_sequence % group_size == 0, (
+            f"num_sequence ({num_sequence}) must be divisible by group_size ({group_size})"
+        )
+
+        num_groups = num_sequence // group_size
+        split_results = []
+
+        # Split list fields
+        prompt_lengths_split = split_list(rollout_result.prompt_lengths, num_groups)
+        prompt_ids_split = split_list(rollout_result.prompt_ids, num_groups)
+        response_lengths_split = split_list(rollout_result.response_lengths, num_groups)
+        response_ids_split = split_list(rollout_result.response_ids, num_groups)
+        is_end_split = split_list(rollout_result.is_end, num_groups)
+
+        # Handle optional fields
+        answers_split = None
+        if rollout_result.answers is not None:
+            answers_split = split_list(rollout_result.answers, num_groups)
+
+        image_data_split = None
+        if rollout_result.image_data is not None:
+            image_data_split = split_list(rollout_result.image_data, num_groups)
+
+        prompt_texts_split = None
+        if rollout_result.prompt_texts is not None:
+            prompt_texts_split = split_list(rollout_result.prompt_texts, num_groups)
+
+        response_texts_split = None
+        if rollout_result.response_texts is not None:
+            response_texts_split = split_list(rollout_result.response_texts, num_groups)
+
+        rollout_logprobs_split = None
+        if rollout_result.rollout_logprobs is not None:
+            rollout_logprobs_split = split_list(
+                rollout_result.rollout_logprobs, num_groups
+            )
+
+        # Handle tensor fields
+        rewards_split = None
+        if rollout_result.rewards is not None:
+            if isinstance(rollout_result.rewards, torch.Tensor):
+                rewards_split = torch.chunk(rollout_result.rewards, num_groups, dim=0)
+            else:
+                rewards_split = split_list(rollout_result.rewards, num_groups)
+
+        advantages_split = None
+        if rollout_result.advantages is not None:
+            if isinstance(rollout_result.advantages, torch.Tensor):
+                advantages_split = torch.chunk(
+                    rollout_result.advantages, num_groups, dim=0
+                )
+            else:
+                advantages_split = split_list(rollout_result.advantages, num_groups)
+
+        prev_logprobs_split = None
+        if rollout_result.prev_logprobs is not None:
+            prev_logprobs_split = torch.chunk(
+                rollout_result.prev_logprobs, num_groups, dim=0
+            )
+
+        ref_logprobs_split = None
+        if rollout_result.ref_logprobs is not None:
+            ref_logprobs_split = torch.chunk(
+                rollout_result.ref_logprobs, num_groups, dim=0
+            )
+
+        # Create split RolloutResult objects
+        for i in range(num_groups):
+            split_result = RolloutResult(
+                num_sequence=group_size,
+                group_size=group_size,
+                prompt_lengths=prompt_lengths_split[i],
+                prompt_ids=prompt_ids_split[i],
+                response_lengths=response_lengths_split[i],
+                response_ids=response_ids_split[i],
+                is_end=is_end_split[i],
+                answers=answers_split[i] if answers_split is not None else None,
+                image_data=image_data_split[i]
+                if image_data_split is not None
+                else None,
+                prompt_texts=prompt_texts_split[i]
+                if prompt_texts_split is not None
+                else None,
+                response_texts=response_texts_split[i]
+                if response_texts_split is not None
+                else None,
+                rollout_logprobs=rollout_logprobs_split[i]
+                if rollout_logprobs_split is not None
+                else None,
+                rewards=rewards_split[i] if rewards_split is not None else None,
+                advantages=advantages_split[i]
+                if advantages_split is not None
+                else None,
+                prev_logprobs=prev_logprobs_split[i]
+                if prev_logprobs_split is not None
+                else None,
+                ref_logprobs=ref_logprobs_split[i]
+                if ref_logprobs_split is not None
+                else None,
+            )
+            split_results.append(split_result)
+
+        return split_results
+
     def to_actor_batch(
         self,
         data_seq_length: int,

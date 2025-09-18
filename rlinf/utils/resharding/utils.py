@@ -14,7 +14,6 @@
 
 
 import torch
-from megatron.core import parallel_state
 
 
 def get_tp_reshard_fn(model_arch: str):
@@ -96,6 +95,8 @@ def _gather_pp_group_tensor_and_reshard(
 
 
 def pp_reshard_fn_qwen2_5(model_state_dict, pp_group, dtype):
+    from megatron.core import parallel_state
+
     pp_first_rank = parallel_state.get_pipeline_model_parallel_first_rank()
     pp_last_rank = parallel_state.get_pipeline_model_parallel_last_rank()
 

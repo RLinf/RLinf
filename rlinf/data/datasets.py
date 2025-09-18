@@ -21,7 +21,9 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import pandas as pd
 import torch
 from omegaconf import DictConfig
+from PIL.Image import Image
 from torch.utils.data import Dataset
+from transformers import AutoProcessor
 
 
 def batch_pad_to_fixed_len(
@@ -80,12 +82,12 @@ class MathDataset(Dataset):
         if isinstance(self.data_paths, str):
             self.data_paths = [self.data_paths]
 
-        self.max_prompt_length = config.max_prompt_length
+        self.max_prompt_length = config.data.max_prompt_length
         self.tokenizer = tokenizer
-        self.prompt_key = config.prompt_key
+        self.prompt_key = config.data.prompt_key
 
         self.data = self._load_data()
-        if config.get("filter_prompt_by_length", False):
+        if config.data.get("filter_prompt_by_length", False):
             total = len(self.data)
             filtered = []
             failed = 0
@@ -180,19 +182,20 @@ class VisionLanguageDataset(Dataset):
     ):
         super().__init__()
         self.data_paths = data_paths
-        self.use_chat_template = config.use_chat_template
+        self.use_chat_template = config.data.use_chat_template
 
-        self.image_keys = config.image_keys
-        self.prompt_key = config.prompt_key
-        self.choice_key = config.choice_key
-        self.answer_key = config.answer_key
-        self.solution_key = config.solution_key
+        self.image_keys = config.data.image_keys
+        self.prompt_key = config.data.prompt_key
+        self.choice_key = config.data.choice_key
+        self.answer_key = config.data.answer_key
+        self.solution_key = config.data.solution_key
 
         if isinstance(self.data_paths, str):
             self.data_paths = [self.data_paths]
 
-        self.max_prompt_length = config.max_prompt_length
+        self.max_prompt_length = config.data.max_prompt_length
         self.tokenizer = tokenizer
+        self.processor = AutoProcessor.from_pretrained(config.actor.model.model_path)
         self.data = self._load_data()
         self.post_process()
 
@@ -206,17 +209,25 @@ class VisionLanguageDataset(Dataset):
                     image_content = dataitem.get(key, None)
                     if image_content is None:
                         continue
+                    if isinstance(image_content, Image):
+                        image_content.append(image_content)
                     if isinstance(image_content, dict) and "bytes" in image_content:
                         image_content = image_content["bytes"]
                         assert isinstance(image_content, bytes), (
                             f"image content should be bytes, but got {type(image_content)} , content is {image_content}"
                         )
                     image_list.append(image_content)
+            if image_list == []:
+                return [None]
             return image_list
 
         def process_prompt(
             data_item: Dict, image_count: int
-        ) -> Tuple[str, List[int], int]:
+        ) -> Tuple[
+            str,
+            List[int],
+            int,
+        ]:
             question = data_item.get(self.prompt_key, "")
             options = data_item.get(self.choice_key, [])
             if not isinstance(options, list):
@@ -230,15 +241,14 @@ class VisionLanguageDataset(Dataset):
                     message_content.append({"type": "image"})
                 message_content.append({"type": "text", "text": prompt_text})
                 messages = [{"role": "user", "content": message_content}]
-                prompt_text = self.tokenizer.apply_chat_template(
+                prompt_text = self.processor.apply_chat_template(
                     messages, tokenize=False, add_generation_prompt=True
                 )
-                prompt_ids = self.tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=True,
-                    add_generation_prompt=True,
+                prompt_ids = self.processor(
+                    text=[prompt_text],
+                    padding=True,
                     return_tensors="pt",
-                )
+                )["input_ids"]
                 if isinstance(prompt_ids, torch.Tensor):
                     if prompt_ids.dim() == 2 and prompt_ids.size(0) == 1:
                         prompt_ids = prompt_ids.squeeze(0)  # [L]
@@ -278,7 +288,7 @@ class VisionLanguageDataset(Dataset):
                 prompt=prompt_ids,
                 length=prompt_length,
                 image_data=image_list,
-                answer=answer,
+                answer=str(answer),
                 solution=solution,
                 idx=idx,
             )
@@ -318,11 +328,11 @@ class VisionLanguageDataset(Dataset):
         return self.data[index]
 
 
-def create_rl_dataset(data_config, tokenizer):
+def create_rl_dataset(config: DictConfig, tokenizer):
     """Create rl datasets.
 
     Arguments:
-        data_config: The data config.
+        config: The RLinf config.
         tokenizer (Tokenizer): The tokenizer.
 
     Returns:
@@ -331,9 +341,9 @@ def create_rl_dataset(data_config, tokenizer):
         val_dataset (Dataset): The validation dataset.
     """
 
-    if data_config.type == "math":
+    if config.data.type == "math":
         dataset_cls = MathDataset
-    elif data_config.type == "vision_language":
+    elif config.data.type == "vision_language":
         dataset_cls = VisionLanguageDataset
     else:
         return None, None
@@ -342,14 +352,14 @@ def create_rl_dataset(data_config, tokenizer):
 
     # Instantiate the dataset using the determined dataset class
     train_dataset = dataset_cls(
-        data_paths=data_config.train_data_paths,
-        config=data_config,
+        data_paths=config.data.train_data_paths,
+        config=config,
         tokenizer=tokenizer,
     )
 
     val_dataset = dataset_cls(
-        data_paths=data_config.val_data_paths,
-        config=data_config,
+        data_paths=config.data.val_data_paths,
+        config=config,
         tokenizer=tokenizer,
     )
 

@@ -19,9 +19,10 @@ import torch.optim as optim
 from omegaconf import DictConfig
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import MixedPrecision, ShardingStrategy, StateDictType
-from transformers import AutoModelForCausalLM
+from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForVision2Seq
 
 from rlinf.config import torch_dtype_from_precision
+from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.hybrid_engines.fsdp.utils import (
     get_fsdp_wrap_policy,
     init_fn,
@@ -40,13 +41,15 @@ class FSDPModelManager:
         self.logger = get_logger()
         self.torch_dtype = torch_dtype_from_precision(self._cfg.model.precision)
 
-        assert (
-            self.torch_dtype == torch.float16 or self.torch_dtype == torch.bfloat16
-        ), (
-            f"Precision {self._cfg.model.precision} is not supported, only support bf16 and fp16."
-        )
+        self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
 
     def model_provider_func(self) -> torch.nn.Module:
+        model_config = AutoConfig.from_pretrained(
+            self._cfg.model.model_path,
+            trust_remote_code=True,
+            attn_implementation="flash_attention_2",
+        )
+
         if self._cfg.model.get("gptq_model", False):
             from auto_gptq import AutoGPTQForCausalLM
 
@@ -57,23 +60,31 @@ class FSDPModelManager:
         elif self._cfg.model.get("load_in_8bit", False):
             model = AutoModelForCausalLM.from_pretrained(
                 self._cfg.model.model_path,
-                device_map=self._cfg.model.get("device_map", "auto"),
                 load_in_8bit=True,
             )
         else:
+            if type(model_config) in AutoModelForVision2Seq._model_mapping.keys():
+                auto_model_class = AutoModelForVision2Seq
+            else:
+                auto_model_class = AutoModelForCausalLM
+
+            # TODO: fix this, load model in float16/bfloat16 may cause optimizer in bf16, which is incorrect
             # default load in float16
-            model = AutoModelForCausalLM.from_pretrained(
+            model = auto_model_class.from_pretrained(
                 self._cfg.model.model_path,
                 torch_dtype=self.torch_dtype,
-                device_map=self._cfg.model.get("device_map", "auto"),
+                config=model_config,
                 trust_remote_code=True,
-                use_safetensors=self._cfg.model.get("use_safetensors", False),
             )
-            if torch.cuda.is_available():
-                model = model.cuda()
-            if self.torch_dtype == torch.float16:
-                model = model.half()
 
+        model.to(self.torch_dtype)
+
+        if torch.cuda.is_available():
+            model = model.cuda()
+        if self.torch_dtype == torch.float16:
+            model = model.half()
+
+        torch.distributed.barrier()
         return model
 
     def setup_model_and_optimizer(self):
@@ -89,8 +100,8 @@ class FSDPModelManager:
 
         mixed_precision = MixedPrecision(
             param_dtype=self.torch_dtype,
-            reduce_dtype=self.torch_dtype,
-            buffer_dtype=self.torch_dtype,
+            reduce_dtype=torch.float32,
+            buffer_dtype=torch.float32,
         )
 
         if self._cfg.model.sharding_strategy == "full_shard":
@@ -108,7 +119,6 @@ class FSDPModelManager:
         self.model = FSDP(
             module,
             param_init_fn=init_fn,
-            use_orig_params=False,
             auto_wrap_policy=auto_wrap_policy,
             device_id=int(os.environ["LOCAL_RANK"]),
             sharding_strategy=sharding_strategy,  # zero3
@@ -130,7 +140,7 @@ class FSDPModelManager:
             },
         ]
 
-        if self._cfg.model.vh_mode in ["a", "a0", "a6"]:
+        if self._cfg.model.get("vh_mode", None) in ["a", "a0", "a6"]:
             param_groups.append(
                 {
                     "params": [

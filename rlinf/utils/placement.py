@@ -226,9 +226,6 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         self._rollout_num_gpus = len(self._rollout_gpus)
 
         if self._is_collocated():
-            assert self.actor_tp_size >= self.rollout_tp_size, (
-                f"Actor TP size {self.actor_tp_size} must be greater or equal to Rollout TP size {self.rollout_tp_size}."
-            )
             assert self._inference_gpus is None, (
                 "Inference GPUs must not be specified in collocated mode."
             )
@@ -282,11 +279,14 @@ class ModelParallelComponentPlacement(ComponentPlacement):
 
             actor_tp_size = self._config.actor.model.tensor_model_parallel_size
             rollout_tp_size = self._config.rollout.tensor_parallel_size
-            assert actor_tp_size >= rollout_tp_size, (
-                f"Actor TP size ({actor_tp_size}) must be greater or equal to Rollout TP size ({rollout_tp_size})"
-            )
-            assert actor_tp_size % rollout_tp_size == 0, (
-                f"Actor TP size ({actor_tp_size}) must be divisible by Rollout TP size ({rollout_tp_size})"
+            if actor_tp_size > rollout_tp_size:
+                assert actor_tp_size % rollout_tp_size == 0, (
+                    f"Actor TP size ({actor_tp_size}) must be divisible by Rollout TP size ({rollout_tp_size})"
+                )
+            stride = (
+                self.actor_tp_size // self.rollout_tp_size
+                if self.actor_tp_size > self.rollout_tp_size
+                else 1
             )
             stride = actor_tp_size // rollout_tp_size
             self._placements["rollout"] = PackedPlacementStrategy(
@@ -325,18 +325,18 @@ class ModelParallelComponentPlacement(ComponentPlacement):
     @property
     def actor_dp_size(self) -> int:
         return self._actor_num_gpus // (
-            self._config.actor.model.tensor_model_parallel_size
-            * self._config.actor.model.context_parallel_size
-            * self._config.actor.model.pipeline_model_parallel_size
+            self._config.actor.model.get("tensor_model_parallel_size", 1)
+            * self._config.actor.model.get("context_parallel_size", 1)
+            * self._config.actor.model.get("pipeline_model_parallel_size", 1)
         )
 
     @property
     def actor_tp_size(self) -> int:
-        return self._config.actor.model.tensor_model_parallel_size
+        return self._config.actor.model.get("tensor_model_parallel_size", 1)
 
     @property
     def actor_pp_size(self) -> int:
-        return self._config.actor.model.pipeline_model_parallel_size
+        return self._config.actor.model.get("pipeline_model_parallel_size", 1)
 
     @property
     def actor_world_size(self) -> int:
@@ -349,7 +349,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             and hasattr(self._config.inference, "model")
             and hasattr(self._config.inference.model, "tensor_model_parallel_size")
         ):
-            return self._config.inference.model.tensor_model_parallel_size
+            return self._config.inference.model.get("tensor_model_parallel_size", 1)
         else:
             return self.actor_tp_size
 
@@ -360,7 +360,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             and hasattr(self._config.inference, "model")
             and hasattr(self._config.inference.model, "pipeline_model_parallel_size")
         ):
-            return self._config.inference.model.pipeline_model_parallel_size
+            return self._config.inference.model.get("pipeline_model_parallel_size", 1)
         else:
             return self.actor_pp_size
 
@@ -377,13 +377,13 @@ class ModelParallelComponentPlacement(ComponentPlacement):
     @property
     def rollout_dp_size(self) -> int:
         return self._rollout_num_gpus // (
-            self._config.rollout.tensor_parallel_size
-            * self._config.rollout.pipeline_parallel_size
+            self._config.rollout.get("tensor_parallel_size", 1)
+            * self._config.rollout.get("pipeline_parallel_size", 1)
         )
 
     @property
     def rollout_tp_size(self) -> int:
-        return self._config.rollout.tensor_parallel_size
+        return self._config.rollout.get("tensor_parallel_size", 1)
 
     @property
     def rollout_world_size(self) -> int:

@@ -29,6 +29,7 @@ from sglang.srt.managers.io_struct import (
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
 )
+from sglang.srt.managers.mm_utils import init_embedding_cache
 from sglang.srt.managers.scheduler import Scheduler as _Scheduler
 from sglang.srt.managers.scheduler import logger
 from sglang.srt.server_args import PortArgs, ServerArgs
@@ -110,10 +111,13 @@ class Scheduler(_Scheduler, Worker):
         self.actor_weight_rank = RankMapper.get_rollout_rank_to_actor_rank_map(
             placement
         )[(self.get_parent_rank(), self._rank)]
+        use_presharded_weights = (
+            False if self.cfg.actor.training_backend == "fsdp" else True
+        )
         # it's important to use load_weight to load resharded weight from megatron
         for _, module in self.tp_worker.worker.model_runner.model.named_modules():
             if hasattr(module, "use_presharded_weights"):
-                module.use_presharded_weights = True
+                module.use_presharded_weights = use_presharded_weights
 
         self._logger.info(
             f"Running Scheduler dp rank {self.get_parent_rank()}, tp rank {self.tp_rank}, corresponding actor weight rank = {self.actor_weight_rank}"

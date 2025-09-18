@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import dataclasses
+import importlib.util
 import logging
 import os
 from dataclasses import asdict
@@ -33,15 +34,7 @@ if TYPE_CHECKING:
 
 logging.getLogger().setLevel(logging.INFO)
 
-try:
-    import transformer_engine
-
-    HAVE_TE = True
-except ImportError:
-    transformer_engine = None
-    HAVE_TE = False
-
-SUPPORTED_MODEL_ARCHS = ["qwen2.5", "openvla", "openvla_oft"]
+SUPPORTED_MODEL_ARCHS = ["qwen2.5", "qwen2.5_vl", "openvla", "openvla_oft"]
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
 __all__ = ["build_config"]
 
@@ -764,7 +757,10 @@ def build_transformer_config(cfg) -> "TransformerConfig":
     tp_only_amax_red = cfg.get("tp_only_amax_red", False)
 
     if cfg.get("enable_cuda_graph", False):
-        assert HAVE_TE, "Transformer Engine is required for cudagraphs."
+        if importlib.util.find_spec("transformer_engine") is None:
+            raise ImportError(
+                "Can not import transformer_engine, which is required for cudagraphs."
+            )
         assert cfg.get("use_te_rng_tracker", False), (
             "Transformer engine's RNG tracker is required for cudagraphs, this can be enabled with \
             'use_te_rng_tracker=True'."
