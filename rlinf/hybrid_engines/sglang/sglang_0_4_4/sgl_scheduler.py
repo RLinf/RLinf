@@ -49,6 +49,8 @@ from rlinf.workers.rollout.utils import (
 )
 
 from .io_struct import (
+    AbortGenerationInput,
+    AbortGenerationOutput,
     OffloadReqInput,
     OffloadReqOutput,
     SyncHFWeightInput,
@@ -97,6 +99,7 @@ class Scheduler(_Scheduler, Worker):
                 (OffloadReqInput, self.offload_model_weights),
                 (SyncWeightInput, self.sync_weight),
                 (SyncHFWeightInput, self.sync_hf_weight),
+                (AbortGenerationInput, self.abort_generation),
             ]
         )
         self.cfg = config
@@ -116,6 +119,23 @@ class Scheduler(_Scheduler, Worker):
         self._logger.info(
             f"Running Scheduler dp rank {self.get_parent_rank()}, tp rank {self.tp_rank}, corresponding actor weight rank = {self.actor_weight_rank}"
         )
+
+        self.is_weight_offloaded = False
+
+    def abort_generation(self, recv_req: AbortGenerationInput):
+        # clear waiting reqs
+        waiting_reqs = []
+        # waiting_reqs.append(self.waiting_queue)
+        for req in self.waiting_queue:
+            req.to_abort = True
+
+        # abort every running req with no kvcache
+        running_reqs = []
+        running_reqs.append(self.running_batch.reqs)
+        for req in self.running_batch.reqs:
+            req.to_abort = True
+        res = AbortGenerationOutput(waiting_reqs=waiting_reqs, running_reqs=running_reqs)
+        return res
 
     def sync_in_tp(self, fn: str = ""):
         broadcast_pyobj(
@@ -143,7 +163,9 @@ class Scheduler(_Scheduler, Worker):
         if not colocate:
             assert use_cudagraph, "If not colocate, use_cudagraph must be True now."
 
-        if use_cudagraph or not colocate:
+        if use_cudagraph:
+            assert not self.is_weight_offloaded, "already offloaded. please do not offload again."
+            self.is_weight_offloaded = True
             self.release_memory_occupation(ReleaseMemoryOccupationReqInput())
             # self.cuda_info("After offload Model weights and kv cache")
             return OffloadReqOutput()
@@ -183,8 +205,11 @@ class Scheduler(_Scheduler, Worker):
 
         model = self.tp_worker.worker.model_runner.model
 
-        if colocate:
+        if self.is_weight_offloaded:
             self.resume_memory_occupation(ResumeMemoryOccupationReqInput())
+            self.is_weight_offloaded = False
+
+        if colocate:
             for name, handle in state_dict.items():
                 func, args = handle
                 list_args = list(args)
@@ -215,8 +240,9 @@ class Scheduler(_Scheduler, Worker):
         )
         model = self.tp_worker.worker.model_runner.model
 
-        if use_cudagraph and colocate:
+        if self.is_weight_offloaded:
             self.resume_memory_occupation(ResumeMemoryOccupationReqInput())
+            self.is_weight_offloaded = False
 
         if colocate:
             if use_cudagraph:
