@@ -12,9 +12,10 @@ hydra:
 
 cluster:
   num_nodes: 1
-  num_gpus_per_node: 1
+  num_gpus_per_node: 4
   component_placement:
-    actor, env, rollout: all
+    actor: 0-1
+    rollout,env: 2-3
 
 runner:
   task_type: embodied
