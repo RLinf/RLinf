@@ -316,19 +316,53 @@ def all_floats_equal(float_list: list[float], epsilon: float = 1e-9) -> bool:
     return np.std(float_list) < epsilon
 
 
+class AsyncTaskQueue:
+    def __init__(self):
+        self.done_queue: asyncio.Queue[tuple[str, asyncio.Future[Any]]] = asyncio.Queue()
+        self.doing_set = set()
+        self.event_loop = asyncio.events.get_event_loop()
+        self.exit_flag = False
+        self._task_completion_event = asyncio.Event()
+
+    def _on_completion(self, f):
+        self.doing_set.remove(f)
+        self.done_queue.put_nowait(f)
+
+    def put_one(self, f, *, tag=None):
+        if not asyncio.futures.isfuture(f) and not asyncio.coroutines.iscoroutine(f):
+            raise TypeError(f"expect of future, not {type(f).__name__}")
+
+        f = asyncio.ensure_future(f, loop=self.event_loop)
+        self.doing_set.add(f)
+        f.add_done_callback(self._on_completion)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        f = None
+        while f is None:
+            if self.exit_flag and self.unfinished_len() == 0:
+                raise StopAsyncIteration
+            f = await self.done_queue.get()
+        return f.result()
+
+    def unfinished_len(self):
+        return len(self.doing_set) + self.done_queue.qsize()
+
+    def set_exit_flag(self):
+        self.exit_flag = True
+        self.done_queue.put_nowait(None)
+
+    async def loop_tasks(self, fn):
+        async for args in self:
+            fn(*args)
+        self._task_completion_event.set()
+
+
 class AsyncSGLangWorker(SGLangWorker):
     def __init__(self, config: DictConfig, placement: ComponentPlacement):
         super().__init__(config, placement)
-        self._current_request: RolloutRequest = None
-        self._input_queue = asyncio.Queue[RolloutRequest]()
-        # (req_input_token_ids, sglang_result)
-        self._output_queue = asyncio.Queue[Tuple[int, List[int], Dict]]()
-
-        # Queue for completed rollouts
-        self._completed_queue = asyncio.Queue[RolloutResult]()
-        self._completion_info = CompletionInfo()
-        self._rollout_end_event = asyncio.Event()
-        self._sync_weight_end_event = asyncio.Event()
 
         self._reward_model = MathRewardModel(scale=self._cfg.reward.reward_scale)
         assert self._rollout_batch_size is None, (
@@ -409,20 +443,146 @@ class AsyncSGLangWorker(SGLangWorker):
         return rewards, advantages.tolist()
 
     async def _async_generate(
-        self, raw_id: int, input_ids: List[int], sampling_params: dict
+        self, completion_info: CompletionInfo, unique_id, input_ids, sampling_params: dict
     ):
+        sampling_params = {k: v for k, v in sampling_params.items()}
+        sampling_params['max_new_tokens'] -= len(input_ids) - len(completion_info.input_ids_map[unique_id])
+
         result = await self._engine.async_generate(
             input_ids=input_ids,
             sampling_params=sampling_params,
-            return_logprob=self._return_logprobs,
         )
 
-        if self._cfg.rollout.print_outputs:
-            prompts = self._tokenizer.batch_decode(input_ids)
-            print_sglang_outputs(prompts, [result], self._tokenizer)
+        # fix the output_ids to the correct length if the generate was migrated from another rank.
+        origin_input_ids_len = len(completion_info.input_ids_map[unique_id])
+        if len(input_ids) != origin_input_ids_len:
+            assert len(input_ids) > origin_input_ids_len
+            result['output_ids'] = input_ids[origin_input_ids_len:] + result['output_ids']
+            # TODO. Sometimes len(result['output_ids']) = self._cfg.algorithm.sampling_params.max_new_tokens + 1 for migrate batch.
+            if len(result['output_ids']) > self._cfg.algorithm.sampling_params.max_new_tokens:
+                self.log_info(f"Warning : Migrate data is too long. output_ids_len:{len(result['output_ids'])} is greater than max_new_tokens {self._cfg.algorithm.max_new_tokens}")
+                result['output_ids'] = result['output_ids'][:self._cfg.algorithm.sampling_params.max_new_tokens]
 
-        # SGLang does not return input_ids, so we need to pass them for further usage.
-        return raw_id, input_ids, result
+
+        completion_info.record_result(unique_id, result)
+        if completion_info.is_completed(unique_id):
+            orig_input_ids, answer, results = completion_info.pop_results(unique_id)
+            try:
+                async with asyncio.timeout(100):
+                    rewards, advantages = await asyncio.to_thread(
+                        self._compute_reward_and_advantage,
+                        results,
+                        answer,
+                    )
+            except TimeoutError:
+                self.log_info(f"Timeout when calculating reward and advantage for unique_id={unique_id}. Using zero rewards and advantages.")
+                rewards = [-1.0] * len(results)
+                advantages = [0.0] * len(results)
+            assert completion_info.n_result_each_request == 16
+            rollout_result = RolloutResult(
+                group_size=completion_info.n_result_each_request,
+                num_sequence=len(results),
+                prompt_lengths=[len(orig_input_ids)] * len(results),
+                prompt_ids=[orig_input_ids] * len(results),
+                response_lengths=[len(res["output_ids"]) for res in results],
+                response_ids=[res["output_ids"] for res in results],
+                is_end=[
+                    res["meta_info"]["finish_reason"]["type"] == "stop"
+                    for res in results
+                ],
+                rewards=torch.tensor(rewards, dtype=torch.float32).reshape(-1, 1),
+                advantages=advantages,
+            )
+            return result, rollout_result
+        return result, None
+
+    async def abort_generation(self):
+        """Abort the generation."""
+        await self._engine.tokenizer_manager.abort_generation(
+            obj=io_struct.AbortGenerationInput()
+        )
+
+    async def run_with_scheduler(self, task_queue: AsyncTaskQueue, completion_info: CompletionInfo):
+        async def report():
+            report = RolloutReport(
+                total_requests=completion_info.num_requests,
+                completed_requests=completion_info.num_completed,
+                total_tasks=completion_info.num_requests * completion_info.n_result_each_request,
+                completed_tasks=completion_info.n_result_each_request * completion_info.num_requests - sum(completion_info.n_result_each_request - len(i) for i in completion_info.results.values()),
+                running_tasks=sum(completion_info.n_result_each_request - len(i) for i in completion_info.results.values()),
+                timestamp=time.time()
+            )
+            scheduler_response = RolloutScheduleInfo(instance_id=self._rank, report=report)
+
+            await self.schedule_channel.put(scheduler_response, queue_name=self.scheduler_response_queue, async_op=True).async_wait()
+
+        async def migrate_out():
+            await self.abort_generation()
+            task_queue.set_exit_flag()
+            # wait async event
+            await task_queue._task_completion_event.wait()
+
+            unique_ids = [unique_id for unique_id, abort_results_list in completion_info.abort_results.items() if len(abort_results_list) != 0]
+
+            rollout_migrate_batches = []
+            for unique_id in unique_ids:
+                rollout_migrate_batches.append(
+                    RolloutMigrateBatch(
+                        input_ids=completion_info.input_ids_map.pop(unique_id),
+                        results=completion_info.results.pop(unique_id),
+                        abort_results=completion_info.abort_results.pop(unique_id),
+                        answers=completion_info.answers.pop(unique_id))
+                )
+
+            scheduler_response = RolloutScheduleInfo(instance_id=self._rank, data=rollout_migrate_batches)
+            await self.schedule_channel.put(scheduler_response, queue_name=self.scheduler_response_queue, async_op=True).async_wait()
+
+        async def migrate_in(scheduler_request: RolloutScheduleInfo):
+            rollout_migrate_batches = scheduler_request.data
+            assert rollout_migrate_batches is not None
+            for migrate_batch in rollout_migrate_batches:
+                assert isinstance(migrate_batch, RolloutMigrateBatch)
+
+                assert len(migrate_batch.abort_results) != 0
+                assert len(migrate_batch.abort_results) + len(migrate_batch.results) == completion_info.n_result_each_request
+
+                unique_id = completion_info.add_unique_id(migrate_batch.input_ids, migrate_batch.answers)
+
+                for result in migrate_batch.results:
+                    completion_info.record_result(unique_id, result)
+
+                for abort_result in migrate_batch.abort_results:
+                    abort_input_ids = migrate_batch.input_ids + abort_result["output_ids"]
+                    task_queue.put_one(self._async_generate(completion_info, unique_id, abort_input_ids, self._sampling_params))
+
+
+        async def wait_for_finish():
+            while True:
+                await asyncio.sleep(0.1)
+                running_tasks = sum(completion_info.n_result_each_request - len(i) for i in completion_info.results.values())
+                if running_tasks == 0:
+                    task_queue.set_exit_flag()
+                    break
+
+        # Action with feedback : [RolloutAction.Report, RolloutAction.Migrate_Out]
+        # Action without feedback : [RolloutAction.Migrate_In, RolloutAction.Finish]
+        while True:
+            request = await self.schedule_channel.get(queue_name=self.scheduler_request_queue, async_op=True).async_wait()
+            if request.action == RolloutAction.Report:
+                await report()
+            elif request.action == RolloutAction.Migrate_In:
+                await migrate_in(request)
+            elif request.action == RolloutAction.Migrate_Out:
+                await migrate_out()
+            elif request.action == RolloutAction.Wait_For_Finish:
+                await wait_for_finish()
+            elif request.action == RolloutAction.Finish:
+                task_queue.set_exit_flag()
+
+            if task_queue.exit_flag:
+                running_tasks = sum(completion_info.n_result_each_request - len(i) for i in completion_info.results.values())
+                assert running_tasks == 0, f"ready to break run_with_scheduler() but running_tasks={running_tasks}"
+                break
 
     async def _put_result(self, result: RolloutResult, output_channel: Channel):
         await output_channel.put(item=result, async_op=True).async_wait()
@@ -435,17 +595,8 @@ class AsyncSGLangWorker(SGLangWorker):
         rollout_request: RolloutRequest = await input_channel.get(
             async_op=True
         ).async_wait()
-        # self._current_request = rollout_request
-        # self._completion_info.clear_and_set(rollout_request)
 
         with self.worker_timer():
-            # rollout_tasks = [
-            #     asyncio.create_task(
-            #         self._async_generate(raw_id, input_ids, self._sampling_params)
-            #     )
-            #     for raw_id, input_ids in enumerate(rollout_request.input_ids)
-            #     for _ in range(rollout_request.n)
-            # ]
             completion_info.n_result_each_request = rollout_request.n
 
             for input_ids, answer in zip(rollout_request.input_ids, rollout_request.answers):
