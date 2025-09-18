@@ -126,8 +126,6 @@ class CompletionInfo:
 
             if len(self.results[unique_id]) == self.n_result_each_request:
                 self.num_completed += 1
-                if self.logger is not None:
-                    self.logger.info(f"Completed all generations for unique_id: {unique_id}")
 
         return len(self.results[unique_id])
 

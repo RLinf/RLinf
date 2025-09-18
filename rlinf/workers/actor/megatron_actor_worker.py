@@ -693,6 +693,8 @@ class MegatronActor(MegatronModelManager, Worker):
         When overlap_param_gather is enabled, weights are scattered across DP and gathered in the next forward pass.
         We need to force a gather here to ensure all weights are correct before the next weight sync.
         """
+        if not self.is_running:
+            return
         if (
             self.role_cfg.optim.use_distributed_optimizer
             and self.role_cfg.optim.overlap_param_gather

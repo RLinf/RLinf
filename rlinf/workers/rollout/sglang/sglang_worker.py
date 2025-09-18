@@ -17,7 +17,7 @@ import dataclasses
 import json
 import os
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 import numpy as np
 import torch
@@ -445,7 +445,7 @@ class AsyncSGLangWorker(SGLangWorker):
     async def _async_generate(
         self, completion_info: CompletionInfo, unique_id, input_ids, sampling_params: dict
     ):
-        sampling_params = {k: v for k, v in sampling_params.items()}
+        sampling_params = dict(sampling_params.items())
         sampling_params['max_new_tokens'] -= len(input_ids) - len(completion_info.input_ids_map[unique_id])
 
         result = await self._engine.async_generate(
@@ -460,9 +460,8 @@ class AsyncSGLangWorker(SGLangWorker):
             result['output_ids'] = input_ids[origin_input_ids_len:] + result['output_ids']
             # TODO. Sometimes len(result['output_ids']) = self._cfg.algorithm.sampling_params.max_new_tokens + 1 for migrate batch.
             if len(result['output_ids']) > self._cfg.algorithm.sampling_params.max_new_tokens:
-                self.log_info(f"Warning : Migrate data is too long. output_ids_len:{len(result['output_ids'])} is greater than max_new_tokens {self._cfg.algorithm.max_new_tokens}")
+                self.log_info(f"Warning : Migrate data is too long. output_ids_len:{len(result['output_ids'])} is greater than max_new_tokens {self._cfg.algorithm.sampling_params.max_new_tokens}")
                 result['output_ids'] = result['output_ids'][:self._cfg.algorithm.sampling_params.max_new_tokens]
-
 
         completion_info.record_result(unique_id, result)
         if completion_info.is_completed(unique_id):
@@ -478,7 +477,7 @@ class AsyncSGLangWorker(SGLangWorker):
                 self.log_info(f"Timeout when calculating reward and advantage for unique_id={unique_id}. Using zero rewards and advantages.")
                 rewards = [-1.0] * len(results)
                 advantages = [0.0] * len(results)
-            assert completion_info.n_result_each_request == 16
+
             rollout_result = RolloutResult(
                 group_size=completion_info.n_result_each_request,
                 num_sequence=len(results),
@@ -554,7 +553,6 @@ class AsyncSGLangWorker(SGLangWorker):
                 for abort_result in migrate_batch.abort_results:
                     abort_input_ids = migrate_batch.input_ids + abort_result["output_ids"]
                     task_queue.put_one(self._async_generate(completion_info, unique_id, abort_input_ids, self._sampling_params))
-
 
         async def wait_for_finish():
             while True:
@@ -635,7 +633,8 @@ class AsyncSGLangWorker(SGLangWorker):
 
             self.log_info(f"Async generation and send completed. send results len={len(return_tasks)}")
             await self.offload_engine()
-            await self.schedule_channel.put(RolloutScheduleInfo(instance_id=self._rank, action=RolloutAction.Offloaded), queue_name=self.scheduler_response_queue, async_op=True).async_wait()
+            if self.use_auto_scheduler:
+                await self.schedule_channel.put(RolloutScheduleInfo(instance_id=self._rank, action=RolloutAction.Offloaded), queue_name=self.scheduler_response_queue, async_op=True).async_wait()
 
     async def offload_engine(self):
         """
