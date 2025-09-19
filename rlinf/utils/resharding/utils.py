@@ -64,49 +64,59 @@ class TransformFunc:
     def _split_gqa_tensor(
         tensor: torch.Tensor, new_statedict: dict, weight_names: List[str], config
     ) -> None:
-        """
-        Private helper to split a GQA-combined tensor (weight or bias).
-        """
         hidden_size = config.model_config.hidden_size
         num_attention_heads = config.model_config.num_attention_heads
-        num_key_value_heads = (
-            config.model_config.num_query_groups or num_attention_heads
-        )
+        num_query_groups = config.model_config.num_query_groups or num_attention_heads
         head_dim = hidden_size // num_attention_heads
 
-        tp_size = config.model_config.tensor_model_parallel_size
-
-        assert num_key_value_heads % tp_size == 0, (
-            "num_key_value_heads must be divisible by tensor parallel size"
+        target_tp = config.reshard_tp_size
+        assert num_query_groups % target_tp == 0, (
+            "num_query_groups must be divisible by reshard_tp_size"
         )
+        local_num_query_groups = num_query_groups // target_tp
 
-        q_heads_per_rank = num_attention_heads // tp_size
-        kv_heads_per_rank = num_key_value_heads // tp_size
+        # heads per query group
+        assert num_attention_heads % num_query_groups == 0, (
+            "num_attention_heads must be divisible by num_query_groups"
+        )
+        q_heads_per_group = num_attention_heads // num_query_groups
 
-        q_shard_size = q_heads_per_rank * head_dim
-        k_shard_size = kv_heads_per_rank * head_dim
-        v_shard_size = kv_heads_per_rank * head_dim
+        num_channel_qkv = q_heads_per_group + 2
 
-        shard_size = q_shard_size + k_shard_size + v_shard_size
-
-        q_shards, k_shards, v_shards = [], [], []
-
-        # [Qi,Ki,Vi]
-        for shard in tensor.split(shard_size, dim=0):
-            # Qi, Ki, Vi
-            q_shard, k_shard, v_shard = shard.split(
-                [q_shard_size, k_shard_size, v_shard_size], dim=0
+        if tensor.ndim == 2:
+            # Weight: [out_features, in_features]
+            out_features, in_features = tensor.shape
+            expected_out = local_num_query_groups * num_channel_qkv * head_dim
+            assert out_features == expected_out, (
+                f"Unexpected fused QKV weight shape {tensor.shape}, expect "
+                f"[{expected_out}, {in_features}] (local groups={local_num_query_groups})"
             )
-            q_shards.append(q_shard)
-            k_shards.append(k_shard)
-            v_shards.append(v_shard)
 
-        # cat
-        q_full = torch.cat(q_shards, dim=0)
-        k_full = torch.cat(k_shards, dim=0)
-        v_full = torch.cat(v_shards, dim=0)
+            qkv = tensor.view(
+                local_num_query_groups, num_channel_qkv, head_dim, in_features
+            )
+            q, k, v = torch.split(
+                qkv, [q_heads_per_group, 1, 1], dim=1
+            )  # shapes: [G, qh, D, In], [G,1,D,In], [G,1,D,In]
+            q_full = q.reshape(-1, in_features).contiguous()
+            k_full = k.reshape(-1, in_features).contiguous()
+            v_full = v.reshape(-1, in_features).contiguous()
+        else:
+            # Bias: [out_features]
+            out_features = tensor.shape[0]
+            expected_out = local_num_query_groups * num_channel_qkv * head_dim
+            assert out_features == expected_out, (
+                f"Unexpected fused QKV bias shape {tensor.shape}, expect "
+                f"[{expected_out}] (local groups={local_num_query_groups})"
+            )
 
-        # saved
+            qkv = tensor.view(local_num_query_groups, num_channel_qkv, head_dim)
+            q, k, v = torch.split(qkv, [q_heads_per_group, 1, 1], dim=1)
+            q_full = q.reshape(-1).contiguous()
+            k_full = k.reshape(-1).contiguous()
+            v_full = v.reshape(-1).contiguous()
+
+        # Save to target names
         new_statedict[weight_names[0]] = q_full.clone()
         new_statedict[weight_names[1]] = k_full.clone()
         new_statedict[weight_names[2]] = v_full.clone()
