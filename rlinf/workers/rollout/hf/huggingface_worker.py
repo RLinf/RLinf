@@ -21,6 +21,10 @@ from tqdm import tqdm
 
 from rlinf.config import torch_dtype_from_precision
 from rlinf.models import get_model, get_model_config_and_processor
+from rlinf.models.embodiment.model_namspace import (
+    append_to_buffer,
+    get_model_buffer_namespace,
+)
 from rlinf.models.embodiment.model_utils import (
     default_logits_processor,
     prepare_observations,
@@ -57,7 +61,7 @@ class MultiStepRolloutWorker(Worker):
         self._obs_queue_name = cfg.env.channel.queue_name
         self._action_queue_name = cfg.rollout.channel.queue_name
         self._replay_buffer_name = cfg.actor.channel.queue_name
-        # stage_num: default to 2, use for pipeline rollout process
+        self._num_images_in_input = cfg.actor.model.num_images_in_input
         self.stage_num = cfg.rollout.pipeline_stage_num
 
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
@@ -69,11 +73,19 @@ class MultiStepRolloutWorker(Worker):
 
         self.use_proprio = self.cfg.actor.model.get("use_proprio", False)
 
+        # Cache model namespace for buffer operations
+        self.model_name = self.cfg.actor.model.model_name
+        self.buffer_namespace = get_model_buffer_namespace(self.model_name)
+
     def init_worker(self):
         self.hf_model = get_model(self.cfg.rollout.model_dir, self.cfg.actor.model)
         self.hf_model.setup_params(self.model_config, self.cfg)
-        self.hf_model.to(self.precision)
+        if self.cfg.actor.model.model_name != "openpi":
+            self.hf_model.to(self.precision)
         self.hf_model.eval()
+        if self.cfg.actor.model.model_name == "openpi":
+            self.input_processor = self.hf_model.input_transform
+
         self.setup_sample_params()
         if self.cfg.rollout.get("enable_offload", False):
             self.offload_model()
@@ -103,6 +115,18 @@ class MultiStepRolloutWorker(Worker):
         }
 
     def predict(self, processed_obs, do_sample=True, mode="train"):
+        if self.cfg.actor.model.model_name in ["openpi"]:
+            with torch.no_grad():
+                result = self.hf_model(
+                    processed_obs,
+                    mode=mode,
+                )
+                # openpi patch, drop the input for the model
+                processed_obs.pop("image")
+                processed_obs.pop("image_mask")
+                processed_obs.pop("state")
+            return result
+
         action_token_len = self.hf_model.action_dim * self.hf_model.num_action_chunks
 
         sample_kwargs = (
@@ -149,8 +173,13 @@ class MultiStepRolloutWorker(Worker):
         chunk_action_tokens = action_tokens.reshape(
             -1, self.hf_model.num_action_chunks, self.hf_model.action_dim
         )
-
-        return chunk_actions, chunk_action_tokens, chunk_logprobs, chunk_values
+        result = {
+            "actions": chunk_actions,
+            "action_tokens": chunk_action_tokens,
+            "prev_logprobs": chunk_logprobs,
+            "prev_values": chunk_values,
+        }
+        return result
 
     def update_env_batch(self, i, env_batch):
         # first step for env_batch
@@ -183,8 +212,10 @@ class MultiStepRolloutWorker(Worker):
                         max_length=self.hf_model.max_prompt_length,
                         processor=self.input_processor,
                         precision=self.precision,
+                        num_images_in_input=self._num_images_in_input,
                     )
-                    _, _, _, _final_values = self.predict(processed_obs)
+                    result = self.predict(processed_obs)
+                    _final_values = result["prev_values"]
                 final_values = torch.zeros_like(_final_values[:, 0])  # [bsz, ]
                 last_step_dones = dones[:, -1]  # [bsz, ]
 
@@ -218,30 +249,22 @@ class MultiStepRolloutWorker(Worker):
                         max_length=self.hf_model.max_prompt_length,
                         processor=self.input_processor,
                         precision=self.precision,
+                        num_images_in_input=self._num_images_in_input,
                     )
-                    chunk_actions, chunk_action_token, chunk_logprobs, chunk_values = (
-                        self.predict(processed_obs)
-                    )
-                    await self.send_chunk_actions(chunk_actions)
+                    result = self.predict(processed_obs)
+                    # Extract actions for sending
+                    chunk_actions = result["actions"]
 
-                    self.buffer_list[i]["input_ids"].append(
-                        processed_obs["input_ids"].cpu().contiguous()
+                    # Automatically append data to buffer based on cached namespace
+                    append_to_buffer(
+                        buffer_list=self.buffer_list,
+                        stage_idx=i,
+                        namespace=self.buffer_namespace,
+                        processed_obs=processed_obs,
+                        result=result,
                     )
-                    self.buffer_list[i]["pixel_values"].append(
-                        processed_obs["pixel_values"].cpu().contiguous()
-                    )
-                    self.buffer_list[i]["attention_mask"].append(
-                        processed_obs["attention_mask"].bool().cpu().contiguous()
-                    )
-                    self.buffer_list[i]["action_tokens"].append(
-                        chunk_action_token.cpu().contiguous()
-                    )
-                    self.buffer_list[i]["prev_logprobs"].append(
-                        chunk_logprobs.cpu().contiguous()
-                    )
-                    self.buffer_list[i]["prev_values"].append(
-                        chunk_values.cpu().contiguous()
-                    )
+
+                    await self.send_chunk_actions(chunk_actions)
 
             for i in range(self.stage_num):
                 env_batch = await self.recv_env_batch()
@@ -254,8 +277,10 @@ class MultiStepRolloutWorker(Worker):
                     max_length=self.hf_model.max_prompt_length,
                     processor=self.input_processor,
                     precision=self.precision,
+                    num_images_in_input=self._num_images_in_input,
                 )
-                _, _, _, final_chunk_values = self.predict(processed_obs)
+                result = self.predict(processed_obs)
+                final_chunk_values = result["prev_values"]
                 self.buffer_list[i]["prev_values"].append(
                     final_chunk_values.cpu().contiguous()
                 )
@@ -293,8 +318,10 @@ class MultiStepRolloutWorker(Worker):
                     max_length=self.hf_model.max_prompt_length,
                     processor=self.input_processor,
                     precision=self.precision,
+                    num_images_in_input=self._num_images_in_input,
                 )
-                chunk_actions, _, _, _ = self.predict(processed_obs, mode="eval")
+                result = self.predict(processed_obs, mode="eval")
+                chunk_actions = result["actions"]
                 await self.send_chunk_actions(chunk_actions)
 
                 if "meta" in env_batch:

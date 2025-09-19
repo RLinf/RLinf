@@ -263,19 +263,23 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.model.train()
         self.optimizer.zero_grad()
         rollout_size = (
-            self.rollout_batch["input_ids"].shape[0]
-            * self.rollout_batch["input_ids"].shape[1]
+            self.rollout_batch["prev_logprobs"].shape[0]
+            * self.rollout_batch["prev_logprobs"].shape[1]
         )
         shuffle_id = torch.randperm(rollout_size)
 
         for key, value in self.rollout_batch.items():
-            self.log_on_first_rank(f"run training, {key}: {value.shape}")
+            self.log_on_first_rank(
+                f"run training, {key}: {value.shape if value is not None else None}"
+            )
 
         with torch.no_grad():
             for key, value in self.rollout_batch.items():
                 if key in ["dones", "prev_values"]:
                     value = value[:-1]
                 if "env_info" in key:
+                    continue
+                if value is None:
                     continue
                 value = value.reshape(rollout_size, *value.shape[2:])
                 self.rollout_batch[key] = value[shuffle_id]
@@ -294,7 +298,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         # Split to make minibatch iterator for updating the actor
         # See PPO paper for details. https://arxiv.org/abs/1707.06347
-        rollout_size = self.rollout_batch["input_ids"].size(0)
+        rollout_size = self.rollout_batch["prev_logprobs"].size(0)
         batch_size_per_rank = self.cfg.actor.global_batch_size // self._world_size
         assert rollout_size % batch_size_per_rank == 0, (
             f"{rollout_size} is not divisible by {batch_size_per_rank}"
@@ -309,7 +313,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             enumerate(rollout_dataloader_iter), desc="get loss and metrics"
         ):
             # split batch into micro_batches
-            train_global_batch_size = train_global_batch["input_ids"].shape[0]
+            train_global_batch_size = train_global_batch["prev_logprobs"].shape[0]
             assert (
                 train_global_batch_size
                 == self.cfg.actor.global_batch_size
@@ -329,39 +333,49 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     data[k] = v.to(f"cuda:{int(os.environ['LOCAL_RANK'])}")
 
                 data = self.model.preprocess_for_train(data)
-                input_ids = data["input_ids"]
-                action_tokens = data["action_tokens"]
-                attention_mask = data["attention_mask"]
-                pixel_values = data["pixel_values"]
+                if self.cfg.actor.model.model_name == "openpi":
+                    # ode-sde mix mode
+                    data["prev_logprobs"] = data["prev_logprobs"][
+                        torch.arange(data["prev_logprobs"].shape[0]),
+                        data["denoise_inds"],
+                    ]
+                    output_dict = self.model(data, mode="compute_logprob")
+                else:
+                    input_ids = data["input_ids"]
+                    action_tokens = data["action_tokens"]
+                    attention_mask = data["attention_mask"]
+                    pixel_values = data["pixel_values"]
 
-                action_token_len = self.model.action_dim * self.model.num_action_chunks
+                    action_token_len = (
+                        self.model.action_dim * self.model.num_action_chunks
+                    )
 
-                logits_processor_args = {
-                    "action_tokens": action_tokens,
-                    "vocab_size": self.model.vocab_size,
-                    "n_action_bins": self.model.config.n_action_bins,
-                }
+                    logits_processor_args = {
+                        "action_tokens": action_tokens,
+                        "vocab_size": self.model.vocab_size,
+                        "n_action_bins": self.model.config.n_action_bins,
+                    }
 
-                output_dict = custom_forward(
-                    self.model,
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    pixel_values=pixel_values,
-                    action_token_len=action_token_len,
-                    value_model=True
-                    if self.cfg.algorithm.adv_type == "embodied_gae"
-                    else False,
-                    value_head_mode=self.cfg.actor.model.get("vh_mode", None),
-                    temperature=self.cfg.algorithm.sampling_params.temperature_train,
-                    top_k=self.cfg.algorithm.sampling_params.top_k,
-                    logits_processor_args=logits_processor_args,
-                )
+                    output_dict = custom_forward(
+                        self.model,
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        pixel_values=pixel_values,
+                        action_token_len=action_token_len,
+                        value_model=True
+                        if self.cfg.algorithm.adv_type == "embodied_gae"
+                        else False,
+                        value_head_mode=self.cfg.actor.model.get("vh_mode", None),
+                        temperature=self.cfg.algorithm.sampling_params.temperature_train,
+                        top_k=self.cfg.algorithm.sampling_params.top_k,
+                        logits_processor_args=logits_processor_args,
+                    )
 
                 kwargs = {
                     "loss_type": self.cfg.algorithm.loss_type,
                     "logprob_type": self.cfg.algorithm.logprob_type,
                     "entropy_type": self.cfg.algorithm.entropy_type,
-                    "single_action_dim": self.model.action_dim,
+                    "single_action_dim": self.cfg.actor.model.get("action_dim", 7),
                     "logprobs": output_dict["logprobs"],
                     "entropy": output_dict["entropy"],
                     "values": output_dict.get("values", None),

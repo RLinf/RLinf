@@ -200,8 +200,9 @@ class EnvWorker(Worker):
         This function is used to interact with the environment.
         """
         chunk_actions = prepare_actions(
-            simulator_type=self.cfg.env.train.simulator_type,
             raw_chunk_actions=chunk_actions,
+            simulator_type=self.cfg.env.train.simulator_type,
+            model_name=self.cfg.actor.model.model_name,
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
             action_dim=self.cfg.actor.model.action_dim,
         )
@@ -240,8 +241,9 @@ class EnvWorker(Worker):
         This function is used to evaluate the environment.
         """
         chunk_actions = prepare_actions(
-            simulator_type=self.cfg.env.train.simulator_type,
             raw_chunk_actions=raw_actions,
+            simulator_type=self.cfg.env.train.simulator_type,
+            model_name=self.cfg.actor.model.model_name,
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
             action_dim=self.cfg.actor.model.action_dim,
         )
@@ -253,12 +255,15 @@ class EnvWorker(Worker):
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
 
         if chunk_dones.any():
-            final_info = infos["final_info"]
-            for key in final_info["episode"]:
-                env_info_list[key] = final_info["episode"][key][
-                    chunk_dones[:, -1]
-                ].cpu()
-
+            if "episode" in infos:
+                for key in infos["episode"]:
+                    env_info_list[key] = infos["episode"][key].cpu()
+            if "final_info" in infos:
+                final_info = infos["final_info"]
+                for key in final_info["episode"]:
+                    env_info_list[key] = final_info["episode"][key][
+                        chunk_dones[:, -1]
+                    ].cpu()
         env_batch = create_env_batch(
             obs=extracted_obs, rews=None, dones=None, infos=infos, meta=env_info_list
         )

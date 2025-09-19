@@ -134,6 +134,7 @@ actor:
     is_lora: True
     lora_rank: 32
     ckpt_path: null
+    num_images_in_input: 1
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
     trust_remote_code: True

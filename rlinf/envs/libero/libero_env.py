@@ -298,8 +298,7 @@ class LiberoEnv(gym.Env):
         if reconfig_env_idx:
             env_fn_params = self.get_env_fn_params(reconfig_env_idx)
             self.env.reconfigure_env_fns(env_fn_params, reconfig_env_idx)
-
-        self.env.seed([0] * len(env_idx))
+        self.env.seed(self.seed)
         self.env.reset(id=env_idx)
         init_state = self._get_reset_states(env_idx=env_idx)
         self.env.set_init_state(init_state=init_state, id=env_idx)
@@ -319,8 +318,9 @@ class LiberoEnv(gym.Env):
 
         self._reconfigure(reset_state_ids, env_idx)
 
-        for _ in range(10):
+        for _ in range(15):
             zero_actions = np.zeros((self.num_envs, 7))
+            zero_actions[:, -1] = -1
             raw_obs, _reward, terminations, info_lists = self.env.step(zero_actions)
 
         obs = self._wrap_obs(raw_obs)
@@ -353,7 +353,6 @@ class LiberoEnv(gym.Env):
         raw_obs, _reward, terminations, info_lists = self.env.step(actions)
         infos = list_of_dict_to_dict_of_list(info_lists)
         truncations = self.elapsed_steps >= self.cfg.max_episode_steps
-
         obs = self._wrap_obs(raw_obs)
 
         step_reward = self._calc_step_reward(terminations)
