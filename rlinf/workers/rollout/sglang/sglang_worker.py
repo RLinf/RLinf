@@ -484,6 +484,7 @@ class AsyncSGLangWorker(SGLangWorker):
         result = await self._engine.async_generate(
             input_ids=input_ids,
             sampling_params=sampling_params,
+            return_logprob=self._return_logprobs,
         )
 
         # fix the output_ids to the correct length if the generate was migrated from another rank.
@@ -522,20 +523,17 @@ class AsyncSGLangWorker(SGLangWorker):
                 rewards = [-1.0] * len(results)
                 advantages = [0.0] * len(results)
 
-            rollout_result = RolloutResult(
-                group_size=completion_info.n_result_each_request,
-                num_sequence=len(results),
-                prompt_lengths=[len(orig_input_ids)] * len(results),
-                prompt_ids=[orig_input_ids] * len(results),
-                response_lengths=[len(res["output_ids"]) for res in results],
-                response_ids=[res["output_ids"] for res in results],
-                is_end=[
-                    res["meta_info"]["finish_reason"]["type"] == "stop"
-                    for res in results
-                ],
-                rewards=torch.tensor(rewards, dtype=torch.float32).reshape(-1, 1),
-                advantages=advantages,
+            rollout_result = RolloutResult.from_sglang_results(
+                results,
+                completion_info.n_result_each_request,
+                [orig_input_ids] * len(results),
+                return_logprobs=self._return_logprobs,
             )
+            rollout_result.rewards = torch.tensor(
+                rewards, dtype=torch.float32
+            ).reshape(-1, 1)
+            rollout_result.advantages = advantages
+
             return result, rollout_result
         return result, None
 
