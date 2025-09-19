@@ -36,12 +36,11 @@ class FSDPModelManager:
 
     def __init__(self, cfg: DictConfig):
         self._cfg = cfg
-        self.torch_dtype = torch_dtype_from_precision(self._cfg.model.precision)
-
-        assert (
-            self.torch_dtype == torch.float16 or self.torch_dtype == torch.bfloat16
-        ), (
-            f"Precision {self._cfg.model.precision} is not supported, only support bf16 and fp16."
+        self.torch_dtype = torch_dtype_from_precision(
+            self._cfg.model.get("precision", None)
+        )
+        self.gradient_checkpointing_enable = self._cfg.model.get(
+            "gradient_checkpointing_enable", False
         )
 
     def model_provider_func(self) -> torch.nn.Module:
@@ -78,7 +77,11 @@ class FSDPModelManager:
         """Setup model and optimizer."""
         module = self.model_provider_func()
 
-        module.gradient_checkpointing_enable()
+        if (
+            hasattr(module, "gradient_checkpointing_enable")
+            and self.gradient_checkpointing_enable
+        ):
+            module.gradient_checkpointing_enable()
 
         mixed_precision = MixedPrecision(
             param_dtype=self.torch_dtype,
@@ -109,34 +112,36 @@ class FSDPModelManager:
             sync_module_states=True,
         )
 
-        # NOTE: Currently we assume that only the value head contains "value_head" in its name.
-        # The value head only serves for value prediction in RL algorithms like PPO.
-        param_groups = [
-            {
-                "params": [
-                    p
-                    for n, p in self.model.named_parameters()
-                    if "value_head" not in n and p.requires_grad
-                ],
-                "lr": self._cfg.optim.lr,
-                "betas": betas,
-            },
-        ]
+        params_actor = []
+        params_critic = []
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                if "model.value_proj" in name or "model.value_head" in name:
+                    params_critic.append(param)
+                else:
+                    params_actor.append(param)
 
-        if self._cfg.model.vh_mode in ["a", "a0", "a6"]:
-            param_groups.append(
-                {
-                    "params": [
-                        p
-                        for n, p in self.model.named_parameters()
-                        if "value_head" in n and p.requires_grad
-                    ],
-                    "lr": self._cfg.optim.value_lr,
-                    "betas": betas,
-                }
+        if len(params_actor) > 0:
+            self.optimizer = optim.AdamW(
+                [
+                    {"params": params_actor, "lr": self._cfg.optim.lr, "betas": betas},
+                    {
+                        "params": params_critic,
+                        "lr": self._cfg.optim.value_lr,
+                        "betas": betas,
+                    },
+                ]
             )
-
-        self.optimizer = optim.AdamW(param_groups)
+        else:
+            self.optimizer = optim.AdamW(
+                [
+                    {
+                        "params": params_actor,
+                        "lr": self._cfg.optim.value_lr,
+                        "betas": betas,
+                    },
+                ]
+            )
 
     def get_model_state_dict(self):
         with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT):

@@ -89,9 +89,13 @@ def preprocess_loss_inputs(**kwargs) -> dict:
         old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim).sum(dim=-1)
 
     elif logprob_type == "chunk_level":
-        logprobs = logprobs.sum(dim=-1)
-        old_logprobs = old_logprobs.sum(dim=-1)
-        advantages = advantages.sum(dim=-1)
+        logprobs = logprobs.reshape(bsz, -1, single_action_dim).mean(dim=[1, 2])
+        old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim).mean(dim=[1, 2])
+        advantages = advantages.mean(dim=-1)
+        if loss_mask is not None:
+            loss_mask = loss_mask.max(dim=-1)[0]
+        if loss_mask_sum is not None:
+            loss_mask_sum = loss_mask_sum.max(dim=-1)[0]
 
     if entropy is not None:
         if entropy_type == "action_level":
@@ -119,8 +123,12 @@ def preprocess_advantages_inputs(**kwargs) -> dict:
     """
     reward_type = kwargs.get("reward_type", None)
     if reward_type == "chunk_level":
-        rewards = kwargs["rewards"]
-        dones = kwargs["dones"]
-        kwargs["rewards"] = rewards.sum(dim=-1, keepdim=True)
-        kwargs["dones"] = dones[..., -1:]
+        kwargs["rewards"] = kwargs["rewards"].sum(dim=-1, keepdim=True)
+        kwargs["dones"] = kwargs["dones"][..., -1:]
+        if "loss_mask" in kwargs and kwargs["loss_mask"] is not None:
+            kwargs["loss_mask"] = kwargs["loss_mask"].max(dim=-1, keepdim=True)[0]
+        if "loss_mask_sum" in kwargs and kwargs["loss_mask_sum"] is not None:
+            kwargs["loss_mask_sum"] = kwargs["loss_mask_sum"].max(dim=-1, keepdim=True)[
+                0
+            ]
     return kwargs

@@ -12,11 +12,11 @@ hydra:
     
 cluster:
   num_nodes: 1
-  num_gpus_per_node: 8
+  num_gpus_per_node: 4
   component_placement:
-    actor: 0-1
+    actor: 0-3
     env: 2-3
-    rollout: 4-5
+    rollout: 0-1
 
 runner:
   task_type: embodied
@@ -99,7 +99,7 @@ rollout:
     queue_size: 0
   mode: "colocate"
   backend: "huggingface"
-  model_dir: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
+  model_dir: "/mnt/mnt/public/mjwei/download_models/openvla/openvla-7b-finetuned-libero-10/"
   enable_offload: True
   pipeline_stage_num: 2
 
@@ -110,7 +110,7 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
+  checkpoint_load_path: "/mnt/mnt/public/mjwei/download_models/openvla/openvla-7b-finetuned-libero-10/"
   checkpoint_save_path: "../results"
   micro_batch_size: 8
   global_batch_size: 160
@@ -136,9 +136,8 @@ actor:
     image_size: [224, 224]
     is_lora: True
     lora_rank: 32
-    lora_path: /path/to/model/oft-sft/lora_004000
+    lora_path: /mnt/mnt/public/hongzhi/models/oft-sft/lora_004000/
     ckpt_path: null
-    
     num_images_in_input: 1
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
@@ -154,7 +153,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
+    tokenizer_model: "/mnt/mnt/public/mjwei/download_models/openvla/openvla-7b-finetuned-libero-10/"
     use_fast: False
     trust_remote_code: True
     padding_side: "right"

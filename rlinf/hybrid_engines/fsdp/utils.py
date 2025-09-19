@@ -30,7 +30,6 @@ import functools
 
 import torch
 from accelerate import init_empty_weights
-from prismatic.extern.hf.modeling_prismatic import PrismaticProjector
 from torch.distributed.fsdp.wrap import (
     transformer_auto_wrap_policy,
 )
@@ -101,6 +100,7 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False):
 
     # Add vision transformer policies for VLA models
     if is_vla_model:
+        from prismatic.extern.hf.modeling_prismatic import PrismaticProjector
         from timm.models.vision_transformer import VisionTransformer
         from torch.distributed.fsdp.wrap import _module_wrap_policy, _or_policy
 

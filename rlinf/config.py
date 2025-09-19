@@ -38,7 +38,7 @@ except ImportError:
     transformer_engine = None
     HAVE_TE = False
 
-SUPPORTED_MODEL_ARCHS = ["qwen2.5", "openvla", "openvla_oft"]
+SUPPORTED_MODEL_ARCHS = ["qwen2.5", "openvla", "openvla_oft", "openpi"]
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
 __all__ = ["build_config"]
 
@@ -50,6 +50,8 @@ def torch_dtype_from_precision(precision: Union[int, str]) -> torch.dtype:
         return torch.float16
     elif precision in [32, "32", "32-true"]:
         return torch.float32
+    elif precision in [None]:
+        return None
     else:
         raise ValueError(
             f"Could not parse the precision of `{precision}` to a valid torch.dtype"
