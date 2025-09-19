@@ -177,7 +177,6 @@ class MathDataset(Dataset):
 
 
 class VLMBaseDataset(Dataset):
-
     def __init__(
         self,
         data_paths: Union[List[str], str],

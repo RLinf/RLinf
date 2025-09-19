@@ -8,7 +8,7 @@ hydra:
 
 cluster:
   num_nodes: 1
-  num_gpus_per_node: 8
+  num_gpus_per_node: 4
   component_placement:
     actor,rollout: all
 
@@ -33,8 +33,7 @@ runner:
 
   resume_dir: null
   experiment_name: grpo-1.5b
-  output_dir: ../results
-
+  output_dir: /mnt/public/daibo/results
 algorithm:
   group_size: 8
 
@@ -85,7 +84,7 @@ rollout:
 
   gpu_memory_utilization: 0.55
 
-  model_dir: /mnt/public/hf_models/DeepSeek-R1-Distill-Qwen-1.5B
+  model_dir: /mnt/public/hf_models/qwen2.5-VL-3B/
   model_arch: qwen2.5
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
@@ -94,7 +93,7 @@ rollout:
   padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
   eos: null                   # will be tokenizer.eos_token_id if null.
     
-  rollout_backend: sglang     # here choose which backend to rollout,support [sglang, vllm] 
+  rollout_backend: vllm     # here choose which backend to rollout,support [sglang, vllm] 
 
   sglang:
     attention_backend: triton # [flashinfer, triton] for more, see sglang's doc
@@ -121,18 +120,25 @@ rollout:
   cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
 
 data:
-  type: math
+  type: vision_language
+  dataset_name: robo2vlm
   max_prompt_length: 1024
   filter_prompt_by_length: True
   rollout_batch_size: 8
   val_rollout_batch_size: null
   num_workers: 2
-  prompt_key: prompt
   shuffle: True
   validation_shuffle: True
   seed: 1234
-  train_data_paths: ["/mnt/public/guozhen/data/boba_106k_0319_prompt_1024.jsonl"]
-  val_data_paths: ["/mnt/public/guozhen/data/boba_106k_0319_prompt_1024.jsonl"]
+  train_data_paths: ["/mnt/public/daibo/dataset/robo2vlm-1/data/"]
+  val_data_paths: ["/mnt/public/daibo/dataset/robo2vlm-1/data/"]
+  prompt_key: question
+  image_keys: [image]
+  answer_key: answer
+  choice_key: choices
+  solution_key: null
+  use_chat_template: True
+  lazy_loading: True
 
 actor:
   group_name: "ActorGroup"
@@ -159,7 +165,7 @@ actor:
 
     seq_length: ${runner.seq_length}
     encoder_seq_length: ${runner.seq_length}
-    model_path: /mnt/public/hf_models/DeepSeek-R1-Distill-Qwen-1.5B
+    model_path: /mnt/public/hf_models/qwen2.5-VL-3B/
 
   optim:
     optimizer: adam
@@ -189,7 +195,7 @@ actor:
     lr_decay_iters: 10
 
   tokenizer:
-    tokenizer_model: /mnt/public/hf_models/DeepSeek-R1-Distill-Qwen-1.5B
+    tokenizer_model: /mnt/public/hf_models/qwen2.5-VL-3B/
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'
