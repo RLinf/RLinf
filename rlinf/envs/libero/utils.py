@@ -323,10 +323,10 @@ def get_libero_wrist_image(
     """
     img = obs["robot0_eye_in_hand_image"]
     img = img[::-1, ::-1]  # IMPORTANT: rotate 180 degrees to match train preprocessing
-    assert isinstance(resize_size, int) or isinstance(resize_size, tuple)
-    if isinstance(resize_size, int):
-        resize_size = (resize_size, resize_size)
-    img = resize_image(img, resize_size)
+    #assert isinstance(resize_size, int) or isinstance(resize_size, tuple)
+    #if isinstance(resize_size, int):
+    #    resize_size = (resize_size, resize_size)
+    #img = resize_image(img, resize_size)
     return img
 
 

@@ -174,56 +174,22 @@ def prepare_observations_for_vla(
             )
             for key in proprio_keys
         }
+    env_processed_obs = {
+        "image": main_image_tensor,
+        "state": proprio_states["state"],
+        "task_descriptions": task_descriptions,
+    }
+    if simulator_type == "libero" and num_images_in_input > 1:
+        env_processed_obs.update({
+            "wrist_image": wrist_image_tensor,
+        })
+    for key, value in env_processed_obs.items():
+        if key != "task_descriptions":
+            env_processed_obs[key] = value.to(device=device).contiguous()
+        else:
+            continue
+    return env_processed_obs
 
-    if model_name == "openvla":
-        processed_obs = processor(
-            text=task_descriptions,
-            images=image_tensor,
-            padding="max_length",
-            max_length=max_length,
-        )
-        processed_obs = processed_obs.to(device=device, dtype=precision)
-    elif model_name == "openvla_oft":
-        images = {"images": image_tensor}
-        processed_obs = processor(
-            text=task_descriptions,
-            images=images,
-            proprio_states=proprio_states,
-            padding="max_length",
-            max_length=max_length,
-        )
-        processed_obs = processed_obs.to(device=device, dtype=precision)
-    elif model_name == "openpi":
-        # to process
-        to_process_input = {
-            "observation/image": main_image_tensor,
-            "observation/wrist_image": wrist_image_tensor,
-            "observation/state": proprio_states["state"],
-            "prompt": task_descriptions,
-        }
-        processed_obs = processor(to_process_input)
-        # save original, to tensor for interface
-        processed_obs.update(
-            {
-                "observation/image": main_image_tensor,
-                "observation/wrist_image": wrist_image_tensor,
-                "observation/state": proprio_states["state"],
-            }
-        )
-
-    for key, value in processed_obs.items():
-        if isinstance(value, list):
-            processed_obs[key] = [
-                item.to(device=device).contiguous() if torch.is_tensor(item) else item
-                for item in value
-            ]
-        elif torch.is_tensor(value):
-            processed_obs[key] = value.to(device=device).contiguous()
-        # todo: patch for openpi
-        elif isinstance(value, dict):
-            for sub_key, sub_value in value.items():
-                processed_obs[key][sub_key] = sub_value.to(device=device).contiguous()
-    return processed_obs
 
 
 def prepare_observations(

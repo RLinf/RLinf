@@ -331,15 +331,12 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             for data_idx, data in enumerate(train_micro_batch):
                 for k, v in data.items():
                     data[k] = v.to(f"cuda:{int(os.environ['LOCAL_RANK'])}")
-
+                # TODO: note prev_logprobs shape here
                 data = self.model.preprocess_for_train(data)
                 if self.cfg.actor.model.model_name == "openpi":
                     # ode-sde mix mode
-                    data["prev_logprobs"] = data["prev_logprobs"][
-                        torch.arange(data["prev_logprobs"].shape[0]),
-                        data["denoise_inds"],
-                    ]
-                    output_dict = self.model(data, mode="compute_logprob")
+                    output_dict = self.model(data)
+                    data['prev_logprobs'] = output_dict['prev_logprobs']
                 else:
                     input_ids = data["input_ids"]
                     action_tokens = data["action_tokens"]
@@ -377,7 +374,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     "entropy_type": self.cfg.algorithm.entropy_type,
                     "single_action_dim": self.cfg.actor.model.get("action_dim", 7),
                     "logprobs": output_dict["logprobs"],
-                    "entropy": output_dict["entropy"],
+                    "entropy": output_dict.get("entropy", None),
                     "values": output_dict.get("values", None),
                     "old_logprobs": data["prev_logprobs"],
                     "advantages": data["advantages"],
@@ -385,6 +382,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     "prev_values": data["prev_values"],
                     "clip_ratio_high": self.cfg.algorithm.clip_ratio_high,
                     "clip_ratio_low": self.cfg.algorithm.clip_ratio_low,
+                    "use_norm_adv": self.cfg.algorithm.get("use_norm_adv", False),
                     "value_clip": self.cfg.algorithm.get("value_clip", None),
                     "huber_delta": self.cfg.algorithm.get("huber_delta", None),
                     "entropy_bonus": self.cfg.algorithm.entropy_bonus,
@@ -440,3 +438,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             torch.save(model_state, os.path.join(save_base_path, "model.pt"))
             torch.save(optim_state, os.path.join(save_base_path, "optim.pt"))
         torch.distributed.barrier()
+
+    def set_global_step(self, global_step):
+        self.model.set_global_step(global_step)

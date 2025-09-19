@@ -3,10 +3,10 @@ task_suite_name: libero_spatial
 
 auto_reset: ${algorithm.auto_reset}
 ignore_terminations: ${algorithm.ignore_terminations}
-max_episode_steps: 512
+max_episode_steps: 240 # TODO: 480
 
 use_rel_reward: True
-reward_coef: 5.0
+reward_coef: 1.0
 only_eval: False
 
 seed: 0
@@ -26,4 +26,4 @@ init_params:
   camera_heights: 256
   camera_widths: 256
 
-use_ordered_reset_state_ids: True
+use_ordered_reset_state_ids: False

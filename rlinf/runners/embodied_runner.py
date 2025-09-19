@@ -92,6 +92,9 @@ class EmbodiedRunner:
     def run(self):
         start_step = self.global_step
         for _step in tqdm(range(start_step, self.max_steps), ncols=120):
+            # set global step
+            self.actor.set_global_step(self.global_step)
+            self.rollout.set_global_step(self.global_step)
             if (
                 _step % self.cfg.runner.val_check_interval == 0
                 and self.cfg.runner.val_check_interval > 0

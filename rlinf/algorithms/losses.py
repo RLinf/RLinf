@@ -55,13 +55,36 @@ def compute_embodied_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict
     value_clip = kwargs["value_clip"]
     huber_delta = kwargs["huber_delta"]
     entropy_bonus = kwargs["entropy_bonus"]
+    loss_mask = kwargs.get("loss_mask", None)
+    loss_mask_sum = loss_mask.sum()
 
     logratio = logprobs - old_logprobs
     ratio = torch.exp(logratio)
+    if kwargs.get("use_norm_adv", False):
+        if loss_mask is not None:
+            adv_mean = advantages[loss_mask].mean()
+            adv_std = advantages[loss_mask].std()  
+        else:
+            adv_mean = advantages.mean()
+            adv_std = advantages.std()  
+        if adv_std < 1e-8 or torch.isinf(adv_std).any() or torch.isnan(adv_std).any():
+            advantages = torch.zeros_like(advantages)
+        else:
+            advantages = (advantages - adv_mean) / (adv_std + 1e-8)
 
-    surr1 = ratio * advantages
-    surr2 = torch.clamp(ratio, 1 - clip_ratio_low, 1 + clip_ratio_high) * advantages
-    policy_loss = -torch.min(surr1, surr2).mean()
+    surr1 = -ratio * advantages
+    surr2 = -torch.clamp(ratio, 1 - clip_ratio_low, 1 + clip_ratio_high) * advantages
+
+    if loss_mask_sum != 0:
+        policy_loss = torch.mean(torch.max(surr1, surr2)[loss_mask])
+        pg_clipfrac = torch.mean(torch.gt(surr2, surr1).float()[loss_mask])
+        approx_kl = torch.mean(((ratio - 1) - logratio)[loss_mask])
+    else:
+        policy_loss = torch.mean(torch.max(surr1, surr2) * loss_mask)
+        pg_clipfrac = torch.mean(torch.gt(surr2, surr1).float() * loss_mask)
+        approx_kl = torch.mean(((ratio - 1) - logratio) * loss_mask)
+    
+    # policy_loss = -pg_loss.mean()
 
     if torch.isnan(policy_loss):
         print("Policy loss is NaN")
@@ -82,11 +105,16 @@ def compute_embodied_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict
     value_clip_indicator = (value_pred_clipped - prev_values).abs() > value_clip
     value_clip_ratio = value_clip_indicator.float().mean()
 
-    value_loss = value_loss.mean()
+    # value_loss = value_loss.mean()
+
+    if loss_mask_sum != 0:
+        value_loss = torch.mean(value_loss[loss_mask])
+    else:
+        value_loss = torch.mean(value_loss * loss_mask)
 
     # Entropy loss
-    entropy_loss = entropy.mean()
-
+    entropy_loss = entropy.mean() if entropy is not None else torch.tensor(0.0)
+    # TODO: No warmup right now because we don't see any difference in the results
     loss = policy_loss + value_loss - entropy_bonus * entropy_loss
 
     # Metrics

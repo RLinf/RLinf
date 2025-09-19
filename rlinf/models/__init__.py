@@ -197,7 +197,7 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
         # train expert only
         if actor_model_config.train_expert_only:
             model.freeze_vlm()
-        safetensors.torch.load_model(model, weight_path)
+        safetensors.torch.load_model(model, weight_path, strict=False)
         model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
         # fsdp replace
         # model.paligemma_with_expert.replace_gemma_decoder_layers()

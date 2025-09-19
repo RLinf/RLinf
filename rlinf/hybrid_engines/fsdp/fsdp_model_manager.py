@@ -119,12 +119,12 @@ class FSDPModelManager:
         params_critic = []
         for name, param in self.model.named_parameters():
             if param.requires_grad:
-                if "model.value_proj" in name or "model.value_head" in name:
+                if "value_proj" in name or "model.value_head" in name:
                     params_critic.append(param)
                 else:
                     params_actor.append(param)
 
-        if len(params_actor) > 0:
+        if len(params_critic) > 0:
             self.optimizer = optim.AdamW(
                 [
                     {"params": params_actor, "lr": self._cfg.optim.lr, "betas": betas},
