@@ -69,9 +69,9 @@ class ConvertorConfig:
     router_trans: str = "auto"
 
     # special for mg
-    te_ln_linear_qkv: bool = False
-    te_ln_linear_mlp_fc1: bool = False
-    te_ln_add_extra_state: bool = False
+    te_ln_linear_qkv: bool = True
+    te_ln_linear_mlp_fc1: bool = True
+    te_ln_add_extra_state: bool = True
 
 
 def load_convertor_config(hf_ckpt_path: str, ckpt_cfg: DictConfig) -> ConvertorConfig:
@@ -168,6 +168,8 @@ def load_convertor_config(hf_ckpt_path: str, ckpt_cfg: DictConfig) -> ConvertorC
     convertor_config.save_path = ckpt_cfg.save_path
     convertor_config.tp_size = ckpt_cfg.tensor_model_parallel_size
     convertor_config.pp_size = ckpt_cfg.pipeline_model_parallel_size
+    convertor_config.ep_size = getattr(ckpt_cfg, "expert_model_parallel_size", 1)
+    convertor_config.tpe_size = getattr(ckpt_cfg, "expert_tensor_parallel_size", 1)
 
     if convertor_config.mlp_type == "moe":
         if convertor_config.use_shared_experts is None:
