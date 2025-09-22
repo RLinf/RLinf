@@ -3,7 +3,7 @@
 </div>
 
 <div align="center">
-<!-- <a href="TODO"><img src="https://img.shields.io/badge/arXiv-Paper-red?logo=arxiv"></a> -->
+<a href="https://arxiv.org/abs/2509.15965"><img src="https://img.shields.io/badge/arXiv-Paper-red?logo=arxiv">
 <a href="https://huggingface.co/RLinf"><img src="https://img.shields.io/badge/HuggingFace-yellow?logo=huggingface&logoColor=white" alt="Hugging Face"></a>
 <a href="https://rlinf.readthedocs.io/en/latest/"><img src="https://img.shields.io/badge/Documentation-Purple?color=8A2BE2&logo=readthedocs"></a>
 <a href="https://rlinf.readthedocs.io/zh-cn/latest/"><img src="https://img.shields.io/badge/中文文档-red?logo=readthedocs"></a>
@@ -134,15 +134,16 @@ We welcome contributions to RLinf. Please read [contribution guide](https://rlin
 If you find **RLinf** helpful, please cite the GitHub repository:
 
 ```bibtex
-@misc{RLinf_repo,
-  title        = {RLinf: Reinforcement Learning Infrastructure for Agentic AI},
-  howpublished = {\url{https://github.com/RLinf/RLinf}},
-  note         = {GitHub repository},
-  year         = {2025}
+@misc{yu2025rlinfflexibleefficientlargescale,
+  title={RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Micro Flow Transformation}, 
+  author={Chao Yu and Yuanqing Wang and Zhen Guo and Hao Lin and Si Xu and Hongzhi Zang and Quanlu Zhang and Yongji Wu and Chunyang Zhu and Junhao Hu and Zixiao Huang and Mingjie Wei and Yuqing Xie and Ke Yang and Bo Dai and Zhexuan Xu and Xiangyuan Wang and Xu Fu and Zhihao Liu and Kang Chen and Weilin Liu and Gang Liu and Boxun Li and Jianlei Yang and Zhi Yang and Guohao Dai and Yu Wang},
+  year={2025},
+  eprint={2509.15965},
+  archivePrefix={arXiv},
+  primaryClass={cs.LG},
+  url={https://arxiv.org/abs/2509.15965}, 
 }
 ```
-
-**Paper**: A full paper describing RLinf will be released by **September 20, 2025**. We will update this section with the official citation and BibTeX when they become available.
 
 **Acknowledgements**
 RLinf has been inspired by, and benefits from, the ideas and tooling of the broader open-source community.
