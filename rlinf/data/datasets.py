@@ -489,8 +489,8 @@ class VLMDatasetRegistry:
         tokenizer: AutoTokenizer,
     ) -> VLMBaseDataset:
         key = dataset_name.lower()
-        klass = cls.registry.get(key)
-        return klass(data_paths=data_paths, config=config, tokenizer=tokenizer)
+        dataset_class = cls.registry.get(key)
+        return dataset_class(data_paths=data_paths, config=config, tokenizer=tokenizer)
 
 
 @VLMDatasetRegistry.register("robo2vlm")

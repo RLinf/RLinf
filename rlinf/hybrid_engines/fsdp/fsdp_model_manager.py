@@ -68,7 +68,6 @@ class FSDPModelManager:
             else:
                 auto_model_class = AutoModelForCausalLM
 
-            # TODO: fix this, load model in float16/bfloat16 may cause optimizer in bf16, which is incorrect
             # default load in float16
             model = auto_model_class.from_pretrained(
                 self._cfg.model.model_path,

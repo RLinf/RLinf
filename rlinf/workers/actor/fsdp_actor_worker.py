@@ -17,6 +17,7 @@ import os
 from typing import Dict, List, Tuple
 
 import numpy as np
+from RLinf.rlinf.algorithms.rewards import get_reward_class
 import torch
 from omegaconf import DictConfig
 from torch.distributed.device_mesh import init_device_mesh
@@ -60,7 +61,6 @@ from rlinf.utils.utils import (
     seq_mean_token_sum,
 )
 from rlinf.workers.rollout.utils import RankMapper
-from toolkits.math_verifier.verify import math_verify_call
 
 
 class FSDPActor(FSDPModelManager, Worker):
@@ -110,8 +110,9 @@ class FSDPActor(FSDPModelManager, Worker):
 
         # Reward configurations
         if not self.cfg.reward.use_reward_model:
-            assert self.cfg.reward.reward_type == "math", "only support math"
-            self.reward_fn = math_verify_call
+            assert self.cfg.reward.reward_type in ["math", "vqa"], "only support math and vqa reward!"
+            reward_cls = get_reward_class(self.cfg.reward.reward_type)
+            self.reward = reward_cls(self.cfg.reward)
 
     def init_worker(self):
         self.setup_model_and_optimizer()
@@ -417,13 +418,8 @@ class FSDPActor(FSDPModelManager, Worker):
             texts.append(
                 self.tokenizer.decode(response.tolist(), skip_special_tokens=True)
             )
-        rewards = self.reward_fn(texts, answers)
-        reward_scores = [
-            self.cfg.reward.reward_scale
-            if reward == 1
-            else -self.cfg.reward.reward_scale
-            for reward in rewards
-        ]
+        reward_scores = self.reward.get_reward(texts, answers)
+
         all_reward_scores = torch.as_tensor(
             reward_scores,
             dtype=torch.float,
