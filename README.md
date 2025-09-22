@@ -131,7 +131,7 @@ We welcome contributions to RLinf. Please read [contribution guide](https://rlin
 
 ## Citation and Acknowledgement
 
-If you find **RLinf** helpful, please cite the GitHub repository:
+If you find **RLinf** helpful, please cite the paper:
 
 ```bibtex
 @misc{yu2025rlinfflexibleefficientlargescale,
@@ -142,6 +142,19 @@ If you find **RLinf** helpful, please cite the GitHub repository:
   archivePrefix={arXiv},
   primaryClass={cs.LG},
   url={https://arxiv.org/abs/2509.15965}, 
+}
+```
+
+if you use RL+VLA in RLinf，you can also cite What Can RL Bring to VLA Generalization? An Empirical Study：
+```bibtex
+@misc{liu2025rlbringvlageneralization,
+  title={What Can RL Bring to VLA Generalization? An Empirical Study}, 
+  author={Jijia Liu and Feng Gao and Bingwen Wei and Xinlei Chen and Qingmin Liao and Yi Wu and Chao Yu and Yu Wang},
+  year={2025},
+  eprint={2505.19789},
+  archivePrefix={arXiv},
+  primaryClass={cs.LG},
+  url={https://arxiv.org/abs/2505.19789}, 
 }
 ```
 
