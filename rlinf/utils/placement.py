@@ -202,6 +202,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         self._actor_gpus = self._component_gpu_map.get("actor", None)
         self._inference_gpus = self._component_gpu_map.get("inference", None)
         self._rollout_gpus = self._component_gpu_map.get("rollout", None)
+        self._reward_gpus = self._component_gpu_map.get("reward", None)
         assert self._actor_gpus is not None, (
             "Actor GPUs must be specified in the component_placement config."
         )
@@ -224,6 +225,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             len(self._inference_gpus) if self._inference_gpus else 0
         )
         self._rollout_num_gpus = len(self._rollout_gpus)
+        self._reward_num_gpus = len(self._reward_gpus)
 
         if self._is_collocated():
             assert self._inference_gpus is None, (
@@ -295,6 +297,9 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 num_accelerators_per_process=rollout_tp_size,
                 stride=stride,
             )
+            self._placements["reward"] = PackedPlacementStrategy(
+                self._reward_gpus[0], self._reward_gpus[-1]
+            )
         elif self._placement_mode == PlacementMode.DISAGGREGATED:
             # Generate continuous placement strategies for components in a cluster.
             num_gpus_per_rollout_dp = len(self._rollout_gpus) // self.rollout_dp_size
@@ -309,6 +314,9 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 )
             self._placements["actor"] = PackedPlacementStrategy(
                 self._actor_gpus[0], self._actor_gpus[-1]
+            )
+            self._placements["reward"] = PackedPlacementStrategy(
+                self._reward_gpus[0], self._reward_gpus[-1]
             )
 
     @property

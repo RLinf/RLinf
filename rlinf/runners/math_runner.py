@@ -35,6 +35,7 @@ from rlinf.utils.runner_utils import check_progress, local_mkdir_safe
 from rlinf.utils.timers import Timer
 from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
+from rlinf.workers.reward.reward_worker import RewardWorker
 
 if typing.TYPE_CHECKING:
     from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
@@ -55,7 +56,7 @@ class MathRunner:
         rollout: Union["SGLangWorker", "VLLMWorker"],
         inference: Optional[MegatronInference],
         actor: MegatronActor,
-        reward: Optional[Worker] = None,
+        reward: Optional[RewardWorker] = None,
     ):
         """"""
         self.cfg = cfg

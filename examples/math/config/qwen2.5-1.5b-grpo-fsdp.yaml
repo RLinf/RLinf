@@ -201,9 +201,14 @@ actor:
     padding_side: 'right'
 
 reward:
+  group_name: "ActorGroup"
   use_reward_model: false
-  reward_type: 'math'
-  reward_scale: 5.0
+  reward_type: 'vqa'
+  # reward_scale: 5.0
+  reward_weights:
+    qa_accuracy: 1.0
+    think_format: 0.0
+    answer_format: 0.0
 
 critic:
   use_critic_model: false
