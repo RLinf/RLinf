@@ -18,4 +18,4 @@ else
     CONFIG_NAME=$1
 fi
 
-python ${REPO_PATH}/examples/vlm/main_vlm.py --config-path ${CONFIG_PATH}/config/  --config-name $CONFIG_NAME
+python ${REPO_PATH}/examples/reasoning/main_grpo.py --config-path ${CONFIG_PATH}/config/vqa/  --config-name $CONFIG_NAME

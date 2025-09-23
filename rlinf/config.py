@@ -36,6 +36,7 @@ logging.getLogger().setLevel(logging.INFO)
 
 SUPPORTED_MODEL_ARCHS = ["qwen2.5", "qwen2.5_vl", "openvla", "openvla_oft"]
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
+SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl"]
 __all__ = ["build_config"]
 
 
@@ -528,7 +529,7 @@ def validate_embodied_cfg(cfg):
     return cfg
 
 
-def validate_math_cfg(cfg: DictConfig) -> DictConfig:
+def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
     assert cfg.rollout.model_arch in SUPPORTED_MODEL_ARCHS, (
         f"Model {cfg.rollout.model_arch} is not supported"
     )
@@ -607,11 +608,14 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
 def validate_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
 
+    assert cfg.runner.task_type in SUPPORTED_TASK_TYPE, (
+        f"task_type must be one of {SUPPORTED_TASK_TYPE}"
+    )
     if cfg.runner.task_type == "embodied":
         cfg = validate_embodied_cfg(cfg)
-    if cfg.runner.task_type == "math":
-        cfg = validate_math_cfg(cfg)
-    if cfg.runner.task_type == "coding_online_rl":
+    elif cfg.runner.task_type == "reasoning":
+        cfg = validate_reasoning_cfg(cfg)
+    elif cfg.runner.task_type == "coding_online_rl":
         cfg = validate_coding_online_rl_cfg(cfg)
 
     if (
