@@ -58,18 +58,20 @@ def prepare_actions_for_maniskill(
 
 def prepare_actions_for_libero(
     raw_chunk_actions,
+    model_name,
 ) -> torch.Tensor:
-    chunk_actions = raw_chunk_actions.copy()
-    chunk_actions[..., -1] = 2 * chunk_actions[..., -1] - 1
-    chunk_actions[..., -1] = np.sign(chunk_actions[..., -1]) * -1.0
-
-    chunk_actions = torch.from_numpy(chunk_actions).cuda()
-    return chunk_actions
+    if model_name == "openvla" or model_name == "openvla_oft":
+        chunk_actions = raw_chunk_actions.copy()
+        chunk_actions[..., -1] = 2 * chunk_actions[..., -1] - 1
+        chunk_actions[..., -1] = np.sign(chunk_actions[..., -1]) * -1.0
+        chunk_actions = torch.from_numpy(chunk_actions).cuda()
+    return raw_chunk_actions
 
 
 def prepare_actions(
-    simulator_type,
     raw_chunk_actions,
+    simulator_type,
+    model_name,
     num_action_chunks,
     action_dim,
     action_scale: float = 1.0,
@@ -78,6 +80,7 @@ def prepare_actions(
     if simulator_type == "libero":
         chunk_actions = prepare_actions_for_libero(
             raw_chunk_actions=raw_chunk_actions,
+            model_name=model_name,
         )
     elif simulator_type == "maniskill":
         chunk_actions = prepare_actions_for_maniskill(

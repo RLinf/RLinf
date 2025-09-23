@@ -7,12 +7,17 @@ export SRC_FILE="${EMBODIED_PATH}/train_embodied_agent.py"
 export MUJOCO_GL="egl"
 export PYOPENGL_PLATFORM="egl"
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
+
 # NOTE: set LIBERO_REPO_PATH to the path of the LIBERO repo
-export LIBERO_REPO_PATH="/path/to/repo/LIBERO"
 # NOTE: set LIBERO_CONFIG_PATH for libero/libero/__init__.py
+export LIBERO_REPO_PATH="/path/to/repo/LIBERO"
 export LIBERO_CONFIG_PATH=${LIBERO_REPO_PATH}
 
-export PYTHONPATH=${LIBERO_REPO_PATH}:$PYTHONPATH
+# NOTE: set OPENPI_REPO_PATH to the path of the openpi repo
+export OPENPI_REPO_PATH="/path/to/repo/openpi"
+
+export PYTHONPATH=${LIBERO_REPO_PATH}:${OPENPI_REPO_PATH}:$PYTHONPATH
+
 export CUDA_LAUNCH_BLOCKING=1
 export HYDRA_FULL_ERROR=1
 
