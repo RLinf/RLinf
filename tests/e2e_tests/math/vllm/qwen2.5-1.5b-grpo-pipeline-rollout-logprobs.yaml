@@ -8,7 +8,7 @@ hydra:
 
 cluster:
   num_nodes: 1
-  num_gpus_per_node: 8
+  num_gpus_per_node: 4
   component_placement:
     rollout: 0-3
     actor: 4-7
@@ -127,7 +127,6 @@ data:
   rollout_batch_size: 8
   val_rollout_batch_size: null
   num_workers: 2
-  prompt_key: prompt
   shuffle: True
   validation_shuffle: True
   seed: 1

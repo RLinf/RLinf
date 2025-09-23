@@ -378,7 +378,7 @@ class RolloutResult:
                 logprobs.append(logprob[response_ids[i]].logprob)
             return logprobs
 
-        num_sequences = len(results)
+        num_sequences = len(results) * group_size
 
         prompt_lengths = []
         prompt_ids = []
@@ -386,22 +386,35 @@ class RolloutResult:
         response_ids = []
         logprobs = []
         is_end = []
-        for _, res in enumerate(results):
-            if res.prompt_token_ids is not None:
-                prompt_ids.append(res.prompt_token_ids)
-                prompt_lengths.append(len(res.prompt_token_ids))
+        rollout_answers = (
+            [answer for answer in answers for _ in range(group_size)]
+            if answers
+            else None
+        )
+        for vllm_result in results:
+            if vllm_result.prompt_token_ids is not None:
+                prompt_ids.extend([vllm_result.prompt_token_ids] * group_size)
+                prompt_lengths.extend([len(vllm_result.prompt_token_ids)] * group_size)
             else:
-                return NotImplementedError("vllm should return tokenized prompt.")
-            response_id = list(res.outputs[0].token_ids)
-            response_ids.append(response_id)
-            response_lengths.append(len(response_id))
-            is_end.append(res.finished)
+                raise NotImplementedError("vllm should return tokenized prompt.")
+            response_ids.extend(
+                [list(output.token_ids) for output in vllm_result.outputs]
+            )
+            response_lengths.extend(
+                [len(output.token_ids) for output in vllm_result.outputs]
+            )
+            is_end.extend([vllm_result.finished] * group_size)
             if return_logprobs:
-                logprobs.append(get_logprobs(response_id, res.outputs[0]))
+                logprobs.extend(
+                    [
+                        get_logprobs(list(output.token_ids), output)
+                        for output in vllm_result.outputs
+                    ]
+                )
         result: RolloutResult = RolloutResult(
             group_size=group_size,
             num_sequence=num_sequences,
-            answers=answers,
+            answers=rollout_answers,
             prompt_ids=prompt_ids,
             prompt_lengths=prompt_lengths,
             response_ids=response_ids,

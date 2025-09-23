@@ -16,7 +16,7 @@ import asyncio
 import io
 import os
 from functools import partial
-from typing import AsyncGenerator, Dict, List, Optional, Tuple, Union
+from typing import AsyncGenerator, List, Optional, Union
 
 import requests
 import torch
@@ -25,7 +25,7 @@ from PIL.Image import Image
 from transformers import AutoTokenizer
 from vllm.config import VllmConfig
 from vllm.engine.arg_utils import EngineArgs
-from vllm.inputs.data import TextPrompt, TokensPrompt
+from vllm.inputs.data import PromptType, TextPrompt, TokensPrompt
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import RequestOutputKind, SamplingParams
 from vllm.utils import Counter
@@ -149,35 +149,19 @@ class VLLMWorker(Worker):
         """
         Validate the model weights before starting to rollout formally.
         """
-        generation_tasks = []
         if self._cfg.rollout.detokenize:
-            for prompt in self._validate_prompts:
-                request_id = str(next(self.request_counter))
-                generation_tasks.append(
-                    asyncio.create_task(
-                        self.generate(
-                            request_id=request_id,
-                            input_ids=None,
-                            sampling_params=self._validate_sampling_params,
-                            prompt_text=prompt,
-                        )
-                    )
-                )
+            vllm_outputs = await self.generate(
+                input_ids=None,
+                sampling_params=self._validate_sampling_params,
+                prompt_texts=self._validate_prompts,
+            )
         else:
             prompt_ids = self._tokenizer(self._validate_prompts).input_ids
-            for prompt_id in prompt_ids:
-                request_id = str(next(self.request_counter))
-                generation_tasks.append(
-                    asyncio.create_task(
-                        self.generate(
-                            request_id=request_id,
-                            input_ids=prompt_id,
-                            sampling_params=self._validate_sampling_params,
-                        )
-                    )
-                )
-        for future in asyncio.as_completed(generation_tasks):
-            _, request_output = await future
+            vllm_outputs = await self.generate(
+                input_ids=prompt_ids,
+                sampling_params=self._validate_sampling_params,
+            )
+        for request_output in vllm_outputs:
             print_vllm_outputs(request_output, self._tokenizer)
 
     async def offload_model_weights(self) -> None:
@@ -228,44 +212,81 @@ class VLLMWorker(Worker):
 
     async def generate(
         self,
-        request_id: str,
-        input_ids: List[int],
+        input_ids: Union[List[List[int]], List[int]],
         sampling_params: SamplingParams,
-        prompt_text: Optional[str] = None,
-        image_data: Optional[List[Union[bytes, str]]] = None,
-    ) -> Tuple[str, RequestOutput]:
-        """
-        An async wrapper of async_engine.generate, which only returns AsyncGenerator.
-        args are the same as async_engine.generate.
-
-        Args:
-            input_ids (List[List[int]]): A batch of input token ids.
-            sampling_params (SamplingParams): Sampling parameters for generation.
-            prompt_texts (Optional[List[str]]): A batch of input prompt texts. If not None,
-                input_ids will be ignored.
-            image_data (Optional[List[List[Union[bytes,str]]]]): A batch of image data,
-                each item can be bytes or image path (local or URL). The outer list should
-                have the same length as input_ids or prompt_texts. The inner list contains
-                multiple images for each input.
-
-        Returns:
-            List[RequestOutput]: A list of RequestOutput from vllm.
-            str: The request id of this generation.
-        """
-        image_list = self._process_image_data(image_data=image_data)
-        if prompt_text is not None:
-            prompt = TextPrompt(prompt=prompt_text, multi_modal_data=image_list)
-        else:
-            prompt = TokensPrompt(
-                prompt_token_ids=input_ids, multi_modal_data=image_list
+        prompt_texts: Optional[Union[List[str], str]] = None,
+        image_data: Optional[
+            Union[List[List[Union[bytes, str]]], List[Union[bytes, str]]]
+        ] = None,
+    ) -> List[RequestOutput]:
+        def check_input_ids() -> List[List[int]]:
+            assert isinstance(input_ids, list), (
+                "input_ids should be a list or list of list of int."
             )
-        async_generator = self._async_engine.generate(
-            prompt=prompt,
-            sampling_params=sampling_params,
-            request_id=request_id,
-        )
-        output = await self._get_output_from_async_generator(async_generator)
-        return request_id, output
+            assert len(input_ids) > 0, "input_ids should not be empty."
+            if isinstance(input_ids[0], int):
+                return [input_ids]
+            else:
+                return input_ids
+
+        def check_prompt_text() -> Optional[List[str]]:
+            if prompt_texts is None:
+                return None
+            assert isinstance(prompt_texts, list) or isinstance(prompt_texts, str), (
+                "prompt_text should be a string or list of strings."
+            )
+            if isinstance(prompt_texts, str):
+                return [prompt_texts]
+            else:
+                assert len(prompt_texts) > 0, "prompt_text should not be empty."
+                return prompt_texts
+
+        def check_image_data() -> Optional[List[List[Image]]]:
+            if image_data is None:
+                return None
+            assert isinstance(image_data, list), "image_data should be a list."
+            if isinstance(image_data[0], list):
+                return image_data
+            else:
+                return [image_data]
+
+        input_ids = check_input_ids()
+        prompt_texts = check_prompt_text()
+        image_list = check_image_data()
+
+        inputs: List[PromptType] = []
+        outputs: List[RequestOutput] = []
+        if prompt_texts is not None:
+            for i, prompt_text in enumerate(prompt_texts):
+                if image_list is not None:
+                    image_list = self._process_image_data(image_data=image_list[i])
+                    inputs.append(
+                        TextPrompt(prompt=prompt_text, multi_modal_data=image_list)
+                    )
+                else:
+                    inputs.append(TextPrompt(prompt=prompt_text))
+        else:
+            for i, input_id in enumerate(input_ids):
+                if image_list is not None:
+                    image_list = self._process_image_data(image_data=image_list[i])
+                    inputs.append(
+                        TokensPrompt(
+                            prompt_token_ids=input_id, multi_modal_data=image_list
+                        )
+                    )
+                else:
+                    inputs.append(TokensPrompt(prompt_token_ids=input_id))
+
+        for inp in inputs:
+            generator = self._async_engine.generate(
+                prompt=inp,
+                sampling_params=sampling_params,
+                request_id=str(next(self.request_counter)),
+            )
+            output = await self._get_output_from_async_generator(generator)
+            outputs.append(output)
+
+        return outputs
 
     async def init_worker(self) -> None:
         """
@@ -328,24 +349,46 @@ class VLLMWorker(Worker):
         if not self._placement.is_disaggregated:
             await self.offload_model_weights()
 
-    async def _compute_reward_and_advantage(
-        self, output: RequestOutput, answer: str
-    ) -> Tuple[List[float], List[float]]:
-        output_lengths = len(output.outputs)
-        assert output_lengths == self._cfg.algorithm.group_size, (
-            f"Output lengths {output_lengths} != group size {self._cfg.algorithm.group_size}"
+    async def _compute_reward_and_advantage(self, rollout_result: RolloutResult):
+        """
+        Compute rewards and advantages for the rollout result using math verification.
+        """
+        answers = rollout_result.answers
+        outputs = rollout_result.response_texts
+        num_sequence = rollout_result.num_sequence
+        assert len(answers) == len(outputs), (
+            f"Answers length {len(answers)} != outputs length {len(outputs)}"
         )
-        answer = [answer] * output_lengths
-        texts = [out.text for out in output.outputs]
-        results = math_verify_call(texts, answer)
-        rewards = [(1 if r else -1) * self._reward_model.scale for r in results]
+        assert len(answers) == num_sequence, (
+            f"Answers length {len(answers)} != num_sequence {num_sequence}"
+        )
+
+        math_verify_results = math_verify_call(outputs, answers)
+        rewards = [
+            (1 if r else -1) * self._reward_model.scale for r in math_verify_results
+        ]
         rewards_tensor = torch.tensor(rewards, dtype=torch.float)
+        rollout_result.rewards = rewards_tensor.reshape(-1, 1)
 
         mean = rewards_tensor.mean()
         std = rewards_tensor.std(unbiased=False)
-        advantages = (rewards_tensor - mean) / (std + 1e-6)
+        rollout_result.advantages = (rewards_tensor - mean) / (std + 1e-6)
 
-        return rewards, advantages.tolist()
+    async def _do_rollout(self, request: RolloutRequest, output_channel: Channel):
+        vllm_results: List[RequestOutput] = await self.generate(
+            input_ids=request.input_ids, sampling_params=self._sampling_params
+        )
+
+        rollout_result: RolloutResult = RolloutResult.from_vllm_results(
+            group_size=self._cfg.algorithm.group_size,
+            results=vllm_results,
+            answers=request.answers,
+            return_logprobs=self._return_logprobs,
+        )
+        if self._placement.is_disaggregated:
+            await self._compute_reward_and_advantage(rollout_result)
+
+        await self._put_result(result=rollout_result, output_channel=output_channel)
 
     async def rollout(self, input_channel: Channel, output_channel: Channel) -> None:
         rollout_request: RolloutRequest = await input_channel.get(
@@ -355,52 +398,15 @@ class VLLMWorker(Worker):
         batched_requests = self._pre_process_rollout_request(rollout_request)
         with self.worker_timer():
             for requests in batched_requests:
-                # NOTE:
-                # here if placement is disaggregated, requests' length is sample count
-                # Otherwise(in collcated mode), requests' length is 1
+                rollout_tasks: List[asyncio.Task] = []
                 for request in requests:
-                    rollout_tasks = []
-                    answers: Dict[str, str] = {}
-                    for input_id, answer in zip(request.input_ids, request.answers):
-                        request_id = str(next(self.request_counter))
-                        rollout_tasks.append(
-                            asyncio.create_task(
-                                self.generate(
-                                    request_id=request_id,
-                                    input_ids=input_id,
-                                    sampling_params=self._sampling_params,
-                                )
-                            )
-                        )
-                        answers[request_id] = answer
-                    return_tasks = []
-                    rollout_results: List[RolloutResult] = []
-                    for future in asyncio.as_completed(rollout_tasks):
-                        request_id, request_output = await future
-                        rollout_result: RolloutResult = RolloutResult.from_vllm_result(
-                            group_size=rollout_request.n,
-                            vllm_result=request_output,
-                            answer=answer,
-                            return_logprobs=self._return_logprobs,
-                        )
-                        if self._placement.is_disaggregated:
-                            (
-                                rewards,
-                                advantages,
-                            ) = await self._compute_reward_and_advantage(
-                                output=request_output, answer=answers[request_id]
-                            )
-                            rollout_result.rewards = torch.tensor(
-                                rewards, dtype=torch.float32
-                            ).reshape(-1, 1)
-                            rollout_result.advantages = advantages
-                        rollout_results.append(rollout_result)
-                    merged_result = RolloutResult.merge_result_list(rollout_results)
-                    return_tasks.append(
+                    rollout_tasks.append(
                         asyncio.create_task(
-                            self._put_result(merged_result, output_channel)
+                            self._do_rollout(
+                                request=request, output_channel=output_channel
+                            )
                         )
                     )
-                    await asyncio.gather(*return_tasks)
+                await asyncio.gather(*rollout_tasks)
             await self._stop()
             output_channel.gpu_lock.release()
