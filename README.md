@@ -41,9 +41,9 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 - Auto-scheduling Strategy: automatically selects the most suitable execution mode based on the training workload, without the need for manual resource allocation.
   
 - Embodied Agent Support
-  - Fast adaptation support for mainstream VLA models: [OpenVLA](https://github.com/openvla/openvla), [OpenVLA-OFT](https://github.com/moojink/openvla-oft), and [π₀](https://github.com/Physical-Intelligence/openpi).
+  - Fast adaptation support for mainstream VLA models: [OpenVLA](https://github.com/openvla/openvla), [OpenVLA-OFT](https://github.com/moojink/openvla-oft), [π₀](https://github.com/Physical-Intelligence/openpi)and [π₀.₅](https://github.com/Physical-Intelligence/openpi).
   - Support for mainstream CPU & GPU-based simulators via standardized RL interfaces: [ManiSkill3](https://github.com/haosulab/ManiSkill), [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO).
-  - Enabling the first RL fine-tuning of the $\pi_0$ model family with a flow-matching action expert.
+  - Enabling the first RL fine-tuning of the $\pi_0$ and $\pi_{0.5}$ model family with a flow-matching action expert.
 
 **RLinf is fast with:**
 
@@ -256,8 +256,8 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 - [ ] Support for Vision-Language Models (VLMs) training  
 - [ ] Support for deep searcher agent training  
 - [ ] Support for multi-agent training  
-- [ ] Support for integration with more embodied simulators (e.g., [Meta-World](https://github.com/Farama-Foundation/Metaworld), [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis))  
-- [ ] Support for more Vision Language Action models (VLAs), such as [GR00T](https://github.com/NVIDIA/Isaac-GR00T)
+- [ ] Support for integration with more embodied simulators (e.g., [Meta-World](https://github.com/Farama-Foundation/Metaworld), [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis), [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin))  
+- [ ] Support for more Vision Language Action models (VLAs), such as [GR00T](https://github.com/NVIDIA/Isaac-GR00T), [WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow)
 - [ ] Support for world model   
 - [ ] Support for real-world RL embodied intelligence
 
@@ -329,7 +329,7 @@ If you find **RLinf** helpful, please cite the paper:
 }
 ```
 
-If you use RL+VLA in RLinf, you can also cite What Can RL Bring to VLA Generalization? An Empirical Study:
+If you use RL+VLA in RLinf, you can also cite our empirical study paper:
 ```bibtex
 @misc{liu2025rlbringvlageneralization,
   title={What Can RL Bring to VLA Generalization? An Empirical Study}, 
