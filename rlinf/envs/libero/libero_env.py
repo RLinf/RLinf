@@ -14,8 +14,8 @@
 
 import copy
 import os
-from typing import List, Optional, Union
 import time
+from typing import List, Optional, Union
 
 import gym
 import numpy as np
@@ -480,7 +480,7 @@ class LiberoEnv(gym.Env):
         save_rollout_video(
             self.render_images,
             output_dir=output_dir,
-            video_name=f"{int(time.time()*1000)}",
+            video_name=f"{int(time.time() * 1000)}",
         )
         self.video_cnt += 1
         self.render_images = []
