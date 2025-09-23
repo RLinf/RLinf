@@ -146,7 +146,7 @@ If you find **RLinf** helpful, please cite the paper:
 }
 ```
 
-if you use RL+VLA in RLinf，you can also cite What Can RL Bring to VLA Generalization? An Empirical Study：
+If you use RL+VLA in RLinf, you can also cite What Can RL Bring to VLA Generalization? An Empirical Study:
 ```bibtex
 @misc{liu2025rlbringvlageneralization,
   title={What Can RL Bring to VLA Generalization? An Empirical Study}, 
