@@ -27,6 +27,7 @@ from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.actor import get_actor_worker
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
+from rlinf.workers.reward.reward_worker import RewardWorker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
 
 """Script to start GRPO training"""
@@ -69,6 +70,14 @@ def main(cfg) -> None:
             placement_strategy=inference_placement_strategy,
         )
 
+    # Reward group
+    reward_placement_strategy = component_placement.get_strategy("reward")
+    reward_group = RewardWorker.create_group(cfg, component_placement).launch(
+        cluster,
+        name=cfg.reward.group_name,
+        placement_strategy=reward_placement_strategy,
+    )
+
     # GRPO Actor group
     actor_worker_cls = get_actor_worker(cfg)
     actor_placement_strategy = component_placement.get_strategy("actor")
@@ -87,6 +96,7 @@ def main(cfg) -> None:
         rollout=rollout_group,
         inference=inference_group,
         actor=actor_group,
+        reward=reward_group,
     )
 
     runner.init_workers()

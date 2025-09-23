@@ -266,7 +266,7 @@ class RolloutResult:
     advantages: Optional[List[float] | torch.Tensor] = None
     prompt_texts: Optional[List[str]] = None
     response_texts: Optional[List[str]] = None
-    answers: Optional[List[str]] = None
+    answers: Optional[List[str | dict]] = None
     image_data: Optional[Union[List[List[bytes]], List[List[str]]]] = None
     # Inference
     # Only set when recompute_logprobs is False

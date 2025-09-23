@@ -1,17 +1,35 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from typing import Dict, List, Tuple
+
 import torch
-from typing import Dict, Tuple, List
 from omegaconf import DictConfig
-from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
-from rlinf.scheduler import Worker, Channel
+
 from rlinf.algorithms.rewards import get_reward_class
 from rlinf.data.io_struct import RolloutResult
+from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
+from rlinf.scheduler import Channel, Worker
+from rlinf.utils.placement import ModelParallelComponentPlacement
 
 
-class RewardWorker(Worker, FSDPModelManager):
-    def __init__(self, cfg: DictConfig):
+class RewardWorker(FSDPModelManager, Worker):
+    def __init__(self, cfg: DictConfig, placement: ModelParallelComponentPlacement):
         Worker.__init__(self)
         super().__init__(cfg.reward)
         self.cfg = cfg
+        self.component_placement = placement
 
         self.total_batch_size_per_dp = (
             self.cfg.data.rollout_batch_size
@@ -25,7 +43,7 @@ class RewardWorker(Worker, FSDPModelManager):
             self.offload_fsdp_param_and_grad()
             self.offload_fsdp_optimizer()
         else:
-            self.reward = get_reward_class(self.cfg.reward.name)(self.cfg.reward)
+            self.reward = get_reward_class(self.cfg.reward.reward_type)(self.cfg.reward)
 
     def get_batch(
         self, channel: Channel
@@ -65,7 +83,7 @@ class RewardWorker(Worker, FSDPModelManager):
             )
 
     def _compute_batch_rewards(
-        self, batch: Dict[str, torch.Tensor], answers: List[str]
+        self, batch: Dict[str, torch.Tensor], answers: List[str | dict]
     ):
         """Reward computation using non-model based reward."""
 

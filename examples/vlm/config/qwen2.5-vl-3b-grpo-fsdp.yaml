@@ -10,7 +10,7 @@ cluster:
   num_nodes: 1
   num_gpus_per_node: 8
   component_placement:
-    actor,rollout: all
+    actor,rollout,reward: all
 
 runner:
   task_type: math
@@ -94,7 +94,7 @@ rollout:
   padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
   eos: null                   # will be tokenizer.eos_token_id if null.
     
-  rollout_backend: sglang     # here choose which backend to rollout,support [sglang, vllm] 
+  rollout_backend: vllm     # here choose which backend to rollout,support [sglang, vllm] 
 
   sglang:
     attention_backend: triton # [flashinfer, triton] for more, see sglang's doc
@@ -122,6 +122,7 @@ rollout:
 
 data:
   type: vision_language
+  dataset_name: robo2vlm
   max_prompt_length: 1024
   filter_prompt_by_length: True
   rollout_batch_size: 8
@@ -133,11 +134,12 @@ data:
   answer_key: "answer"
   solution_key: "solution"
   use_chat_template: True
+  lazy_loading: True
   shuffle: True
   validation_shuffle: True
   seed: 1234
-  train_data_paths: ["/mnt/public/guozhen/data/science_qa/train-00000-of-00001-1028f23e353fbe3e.parquet"]
-  val_data_paths: ["/mnt/public/guozhen/data/science_qa/test-00000-of-00001-f0e719df791966ff.parquet"]
+  train_data_paths: ["/mnt/public/guozhen/data/robo2vlm/train/"]
+  val_data_paths: ["/mnt/public/guozhen/data/robo2vlm/test/"]
 
 actor:
   group_name: "ActorGroup"
@@ -202,9 +204,20 @@ actor:
     padding_side: 'right'
 
 reward:
+  group_name: "RewardGroup"
   use_reward_model: false
-  reward_type: 'math'
-  reward_scale: 5.0
+  reward_type: 'vqa'
+  # reward_scale: 5.0
+  reward_weights:
+    qa_accuracy: 1.0
+    think_format: 0.0
+    answer_format: 0.0
+
+  tokenizer:
+    tokenizer_model: /mnt/public/hf_models/Qwen2.5-VL-3B-Instruct
+    use_fast: False
+    trust_remote_code: True
+    padding_side: 'right'
 
 critic:
   use_critic_model: false

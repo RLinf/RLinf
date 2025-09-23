@@ -67,7 +67,7 @@ def batch_pad_to_fixed_len(
 class DatasetItem:
     prompt: torch.Tensor
     length: int
-    answer: str
+    answer: str | dict
     idx: int
     solution: Optional[str] = None
     image_data: Optional[List[Union[bytes, str]]] = None
@@ -182,8 +182,6 @@ class VLMBaseDataset(Dataset):
         data_paths: Union[List[str], str],
         config: DictConfig,
         tokenizer: AutoTokenizer,
-        *,
-        lazy_loading: bool = False,
     ) -> None:
         super().__init__()
         self.cfg = config
@@ -194,6 +192,7 @@ class VLMBaseDataset(Dataset):
         # Delay processor creation; only needed when use_chat_template is True
         self._processor = None
 
+        self.system_prompt = config.data.get("system_prompt", None)
         self.use_chat_template = bool(config.data.use_chat_template)
         self.image_keys = list(config.data.image_keys or [])
         self.prompt_key = config.data.prompt_key
@@ -204,7 +203,7 @@ class VLMBaseDataset(Dataset):
         self.eos_id = int(self.tokenizer.eos_token_id)
 
         # Loading mode
-        self.lazy_loading = bool(getattr(config.data, "lazy_loading", lazy_loading))
+        self.lazy_loading = bool(getattr(config.data, "lazy_loading", False))
 
         self._records = []
         self._indices = []  # (path, fmt, row_index_or_offset)
@@ -280,11 +279,20 @@ class VLMBaseDataset(Dataset):
                 self._processor = AutoProcessor.from_pretrained(
                     self.cfg.actor.model.model_path
                 )
+            messages = []
+            if self.system_prompt is not None:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": [{"type": "text", "text": self.system_prompt}],
+                    }
+                )
+
             content: List[Dict[str, Any]] = []
             for _ in range(max(0, image_count)):
                 content.append({"type": "image"})
             content.append({"type": "text", "text": prompt_text})
-            messages = [{"role": "user", "content": content}]
+            messages.append({"role": "user", "content": content})
             rendered = self._processor.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )
@@ -495,6 +503,20 @@ class VLMDatasetRegistry:
 
 @VLMDatasetRegistry.register("robo2vlm")
 class Robo2VLMDataset(VLMBaseDataset):
+    def __init__(
+        self,
+        data_paths: Union[List[str], str],
+        config: DictConfig,
+        tokenizer: AutoTokenizer,
+    ) -> None:
+        super().__init__(data_paths, config, tokenizer)
+        self.system_prompt = (
+            "You are a helpful robotic vision assistant specialized in "
+            "answering questions about robotic manipulation tasks. "
+            "Use <think></think> tags to show your reasoning process, "
+            "then provide your final answer in <answer></answer> tags."
+        )
+
     def get_image_list(self, dataitem: Dict[str, Any]) -> List[Union[bytes, str, None]]:
         # Prefer common robo2vlm fields if present, else fallback to configured keys
         images: List[Any] = []
@@ -558,40 +580,12 @@ class Robo2VLMDataset(VLMBaseDataset):
     def postprocess_dataset_item(
         self, item: DatasetItem, raw: Dict[str, Any]
     ) -> DatasetItem:
-        # Derive answer from 'correct_answer' and 'choices' if not provided
-        if not item.answer or str(item.answer).lower() in {"none", "", "null"}:
-            choices = raw.get("choices")
-            ca = raw.get("correct_answer")
-            try:
-                # Normalize choices
-                if isinstance(choices, str):
-                    import ast
+        answer_dict = {
+            "choices": raw.get("choices", None),
+            "correct_answer": raw.get("correct_answer", None),
+        }
+        item.answer = answer_dict
 
-                    choices = ast.literal_eval(choices)
-                if not isinstance(choices, list):
-                    choices = [choices] if choices is not None else []
-
-                ans_val: Optional[str] = None
-                if isinstance(ca, int) and 0 <= ca < len(choices):
-                    ans_val = str(choices[ca])
-                elif isinstance(ca, str):
-                    cstr = ca.strip()
-                    # Letter index like 'A', 'B', ...
-                    if len(cstr) == 1 and "A" <= cstr <= "Z":
-                        idx = ord(cstr) - ord("A")
-                        if 0 <= idx < len(choices):
-                            ans_val = str(choices[idx])
-                    # Direct match to a choice value
-                    if ans_val is None and choices:
-                        for ch in choices:
-                            if str(ch) == cstr:
-                                ans_val = cstr
-                                break
-                if ans_val is not None:
-                    item.answer = ans_val
-            except Exception:
-                # Keep original if any
-                pass
         return item
 
 
