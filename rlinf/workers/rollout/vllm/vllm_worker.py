@@ -372,13 +372,15 @@ class VLLMWorker(Worker):
 
         mean = rewards_tensor.mean()
         std = rewards_tensor.std(unbiased=False)
-        rollout_result.advantages = (rewards_tensor - mean) / (std + 1e-6)
+        advantages = (rewards_tensor - mean) / (std + 1e-6)
+        rollout_result.advantages = advantages.tolist()
 
-    async def _do_rollout(self, request: RolloutRequest, output_channel: Channel):
+    async def rollout_and_return(
+        self, request: RolloutRequest, output_channel: Channel
+    ):
         vllm_results: List[RequestOutput] = await self.generate(
             input_ids=request.input_ids, sampling_params=self._sampling_params
         )
-
         rollout_result: RolloutResult = RolloutResult.from_vllm_results(
             group_size=self._cfg.algorithm.group_size,
             results=vllm_results,
@@ -402,7 +404,7 @@ class VLLMWorker(Worker):
                 for request in requests:
                     rollout_tasks.append(
                         asyncio.create_task(
-                            self._do_rollout(
+                            self.rollout_and_return(
                                 request=request, output_channel=output_channel
                             )
                         )
