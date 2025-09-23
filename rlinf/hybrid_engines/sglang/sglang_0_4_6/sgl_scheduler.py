@@ -29,7 +29,6 @@ from sglang.srt.managers.io_struct import (
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
 )
-from sglang.srt.managers.mm_utils import init_embedding_cache
 from sglang.srt.managers.scheduler import Scheduler as _Scheduler
 from sglang.srt.managers.scheduler import logger
 from sglang.srt.server_args import PortArgs, ServerArgs
