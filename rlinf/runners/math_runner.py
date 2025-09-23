@@ -38,7 +38,7 @@ from rlinf.workers.inference.megatron_inference_worker import MegatronInference
 
 if typing.TYPE_CHECKING:
     from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
-    from rlinf.workers.rollout.vllm.vllm_worker import AsyncVLLMWorker
+    from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
 
 logging.getLogger().setLevel(logging.INFO)
 
@@ -52,7 +52,7 @@ class MathRunner:
         placement: ModelParallelComponentPlacement,
         train_dataset: Dataset,
         val_dataset: Dataset,
-        rollout: Union["SGLangWorker", "AsyncVLLMWorker"],
+        rollout: Union["SGLangWorker", "VLLMWorker"],
         inference: Optional[MegatronInference],
         actor: MegatronActor,
         reward: Optional[Worker] = None,

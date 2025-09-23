@@ -41,7 +41,7 @@ from toolkits.math_verifier.verify import MathRewardModel, math_verify_call
 from . import VLLMExecutor
 
 
-class AsyncVLLMWorker(Worker):
+class VLLMWorker(Worker):
     def __init__(self, config: DictConfig, placement: ComponentPlacement):
         Worker.__init__(self)
         self._cfg = config
@@ -155,7 +155,7 @@ class AsyncVLLMWorker(Worker):
                 request_id = str(next(self.request_counter))
                 generation_tasks.append(
                     asyncio.create_task(
-                        self._generate(
+                        self.generate(
                             request_id=request_id,
                             input_ids=None,
                             sampling_params=self._validate_sampling_params,
@@ -169,7 +169,7 @@ class AsyncVLLMWorker(Worker):
                 request_id = str(next(self.request_counter))
                 generation_tasks.append(
                     asyncio.create_task(
-                        self._generate(
+                        self.generate(
                             request_id=request_id,
                             input_ids=prompt_id,
                             sampling_params=self._validate_sampling_params,
@@ -226,7 +226,7 @@ class AsyncVLLMWorker(Worker):
         else:
             return [r.split(1) for r in split_requests]
 
-    async def _generate(
+    async def generate(
         self,
         request_id: str,
         input_ids: List[int],
@@ -365,7 +365,7 @@ class AsyncVLLMWorker(Worker):
                         request_id = str(next(self.request_counter))
                         rollout_tasks.append(
                             asyncio.create_task(
-                                self._generate(
+                                self.generate(
                                     request_id=request_id,
                                     input_ids=input_id,
                                     sampling_params=self._sampling_params,
