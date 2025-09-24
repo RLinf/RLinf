@@ -86,6 +86,12 @@ class VLLMWorker(Worker):
         os.environ["VLLM_ATTENTION_BACKEND"] = self._cfg.rollout.vllm.attention_backend
         # set True to use AsyncMPClient, which uses async calls.
         os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "1"
+        if self._cfg.rollout.vllm.torch_profiler_dir is not None:
+            os.environ["VLLM_TORCH_PROFILER_DIR"] = (
+                self._cfg.rollout.vllm.torch_profiler_dir
+            )
+            if not os.path.exists(self._cfg.rollout.vllm.torch_profiler_dir):
+                os.makedirs(self._cfg.rollout.vllm.torch_profiler_dir)
 
     def _get_sampling_params_from_config(self) -> SamplingParams:
         """
@@ -277,14 +283,18 @@ class VLLMWorker(Worker):
                 else:
                     inputs.append(TokensPrompt(prompt_token_ids=input_id))
 
-        for inp in inputs:
-            generator = self._async_engine.generate(
-                prompt=inp,
-                sampling_params=sampling_params,
-                request_id=str(next(self.request_counter)),
-            )
-            output = await self._get_output_from_async_generator(generator)
-            outputs.append(output)
+        outputs = await asyncio.gather(
+            *[
+                self._get_output_from_async_generator(
+                    self._async_engine.generate(
+                        prompt=inp,
+                        sampling_params=sampling_params,
+                        request_id=str(next(self.request_counter)),
+                    )
+                )
+                for inp in inputs
+            ]
+        )
 
         return outputs
 
@@ -397,7 +407,7 @@ class VLLMWorker(Worker):
         rollout_request: RolloutRequest = await input_channel.get(
             async_op=True
         ).async_wait()
-        output_channel.gpu_lock.acquire()
+        output_channel.device_lock.acquire()
         batched_requests = self._pre_process_rollout_request(rollout_request)
         with self.worker_timer():
             for requests in batched_requests:
@@ -412,4 +422,4 @@ class VLLMWorker(Worker):
                     )
                 await asyncio.gather(*rollout_tasks)
             await self._stop()
-            output_channel.gpu_lock.release()
+        output_channel.device_lock.release()

@@ -164,6 +164,8 @@ def validate_rollout_cfg(cfg):
         cfg.enable_chunked_prefill = cfg.get("enable_chunked_prefill", True)
         cfg.enable_prefix_caching = cfg.get("enable_prefix_caching", True)
         cfg.enable_flash_infer_sampler = cfg.get("enable_flash_infer_sampler", True)
+        cfg.max_num_batched_tokens = cfg.get("max_num_batched_tokens", None)
+        cfg.torch_profiler_dir = cfg.get("torch_profiler_dir", None)
         return cfg
 
     with open_dict(cfg):
