@@ -104,6 +104,7 @@ rollout:
     enable_chunked_prefill: True  # enable vllm to use chunked_prefill.
     enable_prefix_caching: True   # enable vllm to use prefix_caching.
     enable_flash_infer_sampler: True # if True, vllm will use flashinfer to do sampling.
+    max_num_batched_tokens: 28672 # the maximum number of tokens to be batched together in vllm. If set to null, vllm will use its default value.
 
   return_logprobs: ${not:${algorithm.recompute_logprobs}}
 

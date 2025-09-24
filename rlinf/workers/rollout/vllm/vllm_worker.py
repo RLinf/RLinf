@@ -301,6 +301,7 @@ class VLLMWorker(Worker):
             enforce_eager=self._cfg.rollout.enforce_eager,
             enable_chunked_prefill=self._cfg.rollout.vllm.enable_chunked_prefill,
             enable_prefix_caching=self._cfg.rollout.vllm.enable_prefix_caching,
+            max_num_batched_tokens=self._cfg.rollout.vllm.max_num_batched_tokens,
             task="generate",
             trust_remote_code=self._cfg.actor.tokenizer.trust_remote_code,
             max_model_len=self._cfg.runner.seq_length,
