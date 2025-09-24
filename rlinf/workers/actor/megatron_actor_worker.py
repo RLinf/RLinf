@@ -145,8 +145,12 @@ class MegatronActor(MegatronModelManager, Worker):
 
         # Reward configurations
         if not self.cfg.reward.use_reward_model:
-            assert self.cfg.reward.reward_type == "math", "only support math"
-            self.reward_fn = math_verify_call
+            if self.cfg.reward.reward_type == "math":
+                self.reward_fn = math_verify_call
+            elif self.cfg.reward.reward_type == "online_coding":
+                self.reward_fn = None
+            else:
+                assert False, "only support math and online_coding"
 
         # Rollout configurations
         self.rollout_group_name = self.cfg.rollout.group_name
@@ -873,6 +877,7 @@ class MegatronActor(MegatronModelManager, Worker):
             input_channel: The input channel to read from.
             output_channel: The output channel to send results to.
         """
+        assert self.reward_fn is not None, "reward_fn is not set"
         if self.is_pipeline:
             # In pipeline mode, rewards are computed in the rollout
             with self.worker_timer():
