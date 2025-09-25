@@ -183,6 +183,6 @@ class MegatronCoreWeightReshard:
             )
 
         if self.config.convert_fn is not None:
-            model_state_dict = self.config.convert_fn(model_state_dict, self.config)
+            model_state_dict = self.config.convert_fn(model_state_dict)
 
         return model_state_dict

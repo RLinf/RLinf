@@ -25,7 +25,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from tqdm import tqdm
 
 from rlinf.data.io_struct import RolloutRequest
-from rlinf.scheduler import Channel, Worker
+from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.data_iter_utils import split_list
 from rlinf.utils.distributed import ScopedTimer
@@ -35,6 +35,7 @@ from rlinf.utils.runner_utils import check_progress, local_mkdir_safe
 from rlinf.utils.timers import Timer
 from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
+from rlinf.workers.reward.reward_worker import RewardWorker
 
 if typing.TYPE_CHECKING:
     from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
@@ -43,8 +44,8 @@ if typing.TYPE_CHECKING:
 logging.getLogger().setLevel(logging.INFO)
 
 
-class MathRunner:
-    """Runner for math model training."""
+class ReasoningRunner:
+    """Runner for reasoning task RL training."""
 
     def __init__(
         self,
@@ -55,7 +56,7 @@ class MathRunner:
         rollout: Union["SGLangWorker", "VLLMWorker"],
         inference: Optional[MegatronInference],
         actor: MegatronActor,
-        reward: Optional[Worker] = None,
+        reward: Optional[RewardWorker] = None,
     ):
         """"""
         self.cfg = cfg
@@ -274,18 +275,26 @@ class MathRunner:
     def _put_batch(self, batch: Dict[str, torch.Tensor]):
         prompt_ids = batch["prompt"].tolist()
         lengths = batch["length"].tolist()
-        answers = batch["answer"].tolist()
-        prompts = [ids[-pmp_len:] for ids, pmp_len in zip(prompt_ids, lengths)]
+        answers = batch["answer"]
+        image_data = batch["image_data"]
+        multi_modal_inputs = batch["multi_modal_inputs"]
+        prompt_ids = [ids[-pmp_len:] for ids, pmp_len in zip(prompt_ids, lengths)]
         rollout_dp_size = self.component_placement.rollout_dp_size
 
-        for input_ids, answers in zip(
-            split_list(prompts, rollout_dp_size, enforce_divisible_batch=False),
+        for input_ids, answers, image_data, multi_modal_inputs in zip(
+            split_list(prompt_ids, rollout_dp_size, enforce_divisible_batch=False),
             split_list(answers, rollout_dp_size, enforce_divisible_batch=False),
+            split_list(image_data, rollout_dp_size, enforce_divisible_batch=False),
+            split_list(
+                multi_modal_inputs, rollout_dp_size, enforce_divisible_batch=False
+            ),
         ):
             request = RolloutRequest(
                 n=self.cfg.algorithm.group_size,
                 input_ids=input_ids,
                 answers=answers,
+                image_data=image_data,
+                multi_modal_inputs=multi_modal_inputs,
             )
             self.dataloader_channel.put(request, async_op=True)
 
@@ -417,7 +426,7 @@ class MathRunner:
                     }
                     self.metric_logger.log(training_metrics, logging_steps + i)
 
-                logging_metrics = time_metrics
+                logging_metrics = {f"{k}_time": v for k, v in time_metrics.items()}
 
                 if self.cfg.actor.get("calculate_flops", False):
                     flops_metrics = self._compute_flops_metrics(

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import dataclasses
+import importlib.util
 import logging
 import os
 from dataclasses import asdict
@@ -30,15 +31,7 @@ if TYPE_CHECKING:
 
 logging.getLogger().setLevel(logging.INFO)
 
-try:
-    import transformer_engine
-
-    HAVE_TE = True
-except ImportError:
-    transformer_engine = None
-    HAVE_TE = False
-
-SUPPORTED_MODEL_ARCHS = ["qwen2.5", "openvla", "openvla_oft"]
+SUPPORTED_MODEL_ARCHS = ["qwen2.5", "qwen2.5_vl", "openvla", "openvla_oft"]
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
 __all__ = ["build_config"]
 
@@ -194,8 +187,16 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         qkv_bias = getattr(hf_config, "attention_bias", False)
 
     with open_dict(cfg):
-        if hf_config.rope_scaling is not None:
-            cfg.model.seq_len_interpolation_factor = hf_config.rope_scaling["factor"]
+        rs = getattr(hf_config, "rope_scaling", None)
+        if isinstance(rs, dict):
+            rtype = rs.get("type", "")
+            if rtype in {"linear", "dynamic", "ntk", "yarn"}:
+                f = rs.get("factor")
+                if f is not None:
+                    cfg.model.seq_len_interpolation_factor = float(f)
+            else:
+                # mrope
+                cfg.model.seq_len_interpolation_factor = None
         cfg.model.override_vocab_size = hf_config.vocab_size
         cfg.model.max_position_embeddings = hf_config.max_position_embeddings
         cfg.model.rotary_base = hf_config.rope_theta
@@ -522,7 +523,7 @@ def validate_embodied_cfg(cfg):
     return cfg
 
 
-def validate_math_cfg(cfg: DictConfig) -> DictConfig:
+def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
     assert cfg.rollout.model_arch in SUPPORTED_MODEL_ARCHS, (
         f"Model {cfg.rollout.model_arch} is not supported"
     )
@@ -558,8 +559,8 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
 
     if cfg.runner.task_type == "embodied":
         cfg = validate_embodied_cfg(cfg)
-    if cfg.runner.task_type == "math":
-        cfg = validate_math_cfg(cfg)
+    if cfg.runner.task_type == "reasoning":
+        cfg = validate_reasoning_cfg(cfg)
 
     if (
         cfg.algorithm.adv_type == "embodied_grpo"
@@ -704,7 +705,10 @@ def build_transformer_config(cfg) -> "TransformerConfig":
     tp_only_amax_red = cfg.get("tp_only_amax_red", False)
 
     if cfg.get("enable_cuda_graph", False):
-        assert HAVE_TE, "Transformer Engine is required for cudagraphs."
+        if importlib.util.find_spec("transformer_engine") is None:
+            raise ImportError(
+                "Can not import transformer_engine, which is required for cudagraphs."
+            )
         assert cfg.get("use_te_rng_tracker", False), (
             "Transformer engine's RNG tracker is required for cudagraphs, this can be enabled with \
             'use_te_rng_tracker=True'."

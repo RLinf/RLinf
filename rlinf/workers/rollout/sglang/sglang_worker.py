@@ -166,7 +166,6 @@ class SGLangWorker(Worker):
 
     def rollout(self, input_channel: Channel, output_channel: Channel):
         request: RolloutRequest = input_channel.get()
-
         # Repeat prompts based on the group_size config
         requests = request.repeat_and_split(self._rollout_batch_size)
 
@@ -178,6 +177,8 @@ class SGLangWorker(Worker):
             with self.worker_timer():
                 results = self._engine.generate(
                     input_ids=request.input_ids,
+                    # 0.4.4 has modality bug,can't pass non-None image_data
+                    image_data=request.image_data if any(request.image_data) else None,
                     sampling_params=self._sampling_params,
                     return_logprob=self._return_logprobs,
                 )
@@ -188,6 +189,8 @@ class SGLangWorker(Worker):
                 request.n,
                 request.input_ids,
                 request.answers,
+                request.image_data,
+                request.multi_modal_inputs,
                 self._return_logprobs,
             )
             rollout_results.append(rollout_result)
@@ -202,8 +205,9 @@ class SGLangWorker(Worker):
         self._stop()
         # Release the GPUs once the engine has offloaded
         output_channel.device_lock.release()
-        rollout_result = RolloutResult.merge_result_list(rollout_results)
-        output_channel.put(rollout_result)
+        rollout_result_list = RolloutResult.split_result_list_by_group(rollout_results)
+        for rollout_result in rollout_result_list:
+            output_channel.put(rollout_result)
 
 
 def all_floats_equal(float_list: list[float], epsilon: float = 1e-9) -> bool:

@@ -12,19 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from omegaconf import DictConfig
+from .math import MathReward
+from .vqa import VQAReward
 
-from rlinf.scheduler.worker.worker import Worker
+
+def register_reward(name: str, reward_class: type):
+    assert name not in reward_registry, f"Reward {name} already registered"
+    reward_registry[name] = reward_class
 
 
-def get_actor_worker(cfg: DictConfig) -> Worker:
-    if cfg.actor.training_backend == "fsdp":
-        from .fsdp_actor_worker import FSDPActor
+def get_reward_class(name: str):
+    assert name in reward_registry, f"Reward {name} not found"
+    return reward_registry[name]
 
-        return FSDPActor
-    elif cfg.actor.training_backend == "megatron":
-        from .megatron_actor_worker import MegatronActor
 
-        return MegatronActor
-    else:
-        raise ValueError(f"Unsupported training backend: {cfg.actor.training_backend}")
+reward_registry = {}
+
+register_reward("math", MathReward)
+register_reward("vqa", VQAReward)

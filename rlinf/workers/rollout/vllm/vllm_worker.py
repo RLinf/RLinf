@@ -191,6 +191,7 @@ class VLLMWorker(Worker):
             with self.worker_timer():
                 vllm_results = self._vllm_engine.generate(
                     input_ids=request.input_ids,
+                    image_data=request.image_data,
                     sampling_params=self._sampling_params,
                     return_logprobs=self._return_logprobs,
                 )
@@ -199,6 +200,7 @@ class VLLMWorker(Worker):
                 group_size=self._cfg.algorithm.group_size,
                 results=vllm_results,
                 answers=request.answers,
+                multi_modal_inputs=request.multi_modal_inputs,
                 return_logprobs=self._return_logprobs,
             )
             rollout_results.append(results)
@@ -210,5 +212,6 @@ class VLLMWorker(Worker):
         self._stop()
         # Release the GPUs once the engine has offloaded
         output_channel.device_lock.release()
-        rollout_result = RolloutResult.merge_result_list(rollout_results)
-        output_channel.put(rollout_result)
+        rollout_result_list = RolloutResult.split_result_list_by_group(rollout_results)
+        for rollout_result in rollout_result_list:
+            output_channel.put(rollout_result)

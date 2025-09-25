@@ -15,6 +15,7 @@ from functools import partial
 from typing import List, Optional, Union
 
 from omegaconf import DictConfig
+from PIL.Image import Image
 from vllm.config import VllmConfig
 from vllm.inputs.data import TextPrompt, TokensPrompt
 from vllm.outputs import RequestOutput
@@ -64,6 +65,7 @@ class VLLMEngine:
         self,
         input_ids: Union[List[List[int]], List[int]],
         sampling_params: Union[SamplingParams, PoolingParams],
+        image_data: Optional[List[List[Union[bytes, str]]]] = None,
         prompt_texts: Optional[Union[List[str], str]] = None,
         return_logprobs: bool = False,
     ) -> List[RequestOutput]:
@@ -86,14 +88,67 @@ class VLLMEngine:
             input_ids=input_ids,
             prompt_texts=prompt_texts,
             sampling_params=sampling_params,
+            image_data=image_data,
         )
         results: List[RequestOutput] = self._run_engine()
         return results
+
+    @staticmethod
+    def _process_image_data(
+        image_data: Optional[List[List[Union[bytes, str]]]],
+    ) -> Optional[List[List[Image]]]:
+        """
+        Process the input image data which can be in various formats including file paths,
+        URLs, byte streams, or PIL Image objects. Converts all images to PIL Image format.
+
+        Args:
+            image_data: A list of lists where each sublist contains images in various formats.
+
+        Returns:
+            A list of lists of PIL Image objects, or None if input is None.
+        """
+        if image_data is None:
+            return None
+        batch_image_list = []
+        for imgs in image_data:
+            if not isinstance(imgs, list):
+                imgs = [imgs]
+            image_list = []
+            for img in imgs:
+                if isinstance(img, str):
+                    if img.startswith("http://") or img.startswith("https://"):
+                        from io import BytesIO
+
+                        import requests
+                        from PIL import Image
+
+                        response = requests.get(img)
+                        image = Image.open(BytesIO(response.content)).convert("RGB")
+                        image_list.append(image)
+                    else:
+                        from PIL import Image
+
+                        image = Image.open(img).convert("RGB")
+                        image_list.append(image)
+                elif isinstance(img, bytes):
+                    from io import BytesIO
+
+                    from PIL import Image
+
+                    image = Image.open(BytesIO(img)).convert("RGB")
+                    image_list.append(image)
+                elif isinstance(img, Image.Image):
+                    image_list.append(img)
+                else:
+                    raise ValueError(f"Unsupported image type: {type(img)}")
+            batch_image_list.append(image_list)
+        return batch_image_list
 
     def _add_requests(
         self,
         input_ids: Union[List[List[int]], List[int]],
         sampling_params: Union[SamplingParams, PoolingParams],
+        image_data: Optional[List[List[Union[bytes, str]]]] = None,
         prompt_texts: Optional[Union[List[str], str]] = None,
     ) -> None:
         """
@@ -105,6 +160,8 @@ class VLLMEngine:
                 it will be used instead of input_ids.
             sampling_params: Optional; Sampling parameters for generation.
         """
+        image_data = self._process_image_data(image_data)
+
         if prompt_texts is not None:
             # if not None, we use prompt_text rather than input_ids
             if isinstance(prompt_texts, str):
@@ -112,9 +169,14 @@ class VLLMEngine:
             assert isinstance(prompt_texts, list), (
                 f"Expected list for prompt_texts, got {type(prompt_texts)}"
             )
-            for prompt_text in prompt_texts:
+            for idx, prompt_text in enumerate(prompt_texts):
                 request_id = str(next(self.request_counter))
-                text_prompt = TextPrompt(prompt=prompt_text)
+                text_prompt = TextPrompt(
+                    prompt=prompt_text,
+                    multi_modal_data=image_data[idx]
+                    if image_data is not None
+                    else None,
+                )
                 self._engine.add_request(
                     request_id=request_id,
                     prompt=text_prompt,
@@ -128,9 +190,14 @@ class VLLMEngine:
         if not isinstance(input_ids[0], list):
             input_ids = [input_ids]
 
-        for input_id in input_ids:
+        for idx, input_id in enumerate(input_ids):
             request_id = str(next(self.request_counter))
-            tokens_prompt = TokensPrompt(prompt_token_ids=input_id)
+            tokens_prompt = TokensPrompt(
+                prompt_token_ids=input_id,
+                multi_modal_data={"image": image_data[idx]}
+                if image_data is not None
+                else None,
+            )
             self._engine.add_request(
                 request_id=request_id,
                 prompt=tokens_prompt,
