@@ -16,12 +16,13 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 import torch
 from omegaconf import DictConfig
-from PIL.Image import Image
+from PIL import Image
 from torch.utils.data import Dataset
 from transformers import AutoProcessor, AutoTokenizer
 
@@ -73,6 +74,7 @@ class DatasetItem:
     image_data: Optional[List[Union[bytes, str]]] = None
     prompt_text: Optional[str] = None
     meta: Optional[Dict[str, Any]] = None
+    multi_modal_inputs: Optional[Dict[str, Any]] = None
 
 
 class MathDataset(Dataset):
@@ -247,7 +249,7 @@ class VLMBaseDataset(Dataset):
             v = dataitem.get(k, None)
             if v is None:
                 continue
-            if isinstance(v, Image):
+            if isinstance(v, Image.Image):
                 images.append(v)
             elif isinstance(v, dict) and "bytes" in v:
                 images.append(v["bytes"])
@@ -268,7 +270,7 @@ class VLMBaseDataset(Dataset):
         return str(q)
 
     def encode_prompt(
-        self, prompt_text: str, image_count: int
+        self, prompt_text: str, images
     ) -> Tuple[torch.Tensor, int, Optional[str]]:
         """
         Return (token_ids[L], length, prompt_text_used). If using chat template, encode with processor.
@@ -289,28 +291,47 @@ class VLMBaseDataset(Dataset):
                 )
 
             content: List[Dict[str, Any]] = []
-            for _ in range(max(0, image_count)):
+            for _ in range(max(0, len(images))):
                 content.append({"type": "image"})
             content.append({"type": "text", "text": prompt_text})
             messages.append({"role": "user", "content": content})
             rendered = self._processor.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )
-            ids = self._processor(text=[rendered], padding=True, return_tensors="pt")[
-                "input_ids"
-            ]
+
+            images_inputs = []
+            for image in images:
+                image_obj = None
+                if isinstance(image, Image.Image):
+                    image_obj = image.convert("RGB")
+                if isinstance(image, (bytes, bytearray)):
+                    image_obj = Image.open(BytesIO(image)).convert("RGB")
+                images_inputs.append(image_obj)
+
+            inputs = self._processor(
+                text=[rendered], images=images_inputs, padding=True, return_tensors="pt"
+            )
+            inputs.pop("attention_mask")
+            inputs.pop("input_ids")
+            ids = self._processor(
+                text=[rendered], images=None, padding=True, return_tensors="pt"
+            )["input_ids"]
             if isinstance(ids, torch.Tensor):
                 if ids.dim() == 2 and ids.size(0) == 1:
                     ids = ids.squeeze(0)
                 ids = ids.to(dtype=torch.long)
             else:
                 ids = torch.tensor(ids, dtype=torch.long)
-            return ids, int(ids.numel()), rendered
+
+            multi_modal_inputs = {}
+            for k, v in inputs.items():
+                multi_modal_inputs[k] = v
+            return ids, int(ids.numel()), rendered, multi_modal_inputs
         else:
             # fallback: tokenizer only
             ids_list = self.tokenizer.encode(prompt_text)
             ids = torch.as_tensor(ids_list, dtype=torch.long)
-            return ids, int(ids.numel()), prompt_text
+            return ids, int(ids.numel()), prompt_text, {}
 
     def postprocess_dataset_item(
         self, item: DatasetItem, raw: Dict[str, Any]
@@ -450,7 +471,9 @@ class VLMBaseDataset(Dataset):
     def _process_raw_record(self, raw: Dict[str, Any], idx: int) -> DatasetItem:
         images = self.get_image_list(raw)
         prompt_text = self.build_prompt_text(raw)
-        prompt_ids, plen, rendered_text = self.encode_prompt(prompt_text, len(images))
+        prompt_ids, plen, rendered_text, multi_modal_inputs = self.encode_prompt(
+            prompt_text, images
+        )
 
         if plen > self.max_prompt_length:
             prompt_ids = prompt_ids[: self.max_prompt_length]
@@ -470,6 +493,7 @@ class VLMBaseDataset(Dataset):
             prompt_text=rendered_text or prompt_text,
             solution=solution_val,
             meta=None,
+            multi_modal_inputs=multi_modal_inputs,
         )
         return self.postprocess_dataset_item(item, raw)
 
@@ -543,7 +567,7 @@ class Robo2VLMDataset(VLMBaseDataset):
         for v in images:
             if v is None:
                 continue
-            if isinstance(v, Image):
+            if isinstance(v, Image.Image):
                 normed.append(v)
             elif isinstance(v, dict) and "bytes" in v:
                 normed.append(v["bytes"])  # raw bytes
@@ -686,5 +710,8 @@ def collate_fn(data_list: List["DatasetItem"]) -> Dict[str, Any]:
         ],  # List[Optional[List[bytes|str]]]
         "prompt_text": [it.prompt_text for it in data_list],  # List[Optional[str]]
         "meta": [it.meta for it in data_list],  # List[Optional[dict]]
+        "multi_modal_inputs": [
+            it.multi_modal_inputs for it in data_list
+        ],  # List[Optional[dict]]
     }
     return batch

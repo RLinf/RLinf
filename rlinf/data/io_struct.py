@@ -47,16 +47,70 @@ class RolloutRequest:
     Attr
     input_ids: List of input token IDs for rollout
     n: Number of completions to generate for each input
-    idx: List of unique identifiers for the requests, used for tracking
-    input_lengths: List of lengths of the input sequences, corresponding to input_ids
     image_data: list of image data (bytes or URLs) for multimodal inputs
     answers: Optional list of answers for the requests, if available
+    multi_modal_inputs: list of multi-modal inputs for the requests
     """
 
     n: int
     input_ids: List[List[int]]
-    answers: List[str]
     image_data: Union[List[List[bytes]], List[List[str]]]
+    answers: List[str]    
+    multi_modal_inputs: List[Dict]
+
+    def repeat(self) -> "RolloutRequest":
+        """Repeat each input in the RolloutRequest a specified number of times.
+
+        Args:
+            times (int): The number of times to repeat each input.
+
+        Returns:
+            RolloutRequest: A new RolloutRequest with repeated inputs.
+        """
+        assert self.n > 0, "n must be greater than 0"
+
+        input_ids, answers = zip(
+            *[
+                (input_id, answer)
+                for input_id, answer in zip(self.input_ids, self.answers)
+                for _ in range(self.n)
+            ]
+        )
+        return RolloutRequest(
+            n=self.n,
+            input_ids=list(input_ids),
+            answers=list(answers),
+        )
+
+    def split(self, num_splits: int) -> List["RolloutRequest"]:
+        """Split the RolloutRequest into multiple smaller requests.
+
+        Args:
+            num_splits (int): The number of splits to create.
+
+        Returns:
+            List[RolloutRequest]: A list of smaller RolloutRequest instances.
+        """
+        assert num_splits > 0, "num_splits must be greater than 0"
+        assert len(self.input_ids) % num_splits == 0, (
+            f"Input IDs length {len(self.input_ids)} is not divisible by num_splits {num_splits}"
+        )
+
+        input_ids_split_list = split_list(self.input_ids, num_splits)
+        answers_split_list = split_list(self.answers, num_splits)
+
+        splitted_requests = []
+        for input_ids_batch, answers_batch in zip(
+            input_ids_split_list, answers_split_list
+        ):
+            request = RolloutRequest(
+                n=self.n,
+                input_ids=input_ids_batch,
+                answers=answers_batch,
+            )
+            splitted_requests.append(request)
+
+        return splitted_requests
 
     def repeat(self) -> "RolloutRequest":
         """Repeat each input in the RolloutRequest a specified number of times.
@@ -115,19 +169,23 @@ class RolloutRequest:
     def repeat_and_split(
         self, rollout_batch_size: Optional[int] = None
     ) -> List["RolloutRequest"]:
-        input_ids, answers, image_data = zip(
+        input_ids, answers, image_data, multi_modal_inputs = zip(
             *[
-                (input_id, answer, image_data)
-                for input_id, answer, image_data in zip(
-                    self.input_ids, self.answers, self.image_data
+                (input_id, answer, image_data, multi_modal_inputs)
+                for input_id, answer, image_data, multi_modal_inputs in zip(
+                    self.input_ids,
+                    self.answers,
+                    self.image_data,
+                    self.multi_modal_inputs,
                 )
                 for _ in range(self.n)
             ]
         )
-        input_ids, answers, image_data = (
+        input_ids, answers, image_data, multi_modal_inputs = (
             list(input_ids),
             list(answers),
             list(image_data),
+            list(multi_modal_inputs),
         )
 
         # Split input ids based on rollout_batch_size_per_gpu
@@ -143,15 +201,25 @@ class RolloutRequest:
         input_ids_split_list = split_list(input_ids, num_batches)
         answers_split_list = split_list(answers, num_batches)
         image_data_split_list = split_list(image_data, num_batches)
+        multi_modal_inputs_split_list = split_list(multi_modal_inputs, num_batches)
 
-        for input_ids_batch, answers_batch, image_data_batch in zip(
-            input_ids_split_list, answers_split_list, image_data_split_list
+        for (
+            input_ids_batch,
+            answers_batch,
+            image_data_batch,
+            multi_modal_inputs_batch,
+        ) in zip(
+            input_ids_split_list,
+            answers_split_list,
+            image_data_split_list,
+            multi_modal_inputs_split_list,
         ):
             request = RolloutRequest(
                 n=self.n,
                 input_ids=input_ids_batch,
                 answers=answers_batch,
                 image_data=image_data_batch,
+                multi_modal_inputs=multi_modal_inputs_batch,
             )
             splitted_requests.append(request)
 
@@ -268,6 +336,7 @@ class RolloutResult:
     response_texts: Optional[List[str]] = None
     answers: Optional[List[str | dict]] = None
     image_data: Optional[Union[List[List[bytes]], List[List[str]]]] = None
+    multi_modal_inputs: Optional[List[dict]] = None
     # Inference
     # Only set when recompute_logprobs is False
     rollout_logprobs: Optional[List[List[float]]] = None
@@ -320,6 +389,7 @@ class RolloutResult:
         group_size: int,
         results: List[VllmRequestOutput],
         answers: Optional[List[str]] = None,
+        multi_modal_inputs: Optional[List[Dict]] = None,
         return_logprobs: bool = False,
     ) -> "RolloutResult":
         def get_logprobs(
@@ -378,6 +448,7 @@ class RolloutResult:
             response_ids=response_ids,
             response_lengths=response_lengths,
             response_texts=response_texts,
+            multi_modal_inputs=multi_modal_inputs,
             is_end=is_end,
         )
         if return_logprobs:
@@ -391,6 +462,7 @@ class RolloutResult:
         input_ids: List[List[int]],
         answers: Optional[List[List[int]]] = None,
         image_data: Optional[Union[List[List[bytes]], List[List[str]]]] = None,
+        multi_modal_inputs: Optional[List[Dict]] = None,
         return_logprobs: bool = False,
     ) -> "RolloutResult":
         """Create a MathRolloutResult from the given results and input IDs.
@@ -418,6 +490,7 @@ class RolloutResult:
             response_ids=[res["output_ids"] for res in results],
             answers=answers,
             image_data=image_data,
+            multi_modal_inputs=multi_modal_inputs,
             is_end=[
                 res["meta_info"]["finish_reason"]["type"] == "stop" for res in results
             ],
@@ -584,6 +657,12 @@ class RolloutResult:
         if rollout_result.image_data is not None:
             image_data_split = split_list(rollout_result.image_data, num_groups)
 
+        multi_modal_inputs_split = None
+        if rollout_result.multi_modal_inputs is not None:
+            multi_modal_inputs_split = split_list(
+                rollout_result.multi_modal_inputs, num_groups
+            )
+
         prompt_texts_split = None
         if rollout_result.prompt_texts is not None:
             prompt_texts_split = split_list(rollout_result.prompt_texts, num_groups)
@@ -640,6 +719,9 @@ class RolloutResult:
                 answers=answers_split[i] if answers_split is not None else None,
                 image_data=image_data_split[i]
                 if image_data_split is not None
+                else None,
+                multi_modal_inputs=multi_modal_inputs_split[i]
+                if multi_modal_inputs_split is not None
                 else None,
                 prompt_texts=prompt_texts_split[i]
                 if prompt_texts_split is not None
@@ -760,6 +842,12 @@ class RolloutResult:
             "prompt_lengths": prompt_lengths.cuda(),
             "response_lengths": response_lengths.cuda(),
         }
+
+        if (
+            self.multi_modal_inputs is not None
+            and self.multi_modal_inputs[0] is not None
+        ):
+            batch["multi_modal_inputs"] = self.multi_modal_inputs
 
         if self.advantages is not None:
             if isinstance(self.advantages, torch.Tensor):

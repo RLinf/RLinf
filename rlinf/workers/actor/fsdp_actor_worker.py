@@ -198,7 +198,7 @@ class FSDPActor(FSDPModelManager, Worker):
     def _load_weight_and_optimizer(self, channel: Channel):
         # Acquire the GPUs to ensure that no one is using them before loading models
         # Otherwise, it may lead to OOM
-        with channel.gpu_lock:
+        with channel.device_lock:
             if self.cfg.actor.get("enable_offload", False):
                 self.load_fsdp_param_and_grad(self.device)
                 self.load_fsdp_optimizer(self.device)
@@ -234,30 +234,18 @@ class FSDPActor(FSDPModelManager, Worker):
             == 0
         )
 
-        self.gradient_accumulation = (
-            self.cfg.actor.global_batch_size
-            // self.cfg.actor.micro_batch_size
-            // self._world_size
-        )
-
         training_metrics_list = []
         # Global batch iterations
         with self.worker_timer():
             for global_batch in global_batches:
                 train_global_batch_size = global_batch["input_ids"].shape[0]
-                assert (
-                    train_global_batch_size
-                    == self.cfg.actor.global_batch_size
-                    // torch.distributed.get_world_size()
-                )
+
                 assert train_global_batch_size % self.cfg.actor.micro_batch_size == 0, (
-                    f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size}"
+                    f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size=}"
                 )
 
                 self.gradient_accumulation = (
-                    self.cfg.actor.global_batch_size
-                    // self.cfg.actor.micro_batch_size
-                    // self._world_size
+                    train_global_batch_size // self.cfg.actor.micro_batch_size
                 )
                 # split batch into micro_batches
                 train_micro_batches = get_iterator_k_split(
@@ -269,27 +257,18 @@ class FSDPActor(FSDPModelManager, Worker):
                 metrics = {}
                 for _, m_batch in enumerate(train_micro_batches):
                     for k, v in m_batch.items():
-                        m_batch[k] = v.to(f"cuda:{int(os.environ['LOCAL_RANK'])}")
+                        m_batch[k] = v.cuda() if isinstance(v, torch.Tensor) else v
 
                     multi_modal_inputs = {}
                     if "multi_modal_inputs" in m_batch.keys():
-                        if (
-                            "image_bound" in m_batch["multi_modal_inputs"][0]
-                        ):  # minicpm-o logic
-                            for key in m_batch["multi_modal_inputs"][0].keys():
-                                multi_modal_inputs[key] = [
+                        for key in m_batch["multi_modal_inputs"][0].keys():
+                            multi_modal_inputs[key] = torch.cat(
+                                [
                                     inputs[key]
                                     for inputs in m_batch["multi_modal_inputs"]
-                                ]
-                        else:
-                            for key in m_batch["multi_modal_inputs"][0].keys():
-                                multi_modal_inputs[key] = torch.cat(
-                                    [
-                                        inputs[key]
-                                        for inputs in m_batch["multi_modal_inputs"]
-                                    ],
-                                    dim=0,
-                                )
+                                ],
+                                dim=0,
+                            ).cuda()
 
                     input_ids = m_batch["input_ids"]
                     attention_mask = m_batch["attention_mask"]
@@ -308,7 +287,7 @@ class FSDPActor(FSDPModelManager, Worker):
                         position_ids=position_ids,
                         **multi_modal_inputs,
                         use_cache=False,
-                    )  # prevent model thinks we are generating
+                    )
 
                     logits = output.logits
 

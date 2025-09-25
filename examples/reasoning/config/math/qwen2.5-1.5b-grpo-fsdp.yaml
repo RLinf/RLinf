@@ -8,9 +8,9 @@ hydra:
 
 cluster:
   num_nodes: 1
-  num_gpus_per_node: 4
   component_placement:
-    actor,rollout: all
+    actor: 0-3
+    rollout: 4-7
 
 runner:
   task_type: reasoning

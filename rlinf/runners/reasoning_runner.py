@@ -44,8 +44,8 @@ if typing.TYPE_CHECKING:
 logging.getLogger().setLevel(logging.INFO)
 
 
-class MathRunner:
-    """Runner for math model training."""
+class ReasoningRunner:
+    """Runner for reasoning task RL training."""
 
     def __init__(
         self,
@@ -277,19 +277,24 @@ class MathRunner:
         lengths = batch["length"].tolist()
         answers = batch["answer"]
         image_data = batch["image_data"]
-        prompts = [ids[-pmp_len:] for ids, pmp_len in zip(prompt_ids, lengths)]
+        multi_modal_inputs = batch["multi_modal_inputs"]
+        prompt_ids = [ids[-pmp_len:] for ids, pmp_len in zip(prompt_ids, lengths)]
         rollout_dp_size = self.component_placement.rollout_dp_size
 
-        for input_ids, answers, image_data in zip(
-            split_list(prompts, rollout_dp_size, enforce_divisible_batch=False),
+        for input_ids, answers, image_data, multi_modal_inputs in zip(
+            split_list(prompt_ids, rollout_dp_size, enforce_divisible_batch=False),
             split_list(answers, rollout_dp_size, enforce_divisible_batch=False),
             split_list(image_data, rollout_dp_size, enforce_divisible_batch=False),
+            split_list(
+                multi_modal_inputs, rollout_dp_size, enforce_divisible_batch=False
+            ),
         ):
             request = RolloutRequest(
                 n=self.cfg.algorithm.group_size,
                 input_ids=input_ids,
                 answers=answers,
                 image_data=image_data,
+                multi_modal_inputs=multi_modal_inputs,
             )
             self.dataloader_channel.put(request, async_op=True)
 

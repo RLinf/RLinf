@@ -193,6 +193,7 @@ class SGLangWorker(Worker):
                 request.input_ids,
                 request.answers,
                 request.image_data,
+                request.multi_modal_inputs,
                 self._return_logprobs,
             )
             rollout_results.append(rollout_result)
