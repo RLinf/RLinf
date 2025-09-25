@@ -174,6 +174,7 @@ class VLLMWorker(Worker):
         """
         Use async_engine to offload model weights/kv cache.
         """
+        await self._async_engine.reset_prefix_cache()
         await self._async_engine.collective_rpc("offload_model_weights")
 
     async def sync_model_from_actor(self) -> None:
@@ -181,6 +182,7 @@ class VLLMWorker(Worker):
         Sync model weights from actor to the vllm workers.
         """
         await self._async_engine.collective_rpc("sync_hf_weight")
+        await self._async_engine.reset_prefix_cache()
 
     async def _get_output_from_async_generator(
         self, async_generator: AsyncGenerator[RequestOutput, None]
