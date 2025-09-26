@@ -1,4 +1,4 @@
-基于ManiSkill模拟器的OpenVLA强化学习训练
+基于ManiSkill模拟器的强化学习训练
 =======================================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg

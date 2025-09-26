@@ -21,7 +21,7 @@
          <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/maniskill.html" target="_blank" style="text-decoration: underline; color: blue;">
           <b>基于ManiSkill的强化学习</b>
          </a><br>
-         ManiSkill+OpenVLA+PPO达到SOTA训练效果
+         ManiSkill+OpenVLA+PPO/GRPO达到SOTA训练效果
        </p>
      </div>
 
@@ -48,12 +48,11 @@
 
    <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RoboTwin-Platform/RoboTwin/blob/main/assets/files/50_tasks.gif"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <img src="https://raw.githubusercontent.com/RoboTwin-Platform/RoboTwin/main/assets/files/50_tasks.gif" 
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" 
+            data-target="animated-image.originalImage">
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/robotwin.html" target="_blank" style="text-decoration: underline; color: blue;">
-          <b>[开发中]基于RoboTwin的强化学习</b>
-         </a><br>
+         <b>[开发中]基于RoboTwin的强化学习</b><br>
          RoboTwin+OpenVLA-OFT+PPO达到SOTA训练效果
        </p>
      </div>
@@ -62,9 +61,7 @@
        <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/franka.html" target="_blank" style="text-decoration: underline; color: blue;">
-          <b>[开发中]Franka真机强化学习</b>
-         </a><br>
+         <b>[开发中]Franka真机强化学习</b><br>
          RLinf worker无缝对接Franka机械臂
        </p>
      </div>
@@ -132,7 +129,7 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/cursor_onlinerl.html" target="_blank" style="text-decoration: underline; color: blue;">
-          <b>Cursor代码补全在线强化学习开源版</b>
+          <b>代码补全在线强化学习开源版</b>
          </a><br>
          基于RLinf+continue实现端到端在线强化学习，模型效果提升xx%
        </p>
@@ -142,7 +139,7 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
        <img src="https://github.com/RLinf/misc/raw/main/pic/waiting_icon.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[适配中]rStar2-agent强化学习训练</b><br>
+         <b>[适配中]rStar2-agent强化学习</b><br>
          支持各组件所用资源量的灵活配置与调度
        </p>
      </div>
@@ -158,9 +155,38 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
    </div>
 
 
+实用系统功能
+--------------------
+
+RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训练、智能体中的组件，提供灵活高效的通信库做组件间通信。基于这种解耦的设计，可以灵活调度Worker所使用的计算资源，也可以将Worker分配到更适配的加速器上。
+
+.. raw:: html
+
+   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/waiting_icon.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <b>[开发中]Worker(组件)间秒级热切换</b><br>
+         秒级热切换提升训练速度50%+
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/waiting_icon.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <b>[开发中]异构加速器混合训练</b><br>
+         使用不同加速器运行的组件间灵活互通，构建训练工作流
+       </p>
+     </div>
+   </div>
+
+
 .. toctree::
    :hidden:
    :maxdepth: 2
 
-   embodied
+   maniskill
+   libero
    reasoning
