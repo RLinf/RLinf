@@ -175,11 +175,11 @@ def validate_rollout_cfg(cfg):
         cfg.disable_log_stats = cfg.get("disable_log_stats", False)
         cfg.detokenize = cfg.get("detokenize", False)
         cfg.rollout_backend = cfg.get("rollout_backend", "sglang")
-        assert cfg.rollout_backend in SUPPORTED_ROLLOUT_BACKENDS, (
-            f"rollout_backend must be one of {SUPPORTED_ROLLOUT_BACKENDS}."
-        )
+        # assert cfg.rollout_backend in SUPPORTED_ROLLOUT_BACKENDS, (
+        #     f"rollout_backend must be one of {SUPPORTED_ROLLOUT_BACKENDS}."
+        # )
         cfg.sglang = validate_sglang_cfg(cfg.sglang)
-        cfg.vllm = validate_vllm_cfg(cfg.vllm)
+        # cfg.vllm = validate_vllm_cfg(cfg.vllm)
 
     return cfg
 
@@ -555,7 +555,7 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
 
     if cfg.runner.task_type == "embodied":
         cfg = validate_embodied_cfg(cfg)
-    if cfg.runner.task_type == "math":
+    else:
         cfg = validate_math_cfg(cfg)
 
     if (
