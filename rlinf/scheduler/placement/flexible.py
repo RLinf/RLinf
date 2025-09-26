@@ -15,114 +15,183 @@
 
 from typing import Dict, List, Tuple
 
+from ..cluster import Cluster
 from .placement import Placement, PlacementStrategy
 
 
 class FlexiblePlacementStrategy(PlacementStrategy):
-    """This placement strategy allows processes to be placed on any GPUs by specifying a list of GPU IDs for each process."""
+    """This placement strategy allows processes to be placed on any accelerators (GPUs) by specifying a list of *global* accelerator IDs for each process.
 
-    def __init__(self, gpu_ids_list: List[List[int]]):
+    .. note::
+            The global accelerator ID means the accelerator ID across the entire cluster. For example, if a cluster has 2 nodes, each with 8 GPUs, then the global GPU IDs are 0~7 for node 0 and 8~15 for node 1.
+
+    The following example shows how to use the placement strategy.
+
+    Example::
+
+        >>> from rlinf.scheduler import (
+        ...     Cluster,
+        ...     Worker,
+        ...     FlexiblePlacementStrategy,
+        ... )
+        >>>
+        >>> class MyWorker(Worker):
+        ...     def __init__(self, msg: str = "Hello, World!"):
+        ...         super().__init__()
+        ...         self._msg = msg
+        ...
+        ...     def hello(self):
+        ...         return self._rank
+        ...
+        ...     def available_gpus(self):
+        ...         import torch
+        ...         available_gpus = torch.cuda.device_count()
+        ...         gpu_ids = [
+        ...             torch.cuda.get_device_properties(i) for i in range(available_gpus)
+        ...         ]
+        ...         return available_gpus
+        >>>
+        >>> cluster = Cluster(num_nodes=1)
+        >>>
+        >>> # `FlexiblePlacementStrategy` allows you to specify the *global* accelerator/GPU IDs for each process.
+        >>> placement = FlexiblePlacementStrategy([[4, 5], [6], [7]])
+        >>> my_worker = MyWorker.create_group().launch(
+        ...     cluster=cluster, name="flexible_placement", placement_strategy=placement
+        ... )
+        >>> # This will run 3 processes on the first node's GPU 4, 5, 6, 7, where the first process uses GPUs 4 and 5, the second process uses GPU 6, and the third process uses GPU 7.
+        >>> my_worker.available_gpus().wait()
+        [2, 1, 1]
+
+    """
+
+    def __init__(self, accelerator_ids_list: List[List[int]]):
         """Initialize the FlexiblePlacementStrategy.
 
         .. note::
-            The GPU IDs in each inner list must be on the same node and must be unique.
+            The accelerator IDs in each inner list must be on the same node and must be unique.
 
         .. note::
-            The GPU IDs of different processes should not overlap.
+            The accelerator IDs of different processes should not overlap.
 
         .. note::
-            The GPU IDs will be sorted in ascending order both within each process and across processes (based on the first GPU ID).
+            The accelerator IDs will be sorted in ascending order both within each process and across processes (based on the first ID).
 
         Args:
-            gpu_ids_list (List[List[int]]): A list of lists, where each inner list contains the GPU IDs to allocate for a specific process.
+            accelerator_ids_list (List[List[int]]): A list of lists, where each inner list contains the accelerator (e.g., GPU) IDs to allocate for a specific process.
 
         """
-        assert len(gpu_ids_list) > 0, "The gpu_id_list_per_process must not be empty."
-
-        self._gpu_ids_list = gpu_ids_list
-        all_gpu_ids = sorted([gpu_id for gpu_ids in gpu_ids_list for gpu_id in gpu_ids])
-        assert len(all_gpu_ids) == len(set(all_gpu_ids)), (
-            f"The GPU IDs of different processes {gpu_ids_list} should not overlap."
+        super().__init__()
+        assert len(accelerator_ids_list) > 0, (
+            "The accelerator_id_list must not be empty."
         )
-        super().__init__(all_gpu_ids[0], all_gpu_ids[-1])
+
+        self._accel_ids_list = accelerator_ids_list
+        all_accelerator_ids = sorted(
+            [accel_id for accel_ids in accelerator_ids_list for accel_id in accel_ids]
+        )
+        assert len(all_accelerator_ids) == len(set(all_accelerator_ids)), (
+            f"The accelerator IDs of different processes {accelerator_ids_list} should not overlap."
+        )
+        self._start_accel_id = all_accelerator_ids[0]
+        self._end_accel_id = all_accelerator_ids[-1]
+        assert self._start_accel_id >= 0, (
+            f"The start accelerator ID {self._start_accel_id} must be non-negative."
+        )
+        assert self._end_accel_id >= 0, (
+            f"The end accelerator ID {self._end_accel_id} must be non-negative."
+        )
+        assert self._end_accel_id >= self._start_accel_id, (
+            f"The end accelerator ID {self._end_accel_id} must be greater than or equal to the start accelerator ID {self._start_accel_id}."
+        )
+
         self._placement_strategy = "FLEXIBLE"
 
         self._logger.info("")
         self._logger.info(
-            f"Using flexible placement with GPU IDs: {self._gpu_ids_list}."
+            f"Using flexible placement with accelerator IDs: {self._accel_ids_list}."
         )
 
-    def _verify_gpu_ids_for_process(
-        self, gpu_ids: List[int], num_nodes_in_cluster: int, num_gpus_per_node: int
+    def _verify_accelerator_ids_for_process(
+        self,
+        accel_ids: List[int],
+        cluster: Cluster,
     ):
-        """Verify that the GPU IDs for a process are valid."""
-        for gpu_id in gpu_ids:
-            # Check that all GPU IDs are within the node range
-            assert 0 <= gpu_id < num_nodes_in_cluster * num_gpus_per_node, (
-                f"GPU ID {gpu_id} is out of range. Must be between 0 and {num_nodes_in_cluster * num_gpus_per_node - 1}."
+        """Verify that the accelerator IDs for a process are valid."""
+        for accel_id in accel_ids:
+            # Check that all accelerator IDs are within the node range
+            assert 0 <= accel_id < cluster.num_accelerators_in_cluster, (
+                f"Accelerator ID {accel_id} is out of range. Must be between 0 and {cluster.num_accelerators_in_cluster - 1}."
             )
 
-        # Check that all GPU IDs of a process are on the same node
-        node_ids = {gpu_id // num_gpus_per_node for gpu_id in gpu_ids}
+        # Check that all accelerator IDs of a process are on the same node
+        node_ids = {
+            cluster.get_node_id_from_accel_id(accel_id) for accel_id in accel_ids
+        }
         assert len(node_ids) == 1, (
-            f"All GPU IDs {gpu_ids} for a process must be on the same node."
+            f"All accelerator IDs {accel_ids} for a process must be on the same node."
         )
 
-        # Check that all GPU IDs of a process are unique
-        assert len(gpu_ids) == len(set(gpu_ids)), (
-            f"All GPU IDs {gpu_ids} for a process must be unique."
+        # Check that all accelerator IDs of a process are unique
+        assert len(accel_ids) == len(set(accel_ids)), (
+            f"All accelerator IDs {accel_ids} for a process must be unique."
         )
 
     def get_placement(
         self,
-        num_nodes_in_cluster: int,
-        num_gpus_per_node: int,
-        isolate_gpu: bool = True,
+        cluster: Cluster,
+        isolate_accelerator: bool = True,
     ) -> List[Placement]:
         """Generate a list of placements based on the flexible strategy.
 
         Args:
-            num_nodes_in_cluster (int): Total number of nodes in the cluster.
-            num_gpus_per_node (int): Number of GPUs per node.
-            isolate_gpu (bool): Whether to isolate the GPUs for each process by setting `CUDA_VISIBLE_DEVICES`. Defaults to True.
+            cluster (Cluster): The cluster object containing information about the nodes and accelerators.
+            isolate_accelerator (bool): Whether accelerators not allocated to a worker will *not* be visible to the worker (by settings envs like CUDA_VISIBLE_DEVICES). Defaults to True.
 
         Returns:
-            List[Placement]: A list of Placement objects representing the placements of processes on GPUs.
+            List[Placement]: A list of Placement objects representing the placements of processes on accelerators.
 
         """
-        # Verify and sort the GPU IDs for each process
-        for i, gpu_ids in enumerate(self._gpu_ids_list):
-            self._verify_gpu_ids_for_process(
-                gpu_ids, num_nodes_in_cluster, num_gpus_per_node
-            )
-            self._gpu_ids_list[i] = sorted(gpu_ids)
-        # Sort the list of GPU IDs for processes based on the first GPU ID in each list
-        self._gpu_ids_list.sort(key=lambda x: x[0])
+        # Verify and sort the accelerator IDs for each process
+        for i, accel_ids in enumerate(self._accel_ids_list):
+            self._verify_accelerator_ids_for_process(accel_ids, cluster)
+            self._accel_ids_list[i] = sorted(accel_ids)
+        # Sort the list of accelerator IDs for processes based on the first accelerator ID in each list
+        self._accel_ids_list.sort(key=lambda x: x[0])
 
-        node_ids = [gpu_ids[0] // num_gpus_per_node for gpu_ids in self._gpu_ids_list]
-        node_id_gpu_ids: List[Tuple[int, List[int]]] = list(
-            zip(node_ids, self._gpu_ids_list)
+        node_ids = [
+            cluster.get_node_id_from_accel_id(accel_ids[0])
+            for accel_ids in self._accel_ids_list
+        ]
+        node_id_accel_ids: List[Tuple[int, List[int]]] = list(
+            zip(node_ids, self._accel_ids_list)
         )
 
         placements: List[Placement] = []
-        for rank, (node_id, gpu_ids) in enumerate(node_id_gpu_ids):
-            local_gpu_ids = [gpu_id % num_gpus_per_node for gpu_id in gpu_ids]
-            if isolate_gpu:
-                cuda_visible_devices = [str(gpu_id) for gpu_id in local_gpu_ids]
+        for rank, (node_id, accel_ids) in enumerate(node_id_accel_ids):
+            local_accelerator_ids = [
+                cluster.global_accel_id_to_local_accel_id(accel_id)
+                for accel_id in accel_ids
+            ]
+            if isolate_accelerator:
+                visible_accelerators = [
+                    str(accelerator_id) for accelerator_id in local_accelerator_ids
+                ]
             else:
-                cuda_visible_devices = [
-                    str(gpu_id) for gpu_id in range(num_gpus_per_node)
+                visible_accelerators = [
+                    str(accel_id)
+                    for accel_id in range(cluster.get_node_num_accelerators(node_id))
                 ]
             placements.append(
                 Placement(
                     rank=rank,
                     node_id=node_id,
                     node_rank=-1,
-                    local_gpu_id=local_gpu_ids[0],
+                    accelerator_type=cluster.get_node_info(node_id).accelerator_type,
+                    local_accelerator_id=local_accelerator_ids[0],
                     local_rank=-1,
                     local_world_size=0,
-                    cuda_visible_devices=cuda_visible_devices,
-                    isolate_gpu=isolate_gpu,
+                    visible_accelerators=visible_accelerators,
+                    isolate_accelerator=isolate_accelerator,
                 )
             )
 

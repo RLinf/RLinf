@@ -51,7 +51,7 @@ Math推理的强化学习训练
 
 在启动前，检查配置文件。主要字段包括：  
 
-- 集群设置：``cluster.num_nodes`` （节点数）、``cluster.num_gpus_per_node`` （每节点 GPU 数）。  
+- 集群设置：``cluster.num_nodes`` （节点数）。  
 - 路径：``runner.output_dir`` （保存训练日志与检查点的路径）、``rollout.model_dir`` （基础模型保存路径）、``data.train_data_paths`` （训练数据路径）等。  
 
 **2. 配置文件**
@@ -72,7 +72,7 @@ Math推理的强化学习训练
    export TOKENIZERS_PARALLELISM=false
    bash start_ray.sh;
    if [ "$RANK" -eq 0 ]; then
-       bash check_ray.sh 128; # 设置为 cluster.num_nodes*cluster.num_gpus_per_node
+       bash check_ray.sh 128;
        cd /path_to_RLinf;
        bash examples/math/qwen2.5/run_main_math_grpo_megatron.sh grpo-1.5b-megatron # 修改配置文件
    else

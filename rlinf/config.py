@@ -486,9 +486,12 @@ def validate_embodied_cfg(cfg):
     )
 
     # process num-envs
+    from rlinf.scheduler import Cluster
     from rlinf.utils.placement import HybridComponentPlacement
 
-    component_placement = HybridComponentPlacement(cfg)
+    component_placement = HybridComponentPlacement(
+        cfg, Cluster(num_nodes=cfg.cluster.num_nodes)
+    )
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
     cfg.algorithm.num_group_envs = (

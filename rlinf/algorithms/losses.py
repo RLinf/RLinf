@@ -233,7 +233,7 @@ def compute_math_ppo_actor_loss(**kwargs):
     dual_clip_mask.logical_and_(loss_mask)
 
     clip_fraction = clip_mask.logical_and_(loss_mask).count_nonzero() / loss_mask_count
-    approx_kl = approx_kl.sum() / loss_mask_count
+    approx_kl = -approx_kl.sum() / loss_mask_count
 
     dual_cliped_ratio = torch.where(dual_clip_mask, ratio, 0)
 

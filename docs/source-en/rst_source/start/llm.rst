@@ -50,7 +50,7 @@ For user convenience, our configuration file is set up to run with a single GPU 
 However, if you have multiple GPUs and wish to accelerate the quickstart process,  
 we highly recommend updating the following configuration option in  
 ``./examples/math/config/qwen2.5-1.5b-single-gpu.yaml``:  
-``cluster.num_gpus_per_node``.
+``cluster.component_placement``.
 
 
 You can dynamically set it to **1, 2, 4, or 8** depending on your available resources.
@@ -59,7 +59,6 @@ You can dynamically set it to **1, 2, 4, or 8** depending on your available reso
 
    cluster:
      num_nodes: 1
-     num_gpus_per_node: 1
      component_placement:
         actor,rollout: all
 

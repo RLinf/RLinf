@@ -8,7 +8,6 @@ hydra:
 
 cluster:
   num_nodes: 8
-  num_gpus_per_node: 8
   component_placement:
     rollout: 0-15
     inference: 16-23

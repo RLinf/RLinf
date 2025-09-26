@@ -52,7 +52,7 @@ Running the Script
 
 Before launching, check the configuration file. Key fields include:
 
-- Cluster setup: ``cluster.num_nodes`` (number of nodes), ``cluster.num_gpus_per_node`` (GPUs per node).  
+- Cluster setup: ``cluster.num_nodes`` (number of nodes).  
 - Paths: ``runner.output_dir`` (the path to save training logs & checkpoints), ``rollout.model_dir`` (the path that saves base model), ``data.train_data_paths`` (the path that save training data), etc.  
 
 **2. Configuration File**
@@ -73,7 +73,7 @@ Run the following commands to start the Ray cluster and begin training:
    export TOKENIZERS_PARALLELISM=false
    bash start_ray.sh;
    if [ "$RANK" -eq 0 ]; then
-       bash check_ray.sh 128; # set to cluster.num_nodes*cluster.num_gpus_per_node
+       bash check_ray.sh 128; # set to number of accelerators/GPUs in the cluster
        cd /path_to_RLinf;
        bash examples/math/qwen2.5/run_main_math_grpo_megatron.sh grpo-1.5b-megatron # change config file
    else

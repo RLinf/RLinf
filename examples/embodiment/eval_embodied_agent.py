@@ -32,10 +32,8 @@ def main(cfg) -> None:
     cfg = validate_cfg(cfg)
     cfg.runner.only_eval = True
 
-    cluster = Cluster(
-        num_nodes=cfg.cluster.num_nodes, num_gpus_per_node=cfg.cluster.num_gpus_per_node
-    )
-    component_placement = HybridComponentPlacement(cfg)
+    cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
+    component_placement = HybridComponentPlacement(cfg, cluster)
 
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")

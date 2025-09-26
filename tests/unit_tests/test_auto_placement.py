@@ -572,15 +572,21 @@ class TestSchedulerTask:
         mock_cfg.actor.model.pipeline_model_parallel_size = 1
         mock_cfg.rollout.tensor_parallel_size = 1
         mock_cfg.rollout.pipeline_parallel_size = 1
-        mock_cfg.cluster.num_gpus_per_node = 8
         mock_cfg.cluster.num_nodes = 1
         mock_cfg.algorithm.group_size = 4
         mock_cfg.algorithm.n_minibatches = 4
         mock_cfg.data.rollout_batch_size = 16
         mock_cfg.runner.seq_length = 2048
 
+        mock_cluster = MagicMock()
+        mock_cluster.num_accelerators_in_cluster = 8
+
         profile_data = get_profile_data(
-            mock_cfg, actor_cost=100.0, inference_cost=50.0, rollout_cost=75.0
+            mock_cfg,
+            cluster=mock_cluster,
+            actor_cost=100.0,
+            inference_cost=50.0,
+            rollout_cost=75.0,
         )
 
         assert profile_data["actor"] == (4, 100.0)
@@ -597,7 +603,6 @@ class TestSchedulerTask:
         mock_cfg.actor.model.pipeline_model_parallel_size = 1
         mock_cfg.rollout.tensor_parallel_size = 1
         mock_cfg.rollout.pipeline_parallel_size = 1
-        mock_cfg.cluster.num_gpus_per_node = 8
         mock_cfg.cluster.num_nodes = 1
         mock_cfg.algorithm.group_size = 4
         mock_cfg.algorithm.n_minibatches = 4
@@ -610,7 +615,10 @@ class TestSchedulerTask:
 
         mock_validate.return_value = mock_cfg
 
-        scheduler_task = SchedulerTask(mock_cfg)
+        mock_cluster = MagicMock()
+        mock_cluster.num_accelerators_in_cluster = 8
+
+        scheduler_task = SchedulerTask(mock_cfg, mock_cluster)
 
         assert scheduler_task.is_math is True
         assert scheduler_task.total_gpus == 8

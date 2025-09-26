@@ -20,7 +20,7 @@ from omegaconf import DictConfig
 
 from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.env_manager import EnvManager
-from rlinf.scheduler import Worker
+from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.placement import HybridComponentPlacement
 
 
@@ -61,7 +61,7 @@ class EnvWorker(Worker):
         self._action_queue_name = cfg.rollout.channel.queue_name
         self._replay_buffer_name = cfg.actor.channel.queue_name
 
-        self._component_placement = HybridComponentPlacement(cfg)
+        self._component_placement = HybridComponentPlacement(cfg, Cluster())
         assert (
             self._component_placement.get_world_size("rollout")
             % self._component_placement.get_world_size("env")

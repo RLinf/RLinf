@@ -8,9 +8,8 @@ hydra:
 
 cluster:
   num_nodes: 1
-  num_gpus_per_node: 1
   component_placement:
-    actor,rollout: all
+    actor,rollout: 0
 
 runner:
   task_type: math

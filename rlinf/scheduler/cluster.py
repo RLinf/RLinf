@@ -18,7 +18,7 @@ import sys
 import time
 from dataclasses import dataclass
 from importlib.metadata import version
-from typing import TYPE_CHECKING, List, Optional, Type
+from typing import TYPE_CHECKING, Dict, List, Optional, Type
 
 import ray
 import ray.util.scheduling_strategies
@@ -26,6 +26,8 @@ from packaging import version as vs
 from ray._private import ray_logging
 from ray.actor import ActorHandle
 from ray.util.state import list_actors
+
+from .accelerator import Accelerator, AcceleratorType
 
 ray_version = version("ray")
 assert vs.parse(ray_version) >= vs.parse("2.47.0"), (
@@ -49,8 +51,11 @@ class NodeInfo:
     node_ip: str
     """IP address of the node."""
 
-    num_gpus: int
-    """Number of GPUs available on the node."""
+    accelerator_type: AcceleratorType
+    """Type of accelerator available on the node."""
+
+    num_accelerators: int
+    """Number of accelerators available on the node."""
 
     num_cpus: int
     """Number of CPUs available on the node."""
@@ -85,25 +90,23 @@ class Cluster:
             cls._instance._has_initialized = False
         return cls._instance
 
-    def __init__(self, num_nodes: Optional[int] = None, num_gpus_per_node: int = 8):
+    def __init__(self, num_nodes: Optional[int] = None):
         """Initialize the cluster.
 
         Args:
             num_nodes (int): The number of nodes in the cluster. When you wish to acquire the cluster instance in a processes other than the main driver process, do not pass this argument. Instead, use the `Cluster()` constructor without arguments.
-            num_gpus_per_node (int): The number of GPUs available per node. Default is 8.
         """
         if self._has_initialized:
             return
         if num_nodes is not None:
             self._ray_instance_count = 0
-            self._init_and_launch_managers(num_nodes, num_gpus_per_node)
+            self._init_and_launch_managers(num_nodes)
         else:
             self._init_from_existing_managers()
         self._has_initialized = True
 
-    def _init_and_launch_managers(self, num_nodes: int, num_gpus_per_node: int):
+    def _init_and_launch_managers(self, num_nodes: int):
         self._num_nodes = num_nodes
-        self._num_gpus_per_node = num_gpus_per_node
         self._set_default_env_vars()
 
         if ray.is_initialized():
@@ -148,32 +151,31 @@ class Cluster:
 
         self._nodes: List[NodeInfo] = []
         for node in ray.nodes():
+            accelerator_type, num_accelerators = (
+                Accelerator.get_node_accelerator_type_and_num(node)
+            )
             self._nodes.append(
                 NodeInfo(
                     node_rank=0,
                     ray_id=node["NodeID"],
                     node_ip=node["NodeManagerAddress"],
-                    num_gpus=int(node["Resources"].get("GPU", 0)),
+                    accelerator_type=accelerator_type,
+                    num_accelerators=num_accelerators,
                     num_cpus=int(node["Resources"].get("CPU", 0)),
                 )
             )
 
-        self._master_ip = ray.util.get_node_ip_address()
-        self._master_port = self.find_free_port()
-
-        # Ensure master node is the node that launches the cluster
-        self._master_node: NodeInfo = None
-        other_nodes: List[NodeInfo] = []
+        # Sort nodes first by accelerator type, then by IP
+        nodes_group_by_accel_type: Dict[AcceleratorType, List[NodeInfo]] = {
+            accel_type: [] for accel_type in AcceleratorType
+        }
         for node in self._nodes:
-            if node.node_ip == self._master_ip:
-                self._master_node = node
-            else:
-                other_nodes.append(node)
-        assert self._master_node is not None, (
-            f"Master node with IP {self._master_ip} not found in the cluster."
-        )
-        other_nodes = sorted(other_nodes, key=lambda x: x.node_ip)
-        self._nodes = [self._master_node] + other_nodes
+            nodes_group_by_accel_type[node.accelerator_type].append(node)
+        for accel_type in nodes_group_by_accel_type.keys():
+            nodes_group_by_accel_type[accel_type].sort(key=lambda x: x.node_ip)
+        self._nodes = [
+            node for nodes in nodes_group_by_accel_type.values() for node in nodes
+        ]
 
         # Launch managers
         from .manager import (
@@ -196,18 +198,13 @@ class Cluster:
             self._node_manager = (
                 ray.remote(NodeManager)
                 .options(name=NodeManager.MANAGER_NAME)
-                .remote(
-                    self._nodes,
-                    self._num_gpus_per_node,
-                    self._master_ip,
-                    self._master_port,
-                )
+                .remote(self._nodes)
             )
         except ValueError:
             # If the WorkerManager is already running, we need to switch the namespace
             self._ray_instance_count += 1
             Cluster.NAMESPACE = f"RLinf_{self._ray_instance_count}"
-            return self._init_and_launch_managers(num_nodes, num_gpus_per_node)
+            return self._init_and_launch_managers(num_nodes)
 
         def signal_handler(sig, frame):
             # Exit the main process if SIGUSR1 is received, which is sent by the worker group when an exception occurs.
@@ -246,9 +243,6 @@ class Cluster:
         self._node_manager = NodeManager.get_proxy()
         self._nodes = self._node_manager.get_nodes()
         self._num_nodes = len(self._nodes)
-        self._master_ip = self._node_manager.get_master_ip()
-        self._master_port = self._node_manager.get_master_port()
-        self._num_gpus_per_node = self._node_manager.get_num_gpus_per_node()
 
     def _set_default_env_vars(self):
         """Set default environment variables for the system."""
@@ -272,24 +266,79 @@ class Cluster:
         return os.environ.get(env_var, default)
 
     @property
-    def master_addr(self):
-        """Get the master address of the cluster."""
-        return self._master_ip
-
-    @property
-    def master_port(self):
-        """Get the master port of the cluster."""
-        return self._master_port
-
-    @property
-    def num_gpus_per_node(self):
-        """Get the number of GPUs per node."""
-        return self._num_gpus_per_node
-
-    @property
     def num_nodes(self):
         """Get the number of nodes in the cluster."""
         return self._num_nodes
+
+    @property
+    def num_accelerators_in_cluster(self):
+        """Get the number of accelerators in the cluster."""
+        return sum(node.num_accelerators for node in self._nodes)
+
+    @property
+    def node_accelerator_ids(self) -> List[List[int]]:
+        """Get the global accelerator IDs for each node in the cluster."""
+        node_start_accel_id = 0
+        node_accel_ids = []
+        for node in self._nodes:
+            node_accel_ids.append(
+                list(
+                    range(
+                        node_start_accel_id, node_start_accel_id + node.num_accelerators
+                    )
+                )
+            )
+            node_start_accel_id += node.num_accelerators
+        return node_accel_ids
+
+    def get_node_id_from_accel_id(self, accel_id: int) -> int:
+        """Get the node ID from the global accelerator ID.
+
+        Args:
+            accel_id (int): The global accelerator ID.
+
+        Returns:
+            int: The node ID.
+        """
+        for i, ids in enumerate(self.node_accelerator_ids):
+            if accel_id in ids:
+                return i
+        raise ValueError(f"Accelerator ID {accel_id} not found in any node.")
+
+    def get_node_num_accelerators(self, node_id: int) -> int:
+        """Get the number of accelerators in a specific node.
+
+        Args:
+            node_id (int): The ID of the node.
+
+        Returns:
+            int: The number of accelerators in the node.
+        """
+        if node_id < 0 or node_id >= self._num_nodes:
+            raise ValueError(
+                f"Invalid node_id: {node_id}. Must be between 0 and {self._num_nodes - 1}."
+            )
+        return self._nodes[node_id].num_accelerators
+
+    def global_accel_id_to_local_accel_id(self, accel_id: int):
+        """Get the local accelerator ID from the global accelerator ID.
+
+        Args:
+            accel_id (int): The global accelerator ID.
+
+        Returns:
+            int: The local accelerator ID.
+        """
+        node_id = self.get_node_id_from_accel_id(accel_id)
+        node_accel_ids = self.node_accelerator_ids[node_id]
+        assert accel_id in node_accel_ids, (
+            f"Accelerator ID {accel_id} not found in node {node_id}."
+        )
+        return node_accel_ids.index(accel_id)
+
+    def get_node_info(self, node_id: int):
+        """Get the NodeInfo of a specific node rank."""
+        return self._nodes[node_id]
 
     def get_node_ip(self, node_id: int) -> str:
         """Get the IP address of a specific node by its ID. Note that this is not the ray NodeID but the index of node in the cluster."""
@@ -300,7 +349,6 @@ class Cluster:
         cls: Type["Worker"],
         worker_name: str,
         node_id: int,
-        gpu_id: int,
         env_vars: dict,
         cls_args: List = [],
         cls_kwargs: dict = {},
@@ -311,7 +359,6 @@ class Cluster:
             cls (Type[Worker]): The class to allocate.
             worker_name (str): The name of the worker.
             node_id (int): The ID of the node to allocate on.
-            gpu_id (int): The ID of the GPU to allocate.
             env_vars (dict): Environment variables to set for the worker.
             cls_args (List): Positional arguments to pass to the class constructor.
             cls_kwargs (dict): Keyword arguments to pass to the class constructor.
@@ -323,10 +370,6 @@ class Cluster:
         if node_id < 0 or node_id >= self._num_nodes:
             raise ValueError(
                 f"Invalid node_id: {node_id}. Must be between 0 and {self._num_nodes - 1}."
-            )
-        if gpu_id < 0 or gpu_id >= self._num_gpus_per_node:
-            raise ValueError(
-                f"Invalid gpu_id: {gpu_id}. Must be between 0 and {self._num_gpus_per_node - 1}."
             )
 
         node = self._nodes[node_id]

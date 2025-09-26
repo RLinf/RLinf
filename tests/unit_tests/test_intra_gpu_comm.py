@@ -150,14 +150,13 @@ def cluster():
     if not torch.cuda.is_available() or torch.cuda.device_count() < 1:
         pytest.skip("IPC/Uncertain Peer tests require at least 1 CUDA GPU.")
     # Use all GPUs on one node to test same-node communication
-    num_gpus = torch.cuda.device_count()
-    return Cluster(num_nodes=1, num_gpus_per_node=num_gpus)
+    return Cluster(num_nodes=1)
 
 
 def create_worker_groups(cluster, sender_gpus, receiver_gpus):
     """Helper to create worker groups with specific GPU assignments."""
     sender_placement = PackedPlacementStrategy(
-        start_gpu_id=sender_gpus[0], end_gpu_id=sender_gpus[-1]
+        start_accelerator_id=sender_gpus[0], end_accelerator_id=sender_gpus[-1]
     )
     sender_group = SenderWorker.create_group().launch(
         cluster=cluster,
@@ -166,7 +165,7 @@ def create_worker_groups(cluster, sender_gpus, receiver_gpus):
     )
 
     receiver_placement = PackedPlacementStrategy(
-        start_gpu_id=receiver_gpus[0], end_gpu_id=receiver_gpus[-1]
+        start_accelerator_id=receiver_gpus[0], end_accelerator_id=receiver_gpus[-1]
     )
     receiver_group = ReceiverWorker.create_group().launch(
         cluster=cluster,

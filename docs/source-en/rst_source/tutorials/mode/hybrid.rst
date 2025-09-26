@@ -20,7 +20,6 @@ The configuration style of hybrid mode is consistent to collocated/disaggregated
 
   cluster:
     num_nodes: 1
-    num_gpus_per_node: 8
     component_placement:
       actor: 0-7
       env: 0-3
@@ -47,7 +46,7 @@ Different from collocated and disaggregated modes, hybrid mode uses `HybridCompo
 
    from rlinf.utils.placement import HybridComponentPlacement
 
-   component_placement = HybridComponentPlacement(cfg)
+   component_placement = HybridComponentPlacement(cfg, cluster)
    # Create actor worker group
    actor_placement = component_placement.get_strategy("actor")
    actor_group = FSDPActor.create_group(cfg).launch(

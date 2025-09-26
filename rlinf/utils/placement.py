@@ -18,7 +18,8 @@ from typing import Dict, List, overload
 
 from omegaconf import DictConfig
 
-from rlinf.scheduler.placement import (
+from rlinf.scheduler import (
+    Cluster,
     FlexiblePlacementStrategy,
     PackedPlacementStrategy,
     PlacementStrategy,
@@ -34,7 +35,7 @@ class PlacementMode(Enum):
 class ComponentPlacement:
     """Base component placement for parsing config."""
 
-    def __init__(self, config: DictConfig):
+    def __init__(self, config: DictConfig, cluster: Cluster):
         """Parsing component placement configuration.
 
         Args:
@@ -42,11 +43,7 @@ class ComponentPlacement:
         """
         self._config = config
         self._placement_config: DictConfig = config.cluster.component_placement
-        self._cluster_num_nodes = config.cluster.num_nodes
-        self._cluster_num_gpus_per_node = config.cluster.num_gpus_per_node
-        self._cluster_num_gpus = (
-            config.cluster.num_gpus_per_node * config.cluster.num_nodes
-        )
+        self._cluster_num_gpus = cluster.num_accelerators_in_cluster
         self._components: List[str] = []
         self._component_gpu_map: Dict[str, List[int]] = {}
 
@@ -165,13 +162,13 @@ class ComponentPlacement:
 class HybridComponentPlacement(ComponentPlacement):
     """Hybrid component placement that allows components to run on any sets of GPUs."""
 
-    def __init__(self, config: DictConfig):
+    def __init__(self, config: DictConfig, cluster: Cluster):
         """Initialize HybridComponentPlacement
 
         Args:
             config (DictConfig): The configuration dictionary.
         """
-        super().__init__(config)
+        super().__init__(config, cluster)
         self._placement_mode = PlacementMode.HYBRID
 
     def _generate_placements(self):
@@ -194,13 +191,13 @@ class ModelParallelComponentPlacement(ComponentPlacement):
     In the collocated mode, only actor and rollout exist. While in the disaggregated mode, actor, rollout, and inference should all exist.
     """
 
-    def __init__(self, config: DictConfig):
+    def __init__(self, config: DictConfig, cluster: Cluster):
         """Initialize ModelParallelComponentPlacement
 
         Args:
             config (DictConfig): The configuration dictionary for the component placement.
         """
-        super().__init__(config)
+        super().__init__(config, cluster)
 
         self._actor_gpus = self._component_gpu_map.get("actor", None)
         self._inference_gpus = self._component_gpu_map.get("inference", None)
@@ -295,7 +292,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             self._placements["rollout"] = PackedPlacementStrategy(
                 self._rollout_gpus[0],
                 self._rollout_gpus[-1],
-                num_gpus_per_process=rollout_tp_size,
+                num_accelerators_per_process=rollout_tp_size,
                 stride=stride,
             )
         elif self._placement_mode == PlacementMode.DISAGGREGATED:
@@ -304,7 +301,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             self._placements["rollout"] = PackedPlacementStrategy(
                 self._rollout_gpus[0],
                 self._rollout_gpus[-1],
-                num_gpus_per_process=num_gpus_per_rollout_dp,
+                num_accelerators_per_process=num_gpus_per_rollout_dp,
             )
             if self._inference_gpus is not None:
                 self._placements["inference"] = PackedPlacementStrategy(

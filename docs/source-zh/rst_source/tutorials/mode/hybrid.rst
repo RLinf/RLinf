@@ -21,7 +21,6 @@ RLinf 在共享式模式和分离式模式的基础上，进一步引入了混�
 
   cluster:
     num_nodes: 1
-    num_gpus_per_node: 8
     component_placement:
       actor: 0-7
       env: 0-3
@@ -49,7 +48,7 @@ RLinf 在共享式模式和分离式模式的基础上，进一步引入了混�
 
    from rlinf.utils.placement import HybridComponentPlacement
 
-   component_placement = HybridComponentPlacement(cfg)
+   component_placement = HybridComponentPlacement(cfg, cluster)
    # 创建 actor Worker 组
    actor_placement = component_placement.get_strategy("actor")
    actor_group = FSDPActor.create_group(cfg).launch(

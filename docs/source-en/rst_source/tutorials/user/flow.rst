@@ -31,7 +31,6 @@ these examples, then iterating toward your custom task. Key options include
 
    cluster:
      num_nodes: 1
-     num_gpus_per_node: 8
      component_placement:
        actor: 0-7
        env: 0-3
@@ -64,8 +63,8 @@ all RLinf ``main`` entry points:
 
 .. code:: python
 
-   cluster = Cluster(num_nodes, num_gpus_per_node)
-   component_placement = HybridComponentPlacement(cfg)
+   cluster = Cluster(num_nodes)
+   component_placement = HybridComponentPlacement(cfg, cluster)
 
    # Create actor worker group
    actor_placement = component_placement.get_strategy("actor")

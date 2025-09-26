@@ -27,7 +27,6 @@ Worker 被分配到不同的 GPU 上。GPU 集合通过全局 GPU 索引指定�
 
    cluster:
      num_nodes: 2
-     num_gpus_per_node: 8
      component_placement:
        rollout: 0-9
        inference: 10-11

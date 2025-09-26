@@ -29,7 +29,7 @@ from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
 )
 from rlinf.models import get_model
 from rlinf.models.embodiment.model_utils import custom_forward
-from rlinf.scheduler import Worker
+from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.data_iter_utils import get_iterator_k_split
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
@@ -56,7 +56,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         self._env_group_name = cfg.env.group_name
         self._rollout_group_name = cfg.rollout.group_name
-        self._component_placement = HybridComponentPlacement(cfg)
+        self._component_placement = HybridComponentPlacement(cfg, Cluster())
         self._weight_dst_rank_in_rollout = self._rank
         if self._weight_dst_rank_in_rollout >= self._component_placement.get_world_size(
             "rollout"

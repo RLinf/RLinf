@@ -20,12 +20,14 @@ from resource_allocator import AllocationStates, resource_allocate
 from workflow import ComponentNode, Workflow, get_workflow_cost, get_workflow_partition
 
 from rlinf.config import validate_cfg
+from rlinf.scheduler import Cluster
 
 
 class SchedulerTask:
     def __init__(
         self,
         cfg,
+        cluster,
         workflow_graph: Optional[Dict[ComponentNode, List[ComponentNode]]] = None,
     ):
         self.cfg = cfg
@@ -61,7 +63,7 @@ class SchedulerTask:
             "pipeline_model_parallel_size": inference_pipeline_model_parallel_size,
         }
 
-        self.total_gpus = cfg.cluster.num_gpus_per_node * cfg.cluster.num_nodes
+        self.total_gpus = cluster.num_accelerators_in_cluster
         self.group_size = cfg.algorithm.group_size
         self.n_minibatches = cfg.algorithm.n_minibatches
         self.rollout_batch_size = cfg.data.rollout_batch_size
@@ -140,7 +142,6 @@ class SchedulerTask:
         new_cfg = OmegaConf.create()
         new_cfg.cluster = {}
         new_cfg.cluster.num_nodes = self.cfg.cluster.num_nodes
-        new_cfg.cluster.num_gpus_per_node = self.cfg.cluster.num_gpus_per_node
         new_cfg.cluster.component_placement = {}
 
         is_collocated = len(self.workflow.nodes) == len(partition_allocation)
@@ -232,8 +233,10 @@ class SchedulerTask:
         return min_cost_allocation, min_cost
 
 
-def get_profile_data(cfg, actor_cost=None, inference_cost=None, rollout_cost=None):
-    total_gpus = cfg.cluster.num_gpus_per_node * cfg.cluster.num_nodes
+def get_profile_data(
+    cfg, cluster: Cluster, actor_cost=None, inference_cost=None, rollout_cost=None
+):
+    total_gpus = cluster.num_accelerators_in_cluster
     collocated_actor_instance_num = total_gpus // (
         cfg.actor.model.tensor_model_parallel_size
         * cfg.actor.model.pipeline_model_parallel_size
@@ -263,8 +266,11 @@ def main(cfg):
     if actor_cost is None or inference_cost is None or rollout_cost is None:
         raise ValueError("Profile data is not provided")
 
-    profile_data = get_profile_data(cfg, actor_cost, inference_cost, rollout_cost)
-    scheduler_task = SchedulerTask(cfg)
+    cluster = Cluster(cfg.cluster.num_nodes)
+    profile_data = get_profile_data(
+        cfg, cluster, actor_cost, inference_cost, rollout_cost
+    )
+    scheduler_task = SchedulerTask(cfg, cluster)
     scheduler_task.register_profile_data(profile_data)
     res = scheduler_task.run()
 

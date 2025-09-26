@@ -32,10 +32,8 @@ mp.set_start_method("spawn", force=True)
 def main(cfg) -> None:
     cfg = validate_cfg(cfg)
 
-    cluster = Cluster(
-        num_nodes=cfg.cluster.num_nodes, num_gpus_per_node=cfg.cluster.num_gpus_per_node
-    )
-    component_placement = HybridComponentPlacement(cfg)
+    cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
+    component_placement = HybridComponentPlacement(cfg, cluster)
 
     # Create actor worker group
     actor_placement = component_placement.get_strategy("actor")

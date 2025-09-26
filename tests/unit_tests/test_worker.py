@@ -15,7 +15,13 @@
 import pytest
 import torch
 
-from rlinf.scheduler import Cluster, Worker, WorkerAddress
+from rlinf.scheduler import (
+    Cluster,
+    NodePlacementStrategy,
+    PackedPlacementStrategy,
+    Worker,
+    WorkerAddress,
+)
 
 
 # Fixture to provide a ClusterResource instance for the test session
@@ -23,8 +29,7 @@ from rlinf.scheduler import Cluster, Worker, WorkerAddress
 def cluster():
     """Provides a ClusterResource instance for the tests."""
     # Use a small, fixed number of GPUs for consistent testing
-    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 2
-    return Cluster(num_nodes=1, num_gpus_per_node=num_gpus)
+    return Cluster(num_nodes=1)
 
 
 # A basic Worker class for testing purposes
@@ -59,7 +64,7 @@ class DistributedTestWorker(Worker):
             "rank": self._rank,
             "world_size": self._world_size,
             "node_id": self._node_id,
-            "gpu_id": self._gpu_id,
+            "gpu_id": self._local_accelerator_id,
             "node_local_rank": self._node_local_rank,
         }
 
@@ -74,9 +79,8 @@ class TestClusterResource:
     def test_cluster_initialization(self, cluster: Cluster):
         """Verify that the cluster is initialized with correct properties."""
         assert cluster._num_nodes == 1
-        assert cluster.num_gpus_per_node >= 1
-        assert cluster.master_addr is not None
-        assert cluster.master_port is not None
+        if torch.cuda.is_available():
+            assert cluster.num_accelerators_in_cluster >= 1
 
 
 class TestWorkerAddress:
@@ -95,23 +99,29 @@ class TestWorkerGroup:
 
     def test_worker_group_creation(self, cluster: Cluster):
         """Verify that a WorkerGroup can be created successfully."""
-        num_gpus = cluster.num_gpus_per_node
+        if torch.cuda.is_available():
+            num_workers = cluster.num_accelerators_in_cluster
+        else:
+            num_workers = 1
         worker_group = DistributedTestWorker.create_group().launch(
             cluster=cluster, name="dist_test_1"
         )
 
         # Check that the correct number of actors were created
-        assert len(worker_group.worker_info_list) == num_gpus
+        assert len(worker_group.worker_info_list) == num_workers
 
         # Verify that we can get results from the workers
         results = worker_group.get_env_info().wait()
-        assert len(results) == num_gpus
+        assert len(results) == num_workers
         ranks = sorted([info["rank"] for info in results])
-        assert ranks == list(range(num_gpus))
+        assert ranks == list(range(num_workers))
 
     def test_execute_on_all_workers(self, cluster: Cluster):
         """Test calling a method on all workers in a group."""
-        num_gpus = cluster.num_gpus_per_node
+        if torch.cuda.is_available():
+            num_workers = cluster.num_accelerators_in_cluster
+        else:
+            num_workers = 1
         worker_group = DistributedTestWorker.create_group().launch(
             cluster=cluster, name="dist_test_2"
         )
@@ -119,14 +129,20 @@ class TestWorkerGroup:
         base_value = 10
         results = worker_group.sum_with_rank(base_value).wait()
 
-        assert len(results) == num_gpus
-        expected_results = sorted([base_value + i for i in range(num_gpus)])
+        assert len(results) == num_workers
+        expected_results = sorted([base_value + i for i in range(num_workers)])
         assert sorted(results) == expected_results
 
     def test_execute_on_specific_ranks(self, cluster: Cluster):
         """Test calling a method on a subset of workers in a group."""
+        if torch.cuda.is_available():
+            placement = PackedPlacementStrategy(
+                0, cluster.num_accelerators_in_cluster - 1
+            )
+        else:
+            placement = NodePlacementStrategy([0] * 8)
         worker_group = DistributedTestWorker.create_group().launch(
-            cluster=cluster, name="dist_test_3"
+            cluster=cluster, placement_strategy=placement, name="dist_test_3"
         )
 
         target_ranks = (0, 1)
@@ -139,8 +155,12 @@ class TestWorkerGroup:
         expected_results = sorted([base_value + rank for rank in target_ranks])
         assert sorted(results) == expected_results
 
-    def test_multiple_worker_groups(self, cluster):
+    def test_multiple_worker_groups(self, cluster: Cluster):
         """Test the creation and operation of multiple independent worker groups."""
+        if torch.cuda.is_available():
+            num_workers = cluster.num_accelerators_in_cluster
+        else:
+            num_workers = 1
         group1 = DistributedTestWorker.create_group().launch(
             cluster=cluster, name="multi_group_1"
         )
@@ -150,13 +170,13 @@ class TestWorkerGroup:
 
         # Call a method on group 1
         results1 = group1.sum_with_rank(100).wait()
-        assert len(results1) == cluster.num_gpus_per_node
-        assert sorted(results1) == [100 + i for i in range(cluster.num_gpus_per_node)]
+        assert len(results1) == num_workers
+        assert sorted(results1) == [100 + i for i in range(num_workers)]
 
         # Call a method on group 2
         results2 = group2.sum_with_rank(200).wait()
-        assert len(results2) == cluster.num_gpus_per_node
-        assert sorted(results2) == [200 + i for i in range(cluster.num_gpus_per_node)]
+        assert len(results2) == num_workers
+        assert sorted(results2) == [200 + i for i in range(num_workers)]
 
 
 if __name__ == "__main__":

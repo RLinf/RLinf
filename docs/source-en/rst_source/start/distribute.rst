@@ -60,8 +60,7 @@ After all four startup scripts print *Ray started*, **remain** in the head node 
 
 .. note::
 
-   The argument to ``check_ray.sh`` must equal the product of
-   ``num_nodes × num_gpus_per_node``. 
+   The argument to ``check_ray.sh`` must equal the number of accelerators/GPUs in the cluster. 
 
 If successful, your terminal should show:
 
@@ -88,7 +87,6 @@ Edit the sample YAML:
    # examples/math/config/qwen2.5-1.5b-grpo-megatron.yaml
    cluster:
      num_nodes: 4          # adapt to your cluster
-     num_gpus_per_node: 8
      component_placement:
        actor,rollout: all  # “all” means the whole visible GPU set
 
@@ -111,7 +109,6 @@ allowing fine-grained pipeliningng. Edit the pipeline YAML:
    # examples/math/config/qwen2.5-1.5b-grpo-megatron-pipeline.yaml
    cluster:
      num_nodes: 4
-     num_gpus_per_node: 8
      component_placement:
        rollout:    0-19        # 20 GPUs
        inference:  20-23       # 4  GPUs

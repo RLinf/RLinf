@@ -48,7 +48,7 @@
 为方便用户，我们提供的配置文件默认支持单卡训练。  
 如果你拥有多张 GPU 并希望加快训练过程，  
 我们推荐你修改配置文件  
-``./examples/math/config/qwen2.5-1.5b-single-gpu.yaml`` 中的参数 ``cluster.num_gpus_per_node``。
+``./examples/math/config/qwen2.5-1.5b-single-gpu.yaml`` 中的参数 ``cluster.component_placement``。
 
 你可以根据资源情况将其动态设置为 **1, 2, 4 或 8**。
 
@@ -56,7 +56,6 @@
 
    cluster:
      num_nodes: 1
-     num_gpus_per_node: 1
      component_placement:
         actor,rollout: all
 

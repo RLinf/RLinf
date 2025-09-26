@@ -76,7 +76,6 @@
      self._num_nodes        = len(self._nodes)
      self._master_ip        = self._node_manager.get_master_ip()
      self._master_port      = self._node_manager.get_master_port()
-     self._num_gpus_per_node= self._node_manager.get_num_gpus_per_node()
 
 这可以确保所有使用相同命名空间的进程观察到相同的集群视图。
 

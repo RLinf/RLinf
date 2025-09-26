@@ -17,9 +17,10 @@ import time
 from typing import Any, Callable, List, Optional, overload
 
 import ray
-import torch
 import torch.distributed as dist
 from torch.futures import Future
+
+from ..worker import Worker
 
 
 class AsyncWork:
@@ -83,8 +84,11 @@ class AsyncFuncWork(AsyncWork):
     def __call__(self, future: Future):
         """Execute the function and set the done flag."""
         self._result = self._func(*self._args, **self._kwargs)
-        if torch.cuda.is_initialized():
-            self._cuda_event = torch.cuda.Event()
+        if (
+            Worker.current_worker.has_accelerator
+            and Worker.torch_platform.is_initialized()
+        ):
+            self._cuda_event = Worker.torch_platform.Event()
             self._cuda_event.record()
         if isinstance(self._result, AsyncWork):
             # If the result is another AsyncWork, find the last work in the chain

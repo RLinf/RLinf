@@ -60,7 +60,6 @@ RL 训练前的自动放置
 
    cluster:
      num_nodes: 1
-     num_gpus_per_node: 8
      component_placement:
        rollout,actor: all
 

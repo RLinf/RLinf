@@ -13,11 +13,13 @@
 # limitations under the License.
 
 from .flexible import FlexiblePlacementStrategy
+from .node import NodePlacementStrategy
 from .packed import PackedPlacementStrategy
 from .placement import Placement, PlacementStrategy
 
 __all__ = [
     "FlexiblePlacementStrategy",
+    "NodePlacementStrategy",
     "PackedPlacementStrategy",
     "Placement",
     "PlacementStrategy",

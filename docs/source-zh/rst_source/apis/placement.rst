@@ -45,9 +45,8 @@ Placement 策略
 -----------------------------------
 
 Placement策略是为获取组件分配所使用的每个节点和每个 GPU 资源的精确分配的底层机制。
-通常，用户无需直接使用分配策略。
-但如果您希望实现更自定义的分配方案，可以参考以下两种内置策略：``PackedPlacementStrategy`` 和 ``FlexiblePlacementStrategy``。
-
+如果您希望实现更自定义的分配方案，可以参考以下内置策略：``PackedPlacementStrategy``、``FlexiblePlacementStrategy`` 和 ``NodePlacementStrategy``。
+具体而言，``FlexiblePlacementStrategy`` 和 ``PackedPlacementStrategy`` 用于在加速器/GPU 上放置worker进程，而 ``NodePlacementStrategy`` 用于在特定节点上放置worker进程，而不考虑底层加速器资源，因此对于仅使用 CPU 的worker进程非常有用。
 
 FlexiblePlacementStrategy
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -67,13 +66,14 @@ PackedPlacementStrategy
    :member-order: bysource
    :class-doc-from: class
 
-使用示例
----------
+NodePlacementStrategy
+^^^^^^^^^^^^^^^^^^^^^^^^^
 
-.. autoclass:: rlinf.scheduler.placement.PlacementStrategy
-   :no-members:
-   :no-inherited-members:
-   :exclude-members: __init__, __new__
+.. autoclass:: rlinf.scheduler.placement.node.NodePlacementStrategy
+   :show-inheritance:
+   :members:
+   :member-order: bysource
+   :class-doc-from: class
 
 Placement 元数据
 ^^^^^^^^^^^^^^^^^^^^^^^^^

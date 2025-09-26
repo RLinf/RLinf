@@ -58,7 +58,6 @@ The output of this script is like:
 
    cluster:
      num_nodes: 1
-     num_gpus_per_node: 8
      component_placement:
        rollout,actor: all
 

@@ -27,7 +27,6 @@ The following is an example of placing workers. There are two nodes for this tra
 
    cluster:
      num_nodes: 2
-     num_gpus_per_node: 8
      component_placement:
        actor,rollout: all # or 0-15
 
@@ -51,7 +50,7 @@ Given the above placement configuration, users can use proper `ComponentPlacemen
 
    from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 
-   component_placement = ModelParallelComponentPlacement(cfg)
+   component_placement = ModelParallelComponentPlacement(cfg, cluster)
    rollout_placement_strategy = component_placement.get_strategy("rollout")
    rollout_group = SGLangWorker.create_group(cfg, component_placement).launch(
         cluster,

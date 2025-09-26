@@ -22,7 +22,7 @@ import ray.actor
 from ..cluster import Cluster
 from ..collective import AsyncChannelWork, AsyncWork
 from ..manager import WorkerAddress
-from ..placement import PackedPlacementStrategy
+from ..placement import NodePlacementStrategy
 from ..worker import Worker, WorkerGroup
 
 if TYPE_CHECKING:
@@ -103,15 +103,15 @@ class Channel:
         ...         # Get batch of objects based on weight
         ...         batch = channel.get_batch(target_weight=3)
         >>>
-        >>> cluster = Cluster(num_nodes=1, num_gpus_per_node=8)
+        >>> cluster = Cluster(num_nodes=1)
         >>> placement1 = PackedPlacementStrategy(
-        ...     start_gpu_id=0, end_gpu_id=0
+        ...     start_accelerator_id=0, end_accelerator_id=0
         ... )
         >>> worker_group1 = TestWorker.create_group().launch(
         ...     cluster, name="test", placement_strategy=placement1
         ... )
         >>> placement2 = PackedPlacementStrategy(
-        ...     start_gpu_id=1, end_gpu_id=1
+        ...     start_accelerator_id=1, end_accelerator_id=1
         ... )
         >>> worker_group2 = TestWorker2.create_group().launch(
         ...     cluster, name="test2", placement_strategy=placement2
@@ -127,13 +127,13 @@ class Channel:
 
     @classmethod
     def create(
-        cls, name: str, gpu_id: int = 0, maxsize: int = 0, local: bool = False
+        cls, name: str, node_id: int = 0, maxsize: int = 0, local: bool = False
     ) -> "Channel":
-        """Create a new channel with the specified name, node ID, and GPU ID.
+        """Create a new channel with the specified name, node ID, and accelerator ID.
 
         Args:
             name (str): The name of the channel.
-            gpu_id (int): The global ID of the GPU in the cluster where the channel will be created.
+            node_id (int): The global ID of the node in the cluster where the channel will be created.
             maxsize (int): The maximum size of the channel queue. Defaults to 0 (unbounded).
             local (bool): Create the channel for intra-process communication. A local channel cannot be connected by other workers, and its data cannot be shared among different processes.
 
@@ -157,10 +157,7 @@ class Channel:
             )
             return channel
 
-        placement = PackedPlacementStrategy(
-            start_gpu_id=gpu_id,
-            end_gpu_id=gpu_id,
-        )
+        placement = NodePlacementStrategy(node_ids=[node_id])
         try:
             channel_worker_group = ChannelWorker.create_group(maxsize=maxsize).launch(
                 cluster=cluster, name=name, placement_strategy=placement
@@ -234,7 +231,7 @@ class Channel:
         self._current_worker = current_worker
         self._local_channel = local_channel
         self._maxsize = maxsize
-        self._gpu_lock = GPULockProxy(self)
+        self._device_lock = DeviceLockProxy(self)
         if self._local_channel is not None:
             self._local_channel_id = id(self._local_channel)
             Channel.local_channel_map[self._local_channel_id] = self._local_channel
@@ -247,9 +244,9 @@ class Channel:
         return self._local_channel is not None
 
     @property
-    def gpu_lock(self):
-        """Get the GPU lock for the channel."""
-        return self._gpu_lock
+    def device_lock(self):
+        """Get the accelerator (GPU) device lock for the channel."""
+        return self._device_lock
 
     def create_queue(self, queue_name: str, maxsize: int = 0):
         """Create a new queue in the channel. No effect if a queue with the same name already exists.
@@ -514,23 +511,23 @@ class Channel:
             self._current_worker = Worker.current_worker
 
 
-class GPULockProxy(AbstractContextManager):
-    """The proxy to manage GPU locks for the channel."""
+class DeviceLockProxy(AbstractContextManager):
+    """The proxy to manage accelerator device locks for the channel."""
 
     def __init__(self, channel: Channel):
-        """Initialize the GPU lock proxy."""
+        """Initialize the device lock proxy."""
         self._channel = channel
 
     def acquire(self):
-        """Lock GPUs for the current worker.
+        """Lock accelerator devices for the current worker.
 
-        This is useful for resource isolation, e.g., GPU memory and computation resources, when multiple workers run on the same GPUs.
+        This is useful for resource isolation, e.g., accelerator memory and computation resources, when multiple workers run on the same accelerators.
         """
         if self._channel._current_worker is not None and not self._channel.is_local:
             ray.get(
-                self._channel._channel_worker_actor.acquire_gpus.remote(
+                self._channel._channel_worker_actor.acquire_devices.remote(
                     self._channel._current_worker.worker_address,
-                    self._channel._current_worker.global_gpu_ids,
+                    self._channel._current_worker.global_accelerator_ids,
                 )
             )
         elif self._channel.is_local:
@@ -539,23 +536,23 @@ class GPULockProxy(AbstractContextManager):
             pass
         else:
             raise ValueError(
-                "Cannot lock GPUs when the channel is not used in a worker."
+                "Cannot lock accelerators when the channel is not used in a worker."
             )
 
     def release(self):
-        """Unlock GPUs for the current worker."""
+        """Unlock accelerators for the current worker."""
         if self._channel._current_worker is not None and not self._channel.is_local:
             ray.get(
-                self._channel._channel_worker_actor.release_gpus.remote(
+                self._channel._channel_worker_actor.release_devices.remote(
                     self._channel._current_worker.worker_address,
-                    self._channel._current_worker.global_gpu_ids,
+                    self._channel._current_worker.global_accelerator_ids,
                 )
             )
         elif self._channel.is_local:
             pass
         else:
             raise ValueError(
-                "Cannot unlock GPUs when the channel is not used in a worker."
+                "Cannot unlock accelerators when the channel is not used in a worker."
             )
 
     def __enter__(self):

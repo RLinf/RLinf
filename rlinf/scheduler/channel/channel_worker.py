@@ -71,7 +71,7 @@ class PeekQueue(asyncio.Queue):
         return list(self._queue)
 
 
-class WorkerGPULock(asyncio.Lock):
+class WorkerDeviceLock(asyncio.Lock):
     """Represents an asyncio lock associated with a worker address."""
 
     def __init__(self):
@@ -291,9 +291,8 @@ class ChannelWorker(Worker):
         super().__init__()
         self._queue_map: Dict[str, PeekQueue] = {}
         cluster = Cluster()
-        self._gpu_locks = [
-            WorkerGPULock()
-            for _ in range(cluster.num_nodes * cluster.num_gpus_per_node)
+        self._device_locks = [
+            WorkerDeviceLock() for _ in range(cluster.num_accelerators_in_cluster)
         ]
 
         self._queue_map[DEFAULT_QUEUE_NAME] = PeekQueue(maxsize=maxsize)
@@ -346,26 +345,36 @@ class ChannelWorker(Worker):
         """
         return self._queue_map[queue_name].maxsize
 
-    async def acquire_gpus(self, worker_address: WorkerAddress, gpu_ids: List[int]):
-        """Lock the specified GPU IDs.
+    async def acquire_devices(
+        self, worker_address: WorkerAddress, accel_ids: List[int]
+    ):
+        """Lock the specified accelerator device IDs.
 
         Args:
             worker_address (WorkerAddress): The address of the worker requesting the lock.
-            gpu_ids (List[int]): The list of GPU IDs to lock.
+            accel_ids (List[int]): The list of accelerator IDs to lock.
         """
         await asyncio.gather(
-            *(self._gpu_locks[gpu_id].acquire(worker_address) for gpu_id in gpu_ids)
+            *(
+                self._device_locks[accel_id].acquire(worker_address)
+                for accel_id in accel_ids
+            )
         )
 
-    async def release_gpus(self, worker_address: WorkerAddress, gpu_ids: List[int]):
-        """Release the specified GPU IDs.
+    async def release_devices(
+        self, worker_address: WorkerAddress, accel_ids: List[int]
+    ):
+        """Release the specified accelerator device IDs.
 
         Args:
             worker_address (WorkerAddress): The address of the worker releasing the lock.
-            gpu_ids (List[int]): The list of GPU IDs to release.
+            accel_ids (List[int]): The list of accelerator IDs to release.
         """
         await asyncio.gather(
-            *(self._gpu_locks[gpu_id].release(worker_address) for gpu_id in gpu_ids)
+            *(
+                self._device_locks[accel_id].release(worker_address)
+                for accel_id in accel_ids
+            )
         )
 
     async def put(

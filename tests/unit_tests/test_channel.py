@@ -18,7 +18,13 @@ from typing import Any, Optional
 import pytest
 import torch
 
-from rlinf.scheduler import Channel, Cluster, PackedPlacementStrategy, Worker
+from rlinf.scheduler import (
+    Channel,
+    Cluster,
+    NodePlacementStrategy,
+    PackedPlacementStrategy,
+    Worker,
+)
 
 # --- Constants ---
 PRODUCER_GROUP_NAME = "producer_group"
@@ -74,7 +80,7 @@ class ProducerWorker(Worker):
     def create_with_affinity(self, channel_name: str):
         channel = self.create_channel(
             channel_name=channel_name,
-            gpu_id=2,
+            node_id=0,
         )
         channel.put("affinity_item", 1)
         return True
@@ -128,13 +134,18 @@ class ConsumerWorker(Worker):
 # --- Pytest Fixtures ---
 @pytest.fixture(scope="module")
 def cluster():
-    c = Cluster(num_nodes=1, num_gpus_per_node=8)
+    c = Cluster(num_nodes=1)
     yield c
 
 
 @pytest.fixture(scope="module")
 def worker_groups(cluster):
-    placement = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=0)
+    if torch.cuda.is_available():
+        placement = PackedPlacementStrategy(
+            start_accelerator_id=0, end_accelerator_id=0
+        )
+    else:
+        placement = NodePlacementStrategy([0])
     global \
         group_count, \
         channel_count, \

@@ -70,7 +70,6 @@ full copy of the model.
 
    cluster:
      num_nodes: 16
-     num_gpus_per_node: 8            # 16 × 8 = 128 GPUs
 
    actor:
      model:

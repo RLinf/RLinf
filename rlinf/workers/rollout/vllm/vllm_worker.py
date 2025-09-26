@@ -184,7 +184,7 @@ class VLLMWorker(Worker):
         )
 
         # Acquire the GPUs to ensure no one is using them during rollout
-        output_channel.gpu_lock.acquire()
+        output_channel.device_lock.acquire()
 
         rollout_results: List[RolloutResult] = []
         for request in requests:
@@ -209,6 +209,6 @@ class VLLMWorker(Worker):
         # This avoids running SGLang and Megatron simultaneously
         self._stop()
         # Release the GPUs once the engine has offloaded
-        output_channel.gpu_lock.release()
+        output_channel.device_lock.release()
         rollout_result = RolloutResult.merge_result_list(rollout_results)
         output_channel.put(rollout_result)

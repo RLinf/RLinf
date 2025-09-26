@@ -70,7 +70,7 @@ WorkerAddress
 
 除了点对点通信外，`Worker` 还支持用于 Worker 间数据交换的 **通道（Channel）** 接口，这是一种先进先出（FIFO）的队列机制：
 
-- 使用 `create_channel(name, group_affinity=None, group_rank_affinity=None, maxsize=0)` 创建新通道，  
+- 使用 `create_channel(name, node_id=0, maxsize=0)` 创建新通道，  
   使用 `connect_channel(name)` 允许其他 Worker 按名称连接到已存在的通道。
 
 - 一旦连接成功，可通过 `put()`、`get()` 和 `get_batch()` 等方法存入或提取数据。

@@ -38,7 +38,7 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
 如果你有多张 GPU 并希望加快训练速度，  
 建议你修改配置文件  
 ``./examples/embodiment/config/maniskill_ppo_openvla_quickstart.yaml`` 中的参数  
-``cluster.num_gpus_per_node``。
+``cluster.component_placement``。
 
 你可以根据实际资源设置为 **1、2、4 或 8**。
 
@@ -46,7 +46,6 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
 
    cluster:
      num_nodes: 1
-     num_gpus_per_node: 1
      component_placement:
         actor,rollout: all
 

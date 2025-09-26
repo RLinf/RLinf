@@ -39,10 +39,8 @@ def main(cfg) -> None:
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
-    cluster = Cluster(
-        num_nodes=cfg.cluster.num_nodes, num_gpus_per_node=cfg.cluster.num_gpus_per_node
-    )
-    component_placement = ModelParallelComponentPlacement(cfg)
+    cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
+    component_placement = ModelParallelComponentPlacement(cfg, cluster)
 
     rollout_worker_cls = get_rollout_backend_worker(cfg, component_placement)
 

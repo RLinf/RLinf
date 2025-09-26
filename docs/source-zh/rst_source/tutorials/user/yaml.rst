@@ -37,13 +37,10 @@ cluster
 
   cluster:
     num_nodes: 1
-    num_gpus_per_node: 1
     component_placement:
       actor,inference,rollout: all
 
 ``cluster.num_nodes``：用于训练的物理节点数量。
-
-``cluster.num_gpus_per_node``：每个节点可供放置策略使用的 GPU 数量。
 
 ``cluster.component_placement``：  
 各组件（进程）的 *放置策略*。  

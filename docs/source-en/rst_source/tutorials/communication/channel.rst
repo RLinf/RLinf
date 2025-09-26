@@ -11,8 +11,7 @@ A new channel can be created using::
 
     Worker.create_channel(
         channel_name,
-        group_affinity=None,
-        group_rank_affinity=None,
+        node_id=0,
         maxsize=0
     )
 

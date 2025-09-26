@@ -228,7 +228,7 @@ class MegatronActor(MegatronModelManager, Worker):
     def _load_weight_and_optimizer(self, channel: Channel):
         # Acquire the GPUs to ensure that no one is using them before loading models
         # Otherwise, it may lead to OOM
-        with channel.gpu_lock:
+        with channel.device_lock:
             if self.is_weight_offloaded:
                 self.onload_model_weights_and_grad(load_grad=self.offload_grad)
                 self.is_weight_offloaded = False
@@ -394,7 +394,7 @@ class MegatronActor(MegatronModelManager, Worker):
 
                 kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
                 if self.kl_beta > 0 and ref_logprobs is not None:
-                    kld = kl_penalty(ref_logprobs, curr_logprobs, self.kl_penalty_type)
+                    kld = kl_penalty(curr_logprobs, ref_logprobs, self.kl_penalty_type)
                     kl_loss = self.loss_agg_func(kld, mask)
                     loss = loss + kl_loss * self.kl_beta
 
