@@ -75,7 +75,6 @@
 
    cluster:
       num_nodes: 2
-      num_gpus_per_node: 8
       component_placement:
          env: 0-7
          rollout: 8-15
@@ -92,7 +91,6 @@
    
    cluster:
       num_nodes: 1
-      num_gpus_per_node: 8
       component_placement:
          env,rollout,actor: all
 
@@ -102,7 +100,6 @@
 
    cluster:
       num_nodes: 2
-      num_gpus_per_node: 16
       component_placement:
          env: 0-3
          rollout: 4-7
