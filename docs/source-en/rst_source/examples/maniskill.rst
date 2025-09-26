@@ -18,7 +18,7 @@ The primary objective is to develop a model capable of performing robotic manipu
 4. **Reinforcement Learning**: Optimizing the policy via the PPO with environment feedback.
 
 Environment
------------------------
+-----------
 
 **ManiSkill3 Environment**
 
