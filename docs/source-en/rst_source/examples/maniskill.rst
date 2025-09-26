@@ -199,7 +199,7 @@ Visualization and Results
          experiment_name: "openvla-maniskill"
 
 ManiSkill3 Results
-~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~
 
 As an illustrative example, we present the training results of the PPO algorithm in the ManiSkill3 environment. 
 Running on a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) achieved up to 90% success on ManiSkill3’s plate-25-main task, after 48 and 24 hours of PPO training, respectively.
