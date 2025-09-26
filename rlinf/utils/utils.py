@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import atexit
 import gc
 import os
 import sys
@@ -166,32 +167,35 @@ def output_redirector(func):
         )
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
-        with open(log_path, "w", encoding="utf-8", buffering=1) as f:
-            dual_out = DualOutput(f, sys.stdout)
-            dual_err = DualOutput(f, sys.stderr)
+        f = open(log_path, "w", encoding="utf-8", buffering=1)
+        def close():
+            dual_out.flush()
+            dual_err.flush()
+            f.flush()
+            f.close()
+        atexit.register(close)
 
-            old_stdout = sys.stdout
-            old_stderr = sys.stderr
-            try:
-                sys.stdout = dual_out
-                sys.stderr = dual_err
-                return func(cfg, *args, **kwargs)
+        dual_out = DualOutput(f, sys.stdout)
+        dual_err = DualOutput(f, sys.stderr)
 
-            except Exception as e:
-                import traceback
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        try:
+            sys.stdout = dual_out
+            sys.stderr = dual_err
+            return func(cfg, *args, **kwargs)
 
-                error_msg = f"\nException occurred: {e}\n{traceback.format_exc()}\n"
-                dual_err.write(error_msg)
-                dual_err.flush()
-                f.flush()
-                raise
+        except Exception as e:
+            import traceback
 
-            finally:
-                sys.stdout = old_stdout
-                sys.stderr = old_stderr
+            error_msg = f"\nException occurred: {e}\n{traceback.format_exc()}\n"
+            dual_err.write(error_msg)
+            dual_err.flush()
+            f.flush()
+            raise
 
-                dual_out.flush()
-                dual_err.flush()
-                f.flush()
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
 
     return wrapper
