@@ -28,7 +28,6 @@ from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
 )
 from rlinf.models import get_model
-from rlinf.models.embodiment.model_utils import custom_forward
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.data_iter_utils import get_iterator_k_split
 from rlinf.utils.distributed import all_reduce_dict
@@ -114,23 +113,18 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         self.rollout_batch = {}
         recv_list = []
-        for i in range(split_num):
+        for _ in range(split_num):
             recv_list.append(
                 await self.channel.get(
                     queue_name=self._replay_buffer_name, async_op=True
                 ).async_wait()
             )
 
-        # shape [num_chunk, bsz, chunk_size], cat dim 1
+        # shape [num_chunk, bsz, chunk_size], cat dim 0
         for key in recv_list[0].keys():
-            if "env_info/" not in key:
-                self.rollout_batch[key] = torch.cat(
-                    [recv_list[i][key] for i in range(split_num)], dim=1
-                )
-            else:
-                self.rollout_batch[key] = torch.cat(
-                    [recv_list[i][key] for i in range(split_num)], dim=0
-                )
+            self.rollout_batch[key] = torch.cat(
+                [recv_list[i][key] for i in range(split_num)], dim=0
+            )
 
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
 
@@ -331,42 +325,31 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             for data_idx, data in enumerate(train_micro_batch):
                 for k, v in data.items():
                     data[k] = v.to(f"cuda:{int(os.environ['LOCAL_RANK'])}")
-                # TODO: note prev_logprobs shape here
-                data = self.model.preprocess_for_train(data)
-                if self.cfg.actor.model.model_name == "openpi":
-                    # ode-sde mix mode
-                    output_dict = self.model(data)
-                    data['prev_logprobs'] = output_dict['prev_logprobs']
-                else:
-                    input_ids = data["input_ids"]
-                    action_tokens = data["action_tokens"]
-                    attention_mask = data["attention_mask"]
-                    pixel_values = data["pixel_values"]
 
-                    action_token_len = (
-                        self.model.action_dim * self.model.num_action_chunks
+                advantages = data.pop("advantages")
+                prev_logprobs = data.pop("prev_logprobs")
+                returns = data.pop("returns") if "returns" in data else None
+                prev_values = data.pop("prev_values") if "prev_values" in data else None
+
+                if self.cfg.actor.model.model_name in ["openpi", "openvla"]:
+                    data["temperature"] = (
+                        self.cfg.algorithm.sampling_params.temperature_train
                     )
+                    data["top_k"] = self.cfg.algorithm.sampling_params.top_k
 
-                    logits_processor_args = {
-                        "action_tokens": action_tokens,
-                        "vocab_size": self.model.vocab_size,
-                        "n_action_bins": self.model.config.n_action_bins,
-                    }
+                compute_values = (
+                    True if self.cfg.algorithm.adv_type == "embodied_gae" else False
+                )
 
-                    output_dict = custom_forward(
-                        self.model,
-                        input_ids=input_ids,
-                        attention_mask=attention_mask,
-                        pixel_values=pixel_values,
-                        action_token_len=action_token_len,
-                        value_model=True
-                        if self.cfg.algorithm.adv_type == "embodied_gae"
-                        else False,
-                        value_head_mode=self.cfg.actor.model.get("vh_mode", None),
-                        temperature=self.cfg.algorithm.sampling_params.temperature_train,
-                        top_k=self.cfg.algorithm.sampling_params.top_k,
-                        logits_processor_args=logits_processor_args,
-                    )
+                output_dict = self.model(
+                    data=data,
+                    compute_logprobs=True,
+                    compute_entropy=True,
+                    compute_values=compute_values,
+                )
+
+                if self.cfg.actor.model.model_name in ["openpi"]:
+                    prev_logprobs = output_dict["prev_logprobs"]
 
                 kwargs = {
                     "loss_type": self.cfg.algorithm.loss_type,
@@ -376,10 +359,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     "logprobs": output_dict["logprobs"],
                     "entropy": output_dict.get("entropy", None),
                     "values": output_dict.get("values", None),
-                    "old_logprobs": data["prev_logprobs"],
-                    "advantages": data["advantages"],
-                    "returns": data["returns"],
-                    "prev_values": data["prev_values"],
+                    "old_logprobs": prev_logprobs,
+                    "advantages": advantages,
+                    "returns": returns,
+                    "prev_values": prev_values,
                     "clip_ratio_high": self.cfg.algorithm.clip_ratio_high,
                     "clip_ratio_low": self.cfg.algorithm.clip_ratio_low,
                     "use_norm_adv": self.cfg.algorithm.get("use_norm_adv", False),

@@ -98,12 +98,13 @@ def compute_rollout_metrics(data_buffer: Dict) -> Dict:
         }
         rollout_metrics.update(returns_metrics)
 
-    env_info_keys = [key for key in data_buffer if key.startswith("env_info/")]
-    for env_info_key in env_info_keys:
-        value = data_buffer.pop(env_info_key)
-        value = value.float().mean().to(torch.cuda.current_device())
-        torch.distributed.all_reduce(value, op=torch.distributed.ReduceOp.AVG)
-        rollout_metrics[env_info_key] = value.item()
+    # TODO: move this in env worker
+    # env_info_keys = [key for key in data_buffer if key.startswith("env_info/")]
+    # for env_info_key in env_info_keys:
+    #     value = data_buffer.pop(env_info_key)
+    #     value = value.float().mean().to(torch.cuda.current_device())
+    #     torch.distributed.all_reduce(value, op=torch.distributed.ReduceOp.AVG)
+    #     rollout_metrics[env_info_key] = value.item()
 
     return rollout_metrics
 

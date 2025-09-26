@@ -63,10 +63,10 @@ def compute_embodied_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict
     if kwargs.get("use_norm_adv", False):
         if loss_mask is not None:
             adv_mean = advantages[loss_mask].mean()
-            adv_std = advantages[loss_mask].std()  
+            adv_std = advantages[loss_mask].std()
         else:
             adv_mean = advantages.mean()
-            adv_std = advantages.std()  
+            adv_std = advantages.std()
         if adv_std < 1e-8 or torch.isinf(adv_std).any() or torch.isnan(adv_std).any():
             advantages = torch.zeros_like(advantages)
         else:
@@ -83,7 +83,7 @@ def compute_embodied_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict
         policy_loss = torch.mean(torch.max(surr1, surr2) * loss_mask)
         pg_clipfrac = torch.mean(torch.gt(surr2, surr1).float() * loss_mask)
         approx_kl = torch.mean(((ratio - 1) - logratio) * loss_mask)
-    
+
     # policy_loss = -pg_loss.mean()
 
     if torch.isnan(policy_loss):
@@ -122,6 +122,8 @@ def compute_embodied_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict
         "actor/raw_loss": loss.detach().item(),
         "actor/policy_loss": policy_loss.detach().item(),
         "actor/ratio": ratio.mean().detach().item(),
+        "actor/pg_clipfrac": pg_clipfrac.detach().item(),
+        "actor/approx_kl": approx_kl.detach().item(),
         "critic/value_loss": value_loss.detach().item(),
         "critic/value_clip_ratio": value_clip_ratio.detach().item(),
         "actor/entropy_loss": entropy_loss.detach().item(),

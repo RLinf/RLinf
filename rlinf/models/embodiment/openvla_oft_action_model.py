@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -30,11 +30,17 @@ from prismatic.vla.constants import (
 )
 from transformers.generation import TopKLogitsWarper
 
+from rlinf.models.embodiment.model_utils import (
+    compute_entropy_from_logits,
+    compute_logprobs_from_logits,
+)
 from rlinf.models.embodiment.modules.value_head import ValueHead
 
 
 class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
-    def __init__(self, config: OpenVLAOFTConfig, action_dim, num_action_chunks) -> None:
+    def __init__(
+        self, config: OpenVLAOFTConfig, action_dim, num_action_chunks, add_value_head
+    ) -> None:
         super().__init__(config)
 
         self.action_dim = action_dim
@@ -50,7 +56,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
             f"Action un-norm key {self.unnorm_key} not found in VLA `norm_stats`!"
         )
 
-        if self.config.vh_mode is not None:
+        if self.config.vh_mode is not None and add_value_head:
             self.hidden_size = self.config.hidden_size
             output_dim = (
                 1 if self.config.value_type == "chunk_level" else self.num_action_chunks
@@ -189,9 +195,40 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
         input_ids: torch.LongTensor,
         attention_mask: torch.Tensor,
         pixel_values: torch.FloatTensor,
-        do_sample: bool = True,
+        env_obs=None,
+        calulate_logprobs=True,
+        calulate_values=True,
         **kwargs,
     ) -> Tuple[np.ndarray, torch.Tensor, torch.Tensor, torch.Tensor]:
+        do_sample = kwargs.pop("do_sample")
+        processed_obs = None
+        if input_ids is None:
+            assert env_obs is not None
+            task_descriptions = [
+                f"In: What action should the robot take to {t.lower()}?\nOut: "
+                for t in env_obs["task_descriptions"]
+            ]
+            image_tensor = env_obs["image"]
+            max_length = self.max_prompt_length
+            device = next(self.parameters()).device
+            precision = next(self.parameters()).dtype
+            images = {"images": image_tensor}
+            processed_obs = self.input_processor(
+                text=task_descriptions,
+                images=images,
+                proprio_states=env_obs["state"],
+                padding="max_length",
+                max_length=max_length,
+            )
+
+            input_ids = processed_obs["input_ids"].to(device=device, dtype=precision)
+            attention_mask = processed_obs["attention_mask"].to(
+                device=device, dtype=precision
+            )
+            pixel_values = processed_obs["pixel_values"].to(
+                device=device, dtype=precision
+            )
+
         # assert first token is 1
         assert torch.all(input_ids[:, 0] == 1)
         assert torch.all(attention_mask[:, 0] == 1)
@@ -307,7 +344,35 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
         actions = self._unnormalize_actions(normalized_actions, self.unnorm_key)
         actions = actions.reshape(idxs.shape)
 
-        return actions, idxs, processed_logits_tensor, last_hidden_states
+        action_logits = processed_logits_tensor.permute(
+            0, 2, 1
+        )  # [B, vocab-size, action-dim]
+        action_logits[:, : self.vocab_size - self.config.n_action_bins] = -torch.inf
+        action_logits[:, self.vocab_size :] = -torch.inf
+
+        chunk_logprobs = compute_logprobs_from_logits(logits=action_logits, target=idxs)
+
+        if hasattr(self, "value_head") and calulate_values:
+            hidden_features = last_hidden_states[
+                :, -self.action_dim * self.num_action_chunks
+            ]  # [batch_size, hidden_dim]
+
+            chunk_values = self.value_head(hidden_features)  # [batch_size, 1]
+        else:
+            chunk_values = torch.zeros_like(chunk_logprobs[..., :1])
+
+        chunk_actions = actions.reshape(-1, self.num_action_chunks, self.action_dim)
+        chunk_action_tokens = idxs.reshape(-1, self.num_action_chunks, self.action_dim)
+
+        result = {
+            "actions": chunk_actions,
+            "action_tokens": chunk_action_tokens,
+            "prev_logprobs": chunk_logprobs,
+            "prev_values": chunk_values,
+            "processed_obs": processed_obs,
+        }
+
+        return result
 
     def preprocess_for_train(self, data):
         # action-token: [bsz, chunk-step, action-dim] -> [bsz, chunk-step x action-dim]
@@ -320,7 +385,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
             )
         return data
 
-    def setup_params(self, model_config, cfg):
+    def setup_config_and_processor(self, model_config, cfg, input_processor):
         self.vocab_size = (
             model_config.text_config.vocab_size - model_config.pad_to_multiple_of
         )
@@ -333,13 +398,27 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
         self.policy_setup = cfg.actor.model.policy_setup
         self.max_prompt_length = cfg.runner.max_prompt_length
 
+        self.input_processor = input_processor
+
     def forward(
         self,
         input_ids: torch.LongTensor,
         attention_mask: torch.Tensor,
         pixel_values: torch.FloatTensor,
         output_hidden_states: bool = False,
+        data: Optional[dict[str, torch.Tensor]] = None,
+        compute_logprobs: bool = False,
+        compute_entropy: bool = False,
+        compute_values: bool = False,
     ):
+        if data is not None:
+            data = self.preprocess_for_train(data)
+            input_ids = data["input_ids"]
+            attention_mask = data["attention_mask"]
+            pixel_values = data["pixel_values"]
+
+            action_tokens = data["action_tokens"]
+
         assert torch.all(input_ids[:, 0] == 1)
         assert torch.all(attention_mask[:, 0] == 1)
         # last token is space ` `
@@ -365,7 +444,8 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
         )
         multimodal_position_ids = mm_attention_mask.cumsum(dim=1) - 1
 
-        # raise NotImplementedError
+        if compute_values:
+            output_hidden_states = True
 
         # Forward pass through language model
         outputs = self.language_model(
@@ -380,4 +460,52 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
             output_hidden_states=output_hidden_states,
             return_dict=True,
         )
-        return outputs
+
+        if not compute_logprobs and not compute_values:
+            return outputs
+
+        if compute_logprobs:
+            logits = outputs.logits[
+                :, :, -self.action_dim * self.num_action_chunks : -1
+            ]  # [B, action-dim, vocab-size]
+
+            processed_logits_tensor = logits / data.get("temperature", 1.0)
+            top_k = min(
+                data.get("top_k", -1), processed_logits_tensor.size(-1)
+            )  # Safety check
+            if top_k > 0:
+                logits_warper = TopKLogitsWarper(
+                    top_k
+                )  # since here is logprob instead of logits, we use 0 instead of -inf
+                processed_logits_tensor = logits_warper(None, processed_logits_tensor)
+
+            action_logits = processed_logits_tensor.permute(
+                0, 2, 1
+            )  # [B, vocab-size, action-dim]
+            action_logits[:, : self.vocab_size - self.config.n_action_bins] = -torch.inf
+            action_logits[:, self.vocab_size :] = -torch.inf
+
+            logprobs = compute_logprobs_from_logits(
+                logits=action_logits, target=action_tokens
+            )
+
+            entropy = None
+            if compute_entropy:
+                entropy = compute_entropy_from_logits(logits=action_logits)
+
+        if hasattr(self, "value_head") and compute_values:
+            last_hidden_state = outputs.hidden_states[-1]
+            hidden_features = last_hidden_state[
+                :, -self.action_dim * self.num_action_chunks - 1
+            ]  # [batch_size, hidden_dim]
+            values = self.value_head(hidden_features)
+        else:
+            values = None
+
+        result = {
+            "logprobs": logprobs,
+            "entropy": entropy,
+            "values": values,
+        }
+
+        return result

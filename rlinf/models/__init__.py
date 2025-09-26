@@ -28,7 +28,7 @@ from transformers import (
 from rlinf.config import torch_dtype_from_precision
 
 
-def get_model_config_and_processor(cfg: DictConfig):
+def get_vla_model_config_and_processor(cfg: DictConfig):
     if cfg.model.model_name == "openvla":
         from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
 
@@ -93,9 +93,6 @@ def get_model_config_and_processor(cfg: DictConfig):
             image_processor=image_processor,
             trust_remote_code=True,
         )
-    elif cfg.model.model_name == "openpi":
-        model_config = None
-        input_processor = None
 
     return model_config, input_processor
 
@@ -126,12 +123,16 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
             unnorm_key=cfg.unnorm_key,
             config=actor_model_config,
             vh_mode=cfg.vh_mode,
+            add_value_head=cfg.add_value_head,
             action_dim=cfg.action_dim,
             num_action_chunks=cfg.num_action_chunks,
             attn_implementation=cfg.attn_implementation,
             low_cpu_mem_usage=cfg.low_cpu_mem_usage,
             trust_remote_code=cfg.trust_remote_code,
         )
+
+        model.to(torch_dtype)
+
     elif cfg.model_name == "openvla_oft":
         from prismatic.extern.hf.configuration_prismatic import (
             OpenVLAConfig as OpenVLAOFTConfig,
@@ -165,10 +166,14 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
             action_dim=cfg.action_dim,
             num_action_chunks=cfg.num_action_chunks,
             trust_remote_code=True,
+            add_value_head=cfg.add_value_head,
         )
 
         # oft add
         model.vision_backbone.set_num_images_in_input(cfg.num_images_in_input)
+
+        model.to(torch_dtype)
+
     elif cfg.model_name == "openpi":
         # breakpoint()
         import openpi.shared.download as download
