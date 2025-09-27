@@ -53,7 +53,7 @@ algorithm:
   shuffle_rollout: True
 
   # GRPO loss params
-  loss_type: math_ppo_actor
+  loss_type: grpo
   loss_agg_func: "token-mean" # "seq-mean-token-sum"
   kl_beta: 0.0 # 0.001
   kl_penalty_type: low_var_kl
@@ -62,7 +62,7 @@ algorithm:
   calculate_entropy: False
   clip_ratio_c: null # 3.0
 
-  adv_type: math_grpo
+  loss_type: grpo
   normalize_advantages: True
   early_stop_imp_ratio: 5.0
   use_valid_token_scale: True

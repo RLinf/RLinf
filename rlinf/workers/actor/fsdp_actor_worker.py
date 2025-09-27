@@ -22,7 +22,7 @@ from torch.distributed.device_mesh import init_device_mesh
 from tqdm import tqdm
 
 import rlinf.algorithms  # noqa: F401
-from rlinf.algorithms.registry import actor_loss, calculate_adv_and_returns
+from rlinf.algorithms.registry import loss, calculate_adv_and_returns
 from rlinf.algorithms.utils import preprocess_advantages_inputs, preprocess_loss_inputs
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
@@ -229,12 +229,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         )
 
         kwargs = {
+            "task_type": self.cfg.runner.task_type,
             "adv_type": self.cfg.algorithm.adv_type,
             "rewards": self.rollout_batch["rewards"],
             "dones": self.rollout_batch["dones"],
-            "normalize_advantages": self.cfg.algorithm.get(
-                "normalize_advantages", True
-            ),
             "values": self.rollout_batch.get("prev_values", None),
             "gamma": self.cfg.algorithm.get("gamma", 1),
             "gae_lambda": self.cfg.algorithm.get("gae_lambda", 1),
@@ -377,7 +375,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
                 kwargs = preprocess_loss_inputs(**kwargs)
 
-                loss, metrics_data = actor_loss(**kwargs)
+                loss, metrics_data = loss(**kwargs)
 
                 loss /= self.gradient_accumulation
                 loss.backward()

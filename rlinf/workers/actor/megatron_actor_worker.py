@@ -29,7 +29,7 @@ from torch.multiprocessing.reductions import reduce_tensor
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import (
-    actor_loss,
+    loss,
     calculate_adv_and_returns,
 )
 from rlinf.algorithms.utils import kl_penalty
@@ -375,13 +375,14 @@ class MegatronActor(MegatronModelManager, Worker):
 
                 mask = batch["attention_mask"][:, -response_len:]
 
-                loss, metrics_data = actor_loss(
+                loss, metrics_data = loss(
                     loss_type=self.cfg.algorithm.loss_type,
                     loss_agg_func=self.loss_agg_func,
                     logprobs=curr_logprobs,
                     old_logprobs=prev_logprobs,
                     advantages=advantages,
-                    eps_clip=self.ratio_eps,
+                    clip_ratio_high=self.ratio_eps,
+                    clip_ratio_low=self.ratio_eps,
                     loss_mask=mask,
                 )
 
@@ -962,10 +963,11 @@ class MegatronActor(MegatronModelManager, Worker):
                 if rollout_result.advantages is None:
                     mask = batch["attention_mask"][:, -self.response_len :]
                     advantages, returns = calculate_adv_and_returns(
+                        task_type=self.cfg.runner.task_type,
                         adv_type=self.cfg.algorithm.adv_type,
                         reward_scores=batch["rewards"].cuda(),
-                        mask=mask.cuda(),
-                        num_responses=self.cfg.algorithm.group_size,
+                        loss_mask=mask.cuda(),
+                        group_size=self.cfg.algorithm.group_size,
                     )
                     rollout_result.advantages = advantages.cpu()
 

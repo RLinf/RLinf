@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, Tuple
+from typing import Tuple
 
 import torch
 
 from rlinf.algorithms.registry import register_advantage
 
 
-@register_advantage("embodied_gae")
-def compute_embodied_gae_advantages_and_returns(
+@register_advantage("gae")
+def compute_gae_advantages_and_returns(
     **kwargs,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
@@ -51,160 +51,113 @@ def compute_embodied_gae_advantages_and_returns(
     normalize_advantages = kwargs.get("normalize_advantages", True)
     normalize_returns = kwargs.get("normalize_returns", False)
 
-    num_chunk, bsz, chunk_size = rewards.shape
-    flattened_rewards = rewards.transpose(1, 2).reshape(num_chunk * chunk_size, -1)
-    flattened_values = values.transpose(1, 2).reshape((num_chunk + 1) * chunk_size, -1)
-    flattened_values = flattened_values[
-        : num_chunk * chunk_size + 1
-    ]  # [n_steps+1, bsz]
-    flattened_dones = dones.transpose(1, 2).reshape((num_chunk + 1) * chunk_size, -1)[
-        -(num_chunk * chunk_size + 1) :
-    ]
-
-    flattened_returns = torch.zeros_like(flattened_rewards)
-
+    returns = torch.zeros_like(rewards)
     gae = 0
-    for step in reversed(range(flattened_rewards.shape[0])):
-        vt1 = flattened_values[step + 1]
-        vt = flattened_values[step]
+    for step in reversed(range(rewards.shape[0])):
+        vt1 = values[step + 1]
+        vt = values[step]
 
-        delta = (
-            flattened_rewards[step] + gamma * vt1 * (~flattened_dones[step + 1]) - vt
-        )
-        gae = delta + gamma * gae_lambda * (~flattened_dones[step + 1]) * gae
-        flattened_returns[step] = gae + vt
+        delta = rewards[step] + gamma * vt1 * (~dones[step + 1]) - vt
+        gae = delta + gamma * gae_lambda * (~dones[step + 1]) * gae
+        returns[step] = gae + vt
 
     # calc adv
-    flattened_advantages = flattened_returns - flattened_values[:-1]
+    advantages = returns - values[:-1]
 
     if normalize_advantages:
-        mean_advantages = flattened_advantages.mean()
-        std_advantages = flattened_advantages.std(correction=0)
-        flattened_advantages = (flattened_advantages - mean_advantages) / (
-            std_advantages + 1e-5
-        )
+        mean_advantages = advantages.mean()
+        std_advantages = advantages.std(correction=0)
+        advantages = (advantages - mean_advantages) / (std_advantages + 1e-5)
     if normalize_returns:
-        mean_returns = flattened_returns.mean()
-        std_retuns = flattened_returns.std(correction=0)
-        flattened_returns = (flattened_returns - mean_returns) / (std_retuns + 1e-5)
+        mean_returns = returns.mean()
+        std_retuns = returns.std(correction=0)
+        returns = (returns - mean_returns) / (std_retuns + 1e-5)
 
-    advantages = flattened_advantages.reshape(num_chunk, chunk_size, -1).transpose(1, 2)
-    returns = flattened_returns.reshape(num_chunk, chunk_size, -1).transpose(1, 2)
-
-    return advantages, returns
-
-
-@register_advantage("embodied_grpo")
-def compute_embodied_grpo_advantages(
-    **kwargs,
-) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-    """
-    Group Relative Policy Optimization (GRPO) advantages.
-    """
-
-    rewards = kwargs["rewards"]
-    dones = kwargs["dones"]
-    num_group_envs = kwargs.get("num_group_envs", 1)
-    group_size = kwargs.get("group_size", 2)
-    normalize_advantages = kwargs.get("normalize_advantages", True)
-    loss_mask = kwargs.get("loss_mask", None)
-    rollout_epoch = kwargs.get("rollout_epoch", 1)
-    epsilon = kwargs.get("epsilon", 1e-6)
-
-    n_chunk_step, actual_bsz, num_action_chunks = rewards.shape
-    flattened_rewards = rewards.transpose(1, 2).reshape(
-        n_chunk_step * num_action_chunks, -1
+    kwargs.update(
+        {
+            "advantages": advantages,
+            "returns": returns,
+        }
     )
 
-    flattened_dones = dones.transpose(1, 2).reshape(
-        (n_chunk_step + 1) * num_action_chunks, -1
-    )
-    flattened_dones = flattened_dones[-(n_chunk_step * num_action_chunks + 1) :]
-
-    # loss mask
-    flattened_loss_mask = None
-    if loss_mask is not None:
-        flattened_loss_mask = loss_mask.transpose(1, 2).reshape(
-            n_chunk_step * num_action_chunks, -1
-        )
-
-    n_steps = flattened_rewards.shape[0]
-    scores = torch.zeros(actual_bsz)
-    for step in reversed(range(n_steps)):
-        scores = scores * ~flattened_dones[step + 1]
-        scores += flattened_rewards[step]
-
-    if normalize_advantages:
-        scores = scores.reshape(rollout_epoch * num_group_envs, group_size)
-        mean, std = scores.mean(dim=-1, keepdim=True), scores.std(dim=-1, keepdim=True)
-        flattened_advantages = (scores - mean) / (std + epsilon)
-        flattened_advantages = flattened_advantages.reshape(1, -1)
-    else:
-        flattened_advantages = scores.reshape(1, -1)
-
-    if flattened_loss_mask is not None:
-        flattened_advantages = (
-            flattened_advantages.tile([n_steps, 1]) * flattened_loss_mask
-        )
-    else:
-        flattened_advantages = flattened_advantages.tile([n_steps, 1])
-
-    advantages = flattened_advantages.reshape(
-        n_chunk_step, num_action_chunks, actual_bsz
-    ).transpose(1, 2)
-    return advantages, advantages
+    return kwargs
 
 
-@register_advantage("math_grpo")
-def compute_math_grpo_advantages(**kwargs):
+@register_advantage("grpo")
+def compute_grpo_advantages(**kwargs):
     reward_scores = kwargs["reward_scores"]
-    mask = kwargs["mask"]
-    num_responses = kwargs["num_responses"]
+    mask = kwargs["loss_mask"]
+    group_size = kwargs["group_size"]
 
-    grouped_rewards = reward_scores.view(-1, num_responses)
-    # compute median
+    grouped_rewards = reward_scores.view(-1, group_size)
+
     grouped_reward_mean = grouped_rewards.mean(dim=1).repeat_interleave(
-        num_responses, dim=0
+        group_size, dim=0
     )
-    grouped_reward_std = grouped_rewards.std(dim=1).repeat_interleave(
-        num_responses, dim=0
-    )
-
+    grouped_reward_std = grouped_rewards.std(dim=1).repeat_interleave(group_size, dim=0)
     advantages = reward_scores - grouped_reward_mean
     advantages = advantages / (grouped_reward_std + 1e-6)
-    device = mask.device
-    advantages = advantages.to(device)
 
     advantages = (torch.zeros_like(mask) + advantages.view(-1, 1)) * mask
 
-    return advantages, None
+    kwargs.update({"advantages": advantages})
+
+    return kwargs
 
 
 if __name__ == "__main__":
-    # test compute_ppo_advantages_and_returns
+    from rlinf.algorithms.utils import (
+        calculate_scores,
+        postprocess_advantages_outputs,
+        preprocess_advantages_inputs,
+    )
+
+    # test ppo adv for embodiment
     torch.manual_seed(0)
     rewards = torch.randn(4, 2, 3)
     values = torch.randn(5, 2, 3)
     dones = torch.zeros(5, 2, 3).bool()
     dones[-1] = 1
-    advantages, returns = compute_embodied_gae_advantages_and_returns(
-        rewards=rewards, values=values, dones=dones, gamma=0.99, gae_lambda=0.95
-    )
-    print(advantages.mean())
-    print(returns.mean())
+    kwargs = {
+        "rewards": rewards,
+        "values": values,
+        "dones": dones,
+        "gamma": 0.99,
+        "gae_lambda": 0.95,
+    }
+    kwargs = preprocess_advantages_inputs(**kwargs)
+    kwargs = compute_gae_advantages_and_returns(**kwargs)
+    advantages, returns = postprocess_advantages_outputs(**kwargs)
+    print(advantages.mean(), advantages.shape)
+    print(returns.mean(), returns.shape)
 
-    # test compute_grpo_advantages_and_returns
+    # test grpo adv for embodiment
     torch.manual_seed(0)
-    rewards = torch.randn(4, 4, 3)
+    rewards = torch.randn(4, 4, 3)  # num_chunk, bsz, chunk_size
     dones = torch.zeros(5, 4, 3).bool()
     loss_mask = torch.rand_like(rewards) > 0.5
     dones[-1] = 1
-    advantages, _ = compute_embodied_grpo_advantages(
-        rewards=rewards,
-        dones=dones,
+    kwargs = {
+        "rewards": rewards,
+        "dones": dones,
+        "loss_mask": loss_mask,
+        "group_size": 2,
+    }
+    kwargs = preprocess_advantages_inputs(**kwargs)
+    kwargs = calculate_scores(**kwargs)
+    kwargs = compute_grpo_advantages(**kwargs)
+    advantages, _ = postprocess_advantages_outputs(**kwargs)
+    print(advantages.mean(), advantages.shape)
+
+    # test grpo for math
+    torch.manual_seed(0)
+    rewards = torch.randn(4)
+    loss_mask = torch.rand(4, 2) > 0.3
+    group_size = 2
+    kwargs = compute_grpo_advantages(
+        reward_scores=rewards,
         loss_mask=loss_mask,
-        num_group_envs=2,
-        group_size=2,
-        normalize_advantages=False,
+        group_size=group_size,
     )
-    print(advantages)
+    advantages = kwargs["advantages"]
+    print(advantages.mean(), advantages.std(), advantages.shape)
