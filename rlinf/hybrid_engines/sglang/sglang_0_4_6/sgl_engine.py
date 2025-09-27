@@ -46,7 +46,12 @@ from sglang.srt.utils import (
 from rlinf.scheduler import WorkerAddress
 from rlinf.utils.placement import ComponentPlacement
 
-from .io_struct import OffloadReqInput, SyncHFWeightInput, SyncWeightInput
+from .io_struct import (
+    AbortGenerationInput,
+    OffloadReqInput,
+    SyncHFWeightInput,
+    SyncWeightInput,
+)
 from .sgl_scheduler import run_scheduler_process
 from .tokenizer_manager import TokenizerManager
 
@@ -113,6 +118,11 @@ class Engine(_Engine):
         obj = SyncWeightInput()
         loop = asyncio.get_event_loop()
         return loop.run_until_complete(self.tokenizer_manager.sync_weight(obj))
+
+    def abort_generation(self):
+        obj = AbortGenerationInput()
+        loop = asyncio.get_event_loop()
+        return loop.run_until_complete(self.tokenizer_manager.abort_generation(obj))
 
 
 def _set_envs_and_config(server_args: ServerArgs):
