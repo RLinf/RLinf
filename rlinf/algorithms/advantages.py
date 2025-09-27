@@ -20,6 +20,7 @@ from rlinf.algorithms.registry import register_advantage
 from rlinf.algorithms.utils import kl_penalty
 from rlinf.utils.utils import masked_mean
 
+
 @register_advantage("gae")
 def compute_gae_advantages_and_returns(
     **kwargs,
@@ -156,6 +157,7 @@ def compute_reinpp_advantages(**kwargs):
 
     return kwargs
 
+
 if __name__ == "__main__":
     from rlinf.algorithms.utils import (
         calculate_scores,
@@ -209,6 +211,21 @@ if __name__ == "__main__":
         reward_scores=rewards,
         loss_mask=loss_mask,
         group_size=group_size,
+    )
+    advantages = kwargs["advantages"]
+    print(advantages.mean(), advantages.std(), advantages.shape)
+
+    # test reinforce++ for math
+    torch.manual_seed(0)
+    rewards = torch.randn(4)
+    loss_mask = torch.zeros(4, 2).bool()
+    loss_mask[:, :-1] = 1
+    group_size = 2
+    kwargs = compute_reinpp_advantages(
+        reward_scores=rewards,
+        loss_mask=loss_mask,
+        group_size=group_size,
+        use_reinpp_baseline=True,
     )
     advantages = kwargs["advantages"]
     print(advantages.mean(), advantages.std(), advantages.shape)
