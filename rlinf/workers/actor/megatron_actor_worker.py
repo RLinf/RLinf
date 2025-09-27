@@ -242,7 +242,7 @@ class MegatronActor(MegatronModelManager, Worker):
         ref_policy_state_dict = None
         # only need this if we are running with inital kl penalty & full-parameter tuning
         if (
-            self.cfg.algorithm.kl_beta > 0 or self.cfg.algorithm.reinpp_kl_beta > 0
+            self.cfg.algorithm.kl_beta > 0 or self.cfg.algorithm.get("reinpp_kl_beta", 0) > 0
         ) and self.cfg.actor.get("combine_reference_model", True):
             ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model[0])
         self.ref_policy_state_dict = ref_policy_state_dict
@@ -382,8 +382,8 @@ class MegatronActor(MegatronModelManager, Worker):
                     logprobs=curr_logprobs,
                     old_logprobs=prev_logprobs,
                     advantages=advantages,
-                    clip_ratio_high=self.ratio_eps,
-                    clip_ratio_low=self.ratio_eps,
+                    clip_ratio_high=self.cfg.algorithm.get("clip_ratio_high", self.ratio_eps),
+                    clip_ratio_low=self.cfg.algorithm.get("clip_ratio_low", self.ratio_eps),
                     loss_mask=mask,
                 )
 
