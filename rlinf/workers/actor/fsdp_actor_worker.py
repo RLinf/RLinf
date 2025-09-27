@@ -23,7 +23,6 @@ from tqdm import tqdm
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
-from rlinf.algorithms.utils import preprocess_advantages_inputs, preprocess_loss_inputs
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
 )
@@ -242,7 +241,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "loss_mask": self.rollout_batch.get("loss_mask", None),
             "rollout_epoch": self.cfg.algorithm.get("rollout_epoch", 1),
         }
-        kwargs = preprocess_advantages_inputs(**kwargs)
+
         advantages, returns = calculate_adv_and_returns(**kwargs)
 
         self.rollout_batch.update({"advantages": advantages, "returns": returns})
@@ -373,8 +372,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     "max_episode_steps": self.cfg.env.train.max_episode_steps,
                 }
 
-                kwargs = preprocess_loss_inputs(**kwargs)
-
                 loss, metrics_data = policy_loss(**kwargs)
 
                 # Entropy loss
@@ -405,7 +402,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 data["critic/lr"] = self.optimizer.param_groups[1]["lr"]
             append_to_dict(metrics, data)
 
-        mean_metric_dict = {key: np.mean(value) for key, value in metrics.items()}
+        mean_metric_dict = {key: torch.mean(value) for key, value in metrics.items()}
         mean_metric_dict = all_reduce_dict(
             mean_metric_dict, op=torch.distributed.ReduceOp.AVG
         )

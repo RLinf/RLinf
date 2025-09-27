@@ -19,6 +19,7 @@ import torch
 from rlinf.algorithms.utils import (
     calculate_scores,
     postprocess_advantages_outputs,
+    postprocess_loss_metric,
     preprocess_advantages_inputs,
     preprocess_loss_inputs,
 )
@@ -73,7 +74,11 @@ def policy_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
     if task_type == "embodied":
         kwargs = preprocess_loss_inputs(**kwargs)
 
-    return loss_fn(**kwargs)
+    loss, metrics_data = loss_fn(**kwargs)
+    
+    if task_type == "embodied":
+        metrics_data = postprocess_loss_metric(metrics_data)
+    return loss, metrics_data
 
 
 def calculate_adv_and_returns(**kwargs) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:

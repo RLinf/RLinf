@@ -114,7 +114,7 @@ class MegatronActor(MegatronModelManager, Worker):
         self.calculate_entropy_loss = (
             self.cfg.algorithm.entropy_bonus > 0 and self.calculate_entropy
         )
-        self.ratio_eps = self.cfg.algorithm.ratio_clip_eps
+        self.ratio_eps = self.cfg.algorithm.get("ratio_clip_eps", 0.2)
         self.logprob_forward_micro_batch_size = (
             self.cfg.algorithm.logprob_forward_micro_batch_size
         )
@@ -147,6 +147,10 @@ class MegatronActor(MegatronModelManager, Worker):
         if not self.cfg.reward.use_reward_model:
             assert self.cfg.reward.reward_type == "math", "only support math"
             self.reward_fn = math_verify_call
+
+        self.safe_length = self.cfg.reward.get("safe_length", 16384)
+        self.max_length = self.cfg.reward.get("max_length", 20480)
+        self.buffer_length = self.max_length - self.safe_length
 
         # Rollout configurations
         self.rollout_group_name = self.cfg.rollout.group_name
@@ -374,6 +378,14 @@ class MegatronActor(MegatronModelManager, Worker):
                 if "ref_logprobs" in batch:
                     ref_logprobs = batch["ref_logprobs"]
 
+                if self.cfg.algorithm.get("importance_sampling_fix", False):
+                    inference_prev_logprobs = prev_logprobs
+                    training_prev_logprobs = batch["megatron_prev_logprobs"]
+                    advantages = advantages * torch.clamp(
+                        (training_prev_logprobs - inference_prev_logprobs).exp(),
+                        min=self.cfg.algorithm.importance_sampling_clip,
+                    )
+
                 mask = batch["attention_mask"][:, -response_len:]
 
                 loss, metrics_data = policy_loss(
@@ -406,7 +418,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     loss = loss + kl_loss * self.kl_beta
 
                 # Logging and early stopping according to KL (logp vs ref) or importance ratio (new logp vs old logp).
-                _imp = metrics_data["ratio"]
+                _imp = metrics_data["actor/ratio"]
                 torch.distributed.all_reduce(
                     _imp, group=parallel_state.get_data_parallel_group()
                 )
@@ -857,7 +869,11 @@ class MegatronActor(MegatronModelManager, Worker):
             # Prev logprobs
             with self.worker_timer():
                 prev_logprobs = self.inference_step(batch)
-                rollout_result.prev_logprobs = prev_logprobs.cpu()
+
+                if self.cfg.algorithm.get("importance_sampling_fix", False):
+                    rollout_result.megatron_prev_logprobs = prev_logprobs.cpu()
+                else:
+                    rollout_result.prev_logprobs = prev_logprobs.cpu()
 
             # Ref logprobs
             if compute_ref_logprobs:
@@ -943,7 +959,21 @@ class MegatronActor(MegatronModelManager, Worker):
                 dtype=torch.float,
                 device=torch.cuda.current_device(),
             ).view(-1, 1)
+
+        if self.cfg.reward.get("len_reward_penalty", 0) > 0:
+            len_reward = self.get_length_reward(
+                batch["response_lengths"]
+            )
+            all_reward_scores += len_reward * self.cfg.reward.get("len_reward_penalty", 0)
+
         return broadcast_tensor_within_mp(all_reward_scores).flatten().to("cpu")
+
+    def get_length_reward(self, length):
+        # DAPO trick3: overlong reward shaping
+        rew = torch.clamp(
+            (length - self.safe_length) / self.buffer_length, max=0, min=-1
+        )
+        return rew
 
     # Advantages and returns
     def compute_advantages_and_returns(
@@ -976,7 +1006,9 @@ class MegatronActor(MegatronModelManager, Worker):
                         group_size=self.cfg.algorithm.group_size,
                         kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
                         kl_penalty_type=self.kl_penalty_type,
-                        logprob=batch["log_probs"].cuda(),
+                        logprob=batch["prev_logprobs"].cuda()
+                        if "prev_logprobs" in batch
+                        else None,
                         ref_logprob=batch["ref_logprobs"].cuda()
                         if "ref_logprobs" in batch
                         else None,

@@ -155,7 +155,7 @@ def preprocess_advantages_inputs(**kwargs) -> dict:
     )
     kwargs["dones"] = flattened_dones_full[-(n_steps + 1) :]
 
-    if values is not None:
+    if kwargs["adv_type"] == "gae":
         flattened_values_full = values.transpose(1, 2).reshape(
             (num_chunk + 1) * chunk_size, bsz
         )
@@ -163,6 +163,13 @@ def preprocess_advantages_inputs(**kwargs) -> dict:
 
     return kwargs
 
+def postprocess_loss_metric(metrics_data: dict) -> dict:
+    for k, v in metrics_data.items():
+        if isinstance(v, torch.Tensor):
+            metrics_data[k] = v.detach().item()
+        elif isinstance(v, (float, int)):
+            metrics_data[k] = v
+    return metrics_data
 
 def calculate_scores(**kwargs):
     rewards = kwargs["rewards"]
