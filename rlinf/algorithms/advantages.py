@@ -17,7 +17,8 @@ from typing import Tuple
 import torch
 
 from rlinf.algorithms.registry import register_advantage
-
+from rlinf.algorithms.utils import kl_penalty
+from rlinf.utils.utils import masked_mean
 
 @register_advantage("gae")
 def compute_gae_advantages_and_returns(
@@ -105,12 +106,15 @@ def compute_grpo_advantages(**kwargs):
     return kwargs
 
 
-@register_advantage("reinpp")
 def compute_reinpp_advantages(**kwargs):
     reward_scores = kwargs["reward_scores"]
     mask = kwargs["loss_mask"]
     group_size = kwargs["group_size"]
     use_reinpp_baseline = kwargs.get("use_reinpp_baseline", False)
+    kl_beta = kwargs.get("kl_beta", 0.0)
+    logprob = kwargs.get("logprob", None)
+    ref_logprob = kwargs.get("ref_logprob", None)
+    kl_penalty_type = kwargs.get("kl_penalty_type", "")
 
     # first group baseline for reinforce++ baseline
     if use_reinpp_baseline:
@@ -119,7 +123,7 @@ def compute_reinpp_advantages(**kwargs):
         reward_scores = grouped_rewards.view(-1)  # [B]
 
     # build the reward matrix
-    r_matrix = torch.zeros_like(mask)  # [B, L]
+    r_matrix = torch.zeros_like(mask).float()  # [B, L]
     seq_length = mask.size(1)
     mask_flipped = mask.long().fliplr()
     eos_positions = mask_flipped.argmax(
@@ -131,14 +135,19 @@ def compute_reinpp_advantages(**kwargs):
         dim=1, index=eos_indices, src=reward_scores.unsqueeze(1)
     )  # [B, L]
 
+    # add kl penalty
+    if kl_beta > 0:
+        kld = kl_penalty(logprob, ref_logprob, kl_penalty=kl_penalty_type)  # [B, L]
+        r_matrix -= kl_beta * kld
+
     # compute return
     ret_matrix = torch.cumsum(r_matrix.flip(dims=[1]), dim=1).flip(dims=[1])
 
     # normalize
     advantages = ret_matrix.clone()
 
-    mean = (advantages * mask).sum() / mask.sum()
-    var = ((advantages - mean).pow(2) * mask).sum() / mask.sum()
+    mean = masked_mean(advantages, mask)
+    var = masked_mean((advantages - mean).pow(2), mask)
     rstd = var.clamp(min=1e-8).rsqrt()
 
     advantages = (advantages - mean) * rstd
@@ -146,7 +155,6 @@ def compute_reinpp_advantages(**kwargs):
     kwargs.update({"advantages": advantages})
 
     return kwargs
-
 
 if __name__ == "__main__":
     from rlinf.algorithms.utils import (

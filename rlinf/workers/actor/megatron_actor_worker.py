@@ -241,9 +241,9 @@ class MegatronActor(MegatronModelManager, Worker):
 
         ref_policy_state_dict = None
         # only need this if we are running with inital kl penalty & full-parameter tuning
-        if self.cfg.algorithm.kl_beta > 0 and self.cfg.actor.get(
-            "combine_reference_model", True
-        ):
+        if (
+            self.cfg.algorithm.kl_beta > 0 or self.cfg.algorithm.reinpp_kl_beta > 0
+        ) and self.cfg.actor.get("combine_reference_model", True):
             ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model[0])
         self.ref_policy_state_dict = ref_policy_state_dict
 
@@ -376,6 +376,7 @@ class MegatronActor(MegatronModelManager, Worker):
                 mask = batch["attention_mask"][:, -response_len:]
 
                 loss, metrics_data = policy_loss(
+                    task_type=self.cfg.runner.task_type,
                     loss_type=self.cfg.algorithm.loss_type,
                     loss_agg_func=self.loss_agg_func,
                     logprobs=curr_logprobs,
@@ -968,6 +969,13 @@ class MegatronActor(MegatronModelManager, Worker):
                         reward_scores=batch["rewards"].cuda(),
                         loss_mask=mask.cuda(),
                         group_size=self.cfg.algorithm.group_size,
+                        kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
+                        kl_penalty_type=self.kl_penalty_type,
+                        logprob=batch["logprob"].cuda(),
+                        ref_logprob=batch["ref_logprob"].cuda(),
+                        use_reinpp_baseline=self.cfg.algorithm.get(
+                            "use_reinpp_baseline", False
+                        ),
                     )
                     rollout_result.advantages = advantages.cpu()
 

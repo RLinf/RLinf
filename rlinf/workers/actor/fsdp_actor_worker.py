@@ -352,6 +352,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 )
 
                 kwargs = {
+                    "task_type": self.cfg.runner.task_type,
                     "loss_type": self.cfg.algorithm.loss_type,
                     "logprob_type": self.cfg.algorithm.logprob_type,
                     "entropy_type": self.cfg.algorithm.entropy_type,
@@ -367,7 +368,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     "clip_ratio_low": self.cfg.algorithm.clip_ratio_low,
                     "value_clip": self.cfg.algorithm.get("value_clip", None),
                     "huber_delta": self.cfg.algorithm.get("huber_delta", None),
-                    "entropy_bonus": self.cfg.algorithm.entropy_bonus,
                     "loss_mask": data.get("loss_mask", None),
                     "loss_mask_sum": data.get("loss_mask_sum", None),
                     "max_episode_steps": self.cfg.env.train.max_episode_steps,
@@ -376,6 +376,12 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 kwargs = preprocess_loss_inputs(**kwargs)
 
                 loss, metrics_data = policy_loss(**kwargs)
+
+                # Entropy loss
+                entropy = kwargs["entropy"]
+                entropy_bonus = self.cfg.algorithm.entropy_bonus
+                entropy_loss = entropy.mean()
+                loss -= entropy_loss * entropy_bonus
 
                 loss /= self.gradient_accumulation
                 loss.backward()

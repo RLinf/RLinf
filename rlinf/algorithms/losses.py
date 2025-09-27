@@ -173,19 +173,9 @@ def compute_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
     actor_loss, actor_metrics_data = compute_ppo_actor_loss(**kwargs)
     critic_loss, critic_metrics_data = compute_ppo_critic_loss(**kwargs)
 
-    # Entropy loss
-    entropy = kwargs["entropy"]
-    entropy_bonus = kwargs["entropy_bonus"]
-    entropy_loss = entropy.mean()
-
-    loss = actor_loss + critic_loss - entropy_bonus * entropy_loss
+    loss = actor_loss + critic_loss
     metrics_data.update(actor_metrics_data)
     metrics_data.update(critic_metrics_data)
-    metrics_data.update(
-        {
-            "actor/raw_loss": loss.detach().item(),
-        }
-    )
 
     return loss, metrics_data
 
