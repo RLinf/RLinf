@@ -82,7 +82,10 @@ class VLLMWorker(_VllmInnerWorker):
         state_dict = self._rlinf_worker.recv(
             src_group_name=self._actor_group_name, src_rank=self.actor_weight_rank
         )
-        super().wake_up()
+        if self.placement_mode == PlacementMode.COLLOCATED:
+            # in disaggregated mode, rollout backend will never offload weights
+            # so we don't need to wake up when placement is disaggregated
+            super().wake_up()
 
         model = self.model_runner.model
         if colocate:

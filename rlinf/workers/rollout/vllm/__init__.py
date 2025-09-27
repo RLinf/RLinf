@@ -34,8 +34,8 @@ if package_version is None:
         "vllm package is not installed or its version could not be determined."
     )
 elif package_version >= parse("0.8.5") and package_version < parse("0.9.0"):
-    from rlinf.hybrid_engines.vllm.vllm_0_8_5.vllm_engine import VLLMEngine
+    from rlinf.hybrid_engines.vllm.vllm_0_8_5.executor import VLLMExecutor
 else:
     raise ValueError(f"vllm version {package_version} not supported")
 
-__all__ = ["VLLMEngine"]
+__all__ = ["VLLMExecutor"]
