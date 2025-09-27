@@ -123,6 +123,20 @@ def seq_mean_token_mean(values, mask):
     return loss
 
 
+def masked_mean_ratio(values, mask, max_episode_steps=1):
+    # for embodied tasks
+    loss_mask_sum = mask.sum(dim=(0, 2), keepdim=True)  # [1, bsz, 1]
+    loss_mask_sum = loss_mask_sum.expand_as(mask)
+
+    loss_mask_ratio = (loss_mask_sum * 1.0) / max_episode_steps
+
+    return (values / loss_mask_ratio * mask).mean()
+
+
+def raw_mean(values, mask, axis=0):
+    return values.mean()
+
+
 class DualOutput:
     def __init__(self, file, terminal):
         self.file = file
