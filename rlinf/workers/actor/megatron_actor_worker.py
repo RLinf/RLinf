@@ -29,8 +29,8 @@ from torch.multiprocessing.reductions import reduce_tensor
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import (
-    loss,
     calculate_adv_and_returns,
+    loss,
 )
 from rlinf.algorithms.utils import kl_penalty
 from rlinf.data.io_struct import (

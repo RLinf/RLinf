@@ -22,7 +22,7 @@ from torch.distributed.device_mesh import init_device_mesh
 from tqdm import tqdm
 
 import rlinf.algorithms  # noqa: F401
-from rlinf.algorithms.registry import loss, calculate_adv_and_returns
+from rlinf.algorithms.registry import calculate_adv_and_returns, loss
 from rlinf.algorithms.utils import preprocess_advantages_inputs, preprocess_loss_inputs
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
