@@ -116,7 +116,7 @@ class ManiskillEnv(gym.Env):
     def update_reset_state_ids(self):
         reset_state_ids = torch.randint(
             low=0,
-            high=len(self.total_num_group_envs),
+            high=self.total_num_group_envs,
             size=(self.num_group,),
             generator=self._generator,
         )
