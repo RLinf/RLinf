@@ -65,7 +65,6 @@ class ManiskillEnv(BaseManiskillEnv, EnvOffloadMixin):
             "action_space_state": action_space_state,
             "prev_step_reward": self.prev_step_reward.cpu(),
             "reset_state_ids": self.reset_state_ids.cpu(),
-            "all_reset_state_ids": self.all_reset_state_ids.cpu(),
             "generator_state": self._generator.get_state(),
             "is_start": self.is_start,
             "video_cnt": self.video_cnt,
@@ -176,7 +175,6 @@ class ManiskillEnv(BaseManiskillEnv, EnvOffloadMixin):
         # Restore simulator task state
         self.prev_step_reward = state["prev_step_reward"].to(self.device)
         self.reset_state_ids = state["reset_state_ids"].to(self.device)
-        self.all_reset_state_ids = state["all_reset_state_ids"].to(self.device)
         self._generator.set_state(state["generator_state"])
         self.is_start = state["is_start"]
 

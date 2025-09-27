@@ -111,15 +111,12 @@ class ManiskillEnv(gym.Env):
     def _init_reset_state_ids(self):
         self._generator = torch.Generator()
         self._generator.manual_seed(self.seed)
-        self.all_reset_state_ids = torch.randperm(
-            self.total_num_group_envs, generator=self._generator
-        ).to(self.device)
         self.update_reset_state_ids()
 
     def update_reset_state_ids(self):
         reset_state_ids = torch.randint(
             low=0,
-            high=len(self.all_reset_state_ids),
+            high=self.total_num_group_envs,
             size=(self.num_group,),
             generator=self._generator,
         )
