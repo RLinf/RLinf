@@ -105,6 +105,49 @@ def compute_grpo_advantages(**kwargs):
     return kwargs
 
 
+@register_advantage("reinpp")
+def compute_reinpp_advantages(**kwargs):
+    reward_scores = kwargs["reward_scores"]
+    mask = kwargs["loss_mask"]
+    group_size = kwargs["group_size"]
+    use_reinpp_baseline = kwargs.get("use_reinpp_baseline", False)
+
+    # first group baseline for reinforce++ baseline
+    if use_reinpp_baseline:
+        grouped_rewards = reward_scores.view(-1, group_size)  # [num_prompt, group_size]
+        grouped_rewards -= grouped_rewards.mean(dim=1, keepdims=True)
+        reward_scores = grouped_rewards.view(-1)  # [B]
+
+    # build the reward matrix
+    r_matrix = torch.zeros_like(mask)  # [B, L]
+    seq_length = mask.size(1)
+    mask_flipped = mask.long().fliplr()
+    eos_positions = mask_flipped.argmax(
+        dim=1, keepdim=True
+    )  # position of last True in original mask
+    eos_indices = seq_length - 1 - eos_positions  # [B, 1]
+
+    r_matrix = r_matrix.scatter_(
+        dim=1, index=eos_indices, src=reward_scores.unsqueeze(1)
+    )  # [B, L]
+
+    # compute return
+    ret_matrix = torch.cumsum(r_matrix.flip(dims=[1]), dim=1).flip(dims=[1])
+
+    # normalize
+    advantages = ret_matrix.clone()
+
+    mean = (advantages * mask).sum() / mask.sum()
+    var = ((advantages - mean).pow(2) * mask).sum() / mask.sum()
+    rstd = var.clamp(min=1e-8).rsqrt()
+
+    advantages = (advantages - mean) * rstd
+
+    kwargs.update({"advantages": advantages})
+
+    return kwargs
+
+
 if __name__ == "__main__":
     from rlinf.algorithms.utils import (
         calculate_scores,

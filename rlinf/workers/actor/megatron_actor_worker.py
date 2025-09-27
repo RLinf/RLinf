@@ -30,7 +30,7 @@ from torch.multiprocessing.reductions import reduce_tensor
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import (
     calculate_adv_and_returns,
-    loss,
+    policy_loss,
 )
 from rlinf.algorithms.utils import kl_penalty
 from rlinf.data.io_struct import (
@@ -375,7 +375,7 @@ class MegatronActor(MegatronModelManager, Worker):
 
                 mask = batch["attention_mask"][:, -response_len:]
 
-                loss, metrics_data = loss(
+                loss, metrics_data = policy_loss(
                     loss_type=self.cfg.algorithm.loss_type,
                     loss_agg_func=self.loss_agg_func,
                     logprobs=curr_logprobs,

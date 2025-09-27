@@ -22,7 +22,7 @@ from torch.distributed.device_mesh import init_device_mesh
 from tqdm import tqdm
 
 import rlinf.algorithms  # noqa: F401
-from rlinf.algorithms.registry import calculate_adv_and_returns, loss
+from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.algorithms.utils import preprocess_advantages_inputs, preprocess_loss_inputs
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
@@ -343,7 +343,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     pixel_values=pixel_values,
                     action_token_len=action_token_len,
                     value_model=True
-                    if self.cfg.algorithm.adv_type == "embodied_gae"
+                    if self.cfg.algorithm.loss_type == "ppo"
                     else False,
                     value_head_mode=self.cfg.actor.model.get("vh_mode", None),
                     temperature=self.cfg.algorithm.sampling_params.temperature_train,
@@ -375,7 +375,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
                 kwargs = preprocess_loss_inputs(**kwargs)
 
-                loss, metrics_data = loss(**kwargs)
+                loss, metrics_data = policy_loss(**kwargs)
 
                 loss /= self.gradient_accumulation
                 loss.backward()
@@ -395,7 +395,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 "actor/grad_norm": grad_norm.detach().item(),
                 "actor/lr": self.optimizer.param_groups[0]["lr"],
             }
-            if self.cfg.algorithm.adv_type == "embodied_gae":
+            if self.cfg.algorithm.loss_type == "ppo":
                 data["critic/lr"] = self.optimizer.param_groups[1]["lr"]
             append_to_dict(metrics, data)
 

@@ -62,7 +62,7 @@ def get_policy_loss(name: str):
     return LOSS_REGISTRY[name]
 
 
-def loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
+def policy_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
     """
     Unified actor loss entry.
     """
