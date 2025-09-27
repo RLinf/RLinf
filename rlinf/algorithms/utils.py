@@ -163,6 +163,7 @@ def preprocess_advantages_inputs(**kwargs) -> dict:
 
     return kwargs
 
+
 def postprocess_loss_metric(metrics_data: dict) -> dict:
     for k, v in metrics_data.items():
         if isinstance(v, torch.Tensor):
@@ -170,6 +171,7 @@ def postprocess_loss_metric(metrics_data: dict) -> dict:
         elif isinstance(v, (float, int)):
             metrics_data[k] = v
     return metrics_data
+
 
 def calculate_scores(**kwargs):
     rewards = kwargs["rewards"]

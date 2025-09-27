@@ -37,7 +37,10 @@ class VLLMWorker(Worker):
         self._placement = placement
 
         self._prepare_vllm_environment()
-        self._return_logprobs = self._cfg.rollout.return_logprobs or self._cfg.algorithm.get("importance_sampling_fix", False)
+        self._return_logprobs = (
+            self._cfg.rollout.return_logprobs
+            or self._cfg.algorithm.get("importance_sampling_fix", False)
+        )
         self._sampling_params = self._get_sampling_params_from_config()
         self._tokenizer = AutoTokenizer.from_pretrained(self._cfg.rollout.model_dir)
         self._vllm_engine = None

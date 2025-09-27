@@ -961,10 +961,10 @@ class MegatronActor(MegatronModelManager, Worker):
             ).view(-1, 1)
 
         if self.cfg.reward.get("len_reward_penalty", 0) > 0:
-            len_reward = self.get_length_reward(
-                batch["response_lengths"]
+            len_reward = self.get_length_reward(batch["response_lengths"])
+            all_reward_scores += len_reward * self.cfg.reward.get(
+                "len_reward_penalty", 0
             )
-            all_reward_scores += len_reward * self.cfg.reward.get("len_reward_penalty", 0)
 
         return broadcast_tensor_within_mp(all_reward_scores).flatten().to("cpu")
 

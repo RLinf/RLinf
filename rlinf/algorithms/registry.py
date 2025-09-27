@@ -75,7 +75,7 @@ def policy_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
         kwargs = preprocess_loss_inputs(**kwargs)
 
     loss, metrics_data = loss_fn(**kwargs)
-    
+
     if task_type == "embodied":
         metrics_data = postprocess_loss_metric(metrics_data)
     return loss, metrics_data
