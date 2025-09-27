@@ -106,6 +106,7 @@ def compute_grpo_advantages(**kwargs):
 
     return kwargs
 
+
 @register_advantage("reinpp")
 def compute_reinpp_advantages(**kwargs):
     reward_scores = kwargs["reward_scores"]

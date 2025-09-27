@@ -242,7 +242,8 @@ class MegatronActor(MegatronModelManager, Worker):
         ref_policy_state_dict = None
         # only need this if we are running with inital kl penalty & full-parameter tuning
         if (
-            self.cfg.algorithm.kl_beta > 0 or self.cfg.algorithm.get("reinpp_kl_beta", 0) > 0
+            self.cfg.algorithm.kl_beta > 0
+            or self.cfg.algorithm.get("reinpp_kl_beta", 0) > 0
         ) and self.cfg.actor.get("combine_reference_model", True):
             ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model[0])
         self.ref_policy_state_dict = ref_policy_state_dict
@@ -382,8 +383,12 @@ class MegatronActor(MegatronModelManager, Worker):
                     logprobs=curr_logprobs,
                     old_logprobs=prev_logprobs,
                     advantages=advantages,
-                    clip_ratio_high=self.cfg.algorithm.get("clip_ratio_high", self.ratio_eps),
-                    clip_ratio_low=self.cfg.algorithm.get("clip_ratio_low", self.ratio_eps),
+                    clip_ratio_high=self.cfg.algorithm.get(
+                        "clip_ratio_high", self.ratio_eps
+                    ),
+                    clip_ratio_low=self.cfg.algorithm.get(
+                        "clip_ratio_low", self.ratio_eps
+                    ),
                     loss_mask=mask,
                 )
 
@@ -971,8 +976,10 @@ class MegatronActor(MegatronModelManager, Worker):
                         group_size=self.cfg.algorithm.group_size,
                         kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
                         kl_penalty_type=self.kl_penalty_type,
-                        logprob=batch["logprob"].cuda(),
-                        ref_logprob=batch["ref_logprob"].cuda(),
+                        logprob=batch["log_probs"].cuda(),
+                        ref_logprob=batch["ref_logprobs"].cuda()
+                        if "ref_logprobs" in batch
+                        else None,
                         use_reinpp_baseline=self.cfg.algorithm.get(
                             "use_reinpp_baseline", False
                         ),
