@@ -402,7 +402,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 data["critic/lr"] = self.optimizer.param_groups[1]["lr"]
             append_to_dict(metrics, data)
 
-        mean_metric_dict = {key: torch.mean(value) for key, value in metrics.items()}
+        mean_metric_dict = {key: np.mean(value) for key, value in metrics.items()}
         mean_metric_dict = all_reduce_dict(
             mean_metric_dict, op=torch.distributed.ReduceOp.AVG
         )
