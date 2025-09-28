@@ -175,20 +175,17 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
         model.to(torch_dtype)
 
     elif cfg.model_name == "openpi":
-        # breakpoint()
         import openpi.shared.download as download
         import openpi.transforms as transforms
         import safetensors
         from openpi.training import checkpoints as _checkpoints
         from openpi.training import config as _config
-
-        from .embodiment.openpi_action_model import OpenPi0ForRLActionPrediction
-
-        # TODO: Only unlock the expert-related parameters
-        # TODO: add replace operation on the config by cfg
+        from .embodiment.openpi_action_model import OpenPi0ForRLActionPrediction, OpenPi0Config
         # config
+        # todo chenk: merge openpi config with the rl config
         actor_train_config = _config.get_config("pi0_libero")
         actor_model_config = actor_train_config.model
+        actor_model_config = OpenPi0Config(**actor_model_config.__dict__)
         override_config_kwargs = cfg.openpi
         if override_config_kwargs is not None:
             for key, val in override_config_kwargs.items():
@@ -216,8 +213,11 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
             # that the policy is using the same normalization stats as the original training process.
             if data_config.asset_id is None:
                 raise ValueError("Asset id is required to load norm stats.")
+
+            # asset_dir = os.path.join("assets", data_config.asset_id)
+            asset_dir = data_config.asset_id
             norm_stats = _checkpoints.load_norm_stats(
-                checkpoint_dir, data_config.asset_id
+                checkpoint_dir, asset_dir
             )
         # wrappers
         repack_transforms = transforms.Group()
