@@ -170,7 +170,8 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
         )
 
         # oft add
-        model.vision_backbone.set_num_images_in_input(cfg.num_images_in_input)
+        num_images_in_input = 2 if cfg.use_wrist_image else 1
+        model.vision_backbone.set_num_images_in_input(num_images_in_input)
 
         model.to(torch_dtype)
 
@@ -180,7 +181,12 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
         import safetensors
         from openpi.training import checkpoints as _checkpoints
         from openpi.training import config as _config
-        from .embodiment.openpi_action_model import OpenPi0ForRLActionPrediction, OpenPi0Config
+
+        from .embodiment.openpi_action_model import (
+            OpenPi0Config,
+            OpenPi0ForRLActionPrediction,
+        )
+
         # config
         # todo chenk: merge openpi config with the rl config
         actor_train_config = _config.get_config("pi0_libero")
@@ -213,11 +219,8 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
             # that the policy is using the same normalization stats as the original training process.
             if data_config.asset_id is None:
                 raise ValueError("Asset id is required to load norm stats.")
-
-            # asset_dir = os.path.join("assets", data_config.asset_id)
-            asset_dir = data_config.asset_id
             norm_stats = _checkpoints.load_norm_stats(
-                checkpoint_dir, asset_dir
+                checkpoint_dir, data_config.asset_id
             )
         # wrappers
         repack_transforms = transforms.Group()

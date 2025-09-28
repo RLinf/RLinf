@@ -602,17 +602,21 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         calulate_logprobs=True,
         calulate_values=True,
         **kwargs,
-    ):
+    ) -> Tuple[np.ndarray, Dict[str, Any]]:
         do_sample = kwargs.pop("do_sample")
 
         processed_obs = None
-        if input_ids is None:
+        if env_obs is not None:
             assert env_obs is not None
             task_descriptions = [
                 f"In: What action should the robot take to {t.lower()}?\nOut: "
                 for t in env_obs["task_descriptions"]
             ]
-            image_tensor = env_obs["image"]
+            image_tensor = env_obs["images"]
+            if image_tensor.ndim == 4:
+                image_tensor = image_tensor.unsqueeze(1)
+            assert image_tensor.ndim == 5
+
             max_length = self.max_prompt_length
             device = next(self.parameters()).device
             precision = next(self.parameters()).dtype
@@ -623,9 +627,9 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
                 max_length=max_length,
             )
 
-            input_ids = processed_obs["input_ids"].to(device=device, dtype=precision)
+            input_ids = processed_obs["input_ids"].to(device=device, dtype=torch.long)
             attention_mask = processed_obs["attention_mask"].to(
-                device=device, dtype=precision
+                device=device, dtype=torch.bool
             )
             pixel_values = processed_obs["pixel_values"].to(
                 device=device, dtype=precision
@@ -720,15 +724,16 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
             -1, self.num_action_chunks, self.action_dim
         )
 
+        inputs_data = processed_obs
+        inputs_data["action_tokens"] = chunk_action_tokens
+
         result = {
-            "actions": chunk_actions,
-            "action_tokens": chunk_action_tokens,
             "prev_logprobs": chunk_logprobs,
             "prev_values": chunk_values,
-            "processed_obs": processed_obs,
+            "inputs_data": inputs_data,
         }
 
-        return result
+        return chunk_actions, result
 
     def _check_unnorm_key(
         self, norm_stats: Dict[str, Dict[str, Any]], unnorm_key: Optional[str]

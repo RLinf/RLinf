@@ -139,7 +139,7 @@ actor:
     num_action_chunks: 5 # interface for the env
     action_dim: 7
     is_lora: False
-    num_images_in_input: 2
+    use_wrist_image: True
     use_proprio: True
     num_steps: 3
     sharding_strategy: "no_shard"
@@ -151,6 +151,7 @@ actor:
       train_expert_only: True
       action_env_dim: ${actor.model.action_dim}
       noise_method: "flow_cps"
+      add_value_head: False
       
     
 

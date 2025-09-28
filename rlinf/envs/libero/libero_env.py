@@ -247,7 +247,7 @@ class LiberoEnv(gym.Env):
         return infos
 
     def _extract_image_and_state(self, obs):
-        if self.cfg.num_images_in_input > 1:
+        if self.cfg.use_wrist_image:
             return {
                 "full_image": get_libero_image(obs),
                 "wrist_image": get_libero_wrist_image(obs),

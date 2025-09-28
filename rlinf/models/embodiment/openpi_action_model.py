@@ -16,7 +16,8 @@ import logging
 import random
 from collections import OrderedDict
 from collections.abc import Sequence
-from typing import Any, Dict, List, Literal
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Literal, Tuple
 
 import jax
 import numpy as np
@@ -25,43 +26,33 @@ import torch.nn as nn
 from openpi import transforms as _transforms
 from openpi.models import model as _model
 from openpi.models.pi0_config import Pi0Config
-import openpi.models.gemma as _gemma
-from openpi.models_pytorch.gemma_pytorch import PaliGemmaWithExpertModel
-from collections.abc import Sequence
-import jax
-import jax.numpy as jnp
-import numpy as np
-import time
-from collections import namedtuple
-import random
-import torch.nn as nn
-import torch
-from torch import nn
-from typing import List
-from dataclasses import field, dataclass
-from collections import OrderedDict
-import logging
+from openpi.models_pytorch.pi0_pytorch import PI0Pytorch, make_att_2d_masks
+
 logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class OpenPi0Config(Pi0Config):
-    # config for rl 
+    # config for rl
     noise_level: bool = 0.5
     action_chunk: int = 5
     train_expert_only: bool = False
-    action_env_dim: int = 7 # for libero 
+    action_env_dim: int = 7  # for libero
     num_steps: int = 10
-    noise_method: str = "flow_sde" # flow_sde, flow_cps
+    noise_method: str = "flow_sde"  # flow_sde, flow_cps
     safe_get_logprob: bool = False
     joint_logprob: bool = False
     detach_critic_input: bool = False
     chunk_critic_input: bool = False
-    adv_method: str = "ppo"
+    add_value_head: bool = False
     noise_anneal: bool = False
-    noise_params: List = field(default_factory=lambda: [0.7, 0.3, 400]) # noise_start, noise_end, noise_anneal_steps
+    noise_params: List = field(
+        default_factory=lambda: [0.7, 0.3, 400]
+    )  # noise_start, noise_end, noise_anneal_steps
     ignore_last: bool = False
     value_after_vlm: bool = False
-    value_vlm_mode: str = "mean_token" # last_token, mean_token, first_token
+    value_vlm_mode: str = "mean_token"  # last_token, mean_token, first_token
+
 
 class OpenPi0ForRLActionPrediction(PI0Pytorch):
     """Pi0 model for reinforcement learning action prediction.
@@ -88,51 +79,13 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
     ):
         # pi0 base model init
         super().__init__(config)
-        # nn.Module.__init__(self)
-        # self.config = config
-        # self.pi05 = config.pi05
-
-        # paligemma_config = _gemma.get_config(config.paligemma_variant)
-        # action_expert_config = _gemma.get_config(config.action_expert_variant)
-
-        # self.paligemma_with_expert = PaliGemmaWithExpertModel(
-        #     paligemma_config,
-        #     action_expert_config,
-        #     use_adarms=[False, True] if self.pi05 else [False, False],
-        #     precision=config.dtype,
-        # )
-
-        # self.action_in_proj = nn.Linear(32, action_expert_config.width)
-        # self.action_out_proj = nn.Linear(action_expert_config.width, 32)
-
-        # if self.pi05:
-        #     self.time_mlp_in = nn.Linear(action_expert_config.width, action_expert_config.width)
-        #     self.time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
-        # else:
-        #     self.state_proj = nn.Linear(32, action_expert_config.width)
-        #     self.action_time_mlp_in = nn.Linear(2 * action_expert_config.width, action_expert_config.width)
-        #     self.action_time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
-
-        # torch.set_float32_matmul_precision("high")
-
-        # # Initialize gradient checkpointing flag
-        # self.gradient_checkpointing_enabled = False
-
-        # msg = "transformers_replace is not installed correctly. Please install it with `uv pip install transformers==4.53.2` and `cp -r ./src/openpi/models_pytorch/transformers_replace/* .venv/lib/python3.11/site-packages/transformers/`."
-        # try:
-        #     from transformers.models.siglip import check
-
-        #     if not check.check_whether_transformers_replace_is_installed_correctly():
-        #         raise ValueError(msg)
-        # except ImportError:
-        #     raise ValueError(msg) from None
 
         # rl model init
         proj_width = 1024
         self.global_step = 0
-        if self.config.adv_method == "ppo":
+        if self.config.add_value_head:
             self.value_proj = ValueProj(proj_width)
-            # self.value_proj = nn.Linear(width, 1)
+
         if self.config.noise_method == "reinflow":
             self.reinflow_explore_noise_net = ExploreNoiseNet(
                 in_dim=proj_width,
@@ -221,7 +174,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
 
     def forward(
         self,
-        data: dict[str, Tensor],
+        data: dict[str, torch.Tensor],
         compute_logprobs: bool = True,
         compute_entropy: bool = False,
         compute_values: bool = False,
@@ -293,19 +246,12 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
 
     def _process_obs_from_env(self, env_processed_obs):
         to_process_obs = {
-            "observation/image": env_processed_obs["image"],
-            "observation/wrist_image": env_processed_obs["wrist_image"],
-            "observation/state": env_processed_obs["state"],
+            "observation/image": env_processed_obs["images"],
+            "observation/wrist_image": env_processed_obs["wrist_images"],
+            "observation/state": env_processed_obs["states"],
             "prompt": env_processed_obs["task_descriptions"],
         }
         processed_obs = self.input_transform(to_process_obs)
-        processed_obs.update(
-            {
-                "observation/image": env_processed_obs["image"],
-                "observation/wrist_image": env_processed_obs["wrist_image"],
-                "observation/state": env_processed_obs["state"],
-            }
-        )
         device = next(self.parameters()).device
         for key, value in processed_obs.items():
             if isinstance(value, list):
@@ -327,25 +273,33 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
 
     def predict_action_batch(
         self, env_obs, mode: Literal["train", "eval"] = "train", compute_values=False
-    ) -> Dict[str, Any]:
+    ) -> Tuple[np.ndarray, Dict[str, Any]]:
         processed_obs = self._process_obs_from_env(env_obs)
         observation = _model.Observation.from_dict(processed_obs)
         outputs = self.sample_actions(
             observation, mode=mode, compute_values=compute_values
         )
-        outputs["actions"] = self.output_transform(
+        actions = self.output_transform(
             {"actions": outputs["actions"], "state": observation.state}
         )["actions"].numpy()
 
-        result = {
-            "actions": outputs["actions"],
+        inputs_data = {
             "chains": outputs["chains"],
+            "denoise_inds": outputs["denoise_inds"],
+            "observation/image": env_obs["images"],
+            "observation/wrist_image": env_obs["wrist_images"],
+            "observation/state": env_obs["states"],
+            "tokenized_prompt": processed_obs["tokenized_prompt"],
+            "tokenized_prompt_mask": processed_obs["tokenized_prompt_mask"],
+        }
+
+        result = {
             "prev_logprobs": outputs["prev_logprobs"],
             "prev_values": outputs["prev_values"],
-            "denoise_inds": outputs["denoise_inds"],
-            "processed_obs": processed_obs,
+            "inputs_data": inputs_data,
         }
-        return result
+
+        return actions, result
 
     @torch.no_grad()
     def sample_actions(
@@ -354,7 +308,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         noise=None,
         mode="train",
         compute_values=False,
-    ) -> Tensor:
+    ) -> torch.Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = observation.state.shape[0]
         device = observation.state.device
@@ -519,9 +473,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             x_t,
             t_input,
         )
-        v_t = self.action_out_proj(suffix_out) # [bs,n_action_steps,max_action_dim]
-        # value prediction 
-        if self.config.adv_method == "ppo":
+        v_t = self.action_out_proj(suffix_out)  # [bs,n_action_steps,max_action_dim]
+        # value prediction
+        if self.config.add_value_head and compute_values:
             # use chunk critic input
             if self.config.chunk_critic_input:
                 suffix_out_value = torch.mean(
@@ -686,8 +640,16 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             denoise_ind = denoise_inds[:, idx]
             chains_pre = chains[torch.arange(bsize), denoise_ind]
             chains_next = chains[torch.arange(bsize), denoise_ind + 1]
-            x_t_mean,x_t_std,value_t = self.sample_mean_var_val(chains_pre,denoise_ind,state,prefix_pad_masks,past_key_values,"train",self.config.num_steps)
-            log_probs = self.get_logprob_norm(chains_next,x_t_mean,x_t_std)
+            x_t_mean, x_t_std, value_t = self.sample_mean_var_val(
+                chains_pre,
+                denoise_ind,
+                state,
+                prefix_pad_masks,
+                past_key_values,
+                "train",
+                self.config.num_steps,
+            )
+            log_probs = self.get_logprob_norm(chains_next, x_t_mean, x_t_std)
             chains_log_probs.append(log_probs)
             chains_values.append(value_t)
         chains_log_probs = torch.stack(chains_log_probs, dim=1)

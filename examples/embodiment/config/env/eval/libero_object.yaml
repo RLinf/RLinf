@@ -13,7 +13,7 @@ seed: 0
 num_group: ${env.eval.num_envs}
 group_size: 1
 use_fixed_reset_state_ids: True
-num_images_in_input: 2
+use_wrist_image: ${actor.model.use_wrist_image}
 
 num_envs: 496
 video_cfg:

@@ -13,7 +13,7 @@ seed: 0
 num_group: ${algorithm.num_group_envs}
 group_size: ${algorithm.group_size}
 use_fixed_reset_state_ids: ${algorithm.use_fixed_reset_state_ids}
-num_images_in_input: ${actor.model.num_images_in_input}
+use_wrist_image: ${actor.model.use_wrist_image}
 
 num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
 

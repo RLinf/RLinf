@@ -20,22 +20,9 @@ from tqdm import tqdm
 
 from rlinf.data.io_struct import EmbodiedRolloutResult
 from rlinf.models import get_model, get_vla_model_config_and_processor
-from rlinf.models.embodiment.model_namspace import (
-    get_model_buffer_namespace,
-)
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.placement import HybridComponentPlacement
-
-
-def create_rollout_batch(data):
-    ret_data = {}
-    for key, value in data.items():
-        if "env_info/" not in key:
-            ret_data[key] = torch.stack(value, dim=0).contiguous().cpu()
-        else:
-            ret_data[key] = torch.cat(value, dim=0).contiguous().cpu()
-    return ret_data
 
 
 class MultiStepRolloutWorker(Worker):
@@ -50,7 +37,6 @@ class MultiStepRolloutWorker(Worker):
         self._obs_queue_name = cfg.env.channel.queue_name
         self._action_queue_name = cfg.rollout.channel.queue_name
         self._replay_buffer_name = cfg.actor.channel.queue_name
-        self._num_images_in_input = cfg.actor.model.num_images_in_input
         self.stage_num = cfg.rollout.pipeline_stage_num
 
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
@@ -60,21 +46,15 @@ class MultiStepRolloutWorker(Worker):
                 f"{self._action_queue_name}_{i}", maxsize=cfg.rollout.channel.queue_size
             )
 
-        self.use_proprio = self.cfg.actor.model.get("use_proprio", False)
-
-        # Cache model namespace for buffer operations
-        self.model_name = self.cfg.actor.model.model_name
-        self.buffer_namespace = get_model_buffer_namespace(self.model_name)
-
     def init_worker(self):
-        self.hf_model = get_model(self.cfg.rollout.model_dir, self.cfg.actor)
+        self.hf_model = get_model(self.cfg.rollout.model_dir, self.cfg.actor.model)
 
         if self.cfg.actor.model.model_name in ["openvla", "openvla_oft"]:
             model_config, input_processor = get_vla_model_config_and_processor(
                 self.cfg.actor
             )
             self.hf_model.setup_config_and_processor(
-                model_config, self.cfg.actor, input_processor
+                model_config, self.cfg, input_processor
             )
 
         self.hf_model.eval()
@@ -119,12 +99,12 @@ class MultiStepRolloutWorker(Worker):
             kwargs = {"mode": mode}
 
         with torch.no_grad():
-            result = self.hf_model.predict_action_batch(
+            actions, result = self.hf_model.predict_action_batch(
                 env_obs=env_obs,
                 **kwargs,
             )
 
-        return result
+        return actions, result
 
     def update_env_output(self, i, env_output):
         # first step for env_batch
@@ -142,11 +122,11 @@ class MultiStepRolloutWorker(Worker):
 
                 final_obs = env_output["final_obs"]
                 with torch.no_grad():
-                    result = self.predict(final_obs)
+                    actions, result = self.predict(final_obs)
                     if "prev_values" in result:
                         _final_values = result["prev_values"]
                     else:
-                        _final_values = torch.zeros_like(result["actions"][:, 0])
+                        _final_values = torch.zeros_like(actions[:, 0])
                 final_values = torch.zeros_like(_final_values[:, 0])  # [bsz, ]
                 last_step_dones = dones[:, -1]  # [bsz, ]
 
@@ -157,34 +137,33 @@ class MultiStepRolloutWorker(Worker):
                 )
 
     async def generate(self):
-        # breakpoint()
         if self.cfg.rollout.get("enable_offload", False):
             self.reload_model()
         self.buffer_list = [EmbodiedRolloutResult() for _ in range(self.stage_num)]
 
         for rollout_epoch in range(self.cfg.algorithm.rollout_epoch):
             self._logger.info(f"Now epoch is={rollout_epoch}")
-            for step in tqdm(
+            for _ in tqdm(
                 range(self.cfg.algorithm.n_chunk_steps),
                 desc=f"Rollout ID {self._rank} Epoch {rollout_epoch} in Generate Step",
             ):
                 for i in range(self.stage_num):
                     env_output = await self.recv_env_output()
                     self.update_env_output(i, env_output)
-                    result = self.predict(env_output["obs"])
-                    # Extract actions for sending
-                    chunk_actions = result["actions"]
+                    actions, result = self.predict(env_output["obs"])
 
                     self.buffer_list[i].append_result(result)
 
-                    await self.send_chunk_actions(chunk_actions)
+                    await self.send_chunk_actions(actions)
 
             for i in range(self.stage_num):
                 env_output = await self.recv_env_output()
                 self.update_env_output(i, env_output)
-                result = self.predict(env_output["obs"])
+                actions, result = self.predict(env_output["obs"])
                 if "prev_values" in result:
-                    self.buffer_list[i].prev_values.append(result["prev_values"])
+                    self.buffer_list[i].prev_values.append(
+                        result["prev_values"].cpu().contiguous()
+                    )
 
         for i in range(self.stage_num):
             await self.send_rollout_batch(i)
@@ -201,9 +180,8 @@ class MultiStepRolloutWorker(Worker):
         ):
             for _ in range(self.stage_num):
                 env_output = await self.recv_env_output()
-                result, _ = self.predict(env_output["obs"], mode="eval")
-                chunk_actions = result["actions"]
-                await self.send_chunk_actions(chunk_actions)
+                actions, _ = self.predict(env_output["obs"], mode="eval")
+                await self.send_chunk_actions(actions)
 
         if self.cfg.rollout.get("enable_offload", False):
             self.offload_model()
@@ -250,4 +228,5 @@ class MultiStepRolloutWorker(Worker):
             ).async_wait()
 
     def set_global_step(self, global_step):
-        self.hf_model.set_global_step(global_step)
+        if hasattr(self.hf_model, "set_global_step"):
+            self.hf_model.set_global_step(global_step)

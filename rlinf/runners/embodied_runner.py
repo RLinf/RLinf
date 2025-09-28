@@ -74,24 +74,32 @@ class EmbodiedRunner:
         env_futures = self.env.interact()
         rollout_futures = self.rollout.generate()
         actor_futures = self.actor.recv_rollout_batch()
-        env_futures.wait()
+        env_results = env_futures.wait()
         actor_futures.wait()
         rollout_futures.wait()
+
+        env_results_list = [results for results in env_results if results is not None]
+        env_metrics = compute_evaluate_metrics(env_results_list)
+        return env_metrics
 
     def evaluate(self):
         env_futures = self.env.evaluate()
         rollout_futures = self.rollout.evaluate()
-        env_futures.wait()
-        rollout_results = rollout_futures.wait()
-        eval_metrics_list = [
-            results for results in rollout_results if results is not None
-        ]
+        env_results = env_futures.wait()
+        rollout_futures.wait()
+        eval_metrics_list = [results for results in env_results if results is not None]
         eval_metrics = compute_evaluate_metrics(eval_metrics_list)
         return eval_metrics
 
     def run(self):
         start_step = self.global_step
-        for _step in tqdm(range(start_step, self.max_steps), ncols=120):
+        global_pbar = tqdm(
+            initial=start_step,
+            total=self.max_steps,
+            desc="Global Step",
+            ncols=620,
+        )
+        for _step in range(start_step, self.max_steps):
             # set global step
             self.actor.set_global_step(self.global_step)
             self.rollout.set_global_step(self.global_step)
@@ -102,13 +110,13 @@ class EmbodiedRunner:
                 with self.timer("eval"):
                     self.update_rollout_weights()
                     eval_metrics = self.evaluate()
-                    eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
-                    self.metric_logger.log(data=eval_metrics, step=_step)
+                    metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
+                    self.metric_logger.log(data=metrics, step=_step)
 
             with self.timer("step"):
                 with self.timer("rollout"):
                     self.update_rollout_weights()
-                    self.generate_rollouts()
+                    env_metrics = self.generate_rollouts()
 
                 # compute advantages and returns.
                 with self.timer("cal_adv_and_returns"):
@@ -136,16 +144,27 @@ class EmbodiedRunner:
 
             time_metrics = self.timer.consume_durations()
 
+            logging_metrics = {f"{k}_time": v for k, v in time_metrics.items()}
+            logging_metrics.update({f"{k}_train": v for k, v in env_metrics.items()})
+            logging_metrics.update({f"{k}_eval": v for k, v in eval_metrics.items()})
+            logging_metrics.update(actor_rollout_metrics[0])
+            logging_metrics.update(actor_training_metrics[0])
+
             rollout_metrics = {
                 f"rollout/{k}": v for k, v in actor_rollout_metrics[0].items()
             }
+            env_metrics = {f"env/{k}": v for k, v in env_metrics.items()}
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
             training_metrics = {
                 f"train/{k}": v for k, v in actor_training_metrics[0].items()
             }
+            self.metric_logger.log(env_metrics, _step)
             self.metric_logger.log(rollout_metrics, _step)
             self.metric_logger.log(time_metrics, _step)
             self.metric_logger.log(training_metrics, _step)
+
+            global_pbar.set_postfix(logging_metrics)
+            global_pbar.update(1)
 
         self.metric_logger.finish()
 

@@ -19,7 +19,6 @@ import numpy as np
 import torch
 from omegaconf import DictConfig
 from torch.distributed.device_mesh import init_device_mesh
-from tqdm import tqdm
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import actor_loss, calculate_adv_and_returns
@@ -303,9 +302,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         )
 
         metrics = {}
-        for _, train_global_batch in tqdm(
-            enumerate(rollout_dataloader_iter), desc="get loss and metrics"
-        ):
+        for train_global_batch in rollout_dataloader_iter:
             # split batch into micro_batches
             train_global_batch_size = train_global_batch["prev_logprobs"].shape[0]
             assert (
@@ -322,14 +319,14 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             )
 
             self.optimizer.zero_grad()
-            for data_idx, data in enumerate(train_micro_batch):
+            for data in train_micro_batch:
                 for k, v in data.items():
                     data[k] = v.to(f"cuda:{int(os.environ['LOCAL_RANK'])}")
 
-                advantages = data.pop("advantages")
-                prev_logprobs = data.pop("prev_logprobs")
-                returns = data.pop("returns") if "returns" in data else None
-                prev_values = data.pop("prev_values") if "prev_values" in data else None
+                advantages = data["advantages"]
+                prev_logprobs = data["prev_logprobs"]
+                returns = data["returns"] if "returns" in data else None
+                prev_values = data["prev_values"] if "prev_values" in data else None
 
                 if self.cfg.actor.model.model_name in ["openpi", "openvla"]:
                     data["temperature"] = (
@@ -423,4 +420,5 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         torch.distributed.barrier()
 
     def set_global_step(self, global_step):
-        self.model.set_global_step(global_step)
+        if hasattr(self.model, "set_global_step"):
+            self.model.set_global_step(global_step)

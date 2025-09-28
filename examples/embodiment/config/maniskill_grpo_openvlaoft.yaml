@@ -136,7 +136,7 @@ actor:
     lora_rank: 32
     lora_path: /path/to/model/oft-sft/lora_004000
     ckpt_path: null
-    num_images_in_input: 1
+    use_wrist_image: False
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
     trust_remote_code: True

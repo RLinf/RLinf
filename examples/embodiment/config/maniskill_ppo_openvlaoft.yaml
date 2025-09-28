@@ -98,7 +98,7 @@ rollout:
     queue_size: 0
   mode: "colocate"
   backend: "huggingface"
-  model_dir: "/mnt/mnt/public/mjwei/download_models/openvla/openvla-7b-finetuned-libero-10/"
+  model_dir: "/path/to/openvla/openvla-7b-finetuned-libero-10/"
   enable_offload: True
   pipeline_stage_num: 1
 
@@ -109,7 +109,7 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: "/mnt/mnt/public/mjwei/download_models/openvla/openvla-7b-finetuned-libero-10/"
+  checkpoint_load_path: "/path/to/openvla/openvla-7b-finetuned-libero-10/"
   checkpoint_save_path: "../results"
   micro_batch_size: 40
   global_batch_size: 640
@@ -131,13 +131,14 @@ actor:
     vocab_size: 32000
     hidden_size: 4096
     policy_setup: "widowx_bridge"
+    add_value_head: True
     vh_mode: "a0"
     image_size: [224, 224]
     is_lora: True
     lora_rank: 32
-    lora_path: /mnt/mnt/public/hongzhi/models/oft-sft/lora_004000/
+    lora_path: /path/to/models/oft-sft/lora_004000/
     ckpt_path: null
-    num_images_in_input: 1
+    use_wrist_image: False
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
     trust_remote_code: True
@@ -153,7 +154,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/mnt/mnt/public/mjwei/download_models/openvla/openvla-7b-finetuned-libero-10/"
+    tokenizer_model: "/path/to/openvla/openvla-7b-finetuned-libero-10/"
     use_fast: False
     trust_remote_code: True
     padding_side: "right"
