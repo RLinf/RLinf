@@ -138,19 +138,30 @@ class FSDPActor(FSDPModelManager, Worker):
 
     def del_reshard_state_dict(self):
         if hasattr(self, "rollou_state_dict"):
-            del self.rollou_state_dict
+            del self.rollout_state_dict
 
     def sync_model_to_rollout(self):
         if next(self.model.parameters()).is_cpu:
             self.load_fsdp_param_and_grad(self.device)
 
-        self.rollou_state_dict = self.get_model_state_dict()
+        self.rollout_state_dict = self.get_model_state_dict()
+
+        has_visual = any("visual." in k for k in self.rollout_state_dict.keys())
+
+        state_dict = {}
 
         if self._weight_dst_rank_in_rollout is not None:
-            handle = {k: reduce_tensor(v) for k, v in self.rollou_state_dict.items()}
+            for k, v in self.rollout_state_dict.items():
+                name = k
+                if has_visual:
+                    if name.startswith("model.language_model."):
+                        name = "model." + name[21:]
+                    elif name.startswith("model."):
+                        name = name[6:]
+                state_dict[name] = reduce_tensor(v)
 
             self.send(
-                handle, self._rollout_group_name, self._weight_dst_rank_in_rollout
+                state_dict, self._rollout_group_name, self._weight_dst_rank_in_rollout
             )
         if self.cfg.actor.get("enable_offload", False):
             self.offload_fsdp_param_and_grad()
