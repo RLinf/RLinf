@@ -12,9 +12,10 @@ cluster:
     rollout: 0-15
     inference: 16-23
     actor: 24-63
+    reward: 0-15
 
 runner:
-  task_type: math
+  task_type: reasoning
   logger:
     log_path: ${runner.output_dir}/${runner.experiment_name}
     project_name: rlinf
@@ -134,6 +135,7 @@ rollout:
 
 data:
   type: math
+  dataset_name: boba
   max_prompt_length: 1024
   filter_prompt_by_length: True
   rollout_batch_size: 512
@@ -145,6 +147,7 @@ data:
   seed: 1234
   train_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
   val_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
+
 
 actor:
   group_name: "ActorGroup"
@@ -271,9 +274,15 @@ actor:
 
 
 reward:
+  group_name: "RewardGroup"
   use_reward_model: false
   reward_type: 'math'
   reward_scale: 5.0
+  tokenizer:
+    tokenizer_model: ${actor.tokenizer.tokenizer_model}
+    use_fast: ${actor.tokenizer.use_fast}
+    trust_remote_code: ${actor.tokenizer.trust_remote_code}
+    padding_side: ${actor.tokenizer.padding_side}
 
 critic:
   use_critic_model: false

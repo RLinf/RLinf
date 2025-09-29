@@ -894,14 +894,16 @@ class RolloutResult:
             return merged_batch
         if len(batches) == 1:
             return batches[0]
+
         for key in batches[0].keys():
-            assert torch.is_tensor(batches[0][key]), (
-                f"Expected tensor for key {key} in batches, got {type(batches[0][key])}"
-            )
-            assert torch.is_tensor(batches[0][key]), (
-                f"Expected tensor for key {key} in batches, got {type(batches[0][key])}"
-            )
-            merged_batch[key] = torch.cat([batch[key] for batch in batches], dim=0)
+            if torch.is_tensor(batches[0][key]):
+                merged_batch[key] = torch.cat([batch[key] for batch in batches], dim=0)
+            elif isinstance(batches[0][key], list):
+                merged_batch[key] = []
+                for batch in batches:
+                    merged_batch[key].extend(batch[key])
+            else:
+                raise ValueError(f"Unsupported batch key type: {type(batches[0][key])}")
         return merged_batch
 
 
