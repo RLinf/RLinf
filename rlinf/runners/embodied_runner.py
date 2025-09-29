@@ -103,6 +103,7 @@ class EmbodiedRunner:
             # set global step
             self.actor.set_global_step(self.global_step)
             self.rollout.set_global_step(self.global_step)
+            eval_metrics = None
             if (
                 _step % self.cfg.runner.val_check_interval == 0
                 and self.cfg.runner.val_check_interval > 0
@@ -146,7 +147,10 @@ class EmbodiedRunner:
 
             logging_metrics = {f"{k}_time": v for k, v in time_metrics.items()}
             logging_metrics.update({f"{k}_train": v for k, v in env_metrics.items()})
-            logging_metrics.update({f"{k}_eval": v for k, v in eval_metrics.items()})
+            if eval_metrics is not None:
+                logging_metrics.update(
+                    {f"{k}_eval": v for k, v in eval_metrics.items()}
+                )
             logging_metrics.update(actor_rollout_metrics[0])
             logging_metrics.update(actor_training_metrics[0])
 

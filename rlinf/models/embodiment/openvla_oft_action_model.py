@@ -471,7 +471,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
 
         if compute_logprobs:
             logits = outputs.logits[
-                :, :, -self.action_dim * self.num_action_chunks : -1
+                :, -self.action_dim * self.num_action_chunks - 1 : -1
             ]  # [B, action-dim, vocab-size]
 
             processed_logits_tensor = logits / data.get("temperature", 1.0)

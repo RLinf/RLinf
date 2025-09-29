@@ -212,7 +212,7 @@
     vh_mode: "a0"
     image_size: [224, 224]
     is_lora: False
-    num_images_in_input: 1
+    use_wrist_image: False
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
     trust_remote_code: True
