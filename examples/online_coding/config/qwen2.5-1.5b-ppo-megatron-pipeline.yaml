@@ -40,7 +40,7 @@ runner:
 algorithm:
   group_size: 1
 
-  n_minibatches: 2
+  n_minibatches: 4
   training_batch_size_per_gpu: 1 # micro batch size
   rollout_batch_size_per_gpu: null # If set to null, rollout_batch_size will be evenly divided across all inference instances. You can reduce this parameter if inference consumes too much GPU memory.
 
@@ -145,7 +145,7 @@ data:
   type: math
   max_prompt_length: 1024
   filter_prompt_by_length: True
-  rollout_batch_size: 16
+  rollout_batch_size: 32
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: prompt
@@ -161,9 +161,7 @@ actor:
   mcore_gpt: True
   spec_name: decoder_gpt
 
-  # checkpoint_load_path: "/mnt/public/mg_ckpts/DeepSeek-R1-Distill-Qwen-1.5B-tp2-pp1"
   checkpoint_load_path: "/mnt/public/mg_ckpts/Qwen2.5-Coder-1.5B-tp2-pp1"
-  # checkpoint_load_path: None
 
   offload_optimizer: True
   offload_weight: True
@@ -211,13 +209,13 @@ actor:
 
   optim:
     optimizer: adam
-    bf16: False
-    fp16: True
-    lr: 2e-05
+    bf16: True 
+    fp16: False
+    lr: 2e-06
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-05
-    min_lr: 2.0e-6
+    min_lr: 2.0e-7
     weight_decay: 0.05
     use_distributed_optimizer: True
     overlap_grad_reduce: False
@@ -231,7 +229,7 @@ actor:
     lr_warmup_fraction: 0.01
     lr_warmup_init: 0.0
     lr_warmup_iters: 0
-    max_lr: 2.0e-5
+    max_lr: 2.0e-6
     min_lr: 0.0
     lr_decay_style: constant
     lr_decay_iters: 10
