@@ -147,19 +147,7 @@ class FSDPActor(FSDPModelManager, Worker):
         self.rollou_state_dict = self.get_model_state_dict()
 
         if self._weight_dst_rank_in_rollout is not None:
-
-            def transform_key(k):
-                if k.startswith("model.language_model."):
-                    return "model." + k[21:]
-                elif k.startswith("model."):
-                    return k[6:]
-                else:
-                    return k
-
-            handle = {
-                transform_key(k): reduce_tensor(v)
-                for k, v in self.rollou_state_dict.items()
-            }
+            handle = {k: reduce_tensor(v) for k, v in self.rollou_state_dict.items()}
 
             self.send(
                 handle, self._rollout_group_name, self._weight_dst_rank_in_rollout

@@ -56,21 +56,20 @@ class ReasoningRunner:
         rollout: Union["SGLangWorker", "VLLMWorker"],
         inference: Optional[MegatronInference],
         actor: MegatronActor,
-        reward: Optional[RewardWorker] = None,
+        reward: RewardWorker,
     ):
         """"""
         self.cfg = cfg
         self.component_placement = placement
         self.is_pipeline = self.component_placement.is_disaggregated
         self.has_dedicated_inference = inference is not None
-        self.has_dedicated_reward = reward is not None
 
         # Workers
         self.rollout = rollout
         self.actor = actor
         # Collocated mode uses actor as inference
         self.inference = inference if self.has_dedicated_inference else self.actor
-        self.reward = reward if self.has_dedicated_reward else self.actor
+        self.reward = reward
 
         # Data channels
         self.dataloader_channel = Channel.create("DataLoader")
@@ -80,9 +79,7 @@ class ReasoningRunner:
         self.inference_channel = Channel.create(
             "Inference", local=not self.has_dedicated_inference
         )
-        self.reward_channel = Channel.create(
-            "Reward", local=not self.has_dedicated_reward
-        )
+        self.reward_channel = Channel.create("Reward")
         self.actor_channel = Channel.create("Actor", local=True)
 
         # Configurations
@@ -180,8 +177,7 @@ class ReasoningRunner:
         self.actor.init_worker().wait()
         if self.has_dedicated_inference:
             self.inference.init_worker().wait()
-        if self.has_dedicated_reward:
-            self.reward.init_worker().wait()
+        self.reward.init_worker().wait()
 
         if self.cfg.runner.resume_dir is None:
             return

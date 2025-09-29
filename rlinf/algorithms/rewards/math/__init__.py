@@ -21,7 +21,7 @@ from toolkits.math_verifier.verify import math_verify_call
 
 class MathReward:
     def __init__(self, config: DictConfig):
-        self.scale = config.get("scale", 1.0)
+        self.scale = config.get("reward_scale", 1.0)
 
     def get_reward(
         self, response: List[str], reference: List[List[str]]
@@ -37,4 +37,5 @@ class MathReward:
             List[float]: A list of reward scores, one for each response.
         """
 
-        return math_verify_call(response, reference) * self.scale
+        rewards = math_verify_call(response, reference)
+        return [float(reward) * self.scale for reward in rewards]
