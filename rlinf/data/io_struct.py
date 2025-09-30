@@ -55,7 +55,7 @@ class RolloutRequest:
     n: int
     input_ids: List[List[int]]
     image_data: Union[List[List[bytes]], List[List[str]]]
-    answers: List[str]    
+    answers: List[str]
     multi_modal_inputs: List[Dict]
 
     def repeat(self) -> "RolloutRequest":

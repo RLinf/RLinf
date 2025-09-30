@@ -399,7 +399,7 @@ class VLLMWorker(Worker):
             group_size=self._cfg.algorithm.group_size,
             results=vllm_results,
             answers=request.answers,
-                multi_modal_inputs=request.multi_modal_inputs,
+            multi_modal_inputs=request.multi_modal_inputs,
             return_logprobs=self._return_logprobs,
         )
         if self._placement.is_disaggregated:
