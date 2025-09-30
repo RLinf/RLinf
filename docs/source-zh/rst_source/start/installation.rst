@@ -114,6 +114,7 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 
 自定义环境安装
 -------------------------------
+**如果你已经使用了 Docker 镜像，下面步骤可跳过。**
 
 根据你的实验类型，安装分为三步进行：
 
@@ -122,6 +123,7 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 
 第二步，如果你的实验使用的是 **Megatron 和 SGLang/vLLM** 后端，  
 请参考 :ref:`Megatron 和 SGLang/vLLM 依赖 <megatron-and-sglang-vllm-dependencies>` 安装相应依赖。
+（具身智能实验此步可忽略）
 
 第三步，如果你要运行具身智能相关实验（如 OpenVLA、OpenVLA-OFT、Pi0），  
 请参考 :ref:`具身智能相关依赖 <embodied-dependencies>` 安装专用依赖项。

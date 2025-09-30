@@ -695,7 +695,6 @@ algorithm
 
     n_chunk_steps: 10
     n_eval_chunk_steps: 10
-    rollout_micro_batch_size: 256
     num_group_envs: 32
     rollout_epoch: 1
 
@@ -710,21 +709,17 @@ algorithm
 
 ``algorithm.auto_reset``：是否在 episode 结束时自动重置环境。
 
-``algorithm.ignore_terminations``：训练时是否忽略 episode 的终止信号。
+``algorithm.ignore_terminations``：训练时是否忽略 episode 的终止信号（若开启，episode 仅在达到最大步数时结束）。
 
 ``algorithm.use_fixed_reset_state_ids``：是否使用固定 reset 状态 ID（GRPO 推荐 True，PPO 默认为 False，旨在随机化）。
 
-``algorithm.require_values``：是否需要同时计算值函数。
+``algorithm.require_values``：是否需要同时计算价值函数。
 
 ``algorithm.normalize_advantages``：是否对优势值归一化处理。
 
-``algorithm.kl_penalty``：KL 散度的估算方式（kl 或 kl_penalty）。
+``algorithm.n_chunk_steps``：每个 rollout epoch 中的 chunk 数量（调用模型 predict 的次数）。
 
-``algorithm.n_chunk_steps``：每个 chunk 的动作步数。
-
-``algorithm.n_eval_chunk_steps``：评估模式下每个 chunk 的动作步数。
-
-``algorithm.rollout_micro_batch_size``：Rollout 生成时的微批大小。
+``algorithm.n_eval_chunk_steps``：评估模式下的 chunk 数量。
 
 ``algorithm.num_group_envs``：环境组数量（用于并行）。
 
@@ -792,10 +787,6 @@ rollout
 ``rollout.mode``：rollout 模式（collocate 表示**共享式**使用 GPU）。  
 
 ``rollout.backend``：模型后端（huggingface、vllm）。  
-
-``rollout.enforce_eager``：禁用 CUDA graph，以更快完成初始化。  
-
-``rollout.enable_offload``：启用模型下放以降低内存占用。  
 
 ``rollout.pipeline_stage_num``：模型并行的流水线阶段数。
 
