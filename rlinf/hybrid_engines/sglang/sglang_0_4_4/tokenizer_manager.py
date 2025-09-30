@@ -21,6 +21,8 @@ from sglang.srt.managers.tokenizer_manager import _Communicator
 from sglang.srt.server_args import PortArgs, ServerArgs
 
 from .io_struct import (
+    AbortGenerationInput,
+    AbortGenerationOutput,
     OffloadReqInput,
     OffloadReqOutput,
     SyncHFWeightInput,
@@ -57,6 +59,9 @@ class TokenizerManager(_TokenizerManager):
         self.sync_hf_weight_communicator = _Communicator(
             self.send_to_scheduler, server_args.dp_size
         )
+        self.abort_generation_communicator = _Communicator(
+            self.send_to_scheduler, server_args.dp_size
+        )
 
         self._result_dispatcher._mapping.extend(
             [
@@ -75,6 +80,10 @@ class TokenizerManager(_TokenizerManager):
                 (
                     SyncHFWeightOutput,
                     self.sync_hf_weight_communicator.handle_recv,
+                ),
+                (
+                    AbortGenerationOutput,
+                    self.abort_generation_communicator.handle_recv,
                 ),
             ]
         )
@@ -105,9 +114,11 @@ class TokenizerManager(_TokenizerManager):
 
     async def sync_hf_weight(
         self,
-        obj: SyncHFWeightInput,
+        obj: SyncHFWeightInput = None,
         request: Optional[fastapi.Request] = None,
     ):
+        if obj is None:
+            obj = SyncHFWeightInput()
         self.auto_create_handle_loop()
         await self.sync_hf_weight_communicator(obj)
 
@@ -124,6 +135,14 @@ class TokenizerManager(_TokenizerManager):
             return
         req = AbortReq(rid)
         self.send_to_scheduler.send_pyobj(req)
+
+    async def abort_generation(
+        self,
+        obj: AbortGenerationInput,
+        request: Optional[fastapi.Request] = None,
+    ):
+        self.auto_create_handle_loop()
+        await self.abort_generation_communicator(obj)
 
     async def pause_generation(self):
         self.abort_request("")
