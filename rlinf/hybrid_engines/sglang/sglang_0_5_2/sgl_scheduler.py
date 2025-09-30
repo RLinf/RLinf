@@ -29,9 +29,9 @@ from sglang.srt.managers.io_struct import (
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
 )
-from sglang.srt.managers.mm_utils import init_embedding_cache
 from sglang.srt.managers.scheduler import Scheduler as _Scheduler
 from sglang.srt.managers.scheduler import logger
+from sglang.srt.managers.utils import DPBalanceMeta
 from sglang.srt.server_args import PortArgs, ServerArgs
 from sglang.srt.utils import (
     broadcast_pyobj,
@@ -80,10 +80,13 @@ class Scheduler(_Scheduler, Worker):
         world_size: int,
         rank: int,
         server_args: ServerArgs,
-        port_args,
-        gpu_id,
-        tp_rank,
-        dp_rank,
+        port_args: PortArgs,
+        gpu_id: int,
+        tp_rank: int,
+        moe_ep_rank: int,
+        pp_rank: int,
+        dp_rank: Optional[int],
+        dp_balance_meta: Optional[DPBalanceMeta] = None,
     ):
         Worker.__init__(
             self, parent_address=parent_address, world_size=world_size, rank=rank
@@ -91,7 +94,17 @@ class Scheduler(_Scheduler, Worker):
 
         # since 0.4.6.post2, pp_rank is added into Scheduler init's parameters
         # but we don't use it in our implementation, so we set it to 0
-        _Scheduler.__init__(self, server_args, port_args, gpu_id, tp_rank, 0, dp_rank)
+        _Scheduler.__init__(
+            self,
+            server_args,
+            port_args,
+            gpu_id,
+            tp_rank,
+            moe_ep_rank,
+            pp_rank,
+            dp_rank,
+            dp_balance_meta,
+        )
         # `TpModelWorkerClient` is used when ServerArgs.enable_overlap=True, and it has 'worker' attribute.
         # But in early SGLang version, `TpModelWorker` doesn't have 'worker' attribute.
         if not hasattr(self.tp_worker, "worker"):
@@ -287,7 +300,6 @@ class Scheduler(_Scheduler, Worker):
         return TaskMethodOutput(method_name=obj.method_name, result=result)
 
 
-# only modifiy Scheduler's initialization parameters
 def run_scheduler_process(
     parent_address: WorkerAddress,
     placement: ModelParallelComponentPlacement,
@@ -298,20 +310,27 @@ def run_scheduler_process(
     port_args: PortArgs,
     gpu_id: int,
     tp_rank: int,
+    moe_ep_rank: int,
+    pp_rank: int,
     dp_rank: Optional[int],
     pipe_writer,
+    balance_meta: Optional[DPBalanceMeta] = None,
 ):
     # Generate the prefix
-    if dp_rank is None:
-        prefix = f" TP{tp_rank}"
-    else:
-        prefix = f" DP{dp_rank} TP{tp_rank}"
-        dp_rank = None
+    prefix = ""
+    if dp_rank is not None:
+        prefix += f" DP{dp_rank}"
+    if server_args.tp_size > 1:
+        prefix += f" TP{tp_rank}"
+    if server_args.ep_size > 1:
+        prefix += f" EP{moe_ep_rank}"
+    if server_args.pp_size > 1:
+        prefix += f" PP{pp_rank}"
 
     # Config the process
-    kill_itself_when_parent_died()  # This is disabled because it does not work for `--dp 2`
     setproctitle.setproctitle(f"sglang::scheduler{prefix.replace(' ', '_')}")
     faulthandler.enable()
+    kill_itself_when_parent_died()
     parent_process = psutil.Process().parent()
 
     # [For Router] if env var "SGLANG_DP_RANK" exist, set dp_rank to the value of the env var
@@ -326,10 +345,6 @@ def run_scheduler_process(
     if get_bool_env_var("SGLANG_SET_CPU_AFFINITY"):
         set_gpu_proc_affinity(server_args.tp_size, server_args.nnodes, gpu_id)
 
-    embedding_cache_size = 100
-    if "SGLANG_VLM_CACHE_SIZE_MB" in os.environ:
-        embedding_cache_size = int(os.environ["SGLANG_VLM_CACHE_SIZE_MB"])
-    init_embedding_cache(embedding_cache_size * 1024 * 1024)
     # Create a scheduler and run the event loop
     try:
         scheduler = Scheduler(
@@ -342,7 +357,10 @@ def run_scheduler_process(
             port_args,
             gpu_id,
             tp_rank,
+            moe_ep_rank,
+            pp_rank,
             dp_rank,
+            dp_balance_meta=balance_meta,
         )
         pipe_writer.send(
             {
@@ -351,8 +369,8 @@ def run_scheduler_process(
                 "max_req_input_len": scheduler.max_req_input_len,
             }
         )
-        disaggregation_mode: DisaggregationMode = scheduler.disaggregation_mode
 
+        disaggregation_mode: DisaggregationMode = scheduler.disaggregation_mode
         if disaggregation_mode == DisaggregationMode.NULL:
             if server_args.pp_size > 1:
                 scheduler.event_loop_pp()
@@ -364,7 +382,10 @@ def run_scheduler_process(
             if scheduler.enable_overlap:
                 scheduler.event_loop_overlap_disagg_prefill()
             else:
-                scheduler.event_loop_normal_disagg_prefill()
+                if server_args.pp_size > 1:
+                    scheduler.event_loop_pp_disagg_prefill()
+                else:
+                    scheduler.event_loop_normal_disagg_prefill()
 
         elif disaggregation_mode == DisaggregationMode.DECODE:
             if scheduler.enable_overlap:
