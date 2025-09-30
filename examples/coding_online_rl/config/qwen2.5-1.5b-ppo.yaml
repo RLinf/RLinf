@@ -9,35 +9,37 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,rollout: 0
+    rollout: 0-3
+    inference: 4-5
+    actor: 6-7
 
 runner:
-  task_type: math
+  task_type: coding_online_rl
   logger:
     log_path: ${runner.output_dir}/${runner.experiment_name}
     project_name: rlinf
     experiment_name: ${runner.experiment_name}
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 5
-  max_steps: 10
+  max_epochs: 10
+  max_steps: -1
 
   val_check_interval: 1
-  save_interval: 50
+  save_interval: 10
 
-  seq_length: 2048
+  seq_length: 2560
 
   enable_dynamic_batch_size: False
-  max_tokens_per_mbs: 2048
+  max_tokens_per_mbs: 2560
 
   resume_dir: null
-  experiment_name: grpo-1.5b
+  experiment_name: online-ppo-1.5b-pipeline
   output_dir: ../results
 
 algorithm:
-  group_size: 2
+  group_size: 1
 
-  n_minibatches: 4
+  n_minibatches: 2
   training_batch_size_per_gpu: 1 # micro batch size
   rollout_batch_size_per_gpu: null # If set to null, rollout_batch_size will be evenly divided across all inference instances. You can reduce this parameter if inference consumes too much GPU memory.
 
@@ -52,7 +54,9 @@ algorithm:
   recompute_logprobs: True
   shuffle_rollout: False
 
-  # GRPO loss params
+  max_num_gen_batches: 1
+
+  # PPO loss params (no critic model)
   loss_type: math_ppo_actor
   loss_agg_func: "token-mean"
   kl_beta: 0.0 # 0.001
@@ -62,32 +66,62 @@ algorithm:
   calculate_entropy: False
   clip_ratio_c: null # 3.0
 
-  adv_type: math_grpo
-  normalize_advantages: True
+  # Control critic usage (similar to AReaL's disable_head)
+  use_critic: false  # Disable critic model
+  use_value_loss: false  # Disable value loss computation
+  
+  # PPO parameters for no-critic setup
+  gamma: 0.99
+  gae_lambda: 0.95
+  # value_clip and huber_delta not needed without critic
+
+  # Use no-critic GAE advantage computation
+  adv_type: math_gae_no_critic  # Will implement this function
+  normalize_advantages: False
   early_stop_imp_ratio: 5.0
   use_valid_token_scale: False
 
   # params for rollout
   sampling_params:
     use_greedy: False
-    temperature: 1.0
+    temperature: 0.1
     top_k: 1000000
     top_p: 1.0
     repetition_penalty: 1.0
     max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
     min_new_tokens: 1
+    stop: [
+      "<|endoftext|>",
+      "<|fim_prefix|>",
+      "<|fim_middle|>",
+      "<|fim_suffix|>",
+      "<|fim_pad|>",
+      "<|repo_name|>",
+      "<|file_sep|>",
+      "<|im_start|>",
+      "<|im_end|>",
+    ]
+
+inference:
+  model_arch: ${rollout.model_arch}
+  group_name: "InferenceGroup"
+  load_from_actor: True
+  model:
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 1
+    sequence_parallel: True
 
 rollout:
   group_name: "RolloutGroup"
 
   gpu_memory_utilization: 0.55
 
-  model_dir: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/
+  model_dir: /path/to/model/Qwen2.5-Coder-1.5B
   model_arch: qwen2.5
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
-  detokenize: False            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
+  detokenize: True            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
   padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
   eos: null                   # will be tokenizer.eos_token_id if null.
 
@@ -114,22 +148,13 @@ rollout:
   validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
   print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
 
-  max_running_requests: 64 # the maximum number of running requests in the rollout engine.
+  max_running_requests: 64 # the maximum number of running requests in rollout engine.
   cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
 
 data:
-  type: math
   max_prompt_length: 1024
-  filter_prompt_by_length: True
-  rollout_batch_size: 128
-  val_rollout_batch_size: null
-  num_workers: 2
-  prompt_key: prompt
-  shuffle: True
-  validation_shuffle: True
+  rollout_batch_size: 16
   seed: 1234
-  train_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
-  val_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
 
 actor:
   group_name: "ActorGroup"
@@ -153,11 +178,11 @@ actor:
     precision: fp16
     add_bias_linear: False
 
-    tensor_model_parallel_size: 1
+    tensor_model_parallel_size: 2
     pipeline_model_parallel_size: 1
 
     activation: swiglu
-    sequence_parallel: False
+    sequence_parallel: True
     # recompute_method: block
     # recompute_granularity: selective
 
@@ -185,13 +210,13 @@ actor:
 
   optim:
     optimizer: adam
-    bf16: False
-    fp16: True
-    lr: 2e-05
+    bf16: True
+    fp16: False
+    lr: 2e-06
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-05
-    min_lr: 2.0e-6
+    min_lr: 2.0e-7
     weight_decay: 0.05
     use_distributed_optimizer: True
     overlap_grad_reduce: False
@@ -205,13 +230,13 @@ actor:
     lr_warmup_fraction: 0.01
     lr_warmup_init: 0.0
     lr_warmup_iters: 0
-    max_lr: 2.0e-5
+    max_lr: 2.0e-6
     min_lr: 0.0
     lr_decay_style: constant
     lr_decay_iters: 10
 
   tokenizer:
-    tokenizer_model: /model/DeepSeek-R1-Distill-Qwen-1.5B/
+    tokenizer_model: /path/to/model/Qwen2.5-Coder-1.5B
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'
@@ -228,7 +253,7 @@ actor:
     use_profiler: False # if true, will enable torch profiler when training, pay attention it has influence on performance
 
     ckpt_convertor: # config for ckpt convertor
-      model: DeepSeek-R1-Distill-Qwen-1.5B
+      model: Qwen2.5-Coder-1.5B
       model_type: null # will be set by hf model's config if null
       hf_model_path: ${rollout.model_dir} # path to the hf model
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
@@ -254,11 +279,19 @@ actor:
       schedule_repeat: 1 # inference and training will repeat such times
       # schedule_wait: it will be set at runtime
 
-
 reward:
   use_reward_model: false
-  reward_type: 'math'
+  reward_type: fim_verify_call
   reward_scale: 5.0
 
 critic:
   use_critic_model: false
+
+server:
+  online_router:
+    host: 0.0.0.0
+    port: 8081
+
+  tracking_rollout:
+    host: 0.0.0.0
+    port: 8082

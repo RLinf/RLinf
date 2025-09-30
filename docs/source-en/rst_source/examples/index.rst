@@ -132,7 +132,7 @@ The following examples include agent workflow construction, online RL training, 
        <img src="https://github.com/RLinf/misc/raw/main/pic/math_numbers_small.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/cursor_onlinerl.html" target="_blank" style="text-decoration: underline; color: blue;">
+         <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/coding_online_rl.html" target="_blank" style="text-decoration: underline; color: blue;">
           <b>Open-Source Online RL for Code Completion</b>
          </a><br>
          End-to-end online RL with RLinf + Continue, improving model performance by xx%
@@ -196,3 +196,4 @@ Thanks to this decoupled design, workers can be flexibly and dynamically schedul
    maniskill
    libero
    reasoning
+   coding_online_rl

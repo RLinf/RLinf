@@ -24,6 +24,9 @@ from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
 from transformers import AutoConfig
 
+from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
+from rlinf.scheduler.cluster import Cluster
+
 if TYPE_CHECKING:
     from megatron.core.model_parallel_config import ModelParallelConfig
     from megatron.core.transformer.transformer_config import TransformerConfig
@@ -553,6 +556,51 @@ def validate_math_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
+    assert cfg.rollout.model_arch == "qwen2.5", (
+        f"Model {cfg.rollout.model_arch} is not supported"
+    )
+
+    assert cfg.algorithm.recompute_logprobs != cfg.rollout.return_logprobs, (
+        "Exactly one of `algorithm.recompute_logprobs` or `rollout.return_logprobs` must be True to compute `prev_logprobs`."
+    )
+
+    assert cfg.algorithm.recompute_logprobs == True, (
+        f"Online coding task must use recompute_logprobs"
+    )
+
+    assert cfg.actor.training_backend == "megatron", (
+        f"Online coding task must use megatron training backend"
+    )
+
+    cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
+    component_placement = ModelParallelComponentPlacement(cfg, cluster)
+    assert component_placement.placement_mode == PlacementMode.DISAGGREGATED, (
+        f"Online coding task must use disaggregated placement mode"
+    )
+
+    with open_dict(cfg):
+        cfg.algorithm.training_batch_size_per_gpu = cfg.algorithm.get(
+            "training_batch_size_per_gpu", 1
+        )
+        cfg.algorithm.n_minibatches = cfg.algorithm.get("n_minibatches", 1)
+        cfg.algorithm.max_num_gen_batches = cfg.algorithm.get("max_num_gen_batches", 1)
+        cfg.actor.micro_batch_size = cfg.algorithm.training_batch_size_per_gpu
+        cfg.actor.global_batch_size = (
+            cfg.data.rollout_batch_size
+            * cfg.algorithm.group_size
+            // cfg.algorithm.n_minibatches
+        )
+        assert cfg.actor.micro_batch_size >= 1
+        assert cfg.actor.global_batch_size >= 1
+        assert cfg.runner.seq_length > cfg.data.max_prompt_length, (
+            f"runner.seq_length ({cfg.runner.seq_length}) must be greater than data.max_prompt_length ({cfg.data.max_prompt_length})"
+        )
+
+        cfg.rollout = validate_rollout_cfg(cfg.rollout)
+    return cfg
+
+
 def validate_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
 
@@ -560,6 +608,8 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         cfg = validate_embodied_cfg(cfg)
     if cfg.runner.task_type == "math":
         cfg = validate_math_cfg(cfg)
+    if cfg.runner.task_type == "coding_online_rl":
+        cfg = validate_coding_online_rl_cfg(cfg)
 
     if (
         cfg.algorithm.adv_type == "embodied_grpo"

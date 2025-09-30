@@ -73,3 +73,22 @@ def calculate_adv_and_returns(**kwargs) -> Tuple[torch.Tensor, Optional[torch.Te
     adv_type = kwargs["adv_type"]
     fn = get_adv_and_returns(adv_type)
     return fn(**kwargs)
+
+
+REWARD_REGISTRY: Dict[str, Callable] = {}
+
+
+def register_reward_fn(name: str):
+    def decorator(fn):
+        REWARD_REGISTRY[name] = fn
+        return fn
+
+    return decorator
+
+
+def get_reward_fn(name: Optional[str]):
+    if name is None:
+        return None
+    if name not in REWARD_REGISTRY:
+        raise ValueError(f"Reward function {name} not registered")
+    return REWARD_REGISTRY[name]

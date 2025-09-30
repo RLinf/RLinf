@@ -128,7 +128,7 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
        <img src="https://github.com/RLinf/misc/raw/main/pic/math_numbers_small.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/cursor_onlinerl.html" target="_blank" style="text-decoration: underline; color: blue;">
+         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/coding_online_rl.html" target="_blank" style="text-decoration: underline; color: blue;">
           <b>代码补全在线强化学习开源版</b>
          </a><br>
          基于RLinf+continue实现端到端在线强化学习，模型效果提升xx%
@@ -190,3 +190,4 @@ RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训
    maniskill
    libero
    reasoning
+   coding_online_rl

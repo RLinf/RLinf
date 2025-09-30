@@ -24,6 +24,7 @@ from sympy.parsing.latex import parse_latex
 from sympy.parsing.sympy_parser import parse_expr
 
 from toolkits.math_verifier.parser import extract_answer
+from rlinf.algorithms.registry import register_reward_fn
 
 global_executor = ProcessPoolExecutor(max_workers=40)
 
@@ -382,6 +383,7 @@ def verify_math_solution(answer: str, solution: str):
     return process_results(answer, solution)[0]
 
 
+@register_reward_fn("math")
 def math_verify_call(
     responses: List[str],
     references: List[str],

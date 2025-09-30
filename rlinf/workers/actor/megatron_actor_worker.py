@@ -79,7 +79,8 @@ from rlinf.utils.utils import (
     seq_mean_token_sum,
 )
 from rlinf.workers.rollout.utils import RankMapper
-from toolkits.math_verifier.verify import math_verify_call
+from rlinf.algorithms.registry import get_reward_fn
+from toolkits import register_rewards
 
 
 class MegatronActor(MegatronModelManager, Worker):
@@ -145,8 +146,8 @@ class MegatronActor(MegatronModelManager, Worker):
 
         # Reward configurations
         if not self.cfg.reward.use_reward_model:
-            assert self.cfg.reward.reward_type == "math", "only support math"
-            self.reward_fn = math_verify_call
+            register_rewards()
+            self.reward_fn = get_reward_fn(self.cfg.reward.reward_type)
 
         # Rollout configurations
         self.rollout_group_name = self.cfg.rollout.group_name
@@ -873,6 +874,7 @@ class MegatronActor(MegatronModelManager, Worker):
             input_channel: The input channel to read from.
             output_channel: The output channel to send results to.
         """
+        assert self.reward_fn is not None, "reward_fn is not set"
         if self.is_pipeline:
             # In pipeline mode, rewards are computed in the rollout
             with self.worker_timer():
@@ -915,12 +917,16 @@ class MegatronActor(MegatronModelManager, Worker):
 
         if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
             rewards = self.reward_fn(texts, answers)
-            reward_scores = [
-                self.cfg.reward.reward_scale
-                if reward == 1
-                else -self.cfg.reward.reward_scale
-                for reward in rewards
-            ]
+            if self.cfg.reward.reward_type == "math":
+                reward_scores = [
+                    self.cfg.reward.reward_scale
+                    if reward == 1
+                    else -self.cfg.reward.reward_scale
+                    for reward in rewards
+                ]
+            else:
+                reward_scores = rewards
+
             all_reward_scores.extend(reward_scores)
 
         if len(all_reward_scores) > 0:

@@ -116,27 +116,15 @@ def convert_layer(
         should_load_prefix.update(
             (k for k in hfst_loader.keys() if k.startswith("model.embed_tokens."))
         )
-        if not convert_config.tie_word_embeddings:
-            model_strategy_map.update(
-                {
-                    "embedding.word_embeddings.weight": (
-                        "copy",
-                        linear_trans,
-                        "model.embed_tokens.weight",
-                    ),
-                }
-            )
-        else:
-            model_strategy_map.update(
-                {
-                    "embedding.word_embeddings.weight": (
-                        "copy_equal",
-                        linear_trans,
-                        "model.embed_tokens.weight",
-                        "lm_head.weight",
-                    ),
-                }
-            )
+        model_strategy_map.update(
+            {
+                "embedding.word_embeddings.weight": (
+                    "copy",
+                    linear_trans,
+                    "model.embed_tokens.weight",
+                ),
+            }
+        )
     elif layer_idx == num_layers + 1:
         should_load_prefix.update(
             (
