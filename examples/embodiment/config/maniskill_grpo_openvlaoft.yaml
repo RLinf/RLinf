@@ -1,6 +1,6 @@
 defaults:
-  - env/train: libero_10_grpo
-  - env/eval: libero_10
+  - env/train: PutOnPlateInScene25Main
+  - env/eval: maniskill_ood_template
   - override hydra/job_logging: stdout
 
 hydra:
@@ -13,9 +13,9 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor: 0-3
-    env: 4-5
-    rollout: 6-7
+    actor: 0-7
+    env: 0-7
+    rollout: 0-7
 
 runner:
   task_type: embodied
@@ -30,7 +30,7 @@ runner:
 
   only_eval: False
   val_check_interval: -1
-  save_interval: 25
+  save_interval: 40
   seq_length: 4096
   max_prompt_length: 30
 
@@ -39,15 +39,15 @@ algorithm:
   ignore_terminations: False
   use_fixed_reset_state_ids: True
   require_values: False
-  shuffle_samples: True
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 8
   n_chunk_steps: 10
   n_eval_chunk_steps: 10
-  num_group_envs: 8
+  num_group_envs: 32
   rollout_epoch: 1
-  reward_type: step_level  # step_level or chunk_level
+
+  reward_type: step_level
   logprob_type: token_level
   entropy_type: token_level
 
@@ -65,11 +65,12 @@ algorithm:
   gamma: 0.99
   gae_lambda: 0.95
 
+  # params for rollout
   sampling_params:
     use_greedy: False
     temperature_train: 1.0
     temperature_eval: 0.6
-    top_k: 50
+    top_k: 0
     top_p: 1.0
     repetition_penalty: 1.0
 
@@ -86,7 +87,7 @@ env:
     name: "env_buffer_list"
     queue_name: "obs_buffer"
     queue_size: 0
-  enable_offload: True
+  enable_offload: False
 
 rollout:
   group_name: "RolloutGroup"
@@ -97,8 +98,8 @@ rollout:
   mode: "colocate"
   generation_backend: "huggingface"
   model_dir: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
-  enable_offload: False
-  pipeline_stage_num: 2
+  enable_offload: True
+  pipeline_stage_num: 1
 
 actor:
   group_name: "ActorGroup"
@@ -109,8 +110,8 @@ actor:
   training_backend: "fsdp"
   checkpoint_load_path: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
   checkpoint_save_path: "../results"
-  micro_batch_size: 8
-  global_batch_size: 160
+  micro_batch_size: 40
+  global_batch_size: 640
   seed: 1234
   enable_offload: True
 
@@ -148,12 +149,12 @@ actor:
     padding_side: "right"
 
   optim:
-    lr: 5.0e-6
+    lr: 1.0e-4
     value_lr: 3.0e-3
     adam_beta1: 0.9
-    adam_beta2: 0.95
+    adam_beta2: 0.999
     adam_eps: 1.0e-05
-    clip_grad: 1.0
+    clip_grad: 10.0
 
 reward:
   use_reward_model: False

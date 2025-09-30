@@ -750,7 +750,6 @@ algorithm
 
     n_chunk_steps: 10
     n_eval_chunk_steps: 10
-    rollout_micro_batch_size: 256
     num_group_envs: 32
     rollout_epoch: 1
 
@@ -766,7 +765,7 @@ algorithm
 
 ``algorithm.auto_reset``: Automatically reset environments when episodes terminate.
 
-``algorithm.ignore_terminations``: Ignore episode terminations during training.
+``algorithm.ignore_terminations``: Ignore episode terminations during training (if enabled, episode only ends when it reaches the ``max_episode_steps``).
 
 ``algorithm.use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO.
 
@@ -774,13 +773,9 @@ algorithm
 
 ``algorithm.normalize_advantages``: Normalize advantages across the batch.
 
-``algorithm.kl_penalty``: KL divergence estimation method (kl or kl_penalty).
+``algorithm.n_chunk_steps``: Number of chunks (i.e., times the model is called to predict action chunks) within one rollout epoch.
 
-``algorithm.n_chunk_steps``: Number of action steps per chunk.
-
-``algorithm.n_eval_chunk_steps``: Number of action steps per evaluation chunk.
-
-``algorithm.rollout_micro_batch_size``: Micro-batch size for rollout generation.
+``algorithm.n_eval_chunk_steps``: Number of chunks in evaluation.
 
 ``algorithm.num_group_envs``: Number of environment groups.
 
@@ -849,10 +844,6 @@ rollout
 ``rollout.mode``: Rollout mode (collocate for shared GPU).
 
 ``rollout.backend``: Model backend (huggingface, vllm).
-
-``rollout.enforce_eager``: Disable CUDA graph capture for faster initialization.
-
-``rollout.enable_offload``: Enable model offloading to reduce memory usage.
 
 ``rollout.pipeline_stage_num``: Number of pipeline stages for model parallelism.
 
