@@ -49,7 +49,6 @@ class RewardWorker(FSDPModelManager, Worker):
         self, channel: Channel
     ) -> Tuple[Dict[str, torch.Tensor], RolloutResult]:
         result: RolloutResult = channel.get()
-
         batch = result.to_actor_batch(
             self.cfg.data.max_prompt_length,
             self.cfg.actor.model.encoder_seq_length,
@@ -69,8 +68,8 @@ class RewardWorker(FSDPModelManager, Worker):
             recv_batch_size = 0
             while recv_batch_size < self.total_batch_size_per_dp:
                 batch, rollout_result = self.get_batch(input_channel)
-                recv_batch_size += rollout_result.num_sequence
 
+                recv_batch_size += rollout_result.num_sequence
                 # Compute rule-based reward
                 if rollout_result.rewards is None:
                     rollout_result.rewards = self._compute_batch_rewards(

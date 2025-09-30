@@ -115,10 +115,21 @@ class MegatronActor(MegatronModelManager, Worker):
         self.calculate_entropy_loss = (
             self.cfg.algorithm.entropy_bonus > 0 and self.calculate_entropy
         )
-        self.ratio_eps = self.cfg.algorithm.ratio_clip_eps
+        clip_ratio = self.cfg.algorithm.ratio_clip_eps
+        self.clip_ratio_low = (
+            self.cfg.algorithm.get("clip_ratio_low")
+            if self.cfg.algorithm.get("clip_ratio_low") is not None
+            else clip_ratio
+        )
+        self.clip_ratio_high = (
+            self.cfg.algorithm.get("clip_ratio_high")
+            if self.cfg.algorithm.get("clip_ratio_high") is not None
+            else clip_ratio
+        )
         self.logprob_forward_micro_batch_size = (
             self.cfg.algorithm.logprob_forward_micro_batch_size
         )
+
         self.kl_beta = self.cfg.algorithm.kl_beta
         self.kl_penalty_type = self.cfg.algorithm.kl_penalty_type
         self.clip_ratio_c = self.cfg.algorithm.clip_ratio_c
@@ -382,7 +393,8 @@ class MegatronActor(MegatronModelManager, Worker):
                     logprobs=curr_logprobs,
                     old_logprobs=prev_logprobs,
                     advantages=advantages,
-                    eps_clip=self.ratio_eps,
+                    clip_ratio_low=self.clip_ratio_low,
+                    clip_ratio_high=self.clip_ratio_high,
                     loss_mask=mask,
                 )
 
@@ -843,7 +855,6 @@ class MegatronActor(MegatronModelManager, Worker):
         while recv_batch_size < self.total_batch_size_per_dp:
             batch, rollout_result = self.get_batch(input_channel)
             recv_batch_size += rollout_result.num_sequence
-
             # Must be called after batch is retrieved, suggesting that rollout has stopped
             # Otherwise, loading model might cause OOM in the collocated mode
             self._load_weight_and_optimizer(input_channel)
@@ -859,7 +870,6 @@ class MegatronActor(MegatronModelManager, Worker):
                 with cpu_weight_swap(self.model[0], self.ref_policy_state_dict):
                     ref_logprobs = self.inference_step(batch)
                     rollout_result.ref_logprobs = ref_logprobs.cpu()
-
             self.put_result(rollout_result, output_channel)
 
         assert recv_batch_size == self.total_batch_size_per_dp, (
@@ -963,7 +973,6 @@ class MegatronActor(MegatronModelManager, Worker):
         while recv_batch_size < self.total_batch_size_per_dp:
             batch, rollout_result = self.get_batch(input_channel)
             recv_batch_size += rollout_result.num_sequence
-
             with self.worker_timer():
                 if rollout_result.advantages is None:
                     mask = batch["attention_mask"][:, -self.response_len :]
@@ -1033,7 +1042,10 @@ class MegatronActor(MegatronModelManager, Worker):
     def _compute_rollout_metrics(self, batch):
         rollout_metrics, total_prompt_lengths, total_decode_lengths = (
             compute_rollout_metrics(
-                batch, self.cfg.data.max_prompt_length, self.response_len
+                batch,
+                self.cfg.data.max_prompt_length,
+                self.response_len,
+                self._world_size,
             )
         )
 

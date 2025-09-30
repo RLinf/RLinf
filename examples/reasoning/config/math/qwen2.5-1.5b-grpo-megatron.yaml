@@ -7,7 +7,7 @@ hydra:
   output_subdir: null
 
 cluster:
-  num_nodes: 16
+  num_nodes: 1
   component_placement:
     actor,rollout,reward: all
 
@@ -25,14 +25,14 @@ runner:
   val_check_interval: 1
   save_interval: 50
 
-  seq_length: 28672
+  seq_length: 10240
 
   enable_dynamic_batch_size: False
   max_tokens_per_mbs: 28672
 
   resume_dir: null
-  experiment_name: grpo-1.5b
-  output_dir: ../results
+  experiment_name: megatron-vllm-1.5b-math-test
+  output_dir: /mnt/public/daibo/results
 
 algorithm:
   group_size: 16
@@ -61,6 +61,8 @@ algorithm:
   entropy_bonus: 0.0
   calculate_entropy: False
   clip_ratio_c: null # 3.0
+  clip_ratio_low: null # if null or not set, will use ratio_clip_eps
+  clip_ratio_high: null # if null or not set, will use ratio_clip_eps
 
   adv_type: math_grpo
   normalize_advantages: True
@@ -82,7 +84,7 @@ rollout:
 
   gpu_memory_utilization: 0.55
 
-  model_dir: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/
+  model_dir: /mnt/public/hf_models/DeepSeek-R1-Distill-Qwen-1.5B/
   model_arch: qwen2.5
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
@@ -91,7 +93,7 @@ rollout:
   padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
   eos: null                   # will be tokenizer.eos_token_id if null.
     
-  rollout_backend: sglang     # here choose which backend to rollout,support [sglang, vllm] 
+  rollout_backend: vllm     # here choose which backend to rollout,support [sglang, vllm] 
 
   sglang:
     attention_backend: triton # [flashinfer, triton] for more, see sglang's doc
@@ -124,21 +126,15 @@ data:
   dataset_name: boba
   max_prompt_length: 1024
   filter_prompt_by_length: True
-  rollout_batch_size: 512
+  rollout_batch_size: 8
   val_rollout_batch_size: null
   num_workers: 2
+  prompt_key: prompt
   shuffle: True
   validation_shuffle: True
   seed: 1234
-  train_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
-  val_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
-  prompt_key: prompt
-  image_keys: [image]
-  answer_key: answer
-  choice_key: choices
-  solution_key: null
-  use_chat_template: True
-  lazy_loading: True
+  train_data_paths: ["/mnt/public/daibo/dataset/boba_106k_0319_prompt_1024.jsonl"]
+  val_data_paths: ["/mnt/public/daibo/dataset/boba_106k_0319_prompt_1024.jsonl"]
 
 actor:
   group_name: "ActorGroup"
@@ -220,7 +216,7 @@ actor:
     lr_decay_iters: 10
 
   tokenizer:
-    tokenizer_model: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/
+    tokenizer_model: /mnt/public/hf_models/DeepSeek-R1-Distill-Qwen-1.5B/
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'

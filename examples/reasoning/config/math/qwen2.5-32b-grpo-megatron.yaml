@@ -61,6 +61,8 @@ algorithm:
   entropy_bonus: 0.0
   calculate_entropy: False
   clip_ratio_c: null # 3.0
+  clip_ratio_low: null # if null or not set, will use ratio_clip_eps
+  clip_ratio_high: null # if null or not set, will use ratio_clip_eps
 
   adv_type: math_grpo
   normalize_advantages: True
