@@ -91,7 +91,7 @@ env:
     name: "env_buffer_list"
     queue_name: "obs_buffer"
     queue_size: 0
-  enable_offload: True
+  enable_offload: False
 
 rollout:
   group_name: "RolloutGroup"
