@@ -127,11 +127,12 @@ actor:
     vocab_size: 32000
     hidden_size: 4096
     policy_setup: "widowx_bridge"
+    add_value_head: True
     vh_mode: "a0"
     image_size: [224, 224]
     is_lora: True
     lora_rank: 32
-    num_images_in_input: 1
+    use_wrist_image: False
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
     trust_remote_code: True

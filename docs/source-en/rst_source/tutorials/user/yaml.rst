@@ -894,7 +894,7 @@ actor
       lora_rank: 32
       lora_path: /storage/models/oft-sft/lora_004000
       ckpt_path: null
-      num_images_in_input: 1
+      use_wrist_image: False
       attn_implementation: "flash_attention_2"
       low_cpu_mem_usage: True
       trust_remote_code: True
@@ -972,7 +972,7 @@ actor
 
 ``actor.model.ckpt_path``: Path to model checkpoint.
 
-``actor.model.num_images_in_input``: Number of images in model input.
+``actor.model.use_wrist_image``: Whether to use wrist image in model input.
 
 ``actor.model.attn_implementation``: Attention implementation (flash_attention_2).
 
@@ -1075,9 +1075,9 @@ The path is
 
 .. code:: yaml
 
-  num_images_in_input: 1
+  use_wrist_image: False
 
-``num_images_in_input``: Number of images in model input (1 for single camera view).
+``use_wrist_image``: If set to True, wrist images will be added in model inputs.
 
 **Environment Scaling**
 
