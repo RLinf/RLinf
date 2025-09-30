@@ -119,10 +119,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 ).async_wait()
             )
 
-        # shape [num_chunk, bsz, chunk_size], cat dim 0
+        # shape [num_chunk, bsz, chunk_size], cat dim 1
         for key in recv_list[0].keys():
             self.rollout_batch[key] = torch.cat(
-                [recv_list[i][key] for i in range(split_num)], dim=0
+                [recv_list[i][key] for i in range(split_num)], dim=1
             )
 
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
@@ -325,8 +325,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
                 advantages = data["advantages"]
                 prev_logprobs = data["prev_logprobs"]
-                returns = data["returns"] if "returns" in data else None
-                prev_values = data["prev_values"] if "prev_values" in data else None
+                returns = data.get("returns", None)
+                prev_values = data.get("prev_values", None)
+                loss_mask = data.get("loss_mask", None)
+                loss_mask_sum = data.get("loss_mask_sum", None)
 
                 if self.cfg.actor.model.model_name in ["openpi", "openvla"]:
                     data["temperature"] = (
@@ -366,8 +368,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     "value_clip": self.cfg.algorithm.get("value_clip", None),
                     "huber_delta": self.cfg.algorithm.get("huber_delta", None),
                     "entropy_bonus": self.cfg.algorithm.entropy_bonus,
-                    "loss_mask": data.get("loss_mask", None),
-                    "loss_mask_sum": data.get("loss_mask_sum", None),
+                    "loss_mask": loss_mask,
+                    "loss_mask_sum": loss_mask_sum,
                     "max_episode_steps": self.cfg.env.train.max_episode_steps,
                 }
 

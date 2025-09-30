@@ -967,7 +967,7 @@ class EmbodiedRolloutResult:
 
             for key, value in rollout_result_list[i].items():
                 if isinstance(value, torch.Tensor):
-                    rollout_result_list[i][key] = torch.chunk(value, split_size, dim=0)[
+                    rollout_result_list[i][key] = torch.chunk(value, split_size, dim=1)[
                         i
                     ].contiguous()
                 else:

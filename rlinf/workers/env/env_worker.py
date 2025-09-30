@@ -205,6 +205,10 @@ class EnvWorker(Worker):
                     if "episode" in infos:
                         for key in infos["episode"]:
                             env_info[key] = infos["episode"][key].cpu()
+            else:
+                if "episode" in infos:
+                    for key in infos["episode"]:
+                        env_info[key] = infos["episode"][key].cpu()
         elif chunk_dones.any():
             if "final_info" in infos:
                 final_info = infos["final_info"]
@@ -328,7 +332,7 @@ class EnvWorker(Worker):
             simulator.start_simulator()
 
         env_metrics = defaultdict(list)
-        for _ in range(self.cfg.algorithm.rollout_epoch):
+        for epoch in range(self.cfg.algorithm.rollout_epoch):
             env_output_list = []
             if not self.cfg.env.train.auto_reset:
                 for i in range(self.stage_num):
@@ -376,7 +380,16 @@ class EnvWorker(Worker):
                     await self.send_env_batch(env_output.to_dict())
                     env_output_list[stage_id] = env_output
                     for key, value in env_info.items():
-                        env_metrics[key].append(value)
+                        if (
+                            not self.cfg.env.train.auto_reset
+                            and not self.cfg.env.train.ignore_terminations
+                        ):
+                            if key in env_metrics and len(env_metrics[key]) > epoch:
+                                env_metrics[key][epoch] = value
+                            else:
+                                env_metrics[key].append(value)
+                        else:
+                            env_metrics[key].append(value)
 
             self.last_obs_list = [env_output.obs for env_output in env_output_list]
             self.last_dones_list = [env_output.dones for env_output in env_output_list]
