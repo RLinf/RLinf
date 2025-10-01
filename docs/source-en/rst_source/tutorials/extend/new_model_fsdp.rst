@@ -66,14 +66,13 @@ Implement `predict_action_batch` to wrap generation, decoding, and optional valu
   from rlinf.models.embodiment.modules.value_head import ValueHead
 
   class YourModelForRLActionPrediction(YourBaseModel):
-      def __init__(self, config, hidden_size, unnorm_key, vh_mode, action_dim):
+      def __init__(self, config, hidden_size, unnorm_key, action_dim):
           super().__init__(config)
           self._init_logits_processor()
           action_norm_stats = self.get_action_stats(unnorm_key)
           self.min_action = np.array(action_norm_stats["q01"])
           self.max_action = np.array(action_norm_stats["q99"])
           self.value_head = ValueHead(hidden_size)
-          self.vh_mode = vh_mode
           self.action_dim = action_dim
 
       def _init_logits_processor(self):
@@ -108,7 +107,7 @@ Implement `predict_action_batch` to wrap generation, decoding, and optional valu
               values = torch.zeros_like(logits[..., :1])
           return actions, sequences, logits, values
 
-3. Model Loading
+1. Model Loading
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Modify `get_model` in `rlinf/models/__init__.py` to call `from_pretrained` for your class when `cfg.model_name` matches. This ensures checkpoints load with the correct dtype, dimensions, and LoRA hooks.
@@ -127,7 +126,6 @@ Modify `get_model` in `rlinf/models/__init__.py` to call `from_pretrained` for y
               torch_dtype=torch_dtype,
               hidden_size=cfg.hidden_size,
               unnorm_key=cfg.unnorm_key,
-              vh_mode=cfg.vh_mode,
               action_dim=cfg.action_token_len,
               attn_implementation=cfg.attn_implementation,
               low_cpu_mem_usage=cfg.low_cpu_mem_usage,
@@ -140,7 +138,7 @@ Modify `get_model` in `rlinf/models/__init__.py` to call `from_pretrained` for y
 
       return model
 
-4. Environment Wrapper Functions
+1. Environment Wrapper Functions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 
@@ -211,7 +209,6 @@ This template exposes your model’s hyperparameters for easy experiment setup.
     precision: "bf16"
     vocab_size: 32000
     hidden_size: 4096
-    vh_mode: "a0"
     image_size: [224, 224]
     is_lora: False
     use_wrist_image: False

@@ -103,7 +103,7 @@ class EmbodiedRunner:
             # set global step
             self.actor.set_global_step(self.global_step)
             self.rollout.set_global_step(self.global_step)
-            eval_metrics = None
+            eval_metrics = {}
             if (
                 _step % self.cfg.runner.val_check_interval == 0
                 and self.cfg.runner.val_check_interval > 0
@@ -111,8 +111,8 @@ class EmbodiedRunner:
                 with self.timer("eval"):
                     self.update_rollout_weights()
                     eval_metrics = self.evaluate()
-                    metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
-                    self.metric_logger.log(data=metrics, step=_step)
+                    eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
+                    self.metric_logger.log(data=eval_metrics, step=_step)
 
             with self.timer("step"):
                 with self.timer("rollout"):
@@ -145,15 +145,6 @@ class EmbodiedRunner:
 
             time_metrics = self.timer.consume_durations()
 
-            logging_metrics = {f"{k}_time": v for k, v in time_metrics.items()}
-            logging_metrics.update({f"{k}_train": v for k, v in env_metrics.items()})
-            if eval_metrics is not None:
-                logging_metrics.update(
-                    {f"{k}_eval": v for k, v in eval_metrics.items()}
-                )
-            logging_metrics.update(actor_rollout_metrics[0])
-            logging_metrics.update(actor_training_metrics[0])
-
             rollout_metrics = {
                 f"rollout/{k}": v for k, v in actor_rollout_metrics[0].items()
             }
@@ -166,6 +157,12 @@ class EmbodiedRunner:
             self.metric_logger.log(rollout_metrics, _step)
             self.metric_logger.log(time_metrics, _step)
             self.metric_logger.log(training_metrics, _step)
+
+            logging_metrics = time_metrics
+            logging_metrics.update(eval_metrics)
+            logging_metrics.update(env_metrics)
+            logging_metrics.update(rollout_metrics)
+            logging_metrics.update(training_metrics)
 
             global_pbar.set_postfix(logging_metrics)
             global_pbar.update(1)

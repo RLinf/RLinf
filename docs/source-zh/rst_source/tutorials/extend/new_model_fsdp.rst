@@ -65,14 +65,13 @@
   from rlinf.models.embodiment.modules.value_head import ValueHead
 
   class YourModelForRLActionPrediction(YourBaseModel):
-      def __init__(self, config, hidden_size, unnorm_key, vh_mode, action_dim):
+      def __init__(self, config, hidden_size, unnorm_key, action_dim):
           super().__init__(config)
           self._init_logits_processor()
           action_norm_stats = self.get_action_stats(unnorm_key)
           self.min_action = np.array(action_norm_stats["q01"])
           self.max_action = np.array(action_norm_stats["q99"])
           self.value_head = ValueHead(hidden_size)
-          self.vh_mode = vh_mode
           self.action_dim = action_dim
 
       def _init_logits_processor(self):
@@ -107,7 +106,7 @@
               values = torch.zeros_like(logits[..., :1])
           return actions, sequences, logits, values
 
-3. 模型加载
+1. 模型加载
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 修改 `rlinf/models/__init__.py` 中的 `get_model`，当 `cfg.model_name` 匹配时调用 `from_pretrained` 加载你的类。  
@@ -127,7 +126,6 @@
               torch_dtype=torch_dtype,
               hidden_size=cfg.hidden_size,
               unnorm_key=cfg.unnorm_key,
-              vh_mode=cfg.vh_mode,
               action_dim=cfg.action_token_len,
               attn_implementation=cfg.attn_implementation,
               low_cpu_mem_usage=cfg.low_cpu_mem_usage,
@@ -140,7 +138,7 @@
 
       return model
 
-4. 环境封装函数
+1. 环境封装函数
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 在 `rlinf/envs/your_env_wrapper.py` 中添加 `wrap_observation_your_model` 和 `wrap_chunk_actions_your_model`。  
@@ -209,7 +207,6 @@
     precision: "bf16"
     vocab_size: 32000
     hidden_size: 4096
-    vh_mode: "a0"
     image_size: [224, 224]
     is_lora: False
     use_wrist_image: False

@@ -259,7 +259,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self.rollout_batch["prev_logprobs"].shape[0]
             * self.rollout_batch["prev_logprobs"].shape[1]
         )
-        shuffle_id = torch.randperm(rollout_size)
+        g = torch.Generator()
+        g.manual_seed(self.cfg.actor.seed + self._rank)
+        shuffle_id = torch.randperm(rollout_size, generator=g)
 
         for key, value in self.rollout_batch.items():
             self.log_on_first_rank(

@@ -56,12 +56,18 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
             f"Action un-norm key {self.unnorm_key} not found in VLA `norm_stats`!"
         )
 
-        if self.config.vh_mode is not None and add_value_head:
+        if add_value_head:
             self.hidden_size = self.config.hidden_size
             output_dim = (
                 1 if self.config.value_type == "chunk_level" else self.num_action_chunks
             )
-            self.value_head = ValueHead(self.hidden_size, output_dim=output_dim)
+            self.value_head = ValueHead(
+                input_dim=self.hidden_size,
+                hidden_sizes=(512, 128),
+                output_dim=output_dim,
+                activation="gelu",
+                bias_last=False,
+            )
 
     def _build_embedding(self, input_ids, attention_mask, pixel_values):
         assert torch.all(input_ids[:, -1] == STOP_INDEX)

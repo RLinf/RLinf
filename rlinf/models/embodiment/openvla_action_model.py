@@ -476,7 +476,6 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         config,
         hidden_size,
         unnorm_key,
-        vh_mode,
         action_dim,
         num_action_chunks,
         add_value_head,
@@ -489,9 +488,14 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         self.max_action = np.array(action_norm_stats["q99"])
 
         self.hidden_size = hidden_size
-        if vh_mode is not None and add_value_head:
-            self.value_head = ValueHead(self.hidden_size)
-        self.vh_mode = vh_mode
+        if add_value_head:
+            self.value_head = ValueHead(
+                input_dim=hidden_size,
+                hidden_sizes=(512, 128),
+                output_dim=1,
+                activation="gelu",
+                bias_last=False,
+            )
 
         self.action_dim = action_dim
         self.num_action_chunks = num_action_chunks

@@ -122,7 +122,6 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
             hidden_size=cfg.hidden_size,
             unnorm_key=cfg.unnorm_key,
             config=actor_model_config,
-            vh_mode=cfg.vh_mode,
             add_value_head=cfg.add_value_head,
             action_dim=cfg.action_dim,
             num_action_chunks=cfg.num_action_chunks,

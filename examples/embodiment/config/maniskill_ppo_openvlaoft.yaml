@@ -132,7 +132,6 @@ actor:
     hidden_size: 4096
     policy_setup: "widowx_bridge"
     add_value_head: True
-    vh_mode: "a0"
     image_size: [224, 224]
     is_lora: True
     lora_rank: 32

@@ -28,6 +28,8 @@ from openpi.models import model as _model
 from openpi.models.pi0_config import Pi0Config
 from openpi.models_pytorch.pi0_pytorch import PI0Pytorch, make_att_2d_masks
 
+from rlinf.models.embodiment.modules.value_head import ValueHead
+
 logger = logging.getLogger(__name__)
 
 
@@ -84,7 +86,13 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         proj_width = 1024
         self.global_step = 0
         if self.config.add_value_head:
-            self.value_proj = ValueProj(proj_width)
+            self.value_head = ValueHead(
+                input_dim=proj_width,
+                hidden_sizes=(512, 256, 128),
+                output_dim=1,
+                activation="relu",
+                bias_last=True,
+            )
 
         if self.config.noise_method == "reinflow":
             self.reinflow_explore_noise_net = ExploreNoiseNet(
@@ -486,7 +494,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             # detach critic input
             if self.config.detach_critic_input:
                 suffix_out_value = suffix_out_value.detach()
-            value_t = self.value_proj(suffix_out_value)[:, 0]
+            value_t = self.value_head(suffix_out_value)[:, 0]
         else:
             value_t = torch.zeros((bsize), device=device)
         # ode sde mix sampling
@@ -727,23 +735,6 @@ class ExploreNoiseNet(nn.Module):
         )
         noise_std = torch.exp(0.5 * noise_logvar)
         return noise_std
-
-
-class ValueProj(nn.Module):
-    def __init__(self, width):
-        super().__init__()
-        self.value_proj = nn.Sequential(
-            nn.Linear(width, 512),
-            nn.ReLU(),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, 1),
-        )
-
-    def forward(self, x):
-        return self.value_proj(x)
 
 
 activation_dict = nn.ModuleDict(

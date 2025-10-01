@@ -123,13 +123,13 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False):
         )
         policies.append(prismatic_fsdp_wrapping_policy)
 
-        if hasattr(module, "value_head"):
-            from rlinf.models.embodiment.modules.value_head import ValueHead
+    if hasattr(module, "value_head"):
+        from rlinf.models.embodiment.modules.value_head import ValueHead
 
-            value_head_policy = functools.partial(
-                _module_wrap_policy, module_classes={ValueHead}
-            )
-            policies.append(value_head_policy)
+        value_head_policy = functools.partial(
+            _module_wrap_policy, module_classes={ValueHead}
+        )
+        policies.append(value_head_policy)
 
     # Add transformer layer policies
     if fsdp_transformer_layer_cls_to_wrap is not None:

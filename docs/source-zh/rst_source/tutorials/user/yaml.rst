@@ -822,7 +822,6 @@ actor
       vocab_size: 32000
       hidden_size: 4096
       policy_setup: "widowx_bridge"
-      vh_mode: "a0"
       image_size: [224, 224]
       is_lora: True
       lora_rank: 32
@@ -888,8 +887,6 @@ actor
 ``actor.model.vocab_size / hidden_size``：词表大小与隐藏维度。  
 
 ``actor.model.policy_setup``：策略配置（widowx_bridge）。  
-
-``actor.model.vh_mode``：价值头模式（a0）。
 
 ``actor.model.image_size``：输入图像尺寸 [H, W]。  
 

@@ -140,7 +140,7 @@ class FSDPModelManager:
                 [
                     {
                         "params": params_actor,
-                        "lr": self._cfg.optim.value_lr,
+                        "lr": self._cfg.optim.lr,
                         "betas": betas,
                     },
                 ]

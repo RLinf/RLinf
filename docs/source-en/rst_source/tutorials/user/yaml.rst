@@ -879,7 +879,6 @@ actor
       vocab_size: 32000
       hidden_size: 4096
       policy_setup: "widowx_bridge"
-      vh_mode: "a0"
       image_size: [224, 224]
       is_lora: True
       lora_rank: 32
@@ -950,8 +949,6 @@ actor
 ``actor.model.hidden_size``: Hidden dimension size.
 
 ``actor.model.policy_setup``: Policy configuration (widowx_bridge).
-
-``actor.model.vh_mode``: Value head mode (a0).
 
 ``actor.model.image_size``: Input image dimensions [height, width].
 
