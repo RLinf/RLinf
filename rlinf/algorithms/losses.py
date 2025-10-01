@@ -56,33 +56,26 @@ def compute_embodied_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict
     huber_delta = kwargs["huber_delta"]
     entropy_bonus = kwargs["entropy_bonus"]
     loss_mask = kwargs.get("loss_mask", None)
-    loss_mask_sum = loss_mask.sum()
+    loss_mask_sum = kwargs.get("loss_mask_sum", None)
 
     logratio = logprobs - old_logprobs
     ratio = torch.exp(logratio)
-    if kwargs.get("use_norm_adv", False):
-        if loss_mask is not None:
-            adv_mean = advantages[loss_mask].mean()
-            adv_std = advantages[loss_mask].std()
-        else:
-            adv_mean = advantages.mean()
-            adv_std = advantages.std()
-        if adv_std < 1e-8 or torch.isinf(adv_std).any() or torch.isnan(adv_std).any():
-            advantages = torch.zeros_like(advantages)
-        else:
-            advantages = (advantages - adv_mean) / (adv_std + 1e-8)
 
     surr1 = -ratio * advantages
     surr2 = -torch.clamp(ratio, 1 - clip_ratio_low, 1 + clip_ratio_high) * advantages
-
-    if loss_mask_sum != 0:
-        policy_loss = torch.mean(torch.max(surr1, surr2)[loss_mask])
-        pg_clipfrac = torch.mean(torch.gt(surr2, surr1).float()[loss_mask])
-        approx_kl = torch.mean(((ratio - 1) - logratio)[loss_mask])
+    if loss_mask is None:
+        policy_loss = torch.mean(torch.max(surr1, surr2))
+        pg_clipfrac = torch.mean(torch.gt(surr2, surr1).float())
+        approx_kl = torch.mean((ratio - 1 - logratio))
     else:
-        policy_loss = torch.mean(torch.max(surr1, surr2) * loss_mask)
-        pg_clipfrac = torch.mean(torch.gt(surr2, surr1).float() * loss_mask)
-        approx_kl = torch.mean(((ratio - 1) - logratio) * loss_mask)
+        if loss_mask.any():
+            policy_loss = torch.mean(torch.max(surr1, surr2)[loss_mask])
+            pg_clipfrac = torch.mean(torch.gt(surr2, surr1).float()[loss_mask])
+            approx_kl = torch.mean(((ratio - 1) - logratio)[loss_mask])
+        else:
+            policy_loss = torch.mean(torch.max(surr1, surr2) * loss_mask)
+            pg_clipfrac = torch.mean(torch.gt(surr2, surr1).float() * loss_mask)
+            approx_kl = torch.mean(((ratio - 1) - logratio) * loss_mask)
 
     # policy_loss = -pg_loss.mean()
 
@@ -106,11 +99,13 @@ def compute_embodied_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict
     value_clip_ratio = value_clip_indicator.float().mean()
 
     # value_loss = value_loss.mean()
-
-    if loss_mask_sum != 0:
-        value_loss = torch.mean(value_loss[loss_mask])
+    if loss_mask is None:
+        value_loss = torch.mean(value_loss)
     else:
-        value_loss = torch.mean(value_loss * loss_mask)
+        if loss_mask.any():
+            value_loss = torch.mean(value_loss[loss_mask])
+        else:
+            value_loss = torch.mean(value_loss)
 
     # Entropy loss
     entropy_loss = entropy.mean() if entropy is not None else torch.tensor(0.0)
@@ -174,32 +169,29 @@ def compute_embodied_grpo_actor_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
     ratio = torch.exp(logratio)
 
     # Compute clipped and unclipped policy gradient losses
-    policy_loss = -advantages * ratio
-    policy_loss2 = -advantages * torch.clamp(
-        ratio, 1.0 - clip_ratio_low, 1.0 + clip_ratio_high
-    )
-
-    if loss_mask is not None:
-        # Take the maximum of clipped and unclipped losses
-        policy_loss = (
-            torch.max(policy_loss, policy_loss2) / loss_mask_ratio
-        ) * loss_mask
-        policy_loss = policy_loss.mean()
-        clip_fraction = torch.gt(policy_loss2, policy_loss).float() * loss_mask
-        clip_fraction = clip_fraction.mean()
-        ppo_kl = (-logratio * loss_mask).mean()
+    surr1 = -ratio * advantages
+    surr2 = -torch.clamp(ratio, 1 - clip_ratio_low, 1 + clip_ratio_high) * advantages
+    
+    if loss_mask is None:
+        policy_loss = torch.mean(torch.max(surr1, surr2))
+        pg_clipfrac = torch.mean(torch.gt(surr2, surr1).float())
+        approx_kl = torch.mean((ratio - 1 - logratio))
     else:
-        # Take the maximum of clipped and unclipped losses
-        policy_loss = torch.max(policy_loss, policy_loss2).mean()  # float
-        clip_fraction = torch.gt(policy_loss2, policy_loss).float().mean()  # float
-        ppo_kl = (-logratio).mean()
+        if loss_mask.any():
+            policy_loss = torch.mean(torch.max(surr1, surr2)[loss_mask])
+            pg_clipfrac = torch.mean(torch.gt(surr2, surr1).float()[loss_mask])
+            approx_kl = torch.mean(((ratio - 1) - logratio)[loss_mask])
+        else:
+            policy_loss = torch.mean(torch.max(surr1, surr2) * loss_mask)
+            pg_clipfrac = torch.mean(torch.gt(surr2, surr1).float() * loss_mask)
+            approx_kl = torch.mean(((ratio - 1) - logratio) * loss_mask)
 
     # Compile metrics for logging
     metrics_data = {
         "actor/raw_loss": policy_loss.detach().item(),
         "actor/policy_loss": policy_loss.detach().item(),
-        "actor/policy_clipfrac": clip_fraction.detach().item(),
-        "actor/ppo_kl": ppo_kl.detach().item(),
+        "actor/policy_clipfrac": pg_clipfrac.detach().item(),
+        "actor/ppo_kl": approx_kl.detach().item(),
     }
     return policy_loss, metrics_data
 
