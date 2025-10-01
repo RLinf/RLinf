@@ -13,9 +13,9 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor: 0-1
-    env: 2-2
-    rollout: 3-3
+    actor: 2-3
+    env: 0-0
+    rollout: 1-1
 
 runner:
   task_type: embodied
@@ -143,8 +143,8 @@ actor:
     trust_remote_code: True
 
   optim:
-    lr: 1.0e-4
-    value_lr: 3.0e-3
+    lr: 1.0e-6
+    value_lr: 1.0e-5
     adam_beta1: 0.9
     adam_beta2: 0.999
     adam_eps: 1.0e-05

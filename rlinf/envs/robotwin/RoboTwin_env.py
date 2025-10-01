@@ -65,14 +65,6 @@ def worker(
 
     envs_finish = False
 
-    def filling_up(return_poses):
-        if len(return_poses) < HORIZON:
-            new_poses = np.empty((HORIZON, *return_poses.shape[1:]))
-            new_poses[: len(return_poses)] = return_poses
-            new_poses[len(return_poses) :] = return_poses[-1]
-            return new_poses
-        return return_poses
-
     task = class_decorator(task_name)
 
     valid_seed = False
@@ -94,8 +86,7 @@ def worker(
     action_input_sem.acquire()
     task.run_steps = 0  # Used to record current step, ends when greater than max steps per environment (450 steps in shoe_place)
     prev_obs_venv = task.get_obs()
-    return_pose = np.array([task.get_return_pose()])
-    return_pose = filling_up(return_pose)
+    is_success = np.array([0])
     prev_obs_venv = [prev_obs_venv]
     image_return = update_obs(prev_obs_venv[-1])[0] + update_obs(prev_obs_venv[-1])[0]
     state_return = update_obs(prev_obs_venv[-1])[1]
@@ -109,7 +100,7 @@ def worker(
             np.array([0]),
             np.array([0]),
             np.array([0]),
-            return_pose.flatten(),
+            is_success.flatten(),
         ]
     )
     results[RESULT_SIZE * process_id : (process_id + 1) * RESULT_SIZE] = result
@@ -162,7 +153,7 @@ def worker(
                     np.array([0]),
                     np.array([0]),
                     np.array([1]),
-                    return_pose.flatten(),
+                    is_success.flatten(),
                 ]
             )
             results[RESULT_SIZE * process_id : RESULT_SIZE * (process_id + 1)] = result
@@ -177,12 +168,9 @@ def worker(
         truncated_venv,
         info_venv,
         """
-        obs_venv, reward_venv, terminated_venv, _, return_poses = (
+        obs_venv, reward_venv, terminated_venv, _, info_venv = (
             task.gen_dense_reward_once(input_actions)
         )
-        # TODO something return_poses is [1,6], sometimes is [2,6]
-        return_poses = return_poses[0:1, :]
-        return_poses = filling_up(return_poses)
         if len(obs_venv) > 1:  # Indicates not finished/successful
             image_return = update_obs(obs_venv[-2])[0] + update_obs(obs_venv[-1])[0]
             state_return = update_obs(obs_venv[-1])[1]
@@ -230,7 +218,7 @@ def worker(
                 reward_venv.flatten(),
                 terminated_venv.flatten(),
                 np.array([0]),
-                return_poses.flatten(),
+                info_venv.flatten(),
             ]
         )
         results[RESULT_SIZE * process_id : RESULT_SIZE * (process_id + 1)] = result
@@ -251,13 +239,15 @@ class RoboTwin(gym.Env):
         # Get parameters from configuration
         self.cfg = cfg
         self.rank = rank
-        self.world_size = world_size
+        self.auto_reset = cfg.auto_reset
+        self.ignore_terminations = cfg.ignore_terminations
         self.record_metrics = record_metrics
         self._is_start = True
         self.info_logging_keys = ["is_src_obj_grasped", "consecutive_grasp", "success"]
         self.env_args = OmegaConf.to_container(cfg.init_params, resolve=True)
         if self.record_metrics:
             self._init_metrics()
+        self._elapsed_steps = torch.ones(self.num_envs) * cfg.max_episode_steps
 
         self.task_name = "place_shoe"
         self.n_envs = self.num_envs
@@ -342,7 +332,7 @@ class RoboTwin(gym.Env):
         self.NUM_IMAGES = 6
         self.IMAGE_SHAPE = (240, 320, 3)  # Shape of each image
         self.STATE_SHAPE = (1, 14)  # Shape of state vector
-        self.TARGET_SHAPE = (self.horizon, 6)  # Target object xyz + target position xyz
+        self.TARGET_SHAPE = (1)  # Target is success or not
 
         self.IMAGE_SIZE = np.prod(self.IMAGE_SHAPE)  # Size of each image
         self.STATE_SIZE = np.prod(self.STATE_SHAPE)  # Size of state vector
@@ -406,22 +396,6 @@ class RoboTwin(gym.Env):
         obs_image = obs_image.permute(0, 3, 1, 2)  # [B, C, H, W]
         extracted_obs = {"images": obs_image, "task_descriptions": self.instruction}
         return extracted_obs
-
-    def _calc_step_reward(self, info):
-        reward = torch.zeros(self.num_envs, dtype=torch.float32).to(
-            self.env.device
-        )  # [B, ]
-        reward += info["is_src_obj_grasped"] * 0.1
-        reward += info["consecutive_grasp"] * 0.1
-        reward += (info["success"] & info["is_src_obj_grasped"]) * 1.0
-        # diff
-        reward_diff = reward - self.prev_step_reward
-        self.prev_step_reward = reward
-
-        if self.use_rel_reward:
-            return reward_diff
-        else:
-            return reward
 
     def _init_metrics(self):
         self.success_once = torch.zeros(
@@ -540,6 +514,20 @@ class RoboTwin(gym.Env):
         )
         if actions is None:
             reward_venv = None
+        if reward_venv is not None:
+            step_reward = reward_venv
+        else:
+            step_reward = 0.0
+        infos = self._record_metrics(step_reward, info_venv)
+        if isinstance(terminated_venv, bool):
+            terminated_venv = torch.tensor([terminated_venv], device=self.device)
+        if self.ignore_terminations:
+            terminated_venv[:] = False
+            if self.record_metrics:
+                if "success" in infos:
+                    infos["episode"]["success_at_end"] = infos["success"].clone()
+                if "fail" in infos:
+                    infos["episode"]["fail_at_end"] = infos["fail"].clone()
         return obs_venv, reward_venv, terminated_venv, truncated_venv, info_venv
 
     def reset(self):
@@ -553,6 +541,7 @@ class RoboTwin(gym.Env):
             self.output_sem.acquire()
 
         self.reset_event.clear()
+        self._reset_metrics()
         return
 
     def transform(self, results):
@@ -573,7 +562,7 @@ class RoboTwin(gym.Env):
         truncated_venv = torch.zeros(
             self.num_envs, dtype=torch.bool, device=self.device
         )
-        info_venv = {"return_poses": []}
+        info_venv = {"success": []}
         for i in range(self.n_envs):
             result = results[i]
             imgs = result["imgs"]
@@ -588,12 +577,26 @@ class RoboTwin(gym.Env):
             reward_venv[i] = torch.from_numpy(result["reward"]).to(self.device)
             terminated_venv[i] = torch.from_numpy(result["terminated"]).to(self.device)
             truncated_venv[i] = torch.from_numpy(result["truncated"]).to(self.device)
-            info_venv["return_poses"].append(
-                torch.from_numpy(result["return_poses"]).to(self.device)
-            )
+            info_venv["success"].append(torch.tensor(result["is_success"]).to(self.device))
+        info_venv["success"] = torch.stack(info_venv["success"])
         obs_venv["images"] = torch.stack(obs_venv["images"]).permute(0, 1, 4, 2, 3)
         obs_venv["state"] = torch.stack(obs_venv["state"])
         return obs_venv, reward_venv, terminated_venv, truncated_venv, info_venv
+
+    def check_success(self, return_poses):
+        # return_poses has two arms with xyz poses: [1, 6]
+        return_poses = return_poses[0]
+        taget_pose = [-0.45, 0]
+        eps = np.array([0.221, 0.325])
+        for i in range(2):
+            if (
+                np.all(np.abs(return_poses[i * 3 : i * 3 + 2] - taget_pose) < eps)
+                and return_poses[i * 3 + 2] > 0.2
+                and return_poses[i * 3 + 2] < 0.7
+            ):
+                continue
+            return False
+        return True
 
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
@@ -661,10 +664,8 @@ class RoboTwin(gym.Env):
             start += 1
             cond["truncated"] = result[start : start + 1]
             start += 1
-            cond["return_poses"] = result[start : start + self.TARGET_SIZE].reshape(
-                self.TARGET_SHAPE
-            )
-            start += self.TARGET_SIZE
+            cond["is_success"] = result[start : start + 1]
+            start += 1
             conds.append(cond)
         return conds
 

@@ -52,7 +52,9 @@
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" 
             data-target="animated-image.originalImage">
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[开发中]基于RoboTwin的强化学习</b><br>
+         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/robotwin.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>基于RoboTwin的强化学习</b>
+         </a><br>
          RoboTwin+OpenVLA-OFT+PPO达到SOTA训练效果
        </p>
      </div>
@@ -189,4 +191,5 @@ RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训
 
    maniskill
    libero
+   robotwin
    reasoning
