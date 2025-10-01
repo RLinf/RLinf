@@ -23,6 +23,8 @@ from megatron.core import parallel_state
 def get_convert_fn(model_arch: str):
     if model_arch == "qwen2.5":
         return TransformFunc.convert_mega_qwen2_5_to_hf
+    if model_arch == "qwen3-30b":
+        return TransformFunc.convert_mega_qwen3_30b_to_hf
     else:
         raise NotImplementedError(
             f"get_convert_fn for model_arch {model_arch} is not implemented"
@@ -32,6 +34,8 @@ def get_convert_fn(model_arch: str):
 def get_tp_reshard_fn(model_arch: str):
     if model_arch == "qwen2.5":
         return tp_reshard_fn_qwen2_5
+    if model_arch == "qwen3-30b":
+        return tp_reshard_fn_qwen3_30b
     else:
         raise NotImplementedError(
             f"get_tp_reshard_fn for model_arch {model_arch} is not implemented"
@@ -41,6 +45,8 @@ def get_tp_reshard_fn(model_arch: str):
 def get_pp_reshard_fn(model_arch: str):
     if model_arch == "qwen2.5":
         return pp_reshard_fn_qwen2_5
+    if model_arch == "qwen3-30b":
+        return pp_reshard_fn_qwen3_30b
     else:
         raise NotImplementedError(
             f"get_pp_reshard_fn for model_arch {model_arch} is not implemented"
@@ -66,8 +72,10 @@ class TransformFunc:
     ) -> None:
         hidden_size = config.model_config.hidden_size
         num_attention_heads = config.model_config.num_attention_heads
-        num_query_groups = config.model_config.num_query_groups or num_attention_heads
-        head_dim = hidden_size // num_attention_heads
+        num_key_value_heads = (
+            config.model_config.num_query_groups or num_attention_heads
+        )
+        head_dim = config.model_config.kv_channels
 
         target_tp = config.reshard_tp_size
         assert num_query_groups % target_tp == 0, (
@@ -150,6 +158,38 @@ class TransformFunc:
         new_statedict[weight_names[1]] = up_proj.clone()
 
     @staticmethod
+    def split_expert_fc1(
+        linear_fc1: torch.Tensor, new_statedict: dict, weight_names: List[str], config
+    ) -> None:
+        assert weight_names is not None and len(weight_names) == 2, (
+            f"split_fc1 transform expects two weight names, got {weight_names}"
+        )
+
+        tp_size = config.model_config.expert_tensor_parallel_size
+        target_tp = config.reshard_tp_size
+
+        assert tp_size >= target_tp, f"tp_size {tp_size} must be greater than or equal to target_tp {target_tp}"
+
+        split_size = linear_fc1.shape[0] // (tp_size // target_tp)
+        linear_fc1_slice = torch.split(linear_fc1, split_size, dim=0)
+
+        gate_proj_shards = []
+        up_proj_shards = []
+        for weight in linear_fc1_slice:
+            assert weight.shape[0] % 2 == 0, (
+                f"linear_fc1 weight shape {weight.shape} is not even along dim 0"
+            )
+            weight_chunk = torch.chunk(weight, 2, dim=0)
+            gate_proj_shards.append(weight_chunk[0])
+            up_proj_shards.append(weight_chunk[1])
+        gate_proj = torch.cat(gate_proj_shards, dim=0)
+        up_proj = torch.cat(up_proj_shards, dim=0)
+
+        new_statedict[weight_names[0]] = gate_proj.clone()
+        new_statedict[weight_names[1]] = up_proj.clone()
+
+
+    @staticmethod
     def split_none(
         tensor: torch.Tensor, new_statedict: dict, weight_names: List[str]
     ) -> None:
@@ -226,6 +266,117 @@ class TransformFunc:
         )
 
     @staticmethod
+    def moe_expert_layer(layer_id: str, suffix: str) -> Tuple[TransformType, List[str]]:
+        """
+        MoE expert layer weight conversion.
+        """
+        # Extract expert ID and actual suffix
+        expert_pattern = r"mlp\.experts\.local_experts\.(\d+)\.(.+)"
+        expert_match = re.search(expert_pattern, suffix)
+        if not expert_match:
+            raise ValueError(f"Cannot parse MoE expert layer: {suffix}")
+        
+        expert_id = expert_match.group(1)
+        actual_suffix = expert_match.group(2)
+        
+        # MoE expert layer weight mapping
+        expert_nmap = {
+            "linear_fc1.weight": (
+                TransformType.SPLIT_FC1,
+                [f"mlp.experts.{expert_id}.gate_proj.weight", f"mlp.experts.{expert_id}.up_proj.weight"],
+            ),
+            "linear_fc2.weight": (
+                TransformType.SPLIT_NONE,
+                [f"mlp.experts.{expert_id}.down_proj.weight"],
+            ),
+        }
+        
+        if actual_suffix not in expert_nmap:
+            raise ValueError(f"Unknown MoE expert layer suffix: {actual_suffix}")
+        
+        transform_type, suffixes = expert_nmap[actual_suffix]
+        result_pattern = "model.layers.{}.{}"
+        
+        return (
+            transform_type,
+            [result_pattern.format(layer_id, suffix) for suffix in suffixes],
+        )
+
+    @staticmethod
+    def mega_name_qwen3_30b_to_hf(name: str) -> Tuple[TransformType, List[str]]:
+        """
+        Convert qwen3_30b model weight Megatron name to HuggingFace (HF) name and do shape transform if needed.
+        Args:
+            name (str): Megatron model weight name
+        Returns:
+            (TransformType, List[str]): Transform type and the corresponding HF model weight name(s)
+        """
+        if "embedding.word_embeddings.weight" in name:
+            return (TransformType.SPLIT_NONE, ["model.embed_tokens.weight"])
+        if "decoder.final_layernorm.weight" in name:
+            return (TransformType.SPLIT_NONE, ["model.norm.weight"])
+        if "output_layer.weight" in name:
+            return (TransformType.SPLIT_NONE, ["lm_head.weight"])
+        layer_id, suffix = TransformFunc.extract_layer_info(name)
+        # check the MoE layer
+        if "mlp.experts.local_experts" in suffix:
+            # Handle MoE expert layer
+            return TransformFunc.moe_expert_layer(layer_id, suffix)
+        assert layer_id is not None, f"Cannot extract layer info from {name}"
+        result_pattern = "model.layers.{}.{}"
+        nmap = {
+            "self_attention.linear_proj.weight": (
+                TransformType.SPLIT_NONE,
+                ["self_attn.o_proj.weight"],
+            ),
+            "self_attention.linear_qkv.layer_norm_weight": (
+                TransformType.SPLIT_NONE,
+                ["input_layernorm.weight"],
+            ),
+            "self_attention.linear_qkv.weight": (
+                TransformType.SPLIT_QKV,
+                [
+                    "self_attn.q_proj.weight",
+                    "self_attn.k_proj.weight",
+                    "self_attn.v_proj.weight",
+                ],
+            ),
+            "self_attention.linear_qkv.bias": (
+                TransformType.SPLIT_QKV_BIAS,
+                [
+                    "self_attn.q_proj.bias",
+                    "self_attn.k_proj.bias",
+                    "self_attn.v_proj.bias",
+                ],
+            ),
+            "self_attention.q_layernorm.weight": (
+                TransformType.SPLIT_NONE,
+                ["self_attn.q_norm.weight"],
+            ),
+            "self_attention.k_layernorm.weight": (
+                TransformType.SPLIT_NONE,
+                ["self_attn.k_norm.weight"],
+            ),
+            "pre_mlp_layernorm.weight": (
+                TransformType.SPLIT_NONE,
+                ["post_attention_layernorm.weight"],
+            ),
+            "mlp.router.weight": (
+                TransformType.SPLIT_NONE,
+                ["mlp.gate.weight"],
+            ),
+        }
+
+        assert suffix in nmap, f"Cannot find mapping for {suffix}"
+
+        transform_type, suffixes = nmap[suffix]
+        return (
+            transform_type,
+            [result_pattern.format(layer_id, suffix) for suffix in suffixes],
+        )
+
+
+    @staticmethod
     def convert_mega_qwen2_5_to_hf(model_state_dict: dict, config) -> dict:
         new_statedict = {}
         for name, param in model_state_dict.items():
@@ -243,6 +394,27 @@ class TransformFunc:
                     f"Transform type {transform_type} not implemented"
                 )
         return new_statedict
+
+
+    @staticmethod
+    def convert_mega_qwen3_30b_to_hf(model_state_dict: dict, config) -> dict:
+        new_statedict = {}
+        for name, param in model_state_dict.items():
+            transform_type, hf_names = TransformFunc.mega_name_qwen3_30b_to_hf(name)
+            if transform_type == TransformType.SPLIT_QKV:
+                TransformFunc._split_gqa_tensor(param, new_statedict, hf_names, config)
+            elif transform_type == TransformType.SPLIT_QKV_BIAS:
+                TransformFunc._split_gqa_tensor(param, new_statedict, hf_names, config)
+            elif transform_type == TransformType.SPLIT_FC1:
+                TransformFunc.split_expert_fc1(param, new_statedict, hf_names, config)
+            elif transform_type == TransformType.SPLIT_NONE:
+                TransformFunc.split_none(param, new_statedict, hf_names)
+            else:
+                raise NotImplementedError(
+                    f"Transform type {transform_type} not implemented"
+                )
+        return new_statedict
+
 
     @staticmethod
     def extract_layer_info(s):
@@ -288,6 +460,30 @@ def tp_reshard_fn_qwen2_5(model_state_dict, merge_factor, tp_group):
     return model_state_dict
 
 
+def tp_reshard_fn_qwen3_30b(model_state_dict, merge_factor, tp_group):
+    for k, v in model_state_dict.items():
+        if (
+            "rotary_pos_emb.inv_freq" in k
+            or "linear_qkv.layer_norm_weight" in k
+            or "linear_fc1.layer_norm_weight" in k
+            or "final_layernorm.weight" in k
+            or "q_layernorm.weight" in k
+            or "k_layernorm.weight" in k
+            or "pre_mlp_layernorm.weight" in k
+            or "router.weight" in k
+        ):
+            model_state_dict[k] = v.clone()
+            continue
+
+        dim = 0
+        if "self_attention.linear_proj.weight" in k or "linear_fc2.weight" in k:
+            dim = 1
+        model_state_dict[k] = _gather_tp_group_tensor_and_reshard(
+            v, dim, merge_factor, tp_group
+        )
+    return model_state_dict
+
+
 ##############################
 # pp reshard fn implementation
 ##############################
@@ -314,6 +510,40 @@ def _gather_pp_group_tensor_and_reshard(
 
 
 def pp_reshard_fn_qwen2_5(model_state_dict, pp_group, dtype):
+    pp_first_rank = parallel_state.get_pipeline_model_parallel_first_rank()
+    pp_last_rank = parallel_state.get_pipeline_model_parallel_last_rank()
+
+    key = "decoder.final_layernorm.weight"
+    tensor = _gather_pp_group_tensor_and_reshard(
+        model_state_dict, key, pp_last_rank, pp_group, dtype
+    )
+    if tensor is not None:
+        model_state_dict[key] = tensor.clone()
+
+    key = "decoder.final_layernorm.bias"
+    tensor = _gather_pp_group_tensor_and_reshard(
+        model_state_dict, key, pp_last_rank, pp_group, dtype
+    )
+    if tensor is not None:
+        model_state_dict[key] = tensor.clone()
+
+    key = "embedding.word_embeddings.weight"
+    tensor = _gather_pp_group_tensor_and_reshard(
+        model_state_dict, key, pp_first_rank, pp_group, dtype
+    )
+    if tensor is not None:
+        model_state_dict[key] = tensor.clone()
+
+    key = "output_layer.weight"
+    tensor = _gather_pp_group_tensor_and_reshard(
+        model_state_dict, key, pp_last_rank, pp_group, dtype
+    )
+    if tensor is not None:
+        model_state_dict[key] = tensor.clone()
+    return model_state_dict
+
+
+def pp_reshard_fn_qwen3_30b(model_state_dict, pp_group, dtype):
     pp_first_rank = parallel_state.get_pipeline_model_parallel_first_rank()
     pp_last_rank = parallel_state.get_pipeline_model_parallel_last_rank()
 
