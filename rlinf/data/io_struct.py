@@ -263,6 +263,7 @@ class RolloutResult:
     rollout_logprobs: Optional[List[List[float]]] = None
     prev_logprobs: Optional[torch.Tensor] = None
     ref_logprobs: Optional[torch.Tensor] = None
+    megatron_prev_logprobs: Optional[torch.Tensor] = None
 
     @property
     def batch_size(self):

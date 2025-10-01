@@ -22,8 +22,7 @@ from torch.distributed.device_mesh import init_device_mesh
 from tqdm import tqdm
 
 import rlinf.algorithms  # noqa: F401
-from rlinf.algorithms.registry import actor_loss, calculate_adv_and_returns
-from rlinf.algorithms.utils import preprocess_advantages_inputs, preprocess_loss_inputs
+from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
 )
@@ -229,12 +228,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         )
 
         kwargs = {
+            "task_type": self.cfg.runner.task_type,
             "adv_type": self.cfg.algorithm.adv_type,
             "rewards": self.rollout_batch["rewards"],
             "dones": self.rollout_batch["dones"],
-            "normalize_advantages": self.cfg.algorithm.get(
-                "normalize_advantages", True
-            ),
             "values": self.rollout_batch.get("prev_values", None),
             "gamma": self.cfg.algorithm.get("gamma", 1),
             "gae_lambda": self.cfg.algorithm.get("gae_lambda", 1),
@@ -244,7 +241,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "loss_mask": self.rollout_batch.get("loss_mask", None),
             "rollout_epoch": self.cfg.algorithm.get("rollout_epoch", 1),
         }
-        kwargs = preprocess_advantages_inputs(**kwargs)
+
         advantages, returns = calculate_adv_and_returns(**kwargs)
 
         self.rollout_batch.update({"advantages": advantages, "returns": returns})
@@ -345,7 +342,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     pixel_values=pixel_values,
                     action_token_len=action_token_len,
                     value_model=True
-                    if self.cfg.algorithm.adv_type == "embodied_gae"
+                    if self.cfg.algorithm.loss_type == "ppo"
                     else False,
                     value_head_mode=self.cfg.actor.model.get("vh_mode", None),
                     temperature=self.cfg.algorithm.sampling_params.temperature_train,
@@ -354,6 +351,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 )
 
                 kwargs = {
+                    "task_type": self.cfg.runner.task_type,
                     "loss_type": self.cfg.algorithm.loss_type,
                     "logprob_type": self.cfg.algorithm.logprob_type,
                     "entropy_type": self.cfg.algorithm.entropy_type,
@@ -369,15 +367,18 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     "clip_ratio_low": self.cfg.algorithm.clip_ratio_low,
                     "value_clip": self.cfg.algorithm.get("value_clip", None),
                     "huber_delta": self.cfg.algorithm.get("huber_delta", None),
-                    "entropy_bonus": self.cfg.algorithm.entropy_bonus,
                     "loss_mask": data.get("loss_mask", None),
                     "loss_mask_sum": data.get("loss_mask_sum", None),
                     "max_episode_steps": self.cfg.env.train.max_episode_steps,
                 }
 
-                kwargs = preprocess_loss_inputs(**kwargs)
+                loss, metrics_data = policy_loss(**kwargs)
 
-                loss, metrics_data = actor_loss(**kwargs)
+                # Entropy loss
+                entropy = kwargs["entropy"]
+                entropy_bonus = self.cfg.algorithm.entropy_bonus
+                entropy_loss = entropy.mean()
+                loss -= entropy_loss * entropy_bonus
 
                 loss /= self.gradient_accumulation
                 loss.backward()
@@ -397,7 +398,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 "actor/grad_norm": grad_norm.detach().item(),
                 "actor/lr": self.optimizer.param_groups[0]["lr"],
             }
-            if self.cfg.algorithm.adv_type == "embodied_gae":
+            if self.cfg.algorithm.loss_type == "ppo":
                 data["critic/lr"] = self.optimizer.param_groups[1]["lr"]
             append_to_dict(metrics, data)
 

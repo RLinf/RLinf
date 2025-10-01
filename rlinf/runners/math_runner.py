@@ -85,8 +85,14 @@ class MathRunner:
         self.actor_channel = Channel.create("Actor", local=True)
 
         # Configurations
-        self.compute_ref_logprobs = self.cfg.algorithm.kl_beta > 0
-        self.recompute_logprobs = self.cfg.algorithm.recompute_logprobs
+        self.compute_ref_logprobs = (
+            self.cfg.algorithm.kl_beta > 0
+            or self.cfg.algorithm.get("reinpp_kl_beta", 0) > 0
+        )
+        self.recompute_logprobs = (
+            self.cfg.algorithm.recompute_logprobs
+            or self.cfg.algorithm.get("importance_sampling_fix", False)
+        )
         self.consumed_samples = 0
         self.global_steps = 0
 
