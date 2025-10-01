@@ -740,7 +740,11 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
         calculate_entropy_loss: bool = True,
     ):
         """Forward pass: returns two tensors — entropy and cross-entropy loss"""
+        # Store original dtype and use float32 for numerical stability
+        orig_dtype = vocab_parallel_logits.dtype
         vocab_parallel_logits = vocab_parallel_logits.float()
+        
+        # Subtract max for numerical stability
         logits_max = vocab_parallel_logits.max(dim=-1, keepdim=True).values
         torch.distributed.all_reduce(
             logits_max,
@@ -748,6 +752,8 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
             group=parallel_state.get_tensor_model_parallel_group(),
         )
         norm_logits = vocab_parallel_logits - logits_max
+        
+        # Compute exp directly for efficiency
         exp_logits = norm_logits.exp()
         sum_exp_logits = exp_logits.sum(dim=-1, keepdim=True)
 
@@ -759,9 +765,8 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
 
         softmax = exp_logits.div_(sum_exp_logits)
         sum_exp_logits_log = sum_exp_logits.log()
-
-        entropy = torch.zeros_like(logits_max.squeeze(-1))
-
+        
+        # Always compute sum_softmax_times_logits as it's needed for backward pass
         sum_softmax_times_logits = (softmax * vocab_parallel_logits).sum(
             dim=-1, keepdim=True
         )
@@ -769,11 +774,15 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
             sum_softmax_times_logits,
             group=parallel_state.get_tensor_model_parallel_group(),
         )
-        entropy = (
-            logits_max.squeeze(-1)
-            + sum_exp_logits_log.squeeze(-1)
-            - sum_softmax_times_logits.squeeze(-1)
-        )
+        
+        if calculate_entropy_loss:
+            entropy = (
+                logits_max.squeeze(-1)
+                + sum_exp_logits_log.squeeze(-1)
+                - sum_softmax_times_logits.squeeze(-1)
+            )
+        else:
+            entropy = torch.zeros_like(logits_max.squeeze(-1))
 
         partition_vocab_size = norm_logits.size(-1)
         rank = parallel_state.get_tensor_model_parallel_rank()
@@ -834,6 +843,10 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
                 calculate_entropy_tensor,
             )
 
+        # Restore original dtype
+        entropy = entropy.to(orig_dtype)
+        ce_loss = ce_loss.to(orig_dtype)
+        
         return entropy, ce_loss
 
     @staticmethod
@@ -917,12 +930,55 @@ def vocab_parallel_entropy_and_log_probs(
     target: torch.Tensor,
     label_smoothing: float = 0.0,
     calculate_entropy_loss: bool = True,
+    chunk_size: int = 512,
 ):
-    """Perform a single forward pass to obtain entropy and log_probs (-cross_entropy)"""
-    entropy, ce_loss = _VocabParallelEntropyAndCrossEntropy.apply(
-        vocab_parallel_logits, target, label_smoothing, calculate_entropy_loss
-    )
-    log_probs = -ce_loss
+    """
+    Compute entropy and log probabilities with chunking optimization.
+    
+    Args:
+        vocab_parallel_logits: Input logits tensor [batch_size, seq_len, vocab_size]
+        target: Target labels [batch_size, seq_len]
+        label_smoothing: Label smoothing coefficient
+        calculate_entropy_loss: Whether to calculate entropy
+        chunk_size: Chunk size for sequence length dimension
+    
+    Returns:
+        entropy: Entropy values [batch_size, seq_len]
+        log_probs: Log probabilities [batch_size, seq_len]
+    """
+    batch_size, seq_len, vocab_size = vocab_parallel_logits.shape
+    
+    # Use direct computation for small sequences
+    if seq_len <= chunk_size:
+        entropy, ce_loss = _VocabParallelEntropyAndCrossEntropy.apply(
+            vocab_parallel_logits, target, label_smoothing, calculate_entropy_loss
+        )
+        log_probs = -ce_loss
+        return entropy, log_probs
+    
+    # Process in chunks along sequence dimension
+    entropy_chunks = []
+    log_probs_chunks = []
+    
+    for chunk_start in range(0, seq_len, chunk_size):
+        chunk_end = min(chunk_start + chunk_size, seq_len)
+        
+        # Extract current chunk data
+        logits_chunk = vocab_parallel_logits[:, chunk_start:chunk_end, :]
+        target_chunk = target[:, chunk_start:chunk_end]
+        
+        # Process chunk
+        entropy_chunk, ce_loss_chunk = _VocabParallelEntropyAndCrossEntropy.apply(
+            logits_chunk, target_chunk, label_smoothing, calculate_entropy_loss
+        )
+        
+        entropy_chunks.append(entropy_chunk)
+        log_probs_chunks.append(-ce_loss_chunk)
+    
+    # Concatenate results along sequence dimension
+    entropy = torch.cat(entropy_chunks, dim=1)
+    log_probs = torch.cat(log_probs_chunks, dim=1)
+    
     return entropy, log_probs
 
 
