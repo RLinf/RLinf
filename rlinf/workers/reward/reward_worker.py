@@ -114,5 +114,7 @@ class RewardWorker(FSDPModelManager, Worker):
         self.model.eval()
         with torch.no_grad():
             # TODO: fix this
-            rewards = self.model(batch["input_ids"], batch["attention_mask"])
+            rewards = (
+                self.model(batch["input_ids"], batch["attention_mask"]).detach().cpu()
+            )
         return rewards

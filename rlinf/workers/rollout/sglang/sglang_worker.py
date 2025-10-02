@@ -276,7 +276,7 @@ class AsyncSGLangWorker(SGLangWorker):
                 )
 
         results = math_verify_call(texts, answers)
-        rewards = [(1 if r else -1) * self._reward_model.scale for r in results]
+        rewards = [r * self._reward_model.scale for r in results]
         rewards_tensor = torch.tensor(rewards, dtype=torch.float)
 
         mean = rewards_tensor.mean()
@@ -333,20 +333,6 @@ class AsyncSGLangWorker(SGLangWorker):
 
                 if self._completion_info.is_completed(hash_id):
                     results = self._completion_info.get_results(hash_id)
-                    # (
-                    #     rewards,
-                    #     advantages,
-                    # ) = await self._compute_reward_and_advantage(
-                    #     results,
-                    #     self._current_request.answers[raw_id],
-                    # )
-                    # if (
-                    #     all_floats_equal(rewards)
-                    #     and self._cfg.algorithm.get("max_num_gen_batches", 1) > 1
-                    # ):
-                    #     if (total_reqs - droped_reqs) > required_reqs:
-                    #         droped_reqs += rollout_request.n
-                    #         continue
 
                     input_ids = [input_ids] * len(results)
                     rollout_result = RolloutResult.from_sglang_results(
@@ -355,10 +341,7 @@ class AsyncSGLangWorker(SGLangWorker):
                         input_ids,
                         return_logprobs=self._return_logprobs,
                     )
-                    # rollout_result.rewards = torch.tensor(
-                    #     rewards, dtype=torch.float32
-                    # ).reshape(-1, 1)
-                    # rollout_result.advantages = advantages
+
                     return_tasks.append(
                         asyncio.create_task(
                             self._put_result(rollout_result, output_channel)

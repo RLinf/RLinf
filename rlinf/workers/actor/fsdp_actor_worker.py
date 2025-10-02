@@ -137,7 +137,7 @@ class FSDPActor(FSDPModelManager, Worker):
         )
 
     def del_reshard_state_dict(self):
-        if hasattr(self, "rollou_state_dict"):
+        if hasattr(self, "rollout_state_dict"):
             del self.rollout_state_dict
 
     def sync_model_to_rollout(self):

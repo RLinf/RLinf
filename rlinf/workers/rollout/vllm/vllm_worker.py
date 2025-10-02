@@ -19,7 +19,6 @@ from functools import partial
 from typing import AsyncGenerator, List, Optional, Union
 
 import requests
-import torch
 from omegaconf import DictConfig
 from PIL.Image import Image
 from transformers import AutoTokenizer
@@ -36,7 +35,7 @@ from rlinf.data.io_struct import RolloutRequest, RolloutResult
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.placement import ComponentPlacement
 from rlinf.workers.rollout.utils import print_vllm_outputs
-from toolkits.math_verifier.verify import MathRewardModel, math_verify_call
+from toolkits.math_verifier.verify import MathRewardModel
 
 from . import VLLMExecutor
 
@@ -363,32 +362,6 @@ class VLLMWorker(Worker):
         if not self._placement.is_disaggregated:
             await self.offload_model_weights()
 
-    async def _compute_reward_and_advantage(self, rollout_result: RolloutResult):
-        """
-        Compute rewards and advantages for the rollout result using math verification.
-        """
-        answers = rollout_result.answers
-        outputs = rollout_result.response_texts
-        num_sequence = rollout_result.num_sequence
-        assert len(answers) == len(outputs), (
-            f"Answers length {len(answers)} != outputs length {len(outputs)}"
-        )
-        assert len(answers) == num_sequence, (
-            f"Answers length {len(answers)} != num_sequence {num_sequence}"
-        )
-
-        math_verify_results = math_verify_call(outputs, answers)
-        rewards = [
-            (1 if r else -1) * self._reward_model.scale for r in math_verify_results
-        ]
-        rewards_tensor = torch.tensor(rewards, dtype=torch.float)
-        rollout_result.rewards = rewards_tensor.reshape(-1, 1)
-
-        mean = rewards_tensor.mean()
-        std = rewards_tensor.std(unbiased=False)
-        advantages = (rewards_tensor - mean) / (std + 1e-6)
-        rollout_result.advantages = advantages.tolist()
-
     async def rollout_and_return(
         self, request: RolloutRequest, output_channel: Channel
     ):
@@ -402,8 +375,6 @@ class VLLMWorker(Worker):
             multi_modal_inputs=request.multi_modal_inputs,
             return_logprobs=self._return_logprobs,
         )
-        if self._placement.is_disaggregated:
-            await self._compute_reward_and_advantage(rollout_result)
 
         await self._put_result(result=rollout_result, output_channel=output_channel)
 

@@ -12,10 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
 import json
 import logging
 import os
-from dataclasses import dataclass
 from io import BytesIO
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -26,156 +40,8 @@ from PIL import Image
 from torch.utils.data import Dataset
 from transformers import AutoProcessor, AutoTokenizer
 
-
-def batch_pad_to_fixed_len(
-    batch: List[torch.Tensor],
-    max_batch_len: int,
-    pad_token: int,
-    left_pad: bool = False,
-) -> torch.Tensor:
-    if left_pad:
-        batch_pad = torch.stack(
-            [
-                torch.cat(
-                    [
-                        torch.full(
-                            (max_batch_len - len(seq),), pad_token, dtype=seq.dtype
-                        ),  # pad on the left
-                        seq,
-                    ]
-                )
-                for seq in batch
-            ]
-        )
-    else:
-        batch_pad = torch.stack(
-            [
-                torch.cat(
-                    [
-                        seq,
-                        torch.full(
-                            (max_batch_len - len(seq),), pad_token, dtype=seq.dtype
-                        ),
-                    ]
-                )
-                for seq in batch
-            ]
-        )
-    return batch_pad
-
-
-@dataclass
-class DatasetItem:
-    prompt: torch.Tensor
-    length: int
-    answer: str | dict
-    idx: int
-    solution: Optional[str] = None
-    image_data: Optional[List[Union[bytes, str]]] = None
-    prompt_text: Optional[str] = None
-    meta: Optional[Dict[str, Any]] = None
-    multi_modal_inputs: Optional[Dict[str, Any]] = None
-
-
-class MathDataset(Dataset):
-    def __init__(self, data_paths, config, tokenizer):
-        super().__init__()
-        self.data_paths = data_paths
-        if isinstance(self.data_paths, str):
-            self.data_paths = [self.data_paths]
-
-        self.max_prompt_length = config.data.max_prompt_length
-        self.tokenizer = tokenizer
-        self.prompt_key = config.data.prompt_key
-
-        self.data = self._load_data()
-        if config.data.get("filter_prompt_by_length", False):
-            total = len(self.data)
-            filtered = []
-            failed = 0
-
-            for item in self.data:
-                try:
-                    _, L = self.encode(item[self.prompt_key])
-                    if L <= self.max_prompt_length:
-                        filtered.append(item)
-                except Exception:
-                    failed += 1
-
-            self.data = filtered
-            assert len(self.data) > 0, (
-                f"No samples found within max_prompt_length={self.max_prompt_length}. "
-                "Please check your dataset or increase max_prompt_length."
-            )
-
-            if failed > 0:
-                logging.warning(
-                    f"{failed} samples were skipped due to format issues "
-                    f"(kept {len(self.data)} / {total})."
-                )
-
-    def _load_data(self):
-        merged_data = []
-
-        for path in self.data_paths:
-            _, file_extension = os.path.splitext(path)
-            try:
-                with open(path, "r", encoding="utf-8") as file:
-                    if file_extension == ".jsonl":
-                        merged_data.extend([json.loads(line.strip()) for line in file])
-                    elif file_extension == ".json":
-                        content = json.load(file)
-                        if isinstance(content, list):
-                            merged_data.extend(content)
-                        else:
-                            merged_data.append(content)
-                    else:
-                        print(f"Unsupport {file_extension}, skip: {path}")
-            except Exception:
-                raise RuntimeError("Load data error")
-
-        return merged_data
-
-    def __len__(self):
-        return len(self.data)
-
-    def encode(self, text):
-        text_ids = self.tokenizer.encode(text)
-        return text_ids, len(text_ids)
-
-    def __getitem__(self, idx):
-        """
-        Return a single prompt.
-        """
-
-        prompt = self.data[idx][self.prompt_key]
-
-        answer = self.data[idx]["solutions"]
-
-        prompt_tokens, prompt_length = self.encode(prompt)
-        prompt_tokens_tensor = torch.as_tensor(prompt_tokens, dtype=torch.int64)
-
-        if prompt_length > self.max_prompt_length:
-            print(
-                f"prompt_tokens_tensor length {prompt_length} exceeds the max_prompt_length {self.max_prompt_length}",
-            )
-            prompt_tokens_tensor = prompt_tokens_tensor[: self.max_prompt_length]
-            prompt_length = self.max_prompt_length
-
-        prompt_tokens_tensor = batch_pad_to_fixed_len(
-            [prompt_tokens_tensor],
-            self.max_prompt_length,
-            self.tokenizer.eos_token_id,
-            left_pad=True,
-        )[0]
-        output = DatasetItem(
-            prompt=prompt_tokens_tensor,
-            length=prompt_length,
-            answer=answer,
-            idx=idx,
-            image_data=[],
-        )
-        return output
+from rlinf.data.datasets.item import DatasetItem
+from rlinf.data.datasets.utils import batch_pad_to_fixed_len
 
 
 class VLMBaseDataset(Dataset):
@@ -542,7 +408,6 @@ class Robo2VLMDataset(VLMBaseDataset):
         )
 
     def get_image_list(self, dataitem: Dict[str, Any]) -> List[Union[bytes, str, None]]:
-        # Prefer common robo2vlm fields if present, else fallback to configured keys
         images: List[Any] = []
         if "images" in dataitem:
             v = dataitem.get("images")
@@ -559,10 +424,8 @@ class Robo2VLMDataset(VLMBaseDataset):
             else:
                 images = [None]
         else:
-            # fallback to base behavior using configured image_keys
             return super().get_image_list(dataitem)
 
-        # Normalize each element similar to base behavior
         normed: List[Union[bytes, str, None]] = []
         for v in images:
             if v is None:
@@ -611,107 +474,3 @@ class Robo2VLMDataset(VLMBaseDataset):
         item.answer = answer_dict
 
         return item
-
-
-def create_rl_dataset(config: DictConfig, tokenizer):
-    """Create rl datasets.
-
-    Arguments:
-        config: The RLinf config.
-        tokenizer (Tokenizer): The tokenizer.
-
-    Returns:
-        train_dataset (Dataset): The training dataset.
-
-        val_dataset (Dataset): The validation dataset.
-    """
-
-    if config.data.type == "math":
-        dataset_cls = MathDataset
-    elif config.data.type == "vision_language":
-        # Prefer new factory-based VLM datasets; fallback to legacy if requested
-        dataset_name = getattr(config.data, "dataset_name", None)
-        lazy_loading = bool(getattr(config.data, "lazy_loading", False))
-
-        print(f"Using VLM dataset: name={dataset_name}, lazy_loading={lazy_loading}")
-
-        train_dataset = VLMDatasetRegistry.create(
-            dataset_name,
-            data_paths=config.data.train_data_paths,
-            config=config,
-            tokenizer=tokenizer,
-        )
-        val_dataset = VLMDatasetRegistry.create(
-            dataset_name,
-            data_paths=config.data.val_data_paths,
-            config=config,
-            tokenizer=tokenizer,
-        )
-        return train_dataset, val_dataset
-    else:
-        return None, None
-
-    print(f"Using dataset class: {dataset_cls.__name__}")
-
-    # Instantiate the dataset using the determined dataset class
-    train_dataset = dataset_cls(
-        data_paths=config.data.train_data_paths,
-        config=config,
-        tokenizer=tokenizer,
-    )
-
-    val_dataset = dataset_cls(
-        data_paths=config.data.val_data_paths,
-        config=config,
-        tokenizer=tokenizer,
-    )
-
-    return train_dataset, val_dataset
-
-
-def collate_fn(data_list: List["DatasetItem"]) -> Dict[str, Any]:
-    prompts = []
-    lens = []
-    for it in data_list:
-        p = (
-            it.prompt
-            if isinstance(it.prompt, torch.Tensor)
-            else torch.as_tensor(it.prompt, dtype=torch.long)
-        )
-        if p.dim() == 2 and p.size(0) == 1:
-            p = p.squeeze(0)
-        assert p.dim() == 1, (
-            f"DatasetItem.prompt must be 1-D tensor, current shape is: {p.shape}"
-        )
-        prompts.append(p)
-        lens.append(p.numel())
-
-    if len(set(lens)) == 1:
-        target_len = lens[0]
-    else:
-        target_len = min(lens)
-        prompts = [p[-target_len:] if p.numel() > target_len else p for p in prompts]
-
-    batch_prompt = torch.stack(prompts, dim=0)  # [B, L]
-    batch_length = torch.tensor(
-        [min(int(it.length), target_len) for it in data_list], dtype=torch.long
-    )
-
-    batch_idx = torch.tensor([int(it.idx) for it in data_list], dtype=torch.long)
-
-    batch: Dict[str, Any] = {
-        "prompt": batch_prompt,  # [B, L]
-        "length": batch_length,  # [B]
-        "answer": [it.answer for it in data_list],  # List[str]
-        "idx": batch_idx,  # [B]
-        "solution": [it.solution for it in data_list],  # List[Optional[str]]
-        "image_data": [
-            it.image_data for it in data_list
-        ],  # List[Optional[List[bytes|str]]]
-        "prompt_text": [it.prompt_text for it in data_list],  # List[Optional[str]]
-        "meta": [it.meta for it in data_list],  # List[Optional[dict]]
-        "multi_modal_inputs": [
-            it.multi_modal_inputs for it in data_list
-        ],  # List[Optional[dict]]
-    }
-    return batch

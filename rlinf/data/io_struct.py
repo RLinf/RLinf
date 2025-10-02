@@ -69,10 +69,15 @@ class RolloutRequest:
         """
         assert self.n > 0, "n must be greater than 0"
 
-        input_ids, answers = zip(
+        input_ids, answers, image_data, multi_modal_inputs = zip(
             *[
-                (input_id, answer)
-                for input_id, answer in zip(self.input_ids, self.answers)
+                (input_id, answer, image_data, multi_modal_inputs)
+                for input_id, answer, image_data, multi_modal_inputs in zip(
+                    self.input_ids,
+                    self.answers,
+                    self.image_data,
+                    self.multi_modal_inputs,
+                )
                 for _ in range(self.n)
             ]
         )
@@ -80,6 +85,8 @@ class RolloutRequest:
             n=self.n,
             input_ids=list(input_ids),
             answers=list(answers),
+            image_data=list(image_data),
+            multi_modal_inputs=list(multi_modal_inputs),
         )
 
     def split(self, num_splits: int) -> List["RolloutRequest"]:
@@ -98,15 +105,27 @@ class RolloutRequest:
 
         input_ids_split_list = split_list(self.input_ids, num_splits)
         answers_split_list = split_list(self.answers, num_splits)
+        image_data_split_list = split_list(self.image_data, num_splits)
+        multi_modal_inputs_split_list = split_list(self.multi_modal_inputs, num_splits)
 
         splitted_requests = []
-        for input_ids_batch, answers_batch in zip(
-            input_ids_split_list, answers_split_list
+        for (
+            input_ids_batch,
+            answers_batch,
+            image_data_batch,
+            multi_modal_inputs_batch,
+        ) in zip(
+            input_ids_split_list,
+            answers_split_list,
+            image_data_split_list,
+            multi_modal_inputs_split_list,
         ):
             request = RolloutRequest(
                 n=self.n,
                 input_ids=input_ids_batch,
                 answers=answers_batch,
+                image_data=image_data_batch,
+                multi_modal_inputs=multi_modal_inputs_batch,
             )
             splitted_requests.append(request)
 
