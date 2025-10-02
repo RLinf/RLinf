@@ -20,7 +20,7 @@ from typing import AsyncGenerator, List, Optional, Union
 
 import requests
 from omegaconf import DictConfig
-from PIL.Image import Image
+from PIL import Image
 from transformers import AutoTokenizer
 from vllm.config import VllmConfig
 from vllm.engine.arg_utils import EngineArgs
@@ -226,6 +226,23 @@ class VLLMWorker(Worker):
             Union[List[List[Union[bytes, str]]], List[Union[bytes, str]]]
         ] = None,
     ) -> List[RequestOutput]:
+        """
+        Do Generate Task using the vllm async engine.
+
+        Args:
+            input_ids: The input token ids to generate. It can be a list of list of int,
+                or a list of int (single prompt).
+            sampling_params: The sampling parameters to use for generation.
+            prompt_texts: The input prompt texts to generate. It can be a list of strings
+                or a single string. If provided, it will be used instead of input_ids.
+            image_data: The input multi-modal data to generate. It can be a list of list
+                of bytes or image paths (local or URL), or a list of bytes or image paths
+                (single prompt).
+
+        Returns:
+            List[RequestOutput]: A list of RequestOutput from vllm engine.
+        """
+
         def check_input_ids() -> List[List[int]]:
             assert isinstance(input_ids, list), (
                 "input_ids should be a list or list of list of int."
@@ -266,19 +283,22 @@ class VLLMWorker(Worker):
         if prompt_texts is not None:
             for i, prompt_text in enumerate(prompt_texts):
                 if image_list is not None:
-                    image_list = self._process_image_data(image_data=image_list[i])
+                    images = self._process_image_data(image_data=image_list[i])
                     inputs.append(
-                        TextPrompt(prompt=prompt_text, multi_modal_data=image_list)
+                        TextPrompt(
+                            prompt=prompt_text, multi_modal_data={"image": images}
+                        )
                     )
                 else:
                     inputs.append(TextPrompt(prompt=prompt_text))
         else:
             for i, input_id in enumerate(input_ids):
                 if image_list is not None:
-                    image_list = self._process_image_data(image_data=image_list[i])
+                    images = self._process_image_data(image_data=image_list[i])
                     inputs.append(
                         TokensPrompt(
-                            prompt_token_ids=input_id, multi_modal_data=image_list
+                            prompt_token_ids=input_id,
+                            multi_modal_data={"image": images},
                         )
                     )
                 else:
@@ -302,7 +322,8 @@ class VLLMWorker(Worker):
     async def init_worker(self) -> None:
         """
         Use EngineArgs and VllmConfig to initialize VLLM async engine.
-        Then offload the model weights, ready to use weights sent from actor.
+        If mode is collocated, it will additionally offload model weights,
+        ready to use parameters sent from actor.
         """
         engine_args: EngineArgs = EngineArgs(
             model=self._cfg.rollout.model_dir,
@@ -349,6 +370,13 @@ class VLLMWorker(Worker):
             await self.offload_model_weights()
 
     async def _put_result(self, result: RolloutResult, output_channel: Channel) -> None:
+        """
+        Helper function to put the result to output channel.
+
+        Args:
+            result: The RolloutResult to put to the channel.
+            output_channel: The output channel to send results to.
+        """
         await output_channel.put(result, async_op=True).async_wait()
 
     async def _stop(self) -> None:
@@ -365,8 +393,18 @@ class VLLMWorker(Worker):
     async def rollout_and_return(
         self, request: RolloutRequest, output_channel: Channel
     ):
+        """
+        Helper function to rollout for a single RolloutRequest and build RolloutResult then
+        put it to output channel.
+
+        Args:
+            request: The RolloutRequest to process.
+            output_channel: The output channel to send results to.
+        """
         vllm_results: List[RequestOutput] = await self.generate(
-            input_ids=request.input_ids, sampling_params=self._sampling_params
+            input_ids=request.input_ids,
+            image_data=request.image_data,
+            sampling_params=self._sampling_params,
         )
         rollout_result: RolloutResult = RolloutResult.from_vllm_results(
             group_size=self._cfg.algorithm.group_size,
@@ -375,10 +413,18 @@ class VLLMWorker(Worker):
             multi_modal_inputs=request.multi_modal_inputs,
             return_logprobs=self._return_logprobs,
         )
-
         await self._put_result(result=rollout_result, output_channel=output_channel)
 
     async def rollout(self, input_channel: Channel, output_channel: Channel) -> None:
+        """
+            Perform rollout using vllm engine.
+            It will read `RolloutRequest` from input_channel and put `RolloutResult` to output_channel.
+            If the input request is None, it will stop the rollout.
+
+        Args:
+            input_channel: The input channel to read from.
+            output_channel: The output channel to send results to.
+        """
         rollout_request: RolloutRequest = await input_channel.get(
             async_op=True
         ).async_wait()

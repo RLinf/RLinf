@@ -178,7 +178,10 @@ class VLMBaseDataset(Dataset):
                 text=[rendered], images=images_inputs, padding=True, return_tensors="pt"
             )
             inputs.pop("attention_mask")
-            inputs.pop("input_ids")
+            # NOTE:
+            # we use these input_ids in inputs rather than belows
+            # because sglang need corresponding pixel_values len's placeholder
+            # in input_ids, while vllm does not need.
             ids = self._processor(
                 text=[rendered], images=None, padding=True, return_tensors="pt"
             )["input_ids"]

@@ -179,7 +179,9 @@ class SGLangWorker(Worker):
             # Generate outputs using the SGLang engine.
             with self.worker_timer():
                 results = self._engine.generate(
-                    input_ids=request.input_ids,
+                    input_ids=request.input_ids
+                    if request.multi_modal_inputs
+                    else request.multi_modal_inputs["input_ids"],
                     # 0.4.4 has modality bug,can't pass non-None image_data
                     image_data=request.image_data if any(request.image_data) else None,
                     sampling_params=self._sampling_params,
