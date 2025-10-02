@@ -60,13 +60,17 @@ def concat_dict_list(list_of_dicts: List[Dict[str, Any]]) -> Dict[str, Any]:
     return result
 
 
-def split_list(inputs, num_chunks, enforce_divisible_batch: Optional[bool] = True):
+def split_list(
+    inputs: List, num_chunks: int, enforce_divisible_batch: Optional[bool] = True
+):
     """
     Split a list into equal sized chunks
     """
     if enforce_divisible_batch:
         chunk_size = len(inputs) // num_chunks
-        assert len(inputs) % chunk_size == 0, "Issue with batch size configuration!"
+        assert len(inputs) % chunk_size == 0, (
+            f"Issue with batch size configuration! inputs len:{len(inputs)} num_chunks:{num_chunks}"
+        )
         return [inputs[i : i + chunk_size] for i in range(0, len(inputs), chunk_size)]
     else:
         k, m = divmod(len(inputs), num_chunks)

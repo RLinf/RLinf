@@ -371,6 +371,13 @@ class RolloutResult:
 
         num_sequences = len(results) * group_size
 
+        if multi_modal_inputs:
+            mm_inputs = []
+            for mm_input in multi_modal_inputs:
+                mm_inputs.extend([mm_input] * group_size)
+        else:
+            mm_inputs = None
+
         prompt_lengths = []
         prompt_ids = []
         response_lengths = []
@@ -413,7 +420,7 @@ class RolloutResult:
             response_ids=response_ids,
             response_lengths=response_lengths,
             response_texts=response_texts,
-            multi_modal_inputs=multi_modal_inputs,
+            multi_modal_inputs=mm_inputs,
             is_end=is_end,
         )
         if return_logprobs:

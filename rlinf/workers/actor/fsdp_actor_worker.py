@@ -214,7 +214,6 @@ class FSDPActor(FSDPModelManager, Worker):
             f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
         )
         batch = RolloutResult.merge_batches(batches)
-
         # Must be called after batch is retrieved, which is when rollout has stopped
         # Otherwise, loading model might cause OOM
         self._load_weight_and_optimizer(input_channel)
@@ -279,7 +278,6 @@ class FSDPActor(FSDPModelManager, Worker):
                         ref_logprobs = m_batch["ref_logprobs"]
 
                     loss_mask = m_batch["attention_mask"][:, -self.response_len :]
-
                     output = self.model(
                         input_ids=input_ids,
                         attention_mask=attention_mask,

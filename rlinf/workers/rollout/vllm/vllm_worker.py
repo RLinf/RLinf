@@ -377,7 +377,14 @@ class VLLMWorker(Worker):
             result: The RolloutResult to put to the channel.
             output_channel: The output channel to send results to.
         """
-        await output_channel.put(result, async_op=True).async_wait()
+        # NOTE:
+        # To fit reward worker and actor workers' expected input count,
+        # currently we can only split result into groups.
+        splited_results = RolloutResult.split_result_list_by_group([result])
+        put_tasks = [
+            output_channel.put(r, async_op=True).async_wait() for r in splited_results
+        ]
+        await asyncio.gather(*put_tasks)
 
     async def _stop(self) -> None:
         """

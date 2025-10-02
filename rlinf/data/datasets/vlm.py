@@ -178,13 +178,17 @@ class VLMBaseDataset(Dataset):
                 text=[rendered], images=images_inputs, padding=True, return_tensors="pt"
             )
             inputs.pop("attention_mask")
-            # NOTE:
-            # we use these input_ids in inputs rather than belows
-            # because sglang need corresponding pixel_values len's placeholder
-            # in input_ids, while vllm does not need.
-            ids = self._processor(
-                text=[rendered], images=None, padding=True, return_tensors="pt"
-            )["input_ids"]
+            if self.cfg.rollout.rollout_backend == "sglang":
+                ids = inputs.pop("input_ids")
+            elif self.cfg.rollout.rollout_backend == "vllm":
+                inputs.pop("input_ids")
+                ids = self._processor(
+                    text=[rendered], images=None, padding=True, return_tensors="pt"
+                )["input_ids"]
+            else:
+                raise ValueError(
+                    f"Unsupported rollout backend {self.cfg.rollout.rollout_backend}"
+                )
             if isinstance(ids, torch.Tensor):
                 if ids.dim() == 2 and ids.size(0) == 1:
                     ids = ids.squeeze(0)
