@@ -13,12 +13,14 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 from omegaconf import DictConfig
-from vllm.outputs import CompletionOutput
-from vllm.outputs import RequestOutput as VllmRequestOutput
+
+if TYPE_CHECKING:
+    from vllm.outputs import CompletionOutput
+    from vllm.outputs import RequestOutput as VllmRequestOutput
 
 from rlinf.data.datasets.utils import batch_pad_to_fixed_len
 from rlinf.utils.data_iter_utils import (
@@ -352,13 +354,13 @@ class RolloutResult:
     @staticmethod
     def from_vllm_results(
         group_size: int,
-        results: List[VllmRequestOutput],
+        results: List["VllmRequestOutput"],
         answers: Optional[List[str]] = None,
         multi_modal_inputs: Optional[List[Dict]] = None,
         return_logprobs: bool = False,
     ) -> "RolloutResult":
         def get_logprobs(
-            response_ids: List[int], output: CompletionOutput
+            response_ids: List[int], output: "CompletionOutput"
         ) -> List[float]:
             logprobs = []
             returned_logprobs = output.logprobs
