@@ -335,10 +335,12 @@ class AsyncSGLangWorker(SGLangWorker):
                     results = self._completion_info.get_results(hash_id)
 
                     input_ids = [input_ids] * len(results)
+                    answers = [rollout_request.answers[raw_id]] * len(results)
                     rollout_result = RolloutResult.from_sglang_results(
                         results,
                         rollout_request.n,
                         input_ids,
+                        answers=answers,
                         return_logprobs=self._return_logprobs,
                     )
 

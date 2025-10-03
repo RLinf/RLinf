@@ -14,7 +14,13 @@
 
 import multiprocessing
 import re
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import (
+    ProcessPoolExecutor,
+    as_completed,
+)
+from concurrent.futures import (
+    TimeoutError as FuturesTimeoutError,
+)
 from typing import List, Union
 
 import regex
@@ -403,15 +409,20 @@ def math_verify_call(
             jobs.append(job)
         all_jobs.append(jobs)
 
-    labels = []
+    labels: List[int] = []
     has_timeout = False
     for jobs in all_jobs:
+        label = 0
         try:
             for job in as_completed(jobs, timeout=timeout):
                 x = job.result()
-                labels.append(x)
-        except TimeoutError:
+                label = label or x
+        except FuturesTimeoutError:
             has_timeout = True
+            for job in jobs:
+                job.cancel()
+        finally:
+            labels.append(label)
 
     if has_timeout:
         reset_global_process_pool()

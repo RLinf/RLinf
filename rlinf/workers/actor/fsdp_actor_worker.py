@@ -25,7 +25,6 @@ from tqdm import tqdm
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import actor_loss, calculate_adv_and_returns
-from rlinf.algorithms.rewards import get_reward_class
 from rlinf.algorithms.utils import (
     kl_penalty,
     preprocess_advantages_inputs,
@@ -113,6 +112,8 @@ class FSDPActor(FSDPModelManager, Worker):
             assert self.cfg.reward.reward_type in ["math", "vqa"], (
                 "only support math and vqa reward!"
             )
+            from rlinf.algorithms.rewards import get_reward_class
+
             reward_cls = get_reward_class(self.cfg.reward.reward_type)
             self.reward = reward_cls(self.cfg.reward)
 

@@ -598,7 +598,7 @@ class TestSchedulerTask:
         """Test SchedulerTask initialization."""
         # Create a mock config
         mock_cfg = MagicMock()
-        mock_cfg.runner.task_type = "math"
+        mock_cfg.runner.task_type = "reasoning"
         mock_cfg.actor.model.tensor_model_parallel_size = 2
         mock_cfg.actor.model.pipeline_model_parallel_size = 1
         mock_cfg.rollout.tensor_parallel_size = 1
@@ -620,7 +620,7 @@ class TestSchedulerTask:
 
         scheduler_task = SchedulerTask(mock_cfg, mock_cluster)
 
-        assert scheduler_task.is_math is True
+        assert scheduler_task.is_reasoning is True
         assert scheduler_task.total_gpus == 8
         assert scheduler_task.group_size == 4
         assert "actor" in scheduler_task.components_config

@@ -265,8 +265,8 @@ class VLLMWorker(Worker):
                 assert len(prompt_texts) > 0, "prompt_text should not be empty."
                 return prompt_texts
 
-        def check_image_data() -> Optional[List[List[Image]]]:
-            if image_data is None:
+        def check_image_data() -> Optional[List[List[Image.Image]]]:
+            if image_data is None or not any(image_data):
                 return None
             assert isinstance(image_data, list), "image_data should be a list."
             if isinstance(image_data[0], list):

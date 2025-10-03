@@ -885,10 +885,6 @@ class MegatronActor(MegatronModelManager, Worker):
             input_channel: The input channel to read from.
             output_channel: The output channel to send results to.
         """
-        if self.is_pipeline:
-            # In pipeline mode, advantages are computed in the rollout
-            with self.worker_timer():
-                return
         clear_memory()
         recv_batch_size = 0
         while recv_batch_size < self.total_batch_size_per_dp:

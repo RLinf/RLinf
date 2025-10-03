@@ -13,9 +13,10 @@ cluster:
     rollout: 0-3
     inference: 4-5
     actor: 6-7
+    reward: 0-3
 
 runner:
-  task_type: math
+  task_type: reasoning
   logger:
     log_path: /workspace/results/
     project_name: rlinf
@@ -67,7 +68,7 @@ algorithm:
   calculate_entropy: True
   clip_ratio_c: null # 3.0
 
-  adv_type: grpo
+  adv_type: math_grpo
   normalize_advantages: False
   early_stop_imp_ratio: 5.0
   use_valid_token_scale: True
@@ -274,9 +275,16 @@ actor:
 
 
 reward:
+  group_name: "RewardGroup"
   use_reward_model: false
   reward_type: 'math'
   reward_scale: 5.0
+
+  tokenizer:
+    tokenizer_model: ${actor.tokenizer.tokenizer_model}
+    use_fast: ${actor.tokenizer.use_fast}
+    trust_remote_code: ${actor.tokenizer.trust_remote_code}
+    padding_side: ${actor.tokenizer.padding_side}
 
 critic:
   use_critic_model: false
