@@ -366,7 +366,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     "prev_values": prev_values,
                     "clip_ratio_high": self.cfg.algorithm.clip_ratio_high,
                     "clip_ratio_low": self.cfg.algorithm.clip_ratio_low,
-                    "use_norm_adv": self.cfg.algorithm.get("use_norm_adv", False),
                     "value_clip": self.cfg.algorithm.get("value_clip", None),
                     "huber_delta": self.cfg.algorithm.get("huber_delta", None),
                     "entropy_bonus": self.cfg.algorithm.entropy_bonus,

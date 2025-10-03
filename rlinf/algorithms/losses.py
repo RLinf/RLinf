@@ -57,7 +57,10 @@ def compute_embodied_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict
     entropy_bonus = kwargs["entropy_bonus"]
     loss_mask = kwargs.get("loss_mask", None)
     loss_mask_sum = kwargs.get("loss_mask_sum", None)
-
+    max_episode_steps = kwargs.get("max_episode_steps", None)
+    loss_mask_ratio = (
+        (loss_mask_sum * 1.0) / max_episode_steps if loss_mask is not None else None
+    )
     logratio = logprobs - old_logprobs
     ratio = torch.exp(logratio)
 
@@ -69,7 +72,7 @@ def compute_embodied_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict
         approx_kl = torch.mean((ratio - 1 - logratio))
     else:
         if loss_mask.any():
-            policy_loss = torch.mean(torch.max(surr1, surr2)[loss_mask])
+            policy_loss = torch.mean((torch.max(surr1, surr2)/loss_mask_ratio)[loss_mask])
             pg_clipfrac = torch.mean(torch.gt(surr2, surr1).float()[loss_mask])
             approx_kl = torch.mean(((ratio - 1) - logratio)[loss_mask])
         else:
@@ -86,6 +89,17 @@ def compute_embodied_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict
         raise NotImplementedError
 
     # Value loss
+    if prev_values.shape != values.shape:
+        try:
+            prev_values = prev_values.reshape(values.shape)
+        except:
+            raise ValueError(f"{prev_values.shape=} != {values.shape=}")
+    if returns.shape != values.shape:
+        try:
+            returns = returns.reshape(values.shape)
+        except:
+            raise ValueError(f"{returns.shape=} != {values.shape=}")
+
     value_pred_clipped = prev_values + (values - prev_values).clamp(
         -value_clip, value_clip
     )  # [bsz, ] | [bsz, chunk-step]
@@ -93,7 +107,7 @@ def compute_embodied_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict
     error_original = returns - values  # [bsz, ] | [bsz, chunk-step]
     value_loss_clipped = huber_loss(error_clipped, huber_delta)
     value_loss_original = huber_loss(error_original, huber_delta)
-    value_loss = torch.max(value_loss_original, value_loss_clipped)
+    value_loss = torch.max(value_loss_original, value_loss_clipped)/loss_mask_ratio
 
     value_clip_indicator = (value_pred_clipped - prev_values).abs() > value_clip
     value_clip_ratio = value_clip_indicator.float().mean()
@@ -109,7 +123,6 @@ def compute_embodied_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict
 
     # Entropy loss
     entropy_loss = entropy.mean() if entropy is not None else torch.tensor(0.0)
-    # TODO: No warmup right now because we don't see any difference in the results
     loss = policy_loss + value_loss - entropy_bonus * entropy_loss
 
     # Metrics
@@ -178,7 +191,7 @@ def compute_embodied_grpo_actor_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
         approx_kl = torch.mean((ratio - 1 - logratio))
     else:
         if loss_mask.any():
-            policy_loss = torch.mean(torch.max(surr1, surr2)[loss_mask])
+            policy_loss = torch.mean((torch.max(surr1, surr2)/loss_mask_ratio)[loss_mask])
             pg_clipfrac = torch.mean(torch.gt(surr2, surr1).float()[loss_mask])
             approx_kl = torch.mean(((ratio - 1) - logratio)[loss_mask])
         else:
