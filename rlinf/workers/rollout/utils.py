@@ -376,6 +376,12 @@ class CollocateRankMapper(RankMapper):
         """
         Get the global mapping from actor 1D rank to rollout 2D rank as dict.
         """
+        # rank -> (dp, tp)
+        if actor_tp_size == 1:
+            return {
+                rank: (rank // rollout_tp_size, rank % rollout_tp_size)
+                for rank in range(actor_world_size)
+            }
         rank_map = {}
         for actor_rank in range(actor_world_size):
             rank_map[actor_rank] = cls._get_actor_rank_to_rollout_rank(

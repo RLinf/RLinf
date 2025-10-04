@@ -11,3 +11,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from omegaconf import DictConfig
+
+from rlinf.scheduler.worker.worker import Worker
+
+
+def get_actor_worker(cfg: DictConfig) -> Worker:
+    if cfg.actor.training_backend == "fsdp":
+        from .fsdp_actor_worker import FSDPActor
+
+        return FSDPActor
+    elif cfg.actor.training_backend == "megatron":
+        from .megatron_actor_worker import MegatronActor
+
+        return MegatronActor
+    else:
+        raise ValueError(f"Unsupported training backend: {cfg.actor.training_backend}")

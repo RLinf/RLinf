@@ -1087,34 +1087,6 @@ class TestPlacementStrategies:
             cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
             ModelParallelComponentPlacement(config, cluster)
 
-    def test_model_parallel_component_placement_init_collocated_mode_invalid_tp_sizes(
-        self,
-    ):
-        """Test ModelParallelComponentPlacement raises error when actor TP size < rollout TP size in collocated mode."""
-        config = DictConfig(
-            {
-                "cluster": {
-                    "num_nodes": 1,
-                    "component_placement": {"actor,rollout": "0-3"},
-                },
-                "actor": {
-                    "model": {
-                        "tensor_model_parallel_size": 2,
-                        "context_parallel_size": 1,
-                        "pipeline_model_parallel_size": 1,
-                    }
-                },
-                "rollout": {"tensor_parallel_size": 4, "pipeline_parallel_size": 1},
-            }
-        )
-
-        with pytest.raises(
-            AssertionError,
-            match="Actor TP size 2 must be greater or equal to Rollout TP size 4",
-        ):
-            cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
-            ModelParallelComponentPlacement(config, cluster)
-
     def test_model_parallel_component_placement_init_collocated_mode_with_inference_gpus(
         self,
     ):
