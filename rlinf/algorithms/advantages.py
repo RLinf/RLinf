@@ -30,6 +30,7 @@ def compute_gae_advantages_and_returns(
     gae_lambda: float = 1.0,
     normalize_advantages: bool = True,
     normalize_returns: bool = False,
+    **kwargs,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Calculate advantages and returns for Proximal Policy Optimization (PPO).
@@ -81,6 +82,7 @@ def compute_grpo_advantages(
     reward_scores: torch.Tensor,
     mask: torch.Tensor,
     group_size: int,
+    **kwargs,
 ):
     """
     Compute GRPO advantages.
@@ -117,6 +119,7 @@ def compute_reinpp_advantages(
     logprob=None,
     ref_logprob=None,
     kl_penalty_type: str = "",
+    **kwargs,
 ):
     """
     Compute advantages for reinforce++ and reinforce++ baseline.

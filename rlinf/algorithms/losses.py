@@ -29,8 +29,9 @@ def compute_ppo_actor_loss(
     advantages: torch.Tensor,
     loss_mask: Optional[torch.Tensor] = None,
     c_clip: Optional[float] = None,
-    loss_agg_func=None,  # 默认 masked_mean，可以在函数体中处理
+    loss_agg_func=masked_mean,
     max_episode_steps: Optional[int] = None,
+    **kwargs,
 ) -> Tuple[torch.Tensor, Dict]:
     """
     Compute PPO actor loss function.
@@ -111,6 +112,7 @@ def compute_ppo_critic_loss(
     prev_values: torch.Tensor,
     value_clip: float,
     huber_delta: float,
+    **kwargs,
 ) -> Tuple[torch.Tensor, Dict]:
     """
     Compute PPO critic loss function.
