@@ -23,7 +23,13 @@ from rlinf.utils.utils import masked_mean
 
 @register_advantage("gae")
 def compute_gae_advantages_and_returns(
-    **kwargs,
+    rewards: torch.Tensor,
+    values: torch.Tensor,
+    dones: torch.Tensor,
+    gamma: float = 1.0,
+    gae_lambda: float = 1.0,
+    normalize_advantages: bool = True,
+    normalize_returns: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Calculate advantages and returns for Proximal Policy Optimization (PPO).
@@ -34,25 +40,17 @@ def compute_gae_advantages_and_returns(
     using mean and standard deviation for stable training.
 
     Args:
-        rewards (torch.Tensor): Reward tensor of shape [num-chunk, bsz, chunk-size]
-        values (torch.Tensor): Value predictions of shape [num-chunk + 1, bsz, chunk-size]
-        dones (torch.Tensor): Done flag tensor of shape [num-chunk + 1, bsz, chunk-size]
-        gamma (float): Discount factor
-        gae_lambda (float): GAE lambda parameter
-        normalize_advantages (bool): Whether to normalize advantages
+        rewards (torch.Tensor): Rewards per timestep.
+        values (torch.Tensor): Value function estimates.
+        dones (torch.Tensor): Done flags (1 if episode ended, else 0).
+        gamma (float, optional): Discount factor. Defaults to 1.0.
+        gae_lambda (float, optional): GAE smoothing factor. Defaults to 1.0.
+        normalize_advantages (bool, optional): Whether to normalize advantages. Defaults to True.
+        normalize_returns (bool, optional): Whether to normalize returns. Defaults to False.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]: (advantages, returns) tensors
+        Tuple[torch.Tensor, torch.Tensor]: (advantages, returns)
     """
-
-    rewards = kwargs["rewards"]
-    values = kwargs["values"]
-    dones = kwargs["dones"]
-    gamma = kwargs.get("gamma", 1.0)
-    gae_lambda = kwargs.get("gae_lambda", 1.0)
-    normalize_advantages = kwargs.get("normalize_advantages", True)
-    normalize_returns = kwargs.get("normalize_returns", False)
-
     returns = torch.zeros_like(rewards)
     gae = 0
     for step in reversed(range(rewards.shape[0])):
@@ -75,22 +73,26 @@ def compute_gae_advantages_and_returns(
         std_retuns = returns.std(correction=0)
         returns = (returns - mean_returns) / (std_retuns + 1e-5)
 
-    kwargs.update(
-        {
-            "advantages": advantages,
-            "returns": returns,
-        }
-    )
-
-    return kwargs
+    return advantages, returns
 
 
 @register_advantage("grpo")
-def compute_grpo_advantages(**kwargs):
-    reward_scores = kwargs["reward_scores"]
-    mask = kwargs["loss_mask"]
-    group_size = kwargs["group_size"]
+def compute_grpo_advantages(
+    reward_scores: torch.Tensor,
+    mask: torch.Tensor,
+    group_size: int,
+):
+    """
+    Compute GRPO advantages.
 
+    Args:
+        reward_scores (torch.Tensor): Reward or score values.
+        mask (torch.Tensor): Loss mask for valid entries.
+        group_size (int): Group size for advantage computation.
+
+    Returns:
+        torch.Tensor: advantages
+    """
     grouped_rewards = reward_scores.view(-1, group_size)
 
     grouped_reward_mean = grouped_rewards.mean(dim=1).repeat_interleave(
@@ -102,22 +104,36 @@ def compute_grpo_advantages(**kwargs):
 
     advantages = (torch.zeros_like(mask) + advantages.view(-1, 1)) * mask
 
-    kwargs.update({"advantages": advantages})
-
-    return kwargs
+    return advantages, None
 
 
 @register_advantage("reinpp")
-def compute_reinpp_advantages(**kwargs):
-    reward_scores = kwargs["reward_scores"]
-    mask = kwargs["loss_mask"]
-    group_size = kwargs["group_size"]
-    use_reinpp_baseline = kwargs.get("use_reinpp_baseline", False)
-    kl_beta = kwargs.get("kl_beta", 0.0)
-    logprob = kwargs.get("logprob", None)
-    ref_logprob = kwargs.get("ref_logprob", None)
-    kl_penalty_type = kwargs.get("kl_penalty_type", "")
+def compute_reinpp_advantages(
+    reward_scores: torch.Tensor,
+    mask: torch.Tensor,
+    group_size: int,
+    use_reinpp_baseline: bool = False,
+    kl_beta: float = 0.0,
+    logprob=None,
+    ref_logprob=None,
+    kl_penalty_type: str = "",
+):
+    """
+    Compute advantages for reinforce++ and reinforce++ baseline.
 
+    Args:
+        reward_scores (torch.Tensor): The reward or score values.
+        mask (torch.Tensor): The loss mask for valid entries.
+        group_size (int): The group size for advantage computation.
+        use_reinpp_baseline (bool, optional): Whether to use reinforce++ baseline.
+        kl_beta (float, optional): KL penalty coefficient.
+        logprob (optional): Log probability of current policy.
+        ref_logprob (optional): Log probability of reference policy.
+        kl_penalty_type (str, optional): Type of KL penalty.
+
+    Returns:
+        torch.Tensor: advantages
+    """
     # first group baseline for reinforce++ baseline
     if use_reinpp_baseline:
         grouped_rewards = reward_scores.view(-1, group_size)  # [num_prompt, group_size]
@@ -154,9 +170,7 @@ def compute_reinpp_advantages(**kwargs):
 
     advantages = (advantages - mean) * rstd
 
-    kwargs.update({"advantages": advantages})
-
-    return kwargs
+    return advantages, None
 
 
 if __name__ == "__main__":

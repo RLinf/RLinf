@@ -95,9 +95,14 @@ def calculate_adv_and_returns(**kwargs) -> Tuple[torch.Tensor, Optional[torch.Te
         kwargs = preprocess_advantages_inputs(**kwargs)
         if adv_type != "gae":
             kwargs = calculate_scores(**kwargs)
-        kwargs = fn(**kwargs)
+        advantages, returns = fn(**kwargs)
+        kwargs.update(
+            {
+                "advantages": advantages,
+                "returns": returns,
+            }
+        )
         res = postprocess_advantages_outputs(**kwargs)
     else:
-        kwargs = fn(**kwargs)
-        res = kwargs["advantages"], None
+        res = fn(**kwargs)
     return res

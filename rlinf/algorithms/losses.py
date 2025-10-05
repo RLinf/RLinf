@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import torch
 
@@ -21,35 +21,34 @@ from rlinf.algorithms.utils import huber_loss
 from rlinf.utils.utils import masked_mean, masked_mean_ratio, raw_mean
 
 
-def compute_ppo_actor_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
+def compute_ppo_actor_loss(
+    logprobs: torch.Tensor,
+    old_logprobs: torch.Tensor,
+    clip_ratio_low: float,
+    clip_ratio_high: float,
+    advantages: torch.Tensor,
+    loss_mask: Optional[torch.Tensor] = None,
+    c_clip: Optional[float] = None,
+    loss_agg_func=None,  # 默认 masked_mean，可以在函数体中处理
+    max_episode_steps: Optional[int] = None,
+) -> Tuple[torch.Tensor, Dict]:
     """
     Compute PPO actor loss function.
-
-    There is no shape requirements for the inputs, but they must have the same shape.
-    Either [bs, max_seqlen] for batch padded inputs or [tot_seqlen] for padded inputs.
 
     Args:
         logprobs (torch.FloatTensor): Log probabilities of actions.
         old_logprobs (torch.FloatTensor): Old log probabilities of actions.
+        clip_ratio_low (float): Lower bound of clipping ratio.
+        clip_ratio_high (float): Upper bound of clipping ratio.
         advantages (torch.FloatTensor): GAE (normalized) advantages.
-        eps_clip (float): Clip ratio of PPO.
-        loss_mask (Optional[torch.BoolTensor], optional): Mask for loss computation.
-            1 if valid else 0. Defaults to None.
-        max_episode_steps (Optional[int]): Maximum episode steps for normalization
+        loss_mask (Optional[torch.BoolTensor], optional): Mask for valid entries. Defaults to None.
+        c_clip (Optional[float], optional): Optional clipping coefficient. Defaults to None.
+        loss_agg_func (callable, optional): Aggregation function (e.g., masked_mean). Defaults to None.
+        max_episode_steps (Optional[int], optional): Max episode length for normalization. Defaults to None.
 
     Returns:
-        Tuple[torch.Tensor, Dict]: Scalar loss and statistics.
+        Tuple[torch.Tensor, Dict]: (actor_loss, metrics_dict)
     """
-
-    logprobs = kwargs["logprobs"]
-    old_logprobs = kwargs["old_logprobs"]
-    clip_ratio_low = kwargs["clip_ratio_low"]
-    clip_ratio_high = kwargs["clip_ratio_high"]
-    advantages = kwargs["advantages"]
-    loss_mask = kwargs.get("loss_mask", None)
-    c_clip = kwargs.get("c_clip", None)
-    loss_agg_func = kwargs.get("loss_agg_func", masked_mean)
-    max_episode_steps = kwargs.get("max_episode_steps", None)
 
     if max_episode_steps is not None and loss_mask is not None:
         loss_agg_func = masked_mean_ratio
@@ -106,27 +105,26 @@ def compute_ppo_actor_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
     return policy_loss, metrics_data
 
 
-def compute_ppo_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
+def compute_ppo_critic_loss(
+    values: torch.Tensor,
+    returns: torch.Tensor,
+    prev_values: torch.Tensor,
+    value_clip: float,
+    huber_delta: float,
+) -> Tuple[torch.Tensor, Dict]:
     """
     Compute PPO critic loss function.
 
     Args:
-        values (torch.Tensor): Current value predictions
-        advantages (torch.Tensor): Advantage values
-        returns (torch.Tensor): Return values
-        prev_values (torch.Tensor): Previous value predictions
-        value_clip (float): Value clipping threshold
-        huber_delta (float): Huber loss delta parameter
+        values (torch.Tensor): Current value predictions.
+        returns (torch.Tensor): Return values.
+        prev_values (torch.Tensor): Previous value predictions.
+        value_clip (float): Value clipping threshold.
+        huber_delta (float): Huber loss delta parameter.
 
     Returns:
-        Tuple[torch.Tensor, Dict]: Loss and metrics dictionary
+        Tuple[torch.Tensor, Dict]: (critic_loss, metrics_dict)
     """
-
-    values = kwargs["values"]
-    returns = kwargs["returns"]
-    prev_values = kwargs["prev_values"]
-    value_clip = kwargs["value_clip"]
-    huber_delta = kwargs["huber_delta"]
 
     value_pred_clipped = prev_values + (values - prev_values).clamp(
         -value_clip, value_clip
