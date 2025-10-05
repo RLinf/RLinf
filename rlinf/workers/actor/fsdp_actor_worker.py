@@ -346,6 +346,10 @@ class FSDPActor(FSDPModelManager, Worker):
                         loss = loss + kl_loss * self.kl_beta
 
                     # add to log
+                    # scale loss for gradient accumulation and backprop
+                    loss = loss / self.gradient_accumulation
+                    loss.backward()
+
                     mbs_metrics_data.update(
                         {
                             "final_loss": loss.detach().cpu(),
@@ -355,6 +359,18 @@ class FSDPActor(FSDPModelManager, Worker):
                     )
 
                     append_to_dict(metrics, mbs_metrics_data)
+                # apply gradient clipping and optimizer step at the end of a global batch
+                grad_norm = None
+                try:
+                    grad_norm = self.model.clip_grad_norm_(
+                        max_norm=self.cfg.actor.optim.clip_grad
+                    )
+                except Exception:
+                    pass
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+
+                # aggregate metrics across micro-batches
                 mean_metric_dict = {
                     key: torch.mean(torch.stack(value))
                     for key, value in metrics.items()
@@ -362,6 +378,19 @@ class FSDPActor(FSDPModelManager, Worker):
                 mean_metric_dict = all_reduce_dict(
                     mean_metric_dict, op=torch.distributed.ReduceOp.AVG
                 )
+                # add optimizer stats
+                if grad_norm is not None:
+                    mean_metric_dict["actor/grad_norm"] = (
+                        torch.as_tensor(
+                            grad_norm
+                            if torch.is_tensor(grad_norm)
+                            else float(grad_norm)
+                        )
+                        .float()
+                        .cpu()
+                    )
+                lr = self.optimizer.param_groups[0]["lr"]
+                mean_metric_dict["actor/lr"] = torch.as_tensor(lr).float().cpu()
                 training_metrics_list.append(mean_metric_dict)
 
         # Rollout metrics
