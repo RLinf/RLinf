@@ -53,14 +53,15 @@ we highly recommend updating the following configuration option in
 ``cluster.component_placement``.
 
 
-You can dynamically set it to **1, 2, 4, or 8** depending on your available resources.
+You can set it to **0-1**, **0-3** or  **0-7** to use 2/4/8 GPUs depending on your available resources.
+Refer to :doc:`../tutorials/user/yaml` for a more detailed explanation of the placement configuration.
 
 .. code-block:: yaml
 
    cluster:
      num_nodes: 1
      component_placement:
-        actor,rollout: all
+        actor,rollout: 0
 
 Finally, before running the script, you need to modify the corresponding configuration options in the YAML file according to the download paths of the model and dataset. Specifically, update:
 

@@ -30,7 +30,6 @@ import functools
 
 import torch
 from accelerate import init_empty_weights
-from prismatic.extern.hf.modeling_prismatic import PrismaticProjector
 from torch.distributed.fsdp.wrap import (
     transformer_auto_wrap_policy,
 )
@@ -111,6 +110,12 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False):
         policies.append(vit_wrap_policy)
 
         # Prismatic projector policy for VLA models
+        # The prismatic package initializes a DistributedOverwatch by default,
+        # which initializes accelerate.PartialState, which in turn
+        # initializes a torch.distributed process group in gloo.
+        # This results in default group being gloo, which does not support CUDA tensors and allreduce average.
+        from prismatic.extern.hf.modeling_prismatic import PrismaticProjector
+
         prismatic_fsdp_wrapping_policy = functools.partial(
             _module_wrap_policy,
             module_classes={PrismaticProjector},

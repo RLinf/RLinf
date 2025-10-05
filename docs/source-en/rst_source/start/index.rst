@@ -13,7 +13,7 @@ We present three concise examples to demonstrate the framework's workflow and he
 
 - **Distributed training:** Multi-node training for mathematical tasks (see :doc:`distribute`).
 
-- **Evaluation:** Assessing model performance on embodied intelligence (see :doc:`vlm-eval`) and assessing model performance on long-chain-of-thought mathematical reasoning (see :doc:`llm-eval`).
+- **Evaluation:** Assessing model performance on embodied intelligence (see :doc:`vla-eval`) and assessing model performance on long-chain-of-thought mathematical reasoning (see :doc:`llm-eval`).
 
 .. toctree::
    :hidden:

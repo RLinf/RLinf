@@ -1,13 +1,13 @@
-具身智能 RL-VLA
-========================
+基于LIBERO模拟器的强化学习训练
+===========================================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
    :height: 16px
    :class: inline-icon
 
-本文档给出在 RLinf 框架内启动与管理 **Vision-Language-Action Models (VLAs)** 训练任务的完整指南，  
-重点是在 ManiSkill3/LIBERO 环境中微调 VLA 模型以完成机器人操作。
+本文档给出在 RLinf 框架内启动与管理 **Vision-Language-Action Models (VLAs)** 训练任务的完整指南，
+在 LIBERO 环境中微调 VLA 模型以完成机器人操作。
 
 主要目标是让模型具备以下能力：
 
@@ -18,16 +18,6 @@
 
 环境
 -----------------------
-
-**ManiSkill3 环境**
-
-- **Environment**：ManiSkill3 仿真平台  
-- **Task**：控制机械臂抓取多种物体  
-- **Observation**：第三人称相机的 RGB 图像（224×224）  
-- **Action Space**：7 维连续动作  
-  - 三维位置控制（x, y, z）  
-  - 三维旋转控制（roll, pitch, yaw）  
-  - 夹爪控制（开/合）
 
 **LIBERO 环境**
 
@@ -93,7 +83,7 @@
    rollout:
       pipeline_stage_num: 2
 
-你可以灵活配置 env、rollout、actor 三个组件使用的 GPU等加速器 数量。  
+你可以灵活配置 env、rollout、actor 三个组件使用的 GPU 数量。  
 使用上述配置，可以让 env 与 rollout 之间流水线重叠，并与 actor 共享。  
 此外，在配置中设置 `pipeline_stage_num = 2`，可实现 **rollout 与 actor** 之间的流水线重叠，从而提升 rollout 效率。
 
@@ -120,20 +110,6 @@
 
 **2. 配置文件**
 
-当前我们支持两个环境：**ManiSkill3** 与 **LIBERO**。
-
-1. **ManiSkill3 环境**
-
-   支持两种模型：**OpenVLA** 与 **OpenVLA-OFT**；两种算法：**PPO** 与 **GRPO**。  
-   对应配置文件：
-
-   - **OpenVLA + PPO**：``examples/embodiment/config/maniskill_ppo_openvla.yaml``  
-   - **OpenVLA-OFT + PPO**：``examples/embodiment/config/maniskill_ppo_openvlaoft.yaml``  
-   - **OpenVLA + GRPO**：``examples/embodiment/config/maniskill_grpo_openvla.yaml``  
-   - **OpenVLA-OFT + GRPO**：``examples/embodiment/config/maniskill_grpo_openvlaoft.yaml``
-
-2. **LIBERO 环境**
-
    支持 **OpenVLA-OFT** 模型，算法为 **PPO** 与 **GRPO**。  
    对应配置文件：
 
@@ -148,11 +124,11 @@
 
    bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
 
-例如，在 ManiSkill3 环境中使用 PPO 训练 OpenVLA 模型：
+例如，在 LIBERO 环境中使用 PPO 训练 OpenVLA 模型：
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla
+   bash examples/embodiment/run_embodiment.sh libero_10_ppo_openvlaoft
 
 可视化与结果
 -------------------------
@@ -205,80 +181,7 @@
        wandb:
          enable: True
          project_name: "RLinf"
-         experiment_name: "openvla-maniskill"
-
-ManiSkill3 结果
-~~~~~~~~~~~~~~~~~~~
-
-以下以 ManiSkill3 环境下的 PPO 训练为例：  
-在单机 8×H100 的设置下，OpenVLA（左）与 OpenVLA-OFT（右）在 plate-25-main 任务上，分别在 48 小时与 24 小时的 PPO 训练后，成功率最高达到 90%。
-
-.. raw:: html
-
-   <div style="display: flex; justify-content: space-between; gap: 10px;">
-     <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/embody-loss-1.jpeg" style="width: 100%;"/>
-       <p><em>OpenVLA (48h training)</em></p>
-     </div>
-     <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/embody-loss-2.jpeg" style="width: 100%;"/>
-       <p><em>OpenVLA-OFT (24h training)</em></p>
-     </div>
-   </div>
-
-我们在 OOD（分布外）评估下，对 Vision、Semantic、Position 三类任务进行测试，  
-每类任务最优模型以粗体标注。
-
-.. note::
-   为公平对比，这里采用与 ``rl4vla`` 相同的 OOD 测试集。
-
-.. list-table:: **ManiSkill3 上 OpenVLA 与 OpenVLA-OFT 的模型结果**
-   :header-rows: 1
-   :widths: 40 15 15 18 15
-
-   * - 模型
-     - Vision
-     - Semantic
-     - Position
-     - 平均值
-   * - |huggingface| `rl4vla <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_
-     - 76.6%
-     - 75.4%
-     - 77.6%
-     - 76.1%
-   * - |huggingface| `GRPO-OpenVLA-OFT <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-ManiSkill3-25ood>`_
-     - **84.6%**
-     - 51.6%
-     - 42.9%
-     - 61.5%
-   * - |huggingface| `PPO-OpenVLA-OFT <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-PPO-ManiSkill3-25ood>`_
-     - 80.5%
-     - 56.6%
-     - 56.1%
-     - 64.5%
-   * - |huggingface| `PPO-OpenVLA <https://huggingface.co/RLinf/RLinf-OpenVLA-PPO-ManiSkill3-25ood>`_
-     - 82.0%
-     - **80.6%**
-     - **89.3%**
-     - **82.2%**
-   * - |huggingface| `GRPO-OpenVLA <https://huggingface.co/RLinf/RLinf-OpenVLA-GRPO-ManiSkill3-25ood>`_
-     - 74.7%
-     - 74.4%
-     - 81.6%
-     - 75.5%
-
-.. note::
-   ``rl4vla`` 指在 **小 batch** 条件下，使用 PPO + OpenVLA 的设置，仅应与我们在类似条件下的 PPO+OpenVLA 对比。  
-   而我们的 PPO+OpenVLA 受益于 RLinf 的大规模基础设施，能够使用 **更大的 batch** 进行训练，我们观察到这能显著提升性能。
-
-下面的动图展示了在 RLinf 框架中，使用 PPO 在 ManiSkill3 多任务基准上训练 OpenVLA 模型的效果。
-
-.. raw:: html
-
-   <video controls autoplay loop muted playsinline preload="metadata" width="720">
-     <source src=https://github.com/RLinf/misc/raw/main/pic/embody.mp4 type="video/mp4">
-     Your browser does not support the video tag.
-   </video>
+         experiment_name: "openvla-libero"
 
 LIBERO 结果
 ~~~~~~~~~~~~~~~~~~~

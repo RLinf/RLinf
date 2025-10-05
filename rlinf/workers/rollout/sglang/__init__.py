@@ -30,7 +30,7 @@ package_version = get_version(package_name)
 sglang_version = None
 
 if package_version is None:
-    raise ValueError(f"vllm version {package_version} not supported")
+    raise ValueError(f"sglang version {package_version} not supported")
 elif package_version >= parse("0.4.4") and package_version < parse("0.4.6.post2"):
     sglang_version = package_version
     from rlinf.hybrid_engines.sglang.sglang_0_4_4 import io_struct

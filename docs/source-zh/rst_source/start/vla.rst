@@ -34,20 +34,21 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
 
 **步骤 2：运行官方提供的训练脚本**
 
-为方便使用，我们提供的配置文件默认支持单卡训练。  
+为方便使用，我们提供的配置文件需要至少双卡进行训练。  
 如果你有多张 GPU 并希望加快训练速度，  
 建议你修改配置文件  
 ``./examples/embodiment/config/maniskill_ppo_openvla_quickstart.yaml`` 中的参数  
 ``cluster.component_placement``。
 
-你可以根据实际资源设置为 **1、2、4 或 8**。
+你可以根据实际资源将该项设置为 **0-3** 或 **0-7**来使用 4/8 张 GPU。
+查看 :doc:`../tutorials/user/yaml` 以获取有关 Placement 配置的更详细说明。
 
 .. code-block:: yaml
 
    cluster:
      num_nodes: 1
      component_placement:
-        actor,rollout: all
+        actor,rollout: 0-1
 
 运行脚本之前，请根据你下载的模型和数据集路径，修改 YAML 文件中的以下字段：
 

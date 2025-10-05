@@ -66,3 +66,9 @@ jobs:
               run: |
                 export REPO_PATH=$(pwd)
                 bash tests/e2e_tests/math/sglang/run_pipeline.sh qwen2.5-1.5b-grpo-pipeline-rollout-logprobs.yaml
+
+            - name: vLLM Pipeline mode
+              run: |
+                export REPO_PATH=$(pwd)
+                bash tests/e2e_tests/math/vllm/run_pipeline.sh qwen2.5-1.5b-grpo-pipeline-rollout-logprobs.yaml
+

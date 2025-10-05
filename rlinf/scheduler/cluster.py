@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 import signal
 import sys
 import time
+import warnings
 from dataclasses import dataclass
 from importlib.metadata import version
 from typing import TYPE_CHECKING, Dict, List, Optional, Type
@@ -106,6 +108,22 @@ class Cluster:
         self._has_initialized = True
 
     def _init_and_launch_managers(self, num_nodes: int):
+        assert num_nodes > 0, "num_nodes must be greater than 0."
+
+        # Add logger
+        self._logger = logging.getLogger(Cluster.SYS_NAME)
+        self._logger.setLevel(Cluster.LOGGING_LEVEL)
+        self._logger.propagate = False
+        for handler in self._logger.handlers:
+            self._logger.removeHandler(handler)
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter(
+            fmt="[%(levelname)s %(asctime)s %(name)s] %(message)s",
+            datefmt="%H:%M:%S",
+        )
+        handler.setFormatter(formatter)
+        self._logger.addHandler(handler)
+
         self._num_nodes = num_nodes
         self._set_default_env_vars()
 
@@ -143,9 +161,8 @@ class Cluster:
 
         # Wait for the cluster to be ready
         while len(ray.nodes()) < self._num_nodes:
-            print(
-                f"Waiting for {self._num_nodes} nodes to be ready, currently {len(ray.nodes())} nodes available.",
-                flush=True,
+            self._logger.warning(
+                f"Waiting for {self._num_nodes} nodes to be ready, currently {len(ray.nodes())} nodes available."
             )
             time.sleep(1)
 
@@ -176,6 +193,17 @@ class Cluster:
         self._nodes = [
             node for nodes in nodes_group_by_accel_type.values() for node in nodes
         ]
+
+        # Handle num_nodes configuration mismatch with actual node number
+        if len(self._nodes) > self._num_nodes:
+            warnings.warn(
+                f"The cluster is initialized with {self._num_nodes} nodes, but detected {len(self._nodes)} nodes have joined the ray cluster. So only the first {self._num_nodes} nodes are used."
+            )
+            self._nodes = self._nodes[: self._num_nodes]
+
+        self._logger.info(
+            f"{Cluster.SYS_NAME} is running on a cluster with {len(self._nodes)} node{'s' if len(self._nodes) > 1 else ''} and {self.num_accelerators_in_cluster} accelerator{'s' if self.num_accelerators_in_cluster > 1 else ''}. The nodes' details are: {self._nodes}"
+        )
 
         # Launch managers
         from .manager import (

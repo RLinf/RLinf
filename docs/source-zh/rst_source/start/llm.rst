@@ -50,14 +50,15 @@
 我们推荐你修改配置文件  
 ``./examples/math/config/qwen2.5-1.5b-single-gpu.yaml`` 中的参数 ``cluster.component_placement``。
 
-你可以根据资源情况将其动态设置为 **1, 2, 4 或 8**。
+你可以根据实际资源将该项设置为 **0-1**， **0-3** 或 **0-7**来使用 2/4/8 张 GPU。
+查看 :doc:`../tutorials/user/yaml` 以获取有关 Placement 配置的更详细说明。
 
 .. code-block:: yaml
 
    cluster:
      num_nodes: 1
      component_placement:
-        actor,rollout: all
+        actor,rollout: 0
 
 在运行脚本之前，请根据你的模型和数据集下载路径，  
 在 YAML 配置文件中修改以下字段：

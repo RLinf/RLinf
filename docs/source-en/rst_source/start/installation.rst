@@ -162,9 +162,9 @@ Run the following commands to install Megatron, SGLang or vLLM, and their depend
 
 .. code-block:: shell
 
-   uv sync --extra sgl_vllm
+   uv sync --extra sglang-vllm
    mkdir -p /opt && git clone https://github.com/NVIDIA/Megatron-LM.git -b core_r0.13.0 /opt/Megatron-LM
-   APEX_CPP_EXT=1 APEX_CUDA_EXT=1 uv pip install -r requirements/megatron.txt --no-build-isolation
+   APEX_CPP_EXT=1 APEX_CUDA_EXT=1 NVCC_APPEND_FLAGS="--threads 24" APEX_PARALLEL_BUILD=24 uv pip install -r requirements/megatron.txt --no-build-isolation
 
 Before using Megatron, ensure its path is added to the ``PYTHONPATH`` environment variable:
 
@@ -172,36 +172,27 @@ Before using Megatron, ensure its path is added to the ``PYTHONPATH`` environmen
 
    export PYTHONPATH=/opt/Megatron-LM:$PYTHONPATH
 
-SGLang installation:
-
-.. code-block:: shell
-
-   uv sync --extra sglang
-
-vLLM installation:
-
-.. code-block:: shell
-
-   uv sync --extra vllm
-
 .. _embodied-dependencies:
 
-Additional Embodied Dependencies
+Embodied Dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 For embodied experiments, first install the necessary system dependencies (currently only supported on Debian/Ubuntu via ``apt``):
 
 .. code-block:: shell
 
-   bash requirements/install_embodied_deps.sh
    uv sync --extra embodied
+   bash requirements/install_embodied_deps.sh # Must be run after the above command
 
 Then, depending on the experiment type, install the required packages for ``openvla``, ``openvla-oft`` and ``pi0``:
 
 .. code-block:: shell
 
-   # For OpenVLA/OpenVLA-oft experiments
+   # For OpenVLA experiments
    UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla.txt --no-build-isolation
+
+   # For OpenVLA-oft experiment
+   UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla_oft.txt --no-build-isolation
 
    # For Pi0 experiments
    UV_TORCH_BACKEND=auto uv pip install -r requirements/pi0.txt --no-build-isolation

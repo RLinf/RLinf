@@ -154,6 +154,9 @@ class WorkerGroup(Generic[WorkerClsType]):
         placements = self._placement_strategy.get_placement(
             self._cluster, self._isolate_gpu
         )
+        master_addr = next(
+            self._cluster.get_node_ip(p.node_id) for p in placements if p.rank == 0
+        )
         self._world_size = len(placements)
         for placement in placements:
             worker_name = WorkerAddress.from_parent_name_rank(
@@ -165,6 +168,7 @@ class WorkerGroup(Generic[WorkerClsType]):
             env_vars = {
                 "GROUP_NAME": self._worker_group_name,
                 "WORKER_NAME": worker_name,
+                "MASTER_ADDR": master_addr,
                 "WORLD_SIZE": str(self._world_size),
                 "RANK": str(placement.rank),
                 "NODE_RANK": str(placement.node_rank),

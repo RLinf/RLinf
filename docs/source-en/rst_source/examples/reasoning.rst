@@ -1,5 +1,5 @@
-Reasoning RL-LLM
-=================
+Math Reasoning RL Training
+==========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

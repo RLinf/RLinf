@@ -56,6 +56,60 @@ class RolloutRequest:
     input_ids: List[List[int]]
     answers: List[str]
 
+    def repeat(self) -> "RolloutRequest":
+        """Repeat each input in the RolloutRequest a specified number of times.
+
+        Args:
+            times (int): The number of times to repeat each input.
+
+        Returns:
+            RolloutRequest: A new RolloutRequest with repeated inputs.
+        """
+        assert self.n > 0, "n must be greater than 0"
+
+        input_ids, answers = zip(
+            *[
+                (input_id, answer)
+                for input_id, answer in zip(self.input_ids, self.answers)
+                for _ in range(self.n)
+            ]
+        )
+        return RolloutRequest(
+            n=self.n,
+            input_ids=list(input_ids),
+            answers=list(answers),
+        )
+
+    def split(self, num_splits: int) -> List["RolloutRequest"]:
+        """Split the RolloutRequest into multiple smaller requests.
+
+        Args:
+            num_splits (int): The number of splits to create.
+
+        Returns:
+            List[RolloutRequest]: A list of smaller RolloutRequest instances.
+        """
+        assert num_splits > 0, "num_splits must be greater than 0"
+        assert len(self.input_ids) % num_splits == 0, (
+            f"Input IDs length {len(self.input_ids)} is not divisible by num_splits {num_splits}"
+        )
+
+        input_ids_split_list = split_list(self.input_ids, num_splits)
+        answers_split_list = split_list(self.answers, num_splits)
+
+        splitted_requests = []
+        for input_ids_batch, answers_batch in zip(
+            input_ids_split_list, answers_split_list
+        ):
+            request = RolloutRequest(
+                n=self.n,
+                input_ids=input_ids_batch,
+                answers=answers_batch,
+            )
+            splitted_requests.append(request)
+
+        return splitted_requests
+
     def repeat_and_split(
         self, rollout_batch_size: Optional[int] = None
     ) -> List["RolloutRequest"]:
@@ -256,7 +310,7 @@ class RolloutResult:
     def from_vllm_results(
         group_size: int,
         results: List[VllmRequestOutput],
-        answers: Optional[List[List[int]]] = None,
+        answers: Optional[List[str]] = None,
         return_logprobs: bool = False,
     ) -> "RolloutResult":
         def get_logprobs(
@@ -271,7 +325,7 @@ class RolloutResult:
                 logprobs.append(logprob[response_ids[i]].logprob)
             return logprobs
 
-        num_sequences = len(results)
+        num_sequences = len(results) * group_size
 
         prompt_lengths = []
         prompt_ids = []
@@ -279,26 +333,42 @@ class RolloutResult:
         response_ids = []
         logprobs = []
         is_end = []
-        for _, res in enumerate(results):
-            if res.prompt_token_ids is not None:
-                prompt_ids.append(res.prompt_token_ids)
-                prompt_lengths.append(len(res.prompt_token_ids))
+        response_texts = []
+        rollout_answers = (
+            [answer for answer in answers for _ in range(group_size)]
+            if answers
+            else None
+        )
+        for vllm_result in results:
+            if vllm_result.prompt_token_ids is not None:
+                prompt_ids.extend([vllm_result.prompt_token_ids] * group_size)
+                prompt_lengths.extend([len(vllm_result.prompt_token_ids)] * group_size)
             else:
-                return NotImplementedError("vllm should return tokenized prompt.")
-            response_id = list(res.outputs[0].token_ids)
-            response_ids.append(response_id)
-            response_lengths.append(len(response_id))
-            is_end.append(res.finished)
+                raise NotImplementedError("vllm should return tokenized prompt.")
+            response_ids.extend(
+                [list(output.token_ids) for output in vllm_result.outputs]
+            )
+            response_texts.extend([output.text for output in vllm_result.outputs])
+            response_lengths.extend(
+                [len(output.token_ids) for output in vllm_result.outputs]
+            )
+            is_end.extend([vllm_result.finished] * group_size)
             if return_logprobs:
-                logprobs.append(get_logprobs(response_id, res.outputs[0]))
+                logprobs.extend(
+                    [
+                        get_logprobs(list(output.token_ids), output)
+                        for output in vllm_result.outputs
+                    ]
+                )
         result: RolloutResult = RolloutResult(
             group_size=group_size,
             num_sequence=num_sequences,
-            answers=answers,
+            answers=rollout_answers,
             prompt_ids=prompt_ids,
             prompt_lengths=prompt_lengths,
             response_ids=response_ids,
             response_lengths=response_lengths,
+            response_texts=response_texts,
             is_end=is_end,
         )
         if return_logprobs:

@@ -44,6 +44,7 @@ dependencies = [
     "pybind11",
     "torch-memory-saver",
     "setuptools>=69.5.1,<75.9",
+    "ninja",
 
     # Logging
     "swanlab",
@@ -51,12 +52,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-sglang = [
+sglang-vllm = [
     "transformers==4.51.1",
     "sglang[all]==0.4.6.post5",
-]
-vllm = [
-    "transformers==4.51.1",
     "vllm==0.8.5",
 ]
 embodied = [
@@ -76,10 +74,15 @@ embodied = [
 prerelease = "allow"
 conflicts = [
     [
-      { extra = "sglang" },
-      { extra = "vllm" },
+      { extra = "sglang-vllm" },
       { extra = "embodied" },
     ],
+]
+override-dependencies = [
+    "torch==2.6.0",
+    "torchvision==0.21.0",
+    "torchaudio==2.6.0",
+    "xgrammar==0.1.19"
 ]
 
 [tool.ruff]
