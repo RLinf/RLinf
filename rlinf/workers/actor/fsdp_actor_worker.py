@@ -242,9 +242,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "rollout_epoch": self.cfg.algorithm.get("rollout_epoch", 1),
         }
 
-        advantages, returns = calculate_adv_and_returns(**kwargs)
+        advantages_and_returns = calculate_adv_and_returns(**kwargs)
 
-        self.rollout_batch.update({"advantages": advantages, "returns": returns})
+        self.rollout_batch.update(advantages_and_returns)
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
         return rollout_metrics
 

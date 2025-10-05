@@ -198,9 +198,13 @@ def postprocess_advantages_outputs(**kwargs):
     num_chunk = kwargs["num_chunk"]
     chunk_size = kwargs["chunk_size"]
 
+    res = {}
+
     advantages = advantages.reshape(num_chunk, chunk_size, -1).transpose(1, 2)
+    res.update({"advantages": advantages})
 
     if returns is not None:
         returns = returns.reshape(num_chunk, chunk_size, -1).transpose(1, 2)
+        res.update({"returns": returns})
 
-    return advantages, returns
+    return res

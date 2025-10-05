@@ -56,7 +56,6 @@ algorithm:
   loss_type: grpo
   loss_agg_func: "token-mean"
   kl_beta: 0.0 # 0.001
-  kl_penalty_type: low_var_kl
   ratio_clip_eps: 0.2
   entropy_bonus: 0.0
   calculate_entropy: False
