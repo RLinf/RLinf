@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple
 
 import torch
 
@@ -29,7 +29,7 @@ def compute_ppo_actor_loss(
     advantages: torch.Tensor,
     loss_mask: Optional[torch.Tensor] = None,
     c_clip: Optional[float] = None,
-    loss_agg_func=masked_mean,
+    loss_agg_func: Optional[Callable[..., torch.Tensor]] = masked_mean,
     max_episode_steps: Optional[int] = None,
     **kwargs,
 ) -> Tuple[torch.Tensor, Dict]:

@@ -80,7 +80,7 @@ def compute_gae_advantages_and_returns(
 @register_advantage("grpo")
 def compute_grpo_advantages(
     reward_scores: torch.Tensor,
-    mask: torch.Tensor,
+    loss_mask: torch.Tensor,
     group_size: int,
     **kwargs,
 ):
@@ -89,7 +89,7 @@ def compute_grpo_advantages(
 
     Args:
         reward_scores (torch.Tensor): Reward or score values.
-        mask (torch.Tensor): Loss mask for valid entries.
+        loss_mask (torch.Tensor): Loss mask for valid entries.
         group_size (int): Group size for advantage computation.
 
     Returns:
@@ -104,7 +104,7 @@ def compute_grpo_advantages(
     advantages = reward_scores - grouped_reward_mean
     advantages = advantages / (grouped_reward_std + 1e-6)
 
-    advantages = (torch.zeros_like(mask) + advantages.view(-1, 1)) * mask
+    advantages = (torch.zeros_like(loss_mask) + advantages.view(-1, 1)) * loss_mask
 
     return advantages, None
 
@@ -112,7 +112,7 @@ def compute_grpo_advantages(
 @register_advantage("reinpp")
 def compute_reinpp_advantages(
     reward_scores: torch.Tensor,
-    mask: torch.Tensor,
+    loss_mask: torch.Tensor,
     group_size: int,
     use_reinpp_baseline: bool = False,
     kl_beta: float = 0.0,
@@ -126,7 +126,7 @@ def compute_reinpp_advantages(
 
     Args:
         reward_scores (torch.Tensor): The reward or score values.
-        mask (torch.Tensor): The loss mask for valid entries.
+        loss_mask (torch.Tensor): The loss mask for valid entries.
         group_size (int): The group size for advantage computation.
         use_reinpp_baseline (bool, optional): Whether to use reinforce++ baseline.
         kl_beta (float, optional): KL penalty coefficient.
@@ -144,9 +144,9 @@ def compute_reinpp_advantages(
         reward_scores = grouped_rewards.view(-1)  # [B]
 
     # build the reward matrix
-    r_matrix = torch.zeros_like(mask).float()  # [B, L]
-    seq_length = mask.size(1)
-    mask_flipped = mask.long().fliplr()
+    r_matrix = torch.zeros_like(loss_mask).float()  # [B, L]
+    seq_length = loss_mask.size(1)
+    mask_flipped = loss_mask.long().fliplr()
     eos_positions = mask_flipped.argmax(
         dim=1, keepdim=True
     )  # position of last True in original mask
@@ -167,8 +167,8 @@ def compute_reinpp_advantages(
     # normalize
     advantages = ret_matrix.clone()
 
-    mean = masked_mean(advantages, mask)
-    var = masked_mean((advantages - mean).pow(2), mask)
+    mean = masked_mean(advantages, loss_mask)
+    var = masked_mean((advantages - mean).pow(2), loss_mask)
     rstd = var.clamp(min=1e-8).rsqrt()
 
     advantages = (advantages - mean) * rstd
