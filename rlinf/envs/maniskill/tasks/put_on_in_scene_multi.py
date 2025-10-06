@@ -14,7 +14,6 @@
 
 import os
 from pathlib import Path
-from typing import Optional
 
 import cv2
 import numpy as np
@@ -744,8 +743,8 @@ class PutOnPlateInScene25(BaseEnv):
         rgb_ret = rgb_ret.to(torch.uint8)  # [b, H, W, 3]
 
         return rgb_ret
-    
-    def _get_obs_sensor_data(self, apply_texture_transforms = True):
+
+    def _get_obs_sensor_data(self, apply_texture_transforms=True):
         sensor_obs = super()._get_obs_sensor_data(apply_texture_transforms)
         if (
             self.obs_mode_struct.visual.rgb

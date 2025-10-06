@@ -366,7 +366,7 @@ class ManiskillEnv(gym.Env):
     def add_new_frames(self, infos, rewards=None):
         image = self.render(infos, rewards)
         self.render_images.append(image)
-    
+
     def add_new_frames_from_obs(self, raw_obs):
         '''For debugging render'''
         raw_imgs = common.to_numpy(raw_obs["images"].permute(0, 2, 3, 1))
