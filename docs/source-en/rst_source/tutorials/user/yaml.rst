@@ -781,7 +781,7 @@ algorithm
 
 ``algorithm.rollout_epoch``: Number of rollout epochs per training step.
 
-``algorithm.reward_type``: Reward aggregation level (chunk_level, token_level, step_level).
+``algorithm.reward_type``: Reward aggregation level (chunk_level, action_level).
 
 ``algorithm.logprob_type``: Log probability computation level.
 

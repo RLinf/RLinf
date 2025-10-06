@@ -46,8 +46,7 @@ algorithm:
   n_eval_chunk_steps: 10
   num_group_envs: 32
   rollout_epoch: 1
-
-  reward_type: step_level
+  reward_type: action_level  # action_level or chunk_level
   logprob_type: token_level
   entropy_type: token_level
 
