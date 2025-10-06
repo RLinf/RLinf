@@ -159,6 +159,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             ]  # [n_chunk_step, rollout_epoch x bsz, num_action_chunks]
             loss_mask, loss_mask_sum = compute_loss_mask(dones)
 
+            if self.cfg.algorithm.reward_type == "chunk_level":
+                loss_mask = loss_mask.any(dim=-1, keepdim=True)
+                loss_mask_sum = loss_mask_sum[..., -1:]
+
             rollout_batch["loss_mask"] = loss_mask
             rollout_batch["loss_mask_sum"] = loss_mask_sum
 
