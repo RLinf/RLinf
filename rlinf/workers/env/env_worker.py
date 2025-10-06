@@ -96,22 +96,22 @@ class EnvWorker(Worker):
             from rlinf.envs.maniskill.maniskill_env import ManiskillEnv
 
             if not only_eval:
-                for _ in range(self.stage_num):
+                for stage_id in range(self.stage_num):
                     self.simulator_list.append(
                         EnvManager(
                             self.cfg.env.train,
-                            rank=self._rank,
+                            rank=self._rank * self.stage_num + stage_id,
                             world_size=self._world_size,
                             env_cls=ManiskillEnv,
                             enable_offload=enable_offload,
                         )
                     )
             if self.cfg.runner.val_check_interval > 0 or only_eval:
-                for _ in range(self.stage_num):
+                for stage_id in range(self.stage_num):
                     self.eval_simulator_list.append(
                         EnvManager(
                             self.cfg.env.eval,
-                            rank=self._rank,
+                            rank=self._rank * self.stage_num + stage_id,
                             world_size=self._world_size,
                             env_cls=ManiskillEnv,
                             enable_offload=enable_offload,
@@ -283,13 +283,13 @@ class EnvWorker(Worker):
         if mode == "train":
             if self.cfg.env.train.video_cfg.save_video:
                 for i in range(self.stage_num):
-                    self.simulator_list[i].flush_video(video_sub_dir=f"stage_{i}")
+                    self.simulator_list[i].flush_video()
             for i in range(self.stage_num):
                 self.simulator_list[i].update_reset_state_ids()
         elif mode == "eval":
             if self.cfg.env.eval.video_cfg.save_video:
                 for i in range(self.stage_num):
-                    self.eval_simulator_list[i].flush_video(video_sub_dir=f"stage_{i}")
+                    self.eval_simulator_list[i].flush_video()
 
     def split_env_batch(self, env_batch, gather_id, mode):
         env_batch_i = {}

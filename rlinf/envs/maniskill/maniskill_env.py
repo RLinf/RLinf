@@ -366,6 +366,12 @@ class ManiskillEnv(gym.Env):
     def add_new_frames(self, infos, rewards=None):
         image = self.render(infos, rewards)
         self.render_images.append(image)
+    
+    def add_new_frames_from_obs(self, raw_obs):
+        '''For debugging render'''
+        raw_imgs = common.to_numpy(raw_obs["images"].permute(0, 2, 3, 1))
+        raw_full_img = tile_images(raw_imgs, nrows=int(np.sqrt(self.num_envs)))
+        self.render_images.append(raw_full_img)
 
     def flush_video(self, video_sub_dir: Optional[str] = None):
         output_dir = os.path.join(self.video_cfg.video_base_dir, f"rank_{self.rank}")
