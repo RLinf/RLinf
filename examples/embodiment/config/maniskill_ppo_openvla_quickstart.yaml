@@ -23,7 +23,7 @@ runner:
     experiment_name: "test_openvla"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 5
+  max_epochs: 1000
   max_steps: -1
 
   only_eval: False
@@ -105,7 +105,7 @@ rollout:
     queue_size: 0
   mode: "colocate"
   backend: "huggingface"
-  model_dir: "/mnt/mnt/public/hongzhi/models/rl4vla/openvla-7b-rlvla-warmup/"
+  model_dir: "/path/to/model/openvla-7b-rlvla-warmup/"
   gpu_memory_utilization: 0.5
   enforce_eager: True
   enable_offload: True
@@ -119,7 +119,7 @@ actor:
     queue_size: 0
   training_backend: "fsdp"
 
-  checkpoint_load_path: "/mnt/mnt/public/hongzhi/models/rl4vla/openvla-7b-rlvla-warmup/"
+  checkpoint_load_path: "/path/to/model/openvla-7b-rlvla-warmup/"
   checkpoint_save_path: "../results"
 
   micro_batch_size: 20
@@ -129,7 +129,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/mnt/mnt/public/hongzhi/models/rl4vla/openvla-7b-rlvla-warmup/"
+    tokenizer_model: "/path/to/model/openvla-7b-rlvla-warmup/"
     extra_vocab_size: 421
     use_fast: False
     trust_remote_code: True
