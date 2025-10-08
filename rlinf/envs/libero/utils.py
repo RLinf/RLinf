@@ -449,53 +449,52 @@ def save_rollout_video(
     video_writer.close()
 
 
-def _install_get_benchmark_override():
-    """
-    Runtime extension to override get_benchmark without modifying LIBERO.
+_LIBERO_130_CLASS = None
 
-    This module monkey-patches `libero.libero.benchmark.get_benchmark` to support
-    `libero_130`, which aggregates tasks from all built-in suites in the original
-    LIBERO repository (spatial, object, goal, 90, 10). Other names delegate to the
-    original implementation.
+
+def _get_benchmark_overridden(benchmark_name):
+    """
+    Return the Benchmark class for a given name.
+
+    - For "libero_130": return a dynamically aggregated class from all suites.
+    - For others: delegate to the original LIBERO get_benchmark.
     """
     try:
         import libero.libero.benchmark as bm
 
-        # Cache original function
-        _orig_get_benchmark = bm.get_benchmark
+        name = str(benchmark_name).lower()
+        if name != "libero_130":
+            return bm.get_benchmark(benchmark_name)
+
+        global _LIBERO_130_CLASS
+        if _LIBERO_130_CLASS is not None:
+            return _LIBERO_130_CLASS
 
         # Build aggregated task map once, preserving order and de-duplicating by task name
         aggregated_task_map: Dict[str, bm.Task] = {}
-        # Follow suite order as defined in the original module
         for suite_name in getattr(bm, "libero_suites", []):
             suite_map = bm.task_maps.get(suite_name, {})
             for task_name, task in suite_map.items():
                 if task_name not in aggregated_task_map:
                     aggregated_task_map[task_name] = task
 
-        # Define a dynamic Benchmark subclass that uses the aggregated tasks
         class LIBERO_ALL(bm.Benchmark):
             def __init__(self, task_order_index=0):
                 super().__init__(task_order_index=task_order_index)
                 self.name = "libero_130"
                 self._make_benchmark()
 
-            def _make_benchmark(self):  # override to bypass 10-task ordering
+            def _make_benchmark(self):
                 tasks = list(aggregated_task_map.values())
                 self.tasks = tasks
                 self.n_tasks = len(self.tasks)
 
-        # Optionally make it visible in the registry and help listings
+        # Register for discoverability/help
         bm.BENCHMARK_MAPPING["libero_130"] = LIBERO_ALL
 
-        # Monkey-patch get_benchmark to intercept only when name is libero_130
-        def _get_benchmark_overridden(benchmark_name):
-            if str(benchmark_name).lower() == "libero_130":
-                return LIBERO_ALL
-            return _orig_get_benchmark(benchmark_name)
-
-        bm.get_benchmark = _get_benchmark_overridden
+        _LIBERO_130_CLASS = LIBERO_ALL
+        return _LIBERO_130_CLASS
 
     except Exception:
-        # Be robust if LIBERO isn't installed in some environments
-        pass
+        # Fallback: raise similar to original behavior if import fails
+        raise
