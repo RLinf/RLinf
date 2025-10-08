@@ -33,6 +33,7 @@ from rlinf.envs.libero.utils import (
     save_rollout_video,
     tile_images,
     to_tensor,
+    _install_get_benchmark_override,
 )
 from rlinf.envs.libero.venv import ReconfigureSubprocEnv
 
@@ -56,6 +57,7 @@ class LiberoEnv(gym.Env):
         self._generator_ordered = np.random.default_rng(seed=0)
         self.start_idx = 0
 
+        self._init_libero()
         self.task_suite: Benchmark = get_benchmark(cfg.task_suite_name)()
 
         self._compute_total_num_group_envs()
@@ -73,6 +75,9 @@ class LiberoEnv(gym.Env):
         self.video_cfg = cfg.video_cfg
         self.video_cnt = 0
         self.render_images = []
+
+    def _init_libero(self):
+        _install_get_benchmark_override()
 
     def _init_env(self):
         env_fns = self.get_env_fns()
@@ -154,13 +159,13 @@ class LiberoEnv(gym.Env):
         return reset_state_ids
 
     def _get_ordered_reset_state_ids(self, num_reset_states):
+        if self.start_idx + num_reset_states > len(self.reset_state_ids_all[0]):
+            self.reset_state_ids_all = self.get_reset_state_ids_all()
+            self.start_idx = 0
         reset_state_ids = self.reset_state_ids_all[self.rank][
             self.start_idx : self.start_idx + num_reset_states
         ]
         self.start_idx = self.start_idx + num_reset_states
-        if self.start_idx >= len(self.reset_state_ids_all[0]):
-            self.reset_state_ids_all = self.get_reset_state_ids_all()
-            self.start_idx = 0
         return reset_state_ids
 
     def _get_task_and_trial_ids_from_reset_state_ids(self, reset_state_ids):
