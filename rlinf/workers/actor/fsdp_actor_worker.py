@@ -144,8 +144,11 @@ class FSDPActor(FSDPModelManager, Worker):
     def sync_model_to_rollout(self):
         if next(self.model.parameters()).is_cpu:
             self.load_fsdp_param_and_grad(self.device)
-
         self.rollout_state_dict = self.get_model_state_dict()
+
+        if self.cfg.actor.get("enable_offload", False):
+            self.offload_fsdp_param_and_grad(offload_grad=True)
+            self.offload_fsdp_optimizer()
 
         has_visual = any("visual." in k for k in self.rollout_state_dict.keys())
 
@@ -161,14 +164,9 @@ class FSDPActor(FSDPModelManager, Worker):
                         name = name[6:]
                 state_dict[name] = reduce_tensor(v)
 
-            self.send(
-                state_dict, self._rollout_group_name, self._weight_dst_rank_in_rollout
-            )
-        if self.cfg.actor.get("enable_offload", False):
-            self.offload_fsdp_param_and_grad()
-            torch.cuda.synchronize()
-            gc.collect()
-            torch.cuda.empty_cache()
+        self.send(
+            state_dict, self._rollout_group_name, self._weight_dst_rank_in_rollout
+        )
 
     def compute_logprobs(self):
         self.model.eval()

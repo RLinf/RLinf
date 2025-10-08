@@ -841,7 +841,6 @@ class MegatronActor(MegatronModelManager, Worker):
         self,
         input_channel: Channel,
         output_channel: Channel,
-        rollout_channel: Channel,
         compute_ref_logprobs: bool,
     ):
         """Compute prev/ref logprobs using the actor Model's forward.
@@ -852,8 +851,6 @@ class MegatronActor(MegatronModelManager, Worker):
             compute_ref_logprobs: Whether to compute reference logprobs.
         """
         recv_batch_size = 0
-        if not self.is_pipeline:
-            rollout_channel.device_lock.acquire()
         while recv_batch_size < self.total_batch_size_per_dp:
             batch, rollout_result = self.get_batch(input_channel)
             recv_batch_size += rollout_result.num_sequence
@@ -877,8 +874,6 @@ class MegatronActor(MegatronModelManager, Worker):
         assert recv_batch_size == self.total_batch_size_per_dp, (
             f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
         )
-        if not self.is_pipeline:
-            rollout_channel.device_lock.release()
 
     # Advantages and returns
     def compute_advantages_and_returns(

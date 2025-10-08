@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 
 import torch
 from omegaconf import DictConfig
@@ -67,48 +67,43 @@ class RewardWorker(FSDPModelManager, Worker):
         with self.worker_timer():
             recv_batch_size = 0
             while recv_batch_size < self.total_batch_size_per_dp:
-                batch, rollout_result = self.get_batch(input_channel)
-
+                rollout_result: RolloutResult = input_channel.get()
                 recv_batch_size += rollout_result.num_sequence
-                # Compute rule-based reward
+
                 if rollout_result.rewards is None:
-                    rollout_result.rewards = self._compute_batch_rewards(
-                        batch, rollout_result.answers
-                    )
+                    if self.cfg.reward.use_reward_model:
+                        with input_channel.device_lock:
+                            batch = rollout_result.to_actor_batch(
+                                self.cfg.data.max_prompt_length,
+                                self.cfg.actor.model.encoder_seq_length,
+                                self.tokenizer.eos_token_id,
+                            )
+                            rollout_result.rewards = (
+                                self.compute_batch_rewards_with_model(batch)
+                            )
+                    else:
+                        rollout_result.rewards = self._compute_rule_based_rewards(
+                            rollout_result
+                        )
+
                 output_channel.put(rollout_result)
 
             assert recv_batch_size == self.total_batch_size_per_dp, (
                 f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
             )
 
-    def _compute_batch_rewards(
-        self, batch: Dict[str, torch.Tensor], answers: List[str | dict]
-    ):
-        """Reward computation using non-model based reward."""
+    def _compute_rule_based_rewards(self, rollout_result: RolloutResult):
+        # Decode only the generated tokens; response_ids are already the post-prompt tokens
+        texts = self.tokenizer.batch_decode(
+            rollout_result.response_ids, skip_special_tokens=True
+        )
 
-        if self.cfg.reward.use_reward_model:
-            return self.compute_batch_rewards_with_model(batch)
-
-        texts = []
-        for response, response_len in zip(
-            batch["input_ids"],
-            batch["response_lengths"],
-        ):
-            response = response[
-                self.cfg.data.max_prompt_length : self.cfg.data.max_prompt_length
-                + response_len
-            ]
-            texts.append(
-                self.tokenizer.decode(response.tolist(), skip_special_tokens=True)
-            )
-        reward_scores = self.reward.get_reward(texts, answers)
-
-        all_reward_scores = torch.as_tensor(
-            reward_scores,
-            dtype=torch.float,
-            device=torch.device("cpu"),
-        ).view(-1, 1)
-        return all_reward_scores.flatten()
+        scores = self.reward.get_reward(texts, rollout_result.answers)
+        return (
+            torch.as_tensor(scores, dtype=torch.float, device=torch.device("cpu"))
+            .view(-1, 1)
+            .flatten()
+        )
 
     def compute_batch_rewards_with_model(self, batch: Dict[str, torch.Tensor]):
         self.model.eval()
