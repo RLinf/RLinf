@@ -25,6 +25,7 @@ from libero.libero.envs import OffScreenRenderEnv
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.envs.libero.utils import (
+    _install_get_benchmark_override,
     get_libero_image,
     get_libero_wrist_image,
     list_of_dict_to_dict_of_list,
@@ -33,7 +34,6 @@ from rlinf.envs.libero.utils import (
     save_rollout_video,
     tile_images,
     to_tensor,
-    _install_get_benchmark_override,
 )
 from rlinf.envs.libero.venv import ReconfigureSubprocEnv
 

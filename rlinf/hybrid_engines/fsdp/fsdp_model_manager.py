@@ -80,10 +80,10 @@ class FSDPModelManager:
 
         # Enable gradient checkpointing if configured
         if self._cfg.model.get("enable_gradient_checkpointing", False):
-            print(f"[FSDP] Enabling gradient checkpointing")
+            print("[FSDP] Enabling gradient checkpointing")
             module.gradient_checkpointing_enable()
         else:
-            print(f"[FSDP] Gradient checkpointing is disabled")
+            print("[FSDP] Gradient checkpointing is disabled")
 
         mixed_precision = MixedPrecision(
             param_dtype=self.torch_dtype,
