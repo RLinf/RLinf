@@ -361,7 +361,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     "values": output_dict.get("values", None),
                     "old_logprobs": data["prev_logprobs"],
                     "advantages": data["advantages"],
-                    "returns": data["returns"],
+                    "returns": data["returns"] if "returns" in data else None,
                     "prev_values": data["prev_values"],
                     "clip_ratio_high": self.cfg.algorithm.clip_ratio_high,
                     "clip_ratio_low": self.cfg.algorithm.clip_ratio_low,
