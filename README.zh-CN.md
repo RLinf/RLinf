@@ -44,28 +44,28 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 
 - 灵活的执行模式
 
-  - 共享式： 所有工作进程共享全部 GPU。
-  - 分离式： 支持细粒度流水化。
-  - 混合式： 可定制地组合不同的部署模式，融合共享式与分离式。
+  - 共享式（Collocated Mode）：用户可以配置组件是否同时常驻于 GPU 内存，或通过卸载 / 重新加载机制交替使用 GPU。
+  - 分离式（Disaggregated Mode）：组件既可以顺序运行（可能导致 GPU 空闲），也可以以流水线方式执行，从而确保所有 GPU 都处于忙碌状态。
+  - 混合式（Hybrid Mode）：进一步扩展了灵活性，支持自定义组合不同的放置形式。典型案例是 Generator 和 GPU-based Simulator 执行分离式细粒度流水，二者与 Inference 和 Trainer 执行共享式。
 
 - 自动调度策略： 根据训练任务自动选择最合适的执行模式，无需手动分配资源。
   
 - 具身智能体支持
   - 主流 VLA 模型的快速自适应支持: [OpenVLA](https://github.com/openvla/openvla), [OpenVLA-OFT](https://github.com/moojink/openvla-oft), [π₀](https://github.com/Physical-Intelligence/openpi) 和 [π₀.₅](https://github.com/Physical-Intelligence/openpi).
   - 支持主流基于 CPU 与 GPU 的模拟器（通过标准化 RL 接口）： [ManiSkill3](https://github.com/haosulab/ManiSkill), [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO).
-  - 首次实现对 $\pi_0$ 和 $\pi_{0.5}$ 模型家族的 RL 微调，并结合 flow-matching 动作专家提升效果。
+  - 首次实现对带有 flow-matching action expert 的 $\pi_0$ 和 $\pi_{0.5}$ 模型家族的 RL 微调。
 
 **RLinf 的高效性体现在：**
 
 - 细粒度流水化的混合式模式： 相较于其他框架，实现了 120%+ 的吞吐量提升。
-- 自动化在线伸缩策略： 可动态扩展训练资源，支持在数秒内完成 GPU 切换，在保持 RL 算法 on-policy 特性的同时，进一步提升 20–40% 的效率。
+- 秒级显卡自动扩缩： 可动态扩展训练资源，支持在数秒内完成 GPU 切换，在保持 RL 算法 on-policy 特性的同时，进一步提升 20–40% 的效率。
 
 **RLinf 的灵活性与易用性体现在：**
 
 - 多后端集成
 
   - FSDP + Hugging Face： 快速适配新模型与新算法，非常适合初学者和快速原型开发。
-  - Megatron + SGLang： 针对大规模训练进行了优化，为高负载场景下的专家用户提供最大化效率。
+  - Megatron + SGLang： 针对大规模训练进行了优化，为专家用户提供最大化效率。
 
 - 自适应通信： 通过异步通信通道实现高效交互。
 
@@ -345,7 +345,20 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 }
 ```
 
-如果你在 RLinf 中使用了 RL+VLA，也请引用我们的实证研究论文：
+如果你在 RLinf 中使用了 RL+VLA，欢迎引用我们的算法技术报告和实证研究论文：
+
+```bibtex
+@misc{zang2025rlinfvlaunifiedefficientframework,
+      title={RLinf-VLA: A Unified and Efficient Framework for VLA+RL Training}, 
+      author={Hongzhi Zang and Mingjie Wei and Si Xu and Yongji Wu and Zhen Guo and Yuanqing Wang and Hao Lin and Liangzhi Shi and Yuqing Xie and Zhexuan Xu and Zhihao Liu and Kang Chen and Wenhao Tang and Quanlu Zhang and Weinan Zhang and Chao Yu and Yu Wang},
+      year={2025},
+      eprint={2510.06710},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2510.06710}, 
+}
+```
+
 ```bibtex
 @misc{liu2025rlbringvlageneralization,
   title={What Can RL Bring to VLA Generalization? An Empirical Study}, 

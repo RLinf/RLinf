@@ -338,7 +338,20 @@ If you find **RLinf** helpful, please cite the paper:
 }
 ```
 
-If you use RL+VLA in RLinf, you can also cite our empirical study paper:
+If you use RL+VLA in RLinf, you can also cite our technical report and empirical study paper:
+
+```bibtex
+@misc{zang2025rlinfvlaunifiedefficientframework,
+      title={RLinf-VLA: A Unified and Efficient Framework for VLA+RL Training}, 
+      author={Hongzhi Zang and Mingjie Wei and Si Xu and Yongji Wu and Zhen Guo and Yuanqing Wang and Hao Lin and Liangzhi Shi and Yuqing Xie and Zhexuan Xu and Zhihao Liu and Kang Chen and Wenhao Tang and Quanlu Zhang and Weinan Zhang and Chao Yu and Yu Wang},
+      year={2025},
+      eprint={2510.06710},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2510.06710}, 
+}
+```
+
 ```bibtex
 @misc{liu2025rlbringvlageneralization,
   title={What Can RL Bring to VLA Generalization? An Empirical Study}, 
