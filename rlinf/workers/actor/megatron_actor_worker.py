@@ -841,6 +841,7 @@ class MegatronActor(MegatronModelManager, Worker):
         self,
         input_channel: Channel,
         output_channel: Channel,
+        rollout_channel: Channel,
         compute_ref_logprobs: bool,
     ):
         """Compute prev/ref logprobs using the actor Model's forward.
@@ -856,7 +857,9 @@ class MegatronActor(MegatronModelManager, Worker):
             recv_batch_size += rollout_result.num_sequence
             # Must be called after batch is retrieved, suggesting that rollout has stopped
             # Otherwise, loading model might cause OOM in the collocated mode
-            self._load_weight_and_optimizer(input_channel)
+            self._load_weight_and_optimizer(
+                input_channel if self.is_pipeline else rollout_channel
+            )
 
             # Prev logprobs
             with self.worker_timer():

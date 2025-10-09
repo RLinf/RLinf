@@ -19,8 +19,8 @@ runner:
     experiment_name: ${runner.experiment_name}
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 5
-  max_steps: -1
+  max_epochs: 1
+  max_steps: 3
 
   val_check_interval: 1
   save_interval: 50

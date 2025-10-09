@@ -160,8 +160,12 @@ class FSDPActor(FSDPModelManager, Worker):
                 if has_visual:
                     if name.startswith("model.language_model."):
                         name = "model." + name[21:]
-                    elif name.startswith("model."):
-                        name = name[6:]
+                    # NOTE:
+                    # if transformers version is 4.56.1 or older(not tested),
+                    # the following line should be uncommented
+
+                    # elif name.startswith("model."):
+                    #     name = name[6:]
                 state_dict[name] = reduce_tensor(v)
 
         self.send(
