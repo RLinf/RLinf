@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import os
 
 import torch
@@ -27,6 +26,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
     get_fsdp_wrap_policy,
     init_fn,
 )
+from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import clear_memory
 
 
@@ -37,6 +37,7 @@ class FSDPModelManager:
 
     def __init__(self, cfg: DictConfig):
         self._cfg = cfg
+        self.logger = get_logger()
         self.torch_dtype = torch_dtype_from_precision(self._cfg.model.precision)
 
         assert (
@@ -81,10 +82,10 @@ class FSDPModelManager:
 
         # Enable gradient checkpointing if configured
         if self._cfg.model.get("gradient_checkpointing", False):
-            logging.info("[FSDP] Enabling gradient checkpointing")
+            self.logger.info("[FSDP] Enabling gradient checkpointing")
             module.gradient_checkpointing_enable()
         else:
-            logging.info("[FSDP] Gradient checkpointing is disabled")
+            self.logger.info("[FSDP] Gradient checkpointing is disabled")
 
         mixed_precision = MixedPrecision(
             param_dtype=self.torch_dtype,
