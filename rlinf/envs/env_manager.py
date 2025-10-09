@@ -157,7 +157,9 @@ def recursive_to_own(obj):
 
 
 class EnvManager:
-    def __init__(self, cfg, rank, seed_offset, world_size, env_cls, enable_offload=False):
+    def __init__(
+        self, cfg, rank, seed_offset, world_size, env_cls, enable_offload=False
+    ):
         self.cfg = cfg
         self.rank = rank
         self.seed_offset = seed_offset
