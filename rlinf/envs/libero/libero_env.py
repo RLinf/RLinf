@@ -25,7 +25,7 @@ from libero.libero.envs import OffScreenRenderEnv
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.envs.libero.utils import (
-    _get_benchmark_overridden,
+    get_benchmark_overridden,
     get_libero_image,
     get_libero_wrist_image,
     list_of_dict_to_dict_of_list,
@@ -57,7 +57,7 @@ class LiberoEnv(gym.Env):
         self._generator_ordered = np.random.default_rng(seed=0)
         self.start_idx = 0
 
-        self.task_suite: Benchmark = _get_benchmark_overridden(cfg.task_suite_name)()
+        self.task_suite: Benchmark = get_benchmark_overridden(cfg.task_suite_name)()
 
         self._compute_total_num_group_envs()
         self.reset_state_ids_all = self.get_reset_state_ids_all()

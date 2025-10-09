@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 
 import torch
@@ -79,11 +80,11 @@ class FSDPModelManager:
         module = self.model_provider_func()
 
         # Enable gradient checkpointing if configured
-        if self._cfg.model.get("enable_gradient_checkpointing", True):
-            print("[FSDP] Enabling gradient checkpointing")
+        if self._cfg.model.get("gradient_checkpointing", False):
+            logging.info("[FSDP] Enabling gradient checkpointing")
             module.gradient_checkpointing_enable()
         else:
-            print("[FSDP] Gradient checkpointing is disabled")
+            logging.info("[FSDP] Gradient checkpointing is disabled")
 
         mixed_precision = MixedPrecision(
             param_dtype=self.torch_dtype,
