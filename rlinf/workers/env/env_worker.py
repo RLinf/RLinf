@@ -100,7 +100,8 @@ class EnvWorker(Worker):
                     self.simulator_list.append(
                         EnvManager(
                             self.cfg.env.train,
-                            rank=self._rank * self.stage_num + stage_id,
+                            rank=self._rank,
+                            seed_offset=self._rank * self.stage_num + stage_id,
                             world_size=self._world_size,
                             env_cls=ManiskillEnv,
                             enable_offload=enable_offload,
@@ -111,7 +112,8 @@ class EnvWorker(Worker):
                     self.eval_simulator_list.append(
                         EnvManager(
                             self.cfg.env.eval,
-                            rank=self._rank * self.stage_num + stage_id,
+                            rank=self._rank, 
+                            seed_offset=self._rank * self.stage_num + stage_id,
                             world_size=self._world_size,
                             env_cls=ManiskillEnv,
                             enable_offload=enable_offload,
@@ -126,6 +128,7 @@ class EnvWorker(Worker):
                         EnvManager(
                             self.cfg.env.train,
                             rank=self._rank,
+                            seed_offset=self._rank * self.stage_num + stage_id,
                             world_size=self._world_size,
                             env_cls=LiberoEnv,
                             enable_offload=enable_offload,
@@ -137,6 +140,7 @@ class EnvWorker(Worker):
                         EnvManager(
                             self.cfg.env.eval,
                             rank=self._rank,
+                            seed_offset=self._rank * self.stage_num + stage_id,
                             world_size=self._world_size,
                             env_cls=LiberoEnv,
                             enable_offload=enable_offload,
@@ -151,6 +155,7 @@ class EnvWorker(Worker):
                         EnvManager(
                             self.cfg.env.train,
                             rank=self._rank,
+                            seed_offset=self._rank * self.stage_num + stage_id,
                             world_size=self._world_size,
                             env_cls=RoboTwin,
                             enable_offload=enable_offload,
@@ -163,6 +168,7 @@ class EnvWorker(Worker):
                         EnvManager(
                             self.cfg.env.eval,
                             rank=self._rank,
+                            seed_offset=self._rank * self.stage_num + stage_id,
                             world_size=self._world_size,
                             env_cls=RoboTwin,
                             enable_offload=enable_offload,

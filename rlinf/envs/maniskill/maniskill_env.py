@@ -47,10 +47,9 @@ def extract_termination_from_info(info, num_envs, device):
 
 
 class ManiskillEnv(gym.Env):
-    def __init__(self, cfg, rank, world_size, record_metrics=True):
+    def __init__(self, cfg, seed_offset, world_size, record_metrics=True):
         env_seed = cfg.seed
-        self.seed = env_seed + rank
-        self.rank = rank
+        self.seed = env_seed + seed_offset
         self.world_size = world_size
         self.auto_reset = cfg.auto_reset
         self.use_rel_reward = cfg.use_rel_reward
@@ -374,7 +373,7 @@ class ManiskillEnv(gym.Env):
         self.render_images.append(raw_full_img)
 
     def flush_video(self, video_sub_dir: Optional[str] = None):
-        output_dir = os.path.join(self.video_cfg.video_base_dir, f"rank_{self.rank}")
+        output_dir = os.path.join(self.video_cfg.video_base_dir, f"seed_{self.seed}")
         if video_sub_dir is not None:
             output_dir = os.path.join(output_dir, f"{video_sub_dir}")
         images_to_video(
