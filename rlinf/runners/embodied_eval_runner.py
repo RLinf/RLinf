@@ -14,10 +14,10 @@
 
 from omegaconf.dictconfig import DictConfig
 
-from rlinf.algorithms.embodiment.utils import compute_evaluate_metrics
 from rlinf.scheduler import Worker
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
+from rlinf.utils.metric_utils import compute_evaluate_metrics
 
 
 class EmbodiedEvalRunner:

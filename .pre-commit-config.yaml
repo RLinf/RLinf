@@ -3,7 +3,13 @@ repos:
     rev: "v0.12.9"
     hooks:
       - id: ruff
-        args: ["--preview"]
+        args: ["--preview", "--fix"]
       - id: ruff-format
-        args: ["--check"]
+
+  - repo: https://github.com/commit-check/commit-check
+    rev: "v0.10.2"
+    hooks: # support hooks
+    -   id: check-message  # requires commit-msg hook
+    -   id: check-branch
+    -   id: check-commit-signoff
 

@@ -21,7 +21,6 @@ import sys
 import threading
 import time
 import traceback
-import warnings
 from contextlib import contextmanager
 from typing import (
     TYPE_CHECKING,
@@ -37,9 +36,9 @@ from typing import (
 
 import ray
 import torch
+from omegaconf import OmegaConf
 
-from rlinf.config import set_new_omegaconf_resolvers
-
+from ..accelerator import Accelerator, AcceleratorType
 from ..cluster import Cluster
 from ..manager import WorkerAddress
 
@@ -133,7 +132,7 @@ class Worker(metaclass=WorkerMeta):
         ...     def hello(self):
         ...         return self._rank
         >>>
-        >>> cluster = Cluster(num_nodes=1, num_gpus_per_node=8)
+        >>> cluster = Cluster(num_nodes=1)
         >>> my_worker_group = MyWorker.create_group().launch(cluster=cluster, name="my_worker_group")
         >>> my_worker_group.initialize().wait()[0]
         tensor([[8.]], device='cuda:0')
@@ -302,7 +301,7 @@ class Worker(metaclass=WorkerMeta):
         ...
         ...         asyncio.run(recv_tensor_async())
         >>>
-        >>> cluster = Cluster(num_nodes=1, num_gpus_per_node=8)
+        >>> cluster = Cluster(num_nodes=1)
         >>> send_group = SendWorker.create_group().launch(cluster=cluster, name=SEND_GROUP_NAME)
         >>> recv_group = RecvWorker.create_group().launch(cluster=cluster, name=RECV_GROUP_NAME)
         >>> res = send_group.hello_recv()
@@ -315,6 +314,8 @@ class Worker(metaclass=WorkerMeta):
     PID = None
     current_worker = None
     logger = logging.getLogger(Cluster.SYS_NAME)
+    torch_platform = torch.cuda
+    torch_device_type = "cuda"
 
     def __new__(cls, *args, **kwargs):
         """Create a new instance of the Worker class."""
@@ -345,14 +346,21 @@ class Worker(metaclass=WorkerMeta):
 
         # These are not required env_vars, but are set by Ray Worker for convenience
         self._node_id = int(os.environ.get("NODE_ID", -1))
-        self._gpu_id = int(os.environ.get("GPU_ID", -1))
+        self._accelerator_type = AcceleratorType(
+            os.environ.get("ACCELERATOR_TYPE", str(AcceleratorType.NO_ACCEL.value))
+        )
+        self._local_accelerator_id = int(os.environ.get("LOCAL_ACCELERATOR_ID", -1))
         self._node_local_rank = int(os.environ.get("NODE_LOCAL_RANK", -1))
         self._node_local_world_size = int(os.environ.get("NODE_LOCAL_WORLD_SIZE", -1))
+        Worker.torch_device_type = Accelerator.get_device_type(self._accelerator_type)
+        Worker.torch_platform = Accelerator.get_torch_platform(self._accelerator_type)
+        self.torch_device_type = Worker.torch_device_type
+        self.torch_platform = Worker.torch_platform
 
         self._actor = None
         self._has_initialized = False
         self._timer_metrics: Dict[str, float] = {}
-        set_new_omegaconf_resolvers()
+        self._set_new_omegaconf_resolvers()
 
     def __init__(
         self,
@@ -381,7 +389,7 @@ class Worker(metaclass=WorkerMeta):
         else:
             self._is_ray_actor = True
 
-        if self._is_ray_actor and not hasattr(self, "_gpu_id"):
+        if self._is_ray_actor and not hasattr(self, "_local_accelerator_id"):
             raise RuntimeError(
                 "You may have mistakenly initialized the Worker class directly without `create_group` and `launch`. Please ensure a worker class is not instantiated on the main process directly like `Worker()`, but `Worker.create_group().launch()`."
             )
@@ -406,8 +414,8 @@ class Worker(metaclass=WorkerMeta):
         # Setup local rank and world size
         self._setup_local_rank_world_size()
 
-        # Setup GPU ID
-        self._setup_gpu_info()
+        # Setup accelerator ID
+        self._setup_accelerator_info()
 
         # Configure logging
         self._setup_logging()
@@ -425,6 +433,11 @@ class Worker(metaclass=WorkerMeta):
 
         Worker.current_worker = self
         self._has_initialized = True
+
+    @property
+    def has_accelerator(self) -> bool:
+        """Whether the worker has been allocated with accelerators."""
+        return self._accelerator_type != AcceleratorType.NO_ACCEL
 
     @property
     def worker_address(self) -> WorkerAddress:
@@ -590,7 +603,7 @@ class Worker(metaclass=WorkerMeta):
     def create_channel(
         self,
         channel_name: str,
-        gpu_id: int = 0,
+        node_id: int = 0,
         maxsize: int = 0,
         local: bool = False,
     ):
@@ -598,7 +611,7 @@ class Worker(metaclass=WorkerMeta):
 
         Args:
             channel_name (str): The name of the channel.
-            gpu_id (int): The global ID of the GPU in the cluster where the channel will be created.
+            node_id (int): The global ID of the node in the cluster where the channel will be created.
             maxsize (int): The maximum size of the channel queue. Defaults to 0 (unbounded).
             local (bool): Create the channel for intra-process communication. Cannot be connected by other workers.
 
@@ -609,7 +622,7 @@ class Worker(metaclass=WorkerMeta):
         from ..channel.channel import Channel
 
         return Channel.create(
-            name=channel_name, gpu_id=gpu_id, maxsize=maxsize, local=local
+            name=channel_name, node_id=node_id, maxsize=maxsize, local=local
         )
 
     def connect_channel(self, channel_name: str):
@@ -755,15 +768,15 @@ class Worker(metaclass=WorkerMeta):
 
     def _setup_local_rank_world_size(self):
         if self._is_ray_actor:
-            if os.environ.get("ISOLATE_GPU", "0") == "1":
-                # Ray limits the number of GPUs per worker to 1, so when calling torch.cuda.set_device(), we must ensure that 0 is passed as the local rank.
+            if os.environ.get("ISOLATE_ACCELERATOR", "0") == "1":
+                # Ray limits the number of accelerators per worker to 1, so when calling torch.cuda.set_device(), we must ensure that 0 is passed as the local rank.
                 os.environ["LOCAL_RANK"] = "0"
                 os.environ["LOCAL_WORLD_SIZE"] = "1"
                 self._isolate_gpu = True
             else:
                 os.environ["LOCAL_RANK"] = str(
-                    self._gpu_id
-                )  # Must use the actual CUDA device ID
+                    self._local_accelerator_id
+                )  # Must use the actual device ID
                 os.environ["LOCAL_WORLD_SIZE"] = str(self._node_local_world_size)
                 self._isolate_gpu = False
 
@@ -797,35 +810,19 @@ class Worker(metaclass=WorkerMeta):
             os.environ["MASTER_ADDR"] = self._master_address
             os.environ["MASTER_PORT"] = str(self._master_port)
 
-    def _setup_gpu_info(self) -> int:
-        num_available_gpus = torch.cuda.device_count()
-        cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+    def _setup_accelerator_info(self) -> int:
         cluster = Cluster()
-        if cuda_devices is None:
-            cuda_devices = list(range(cluster.num_gpus_per_node))
-        else:
-            cuda_devices = [int(d) for d in cuda_devices.split(",")]
-
-        self.global_gpu_ids = [
-            cuda_device + self._node_id * cluster.num_gpus_per_node
-            for cuda_device in cuda_devices
+        visible_devices = Accelerator.get_visible_devices(self._accelerator_type)
+        node_accelerator_ids = cluster.node_accelerator_ids[self._node_id]
+        self.global_accelerator_ids = [
+            node_accelerator_ids[local_id] for local_id in visible_devices
         ]
 
         if not self._is_ray_actor:
-            self._gpu_id = cuda_devices[0]
-
-        # Find available GPUs visible to the worker
-        self._available_gpus = []
-        for device in range(num_available_gpus):
-            try:
-                # Check if the device is available
-                uuid = str(torch.cuda.get_device_properties(device).uuid)
-                self._available_gpus.append(uuid)
-            except Exception as e:
-                warnings.warn(
-                    f"CUDA device {device} is not available: {e}. "
-                    "This may lead to unexpected behavior in distributed workers."
-                )
+            if len(visible_devices) > 0:
+                self._local_accelerator_id = visible_devices[0]
+            else:
+                self._local_accelerator_id = -1
 
     def _setup_logging(self):
         self._logger = logging.getLogger(self._worker_name)
@@ -890,6 +887,14 @@ class Worker(metaclass=WorkerMeta):
                 "Failed to register signal handlers. This may happen if the Worker is not running in the main thread."
             )
 
+    def _set_new_omegaconf_resolvers(self):
+        OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
+        OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
+        OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
+        OmegaConf.register_new_resolver(
+            "torch.dtype", lambda dtype_name: getattr(torch, dtype_name), replace=True
+        )
+
     def _get_p2p_collective_group(self, peer_addr: WorkerAddress):
         """Get a P2P collective group for communication with a peer worker."""
         workers = [self._worker_address, peer_addr]
@@ -916,8 +921,9 @@ class Worker(metaclass=WorkerMeta):
             address=self._worker_address,
             rank=self._rank,
             node_id=self._node_id,
-            gpu_id=self._gpu_id,
+            accelerator_type=self._accelerator_type,
+            accelerator_id=self._local_accelerator_id,
             node_ip=node_ip,
             node_port=node_port,
-            available_gpus=self._available_gpus,
+            available_accelerators=self.global_accelerator_ids,
         )

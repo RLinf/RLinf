@@ -1,0 +1,98 @@
+explict_model:
+  dsv2lite:
+    first_dense: 1
+    model_type: deepseek
+    num_experts: 64
+    num_layers: 27
+    use_expert_bias: false
+    use_q_lora: false
+  dsv3:
+    first_dense: 3
+    model_type: deepseek
+    num_experts: 256
+    num_layers: 61
+    use_expert_bias: true
+    use_q_lora: true
+  qwen_2.5_32b:
+    model_type: qwen_2
+    num_attention_heads: 40
+    num_layers: 64
+    num_query_groups: 8
+  qwen_2_57b_a14b:
+    model_type: qwen_2_moe
+    num_attention_heads: 28
+    num_experts: 64
+    num_layers: 28
+    num_query_groups: 4
+  'DeepSeek-R1-Distill-Qwen-1.5B':
+    model_type: qwen_2
+    num_attention_heads: 12
+    num_query_groups: 2
+    head_dim: 128
+    num_layers: 28
+    te_ln_linear_qkv: True
+    te_ln_linear_mlp_fc1: True
+    te_ln_add_extra_state: True # pay attention if precision is fp8 mixture
+  'DeepSeek-R1-Distill-Qwen-7B':
+    model_type: qwen_2
+    num_attention_heads: 28
+    num_query_groups: 4
+    head_dim: 128
+    num_layers: 28
+    te_ln_linear_qkv: True
+    te_ln_linear_mlp_fc1: True
+    te_ln_add_extra_state: True # pay attention if precision is fp8 mixture
+  'DeepSeek-R1-Distill-Qwen-32B':
+    model_type: qwen_2
+    num_attention_heads: 40
+    num_query_groups: 8
+    head_dim: 128
+    num_layers: 64
+    te_ln_linear_qkv: True
+    te_ln_linear_mlp_fc1: True
+    te_ln_add_extra_state: True # pay attention if precision is fp8 mixture
+  'Qwen3-30B-A3B':
+    model_type: qwen_3_moe
+    num_attention_heads: 32
+    num_query_groups: 4
+    head_dim: 128
+    num_layers: 48
+    num_experts: 128
+  'Qwen3-0.6B':
+    model_type: qwen_3
+    num_attention_heads: 16
+    num_query_groups: 8
+    head_dim: 128
+    num_layers: 28
+    tie_word_embeddings: true
+
+model_type:
+  deepseek:
+    attn_type: mla
+    hf_shared_experts_prefix: mlp.shared_experts
+    mlp_type: moe
+    use_shared_experts: true
+  qwen_2:
+    attn_type: gqa
+    mlp_type: dense
+    use_qk_norm: false
+    use_qkv_bias: true
+  qwen_2_moe:
+    attn_type: gqa
+    hf_shared_experts_prefix: mlp.shared_expert
+    mlp_type: moe
+    use_qk_norm: false
+    use_qkv_bias: true
+    use_shared_experts: true
+    use_shared_experts_gate: true
+  qwen_3:
+    attn_type: gqa
+    mlp_type: dense
+    use_qk_norm: true
+    use_qkv_bias: false
+  qwen_3_moe:
+    attn_type: gqa
+    mlp_type: moe
+    use_qk_norm: true
+    use_qkv_bias: false
+    use_shared_experts: false

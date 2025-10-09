@@ -22,10 +22,14 @@ import psutil
 import setproctitle
 import torch
 from omegaconf import DictConfig
+from sglang.srt.disaggregation.utils import (
+    DisaggregationMode,
+)
 from sglang.srt.managers.io_struct import (
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
 )
+from sglang.srt.managers.mm_utils import init_embedding_cache
 from sglang.srt.managers.scheduler import Scheduler as _Scheduler
 from sglang.srt.managers.scheduler import logger
 from sglang.srt.server_args import PortArgs, ServerArgs
@@ -199,6 +203,7 @@ class Scheduler(_Scheduler, Worker):
             # disaggregate mode, recv tensor directly
             for name, tensor in state_dict.items():
                 model.load_weights([(name, tensor)])
+        self.flush_cache()
         self.sync_in_tp("sync_hf_weight")
         return SyncHFWeightOutput()
 
@@ -320,6 +325,10 @@ def run_scheduler_process(
     if get_bool_env_var("SGLANG_SET_CPU_AFFINITY"):
         set_gpu_proc_affinity(server_args.tp_size, server_args.nnodes, gpu_id)
 
+    embedding_cache_size = 100
+    if "SGLANG_VLM_CACHE_SIZE_MB" in os.environ:
+        embedding_cache_size = int(os.environ["SGLANG_VLM_CACHE_SIZE_MB"])
+    init_embedding_cache(embedding_cache_size * 1024 * 1024)
     # Create a scheduler and run the event loop
     try:
         scheduler = Scheduler(
@@ -341,10 +350,27 @@ def run_scheduler_process(
                 "max_req_input_len": scheduler.max_req_input_len,
             }
         )
-        if scheduler.enable_overlap:
-            scheduler.event_loop_overlap()
-        else:
-            scheduler.event_loop_normal()
+        disaggregation_mode: DisaggregationMode = scheduler.disaggregation_mode
+
+        if disaggregation_mode == DisaggregationMode.NULL:
+            if server_args.pp_size > 1:
+                scheduler.event_loop_pp()
+            elif scheduler.enable_overlap:
+                scheduler.event_loop_overlap()
+            else:
+                scheduler.event_loop_normal()
+        elif disaggregation_mode == DisaggregationMode.PREFILL:
+            if scheduler.enable_overlap:
+                scheduler.event_loop_overlap_disagg_prefill()
+            else:
+                scheduler.event_loop_normal_disagg_prefill()
+
+        elif disaggregation_mode == DisaggregationMode.DECODE:
+            if scheduler.enable_overlap:
+                scheduler.event_loop_overlap_disagg_decode()
+            else:
+                scheduler.event_loop_normal_disagg_decode()
+
     except Exception:
         traceback = get_exception_traceback()
         logger.error(f"Scheduler hit an exception: {traceback}")

@@ -14,6 +14,6 @@ else
 fi
 
 
-python ${REPO_PATH}/tools/auto_placement/scheduler_task.py \
+python ${REPO_PATH}/toolkits/auto_placement/scheduler_task.py \
     --config-path ${CONFIG_PATH}/config/ \
     --config-name $CONFIG_NAME \

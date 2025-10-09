@@ -67,7 +67,6 @@ RLinf 使用 **NVIDIA Megatron-LM** 作为大规模 Transformer 训练的后端�
 
    cluster:
      num_nodes: 16
-     num_gpus_per_node: 8            # 16 × 8 = 128 GPUs
 
    actor:
      model:

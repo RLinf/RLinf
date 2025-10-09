@@ -52,8 +52,12 @@ try:
 except (ImportError, ModuleNotFoundError):
     HAVE_MEGATRON_CORE = False
     raise "import error"
-
-from megatron.legacy.model import Float16Module
+try:
+    from megatron.legacy.model import Float16Module
+except ImportError:
+    from megatron.core.transformer.module import Float16Module
+except ImportError:
+    raise "Could not import Float16Module from megatron"
 from megatron.training.checkpointing import load_checkpoint, save_checkpoint
 from megatron.training.training import (
     preprocess_common_state_dict,

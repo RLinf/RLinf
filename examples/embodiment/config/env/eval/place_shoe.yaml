@@ -1,0 +1,27 @@
+simulator_type: robotwin
+auto_reset: False
+ignore_terminations: False
+use_rel_reward: True
+seed: 0
+num_group: ${env.eval.num_envs}
+group_size: 1
+use_fixed_reset_state_ids: True
+num_envs: 32
+only_eval: True
+image_size: [224, 224]
+
+video_cfg:
+  save_video: True
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/eval
+
+init_params:
+  id: "PutCarrotOnPlateInScene-v2"
+  num_envs: ${env.eval.num_envs}
+  obs_mode: ${env.train.init_params.obs_mode}
+  control_mode: None
+  sim_backend: "gpu"
+  sim_config: ${env.train.init_params.sim_config}
+  max_episode_steps: ${env.train.init_params.max_episode_steps}
+  sensor_configs: ${env.train.init_params.sensor_configs}
+  render_mode: null

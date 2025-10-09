@@ -1,5 +1,5 @@
 name: Documentation
-description: Report an issue related to https://rlinf-docs.readthedocs.io
+description: Report an issue related to https://rlinf.readthedocs.io
 title: "[Doc]: "
 labels: ["documentation"]
 
@@ -8,7 +8,7 @@ body:
   attributes:
     label: Documentation issue
     description: >
-      A clear and concise description of what content in https://rlinf-docs.readthedocs.io is an issue.
+      A clear and concise description of what content in https://rlinf.readthedocs.io is an issue.
   validations:
     required: true
 - type: textarea
@@ -25,5 +25,5 @@ body:
   attributes:
     label: Before submitting a new issue...
     options:
-      - label: Have you checked relevant issues, FAQs (https://rlinf-docs.readthedocs.io/en/latest/rst_source/faq.html), or asked the chatbot at the top right corner of the [documentation page](https://rlinf-docs.readthedocs.io).
+      - label: Have you checked relevant issues, FAQs (https://rlinf.readthedocs.io/en/latest/rst_source/faq.html), or asked the chatbot at the top right corner of the [documentation page](https://rlinf.readthedocs.io).
         required: true

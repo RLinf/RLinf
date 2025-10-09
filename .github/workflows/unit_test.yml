@@ -30,19 +30,36 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-    unit-tests:
+    unit-tests-cuda:
         runs-on: rlinf
         container:
-            image: rlinf/rlinf:math-rlinf0.1-torch2.5.1-sglang0.4.4-vllm0.7.1-megatron0.11.0-te2.1
+            image: rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1
             volumes:
                 - /mnt/public/dataset:/workspace/dataset
                 - /mnt/public/tokenizer:/workspace/tokenizer
             options: --gpus="all" --shm-size=80g
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Install pytest
+              run: pip install pytest
+
+            - name: Run pytest
+              run: |
+                export PYTHONPATH=$(pwd):$(pwd)/megatron:$(pwd)/tests/unit_tests 
+                pytest tests/unit_tests
+            
+            - name: Run doctest
+              run: |
+                pytest --doctest-modules rlinf/scheduler
+      
+    unit-tests-cpu:
+        runs-on: ubuntu-latest
+        container:
+            image: rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1
 
         steps:
             - name: Checkout code

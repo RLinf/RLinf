@@ -80,8 +80,8 @@ PPO 的目标函数定义如下：
       require_values: True
       normalize_advantages: True
       group_size: 1
-      adv_type: "ppo"
-      loss_type: "ppo"
+      adv_type: embodied_gae
+      loss_type: embodied_ppo
       loss_agg_func: "token-mean"
 
       # 算法参数（通常需要调优）

@@ -56,7 +56,7 @@
 
 .. note::
 
-   ``check_ray.sh`` 的参数必须等于 ``num_nodes × num_gpus_per_node`` 的乘积。
+   ``check_ray.sh`` 的参数必须等于集群中GPU等加速器的总数。
 
 如果一切正常，你将看到如下输出：
 
@@ -82,7 +82,6 @@
    # examples/math/config/qwen2.5-1.5b-grpo-megatron.yaml
    cluster:
      num_nodes: 4          # 根据你的集群情况修改
-     num_gpus_per_node: 8
      component_placement:
        actor,rollout: all  # “all” 表示使用所有可见 GPU
 
@@ -104,7 +103,6 @@
    # examples/math/config/qwen2.5-1.5b-grpo-megatron-pipeline.yaml
    cluster:
      num_nodes: 4
-     num_gpus_per_node: 8
      component_placement:
        rollout:    0-19        # 使用 20 块 GPU
        inference:  20-23       # 使用 4 块 GPU

@@ -26,7 +26,6 @@ The workers are assigned to separate GPUs. The set of GPUs is specified using gl
 
    cluster:
      num_nodes: 2
-     num_gpus_per_node: 8
      component_placement:
        rollout: 0-9
        inference: 10-11

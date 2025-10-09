@@ -67,7 +67,7 @@
 .. 2. Megatron Weight Conversion Support
 .. ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. **Tool:** ``tools/ckpt_convert``  
+.. **Tool:** ``toolkits/ckpt_convert``  
 .. Provide weight-conversion scripts that match the modified model. The
 .. example below converts DeepSeek checkpoints:
 
@@ -302,7 +302,7 @@ that specialised model structures are supported.
 2. Megatron Weight Conversion Support
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**Tool:** ``tools/ckpt_convert``  
+**Tool:** ``toolkits/ckpt_convert``  
 Provide weight-conversion scripts that match the modified model. The
 example below converts qwen2.5 checkpoints:
 

@@ -13,14 +13,17 @@
 # limitations under the License.
 
 import os
+from unittest.mock import MagicMock
 
 import pytest
 import torch
 from omegaconf import DictConfig
 
 from rlinf.scheduler import (
+    AcceleratorType,
     Cluster,
     FlexiblePlacementStrategy,
+    NodePlacementStrategy,
     PackedPlacementStrategy,
     Worker,
 )
@@ -36,10 +39,27 @@ def cluster():
     """Provides a ClusterResource instance for the tests."""
     # Use a fixed number of GPUs for consistent testing.
     # A warning will be issued if an instance already exists, which is fine for testing.
-    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 4
-    if num_gpus < 4:
-        pytest.skip("Placement tests require at least 4 GPUs.")
-    return Cluster(num_nodes=1, num_gpus_per_node=num_gpus)
+    return Cluster(num_nodes=1)
+
+
+def mock_cluster(num_nodes, num_accelerators_per_node):
+    cluster = MagicMock()
+    cluster.num_accelerators_in_cluster = num_nodes * num_accelerators_per_node
+    cluster.num_nodes = num_nodes
+    cluster.get_node_id_from_accel_id = MagicMock(
+        side_effect=lambda x: x // num_accelerators_per_node
+    )
+    cluster.global_accel_id_to_local_accel_id = MagicMock(
+        side_effect=lambda x: x % num_accelerators_per_node
+    )
+    cluster.get_node_num_accelerators = MagicMock(
+        return_value=num_accelerators_per_node
+    )
+    # accelerator_type can be retrieved from node_info
+    node_info = MagicMock()
+    node_info.accelerator_type = AcceleratorType.NV_GPU
+    cluster.get_node_info = MagicMock(return_value=node_info)
+    return cluster
 
 
 # A WorkerGroup-decorated class for testing placement strategies
@@ -55,7 +75,7 @@ class PlacementTestWorker(Worker):
             "rank": self._rank,
             "world_size": self._world_size,
             "node_id": self._node_id,
-            "gpu_id": self._gpu_id,
+            "gpu_id": self._local_accelerator_id,
             "node_local_rank": self._node_local_rank,
             "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
             "local_rank": self._local_rank,
@@ -72,8 +92,12 @@ class TestPlacementStrategies:
 
     def test_packed_placement(self, cluster: Cluster):
         """Verify that PackedPlacementStrategy places workers on all available GPUs."""
-        num_gpus = cluster.num_gpus_per_node
-        placement = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=num_gpus - 1)
+        if not torch.cuda.is_available():
+            pytest.skip("Skipping accelerator placement test on CPU-only environment.")
+        num_gpus = cluster.num_accelerators_in_cluster
+        placement = PackedPlacementStrategy(
+            start_accelerator_id=0, end_accelerator_id=num_gpus - 1
+        )
         worker_group = PlacementTestWorker.create_group().launch(
             cluster=cluster, name="packed_test", placement_strategy=placement
         )
@@ -120,9 +144,11 @@ class TestPlacementStrategies:
 
     def test_fine_grained_packed_placement(self, cluster: Cluster):
         """Verify that FineGrainedPackedPlacementStrategy places a specific number of workers."""
+        if not torch.cuda.is_available():
+            pytest.skip("Skipping accelerator placement test on CPU-only environment.")
         num_workers_to_place = 2
         placement = PackedPlacementStrategy(
-            start_gpu_id=0, end_gpu_id=num_workers_to_place - 1
+            start_accelerator_id=0, end_accelerator_id=num_workers_to_place - 1
         )
         worker_group = PlacementTestWorker.create_group().launch(
             cluster=cluster, name="fine_grained_test", placement_strategy=placement
@@ -141,14 +167,16 @@ class TestPlacementStrategies:
 
     def test_chunked_placement(self, cluster: Cluster):
         """Verify that ChunkedPlacementStrategy allocates multiple GPUs per worker."""
+        if not torch.cuda.is_available():
+            pytest.skip("Skipping accelerator placement test on CPU-only environment.")
         stride = 2
-        num_gpus = cluster.num_gpus_per_node
+        num_gpus = cluster.num_accelerators_in_cluster
         expected_num_workers = num_gpus // stride
 
         placement = PackedPlacementStrategy(
-            start_gpu_id=0,
-            end_gpu_id=cluster._num_gpus_per_node - 1,
-            num_gpus_per_process=stride,
+            start_accelerator_id=0,
+            end_accelerator_id=cluster.num_accelerators_in_cluster - 1,
+            num_accelerators_per_process=stride,
         )
         worker_group = PlacementTestWorker.create_group().launch(
             cluster=cluster, name="chunked_test", placement_strategy=placement
@@ -177,8 +205,9 @@ class TestPlacementStrategies:
 
     def test_strided_placement(self, cluster: Cluster):
         """Verify that stride allocates GPUs in a strided manner."""
-
-        num_gpus = cluster.num_gpus_per_node
+        if not torch.cuda.is_available():
+            pytest.skip("Skipping accelerator placement test on CPU-only environment.")
+        num_gpus = cluster.num_accelerators_in_cluster
         stride = 2
         num_gpus_per_process = 2
 
@@ -194,10 +223,10 @@ class TestPlacementStrategies:
         expected_num_workers = (num_gpus // (stride * num_gpus_per_process)) * stride
 
         placement = PackedPlacementStrategy(
-            start_gpu_id=0,
-            end_gpu_id=7,
+            start_accelerator_id=0,
+            end_accelerator_id=7,
             stride=stride,
-            num_gpus_per_process=num_gpus_per_process,
+            num_accelerators_per_process=num_gpus_per_process,
         )
         worker_group = PlacementTestWorker.create_group().launch(
             cluster=cluster, name="strided_test", placement_strategy=placement
@@ -231,259 +260,254 @@ class TestPlacementStrategies:
 
     def test_packed_placement_strategy_multiple_nodes(self):
         """Test PackedPlacementStrategy with 2 nodes and 4 GPUs per node, 1 GPU per process."""
-        strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=7)
-        placements = strategy.get_placement(
-            num_nodes_in_cluster=2, num_gpus_per_node=4, isolate_gpu=True
-        )
+        # Mock a cluster with 2 nodes and 4 GPUs per node
+        cluster = mock_cluster(num_nodes=2, num_accelerators_per_node=4)
+        strategy = PackedPlacementStrategy(start_accelerator_id=0, end_accelerator_id=7)
+        placements = strategy.get_placement(cluster=cluster, isolate_accelerator=True)
 
         assert len(placements) == 8
         for i, p in enumerate(placements):
             assert p.rank == i
             assert p.node_id == i // 4
             assert p.node_rank == i // 4
-            assert p.local_gpu_id == i % 4
+            assert p.local_accelerator_id == i % 4
             assert p.local_rank == i % 4
             assert p.local_world_size == 4
-            assert p.cuda_visible_devices == [str(i % 4)]
-            assert p.isolate_gpu is True
+            assert p.visible_accelerators == [str(i % 4)]
+            assert p.isolate_accelerator is True
 
     def test_packed_placement_strategy_multiple_nodes_multiple_gpus_per_process(self):
         """Test PackedPlacementStrategy with 2 nodes, 4 GPUs per node, 2 GPUs per process."""
+        cluster = mock_cluster(num_nodes=2, num_accelerators_per_node=4)
         strategy = PackedPlacementStrategy(
-            start_gpu_id=0, end_gpu_id=7, num_gpus_per_process=2
+            start_accelerator_id=0, end_accelerator_id=7, num_accelerators_per_process=2
         )
-        placements = strategy.get_placement(
-            num_nodes_in_cluster=2, num_gpus_per_node=4, isolate_gpu=True
-        )
+        placements = strategy.get_placement(cluster=cluster, isolate_accelerator=True)
 
         assert len(placements) == 4
         for i, p in enumerate(placements):
             assert p.rank == i
             assert p.node_id == i // 2
             assert p.node_rank == i // 2
-            assert p.local_gpu_id == (i % 2) * 2
+            assert p.local_accelerator_id == (i % 2) * 2
             assert p.local_rank == i % 2
             assert p.local_world_size == 2
             expected_devices = [str((i % 2) * 2), str((i % 2) * 2 + 1)]
-            assert p.cuda_visible_devices == expected_devices
-            assert p.isolate_gpu is True
+            assert p.visible_accelerators == expected_devices
+            assert p.isolate_accelerator is True
 
     def test_packed_placement_strategy_multiple_nodes_no_isolate(self):
         """Test PackedPlacementStrategy with 2 nodes, 4 GPUs per node, isolate_gpu=False."""
-        strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=7)
-        placements = strategy.get_placement(
-            num_nodes_in_cluster=2, num_gpus_per_node=4, isolate_gpu=False
-        )
+        cluster = mock_cluster(num_nodes=2, num_accelerators_per_node=4)
+        strategy = PackedPlacementStrategy(start_accelerator_id=0, end_accelerator_id=7)
+        placements = strategy.get_placement(cluster=cluster, isolate_accelerator=False)
 
         assert len(placements) == 8
         for i, p in enumerate(placements):
             assert p.rank == i
             assert p.node_id == i // 4
             assert p.node_rank == i // 4
-            assert p.local_gpu_id == i % 4
+            assert p.local_accelerator_id == i % 4
             assert p.local_rank == i % 4
             assert p.local_world_size == 4
-            assert p.cuda_visible_devices == [str(j) for j in range(4)]
-            assert p.isolate_gpu is False
+            assert p.visible_accelerators == [str(j) for j in range(4)]
+            assert p.isolate_accelerator is False
 
     def test_packed_placement_strategy_node_offset(self):
         """Test PackedPlacementStrategy with node offset (start from node 1)."""
-        strategy = PackedPlacementStrategy(start_gpu_id=4, end_gpu_id=7)
-        placements = strategy.get_placement(
-            num_nodes_in_cluster=2, num_gpus_per_node=4, isolate_gpu=True
-        )
+        cluster = mock_cluster(num_nodes=2, num_accelerators_per_node=4)
+        strategy = PackedPlacementStrategy(start_accelerator_id=4, end_accelerator_id=7)
+        placements = strategy.get_placement(cluster=cluster, isolate_accelerator=True)
 
         assert len(placements) == 4
         for i, p in enumerate(placements):
             assert p.rank == i
             assert p.node_id == 1
             assert p.node_rank == 0
-            assert p.local_gpu_id == i
+            assert p.local_accelerator_id == i
             assert p.local_rank == i
             assert p.local_world_size == 4
-            assert p.cuda_visible_devices == [str(i)]
-            assert p.isolate_gpu is True
+            assert p.visible_accelerators == [str(i)]
+            assert p.isolate_accelerator is True
 
     def test_packed_placement_strategy_partial_node(self):
         """Test PackedPlacementStrategy with 2 nodes, 4 GPUs per node, but only 1 node used."""
-        strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=3)
-        placements = strategy.get_placement(
-            num_nodes_in_cluster=2, num_gpus_per_node=4, isolate_gpu=True
-        )
+        cluster = mock_cluster(num_nodes=2, num_accelerators_per_node=4)
+        strategy = PackedPlacementStrategy(start_accelerator_id=0, end_accelerator_id=3)
+        placements = strategy.get_placement(cluster=cluster, isolate_accelerator=True)
 
         assert len(placements) == 4
         for i, p in enumerate(placements):
             assert p.rank == i
             assert p.node_id == 0
             assert p.node_rank == 0
-            assert p.local_gpu_id == i
+            assert p.local_accelerator_id == i
             assert p.local_rank == i
             assert p.local_world_size == 4
-            assert p.cuda_visible_devices == [str(i)]
-            assert p.isolate_gpu is True
+            assert p.visible_accelerators == [str(i)]
+            assert p.isolate_accelerator is True
 
     def test_packed_placement_strategy_single_node_single_gpu_per_process(self):
         """Test PackedPlacementStrategy with 1 node, 4 GPUs per node, 1 GPU per process."""
-        strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=3)
-        placements = strategy.get_placement(
-            num_nodes_in_cluster=1, num_gpus_per_node=4, isolate_gpu=True
-        )
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+        strategy = PackedPlacementStrategy(start_accelerator_id=0, end_accelerator_id=3)
+        placements = strategy.get_placement(cluster=cluster, isolate_accelerator=True)
 
         assert len(placements) == 4
         for i, p in enumerate(placements):
             assert p.rank == i
             assert p.node_id == 0
             assert p.node_rank == 0
-            assert p.local_gpu_id == i
+            assert p.local_accelerator_id == i
             assert p.local_rank == i
             assert p.local_world_size == 4
-            assert p.cuda_visible_devices == [str(i)]
-            assert p.isolate_gpu is True
+            assert p.visible_accelerators == [str(i)]
+            assert p.isolate_accelerator is True
 
     def test_packed_placement_strategy_single_node_multiple_gpus_per_process(self):
         """Test PackedPlacementStrategy with 1 node, 4 GPUs per node, 2 GPUs per process."""
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
         strategy = PackedPlacementStrategy(
-            start_gpu_id=0, end_gpu_id=3, num_gpus_per_process=2
+            start_accelerator_id=0, end_accelerator_id=3, num_accelerators_per_process=2
         )
-        placements = strategy.get_placement(
-            num_nodes_in_cluster=1, num_gpus_per_node=4, isolate_gpu=True
-        )
+        placements = strategy.get_placement(cluster=cluster, isolate_accelerator=True)
 
         assert len(placements) == 2
         for i, p in enumerate(placements):
             assert p.rank == i
             assert p.node_id == 0
             assert p.node_rank == 0
-            assert p.local_gpu_id == i * 2
+            assert p.local_accelerator_id == i * 2
             assert p.local_rank == i
             assert p.local_world_size == 2
             expected_devices = [str(i * 2), str(i * 2 + 1)]
-            assert p.cuda_visible_devices == expected_devices
-            assert p.isolate_gpu is True
+            assert p.visible_accelerators == expected_devices
+            assert p.isolate_accelerator is True
 
     def test_packed_placement_strategy_isolate_gpu_false(self):
         """Test PackedPlacementStrategy with isolate_gpu=False."""
-        strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=3)
-        placements = strategy.get_placement(
-            num_nodes_in_cluster=1, num_gpus_per_node=4, isolate_gpu=False
-        )
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+        strategy = PackedPlacementStrategy(start_accelerator_id=0, end_accelerator_id=3)
+        placements = strategy.get_placement(cluster=cluster, isolate_accelerator=False)
 
         assert len(placements) == 4
         for i, p in enumerate(placements):
             assert p.rank == i
             assert p.node_id == 0
             assert p.node_rank == 0
-            assert p.local_gpu_id == i
+            assert p.local_accelerator_id == i
             assert p.local_rank == i
             assert p.local_world_size == 4
-            assert p.cuda_visible_devices == [str(j) for j in range(4)]
-            assert p.isolate_gpu is False
+            assert p.visible_accelerators == [str(j) for j in range(4)]
+            assert p.isolate_accelerator is False
 
     def test_packed_placement_strategy_master_gpu_offset(self):
         """Test PackedPlacementStrategy with master_gpu offset (start from GPU 2)."""
-        strategy = PackedPlacementStrategy(start_gpu_id=2, end_gpu_id=3)
-        placements = strategy.get_placement(
-            num_nodes_in_cluster=1, num_gpus_per_node=4, isolate_gpu=True
-        )
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+        strategy = PackedPlacementStrategy(start_accelerator_id=2, end_accelerator_id=3)
+        placements = strategy.get_placement(cluster=cluster, isolate_accelerator=True)
 
         assert len(placements) == 2
         for i, p in enumerate(placements):
             assert p.rank == i
             assert p.node_id == 0
             assert p.node_rank == 0
-            assert p.local_gpu_id == i + 2
+            assert p.local_accelerator_id == i + 2
             assert p.local_rank == i
             assert p.local_world_size == 2
-            assert p.cuda_visible_devices == [str(i + 2)]
-            assert p.isolate_gpu is True
+            assert p.visible_accelerators == [str(i + 2)]
+            assert p.isolate_accelerator is True
 
     def test_packed_placement_strategy_num_processes(self):
         """Test PackedPlacementStrategy with num_processes specified."""
-        strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=2)
-        placements = strategy.get_placement(
-            num_nodes_in_cluster=1, num_gpus_per_node=4, isolate_gpu=True
-        )
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+        strategy = PackedPlacementStrategy(start_accelerator_id=0, end_accelerator_id=2)
+        placements = strategy.get_placement(cluster=cluster, isolate_accelerator=True)
 
         assert len(placements) == 3
         for i, p in enumerate(placements):
             assert p.rank == i
             assert p.node_id == 0
             assert p.node_rank == 0
-            assert p.local_gpu_id == i
+            assert p.local_accelerator_id == i
             assert p.local_rank == i
             assert p.local_world_size == 3
-            assert p.cuda_visible_devices == [str(i)]
-            assert p.isolate_gpu is True
+            assert p.visible_accelerators == [str(i)]
+            assert p.isolate_accelerator is True
 
     def test_packed_placement_strategy_invalid_start_end_gpu(self):
         """Test that specifying both start_gpu_id and end_gpu_id raises ValueError."""
         with pytest.raises(AssertionError):
-            PackedPlacementStrategy(start_gpu_id=4, end_gpu_id=1)
-            PackedPlacementStrategy(start_gpu_id=4, end_gpu_id=-1)
-            PackedPlacementStrategy(start_gpu_id=-4, end_gpu_id=-1)
+            PackedPlacementStrategy(start_accelerator_id=4, end_accelerator_id=1)
+            PackedPlacementStrategy(start_accelerator_id=4, end_accelerator_id=-1)
+            PackedPlacementStrategy(start_accelerator_id=-4, end_accelerator_id=-1)
 
     def test_packed_placement_strategy_invalid_master_gpu(self):
-        """Test that specifying master_gpu >= num_gpus_per_node raises AssertionError."""
-        strategy = PackedPlacementStrategy(start_gpu_id=4, end_gpu_id=7)
+        """Test that specifying master_gpu >= num_accelerators_per_node raises AssertionError."""
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+        strategy = PackedPlacementStrategy(start_accelerator_id=4, end_accelerator_id=7)
         with pytest.raises(AssertionError):
-            strategy.get_placement(
-                num_nodes_in_cluster=1, num_gpus_per_node=4, isolate_gpu=True
-            )
+            strategy.get_placement(cluster=cluster, isolate_accelerator=True)
 
     def test_packed_placement_strategy_invalid_num_gpus_per_process(self):
         """Test that specifying num_gpus_per_process that doesn't fit raises AssertionError."""
         with pytest.raises(AssertionError):
+            cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
             strategy = PackedPlacementStrategy(
-                start_gpu_id=0, end_gpu_id=2, num_gpus_per_process=4
+                start_accelerator_id=0,
+                end_accelerator_id=2,
+                num_accelerators_per_process=4,
             )
-            strategy.get_placement(
-                num_nodes_in_cluster=1, num_gpus_per_node=4, isolate_gpu=True
-            )
+            strategy.get_placement(cluster=cluster, isolate_accelerator=True)
 
     def test_packed_placement_strategy_invalid_stride(self):
         """Test that specifying stride that doesn't fit raises AssertionError."""
         with pytest.raises(AssertionError):
-            strategy = PackedPlacementStrategy(start_gpu_id=0, end_gpu_id=2, stride=7)
-            strategy.get_placement(
-                num_nodes_in_cluster=1, num_gpus_per_node=4, isolate_gpu=True
+            cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+            strategy = PackedPlacementStrategy(
+                start_accelerator_id=0, end_accelerator_id=2, stride=7
             )
+            strategy.get_placement(cluster=cluster, isolate_accelerator=True)
 
     def test_flex_placement_single_process_single_gpu(self):
         """Test placement for a single process with a single GPU."""
+        cluster = mock_cluster(num_nodes=2, num_accelerators_per_node=4)
         strategy = FlexiblePlacementStrategy([[0]])
-        placements = strategy.get_placement(2, 4)
+        placements = strategy.get_placement(cluster=cluster)
 
         assert len(placements) == 1
         placement = placements[0]
         assert placement.rank == 0
         assert placement.node_id == 0
         assert placement.node_rank == 0
-        assert placement.local_gpu_id == 0
+        assert placement.local_accelerator_id == 0
         assert placement.local_rank == 0
         assert placement.local_world_size == 1
-        assert placement.cuda_visible_devices == ["0"]
-        assert placement.isolate_gpu is True
+        assert placement.visible_accelerators == ["0"]
+        assert placement.isolate_accelerator is True
 
     def test_flex_placement_single_process_multiple_gpus(self):
         """Test placement for a single process with multiple GPUs."""
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
         strategy = FlexiblePlacementStrategy([[2, 1, 3]])
-        placements = strategy.get_placement(2, 4)
+        placements = strategy.get_placement(cluster=cluster)
 
         assert len(placements) == 1
         placement = placements[0]
         assert placement.rank == 0
         assert placement.node_id == 0
         assert placement.node_rank == 0
-        assert placement.local_gpu_id == 1  # First GPU after sorting
+        assert placement.local_accelerator_id == 1  # First GPU after sorting
         assert placement.local_rank == 0
         assert placement.local_world_size == 1
-        assert placement.cuda_visible_devices == ["1", "2", "3"]  # Sorted local GPU IDs
-        assert placement.isolate_gpu is True
+        assert placement.visible_accelerators == ["1", "2", "3"]  # Sorted local GPU IDs
+        assert placement.isolate_accelerator is True
 
     def test_flex_placement_multiple_processes_same_node(self):
         """Test placement for multiple processes on the same node."""
+        cluster = mock_cluster(num_nodes=2, num_accelerators_per_node=4)
         strategy = FlexiblePlacementStrategy([[0], [1], [2]])
-        placements = strategy.get_placement(2, 4)
+        placements = strategy.get_placement(cluster=cluster)
 
         assert len(placements) == 3
 
@@ -510,8 +534,9 @@ class TestPlacementStrategies:
 
     def test_flex_placement_multiple_processes_different_nodes(self):
         """Test placement for multiple processes across different nodes."""
+        cluster = mock_cluster(num_nodes=3, num_accelerators_per_node=4)
         strategy = FlexiblePlacementStrategy([[0], [4], [8]])
-        placements = strategy.get_placement(3, 4)
+        placements = strategy.get_placement(cluster=cluster)
 
         assert len(placements) == 3
 
@@ -538,8 +563,9 @@ class TestPlacementStrategies:
 
     def test_flex_placement_mixed_nodes_and_processes(self):
         """Test placement for mixed scenario with multiple processes per node."""
+        cluster = mock_cluster(num_nodes=2, num_accelerators_per_node=4)
         strategy = FlexiblePlacementStrategy([[1], [2], [4], [5]])
-        placements = strategy.get_placement(2, 4)
+        placements = strategy.get_placement(cluster=cluster)
 
         assert len(placements) == 4
 
@@ -567,26 +593,28 @@ class TestPlacementStrategies:
 
     def test_flex_placement_sorting_gpu_ids_within_process(self):
         """Test that GPU IDs are sorted within each process."""
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
         strategy = FlexiblePlacementStrategy([[3, 1, 2]])
-        placements = strategy.get_placement(1, 4)
+        placements = strategy.get_placement(cluster=cluster)
 
-        assert placements[0].cuda_visible_devices == ["1", "2", "3"]
-        assert placements[0].local_gpu_id == 1
+        assert placements[0].visible_accelerators == ["1", "2", "3"]
+        assert placements[0].local_accelerator_id == 1
 
     def test_flex_placement_sorting_processes_by_first_gpu(self):
         """Test that processes are sorted by their first GPU ID."""
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
         strategy = FlexiblePlacementStrategy([[2], [0], [1]])
-        placements = strategy.get_placement(1, 4)
+        placements = strategy.get_placement(cluster=cluster)
 
         assert len(placements) == 3
-        assert placements[0].local_gpu_id == 0  # Process with GPU 0
-        assert placements[1].local_gpu_id == 1  # Process with GPU 1
-        assert placements[2].local_gpu_id == 2  # Process with GPU 2
+        assert placements[0].local_accelerator_id == 0  # Process with GPU 0
+        assert placements[1].local_accelerator_id == 1  # Process with GPU 1
+        assert placements[2].local_accelerator_id == 2  # Process with GPU 2
 
     def test_empty_gpu_ids_list_raises_error(self):
         """Test that empty GPU IDs list raises assertion error."""
         with pytest.raises(
-            AssertionError, match="The gpu_id_list_per_process must not be empty"
+            AssertionError, match="The accelerator_id_list must not be empty"
         ):
             FlexiblePlacementStrategy([])
 
@@ -597,29 +625,165 @@ class TestPlacementStrategies:
 
     def test_out_of_range_gpu_id_raises_error(self):
         """Test that out of range GPU ID raises assertion error."""
-        with pytest.raises(AssertionError, match="GPU ID 8 is out of range"):
+        with pytest.raises(AssertionError, match="Accelerator ID 8 is out of range"):
+            cluster = mock_cluster(num_nodes=2, num_accelerators_per_node=4)
             strategy = FlexiblePlacementStrategy([[0], [8]])
-            strategy.get_placement(num_nodes_in_cluster=2, num_gpus_per_node=4)
+            strategy.get_placement(cluster=cluster)
 
     def test_cross_node_gpu_ids_raises_error(self):
         """Test that GPU IDs spanning multiple nodes raise assertion error."""
         with pytest.raises(AssertionError, match="must be on the same node"):
+            cluster = mock_cluster(num_nodes=2, num_accelerators_per_node=4)
             strategy = FlexiblePlacementStrategy([[0, 4]])
-            strategy.get_placement(num_nodes_in_cluster=2, num_gpus_per_node=4)
+            strategy.get_placement(cluster=cluster)
 
     def test_duplicate_gpu_ids_in_process_raises_error(self):
         """Test that duplicate GPU IDs within a process raise assertion error."""
         with pytest.raises(AssertionError, match="should not overlap"):
+            cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
             strategy = FlexiblePlacementStrategy([[0, 0]])
-            strategy.get_placement(num_nodes_in_cluster=1, num_gpus_per_node=4)
+            strategy.get_placement(cluster=cluster)
 
     def test_negative_gpu_id_raises_error(self):
         """Test that negative GPU IDs raise assertion error."""
         with pytest.raises(
-            AssertionError, match="The start GPU ID -1 must be non-negative"
+            AssertionError, match="The start accelerator ID -1 must be non-negative"
         ):
+            cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
             strategy = FlexiblePlacementStrategy([[-1]])
-            strategy.get_placement(num_nodes_in_cluster=1, num_gpus_per_node=4)
+            strategy.get_placement(cluster=cluster)
+
+    def test_init_valid_node_ids(self):
+        """Test initialization with valid node IDs."""
+        strategy = NodePlacementStrategy([0, 1, 2])
+        assert strategy._node_ids == [0, 1, 2]
+        assert strategy._placement_strategy == "NODE"
+
+    def test_init_sorts_node_ids(self):
+        """Test that node IDs are sorted during initialization."""
+        strategy = NodePlacementStrategy([2, 0, 1])
+        assert strategy._node_ids == [0, 1, 2]
+
+    def test_init_empty_node_ids_raises_assertion(self):
+        """Test that empty node IDs list raises assertion error."""
+        with pytest.raises(AssertionError, match="The node_ids list must not be empty"):
+            NodePlacementStrategy([])
+
+    def test_get_placement_single_node(self):
+        """Test placement generation for single node."""
+        # Mock cluster
+        cluster = MagicMock(spec=Cluster)
+        cluster.num_nodes = 2
+        cluster.get_node_num_accelerators.return_value = 2
+
+        node_info = MagicMock()
+        node_info.accelerator_type = "cuda"
+        cluster.get_node_info.return_value = node_info
+
+        strategy = NodePlacementStrategy([0, 0])
+        placements = strategy.get_placement(cluster)
+
+        assert len(placements) == 2
+        assert placements[0].rank == 0
+        assert placements[0].node_id == 0
+        assert placements[0].node_rank == 0
+        assert placements[0].local_rank == 0
+        assert placements[0].local_world_size == 2
+
+        assert placements[1].rank == 1
+        assert placements[1].node_id == 0
+        assert placements[1].node_rank == 0
+        assert placements[1].local_rank == 1
+        assert placements[1].local_world_size == 2
+
+    def test_get_placement_multiple_nodes(self):
+        """Test placement generation across multiple nodes."""
+        # Mock cluster
+        cluster = MagicMock(spec=Cluster)
+        cluster.num_nodes = 3
+        cluster.get_node_num_accelerators.return_value = 1
+
+        node_info = MagicMock()
+        node_info.accelerator_type = "cuda"
+        cluster.get_node_info.return_value = node_info
+
+        strategy = NodePlacementStrategy([0, 1, 1, 2])
+        placements = strategy.get_placement(cluster)
+
+        assert len(placements) == 4
+
+        # Node 0
+        assert placements[0].node_id == 0
+        assert placements[0].node_rank == 0
+        assert placements[0].local_rank == 0
+        assert placements[0].local_world_size == 1
+
+        # Node 1
+        assert placements[1].node_id == 1
+        assert placements[1].node_rank == 1
+        assert placements[1].local_rank == 0
+        assert placements[1].local_world_size == 2
+
+        assert placements[2].node_id == 1
+        assert placements[2].node_rank == 1
+        assert placements[2].local_rank == 1
+        assert placements[2].local_world_size == 2
+
+        # Node 2
+        assert placements[3].node_id == 2
+        assert placements[3].node_rank == 2
+        assert placements[3].local_rank == 0
+        assert placements[3].local_world_size == 1
+
+    def test_get_placement_no_accelerators(self):
+        """Test placement generation when no accelerators available."""
+        # Mock cluster
+        cluster = MagicMock(spec=Cluster)
+        cluster.num_nodes = 2
+        cluster.get_node_num_accelerators.return_value = 0
+
+        node_info = MagicMock()
+        node_info.accelerator_type = "cpu"
+        cluster.get_node_info.return_value = node_info
+
+        strategy = NodePlacementStrategy([0])
+        placements = strategy.get_placement(cluster)
+
+        assert len(placements) == 1
+        assert placements[0].local_accelerator_id == -1
+        assert placements[0].visible_accelerators == []
+
+    def test_get_placement_node_id_exceeds_cluster_size(self):
+        """Test that node ID exceeding cluster size raises assertion error."""
+        # Mock cluster
+        cluster = MagicMock(spec=Cluster)
+        cluster.num_nodes = 2
+        cluster.get_node_num_accelerators.return_value = 2
+
+        strategy = NodePlacementStrategy([0, 2])
+
+        with pytest.raises(
+            AssertionError, match="Node ID 2 exceeds number of available nodes 2"
+        ):
+            strategy.get_placement(cluster)
+
+    def test_get_placement_isolate_accelerator_false(self):
+        """Test placement generation with isolate_accelerator=False."""
+        # Mock cluster
+        cluster = MagicMock(spec=Cluster)
+        cluster.num_nodes = 1
+        cluster.get_node_num_accelerators.return_value = 2
+
+        node_info = MagicMock()
+        node_info.accelerator_type = "cuda"
+        cluster.get_node_info.return_value = node_info
+
+        strategy = NodePlacementStrategy([0])
+        placements = strategy.get_placement(cluster, isolate_accelerator=False)
+
+        assert len(placements) == 1
+        assert not placements[0].isolate_accelerator
+        assert placements[0].visible_accelerators == ["0", "1"]
 
     def test_hybrid_component_placement_generate_placements(self):
         """Test HybridComponentPlacement._generate_placements method."""
@@ -629,13 +793,13 @@ class TestPlacementStrategies:
             {
                 "cluster": {
                     "num_nodes": 1,
-                    "num_gpus_per_node": 4,
                     "component_placement": {"actor,rollout": "0,1,2", "inference": "3"},
                 }
             }
         )
 
-        placement = HybridComponentPlacement(config)
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+        placement = HybridComponentPlacement(config, cluster)
 
         # Initially placements should be empty
         assert len(placement._placements) == 0
@@ -663,9 +827,10 @@ class TestPlacementStrategies:
         assert placement._component_gpu_map["inference"] == expected_inference_gpu_lists
 
         # We can't directly access the internal structure, but we can test the placement results
-        actor_placements = actor_strategy.get_placement(1, 4)
-        rollout_placements = rollout_strategy.get_placement(1, 4)
-        inference_placements = inference_strategy.get_placement(1, 4)
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+        actor_placements = actor_strategy.get_placement(cluster=cluster)
+        rollout_placements = rollout_strategy.get_placement(cluster=cluster)
+        inference_placements = inference_strategy.get_placement(cluster=cluster)
 
         # Check that correct number of processes are created
         assert len(actor_placements) == 3  # GPUs 0,1,2
@@ -673,9 +838,9 @@ class TestPlacementStrategies:
         assert len(inference_placements) == 1  # GPU 3
 
         # Check GPU assignments
-        actor_gpus = sorted([p.local_gpu_id for p in actor_placements])
-        rollout_gpus = sorted([p.local_gpu_id for p in rollout_placements])
-        inference_gpus = [p.local_gpu_id for p in inference_placements]
+        actor_gpus = sorted([p.local_accelerator_id for p in actor_placements])
+        rollout_gpus = sorted([p.local_accelerator_id for p in rollout_placements])
+        inference_gpus = [p.local_accelerator_id for p in inference_placements]
 
         assert actor_gpus == [0, 1, 2]
         assert rollout_gpus == [0, 1, 2]
@@ -688,24 +853,25 @@ class TestPlacementStrategies:
             {
                 "cluster": {
                     "num_nodes": 1,
-                    "num_gpus_per_node": 4,
                     "component_placement": {"actor": "all"},
                 }
             }
         )
 
-        placement = HybridComponentPlacement(config)
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+        placement = HybridComponentPlacement(config, cluster)
         placement._generate_placements()
 
         assert "actor" in placement._placements
 
         actor_strategy = placement._placements["actor"]
-        actor_placements = actor_strategy.get_placement(1, 4)
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+        actor_placements = actor_strategy.get_placement(cluster=cluster)
 
         # Should create one process per GPU
         assert len(actor_placements) == 4
 
-        actor_gpus = sorted([p.local_gpu_id for p in actor_placements])
+        actor_gpus = sorted([p.local_accelerator_id for p in actor_placements])
         assert actor_gpus == [0, 1, 2, 3]
 
     def test_hybrid_component_placement_generate_placements_gpu_ranges(self):
@@ -715,29 +881,30 @@ class TestPlacementStrategies:
             {
                 "cluster": {
                     "num_nodes": 1,
-                    "num_gpus_per_node": 8,
                     "component_placement": {"actor": "0-2,5,7", "inference": "3-4"},
                 }
             }
         )
 
-        placement = HybridComponentPlacement(config)
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=8)
+        placement = HybridComponentPlacement(config, cluster)
         placement._generate_placements()
 
         # Check actor placement (GPUs 0,1,2,5,7)
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=8)
         actor_strategy = placement._placements["actor"]
-        actor_placements = actor_strategy.get_placement(1, 8)
+        actor_placements = actor_strategy.get_placement(cluster=cluster)
         assert len(actor_placements) == 5
 
-        actor_gpus = sorted([p.local_gpu_id for p in actor_placements])
+        actor_gpus = sorted([p.local_accelerator_id for p in actor_placements])
         assert actor_gpus == [0, 1, 2, 5, 7]
 
         # Check inference placement (GPUs 3,4)
         inference_strategy = placement._placements["inference"]
-        inference_placements = inference_strategy.get_placement(1, 8)
+        inference_placements = inference_strategy.get_placement(cluster=cluster)
         assert len(inference_placements) == 2
 
-        inference_gpus = sorted([p.local_gpu_id for p in inference_placements])
+        inference_gpus = sorted([p.local_accelerator_id for p in inference_placements])
         assert inference_gpus == [3, 4]
 
     def test_hybrid_component_placement_generate_placements_single_gpu(self):
@@ -747,7 +914,6 @@ class TestPlacementStrategies:
             {
                 "cluster": {
                     "num_nodes": 1,
-                    "num_gpus_per_node": 4,
                     "component_placement": {
                         "actor": "0",
                         "rollout": "1",
@@ -757,22 +923,32 @@ class TestPlacementStrategies:
             }
         )
 
-        placement = HybridComponentPlacement(config)
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+        placement = HybridComponentPlacement(config, cluster)
         placement._generate_placements()
 
         # Each component should have exactly one process
         for component in ["actor", "rollout", "inference"]:
             strategy = placement._placements[component]
-            placements = strategy.get_placement(1, 4)
+            placements = strategy.get_placement(cluster)
             assert len(placements) == 1
 
         # Check GPU assignments
-        actor_gpu = placement._placements["actor"].get_placement(1, 4)[0].local_gpu_id
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+        actor_gpu = (
+            placement._placements["actor"]
+            .get_placement(cluster=cluster)[0]
+            .local_accelerator_id
+        )
         rollout_gpu = (
-            placement._placements["rollout"].get_placement(1, 4)[0].local_gpu_id
+            placement._placements["rollout"]
+            .get_placement(cluster=cluster)[0]
+            .local_accelerator_id
         )
         inference_gpu = (
-            placement._placements["inference"].get_placement(1, 4)[0].local_gpu_id
+            placement._placements["inference"]
+            .get_placement(cluster=cluster)[0]
+            .local_accelerator_id
         )
 
         assert actor_gpu == 0
@@ -788,13 +964,13 @@ class TestPlacementStrategies:
             {
                 "cluster": {
                     "num_nodes": 1,
-                    "num_gpus_per_node": 4,
                     "component_placement": {"actor": "0,1"},
                 }
             }
         )
 
-        placement = HybridComponentPlacement(config)
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+        placement = HybridComponentPlacement(config, cluster)
 
         # Initially placements should be empty
         assert len(placement._placements) == 0
@@ -813,7 +989,6 @@ class TestPlacementStrategies:
             {
                 "cluster": {
                     "num_nodes": 1,
-                    "num_gpus_per_node": 4,
                     "component_placement": {"actor,rollout": "0-3"},
                 },
                 "actor": {
@@ -827,7 +1002,8 @@ class TestPlacementStrategies:
             }
         )
 
-        placement = ModelParallelComponentPlacement(config)
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+        placement = ModelParallelComponentPlacement(config, cluster)
 
         assert placement._placement_mode.name == "COLLOCATED"
         assert placement._actor_gpus == [0, 1, 2, 3]
@@ -844,7 +1020,6 @@ class TestPlacementStrategies:
             {
                 "cluster": {
                     "num_nodes": 1,
-                    "num_gpus_per_node": 8,
                     "component_placement": {
                         "actor": "0-1",
                         "rollout": "2-5",
@@ -869,7 +1044,8 @@ class TestPlacementStrategies:
             }
         )
 
-        placement = ModelParallelComponentPlacement(config)
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=8)
+        placement = ModelParallelComponentPlacement(config, cluster)
 
         assert placement._placement_mode.name == "DISAGGREGATED"
         assert placement._actor_gpus == [0, 1]
@@ -887,14 +1063,14 @@ class TestPlacementStrategies:
             {
                 "cluster": {
                     "num_nodes": 1,
-                    "num_gpus_per_node": 4,
                     "component_placement": {"rollout": "0-3"},
                 }
             }
         )
 
         with pytest.raises(AssertionError, match="Actor GPUs must be specified"):
-            ModelParallelComponentPlacement(config)
+            cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+            ModelParallelComponentPlacement(config, cluster)
 
     def test_model_parallel_component_placement_init_missing_rollout_gpus(self):
         """Test ModelParallelComponentPlacement raises error when rollout GPUs are missing."""
@@ -902,14 +1078,14 @@ class TestPlacementStrategies:
             {
                 "cluster": {
                     "num_nodes": 1,
-                    "num_gpus_per_node": 4,
                     "component_placement": {"actor": "0-3"},
                 }
             }
         )
 
         with pytest.raises(AssertionError, match="Rollout GPUs must be specified"):
-            ModelParallelComponentPlacement(config)
+            cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+            ModelParallelComponentPlacement(config, cluster)
 
     def test_model_parallel_component_placement_init_collocated_mode_invalid_tp_sizes(
         self,
@@ -919,7 +1095,6 @@ class TestPlacementStrategies:
             {
                 "cluster": {
                     "num_nodes": 1,
-                    "num_gpus_per_node": 4,
                     "component_placement": {"actor,rollout": "0-3"},
                 },
                 "actor": {
@@ -937,7 +1112,8 @@ class TestPlacementStrategies:
             AssertionError,
             match="Actor TP size 2 must be greater or equal to Rollout TP size 4",
         ):
-            ModelParallelComponentPlacement(config)
+            cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+            ModelParallelComponentPlacement(config, cluster)
 
     def test_model_parallel_component_placement_init_collocated_mode_with_inference_gpus(
         self,
@@ -947,7 +1123,6 @@ class TestPlacementStrategies:
             {
                 "cluster": {
                     "num_nodes": 1,
-                    "num_gpus_per_node": 4,
                     "component_placement": {"actor,rollout": "0-1", "inference": "2-3"},
                 },
                 "actor": {
@@ -965,7 +1140,8 @@ class TestPlacementStrategies:
             AssertionError,
             match="Inference GPUs must not be specified in collocated mode",
         ):
-            ModelParallelComponentPlacement(config)
+            cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+            ModelParallelComponentPlacement(config, cluster)
 
     def test_model_parallel_component_placement_init_disaggregated_mode_invalid_inference_tp_size(
         self,
@@ -975,7 +1151,6 @@ class TestPlacementStrategies:
             {
                 "cluster": {
                     "num_nodes": 1,
-                    "num_gpus_per_node": 8,
                     "component_placement": {
                         "actor": "0-1",
                         "rollout": "2-5",
@@ -1004,7 +1179,8 @@ class TestPlacementStrategies:
             AssertionError,
             match="Inference TP size 4 must be less than or equal to Inference world size 2",
         ):
-            ModelParallelComponentPlacement(config)
+            cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=8)
+            ModelParallelComponentPlacement(config, cluster)
 
     def test_model_parallel_component_placement_init_disaggregated_mode_recompute_logprobs_false(
         self,
@@ -1014,7 +1190,6 @@ class TestPlacementStrategies:
             {
                 "cluster": {
                     "num_nodes": 1,
-                    "num_gpus_per_node": 8,
                     "component_placement": {
                         "actor": "0-1",
                         "rollout": "2-5",
@@ -1042,7 +1217,8 @@ class TestPlacementStrategies:
         with pytest.raises(
             AssertionError, match="algorithm.recompute_logprobs has been set to false"
         ):
-            ModelParallelComponentPlacement(config)
+            cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=8)
+            ModelParallelComponentPlacement(config, cluster)
 
     def test_model_parallel_component_placement_init_invalid_placement_mode(self):
         """Test ModelParallelComponentPlacement raises error for invalid placement (neither collocated nor disaggregated)."""
@@ -1050,7 +1226,6 @@ class TestPlacementStrategies:
             {
                 "cluster": {
                     "num_nodes": 1,
-                    "num_gpus_per_node": 8,
                     "component_placement": {
                         "actor": "0-2",
                         "rollout": "1-4",  # Overlapping GPUs
@@ -1071,7 +1246,8 @@ class TestPlacementStrategies:
             ValueError,
             match="The specified placement does not match either the collocated mode",
         ):
-            ModelParallelComponentPlacement(config)
+            cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=8)
+            ModelParallelComponentPlacement(config, cluster)
 
     def test_model_parallel_component_placement_init_actor_tp_size_exceeds_world_size(
         self,
@@ -1081,7 +1257,6 @@ class TestPlacementStrategies:
             {
                 "cluster": {
                     "num_nodes": 1,
-                    "num_gpus_per_node": 4,
                     "component_placement": {"actor,rollout": "0-1"},
                 },
                 "actor": {
@@ -1099,7 +1274,8 @@ class TestPlacementStrategies:
             AssertionError,
             match="Actor TP size 4 must be less than or equal to Actor world size 2",
         ):
-            ModelParallelComponentPlacement(config)
+            cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=4)
+            ModelParallelComponentPlacement(config, cluster)
 
     def test_model_parallel_component_placement_init_disaggregated_mode_without_inference(
         self,
@@ -1109,7 +1285,6 @@ class TestPlacementStrategies:
             {
                 "cluster": {
                     "num_nodes": 1,
-                    "num_gpus_per_node": 8,
                     "component_placement": {"actor": "0-1", "rollout": "2-5"},
                 },
                 "actor": {
@@ -1123,7 +1298,8 @@ class TestPlacementStrategies:
             }
         )
 
-        placement = ModelParallelComponentPlacement(config)
+        cluster = mock_cluster(num_nodes=1, num_accelerators_per_node=8)
+        placement = ModelParallelComponentPlacement(config, cluster)
 
         assert placement._placement_mode.name == "DISAGGREGATED"
         assert placement._inference_gpus is None

@@ -18,7 +18,7 @@ import os
 import pytest
 import torch
 
-from rlinf.scheduler import Cluster, Worker
+from rlinf.scheduler import Cluster, NodePlacementStrategy, Worker
 
 SENDER_GROUP_NAME = "sender_worker_group"
 RECEIVER_GROUP_NAME = "receiver_worker_group"
@@ -287,21 +287,27 @@ class ReceiverWorker(Worker):
 @pytest.fixture(scope="module")
 def cluster():
     """Provides a ClusterResource instance for the tests."""
-    num_gpus = torch.cuda.device_count()
-    if num_gpus < 2:
-        pytest.skip("Communication tests require at least 2 GPUs or 2 CPU cores.")
-    return Cluster(num_nodes=1, num_gpus_per_node=num_gpus)
+    return Cluster(num_nodes=1)
 
 
 @pytest.fixture(scope="class")
-def worker_groups(cluster):
+def worker_groups(cluster: Cluster):
     """Creates and yields the sender and receiver worker groups."""
-    sender_group = SenderWorker.create_group().launch(
-        cluster=cluster, name=SENDER_GROUP_NAME
-    )
-    receiver_group = ReceiverWorker.create_group().launch(
-        cluster=cluster, name=RECEIVER_GROUP_NAME
-    )
+    if cluster.num_accelerators_in_cluster > 0:
+        sender_group = SenderWorker.create_group().launch(
+            cluster=cluster, name=SENDER_GROUP_NAME
+        )
+        receiver_group = ReceiverWorker.create_group().launch(
+            cluster=cluster, name=RECEIVER_GROUP_NAME
+        )
+    else:
+        placement = NodePlacementStrategy([0] * 8)
+        sender_group = SenderWorker.create_group().launch(
+            cluster=cluster, placement_strategy=placement, name=SENDER_GROUP_NAME
+        )
+        receiver_group = ReceiverWorker.create_group().launch(
+            cluster=cluster, placement_strategy=placement, name=RECEIVER_GROUP_NAME
+        )
     yield sender_group, receiver_group
     # No explicit cleanup needed, Ray handles actor termination on shutdown.
 
@@ -347,10 +353,8 @@ class TestCommunication:
     @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
     def test_tensor_communication(self, worker_groups, on_cpu, async_op):
         """Tests sending and receiving a single tensor."""
-        if on_cpu and not torch.cuda.is_available():
-            pytest.skip(
-                "Skipping CPU test on CPU-only environment to avoid redundancy."
-            )
+        if not on_cpu and not torch.cuda.is_available():
+            pytest.skip("Skipping CUDA test on CPU-only environment.")
         results = self._run_test(
             worker_groups,
             "test_send_tensor",
@@ -367,10 +371,8 @@ class TestCommunication:
     @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
     def test_tensor_list_communication(self, worker_groups, on_cpu, async_op):
         """Tests sending and receiving a list of tensors."""
-        if on_cpu and not torch.cuda.is_available():
-            pytest.skip(
-                "Skipping CPU test on CPU-only environment to avoid redundancy."
-            )
+        if not on_cpu and not torch.cuda.is_available():
+            pytest.skip("Skipping CUDA test on CPU-only environment.")
         results = self._run_test(
             worker_groups,
             "test_send_tensor_list",
@@ -388,10 +390,8 @@ class TestCommunication:
     @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
     def test_tensor_dict_communication(self, worker_groups, on_cpu, async_op):
         """Tests sending and receiving a dictionary of tensors."""
-        if on_cpu and not torch.cuda.is_available():
-            pytest.skip(
-                "Skipping CPU test on CPU-only environment to avoid redundancy."
-            )
+        if not on_cpu and not torch.cuda.is_available():
+            pytest.skip("Skipping CUDA test on CPU-only environment.")
         results = self._run_test(
             worker_groups,
             "test_send_tensor_dict",
@@ -410,10 +410,8 @@ class TestCommunication:
     @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
     def test_inplace_tensor_communication(self, worker_groups, on_cpu, async_op):
         """Tests send_tensor/recv_tensor for in-place tensor communication."""
-        if on_cpu and not torch.cuda.is_available():
-            pytest.skip(
-                "Skipping CPU test on CPU-only environment to avoid redundancy."
-            )
+        if not on_cpu and not torch.cuda.is_available():
+            pytest.skip("Skipping CUDA test on CPU-only environment.")
         results = self._run_test(
             worker_groups,
             "test_send_tensor_inplace",
@@ -429,10 +427,8 @@ class TestCommunication:
     @pytest.mark.parametrize("on_cpu", [True, False], ids=["cpu", "cuda"])
     def test_asyncio_communication(self, worker_groups, on_cpu):
         """Tests async communication with asyncio.run and async_wait."""
-        if on_cpu and not torch.cuda.is_available():
-            pytest.skip(
-                "Skipping CPU test on CPU-only environment to avoid redundancy."
-            )
+        if not on_cpu and not torch.cuda.is_available():
+            pytest.skip("Skipping CUDA test on CPU-only environment.")
         results = self._run_test(
             worker_groups,
             "test_send_tensor_asyncio",
@@ -448,10 +444,8 @@ class TestCommunication:
     @pytest.mark.parametrize("on_cpu", [True, False], ids=["cpu", "cuda"])
     def test_unaligned_send_recv(self, worker_groups, on_cpu):
         """Tests unaligned sending and receiving of tensors."""
-        if on_cpu and not torch.cuda.is_available():
-            pytest.skip(
-                "Skipping CPU test on CPU-only environment to avoid redundancy."
-            )
+        if not on_cpu and not torch.cuda.is_available():
+            pytest.skip("Skipping CUDA test on CPU-only environment.")
         results = self._run_test(
             worker_groups,
             "test_unaligned_send_recv",
@@ -466,10 +460,8 @@ class TestCommunication:
     @pytest.mark.parametrize("on_cpu", [True, False], ids=["cpu", "cuda"])
     def test_consecutive_send_recv(self, worker_groups, on_cpu):
         """Tests sending and receiving tensors in a consecutive manner."""
-        if on_cpu and not torch.cuda.is_available():
-            pytest.skip(
-                "Skipping CPU test on CPU-only environment to avoid redundancy."
-            )
+        if not on_cpu and not torch.cuda.is_available():
+            pytest.skip("Skipping CUDA test on CPU-only environment.")
         results = self._run_test(
             worker_groups,
             "test_consecutive_send_recv",

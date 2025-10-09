@@ -18,6 +18,9 @@ apt-get install -y --no-install-recommends \
     libsm6 \
     libxext6 \
     libxrender-dev \
-    libgomp1 \
+    libgomp1
+
+python -m mani_skill.utils.download_asset bridge_v2_real2sim -y
+python -m mani_skill.utils.download_asset widowx250s -y
 
 

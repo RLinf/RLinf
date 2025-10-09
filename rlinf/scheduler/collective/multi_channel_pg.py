@@ -19,8 +19,9 @@ from typing import List, Optional
 import torch
 import torch.distributed as dist
 
+from ..accelerator import Accelerator, AcceleratorType
 from .async_work import AsyncCollWork, AsyncWork
-from .collective_group import CollectiveGroup
+from .collective_group import CollectiveGroup, CollectiveGroupInfo
 
 
 class MultiChannelProcessGroup:
@@ -39,6 +40,7 @@ class MultiChannelProcessGroup:
         self,
         cur_rank: int,
         num_channels: int,
+        group_info: CollectiveGroupInfo,
         logger: Optional[logging.Logger] = None,
     ):
         """Initialize the MultiChannelProcessGroup.
@@ -46,6 +48,7 @@ class MultiChannelProcessGroup:
         Args:
             cur_rank (int): The current rank in the group.
             num_channels (int): The number of channels to use for communication.
+            group_info (CollectiveGroupInfo): The collective group information.
             logger (Optional[logging.Logger]): Optional logger for debugging.
 
         """
@@ -54,13 +57,28 @@ class MultiChannelProcessGroup:
         self._num_channels = num_channels
         self._logger = logger
         self._is_initialized = False
-        self._no_nccl = False
+        self._no_accel_ccl = False
         self._group_name = None
+        self._group_info = group_info
 
-        self._send_nccl_process_groups: List[dist.ProcessGroup] = [
+        # Check if all workers have the same accelerator type
+        accel_type = group_info.workers[0].accelerator_type
+        self._no_accel_ccl = (
+            # Hetero workers in the same group, disable CCL
+            any(worker.accelerator_type != accel_type for worker in group_info.workers)
+            # CPU only, disable CCL
+            or accel_type == AcceleratorType.NO_ACCEL
+            # Unsupported accelerator CCL type, disable CCL
+            or accel_type not in Accelerator.CCL_SUPPORT_LIST
+        )
+        self._accel_ccl_backend = (
+            Accelerator.get_ccl_backend(accel_type) if not self._no_accel_ccl else None
+        )
+
+        self._send_accel_ccl_process_groups: List[dist.ProcessGroup] = [
             None for _ in range(num_channels)
         ]
-        self._recv_nccl_process_groups: List[dist.ProcessGroup] = [
+        self._recv_accel_ccl_process_groups: List[dist.ProcessGroup] = [
             None for _ in range(num_channels)
         ]
         self._send_gloo_process_groups: List[dist.ProcessGroup] = [
@@ -106,13 +124,13 @@ class MultiChannelProcessGroup:
                 "Invalid TIMEOUT value. It should be an integer representing minutes."
             )
 
-        try:
+        if not self._no_accel_ccl:
             base_group = MultiChannelProcessGroup._create_process_group(
-                backend="nccl",  # Only NCCL group supports splitting
+                backend=self._accel_ccl_backend,  # Only NCCL group supports splitting
                 init_method=init_method,
                 world_size=world_size,
                 rank=rank,
-                group_name=group_name + "nccl_send_0",
+                group_name=group_name + f"{self._accel_ccl_backend}_send_0",
                 timeout=timeout,
                 # device_id=torch.device(f"cuda:{torch.cuda.current_device()}"),
                 # Setting device_id is crucial triggers eager creation of NCCL communicators
@@ -121,55 +139,46 @@ class MultiChannelProcessGroup:
                 # If the first pair of communications are from different process groups (e.g., two async recvs from a group), the NCCL group creation will hang by then
                 # However, eager creation of NCCL communicators leads to severe GPU memory consumption. So we disable it by default.
             )
-        except dist.DistBackendError as e:
-            if "invalid usage" in str(e):
-                # This indicates that the process group's two ranks are on the same GPU
-                # In this case
-                self._no_nccl = True
-                base_group = MultiChannelProcessGroup._create_process_group(
-                    backend="nccl",  # Only NCCL group supports splitting
-                    init_method=init_method,
-                    world_size=world_size,
-                    rank=rank,
-                    group_name=group_name + "nccl_send_0",
-                    timeout=timeout,
-                )
 
-        for i in range(self._num_channels):
-            if not self._no_nccl:
-                self._send_nccl_process_groups[i] = (
+            for i in range(self._num_channels):
+                self._send_accel_ccl_process_groups[i] = (
                     MultiChannelProcessGroup._split_process_group(
                         base_group=base_group,
-                        backend="nccl",
-                        group_name=group_name + f"nccl_send_{i}",
+                        backend=self._accel_ccl_backend,
+                        group_name=group_name + f"{self._accel_ccl_backend}_send_{i}",
                         timeout=timeout,
                     )
                     if i > 0
                     else base_group
                 )
 
-                self._recv_nccl_process_groups[i] = (
+                self._recv_accel_ccl_process_groups[i] = (
                     MultiChannelProcessGroup._split_process_group(
                         base_group=base_group,
-                        backend="nccl",
-                        group_name=group_name + f"nccl_recv_{i}",
+                        backend=self._accel_ccl_backend,
+                        group_name=group_name + f"{self._accel_ccl_backend}_recv_{i}",
                         timeout=timeout,
                     )
                 )
 
+        for i in range(self._num_channels):
             self._send_gloo_process_groups[i] = (
-                MultiChannelProcessGroup._split_process_group(
-                    base_group=base_group,
+                MultiChannelProcessGroup._create_process_group(
                     backend="gloo",
+                    init_method=init_method,
+                    world_size=world_size,
+                    rank=rank,
                     group_name=group_name + f"gloo_send_{i}",
                     timeout=timeout,
                 )
             )
 
             self._recv_gloo_process_groups[i] = (
-                MultiChannelProcessGroup._split_process_group(
-                    base_group=base_group,
+                MultiChannelProcessGroup._create_process_group(
                     backend="gloo",
+                    init_method=init_method,
+                    world_size=world_size,
+                    rank=rank,
                     group_name=group_name + f"gloo_recv_{i}",
                     timeout=timeout,
                 )
@@ -177,9 +186,9 @@ class MultiChannelProcessGroup:
 
         if self._cur_rank == 1:
             # Swap send and recv process groups if the current rank is the last rank
-            self._send_nccl_process_groups, self._recv_nccl_process_groups = (
-                self._recv_nccl_process_groups,
-                self._send_nccl_process_groups,
+            self._send_accel_ccl_process_groups, self._recv_accel_ccl_process_groups = (
+                self._recv_accel_ccl_process_groups,
+                self._send_accel_ccl_process_groups,
             )
             self._send_gloo_process_groups, self._recv_gloo_process_groups = (
                 self._recv_gloo_process_groups,
@@ -208,13 +217,13 @@ class MultiChannelProcessGroup:
             )
 
         # NOTE: GLOO backend doesn't support dist.Work.get_future, use broadcast to simulate send/recv instead
-        if self._no_nccl and device == CollectiveGroup.CUDA:
+        if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
             raise RuntimeError(
-                f"Collective group {self._group_name} is first initialized on the same GPU device (possibly {torch.cuda.current_device()}) and thus NCCL is disabled. But now you have switched to another GPU device on one rank (possibly via `torch.cuda.set_device()`), resulting in NCCL communications. We currently do not support this use case. Please ensure that all ranks are initialized on the same GPU device and do not switch devices after initialization."
+                f"Collective group {self._group_name} does not support accelerator CCL backend, possibly because (1) the workers in the group have different accelerator types:  {[worker.accelerator_type for worker in self._group_info.workers]}, (2) the workers are CPU-only, or (3) the accelerator CCL is not among the supported CCL: {Accelerator.CCL_SUPPORT_LIST}."
             )
         group = (
-            self._send_nccl_process_groups[channel_id]
-            if device == CollectiveGroup.CUDA
+            self._send_accel_ccl_process_groups[channel_id]
+            if device == CollectiveGroup.ACCEL
             else self._send_gloo_process_groups[channel_id]
         )
         work = self._broadcast(
@@ -247,8 +256,8 @@ class MultiChannelProcessGroup:
 
         # NOTE: GLOO backend doesn't support dist.Work.get_future, use broadcast to simulate send/recv instead
         group = (
-            self._recv_nccl_process_groups[channel_id]
-            if device == CollectiveGroup.CUDA
+            self._recv_accel_ccl_process_groups[channel_id]
+            if device == CollectiveGroup.ACCEL
             else self._recv_gloo_process_groups[channel_id]
         )
         work = self._broadcast(

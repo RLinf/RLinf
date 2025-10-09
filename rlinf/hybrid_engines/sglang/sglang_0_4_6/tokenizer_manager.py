@@ -15,6 +15,7 @@
 from typing import List, Optional
 
 import fastapi
+from sglang.srt.managers.io_struct import AbortReq
 from sglang.srt.managers.tokenizer_manager import TokenizerManager as _TokenizerManager
 from sglang.srt.managers.tokenizer_manager import _Communicator
 from sglang.srt.server_args import PortArgs, ServerArgs
@@ -119,3 +120,12 @@ class TokenizerManager(_TokenizerManager):
     ):
         self.auto_create_handle_loop()
         await self.sync_weight_communicator(obj)
+
+    def abort_request(self, rid: str):
+        if rid != "" and rid not in self.rid_to_state:
+            return
+        req = AbortReq(rid)
+        self.send_to_scheduler.send_pyobj(req)
+
+    async def pause_generation(self):
+        self.abort_request("")

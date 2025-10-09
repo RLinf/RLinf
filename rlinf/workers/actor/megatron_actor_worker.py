@@ -27,12 +27,12 @@ from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig
 from torch.multiprocessing.reductions import reduce_tensor
 
-from rlinf.algorithms.math.algo_functions import (
-    actor_loss_fn,
+import rlinf.algorithms  # noqa: F401
+from rlinf.algorithms.registry import (
+    actor_loss,
     calculate_adv_and_returns,
-    kl_penalty,
 )
-from rlinf.algorithms.math.verifier.verify import math_verify_call
+from rlinf.algorithms.utils import kl_penalty
 from rlinf.data.io_struct import (
     BatchResizingIterator,
     RolloutResult,
@@ -79,6 +79,7 @@ from rlinf.utils.utils import (
     seq_mean_token_sum,
 )
 from rlinf.workers.rollout.utils import RankMapper
+from toolkits.math_verifier.verify import math_verify_call
 
 
 class MegatronActor(MegatronModelManager, Worker):
@@ -227,7 +228,7 @@ class MegatronActor(MegatronModelManager, Worker):
     def _load_weight_and_optimizer(self, channel: Channel):
         # Acquire the GPUs to ensure that no one is using them before loading models
         # Otherwise, it may lead to OOM
-        with channel.gpu_lock:
+        with channel.device_lock:
             if self.is_weight_offloaded:
                 self.onload_model_weights_and_grad(load_grad=self.offload_grad)
                 self.is_weight_offloaded = False
@@ -374,24 +375,16 @@ class MegatronActor(MegatronModelManager, Worker):
 
                 mask = batch["attention_mask"][:, -response_len:]
 
-                # Calculate clipped PPO surrogate loss function.
-                (
-                    loss,
-                    proportion_clipped,
-                    approx_kl,
-                    ratios,
-                    cliped_ratio,
-                    dual_cliped_ratio,
-                ) = actor_loss_fn(
-                    self.loss_agg_func,
-                    curr_logprobs,
-                    prev_logprobs,
-                    advantages,
-                    self.ratio_eps,
-                    mask,
+                loss, metrics_data = actor_loss(
+                    loss_type=self.cfg.algorithm.loss_type,
+                    loss_agg_func=self.loss_agg_func,
+                    logprobs=curr_logprobs,
+                    old_logprobs=prev_logprobs,
+                    advantages=advantages,
+                    eps_clip=self.ratio_eps,
+                    loss_mask=mask,
                 )
 
-                logging_loss = loss.detach()
                 entropy_loss = torch.zeros(1, device=loss.device)
                 if self.calculate_entropy:
                     entropy = output["entropy"][:, -response_len - 1 : -1].contiguous()
@@ -401,12 +394,12 @@ class MegatronActor(MegatronModelManager, Worker):
 
                 kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
                 if self.kl_beta > 0 and ref_logprobs is not None:
-                    kld = kl_penalty(ref_logprobs, curr_logprobs, self.kl_penalty_type)
+                    kld = kl_penalty(curr_logprobs, ref_logprobs, self.kl_penalty_type)
                     kl_loss = self.loss_agg_func(kld, mask)
                     loss = loss + kl_loss * self.kl_beta
 
                 # Logging and early stopping according to KL (logp vs ref) or importance ratio (new logp vs old logp).
-                _imp = (ratios.detach().float() * mask).sum()
+                _imp = metrics_data["ratio"]
                 torch.distributed.all_reduce(
                     _imp, group=parallel_state.get_data_parallel_group()
                 )
@@ -415,6 +408,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     _n_valid_tokens, group=parallel_state.get_data_parallel_group()
                 )
                 _imp /= _n_valid_tokens
+
                 # Early stopping.
                 if (
                     self.cfg.algorithm.early_stop_imp_ratio is not None
@@ -425,6 +419,7 @@ class MegatronActor(MegatronModelManager, Worker):
                         f"than early stop threshold {self.cfg.algorithm.early_stop_imp_ratio}. Abandon this microbatch."
                     )
                     loss = loss * 0.0
+
                 if self.cfg.algorithm.use_valid_token_scale:
                     loss_scale = (
                         mask.sum()
@@ -434,49 +429,20 @@ class MegatronActor(MegatronModelManager, Worker):
                     )
                     loss *= loss_scale.item()
 
-                with torch.no_grad():
-                    ratios = masked_mean(ratios.detach(), mask)
-                    cliped_ratio = masked_mean(cliped_ratio.detach(), mask)
-                    dual_cliped_ratio = masked_mean(dual_cliped_ratio.detach(), mask)
-                    entropy_loss = entropy_loss.detach()
-                    kl_loss = kl_loss.detach()
-                    approx_kl = approx_kl.detach()
-                    proportion_clipped = proportion_clipped.detach()
-
-                (
-                    reduced_actor_loss,
-                    ratios,
-                    cliped_ratio,
-                    dual_cliped_ratio,
-                    entropy_loss,
-                    kl_loss,
-                    approx_kl,
-                    proportion_clipped,
-                ) = average_losses_across_data_parallel_group(
-                    [
-                        logging_loss,
-                        ratios,
-                        cliped_ratio,
-                        dual_cliped_ratio,
-                        entropy_loss,
-                        kl_loss,
-                        approx_kl,
-                        proportion_clipped,
-                    ]
-                )
-                return (
-                    loss,
+                # add to log
+                metrics_data.update(
                     {
-                        "loss": reduced_actor_loss,
-                        "ratio": ratios,
-                        "cliped_ratio": cliped_ratio,
-                        "dual_cliped_ratio": dual_cliped_ratio,
-                        "entropy_loss": entropy_loss,
-                        "kl_loss": kl_loss,
-                        "approx_kl": approx_kl,
-                        "proportion_clipped": proportion_clipped,
-                    },
+                        "final_loss": loss.detach(),
+                        "entropy_loss": entropy_loss.detach(),
+                        "kl_loss": kl_loss.detach(),
+                    }
                 )
+
+                for k, v in metrics_data.items():
+                    if v is not None:
+                        metrics_data[k] = average_losses_across_data_parallel_group([v])
+
+                return loss, metrics_data
 
             return output, loss_func
 
@@ -996,10 +962,10 @@ class MegatronActor(MegatronModelManager, Worker):
                 if rollout_result.advantages is None:
                     mask = batch["attention_mask"][:, -self.response_len :]
                     advantages, returns = calculate_adv_and_returns(
-                        self.cfg.algorithm.adv_type,
-                        batch["rewards"].cuda(),
-                        mask.cuda(),
-                        self.cfg.algorithm.group_size,
+                        adv_type=self.cfg.algorithm.adv_type,
+                        reward_scores=batch["rewards"].cuda(),
+                        mask=mask.cuda(),
+                        num_responses=self.cfg.algorithm.group_size,
                     )
                     rollout_result.advantages = advantages.cpu()
 

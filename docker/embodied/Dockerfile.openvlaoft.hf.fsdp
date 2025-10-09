@@ -85,6 +85,12 @@ RUN pip install \
 
 RUN pip install -r /workspace/openvla_oft/experiments/robot/libero/libero_requirements.txt 
 
+# OpenVLA overrides torch with v2.2, needs to be reset
+RUN pip install torch==2.5.1
+
+RUN python -m mani_skill.utils.download_asset bridge_v2_real2sim -y
+RUN python -m mani_skill.utils.download_asset widowx250s -y
+
 RUN echo "source /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc
 RUN echo "conda activate" >> ~/.bashrc
 

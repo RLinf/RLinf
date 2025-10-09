@@ -17,6 +17,7 @@ import itertools
 import logging
 import threading
 import time
+from contextlib import nullcontext
 from pickle import Pickler, Unpickler
 from queue import Empty, Queue
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
@@ -26,7 +27,7 @@ import torch.distributed as dist
 from torch.multiprocessing.reductions import reduce_tensor
 
 from ..manager import CollectiveGroupInfo, CollectiveManager, WorkerInfo
-from ..worker import WorkerAddress
+from ..worker import Worker, WorkerAddress
 from .async_work import AsyncFuncWork, AsyncWork
 
 if TYPE_CHECKING:
@@ -47,7 +48,9 @@ class CollectiveWorkQueue:
             logger (logging.Logger): The logger to use for logging messages.
 
         """
-        self._cuda_stream = torch.cuda.Stream()
+        self._accel_stream = None
+        self._stream_ctx = nullcontext()
+        self._worker = Worker.current_worker
         self._work_queue: Queue[AsyncFuncWork] = Queue()
         self._work_done = True
         self._type = comm_type
@@ -65,7 +68,7 @@ class CollectiveWorkQueue:
         self,
         work: AsyncFuncWork,
         comm_id: int,
-        event: Optional[torch.cuda.Event] = None,
+        event: Optional["torch.cuda.Event"] = None,
     ):
         """Enqueue a work to the queue."""
         with self._lock:
@@ -73,21 +76,34 @@ class CollectiveWorkQueue:
             self._work_queue.put((work, comm_id, event))
 
     def _run_queue(self):
-        with torch.cuda.stream(self._cuda_stream):
-            while True:
-                self._lock.acquire()
-                lock_has_released = False
-                try:
-                    work, comm_id, event = self._work_queue.get(block=False)
-                except Empty:
-                    self._work_done = True
-                    lock_has_released = True
-                    self._lock.release()  # The blocking get should not hold the lock
-                    work, comm_id, event = self._work_queue.get()
-                if not lock_has_released:
-                    self._lock.release()
+        while True:
+            self._lock.acquire()
+            lock_has_released = False
+            try:
+                work, comm_id, event = self._work_queue.get(block=False)
+            except Empty:
+                self._work_done = True
+                lock_has_released = True
+                self._lock.release()  # The blocking get should not hold the lock
+                work, comm_id, event = self._work_queue.get()
+            if not lock_has_released:
+                self._lock.release()
+
+            # Create CUDA stream if CUDA is initialized and not created yet
+            if (
+                self._worker.has_accelerator
+                and Worker.torch_platform.is_initialized()
+                and self._accel_stream is None
+            ):
+                self._accel_stream = Worker.torch_platform.Stream()
+            if self._accel_stream is not None and isinstance(
+                self._stream_ctx, nullcontext
+            ):
+                self._stream_ctx = Worker.torch_platform.stream(self._accel_stream)
+
+            with self._stream_ctx:
                 if event is not None:
-                    event.wait(self._cuda_stream)
+                    event.wait(self._accel_stream)
                 self._logger.debug(
                     f"Async {'send' if self._type == CollectiveWorkQueue.SEND else 'recv'} ID {comm_id} begins"
                 )
@@ -101,7 +117,7 @@ class CollectiveWorkQueue:
 class CollectiveGroup:
     """Collective group for constructing and performing collective operations."""
 
-    CUDA: str = "cuda"
+    ACCEL: str = "cuda"
     CPU: str = "cpu"
     TENSOR: int = 0
     TENSOR_LIST: int = 1
@@ -133,6 +149,7 @@ class CollectiveGroup:
         self._worker_addresses = worker_addresses
         self._cur_worker_address = cur_worker_address
         self._mc_group = None
+        self._worker = Worker.current_worker
         self._coll_manager = CollectiveManager.get_proxy()
         self._logger = logging.getLogger(cur_worker_address.get_name())
 
@@ -178,8 +195,8 @@ class CollectiveGroup:
         )
 
         # Capture CUDA event of the main stream if the device type is CUDA
-        if device_type == CollectiveGroup.CUDA:
-            send_event = torch.cuda.Event()
+        if device_type == CollectiveGroup.ACCEL:
+            send_event = Worker.torch_platform.Event()
             send_event.record()
         else:
             send_event = None
@@ -238,8 +255,12 @@ class CollectiveGroup:
         recv_comm_id = next(self._recv_comm_id_iter)
 
         recv_work = AsyncFuncWork(self._atomic_recv, comm_id=recv_comm_id)
-        recv_event = torch.cuda.Event()
-        recv_event.record()
+
+        if self._worker.has_accelerator and Worker.torch_platform.is_initialized():
+            recv_event = Worker.torch_platform.Event()
+            recv_event.record()
+        else:
+            recv_event = None
 
         work_queue = self._recv_work_queues[recv_comm_id % CollectiveGroup.POOL_SIZE]
         if async_op:
@@ -296,8 +317,8 @@ class CollectiveGroup:
             object_type=object_type,
         )
 
-        if device_type == CollectiveGroup.CUDA:
-            send_event = torch.cuda.Event()
+        if device_type == CollectiveGroup.ACCEL:
+            send_event = Worker.torch_platform.Event()
             send_event.record()
         else:
             send_event = None
@@ -320,7 +341,7 @@ class CollectiveGroup:
         assert object_type == CollectiveGroup.TENSOR, (
             "The object must be a torch.Tensor when using send_tensor"
         )
-        if device_type == CollectiveGroup.CUDA and not tensor.is_contiguous():
+        if device_type == CollectiveGroup.ACCEL and not tensor.is_contiguous():
             raise ValueError(
                 "All CUDA tensors must be contiguous when using P2P communication. Otherwise the recv side might recv wrong tensor data. Consider using .contiguous() to make the tensors contiguous."
             )
@@ -331,7 +352,7 @@ class CollectiveGroup:
         )
 
         # Handle CUDA tensor sending with IPC if the peer worker is on the same device
-        if device_type == CollectiveGroup.CUDA:
+        if device_type == CollectiveGroup.ACCEL:
             check_cuda_device_result = self._check_same_device_with_peer()
             if check_cuda_device_result == 0:
                 return self._send_single_cuda_tensor_to_uncertain_peer(tensor, comm_id)
@@ -353,8 +374,11 @@ class CollectiveGroup:
             self._atomic_recv_tensor, tensor=tensor, comm_id=recv_comm_id
         )
 
-        recv_event = torch.cuda.Event()
-        recv_event.record()
+        if self._worker.has_accelerator and Worker.torch_platform.is_initialized():
+            recv_event = Worker.torch_platform.Event()
+            recv_event.record()
+        else:
+            recv_event = None
 
         work_queue = self._recv_work_queues[recv_comm_id % CollectiveGroup.POOL_SIZE]
         if async_op:
@@ -378,7 +402,7 @@ class CollectiveGroup:
         self._logger.debug(
             f"Receiving tensor from Rank {self._peer_rank} in group {self._group_info.group_name}"
         )
-        if device_type == CollectiveGroup.CUDA:
+        if device_type == CollectiveGroup.ACCEL:
             check_cuda_device_result = self._check_same_device_with_peer()
             if check_cuda_device_result == 0:
                 return self._recv_single_cuda_tensor_to_uncertain_peer(tensor, comm_id)
@@ -449,6 +473,7 @@ class CollectiveGroup:
             self._mc_group: MultiChannelProcessGroup = MultiChannelProcessGroup(
                 cur_rank=self._rank,
                 num_channels=CollectiveGroup.POOL_SIZE,
+                group_info=self._group_info,
                 logger=self._logger,
             )
 
@@ -480,7 +505,7 @@ class CollectiveGroup:
                     )
 
         self._logger.debug(
-            f"Initializing process group for collective group {self._group_info.group_name}, master address {self._group_info.master_addr}, master port {master_port}, world size {self._group_info.world_size}, rank {self._rank}, device {torch.cuda.get_device_properties(torch.cuda.current_device()) if torch.cuda.is_available() else 'cpu'}"
+            f"Initializing process group for collective group {self._group_info.group_name}, master address {self._group_info.master_addr}, master port {master_port}, world size {self._group_info.world_size}, rank {self._rank}"
         )
 
         self._mc_group.init(
@@ -504,8 +529,8 @@ class CollectiveGroup:
         object_type = CollectiveGroup.OBJECT
         if isinstance(object, torch.Tensor):
             device_type = (
-                CollectiveGroup.CUDA
-                if object.device.type == "cuda"
+                CollectiveGroup.ACCEL
+                if object.device.type == Worker.torch_device_type
                 else CollectiveGroup.CPU
             )
             object_type = CollectiveGroup.TENSOR
@@ -513,8 +538,8 @@ class CollectiveGroup:
             isinstance(item, torch.Tensor) for item in object
         ):
             device_type = (
-                CollectiveGroup.CUDA
-                if all(item.device.type == "cuda" for item in object)
+                CollectiveGroup.ACCEL
+                if all(item.device.type == Worker.torch_device_type for item in object)
                 else CollectiveGroup.CPU
             )
             if device_type == CollectiveGroup.CPU:
@@ -526,8 +551,11 @@ class CollectiveGroup:
             isinstance(item, torch.Tensor) for item in object.values()
         ):
             device_type = (
-                CollectiveGroup.CUDA
-                if all(item.device.type == "cuda" for item in object.values())
+                CollectiveGroup.ACCEL
+                if all(
+                    item.device.type == Worker.torch_device_type
+                    for item in object.values()
+                )
                 else CollectiveGroup.CPU
             )
             if device_type == CollectiveGroup.CPU:
@@ -537,7 +565,7 @@ class CollectiveGroup:
             object_type = CollectiveGroup.TENSOR_DICT
 
         try:
-            if device_type == CollectiveGroup.CUDA:
+            if device_type == CollectiveGroup.ACCEL:
                 if object_type == CollectiveGroup.TENSOR and not object.is_contiguous():
                     raise ValueError
                 elif object_type == CollectiveGroup.TENSOR_LIST and not all(
@@ -550,20 +578,20 @@ class CollectiveGroup:
                     raise ValueError
         except ValueError:
             raise ValueError(
-                "All CUDA tensors must be contiguous when using P2P communication. Otherwise the recv side might recv wrong tensor data. Consider using .contiguous() to make the tensors contiguous."
+                "All CUDA/Accelerator tensors must be contiguous when using P2P communication. Otherwise the recv side might recv wrong tensor data. Consider using .contiguous() to make the tensors contiguous."
             )
 
         return device_type, object_type
 
     def _check_same_device_with_peer(self):
-        """Check if the current worker and the peer worker are on the same CUDA device.
+        """Check if the current worker and the peer worker are on the same device.
 
         Returns:
-            int: -1 means no common device; 0 means have common devices, but not sure if the tensor will be on the same device (the worker has multiple devices); 1 means the two workers are on the same CUDA device.
+            int: -1 means no common device; 0 means have common devices, but not sure if the tensor will be on the same device (the worker has multiple devices); 1 means the two workers are on the same device.
 
         """
-        peer_devices = self._group_info.workers[self._peer_rank].available_gpus
-        my_devices = self._group_info.workers[self._rank].available_gpus
+        peer_devices = self._group_info.workers[self._peer_rank].available_accelerators
+        my_devices = self._group_info.workers[self._rank].available_accelerators
 
         # Check if the peer is on the same node
         if (
@@ -661,7 +689,9 @@ class CollectiveGroup:
     ):
         """For handling possible same devices send/recv in send_tensor."""
         # Exchange tensor device info
-        tensor_device = str(torch.cuda.get_device_properties(tensor.device).uuid)
+        tensor_device = str(
+            Worker.torch_platform.get_device_properties(tensor.device).uuid
+        )
         device_tensor, device_tensor_size = self._object_to_tensor(tensor_device, "cpu")
         send_work = self._send(
             device_tensor_size,
@@ -699,7 +729,7 @@ class CollectiveGroup:
                     async_op=False,
                 )
             else:
-                self._send(tensor, CollectiveGroup.CUDA, comm_id=comm_id)
+                self._send(tensor, CollectiveGroup.ACCEL, comm_id=comm_id)
 
         if async_op:
             return send_work.then(check_and_send)
@@ -711,7 +741,9 @@ class CollectiveGroup:
     ):
         """For handling possible same devices send/recv in recv_tensor."""
         # Exchange tensor device info
-        tensor_device = str(torch.cuda.get_device_properties(tensor.device).uuid)
+        tensor_device = str(
+            Worker.torch_platform.get_device_properties(tensor.device).uuid
+        )
         device_tensor, device_tensor_size = self._object_to_tensor(tensor_device, "cpu")
 
         peer_device_tensor_size = torch.empty(1, dtype=torch.long, device="cpu")
@@ -740,7 +772,7 @@ class CollectiveGroup:
                 tensor.copy_(remote_tensor)
                 return None
             else:
-                return self._recv(tensor, CollectiveGroup.CUDA, comm_id)
+                return self._recv(tensor, CollectiveGroup.ACCEL, comm_id)
 
         if async_op:
             return recv_work.then(check_and_recv, peer_device_tensor_size)
@@ -803,7 +835,7 @@ class CollectiveGroup:
             for (rebuild_func, rebuild_args) in tensor_handles
         ]
         tensors = [
-            tensor.clone().detach().to(torch.cuda.current_device())
+            tensor.clone().detach().to(Worker.torch_platform.current_device())
             for tensor in remote_tensors
         ]
 
@@ -818,7 +850,7 @@ class CollectiveGroup:
         """For handling same device send/recv in _send_tensor_list."""
         # Exchange tensor device info
         devices = [
-            str(torch.cuda.get_device_properties(tensor.device).uuid)
+            str(Worker.torch_platform.get_device_properties(tensor.device).uuid)
             for tensor in tensors
         ]
 
@@ -861,7 +893,7 @@ class CollectiveGroup:
                 for tensor in tensors_via_nccl:
                     self._send(
                         tensor=tensor,
-                        device=CollectiveGroup.CUDA,
+                        device=CollectiveGroup.ACCEL,
                         comm_id=comm_id,
                     )
 
@@ -893,7 +925,9 @@ class CollectiveGroup:
         )
 
         current_device = str(
-            torch.cuda.get_device_properties(torch.cuda.current_device()).uuid
+            Worker.torch_platform.get_device_properties(
+                Worker.torch_platform.current_device()
+            ).uuid
         )
         device_tensor, device_tensor_size = self._object_to_tensor(
             current_device, "cpu"
@@ -924,11 +958,11 @@ class CollectiveGroup:
             for i in nccl_tensor_indices:
                 shape, dtype = tensor_shapes[i]
                 tensors[i] = torch.empty(
-                    shape, dtype=dtype, device=torch.cuda.current_device()
+                    shape, dtype=dtype, device=Worker.torch_platform.current_device()
                 )
                 self._recv(
                     tensor=tensors[i],
-                    device=CollectiveGroup.CUDA,
+                    device=CollectiveGroup.ACCEL,
                     comm_id=comm_id,
                 )
         return tensors
@@ -996,7 +1030,7 @@ class CollectiveGroup:
                 for tensor in tensors:
                     work = self._send(
                         tensor,
-                        device=CollectiveGroup.CUDA,
+                        device=CollectiveGroup.ACCEL,
                         comm_id=comm_id,
                         async_op=async_op,
                     )
@@ -1036,7 +1070,7 @@ class CollectiveGroup:
         tensor_shapes = metadata["meta"]
 
         tensors = []
-        if device_type == CollectiveGroup.CUDA:
+        if device_type == CollectiveGroup.ACCEL:
             check_cuda_device_result = self._check_same_device_with_peer()
             # Find a suitable device for each tensor that is not the same device as the peer
             if check_cuda_device_result == 0:
@@ -1050,8 +1084,8 @@ class CollectiveGroup:
             torch.empty(
                 shape,
                 dtype=dtype,
-                device=torch.cuda.current_device()
-                if device_type == CollectiveGroup.CUDA
+                device=Worker.torch_platform.current_device()
+                if device_type == CollectiveGroup.ACCEL
                 else "cpu",
             )
             for (shape, dtype) in tensor_shapes

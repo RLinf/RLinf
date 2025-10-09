@@ -16,6 +16,7 @@ import bisect
 from dataclasses import dataclass
 from typing import List
 
+from ..accelerator import AcceleratorType
 from .manager import Manager
 
 
@@ -143,8 +144,11 @@ class WorkerInfo:
     node_id: int
     """Node ID where the worker is placed."""
 
-    gpu_id: int
-    """GPU ID where the worker is placed."""
+    accelerator_type: AcceleratorType
+    """Type of accelerator where the worker is placed."""
+
+    accelerator_id: int
+    """Accelerator ID where the worker is placed."""
 
     node_ip: str
     """IP address of the node where the worker is placed."""
@@ -152,8 +156,8 @@ class WorkerInfo:
     node_port: int
     """Port of the node where the worker is placed."""
 
-    available_gpus: List[str]
-    """List of CUDA device UUID available to the worker."""
+    available_accelerators: List[int]
+    """List of global accelerator IDs available to the worker."""
 
     def __hash__(self):
         """Hash function for WorkerInfo."""

@@ -12,19 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .accelerator import Accelerator, AcceleratorType
 from .channel import Channel, ChannelWorker, WeightedItem
 from .cluster import Cluster
 from .placement import (
     FlexiblePlacementStrategy,
+    NodePlacementStrategy,
     PackedPlacementStrategy,
     PlacementStrategy,
 )
 from .worker import Worker, WorkerAddress, WorkerGroupFuncResult
 
 __all__ = [
+    "Accelerator",
+    "AcceleratorType",
     "Cluster",
     "PlacementStrategy",
     "FlexiblePlacementStrategy",
+    "NodePlacementStrategy",
     "PackedPlacementStrategy",
     "Worker",
     "WorkerAddress",

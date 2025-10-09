@@ -35,7 +35,35 @@
 快速开始
 -----------------
 
-如果你想在单个数据集上运行评估，可以执行如下命令：
+模型转换
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+在训练过程中，模型以 Megatron 格式被存储下来。 你可以使用位于 ``toolkits/ckpt_convertor/`` 的转换脚本将其转换为 Huggingface 格式。
+
+你有两种方式使用脚本：
+
+**方式一：编辑脚本文件**
+
+手动打开 ``mg2hf_7b.sh`` 或 ``mg2hf_1.5b.sh``，将以下变量设置为你想要的路径。
+
+1. ``CKPT_PATH_MG``（Megatron checkpoint路径，例如 ``results/run_name/checkpoints/global_step_xx/actor/``）， 
+2. ``CKPT_PATH_HF``（Huggingface目标路径，任意路径），以及
+3. ``CKPT_PATH_ORIGINAL_HF`` （初始化训练的基模checkpoint，例如 ``/path/to/DeepSeek-R1-Distill-Qwen-1.5B``） 
+
+**方式二：命令行参数**
+
+更灵活的方式是直接通过命令行参数传入路径。
+.. code-block:: bash
+
+   # 对于1.5B模型
+   bash mg2hf_1.5b.sh /path/to/megatron_checkpoint /target/path/to/huggingface_checkpoint /path/to/base_model_checkpoint
+
+   # 对于7B模型
+   bash mg2hf_7b.sh /path/to/megatron_checkpoint /target/path/to/huggingface_checkpoint /path/to/base_model_checkpoint
+
+运行评测脚本
+^^^^^^^^^^^^^^^^^^^^^^
+
+如果你想在 **单个数据集** 上运行评估，可以执行如下命令：
 
 .. code-block:: bash
 
@@ -62,14 +90,14 @@
        --use_vllm \
        --save_outputs
 
-若进行 **批量评估**，可运行：
+若进行 **批量评估**，可运行``main_eval.sh``脚本。该脚本将依次在 AIME24、AIME25 和 GPQA-diamond 数据集上评估模型。
 
 .. code-block:: bash
 
-   bash main_eval.sh
+   bash main_eval.sh /path/to/model_checkpoint
 
-你需要在脚本中设置 ``MODEL_NAME_OR_PATH`` 和 ``CUDA_VISIBLE_DEVICES``，  
-该脚本将依次在 AIME24、AIME25 和 GPQA-diamond 数据集上进行评估。
+你可以在脚本中指定``CUDA_VISIBLE_DEVICES``，进行更灵活的GPU管理。  
+
 
 评估结果
 -----------------

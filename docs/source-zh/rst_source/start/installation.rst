@@ -121,10 +121,10 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 这一步已经包括了 **FSDP + Huggingface** 的完整配置。
 
 第二步，如果你的实验使用的是 **Megatron 和 SGLang/vLLM** 后端，  
-请参考 :ref:`Megatron 及 SGLang/vLLM 依赖 <megatron-and-sglang-vllm-dependencies>` 安装相应依赖。
+请参考 :ref:`Megatron 和 SGLang/vLLM 依赖 <megatron-and-sglang-vllm-dependencies>` 安装相应依赖。
 
 第三步，如果你要运行具身智能相关实验（如 OpenVLA、OpenVLA-OFT、Pi0），  
-请参考 :ref:`具身智能依赖 <embodied-dependencies>` 安装专用依赖项。
+请参考 :ref:`具身智能相关依赖 <embodied-dependencies>` 安装专用依赖项。
 
 .. _common-dependencies:
 
@@ -157,9 +157,9 @@ Megatron 和 SGLang/vLLM 依赖
 
 .. code-block:: shell
 
-   uv sync --extra sgl_vllm
-   mkdir -p /opt && git clone https://github.com/NVIDIA/Megatron-LM.git -b core_r0.11.0 /opt/Megatron-LM
-   APEX_CPP_EXT=1 APEX_CUDA_EXT=1 uv pip install -r requirements/megatron.txt --no-build-isolation
+   uv sync --extra sglang-vllm
+   mkdir -p /opt && git clone https://github.com/NVIDIA/Megatron-LM.git -b core_r0.13.0 /opt/Megatron-LM
+   APEX_CPP_EXT=1 APEX_CUDA_EXT=1 NVCC_APPEND_FLAGS="--threads 24" APEX_PARALLEL_BUILD=24 uv pip install -r requirements/megatron.txt --no-build-isolation
 
 使用 Megatron 前，请将其路径加入 ``PYTHONPATH`` 环境变量：
 
@@ -176,15 +176,18 @@ Megatron 和 SGLang/vLLM 依赖
 
 .. code-block:: shell
 
-   bash requirements/install_embodied_deps.sh
    uv sync --extra embodied
+   bash requirements/install_embodied_deps.sh # Must be run after the above command
 
 接着，根据具体实验类型安装对应的 Python 包：
 
 .. code-block:: shell
 
-   # OpenVLA / OpenVLA-OFT 实验所需依赖
+   # OpenVLA 实验所需依赖
    UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla.txt --no-build-isolation
+
+   # OpenVLA-oft 实验所需依赖
+   UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla_oft.txt --no-build-isolation
 
    # Pi0 实验所需依赖
    UV_TORCH_BACKEND=auto uv pip install -r requirements/pi0.txt --no-build-isolation

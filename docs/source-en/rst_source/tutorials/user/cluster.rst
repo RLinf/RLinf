@@ -81,7 +81,6 @@ When a ``Cluster`` is created without arguments, it attaches to the running clus
      self._num_nodes        = len(self._nodes)
      self._master_ip        = self._node_manager.get_master_ip()
      self._master_port      = self._node_manager.get_master_port()
-     self._num_gpus_per_node= self._node_manager.get_num_gpus_per_node()
 
 This guarantees that every process using the same namespace observes the same cluster view.
 

@@ -14,7 +14,8 @@
 
 import logging
 import os
-from typing import Dict, Optional
+import typing
+from typing import Dict, Optional, Union
 
 import pandas as pd
 import torch
@@ -34,7 +35,10 @@ from rlinf.utils.runner_utils import check_progress, local_mkdir_safe
 from rlinf.utils.timers import Timer
 from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
-from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
+
+if typing.TYPE_CHECKING:
+    from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
+    from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
 
 logging.getLogger().setLevel(logging.INFO)
 
@@ -48,7 +52,7 @@ class MathRunner:
         placement: ModelParallelComponentPlacement,
         train_dataset: Dataset,
         val_dataset: Dataset,
-        rollout: SGLangWorker,
+        rollout: Union["SGLangWorker", "VLLMWorker"],
         inference: Optional[MegatronInference],
         actor: MegatronActor,
         reward: Optional[Worker] = None,
@@ -163,7 +167,7 @@ class MathRunner:
                 self.cfg.actor.training_backend == "megatron"
                 and self.cfg.actor.megatron.use_hf_ckpt
             ):
-                from tools.ckpt_convertor.convert_hf_to_mg import convert_hf_to_mg
+                from toolkits.ckpt_convertor.convert_hf_to_mg import convert_hf_to_mg
 
                 convert_hf_to_mg(
                     self.cfg.actor.megatron.ckpt_convertor.hf_model_path,
@@ -181,7 +185,7 @@ class MathRunner:
         if self.cfg.runner.resume_dir is None:
             return
 
-        # Checkpoint loading
+        # Resume from checkpoint
         logging.info(f"Load from checkpoint folder: {self.cfg.runner.resume_dir}")
         # set global step
         self.global_steps = int(self.cfg.runner.resume_dir.split("global_step_")[-1])
@@ -358,7 +362,6 @@ class MathRunner:
                     )
 
                     metrics = actor_handle.wait()
-
                     self.global_steps += 1
 
                     run_time_exceeded = self.run_timer.is_finished()

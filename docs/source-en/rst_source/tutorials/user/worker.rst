@@ -95,7 +95,7 @@ See :ref:`collectivegroup_p2p` for more details.
 
 In addition to pairwise communications, the `Worker` also provides an interface for **Channels**, which are FIFO queues for exchanging data between Workers:
 
-- `create_channel(name, group_affinity=None, group_rank_affinity=None, maxsize=0)` sets up a new channel. 
+- `create_channel(name, node_id=0, maxsize=0)` sets up a new channel. 
   `connect_channel(name)` allows other Workers to connect to an existing channel by name. 
   
 - Once a channel is connected, data can be stored and retrieved through it using methods such as `put()`, `get()`, and `get_batch()`.

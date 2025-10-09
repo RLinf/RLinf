@@ -23,7 +23,11 @@ from prismatic.extern.hf.configuration_prismatic import (
 from prismatic.extern.hf.modeling_prismatic import (
     OpenVLAForActionPrediction as OpenVLAOFTForActionPrediction,
 )
-from prismatic.vla.constants import STOP_INDEX
+from prismatic.vla.constants import (
+    ACTION_PROPRIO_NORMALIZATION_TYPE,
+    STOP_INDEX,
+    NormalizationType,
+)
 from transformers.generation import TopKLogitsWarper
 
 from rlinf.models.embodiment.modules.value_head import ValueHead
@@ -76,6 +80,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
         input_embeddings = input_embeddings * (~all_actions_mask.unsqueeze(-1))
 
         # vision
+        pixel_values = pixel_values.reshape(-1, *pixel_values.shape[2:])
         projected_patch_embeddings = self._process_vision_features(
             pixel_values, None, use_film=False
         )
@@ -83,6 +88,9 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
         assert projected_patch_embeddings.shape[1] == n_patch_tokens
 
         # multimodal embeddings
+        projected_patch_embeddings = projected_patch_embeddings.reshape(
+            input_embeddings.shape[0], -1, *projected_patch_embeddings.shape[2:]
+        )
         multimodal_embeddings, multimodal_attention_mask = (
             self._build_multimodal_attention(
                 input_embeddings, projected_patch_embeddings, attention_mask
@@ -103,6 +111,77 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
         """Get all the logged statistics for the given dataset."""
         unnorm_key = self._check_unnorm_key(self.norm_stats, self.unnorm_key)
         return self.norm_stats[unnorm_key]["action"]
+
+    def _prepare_input_for_action_prediction(self, input_ids, attention_mask):
+        """Prepares input for action prediction by adding necessary tokens"""
+        # Add (ACTION_DIM * NUM_ACTIONS_CHUNK) placeholder tokens to input_ids to simulate action tokens
+        placeholder_action_token_ids = (
+            torch.ones((input_ids.shape[0], self.action_dim * self.num_action_chunks))
+            .to(input_ids.device)
+            .to(input_ids.dtype)
+        )
+        input_ids = torch.cat([input_ids, placeholder_action_token_ids], dim=-1)
+
+        # Add stop token to sequence (needed in non-causal bi-directional self-attention, as it appears at train time)
+        stop_token_id = (
+            torch.ones((input_ids.shape[0], 1)).to(input_ids.device).to(input_ids.dtype)
+            * STOP_INDEX
+        )
+        input_ids = torch.cat([input_ids, stop_token_id], dim=-1)
+
+        # Extend the attention mask to fit the new shape of input
+        # Note: Only batch size == 1 supported right now
+        mask_extension = (
+            torch.ones(
+                (
+                    attention_mask.shape[0],
+                    input_ids.shape[-1] - attention_mask.shape[-1],
+                )
+            )
+            .to(attention_mask.device)
+            .to(attention_mask.dtype)
+        )
+        attention_mask = torch.cat([attention_mask, mask_extension], dim=-1)
+
+        return input_ids, attention_mask
+
+    def _unnormalize_actions(self, normalized_actions, unnorm_key=None):
+        """Unnormalize actions using dataset statistics"""
+        action_norm_stats = self.get_action_stats(unnorm_key)
+
+        if ACTION_PROPRIO_NORMALIZATION_TYPE == NormalizationType.BOUNDS:
+            mask = action_norm_stats.get(
+                "mask", np.ones_like(action_norm_stats["min"], dtype=bool)
+            )
+            action_high, action_low = (
+                np.array(action_norm_stats["max"]),
+                np.array(action_norm_stats["min"]),
+            )
+        elif ACTION_PROPRIO_NORMALIZATION_TYPE == NormalizationType.BOUNDS_Q99:
+            mask = action_norm_stats.get(
+                "mask", np.ones_like(action_norm_stats["q01"], dtype=bool)
+            )
+            action_high, action_low = (
+                np.array(action_norm_stats["q99"]),
+                np.array(action_norm_stats["q01"]),
+            )
+        else:
+            raise ValueError("Unsupported action/proprio normalization type detected!")
+
+        action_dim = normalized_actions.shape[-1]
+        repeat_factor = action_dim // action_high.shape[0]
+        action_high = action_high.repeat(repeat_factor)
+        action_low = action_low.repeat(repeat_factor)
+        mask = mask * repeat_factor
+
+        actions = np.where(
+            mask,
+            0.5 * (normalized_actions + 1) * (action_high - action_low + 1e-8)
+            + action_low,
+            normalized_actions,
+        )
+
+        return actions
 
     @torch.no_grad()
     def predict_action_batch(

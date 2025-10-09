@@ -72,8 +72,8 @@ An example configuration for LLM math tasks is shown below:
 
   algorithm:
     # Core GRPO settings (recommended not to change)
-    adv_type: grpo
-    loss_type: ppo
+    adv_type: math_grpo # math_grpo for math tasks, embodied_grpo for embodied tasks
+    loss_type: math_ppo_actor # math_ppo_actor for math tasks, embodied_grpo for embodied tasks
     loss_agg_func: "token-mean"
 
     # Algorithm parameters (typically require tuning)

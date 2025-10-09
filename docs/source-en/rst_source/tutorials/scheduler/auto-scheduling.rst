@@ -9,7 +9,7 @@ This tool automatically generates optimal component placement configurations for
 Overview
 ~~~~~~~~
 
-The auto placement tool consists of three main components in `tools/auto_placement`:
+The auto placement tool consists of three main components in `toolkits/auto_placement`:
 
 - **scheduler_task.py**: Main scheduler that performs time and space division multiplexing to find optimal placements
 - **resource_allocator.py**: Handles resource allocation for different components
@@ -58,7 +58,6 @@ The output of this script is like:
 
    cluster:
      num_nodes: 1
-     num_gpus_per_node: 8
      component_placement:
        rollout,actor: all
 

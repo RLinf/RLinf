@@ -39,7 +39,7 @@ except ImportError:
     HAVE_TE = False
 
 SUPPORTED_MODEL_ARCHS = ["qwen2.5", "openvla", "openvla_oft"]
-
+SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
 __all__ = ["build_config"]
 
 
@@ -145,6 +145,47 @@ def activation_to_func(
     return activation_func
 
 
+def validate_rollout_cfg(cfg):
+    def validate_sglang_cfg(cfg):
+        assert cfg is not None, (
+            "sglang config must be specified if rollout_backend is sglang."
+        )
+        cfg.attention_backend = cfg.get("attention_backend", "triton")
+        cfg.decode_log_interval = cfg.get("decode_log_interval", 500000)
+        cfg.use_torch_compile = cfg.get("use_torch_compile", False)
+        cfg.torch_compile_max_bs = cfg.get("torch_compile_max_bs", 128)
+        return cfg
+
+    def validate_vllm_cfg(cfg):
+        assert cfg is not None, (
+            "vllm config must be specified if rollout_backend is vllm."
+        )
+        cfg.attention_backend = cfg.get("attention_backend", "FLASH_ATTN")
+        cfg.enable_chunked_prefill = cfg.get("enable_chunked_prefill", True)
+        cfg.enable_prefix_caching = cfg.get("enable_prefix_caching", True)
+        cfg.enable_flash_infer_sampler = cfg.get("enable_flash_infer_sampler", True)
+        cfg.max_num_batched_tokens = cfg.get("max_num_batched_tokens", None)
+        cfg.torch_profiler_dir = cfg.get("torch_profiler_dir", None)
+        return cfg
+
+    with open_dict(cfg):
+        cfg.gpu_memory_utilization = cfg.get("gpu_memory_utilization", 0.65)
+        assert cfg.model_dir is not None, "model_dir must be specified for rollout."
+        assert cfg.model_arch in SUPPORTED_MODEL_ARCHS, (
+            f"model_arch must be one of {SUPPORTED_MODEL_ARCHS}"
+        )
+        cfg.disable_log_stats = cfg.get("disable_log_stats", False)
+        cfg.detokenize = cfg.get("detokenize", False)
+        cfg.rollout_backend = cfg.get("rollout_backend", "sglang")
+        assert cfg.rollout_backend in SUPPORTED_ROLLOUT_BACKENDS, (
+            f"rollout_backend must be one of {SUPPORTED_ROLLOUT_BACKENDS}."
+        )
+        cfg.sglang = validate_sglang_cfg(cfg.sglang)
+        cfg.vllm = validate_vllm_cfg(cfg.vllm)
+
+    return cfg
+
+
 def validate_model_cfg_by_hf_config(cfg, hf_model_path):
     # validate by hf config
     hf_config = AutoConfig.from_pretrained(hf_model_path)
@@ -174,15 +215,6 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         cfg.model.layernorm_epsilon = hf_config.rms_norm_eps
 
     return cfg
-
-
-def set_new_omegaconf_resolvers():
-    OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
-    OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
-    OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
-    OmegaConf.register_new_resolver(
-        "torch.dtype", lambda dtype_name: getattr(torch, dtype_name), replace=True
-    )
 
 
 def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
@@ -215,6 +247,23 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
         cfg.megatron.timing_log_option = cfg.megatron.get(
             "timing_log_option", "minmax"
         )  # choices=['max', 'minmax', 'all']
+
+        # Megatron >= 0.12.0
+        cfg.megatron.init_model_with_meta_device = cfg.megatron.get(
+            "init_model_with_meta_device", False
+        )
+        cfg.megatron.use_torch_fsdp2 = cfg.megatron.get("use_torch_fsdp2", False)
+        cfg.megatron.use_custom_fsdp = cfg.megatron.get("use_custom_fsdp", False)
+        cfg.megatron.check_for_large_grads = cfg.megatron.get(
+            "check_for_large_grads", False
+        )
+        cfg.megatron.ddp_num_buckets = cfg.megatron.get("ddp_num_buckets", None)
+        cfg.megatron.ddp_pad_buckets_for_high_nccl_busbw = cfg.megatron.get(
+            "ddp_pad_buckets_for_high_nccl_busbw", False
+        )
+        cfg.megatron.enable_gloo_process_groups = cfg.megatron.get(
+            "enable_gloo_process_groups", True
+        )
 
         # ddp config
         cfg.megatron.check_for_nan_in_loss_and_grad = cfg.megatron.get(
@@ -439,9 +488,12 @@ def validate_embodied_cfg(cfg):
     )
 
     # process num-envs
+    from rlinf.scheduler import Cluster
     from rlinf.utils.placement import HybridComponentPlacement
 
-    component_placement = HybridComponentPlacement(cfg)
+    component_placement = HybridComponentPlacement(
+        cfg, Cluster(num_nodes=cfg.cluster.num_nodes)
+    )
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
     cfg.algorithm.num_group_envs = (
@@ -498,6 +550,8 @@ def validate_math_cfg(cfg: DictConfig) -> DictConfig:
         assert cfg.runner.seq_length > cfg.data.max_prompt_length, (
             f"runner.seq_length ({cfg.runner.seq_length}) must be greater than data.max_prompt_length ({cfg.data.max_prompt_length})"
         )
+
+        cfg.rollout = validate_rollout_cfg(cfg.rollout)
     return cfg
 
 
@@ -509,7 +563,10 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     if cfg.runner.task_type == "math":
         cfg = validate_math_cfg(cfg)
 
-    if cfg.algorithm.adv_type == "grpo":
+    if (
+        cfg.algorithm.adv_type == "embodied_grpo"
+        or cfg.algorithm.adv_type == "math_grpo"
+    ):
         assert cfg.algorithm.group_size > 1
 
     if cfg.actor.training_backend == "megatron":

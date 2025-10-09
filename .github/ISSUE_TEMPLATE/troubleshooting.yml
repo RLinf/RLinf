@@ -47,5 +47,5 @@ body:
   attributes:
     label: Before submitting a new issue...
     options:
-      - label: Have you checked relevant issues, FAQs (https://rlinf-docs.readthedocs.io/en/latest/rst_source/faq.html), or asked the chatbot at the top right corner of the [documentation page](https://rlinf-docs.readthedocs.io).
+      - label: Have you checked relevant issues, FAQs (https://rlinf.readthedocs.io/en/latest/rst_source/faq.html), or asked the chatbot at the top right corner of the [documentation page](https://rlinf.readthedocs.io).
         required: true

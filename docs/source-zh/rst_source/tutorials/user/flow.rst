@@ -26,7 +26,6 @@ YAML 配置
 
    cluster:
      num_nodes: 1
-     num_gpus_per_node: 8
      component_placement:
        actor: 0-7
        env: 0-3
@@ -58,8 +57,8 @@ Worker 启动调度流程
 
 .. code:: python
 
-   cluster = Cluster(num_nodes, num_gpus_per_node)
-   component_placement = HybridComponentPlacement(cfg)
+   cluster = Cluster(num_nodes)
+   component_placement = HybridComponentPlacement(cfg, cluster)
 
    # 创建 actor worker 组
    actor_placement = component_placement.get_strategy("actor")

@@ -19,14 +19,14 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
-from rlinf.algorithms.embodiment.utils import compute_split_num
 from rlinf.config import torch_dtype_from_precision
 from rlinf.models import get_model, get_model_config_and_processor
 from rlinf.models.embodiment.model_utils import (
     default_logits_processor,
     prepare_observations,
 )
-from rlinf.scheduler import Worker
+from rlinf.scheduler import Cluster, Worker
+from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.placement import HybridComponentPlacement
 
 
@@ -60,7 +60,7 @@ class MultiStepRolloutWorker(Worker):
         # stage_num: default to 2, use for pipeline rollout process
         self.stage_num = cfg.rollout.pipeline_stage_num
 
-        self._component_placement = HybridComponentPlacement(cfg)
+        self._component_placement = HybridComponentPlacement(cfg, Cluster())
         self.channel = self.connect_channel(cfg.rollout.channel.name)
         for i in range(self._component_placement.get_world_size("rollout")):
             self.channel.create_queue(

@@ -73,8 +73,8 @@
 
   algorithm:
     # 核心 GRPO 设置（建议不要修改）
-    adv_type: grpo
-    loss_type: ppo
+    adv_type: math_grpo # 推理任务使用 math_grpo, 具身任务使用 embodied_grpo
+    loss_type: math_ppo_actor # 推理任务使用 math_ppo_actor, 具身任务使用 embodied_grpo
     loss_agg_func: "token-mean"
 
     # 算法参数（通常需要调优）

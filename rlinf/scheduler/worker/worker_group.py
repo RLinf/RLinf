@@ -17,7 +17,6 @@ import os
 import signal
 import sys
 import threading
-import warnings
 from dataclasses import dataclass
 from typing import Generic, List, Optional, Type
 
@@ -25,9 +24,14 @@ import numpy as np
 import ray
 import ray.remote_function
 
+from ..accelerator import Accelerator
 from ..cluster import Cluster
 from ..manager import WorkerInfo
-from ..placement import PackedPlacementStrategy, PlacementStrategy
+from ..placement import (
+    NodePlacementStrategy,
+    PackedPlacementStrategy,
+    PlacementStrategy,
+)
 from .worker import Worker, WorkerAddress, WorkerClsType
 
 
@@ -52,11 +56,8 @@ class WorkerGroup(Generic[WorkerClsType]):
         self._cluster = None
 
         self._group_size = None
-        self._master_addr = None
-        self._master_port = None
-        self._placement_strategy = (
-            None  # The strategy to place workers on different GPUs
-        )
+        # The strategy to place workers on different GPUs
+        self._placement_strategy = None
 
         # Ranks to execute functions on in the worker group. If None, all workers will be executed.
         self._execution_ranks = None
@@ -102,8 +103,6 @@ class WorkerGroup(Generic[WorkerClsType]):
         """
         self._cluster = cluster
 
-        self._master_addr = self._cluster.master_addr
-        self._master_port = self._cluster.master_port
         self._placement_strategy = placement_strategy
         self._isolate_gpu = isolate_gpu
         self._catch_system_failure = catch_system_failure
@@ -111,10 +110,14 @@ class WorkerGroup(Generic[WorkerClsType]):
             self._catch_system_failure = Cluster.get_sys_env_var("CATCH_FAILURE") == "1"
 
         if self._placement_strategy is None:
-            # Use all resources by default
-            self._placement_strategy = PackedPlacementStrategy(
-                0, cluster.num_nodes * cluster.num_gpus_per_node - 1
-            )
+            if cluster.num_accelerators_in_cluster > 0:
+                # Use all resources by default
+                self._placement_strategy = PackedPlacementStrategy(
+                    0, cluster.num_accelerators_in_cluster - 1
+                )
+            else:
+                # If no accelerator is available, just launch one worker on CPU
+                self._placement_strategy = NodePlacementStrategy([0])
         if name is not None:
             self._worker_group_name = name
 
@@ -134,21 +137,6 @@ class WorkerGroup(Generic[WorkerClsType]):
         self._execution_ranks = list(ranks)
         return self
 
-    def _nccl_env_vars(self):
-        """Set the environment variables for NCCL. This is intended to align NCCL configurations of various workers."""
-        env_vars = {
-            "NCCL_CUMEM_ENABLE": "0",
-            "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",
-        }
-        if os.environ.get("NCCL_CUMEM_ENABLE", "0") != "0":
-            warnings.warn(
-                f"NCCL_CUMEM_ENABLE is set to {os.environ['NCCL_CUMEM_ENABLE']}. However, "
-                "This may increase memory overhead with cudagraph+allreduce: "
-                "https://github.com/NVIDIA/nccl/issues/1234, and thus set to 0 by both vLLM and SGLang, see https://github.com/vllm-project/vllm/pull/24141.",
-            )
-            env_vars["NCCL_CUMEM_ENABLE"] = os.environ["NCCL_CUMEM_ENABLE"]
-        return env_vars
-
     def _close(self):
         """Close the worker group and release resources. This method is called when the worker group is no longer needed."""
         for worker_info in self._workers:
@@ -164,41 +152,49 @@ class WorkerGroup(Generic[WorkerClsType]):
     def _create_workers(self):
         """Create workers in the group, each worker is placed on a different GPU."""
         placements = self._placement_strategy.get_placement(
-            self._cluster.num_nodes, self._cluster._num_gpus_per_node, self._isolate_gpu
+            self._cluster, self._isolate_gpu
+        )
+        master_addr = next(
+            self._cluster.get_node_ip(p.node_id) for p in placements if p.rank == 0
         )
         self._world_size = len(placements)
         for placement in placements:
             worker_name = WorkerAddress.from_parent_name_rank(
                 self._worker_group_name, placement.rank
             ).get_name()
+            accelerator_type = self._cluster.get_node_info(
+                placement.node_id
+            ).accelerator_type
             env_vars = {
                 "GROUP_NAME": self._worker_group_name,
                 "WORKER_NAME": worker_name,
+                "MASTER_ADDR": master_addr,
                 "WORLD_SIZE": str(self._world_size),
                 "RANK": str(placement.rank),
                 "NODE_RANK": str(placement.node_rank),
                 "NODE_ID": str(placement.node_id),
-                "GPU_ID": str(placement.local_gpu_id),
+                "LOCAL_ACCELERATOR_ID": str(placement.local_accelerator_id),
                 "NODE_LOCAL_RANK": str(placement.local_rank),
                 "NODE_LOCAL_WORLD_SIZE": str(placement.local_world_size),
                 "RAY_ACTOR": str(1),
-                "CUDA_VISIBLE_DEVICES": ",".join(placement.cuda_visible_devices),
                 "CLUSTER_NAMESPACE": Cluster.NAMESPACE,
                 "CATCH_SYSTEM_FAILURE": "1"
                 if self._catch_system_failure
                 else "0",  # Inform the Worker process to catch signals
-                "ISOLATE_GPU": "1" if placement.isolate_gpu else "0",
-                # Override Ray's control over GPU assignment
-                "RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES": "1",
-                # https://github.com/ray-project/ray/blob/161849364a784442cc659fb9780f1a6adee85fce/python/ray/_private/accelerators/nvidia_gpu.py#L95-L96
+                "VISIBLE_DEVICES": ",".join(placement.visible_accelerators),
+                "ACCELERATOR_TYPE": str(accelerator_type.value),
+                "ISOLATE_ACCELERATOR": "1" if placement.isolate_accelerator else "0",
             }
-            env_vars.update(self._nccl_env_vars())
+            env_vars.update(
+                Accelerator.get_accelerator_env_var(
+                    accelerator_type, placement.visible_accelerators
+                )
+            )
 
             worker = self._cluster.allocate(
                 cls=self._worker_cls,
                 worker_name=worker_name,
                 node_id=placement.node_id,
-                gpu_id=placement.local_gpu_id,
                 env_vars=env_vars,
                 cls_args=self._worker_cls_args,
                 cls_kwargs=self._worker_cls_kwargs,

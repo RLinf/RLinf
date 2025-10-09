@@ -24,7 +24,7 @@ dependencies = [
     # Core System
     "accelerate",
     "ray[default]>=2.47.0",
-    "torch==2.5.1",
+    "torch==2.6.0",
 
     # Data processing
     "pylatexenc",
@@ -44,6 +44,7 @@ dependencies = [
     "pybind11",
     "torch-memory-saver",
     "setuptools>=69.5.1,<75.9",
+    "ninja",
 
     # Logging
     "swanlab",
@@ -51,10 +52,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-sgl_vllm = [
-    "transformers==4.48.3",
-    "sglang[all]==0.4.4",
-    "vllm==0.7.1",
+sglang-vllm = [
+    "transformers==4.51.1",
+    "sglang[all]==0.4.6.post5",
+    "vllm==0.8.5",
 ]
 embodied = [
     "prismatic",
@@ -73,9 +74,15 @@ embodied = [
 prerelease = "allow"
 conflicts = [
     [
-      { extra = "sgl_vllm" },
+      { extra = "sglang-vllm" },
       { extra = "embodied" },
     ],
+]
+override-dependencies = [
+    "torch==2.6.0",
+    "torchvision==0.21.0",
+    "torchaudio==2.6.0",
+    "xgrammar==0.1.19"
 ]
 
 [tool.ruff]

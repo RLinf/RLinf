@@ -62,7 +62,7 @@
 2. Megatron 权重转换支持
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**工具：** ``tools/ckpt_convert``  
+**工具：** ``toolkits/ckpt_convert``  
 提供与修改后的模型匹配的权重转换脚本。以下示例将 qwen2.5 的检查点进行转换：  
 
 .. code-block:: bash

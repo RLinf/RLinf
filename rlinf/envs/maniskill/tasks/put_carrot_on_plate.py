@@ -124,11 +124,11 @@ class PutCarrotOnPlateInSceneV2(PutCarrotOnPlateInScene):
             )[0, :, 0]
             """target object bbox size (3, )"""
 
-            if self.consecutive_grasp is None:
+            if getattr(self, "consecutive_grasp", None) is None:
                 self.consecutive_grasp = torch.zeros(
                     self.num_envs, dtype=torch.int32
                 ).to(self.device)
-            if self.episode_stats is None:
+            if getattr(self, "episode_stats", None) is None:
                 self.episode_stats = {
                     "moved_correct_obj": torch.zeros(
                         (self.num_envs,), dtype=torch.bool
