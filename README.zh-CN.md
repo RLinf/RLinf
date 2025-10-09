@@ -327,7 +327,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 
 
 ## 贡献指南
-我们欢迎对 RLinf 的贡献。在参与之前，请先阅读 [贡献指南](https://rlinf.readthedocs.io/en/latest/index.html#contribution-guidelines) before taking action.
+我们欢迎对 RLinf 的贡献。在参与之前，请先阅读 [贡献指南](https://rlinf.readthedocs.io/en/latest/index.html#contribution-guidelines)。
 
 ## 引用与致谢
 
