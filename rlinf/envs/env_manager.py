@@ -203,7 +203,7 @@ class EnvManager:
             args=(
                 self.cfg,
                 self.rank,
-                self.seed_offset, 
+                self.seed_offset,
                 self.world_size,
                 self.env_cls,
                 self.command_queue,
@@ -279,7 +279,7 @@ class EnvManager:
         if name in [
             "cfg",
             "rank",
-            "seed_offset", 
+            "seed_offset",
             "world_size",
             "process",
             "command_queue",
@@ -324,7 +324,7 @@ class EnvManager:
 def _simulator_worker(
     cfg,
     rank,
-    seed_offset, 
+    seed_offset,
     world_size,
     env_cls,
     command_queue,

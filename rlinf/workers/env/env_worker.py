@@ -112,7 +112,7 @@ class EnvWorker(Worker):
                     self.eval_simulator_list.append(
                         EnvManager(
                             self.cfg.env.eval,
-                            rank=self._rank, 
+                            rank=self._rank,
                             seed_offset=self._rank * self.stage_num + stage_id,
                             world_size=self._world_size,
                             env_cls=ManiskillEnv,
