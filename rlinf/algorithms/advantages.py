@@ -106,7 +106,7 @@ def compute_grpo_advantages(
 
     advantages = (torch.zeros_like(loss_mask) + advantages.view(-1, 1)) * loss_mask
 
-    return advantages
+    return advantages, None
 
 
 @register_advantage("reinpp")
@@ -173,7 +173,7 @@ def compute_reinpp_advantages(
 
     advantages = (advantages - mean) * rstd
 
-    return advantages
+    return advantages, None
 
 
 if __name__ == "__main__":
