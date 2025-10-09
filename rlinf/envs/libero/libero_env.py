@@ -14,6 +14,7 @@
 
 import copy
 import os
+import time
 from typing import List, Optional, Union
 
 import gym
@@ -479,7 +480,7 @@ class LiberoEnv(gym.Env):
         save_rollout_video(
             self.render_images,
             output_dir=output_dir,
-            video_name=f"{self.video_cnt}",
+            video_name=f"{int(time.time() * 1000)}",
         )
         self.video_cnt += 1
         self.render_images = []

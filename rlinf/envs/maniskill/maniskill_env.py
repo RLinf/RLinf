@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import time
 from typing import Dict, List, Optional, Tuple, Union
 
 import gymnasium as gym
@@ -374,7 +375,7 @@ class ManiskillEnv(gym.Env):
         images_to_video(
             self.render_images,
             output_dir=output_dir,
-            video_name=f"{self.video_cnt}",
+            video_name=f"{int(time.time() * 1000)}",
             fps=self.cfg.init_params.sim_config.control_freq,
             verbose=False,
         )
