@@ -4,6 +4,8 @@ export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
 export SRC_FILE="${EMBODIED_PATH}/train_embodied_agent.py"
 
+# export MUJOCO_GL="osmesa"
+# export PYOPENGL_PLATFORM="osmesa"
 export MUJOCO_GL="egl"
 export PYOPENGL_PLATFORM="egl"
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
@@ -15,6 +17,10 @@ export LIBERO_CONFIG_PATH=${LIBERO_REPO_PATH}
 export PYTHONPATH=${LIBERO_REPO_PATH}:$PYTHONPATH
 export CUDA_LAUNCH_BLOCKING=1
 export HYDRA_FULL_ERROR=1
+
+# torch.compile may cause errors 
+# export TORCH_COMPILE_DISABLE=1
+# export TORCHDYNAMO_DISABLE=1
 
 
 if [ -z "$1" ]; then

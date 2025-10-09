@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from typing import Dict
 
 import numpy as np
@@ -90,6 +91,12 @@ class EnvWorker(Worker):
             )
 
     def init_worker(self):
+        # Set EGL device ID for this worker process if using EGL rendering
+        if os.environ.get("MUJOCO_GL") == "egl":
+            # Ray isolates GPUs by setting CUDA_VISIBLE_DEVICES to specific device IDs.
+            # Renumber CUDA_VISIBLE_DEVICES to start from 0 for isolated single-GPU processes
+            os.environ["MUJOCO_EGL_DEVICE_ID"] = str(self._local_accelerator_id)
+
         enable_offload = self.cfg.env.enable_offload
         only_eval = getattr(self.cfg.runner, "only_eval", False)
         if self.cfg.env.train.simulator_type == "maniskill":
