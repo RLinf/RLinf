@@ -55,3 +55,19 @@ jobs:
               run: |
                 export REPO_PATH=$(pwd)
                 bash tests/e2e_tests/embodied/run_openvla.sh
+    openvlaoft-grpo-test:
+        runs-on: rlinf
+        container:
+            image: rlinf/rlinf:agentic-openvlaoft-rlinf0.1-torch2.5.1
+            volumes:
+                - /mnt/public/dataset:/workspace/dataset
+                - /mnt/public/tokenizer:/workspace/tokenizer
+            options: --gpus="all" --shm-size=2g -e NVIDIA_DRIVER_CAPABILITIES="compute,utility,graphics"
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+            - name: OpenVLA-OFT test
+              run: |
+                export REPO_PATH=$(pwd)
+                bash tests/e2e_tests/embodied/run_openvlaoft_libero130.sh
