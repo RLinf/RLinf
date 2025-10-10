@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Training script for embodied SAC agent using OpenVLA model.
+
+This script demonstrates how to train an embodied agent using Soft Actor-Critic (SAC)
+algorithm with the RLinf framework. SAC is an off-policy algorithm that uses a replay
+buffer and learns both a policy and Q-functions.
+
+Usage:
+    python examples/embodiment/train_embodied_sac_agent.py --config-name=maniskill_sac_openvla
+
+Key differences from PPO training:
+1. Uses replay buffer for off-policy learning
+2. Learns Q-functions instead of value functions
+3. Automatic entropy tuning for exploration
+4. Soft target network updates
+5. No advantage computation (uses Q-values directly)
+"""
+
+import hydra
+import torch.multiprocessing as mp
+
+from rlinf.config import validate_cfg
+from rlinf.runners.embodied_runner import EmbodiedRunner
+from rlinf.scheduler import Cluster
+from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.workers.actor.fsdp_actor_worker_sac import EmbodiedSACFSDPActor
+from rlinf.workers.env.env_worker import EnvWorker
+from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+mp.set_start_method("spawn", force=True)
+
+
+@hydra.main(
+    version_base="1.1", config_path="config", config_name="maniskill_sac_openvla"
+)
+def main(cfg) -> None:
+    """
+    Main training function for SAC embodied agent.    
+    Args:
+        cfg: Hydra configuration object containing all training parameters
+    """
+    cfg = validate_cfg(cfg)
+
+    cluster = Cluster(
+        num_nodes=cfg.cluster.num_nodes, num_gpus_per_node=cfg.cluster.num_gpus_per_node
+    )
+    component_placement = HybridComponentPlacement(cfg)
+
+    # Create actor worker group (SAC version)
+    actor_placement = component_placement.get_strategy("actor")
+    actor_group = EmbodiedSACFSDPActor.create_group(cfg).launch(
+        cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
+    )
+    # Create rollout worker group
+    rollout_placement = component_placement.get_strategy("rollout")
+    rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
+        cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
+    )
+    # Create env worker group
+    env_placement = component_placement.get_strategy("env")
+    env_group = EnvWorker.create_group(cfg).launch(
+        cluster, name=cfg.env.group_name, placement_strategy=env_placement
+    )
+
+    runner = EmbodiedRunner(
+        cfg=cfg,
+        actor=actor_group,
+        rollout=rollout_group,
+        env=env_group,
+    )
+
+    runner.init_workers()
+    runner.run()
+
+
+if __name__ == "__main__":
+    main()
