@@ -52,27 +52,39 @@ jobs:
             - name: Checkout code
               uses: actions/checkout@v4
 
-            - name: SGLang Collocated mode
+            - name: Megatron SGLang Collocated mode
               timeout-minutes: 20
               run: |
                 export REPO_PATH=$(pwd)
-                bash tests/e2e_tests/math/sglang/run_collocated.sh qwen2.5-1.5b-grpo-collocated-rollout-logprobs.yaml
+                bash tests/e2e_tests/reasoning/run_collocated.sh qwen2.5-1.5b-grpo-collocated-mg-sgl-rollout-logprobs
 
-            - name: vLLM Collocated mode
+            - name: Megatron vLLM Collocated mode
               timeout-minutes: 20
               run: |
                 export REPO_PATH=$(pwd)
-                bash tests/e2e_tests/math/vllm/run_collocated.sh qwen2.5-1.5b-grpo-collocated-rollout-logprobs.yaml
+                bash tests/e2e_tests/reasoning/run_collocated.sh qwen2.5-1.5b-grpo-collocated-mg-vllm-rollout-logprobs
 
-            - name: SGLang Pipeline mode
+            - name: Megatron SGLang Pipeline mode
               timeout-minutes: 20
               run: |
                 export REPO_PATH=$(pwd)
-                bash tests/e2e_tests/math/sglang/run_pipeline.sh qwen2.5-1.5b-grpo-pipeline-rollout-logprobs.yaml
+                bash tests/e2e_tests/reasoning/run_pipeline.sh qwen2.5-1.5b-grpo-pipeline-mg-sgl-rollout-logprobs
 
-            - name: vLLM Pipeline mode
+            - name: Megatron vLLM Pipeline mode
               timeout-minutes: 20
               run: |
                 export REPO_PATH=$(pwd)
-                bash tests/e2e_tests/math/vllm/run_pipeline.sh qwen2.5-1.5b-grpo-pipeline-rollout-logprobs.yaml
+                bash tests/e2e_tests/reasoning/run_pipeline.sh qwen2.5-1.5b-grpo-pipeline-mg-vllm-rollout-logprobs
+
+            - name: FSDP SGLang Collocated mode
+              timeout-minutes: 20
+              run: |
+                export REPO_PATH=$(pwd)
+                bash tests/e2e_tests/reasoning/run_collocated.sh qwen2.5-1.5b-grpo-collocated-fsdp-sglang-rollout-logprobs
+
+            - name: FSDP vLLM Collocated mode
+              timeout-minutes: 20
+              run: |
+                export REPO_PATH=$(pwd)
+                bash tests/e2e_tests/reasoning/run_collocated.sh qwen2.5-1.5b-grpo-collocated-fsdp-vllm-rollout-logprobs
 

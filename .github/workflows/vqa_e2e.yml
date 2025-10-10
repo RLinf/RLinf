@@ -55,9 +55,9 @@ jobs:
             - name: SGLang Collocated mode
               run: |
                 export REPO_PATH=$(pwd)
-                bash tests/e2e_tests/vqa/sglang/run_collocated.sh
+                bash tests/e2e_tests/reasoning/run_collocated.sh qwen2.5-vl-3b-grpo-collocated-fsdp-sgl
 
             - name: vLLM Collocated mode
               run: |
                 export REPO_PATH=$(pwd)
-                bash tests/e2e_tests/vqa/vllm/run_collocated.sh
+                bash tests/e2e_tests/reasoning/run_collocated.sh qwen2.5-vl-3b-grpo-collocated-fsdp-vllm

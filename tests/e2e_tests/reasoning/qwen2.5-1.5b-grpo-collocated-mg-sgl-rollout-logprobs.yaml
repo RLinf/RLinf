@@ -49,7 +49,7 @@ algorithm:
   # val rollout mbs
   val_rollout_batch_size_per_gpu: 4 # ${.rollout_batch_size_per_gpu}
 
-  recompute_logprobs: True
+  recompute_logprobs: False
   shuffle_rollout: False
 
   # GRPO loss params
@@ -107,7 +107,6 @@ rollout:
     max_num_batched_tokens: null # the maximum number of tokens to be batched together in vllm. If set to null, vllm will use its default value.
     torch_profiler_dir: null # if not null, vllm will enable torch profiler and save the result to the specified directory.
 
-
   return_logprobs: ${not:${algorithm.recompute_logprobs}}
 
   tensor_parallel_size: 1
@@ -117,12 +116,8 @@ rollout:
   validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
   print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
 
-  sglang_decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
   max_running_requests: 64 # the maximum number of running requests in the rollout engine.
   cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
-
-  use_torch_compile: False # enable torch_compile in SGLang for rollout.
-  torch_compile_max_bs: 128 # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.
 
 data:
   type: math
@@ -151,7 +146,7 @@ actor:
   offload_weight: True
   offload_grad: True
 
-  enable_dp_load_balance: True
+  enable_dp_load_balance: False
 
   calculate_flops: True
 
