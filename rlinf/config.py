@@ -37,6 +37,7 @@ logging.getLogger().setLevel(logging.INFO)
 SUPPORTED_MODEL_ARCHS = ["qwen2.5", "qwen2.5_vl", "openvla", "openvla_oft"]
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
 SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl"]
+SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
 
 
@@ -219,6 +220,16 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         cfg.model.add_qkv_bias = qkv_bias
         cfg.model.layernorm_epsilon = hf_config.rms_norm_eps
 
+    return cfg
+
+
+def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
+    OmegaConf.set_struct(cfg, True)
+    with open_dict(cfg):
+        cfg.fsdp.forward_prefetch = cfg.fsdp.get("forward_prefetch", False)
+        cfg.fsdp.limit_all_gathers = cfg.fsdp.get("limit_all_gathers", False)
+        cfg.fsdp.backward_prefetch = cfg.fsdp.get("backward_prefetch", False)
+        cfg.fsdp.use_orig_params = cfg.fsdp.get("use_orig_params", False)
     return cfg
 
 
@@ -624,13 +635,23 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     ):
         assert cfg.algorithm.group_size > 1
 
+    assert cfg.actor.training_backend in SUPPORTED_TRAINING_BACKENDS, (
+        f"Unsupported training_backend {cfg.actor.training_backend}. Supported training backends are {SUPPORTED_TRAINING_BACKENDS}."
+    )
+
     if cfg.actor.training_backend == "megatron":
         cfg.actor = validate_megatron_cfg(cfg.actor)
+        cfg.actor = validate_model_cfg_by_hf_config(cfg.actor, cfg.rollout.model_dir)
+    elif cfg.actor.training_backend == "fsdp":
+        cfg.actor = validate_fsdp_cfg(cfg.actor)
         cfg.actor = validate_model_cfg_by_hf_config(cfg.actor, cfg.rollout.model_dir)
 
     if cfg.critic.use_critic_model and cfg.critic.training_backend == "megatron":
         cfg.critic = validate_megatron_cfg(cfg.critic)
         cfg = validate_model_cfg_by_hf_config(cfg.critic, cfg.rollout.model_dir)
+    elif cfg.critic.use_critic_model and cfg.critic.training_backend == "fsdp":
+        cfg.critic = validate_fsdp_cfg(cfg.critic)
+        cfg.critic = validate_model_cfg_by_hf_config(cfg.critic, cfg.rollout.model_dir)
 
     return cfg
 

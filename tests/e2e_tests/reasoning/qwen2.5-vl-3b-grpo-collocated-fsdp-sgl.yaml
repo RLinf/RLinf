@@ -202,6 +202,12 @@ actor:
     trust_remote_code: True
     padding_side: 'right'
 
+  fsdp:
+    forward_prefetch: True
+    limit_all_gathers: True
+    backward_prefetch: True
+    use_orig_params: True
+
 reward:
   group_name: "RewardGroup"
   use_reward_model: false

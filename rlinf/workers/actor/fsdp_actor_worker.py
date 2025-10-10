@@ -14,6 +14,7 @@
 
 import gc
 import os
+from contextlib import nullcontext
 from typing import Dict, Tuple
 
 import numpy as np
@@ -258,7 +259,12 @@ class FSDPActor(FSDPModelManager, Worker):
 
                 self.optimizer.zero_grad()
                 metrics = {}
-                for _, m_batch in enumerate(train_micro_batches):
+                for idx, m_batch in enumerate(train_micro_batches):
+                    backward_ctx = (
+                        self.model.no_sync()
+                        if idx < self.gradient_accumulation - 1
+                        else nullcontext()
+                    )
                     for k, v in m_batch.items():
                         m_batch[k] = v.cuda() if isinstance(v, torch.Tensor) else v
 
@@ -352,7 +358,8 @@ class FSDPActor(FSDPModelManager, Worker):
                     # add to log
                     # scale loss for gradient accumulation and backprop
                     loss = loss / self.gradient_accumulation
-                    loss.backward()
+                    with backward_ctx:
+                        loss.backward()
 
                     mbs_metrics_data.update(
                         {

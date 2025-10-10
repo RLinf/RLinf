@@ -80,7 +80,7 @@ jobs:
               timeout-minutes: 20
               run: |
                 export REPO_PATH=$(pwd)
-                bash tests/e2e_tests/reasoning/run_collocated.sh qwen2.5-1.5b-grpo-collocated-fsdp-sglang-rollout-logprobs
+                bash tests/e2e_tests/reasoning/run_collocated.sh qwen2.5-1.5b-grpo-collocated-fsdp-sgl-rollout-logprobs
 
             - name: FSDP vLLM Collocated mode
               timeout-minutes: 20

@@ -17,8 +17,13 @@ import os
 import torch
 import torch.optim as optim
 from omegaconf import DictConfig
+from torch.distributed.fsdp import (
+    BackwardPrefetch,
+    MixedPrecision,
+    ShardingStrategy,
+    StateDictType,
+)
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp import MixedPrecision, ShardingStrategy, StateDictType
 from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForVision2Seq
 
 from rlinf.config import torch_dtype_from_precision
@@ -123,6 +128,14 @@ class FSDPModelManager:
             sharding_strategy=sharding_strategy,  # zero3
             mixed_precision=mixed_precision,
             sync_module_states=True,
+            forward_prefetch=self._cfg.fsdp.forward_prefetch,
+            backward_prefetch=(
+                BackwardPrefetch.BACKWARD_PRE
+                if self._cfg.fsdp.backward_prefetch
+                else BackwardPrefetch.NONE
+            ),
+            limit_all_gathers=self._cfg.fsdp.limit_all_gathers,
+            use_orig_params=self._cfg.fsdp.use_orig_params,
         )
 
         # NOTE: Currently we assume that only the value head contains "value_head" in its name.

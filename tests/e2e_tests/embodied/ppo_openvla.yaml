@@ -165,6 +165,12 @@ actor:
     adam_eps: 1.0e-05
     clip_grad: 1.0
 
+  fsdp:
+    forward_prefetch: True
+    limit_all_gathers: True
+    backward_prefetch: True
+    use_orig_params: True
+
 reward:
   use_reward_model: False
 

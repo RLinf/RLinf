@@ -25,7 +25,7 @@ runner:
   val_check_interval: 1
   save_interval: 50
 
-  seq_length: 2048
+  seq_length: 28672
 
   enable_dynamic_batch_size: False
   max_tokens_per_mbs: 28672
@@ -198,6 +198,12 @@ actor:
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'
+
+  fsdp:
+    forward_prefetch: True
+    limit_all_gathers: True
+    backward_prefetch: True
+    use_orig_params: True
 
 reward:
   group_name: "RewardGroup"
