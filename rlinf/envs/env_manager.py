@@ -213,7 +213,7 @@ class EnvManager:
         self.process.start()
 
         # Wait for initialization
-        result = self.result_queue.get(timeout=60)
+        result = self.result_queue.get()
         if result["status"] != "ready":
             raise RuntimeError(f"Simulator initialization failed: {result}")
 
