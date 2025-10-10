@@ -14,7 +14,7 @@
 
 import gc
 import os
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 
 import numpy as np
 import torch
@@ -142,13 +142,12 @@ class FSDPActor(FSDPModelManager, Worker):
             del self.rollout_state_dict
 
     def sync_model_to_rollout(self):
+        if self.cfg.actor.get("enable_offload", False):
+            self.offload_fsdp_optimizer()
+
         if next(self.model.parameters()).is_cpu:
             self.load_fsdp_param_and_grad(self.device)
         self.rollout_state_dict = self.get_model_state_dict()
-
-        if self.cfg.actor.get("enable_offload", False):
-            self.offload_fsdp_param_and_grad(offload_grad=True)
-            self.offload_fsdp_optimizer()
 
         has_visual = any("visual." in k for k in self.rollout_state_dict.keys())
 
@@ -168,9 +167,12 @@ class FSDPActor(FSDPModelManager, Worker):
                     #     name = name[6:]
                 state_dict[name] = reduce_tensor(v)
 
-        self.send(
-            state_dict, self._rollout_group_name, self._weight_dst_rank_in_rollout
-        )
+            self.send(
+                state_dict, self._rollout_group_name, self._weight_dst_rank_in_rollout
+            )
+
+        if self.cfg.actor.get("enable_offload", False):
+            self.offload_fsdp_param_and_grad()
 
     def compute_logprobs(self):
         self.model.eval()
@@ -354,22 +356,23 @@ class FSDPActor(FSDPModelManager, Worker):
 
                     mbs_metrics_data.update(
                         {
-                            "final_loss": loss.detach().cpu(),
-                            "entropy_loss": entropy_loss.detach().cpu(),
-                            "kl_loss": kl_loss.detach().cpu(),
+                            "final_loss": loss.detach(),
+                            "entropy_loss": entropy_loss.detach(),
+                            "kl_loss": kl_loss.detach(),
                         }
                     )
 
                     append_to_dict(metrics, mbs_metrics_data)
                 # apply gradient clipping and optimizer step at the end of a global batch
-                grad_norm = None
-                try:
-                    grad_norm = self.model.clip_grad_norm_(
-                        max_norm=self.cfg.actor.optim.clip_grad
+                grad_norm = self.model.clip_grad_norm_(
+                    max_norm=self.cfg.actor.optim.clip_grad
+                )
+                if not torch.isfinite(grad_norm).all():
+                    self.log_warning(
+                        "grad norm is not finite, skip this optimizer step."
                     )
-                except Exception:
-                    pass
-                self.optimizer.step()
+                else:
+                    self.optimizer.step()
                 self.optimizer.zero_grad()
 
                 # aggregate metrics across micro-batches
@@ -381,16 +384,12 @@ class FSDPActor(FSDPModelManager, Worker):
                     mean_metric_dict, op=torch.distributed.ReduceOp.AVG
                 )
                 # add optimizer stats
-                if grad_norm is not None:
-                    mean_metric_dict["actor/grad_norm"] = (
-                        torch.as_tensor(
-                            grad_norm
-                            if torch.is_tensor(grad_norm)
-                            else float(grad_norm)
-                        )
-                        .float()
-                        .cpu()
+                if torch.is_tensor(grad_norm):
+                    mean_metric_dict["actor/grad_norm"] = float(
+                        grad_norm.detach().item()
                     )
+                else:
+                    mean_metric_dict["actor/grad_norm"] = float(grad_norm)
                 lr = self.optimizer.param_groups[0]["lr"]
                 mean_metric_dict["actor/lr"] = torch.as_tensor(lr).float().cpu()
                 training_metrics_list.append(mean_metric_dict)
@@ -411,57 +410,6 @@ class FSDPActor(FSDPModelManager, Worker):
             torch.save(model_state, os.path.join(save_base_path, "model.pt"))
             torch.save(optim_state, os.path.join(save_base_path, "optim.pt"))
         torch.distributed.barrier()
-
-    def _compute_batch_rewards(
-        self, batch: Dict[str, torch.Tensor], answers: List[str]
-    ):
-        """Reward computation using non-model based reward."""
-        texts = []
-        for response, response_len in zip(
-            batch["input_ids"],
-            batch["response_lengths"],
-        ):
-            response = response[
-                self.cfg.data.max_prompt_length : self.cfg.data.max_prompt_length
-                + response_len
-            ]
-            texts.append(
-                self.tokenizer.decode(response.tolist(), skip_special_tokens=True)
-            )
-        reward_scores = self.reward.get_reward(texts, answers)
-
-        all_reward_scores = torch.as_tensor(
-            reward_scores,
-            dtype=torch.float,
-            device=torch.device("cpu"),
-        ).view(-1, 1)
-        return all_reward_scores.flatten()
-
-    # Rewards
-    def compute_rewards(self, input_channel: Channel, output_channel: Channel):
-        """Compute rewards.
-
-        Args:
-            input_channel: The input channel to read from.
-            output_channel: The output channel to send results to.
-        """
-        recv_batch_size = 0
-        while recv_batch_size < self.total_batch_size_per_dp:
-            batch, rollout_result = self.get_batch(input_channel)
-            recv_batch_size += rollout_result.num_sequence
-
-            # Compute rule-based reward
-            with self.worker_timer():
-                if rollout_result.rewards is None:
-                    rollout_result.rewards = self._compute_batch_rewards(
-                        batch, rollout_result.answers
-                    )
-
-            self.put_result(rollout_result, output_channel)
-
-        assert recv_batch_size == self.total_batch_size_per_dp, (
-            f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
-        )
 
     # Advantages and returns
     def compute_advantages_and_returns(

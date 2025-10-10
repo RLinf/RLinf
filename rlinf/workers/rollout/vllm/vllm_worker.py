@@ -420,6 +420,8 @@ class VLLMWorker(Worker):
             multi_modal_inputs=request.multi_modal_inputs,
             return_logprobs=self._return_logprobs,
         )
+        if self._cfg.rollout.print_outputs:
+            print_vllm_outputs(outputs=vllm_results)
         await self._put_result(result=rollout_result, output_channel=output_channel)
 
     async def rollout(self, input_channel: Channel, output_channel: Channel) -> None:

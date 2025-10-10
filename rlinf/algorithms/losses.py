@@ -233,17 +233,21 @@ def compute_math_ppo_actor_loss(**kwargs):
     clip_mask = policy_loss1.detach() < policy_loss2.detach()
     dual_clip_mask.logical_and_(loss_mask)
 
-    clip_fraction = clip_mask.logical_and_(loss_mask).count_nonzero() / loss_mask_count
-    approx_kl = -approx_kl.sum() / loss_mask_count
+    num_clipped = clip_mask.logical_and_(loss_mask).count_nonzero()
+
+    clip_fraction = num_clipped.float() / float(loss_mask_count)
+    approx_kl = -approx_kl.sum() / float(loss_mask_count)
 
     dual_cliped_ratio = torch.where(dual_clip_mask, ratio, 0)
 
     # Compile metrics for logging
     metrics_data = {
-        "policy_loss": masked_mean(policy_loss.detach(), loss_mask),
-        "ratio": masked_mean(ratio.detach(), loss_mask),
-        "clipped_ratio": masked_mean(clipped_ratio.detach(), loss_mask),
-        "dual_cliped_ratio": masked_mean(dual_cliped_ratio.detach(), loss_mask),
+        "policy_loss": masked_mean(policy_loss.detach(), loss_mask).detach(),
+        "ratio": masked_mean(ratio.detach(), loss_mask).detach(),
+        "clipped_ratio": masked_mean(clipped_ratio.detach(), loss_mask).detach(),
+        "dual_cliped_ratio": masked_mean(
+            dual_cliped_ratio.detach(), loss_mask
+        ).detach(),
         "approx_kl": approx_kl.detach(),
         "clip_fraction": clip_fraction.detach(),
     }

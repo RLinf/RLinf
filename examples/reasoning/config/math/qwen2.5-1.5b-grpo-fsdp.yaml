@@ -158,7 +158,7 @@ actor:
   seed: 1234
 
   model:
-    precision: fp16
+    precision: bf16
     sharding_strategy: full_shard
     is_lora: False
 
@@ -168,8 +168,8 @@ actor:
 
   optim:
     optimizer: adam
-    bf16: False
-    fp16: True
+    bf16: True
+    fp16: False
     lr: 2e-05
     adam_beta1: 0.9
     adam_beta2: 0.95
