@@ -43,15 +43,8 @@ algorithm:
 
   n_chunk_steps: 10
   n_eval_chunk_steps: 10
-  # training rollout mbs
-  rollout_micro_batch_size: 64
   num_group_envs: 8
   rollout_epoch: 1
-
-  # mbs to do log prob inference, can be set to
-  # lower than rollout_micro_batch_size to reduce
-  # memory usage
-  logprob_forward_micro_batch_size: 16 # ${.rollout_micro_batch_size}
 
   adv_type: embodied_gae
   loss_type: embodied_ppo
