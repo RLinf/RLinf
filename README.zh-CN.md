@@ -19,64 +19,65 @@
 </div>
 
 <h1 align="center">
-  <sub>RLinf: Reinforcement Learning Infrastructure for Agentic AI</sub>
+  <sub>RLinf: 为Agentic AI而生的强化学习框架</sub>
 </h1>
 
-RLinf is a flexible and scalable open-source infrastructure designed for post-training foundation models via reinforcement learning. The 'inf' in RLinf stands for `Infrastructure`, highlighting its role as a robust backbone for next-generation training. It also stands for `Infinite`, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
+RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进行基础模型的后训练而设计。名称中的 “inf” 既代表 `Infrastructure`，强调其作为新一代训练坚实基础的作用；也代表 `Infinite`，寓意其支持开放式学习、持续泛化以及智能发展的无限可能。
 
 <div align="center">
   <img src="docs/source-en/_static/svg/overview.svg" alt="RLinf-overview"/>
 </div>
 
 
-## What's NEW!
-- [2025/09] <img src="https://github.githubassets.com/images/icons/emoji/unicode/1f525.png" width="18" /> [Example Gallery](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) is updated, users can find various off-the-shelf examples!
-- [2025/09] The paper [RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Micro Flow Transformation](https://arxiv.org/abs/2509.15965) is released.
-- [2025/09] The [report on RLinf by Machine Heart](https://mp.weixin.qq.com/s/Xtv4gDu3lhDDGadLrzt6Aw)  is released. 
-- [2025/08] RLinf is open-sourced. The formal v0.1 will be released soon.
-
-## Key Features
+## 最新动态
+- [2025/09] <img src="https://github.githubassets.com/images/icons/emoji/unicode/1f525.png" width="18" /> [示例库](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) 已更新，用户可以在其中找到多种可直接使用的示例！
+- [2025/09] 我们的论文 [《RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Micro Flow Transformation》](https://arxiv.org/abs/2509.15965)已正式发布。
+- [2025/09] 机器之心关于 RLinf 的报道[《首个为具身智能而生的大规模强化学习框架RLinf！清华、北京中关村学院、无问芯穹等重磅开源》](https://mp.weixin.qq.com/s/Xtv4gDu3lhDDGadLrzt6Aw)已经发布。
+- [2025/08] RLinf 已经开源，正式的 v0.1 版本即将发布。
 
 
-**RLinf is unique with:**
-- Macro-to-Micro Flow: a new paradigm M2Flow, which executes macro-level logical flows through micro-level execution flows, decoupling logical workflow construction (programmable) from physical communication and scheduling (efficiency).
+## ✨ 核心特性
 
-- Flexible Execution Modes
 
-  - Collocated mode: shares all GPUs across all workers.
-  - Disaggregated mode: enables fine-grained pipelining.
-  - Hybrid mode: a customizable combination of different placement modes, integrating both collocated and disaggregated modes.
+**RLinf 的独特之处在于：**
+- 宏工作流到微执行流的映射机制（Macro-to-Micro Flow）：一种全新的 M2Flow 范式，通过微观层次的执行流来驱动宏观层次的逻辑流，实现逻辑工作流构建（可编程）与物理通信和调度（高效性）的解耦。
 
-- Auto-scheduling Strategy: automatically selects the most suitable execution mode based on the training workload, without the need for manual resource allocation.
+- 灵活的执行模式
+
+  - 共享式（Collocated Mode）：用户可以配置组件是否同时常驻于 GPU 内存，或通过卸载 / 重新加载机制交替使用 GPU。
+  - 分离式（Disaggregated Mode）：组件既可以顺序运行（可能导致 GPU 空闲），也可以以流水线方式执行，从而确保所有 GPU 都处于忙碌状态。
+  - 混合式（Hybrid Mode）：进一步扩展了灵活性，支持自定义组合不同的放置形式。典型案例是 Generator 和 GPU-based Simulator 执行分离式细粒度流水，二者与 Inference 和 Trainer 执行共享式。
+
+- 自动调度策略： 根据训练任务自动选择最合适的执行模式，无需手动分配资源。
   
-- Embodied Agent Support
-  - Fast adaptation support for mainstream VLA models: [OpenVLA](https://github.com/openvla/openvla), [OpenVLA-OFT](https://github.com/moojink/openvla-oft), [π₀](https://github.com/Physical-Intelligence/openpi) and [π₀.₅](https://github.com/Physical-Intelligence/openpi).
-  - Support for mainstream CPU & GPU-based simulators via standardized RL interfaces: [ManiSkill3](https://github.com/haosulab/ManiSkill), [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO).
-  - Enabling the first RL fine-tuning of the $\pi_0$ and $\pi_{0.5}$ model family with a flow-matching action expert.
+- 具身智能体支持
+  - 主流 VLA 模型的快速自适应支持: [OpenVLA](https://github.com/openvla/openvla), [OpenVLA-OFT](https://github.com/moojink/openvla-oft), [π₀](https://github.com/Physical-Intelligence/openpi) 和 [π₀.₅](https://github.com/Physical-Intelligence/openpi).
+  - 支持主流基于 CPU 与 GPU 的模拟器（通过标准化 RL 接口）： [ManiSkill3](https://github.com/haosulab/ManiSkill), [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO).
+  - 首次实现对带有 flow-matching action expert 的 $\pi_0$ 和 $\pi_{0.5}$ 模型家族的 RL 微调。
 
-**RLinf is fast with:**
+**RLinf 的高效性体现在：**
 
-- Hybrid mode with fine-grained pipelining: achieves a **120%+** throughput improvement compared to other frameworks.
-- Automatic Online Scaling Strategy: dynamically scales training resources, with GPU switching completed within seconds, further improving efficiency by 20–40% while preserving the on-policy nature of RL algorithms.
+- 细粒度流水化的混合式模式： 相较于其他框架，实现了 120%+ 的吞吐量提升。
+- 秒级显卡自动扩缩： 可动态扩展训练资源，支持在数秒内完成 GPU 切换，在保持 RL 算法 on-policy 特性的同时，进一步提升 20–40% 的效率。
 
-**RLinf is flexible and easy to use with:**
+**RLinf 的灵活性与易用性体现在：**
 
-- Multiple Backend Integrations
+- 多后端集成
 
-  - FSDP + Hugging Face: rapid adaptation to new models and algorithms, ideal for beginners and fast prototyping.
-  - Megatron + SGLang: optimized for large-scale training, delivering maximum efficiency for expert users with demanding workloads.
+  - FSDP + Hugging Face： 快速适配新模型与新算法，非常适合初学者和快速原型开发。
+  - Megatron + SGLang： 针对大规模训练进行了优化，为专家用户提供最大化效率。
 
-- Adaptive communication via the asynchronous communication channel
+- 自适应通信： 通过异步通信通道实现高效交互。
 
-- Built-in support for popular RL methods, including [PPO](https://arxiv.org/abs/1707.06347), [GRPO](https://arxiv.org/abs/2402.03300), [DAPO](https://arxiv.org/abs/2503.14476), [Reinforce++](https://arxiv.org/abs/2501.03262), and more.
+- 内置支持主流 RL 方法： 包括 [PPO](https://arxiv.org/abs/1707.06347), [GRPO](https://arxiv.org/abs/2402.03300), [DAPO](https://arxiv.org/abs/2503.14476), [Reinforce++](https://arxiv.org/abs/2501.03262) 等。
 
-## Main Results
-### Embodied Intelligence
+## 主要成果
+### 具身智能
 
 <div align="center">
 <table>
   <tr>
-    <th colspan="5" style="text-align:center;"><strong>OpenVLA and OpenVLA-OFT model results on ManiSkill3</strong></th>
+    <th colspan="5" style="text-align:center;"><strong>OpenVLA-OFT 模型在 ManiSkill3 上的实验结果</strong></th>
   </tr>
   <tr>
     <th>Model</th>
@@ -124,7 +125,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 <table>
   <tr>
-    <th colspan="6" style="text-align:center;"><strong>OpenVLA-OFT model results on LIBERO</strong></th>
+    <th colspan="6" style="text-align:center;"><strong>OpenVLA-OFT 模型在 LIBERO 上的实验结果</strong></th>
   </tr>
   <tr>
     <th>Model</th>
@@ -161,11 +162,11 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 </table>
 </div>
 
-- RLinf supports both PPO and GRPO algorithms, enabling state-of-the-art training for Vision-Language-Action models.
-- The framework provides seamless integration with mainstream embodied intelligence benchmarks, including ManiSkill3 and LIBERO, and achieves strong performance across diverse evaluation metrics.
+- RLinf 同时支持 PPO 与 GRPO 算法，为视觉-语言-动作（Vision-Language-Action, VLA）模型提供最先进的训练能力。
+- 该框架与主流具身智能基准测试（如 ManiSkill3 与 LIBERO）无缝集成，并在多样化的评测指标上均取得了优异表现。
 
 
-### Math Reasoning
+### 数学推理
 
 <div align="center">
 <table>
@@ -210,7 +211,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 </table>
 </div>
 
-\* We retrain the model using the default settings for 600 steps.
+\* 我们使用默认设置对模型进行了 600 步的重新训练。
 
 <div align="center">
 <table>
@@ -251,80 +252,86 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 </table>
 </div>
 
-- RLinf achieves state-of-the-art performance on math reasoning tasks, consistently outperforming existing models across multiple benchmarks (AIME 24, AIME 25, GPQA-diamond) for both 1.5B and 7B model sizes.
+- RLinf 在数学推理任务上实现了当前最先进的性能，在多个基准测试（AIME 24、AIME 25、GPQA-diamond）中，1.5B 与 7B 规模的模型均稳定超越现有方法。
 
-## Roadmap
+## 路线图
 
-### 1. System-Level Enhancements
-- [ ] Support for heterogeneous GPUs  
-- [ ] Support for asynchronous pipeline execution  
-- [ ] Support for Mixture of Experts (MoE)  
-- [ ] Support for vLLM inference backend
+### 1. 系统级增强
+- [ ] 支持异构 GPU
 
-### 2. Application-Level Extensions
-- [ ] Support for Vision-Language Models (VLMs) training  
-- [ ] Support for deep searcher agent training  
-- [ ] Support for multi-agent training  
-- [ ] Support for integration with more embodied simulators (e.g., [Meta-World](https://github.com/Farama-Foundation/Metaworld), [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis), [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin))  
-- [ ] Support for more Vision Language Action models (VLAs), such as [GR00T](https://github.com/NVIDIA/Isaac-GR00T), [WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow)
-- [ ] Support for world model   
-- [ ] Support for real-world RL embodied intelligence
+- [ ] 支持异步流水线执行
+
+- [ ] 支持专家混合（Mixture of Experts, MoE）
+
+- [ ] 支持 vLLM 推理后端
+
+### 2. 应用级扩展
+- [ ] 支持视觉-语言模型（VLMs）训练
+
+- [ ] 支持深度搜索智能体训练
+
+- [ ] 支持多智能体训练
+- [ ] 支持更多具身模拟器的集成 (如 [Meta-World](https://github.com/Farama-Foundation/Metaworld), [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis), [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin))  
+- [ ] 支持更多VLA模型，比如 [GR00T](https://github.com/NVIDIA/Isaac-GR00T), [WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow)
+- [ ] 支持世界模型（World Model）
+
+- [ ] 支持真实世界的具身智能强化学习
 
 
-## Getting Started 
+## 快速开始 
 
-Complete documentation for RLinf can be found [**Here**](https://rlinf.readthedocs.io/en/latest/).
+完整的 RLinf 文档请见[**这里**](https://rlinf.readthedocs.io/en/latest/).
 
-**Quickstart**
+**快速上手**
 
-  - [Installation](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html)
-  - [Quickstart 1: PPO Training of VLAs on Maniskill3](https://rlinf.readthedocs.io/en/latest/rst_source/start/vla.html)
-  - [Quickstart 2: GRPO Training of LLMs on MATH](https://rlinf.readthedocs.io/en/latest/rst_source/start/llm.html)
-  - [Multi-node Training](https://rlinf.readthedocs.io/en/latest/rst_source/start/distribute.html)
-  - [Model Evaluation](https://rlinf.readthedocs.io/en/latest/rst_source/start/eval.html)
+  - [安装指南](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html)
+  - [快速上手 1：在 ManiSkill3 上进行 VLA 的 PPO 训练](https://rlinf.readthedocs.io/en/latest/rst_source/start/vla.html)
+  - [快速上手 2：在 MATH 上进行 LLM 的 GRPO 训练](https://rlinf.readthedocs.io/en/latest/rst_source/start/llm.html)
+  - [多节点训练](https://rlinf.readthedocs.io/en/latest/rst_source/start/distribute.html)
+  - [模型评估](https://rlinf.readthedocs.io/en/latest/rst_source/start/eval.html)
 
-**Key Design**
-  - [Unified User Interface Usage](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/user/index.html)
-  - [Flexible Execution Modes](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/mode/index.html)
-  - [Enable Automatic Scheduling](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/scheduler/index.html)
-  - [Elastic Communication](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/communication/index.html)
+**关键设计**
+  - [统一用户接口使用](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/user/index.html)
+  - [灵活的执行模式](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/mode/index.html)
+  - [自动调度支持](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/scheduler/index.html)
+  - [弹性通信](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/communication/index.html)
 
-**Example Gallery**
+**示例库**
 
-  - [Embodied Intelligence Vision-Language-Action Model training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied.html)
-  - [Math Reasoning Model Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/reasoning.html)
+  - [具身智能 VLA 模型训练](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied.html)
+  - [数学推理模型训练](https://rlinf.readthedocs.io/en/latest/rst_source/examples/reasoning.html)
 
-**Advanced Features**
+**高级特性**
 
-  - [5D Parallelism Configuration for Megatron-LM](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/advance/5D.html)
-  - [LoRA Integration for efficient fine-tuning](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/advance/lora.html)
-  - [Switch between different versions of SGLang](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/advance/version.html)
-  - [Checkpoint Resume and Recovery Support](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/advance/resume.html)
+  - [Megatron-LM 的 5D 并行配置](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/advance/5D.html)
+  - [LoRA 集成以实现高效微调](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/advance/lora.html)
+  - [在不同版本的 SGLang 之间切换](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/advance/version.html)
+  - [检查点恢复与重启支持](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/advance/resume.html)
 
-**Extending The Framework:**
+**框架扩展**
 
-  - [Adding new Environments](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/extend/new_env.html)
-  - [Adding new Models with FSDP+Huggingface backend](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/extend/new_model_fsdp.html)
-  - [Adding new Models with Megatron+SGLang backend](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/extend/new_model_megatron.html)
+  - [添加新环境](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/extend/new_env.html)
+  - [基于 FSDP+Hugging Face 后端添加新模型](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/extend/new_model_fsdp.html)
+  - [基于 Megatron+SGLang 后端添加新模型](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/extend/new_model_megatron.html)
 
-**Blogs**
+**博客**
 
-  - [Comparison with VeRL](https://rlinf.readthedocs.io/en/latest/rst_source/blog/compare_with_verl.html)
+  - [与 VeRL 的对比](https://rlinf.readthedocs.io/en/latest/rst_source/blog/compare_with_verl.html)
 
-## Build Status
+## 构建状态
 
 | Type             | Status |
 | :--------------: | :----: |
-| Reasoning RL-MATH | [![Build Status](https://github.com/RLinf/RLinf/actions/workflows/math_e2e.yml/badge.svg)](https://github.com/RLinf/RLinf/actions/workflows/math_e2e.yml) |
-| Embodied RL-VLA   | [![Build Status](https://github.com/RLinf/RLinf/actions/workflows/embodied_e2e.yml/badge.svg)](https://github.com/RLinf/RLinf/actions/workflows/embodied_e2e.yml) |
+| 推理 RL-MATH | [![Build Status](https://github.com/RLinf/RLinf/actions/workflows/math_e2e.yml/badge.svg)](https://github.com/RLinf/RLinf/actions/workflows/math_e2e.yml) |
+| 具身 RL-VLA   | [![Build Status](https://github.com/RLinf/RLinf/actions/workflows/embodied_e2e.yml/badge.svg)](https://github.com/RLinf/RLinf/actions/workflows/embodied_e2e.yml) |
 
 
-## Contribution Guidelines
-We welcome contributions to RLinf. Please read [contribution guide](https://rlinf.readthedocs.io/en/latest/index.html#contribution-guidelines) before taking action.
+## 贡献指南
+我们欢迎对 RLinf 的贡献。在参与之前，请先阅读 [贡献指南](https://rlinf.readthedocs.io/en/latest/index.html#contribution-guidelines)。
 
-## Citation and Acknowledgement
+## 引用与致谢
 
-If you find **RLinf** helpful, please cite the paper:
+如果您觉得 **RLinf** 对您的研究或工作有所帮助，请引用以下论文：
 
 ```bibtex
 @misc{yu2025rlinfflexibleefficientlargescale,
@@ -338,7 +345,7 @@ If you find **RLinf** helpful, please cite the paper:
 }
 ```
 
-If you use RL+VLA in RLinf, you can also cite our technical report and empirical study paper:
+如果你在 RLinf 中使用了 RL+VLA，欢迎引用我们的算法技术报告和实证研究论文：
 
 ```bibtex
 @misc{zang2025rlinfvlaunifiedefficientframework,
@@ -364,11 +371,13 @@ If you use RL+VLA in RLinf, you can also cite our technical report and empirical
 }
 ```
 
-**Acknowledgements**
-RLinf has been inspired by, and benefits from, the ideas and tooling of the broader open-source community.
-In particular, we would like to thank the teams and contributors behind VeRL, AReaL, Megatron-LM, SGLang, and PyTorch Fully Sharded Data Parallel (FSDP), and if we have inadvertently missed your project or contribution, please open an issue or a pull request so we can properly credit you.
+**致谢**
+RLinf 的灵感来源并受益于更广泛开源社区的思想与工具。
+我们特别感谢 VeRL、AReaL、Megatron-LM、SGLang 和 PyTorch Fully Sharded Data Parallel (FSDP) 的团队与贡献者。
+如果我们不慎遗漏了您的项目或贡献，请提交 issue 或 pull request，以便我们能够给予您应有的致谢。
 
-**Contact:**
-We welcome applications from Postdocs, PhD/Master's students, and interns. Join us in shaping the future of RL infrastructure and embodied AI!
+**联系方式：**
+我们欢迎博士后、博士/硕士研究生以及实习生的加入。
+诚邀您共同塑造强化学习基础设施与具身智能的未来！
 - Chao Yu: zoeyuchao@gmail.com
 - Yu Wang: yu-wang@tsinghua.edu.cn

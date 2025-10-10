@@ -1,6 +1,6 @@
 defaults:
-  - env/train: PutCarrotOnPlateInScene
-  - env/eval: PutCarrotOnPlateInScene
+  - env/train: PutOnPlateInScene25Main
+  - env/eval: PutOnPlateInScene25Main
   - override hydra/job_logging: stdout
 
 hydra:
@@ -12,10 +12,11 @@ hydra:
 
 cluster:
   num_nodes: 1
+  num_gpus_per_node: 8
   component_placement:
-    actor: 0-3
-    env: 4-5
-    rollout: 6-7
+    actor: 0-7
+    env: 0-3
+    rollout: 4-7
 
 runner:
   task_type: embodied
@@ -38,15 +39,18 @@ algorithm:
   auto_reset: False
   ignore_terminations: False
   use_fixed_reset_state_ids: True
+
   require_values: False
-  shuffle_samples: True
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 8
-  n_chunk_steps: 80
-  n_eval_steps: 80
-  num_group_envs: 16
+
+  num_group_envs: 32
   rollout_epoch: 1
+
+  n_chunk_steps: 80
+  n_eval_chunk_steps: 80
+
   reward_type: step_level
   logprob_type: token_level
   entropy_type: token_level
@@ -65,6 +69,7 @@ algorithm:
   gamma: 0.99
   gae_lambda: 0.95
 
+  # params for generation
   sampling_params:
     use_greedy: False
     temperature_train: 1.0
@@ -86,7 +91,7 @@ env:
     name: "env_buffer_list"
     queue_name: "obs_buffer"
     queue_size: 0
-  enable_offload: True
+  enable_offload: False
 
 rollout:
   group_name: "RolloutGroup"
@@ -123,7 +128,6 @@ actor:
 
   model:
     model_name: "openvla"
-    value_type: ${algorithm.reward_type}  # 'action' or 'token'
     action_dim: 7
     num_action_chunks: 1
     use_proprio: False
