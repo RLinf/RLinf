@@ -47,10 +47,10 @@ def extract_termination_from_info(info, num_envs, device):
 
 
 class ManiskillEnv(gym.Env):
-    def __init__(self, cfg, seed_offset, world_size, record_metrics=True):
+    def __init__(self, cfg, seed_offset, total_num_processes, record_metrics=True):
         env_seed = cfg.seed
         self.seed = env_seed + seed_offset
-        self.world_size = world_size
+        self.total_num_processes = total_num_processes
         self.auto_reset = cfg.auto_reset
         self.use_rel_reward = cfg.use_rel_reward
         self.ignore_terminations = cfg.ignore_terminations

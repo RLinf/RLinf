@@ -102,7 +102,7 @@ class EnvWorker(Worker):
                             self.cfg.env.train,
                             rank=self._rank,
                             seed_offset=self._rank * self.stage_num + stage_id,
-                            world_size=self._world_size,
+                            total_num_processes=self._world_size,
                             env_cls=ManiskillEnv,
                             enable_offload=enable_offload,
                         )
@@ -114,7 +114,7 @@ class EnvWorker(Worker):
                             self.cfg.env.eval,
                             rank=self._rank,
                             seed_offset=self._rank * self.stage_num + stage_id,
-                            world_size=self._world_size,
+                            total_num_processes=self._world_size,
                             env_cls=ManiskillEnv,
                             enable_offload=enable_offload,
                         )
@@ -129,7 +129,7 @@ class EnvWorker(Worker):
                             self.cfg.env.train,
                             rank=self._rank,
                             seed_offset=self._rank * self.stage_num + stage_id,
-                            world_size=self._world_size,
+                            total_num_processes=self._world_size * self.stage_num,
                             env_cls=LiberoEnv,
                             enable_offload=enable_offload,
                         )
@@ -141,7 +141,7 @@ class EnvWorker(Worker):
                             self.cfg.env.eval,
                             rank=self._rank,
                             seed_offset=self._rank * self.stage_num + stage_id,
-                            world_size=self._world_size,
+                            total_num_processes=self._world_size * self.stage_num,
                             env_cls=LiberoEnv,
                             enable_offload=enable_offload,
                         )
@@ -156,11 +156,11 @@ class EnvWorker(Worker):
                             self.cfg.env.train,
                             rank=self._rank,
                             seed_offset=self._rank * self.stage_num + stage_id,
-                            world_size=self._world_size,
+                            total_num_processes=self._world_size * self.stage_num,
                             env_cls=RoboTwin,
                             enable_offload=enable_offload,
                         )
-                        # RoboTwin(self.cfg.env.train, rank=self._rank, world_size=self._world_size)
+                        # RoboTwin(self.cfg.env.train, rank=self._rank, total_num_processes=self._world_size)
                     )
             if self.cfg.runner.val_check_interval > 0 or only_eval:
                 for stage_id in range(self.stage_num):
@@ -169,7 +169,7 @@ class EnvWorker(Worker):
                             self.cfg.env.eval,
                             rank=self._rank,
                             seed_offset=self._rank * self.stage_num + stage_id,
-                            world_size=self._world_size,
+                            total_num_processes=self._world_size,
                             env_cls=RoboTwin,
                             enable_offload=enable_offload,
                         )
