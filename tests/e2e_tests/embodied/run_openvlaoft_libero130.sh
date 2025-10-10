@@ -2,8 +2,8 @@
 set -x
 
 tabs 4
-export MUJOCO_GL="egl"
-export PYOPENGL_PLATFORM="egl"
+export MUJOCO_GL="osmesa"
+export PYOPENGL_PLATFORM="osmesa"
 export LIBERO_REPO_PATH="/workspace/libero"
 export LIBERO_CONFIG_PATH=${LIBERO_REPO_PATH}
 export PYTHONPATH=${LIBERO_REPO_PATH}:$PYTHONPATH
