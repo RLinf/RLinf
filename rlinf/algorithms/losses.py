@@ -96,10 +96,10 @@ def compute_ppo_actor_loss(
 
     # Compile metrics for logging
     metrics_data = {
-        "actor/policy_loss": loss_agg_func(policy_loss.detach(), loss_mask),
-        "actor/ratio": loss_agg_func(ratio.detach(), loss_mask),
-        "actor/clipped_ratio": loss_agg_func(clipped_ratio.detach(), loss_mask),
-        "actor/dual_cliped_ratio": loss_agg_func(dual_cliped_ratio.detach(), loss_mask),
+        "actor/policy_loss": policy_loss.detach(),
+        "actor/ratio": raw_mean(ratio.detach(), loss_mask),
+        "actor/clipped_ratio": raw_mean(clipped_ratio.detach(), loss_mask),
+        "actor/dual_cliped_ratio": raw_mean(dual_cliped_ratio.detach(), loss_mask),
         "actor/approx_kl": approx_kl.detach(),
         "actor/clip_fraction": clip_fraction.detach(),
     }
@@ -268,7 +268,6 @@ if __name__ == "__main__":
     clip_ratio_high = 0.2
     value_clip = 0.2
     huber_delta = 1.0
-    entropy_bonus = 0.01
     kwargs = {
         "logprobs": logprobs,
         "old_logprobs": old_logprobs,
@@ -281,7 +280,6 @@ if __name__ == "__main__":
         "clip_ratio_high": clip_ratio_high,
         "value_clip": value_clip,
         "huber_delta": huber_delta,
-        "entropy_bonus": entropy_bonus,
     }
     loss, metrics_data = compute_ppo_actor_critic_loss(**kwargs)
     print(f"{loss=}, {metrics_data=}")

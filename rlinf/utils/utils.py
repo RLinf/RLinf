@@ -134,7 +134,10 @@ def masked_mean_ratio(values, mask, max_episode_steps=1):
 
 
 def raw_mean(values, mask, axis=0):
-    return values.mean()
+    if mask is not None:
+        return (values * mask).mean()
+    else:
+        return values.mean()
 
 
 class DualOutput:

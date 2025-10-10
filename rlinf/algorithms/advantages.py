@@ -97,11 +97,14 @@ def compute_grpo_advantages(
     """
     grouped_rewards = reward_scores.view(-1, group_size)
 
-    grouped_reward_mean = grouped_rewards.mean(dim=1).repeat_interleave(
-        group_size, dim=0
+    grouped_reward_mean = grouped_rewards.mean(dim=-1, keepdim=True).expand_as(
+        grouped_rewards
     )
-    grouped_reward_std = grouped_rewards.std(dim=1).repeat_interleave(group_size, dim=0)
-    advantages = reward_scores - grouped_reward_mean
+    grouped_reward_std = grouped_rewards.std(dim=-1, keepdim=True).expand_as(
+        grouped_rewards
+    )
+
+    advantages = grouped_rewards - grouped_reward_mean
     advantages = advantages / (grouped_reward_std + 1e-6)
 
     advantages = (torch.zeros_like(loss_mask) + advantages.view(-1, 1)) * loss_mask
@@ -195,10 +198,13 @@ if __name__ == "__main__":
         "dones": dones,
         "gamma": 0.99,
         "gae_lambda": 0.95,
+        "adv_type": "gae",
     }
     kwargs = preprocess_advantages_inputs(**kwargs)
-    kwargs = compute_gae_advantages_and_returns(**kwargs)
-    advantages, returns = postprocess_advantages_outputs(**kwargs)
+    advantages, returns = compute_gae_advantages_and_returns(**kwargs)
+    kwargs.update({"advantages": advantages, "returns": returns})
+    kwargs = postprocess_advantages_outputs(**kwargs)
+    advantages, returns = kwargs["advantages"], kwargs.get("returns", None)
     print(advantages.mean(), advantages.shape)
     print(returns.mean(), returns.shape)
 
@@ -213,24 +219,26 @@ if __name__ == "__main__":
         "dones": dones,
         "loss_mask": loss_mask,
         "group_size": 2,
+        "adv_type": "grpo",
     }
     kwargs = preprocess_advantages_inputs(**kwargs)
     kwargs = calculate_scores(**kwargs)
-    kwargs = compute_grpo_advantages(**kwargs)
-    advantages, _ = postprocess_advantages_outputs(**kwargs)
-    print(advantages.mean(), advantages.shape)
+    advantages, returns = compute_grpo_advantages(**kwargs)
+    kwargs.update({"advantages": advantages, "returns": returns})
+    kwargs = postprocess_advantages_outputs(**kwargs)
+    advantages, returns = kwargs["advantages"], kwargs.get("returns", None)
+    print(advantages.mean(), advantages.shape, advantages.min(), advantages.max())
 
     # test grpo for math
     torch.manual_seed(0)
     rewards = torch.randn(4)
     loss_mask = torch.rand(4, 2) > 0.3
     group_size = 2
-    kwargs = compute_grpo_advantages(
+    advantages, _ = compute_grpo_advantages(
         reward_scores=rewards,
         loss_mask=loss_mask,
         group_size=group_size,
     )
-    advantages = kwargs["advantages"]
     print(advantages.mean(), advantages.std(), advantages.shape)
 
     # test reinforce++ for math
@@ -239,11 +247,10 @@ if __name__ == "__main__":
     loss_mask = torch.zeros(4, 2).bool()
     loss_mask[:, :-1] = 1
     group_size = 2
-    kwargs = compute_reinpp_advantages(
+    advantages, _ = compute_reinpp_advantages(
         reward_scores=rewards,
         loss_mask=loss_mask,
         group_size=group_size,
         use_reinpp_baseline=True,
     )
-    advantages = kwargs["advantages"]
     print(advantages.mean(), advantages.std(), advantages.shape)

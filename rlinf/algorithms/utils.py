@@ -131,10 +131,9 @@ def preprocess_advantages_inputs(**kwargs) -> dict:
     kwargs.update(
         {
             "num_chunk": num_chunk,
-            "bsz": bsz,
+            "batch_size": bsz,
             "chunk_size": chunk_size,
             "n_steps": n_steps,
-            "group_size": bsz,
         }
     )
 
@@ -175,14 +174,16 @@ def postprocess_loss_metric(metrics_data: dict) -> dict:
 
 def calculate_scores(**kwargs):
     rewards = kwargs["rewards"]
-    bsz = kwargs["bsz"]
+    bsz = kwargs["batch_size"]
     n_steps = kwargs["n_steps"]
     dones = kwargs["dones"]
+    group_size = kwargs["group_size"]
 
     scores = torch.zeros(bsz)
     for step in reversed(range(n_steps)):
         scores = scores * ~dones[step + 1]
         scores += rewards[step]
+    scores = scores.reshape(-1, group_size)
 
     kwargs.update({"reward_scores": scores})
 
