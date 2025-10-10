@@ -104,7 +104,7 @@ and exhibits greater stability.
   <tr>
     <td style="text-align:center;"></td>
     <th rowspan="2" colspan="1" style="text-align:center;">In-Distribution</th>
-    <td colspan="4" style="text-align:center;"><strong>Out-Of-Distribution<strong></td>
+    <td colspan="4" style="text-align:center;"><strong>Out-Of-Distribution</strong></td>
   
   </tr>
   <tr>
