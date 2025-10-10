@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright 2025 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,15 +28,17 @@ mp.set_start_method("spawn", force=True)
 
 
 @hydra.main(
-    version_base="1.1", config_path="config", config_name="maniskill_ppo_openvlaoft"
+    version_base="1.1", config_path="config", config_name="maniskill_sac_openvla"
 )
 def main(cfg) -> None:
     cfg = validate_cfg(cfg)
 
-    cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
-    component_placement = HybridComponentPlacement(cfg, cluster)
+    cluster = Cluster(
+        num_nodes=cfg.cluster.num_nodes, num_gpus_per_node=cfg.cluster.num_gpus_per_node
+    )
+    component_placement = HybridComponentPlacement(cfg)
 
-    # Create actor worker group
+    # Create actor worker group (SAC version)
     actor_placement = component_placement.get_strategy("actor")
     actor_group = EmbodiedFSDPActor.create_group(cfg).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
