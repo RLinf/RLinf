@@ -101,18 +101,17 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
     <th colspan="6" style="text-align:center;"> <strong>在 ManiSkill 上的评测结果。表中数值表示任务的成功率（Success Rate）</strong></th>
   </tr>
   <tr>
-    <th style="text-align:center;"></th>
-    <th colspan="1" style="text-align:center;">In-Distribution</th>
-    <th colspan="3" style="text-align:center;">Out-Of-Distribution</th>
-    <th colspan="1" style="text-align:center;">Avg.</th>
+    <td style="text-align:center;"></td>
+    <th rowspan="2" colspan="1" style="text-align:center;">In-Distribution</th>
+    <td colspan="4" style="text-align:center;"><strong>Out-Of-Distribution<strong></td>
+  
   </tr>
   <tr>
-    <th style="text-align:center;"></th>
     <th style="text-align:center;"></th>
     <th style="text-align:center;">Vision</th>
     <th style="text-align:center;">Semantic</th>
     <th style="text-align:center;">Execution</th>
-    <th style="text-align:center;"></th>
+    <th style="text-align:center;">Avg.</th>
   </tr>
   <tr>
     <td style="text-align:center;">OpenVLA (Base)</td>
@@ -184,15 +183,15 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
   </tr>
   <tr>
     <th style="text-align:center;">Model</th>
-    <th style="text-align:center;"><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-spatial"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">Spatial</th>
-    <th style="text-align:center;"><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-object"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">Object</th>
-    <th style="text-align:center;"><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-goal"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">Goal</th>
+    <th style="text-align:center;">Spatial</th>
+    <th style="text-align:center;">Object</th>
+    <th style="text-align:center;">Goal</th>
     <th style="text-align:center;">10</th>
     <th style="text-align:center;">90</th>
     <th style="text-align:center;">Avg.</th>
   </tr>
   <tr>
-    <td style="text-align:center;">OpenVLA-OFT (Base)</td>
+    <td style="text-align:center;"><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">OpenVLA-OFT (Base)</td>
     <td style="text-align:center;">72.18%</td>
     <td style="text-align:center;">71.48%</td>
     <td style="text-align:center;">64.06%</td>
@@ -201,13 +200,13 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
     <td style="text-align:center;">65.43%</td>
   </tr>
   <tr>
-    <td style="text-align:center;">OpenVLA-OFT (RLinf-GRPO)</td>
-    <td style="text-align:center;">99.40%</td>
-    <td style="text-align:center;">99.80%</td>
-    <td style="text-align:center;">98.79%</td>
-    <td style="text-align:center;">93.95%</td>
-    <td style="text-align:center;">98.59%</td>
-    <td style="text-align:center;">98.11%</td>
+    <td style="text-align:center;"><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">OpenVLA-OFT (RLinf-GRPO)</td>
+    <td style="text-align:center;"><strong>99.40%<strong></td>
+    <td style="text-align:center;"><strong>99.80%<strong></td>
+    <td style="text-align:center;"><strong>98.79%<strong></td>
+    <td style="text-align:center;"><strong>93.95%<strong></td>
+    <td style="text-align:center;"><strong>98.59%<strong></td>
+    <td style="text-align:center;"><strong>98.11%<strong></td>
   </tr>
   <tr>
     <td style="text-align:center;">Δ Improvement</td>
@@ -221,93 +220,6 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 </table>
 </div>
 
-<div align="center">
-<table>
-  <tr>
-    <th colspan="5" style="text-align:center;"><strong>OpenVLA-OFT 模型在 ManiSkill3 上的实验结果</strong></th>
-  </tr>
-  <tr>
-    <th>Model</th>
-    <th>Vision</th>
-    <th>Semantic</th>
-    <th>Position</th>
-    <th>Average</th>
-  </tr>
-  <tr>
-    <td><a href="https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">rl4vla</a></td>
-    <td>76.6%</td>
-    <td>75.4%</td>
-    <td>77.6%</td>
-    <td>76.1%</td>
-  </tr>
-  <tr>
-    <td><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-ManiSkill3-25ood"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">GRPO-OpenVLA-OFT</td>
-    <td><strong>84.6%</strong></td>
-    <td>51.6%</td>
-    <td>42.9%</td>
-    <td>61.5%</td>
-  </tr>
-  <tr>
-    <td><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-PPO-ManiSkill3-25ood"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">PPO-OpenVLA-OFT</td>
-    <td>80.5%</td>
-    <td>56.6%</td>
-    <td>56.1%</td>
-    <td>64.5%</td>
-  </tr>
-  <tr>
-    <td><a href="https://huggingface.co/RLinf/RLinf-OpenVLA-PPO-ManiSkill3-25ood"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">PPO-OpenVLA</td>
-    <td>82.0%</td>
-    <td><strong>80.6%</strong></td>
-    <td><strong>89.3%</strong></td>
-    <td><strong>82.2%</strong></td>
-  </tr>
-  <tr>
-    <td><a href="https://huggingface.co/RLinf/RLinf-OpenVLA-GRPO-ManiSkill3-25ood"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">GRPO-OpenVLA</td>
-    <td>74.7%</td>
-    <td>74.4%</td>
-    <td>81.6%</td>
-    <td>75.5%</td>
-  </tr>
-</table>
-
-<table>
-  <tr>
-    <th colspan="6" style="text-align:center;"><strong>OpenVLA-OFT 模型在 LIBERO 上的实验结果</strong></th>
-  </tr>
-  <tr>
-    <th>Model</th>
-    <th><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-spatial"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">Spatial</a></th>
-    <th><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-goal"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">Goal</a></th>
-    <th><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-object"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">Object</a></th>
-    <th><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-long"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">Long</a></th>
-    <th>Average</th>
-  </tr>
-  <tr>
-    <td>OpenVLA-OFT-SFT (one-shot)</td>
-    <td>56.5%</td>
-    <td>45.6%</td>
-    <td>25.6%</td>
-    <td>9.7%</td>
-    <td>34.4%</td>
-  </tr>
-  <tr>
-    <td>OpenVLA-OFT-RLinf</td>
-    <td><strong>99.0%</strong></td>
-    <td><strong>99.0%</strong></td>
-    <td><strong>99.0%</strong></td>
-    <td><strong>94.4%</strong></td>
-    <td><strong>97.9%</strong></td>
-  </tr>
-  <tr>
-    <td>Improvement</td>
-    <td>+42.5%</td>
-    <td>+53.4%</td>
-    <td>+73.4%</td>
-    <td>+84.7%</td>
-    <td>+63.5%</td>
-  </tr>
-</table>
-</div>
 
 - RLinf 同时支持 PPO 与 GRPO 算法，为视觉-语言-动作（Vision-Language-Action, VLA）模型提供最先进的训练能力。
 - 该框架与主流具身智能基准测试（如 ManiSkill3 与 LIBERO）无缝集成，并在多样化的评测指标上均取得了优异表现。

@@ -102,18 +102,17 @@ and exhibits greater stability.
     <th colspan="6" style="text-align:center;"> <strong>Evaluation results on ManiSkill. Values denote success rates</strong></th>
   </tr>
   <tr>
-    <th style="text-align:center;"></th>
-    <th colspan="1" style="text-align:center;">In-Distribution</th>
-    <th colspan="3" style="text-align:center;">Out-Of-Distribution</th>
-    <th colspan="1" style="text-align:center;">Avg.</th>
+    <td style="text-align:center;"></td>
+    <th rowspan="2" colspan="1" style="text-align:center;">In-Distribution</th>
+    <td colspan="4" style="text-align:center;"><strong>Out-Of-Distribution<strong></td>
+  
   </tr>
   <tr>
-    <th style="text-align:center;"></th>
     <th style="text-align:center;"></th>
     <th style="text-align:center;">Vision</th>
     <th style="text-align:center;">Semantic</th>
     <th style="text-align:center;">Execution</th>
-    <th style="text-align:center;"></th>
+    <th style="text-align:center;">Avg.</th>
   </tr>
   <tr>
     <td style="text-align:center;">OpenVLA (Base)</td>
@@ -185,15 +184,15 @@ and exhibits greater stability.
   </tr>
   <tr>
     <th style="text-align:center;">Model</th>
-    <th style="text-align:center;"><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-spatial"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">Spatial</th>
-    <th style="text-align:center;"><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-object"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">Object</th>
-    <th style="text-align:center;"><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-goal"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">Goal</th>
+    <th style="text-align:center;">Spatial</th>
+    <th style="text-align:center;">Object</th>
+    <th style="text-align:center;">Goal</th>
     <th style="text-align:center;">10</th>
     <th style="text-align:center;">90</th>
     <th style="text-align:center;">Avg.</th>
   </tr>
   <tr>
-    <td style="text-align:center;">OpenVLA-OFT (Base)</td>
+    <td style="text-align:center;"><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">OpenVLA-OFT (Base)</td>
     <td style="text-align:center;">72.18%</td>
     <td style="text-align:center;">71.48%</td>
     <td style="text-align:center;">64.06%</td>
@@ -202,13 +201,13 @@ and exhibits greater stability.
     <td style="text-align:center;">65.43%</td>
   </tr>
   <tr>
-    <td style="text-align:center;">OpenVLA-OFT (RLinf-GRPO)</td>
-    <td style="text-align:center;">99.40%</td>
-    <td style="text-align:center;">99.80%</td>
-    <td style="text-align:center;">98.79%</td>
-    <td style="text-align:center;">93.95%</td>
-    <td style="text-align:center;">98.59%</td>
-    <td style="text-align:center;">98.11%</td>
+    <td style="text-align:center;"><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">OpenVLA-OFT (RLinf-GRPO)</td>
+    <td style="text-align:center;"><strong>99.40%<strong></td>
+    <td style="text-align:center;"><strong>99.80%<strong></td>
+    <td style="text-align:center;"><strong>98.79%<strong></td>
+    <td style="text-align:center;"><strong>93.95%<strong></td>
+    <td style="text-align:center;"><strong>98.59%<strong></td>
+    <td style="text-align:center;"><strong>98.11%<strong></td>
   </tr>
   <tr>
     <td style="text-align:center;">Δ Improvement</td>
