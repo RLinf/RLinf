@@ -1,6 +1,6 @@
 defaults:
-  - env/train: PutCarrotOnPlateInScene
-  - env/eval: PutCarrotOnPlateInScene
+  - env/train: PutOnPlateInScene25Main
+  - env/eval: maniskill_ood_template
   - override hydra/job_logging: stdout
 
 hydra:
@@ -36,16 +36,15 @@ runner:
 
 algorithm:
   auto_reset: True
-  ignore_terminations: True
+  ignore_terminations: False
   use_fixed_reset_state_ids: False
   require_values: True
-  shuffle_samples: True
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
-  n_chunk_steps: 80
+  n_chunk_steps: 160
   n_eval_chunk_steps: 80
-  num_group_envs: 120
+  num_group_envs: 128
   rollout_epoch: 1
   reward_type: step_level
   logprob_type: action_level
@@ -70,7 +69,7 @@ algorithm:
     use_greedy: False
     temperature_train: 1.0
     temperature_eval: 0.6
-    top_k: 50
+    top_k: 0
     top_p: 1.0
     repetition_penalty: 1.0
 
@@ -87,7 +86,7 @@ env:
     name: "env_buffer_list"
     queue_name: "obs_buffer"
     queue_size: 0
-  enable_offload: True
+  enable_offload: False
 
 rollout:
   group_name: "RolloutGroup"
@@ -110,8 +109,8 @@ actor:
   training_backend: "fsdp"
   checkpoint_load_path: "/path/to/model/rl4vla/openvla-7b-rlvla-warmup/"
   checkpoint_save_path: "../results"
-  micro_batch_size: 20
-  global_batch_size: 160
+  micro_batch_size: 40
+  global_batch_size: 640
   seed: 1234
   enable_offload: True
 
@@ -144,9 +143,9 @@ actor:
     lr: 1.0e-4
     value_lr: 3.0e-3
     adam_beta1: 0.9
-    adam_beta2: 0.95
+    adam_beta2: 0.999
     adam_eps: 1.0e-05
-    clip_grad: 1.0
+    clip_grad: 10.0
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
