@@ -79,12 +79,12 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 <table border="0">
   <tr>
     <td align="center">
-      <img src="docs/source-en/_static/png/mani_openvla.png" alt="mani_openvla" width="350"/>
+      <img src="https://github.com/RLinf/misc/raw/main/pic/mani_openvla.png" alt="mani_openvla" width="350"/>
       <br/>
       <strong>OpenVLA</strong>
     </td>
     <td align="center">
-      <img src="docs/source-en/_static/png/mani_openvlaoft.png" alt="mani_openvlaoft" width="350"/>
+      <img src="https://github.com/RLinf/misc/raw/main/pic/mani_openvlaoft.png" alt="mani_openvlaoft" width="350"/>
       <br/>
       <strong>OpenVLA-OFT</strong>
     </td>
