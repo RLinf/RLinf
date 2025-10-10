@@ -119,7 +119,7 @@ class FSDPModelManager:
         params_critic = []
         for name, param in self.model.named_parameters():
             if param.requires_grad:
-                if "value_proj" in name or "model.value_head" in name:
+                if "value_head" in name or "model.value_head" in name:
                     params_critic.append(param)
                 else:
                     params_actor.append(param)

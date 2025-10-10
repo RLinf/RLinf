@@ -72,7 +72,9 @@ def compute_embodied_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict
         approx_kl = torch.mean((ratio - 1 - logratio))
     else:
         if loss_mask.any():
-            policy_loss = torch.mean((torch.max(surr1, surr2)/loss_mask_ratio)[loss_mask])
+            policy_loss = torch.mean(
+                (torch.max(surr1, surr2) / loss_mask_ratio)[loss_mask]
+            )
             pg_clipfrac = torch.mean(torch.gt(surr2, surr1).float()[loss_mask])
             approx_kl = torch.mean(((ratio - 1) - logratio)[loss_mask])
         else:
@@ -89,16 +91,15 @@ def compute_embodied_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict
         raise NotImplementedError
 
     # Value loss
-    if prev_values.shape != values.shape:
-        try:
-            prev_values = prev_values.reshape(values.shape)
-        except:
-            raise ValueError(f"{prev_values.shape=} != {values.shape=}")
-    if returns.shape != values.shape:
-        try:
-            returns = returns.reshape(values.shape)
-        except:
-            raise ValueError(f"{returns.shape=} != {values.shape=}")
+    assert prev_values.numel() == values.numel(), (
+        f"numel mismatch: {prev_values.shape=} vs {values.shape=}"
+    )
+    prev_values = prev_values.reshape_as(values)
+
+    assert returns.numel() == values.numel(), (
+        f"numel mismatch: {returns.shape=} vs {values.shape=}"
+    )
+    returns = returns.reshape_as(values)
 
     value_pred_clipped = prev_values + (values - prev_values).clamp(
         -value_clip, value_clip
@@ -107,7 +108,7 @@ def compute_embodied_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict
     error_original = returns - values  # [bsz, ] | [bsz, chunk-step]
     value_loss_clipped = huber_loss(error_clipped, huber_delta)
     value_loss_original = huber_loss(error_original, huber_delta)
-    value_loss = torch.max(value_loss_original, value_loss_clipped)/loss_mask_ratio
+    value_loss = torch.max(value_loss_original, value_loss_clipped) / loss_mask_ratio
 
     value_clip_indicator = (value_pred_clipped - prev_values).abs() > value_clip
     value_clip_ratio = value_clip_indicator.float().mean()
@@ -184,14 +185,16 @@ def compute_embodied_grpo_actor_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
     # Compute clipped and unclipped policy gradient losses
     surr1 = -ratio * advantages
     surr2 = -torch.clamp(ratio, 1 - clip_ratio_low, 1 + clip_ratio_high) * advantages
-    
+
     if loss_mask is None:
         policy_loss = torch.mean(torch.max(surr1, surr2))
         pg_clipfrac = torch.mean(torch.gt(surr2, surr1).float())
         approx_kl = torch.mean((ratio - 1 - logratio))
     else:
         if loss_mask.any():
-            policy_loss = torch.mean((torch.max(surr1, surr2)/loss_mask_ratio)[loss_mask])
+            policy_loss = torch.mean(
+                (torch.max(surr1, surr2) / loss_mask_ratio)[loss_mask]
+            )
             pg_clipfrac = torch.mean(torch.gt(surr2, surr1).float()[loss_mask])
             approx_kl = torch.mean(((ratio - 1) - logratio)[loss_mask])
         else:

@@ -31,6 +31,7 @@ import functools
 import torch
 from accelerate import init_empty_weights
 from torch.distributed.fsdp.wrap import (
+    _module_wrap_policy,
     transformer_auto_wrap_policy,
 )
 from transformers.trainer_pt_utils import get_module_class_from_name
@@ -102,7 +103,6 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False):
     if is_vla_model:
         from prismatic.extern.hf.modeling_prismatic import PrismaticProjector
         from timm.models.vision_transformer import VisionTransformer
-        from torch.distributed.fsdp.wrap import _module_wrap_policy, _or_policy
 
         # Vision transformer policies
         vit_wrap_policy = functools.partial(
@@ -115,7 +115,6 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False):
         # which initializes accelerate.PartialState, which in turn
         # initializes a torch.distributed process group in gloo.
         # This results in default group being gloo, which does not support CUDA tensors and allreduce average.
-        from prismatic.extern.hf.modeling_prismatic import PrismaticProjector
 
         prismatic_fsdp_wrapping_policy = functools.partial(
             _module_wrap_policy,
