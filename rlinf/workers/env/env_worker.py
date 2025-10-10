@@ -123,7 +123,7 @@ class EnvWorker(Worker):
             from rlinf.envs.libero.libero_env import LiberoEnv
 
             if not only_eval:
-                for _ in range(self.stage_num):
+                for stage_id in range(self.stage_num):
                     self.simulator_list.append(
                         EnvManager(
                             self.cfg.env.train,
@@ -135,7 +135,7 @@ class EnvWorker(Worker):
                         )
                     )
             if self.cfg.runner.val_check_interval > 0 or only_eval:
-                for _ in range(self.stage_num):
+                for stage_id in range(self.stage_num):
                     self.eval_simulator_list.append(
                         EnvManager(
                             self.cfg.env.eval,
@@ -150,7 +150,7 @@ class EnvWorker(Worker):
             from rlinf.envs.robotwin.RoboTwin_env import RoboTwin
 
             if not only_eval:
-                for _ in range(self.stage_num):
+                for stage_id in range(self.stage_num):
                     self.simulator_list.append(
                         EnvManager(
                             self.cfg.env.train,
@@ -163,7 +163,7 @@ class EnvWorker(Worker):
                         # RoboTwin(self.cfg.env.train, rank=self._rank, world_size=self._world_size)
                     )
             if self.cfg.runner.val_check_interval > 0 or only_eval:
-                for _ in range(self.stage_num):
+                for stage_id in range(self.stage_num):
                     self.eval_simulator_list.append(
                         EnvManager(
                             self.cfg.env.eval,
