@@ -82,6 +82,7 @@ def preprocess_loss_inputs(**kwargs) -> dict:
         advantages = advantages.unsqueeze(-1)
         if loss_mask is not None:
             loss_mask = loss_mask.unsqueeze(-1)
+        if loss_mask_sum is not None:
             loss_mask_sum = loss_mask_sum.unsqueeze(-1)
 
     elif logprob_type == "action_level":
@@ -116,6 +117,7 @@ def preprocess_loss_inputs(**kwargs) -> dict:
 def preprocess_advantages_inputs(**kwargs) -> dict:
     """
     Preprocess inputs before computing advantages & returns.
+    Unify names & formats, align with math interfaces.
     """
     reward_type = kwargs.get("reward_type", None)
     if reward_type == "chunk_level":
@@ -123,4 +125,91 @@ def preprocess_advantages_inputs(**kwargs) -> dict:
         dones = kwargs["dones"]
         kwargs["rewards"] = rewards.sum(dim=-1, keepdim=True)
         kwargs["dones"] = dones[..., -1:]
+
+    rewards = kwargs["rewards"]
+    dones = kwargs["dones"]
+    values = kwargs.get("values", None)
+    loss_mask = kwargs.get("loss_mask", None)
+    num_chunk, bsz, chunk_size = rewards.shape
+    n_steps = num_chunk * chunk_size
+    kwargs.update(
+        {
+            "num_chunk": num_chunk,
+            "batch_size": bsz,
+            "chunk_size": chunk_size,
+            "n_steps": n_steps,
+        }
+    )
+
+    # Transpose(1, 2) -> [num-chunk, chunk-size, bsz]
+    # Reshape -> [n_steps, bsz]
+    # Rewards [n_steps, bsz]
+    kwargs["rewards"] = rewards.transpose(1, 2).reshape(n_steps, bsz)
+
+    # Loss Mask (T steps) [bsz, n_steps]
+    if loss_mask is not None:
+        kwargs["loss_mask"] = (
+            loss_mask.transpose(1, 2).reshape(n_steps, bsz).transpose(0, 1)
+        )
+
+    # Dones (T+1 steps) [num-chunk+1, bsz, chunk-size]
+    flattened_dones_full = dones.transpose(1, 2).reshape(
+        (num_chunk + 1) * chunk_size, bsz
+    )
+    kwargs["dones"] = flattened_dones_full[-(n_steps + 1) :]
+
+    if kwargs["adv_type"] == "gae":
+        flattened_values_full = values.transpose(1, 2).reshape(
+            (num_chunk + 1) * chunk_size, bsz
+        )
+        kwargs["values"] = flattened_values_full[: n_steps + 1]
+
     return kwargs
+
+
+def postprocess_loss_metric(metrics_data: dict) -> dict:
+    for k, v in metrics_data.items():
+        if isinstance(v, torch.Tensor):
+            metrics_data[k] = v.detach().item()
+        elif isinstance(v, (float, int)):
+            metrics_data[k] = v
+    return metrics_data
+
+
+def calculate_scores(**kwargs):
+    rewards = kwargs["rewards"]
+    bsz = kwargs["batch_size"]
+    n_steps = kwargs["n_steps"]
+    dones = kwargs["dones"]
+    group_size = kwargs["group_size"]
+
+    scores = torch.zeros(bsz)
+    for step in reversed(range(n_steps)):
+        scores = scores * ~dones[step + 1]
+        scores += rewards[step]
+    scores = scores.reshape(-1, group_size)
+
+    kwargs.update({"reward_scores": scores})
+
+    return kwargs
+
+
+def postprocess_advantages_outputs(**kwargs):
+    """
+    Post-process results for Embodiment tasks; unflatten tensors.
+    """
+    advantages = kwargs["advantages"]
+    returns = kwargs.get("returns", None)
+    num_chunk = kwargs["num_chunk"]
+    chunk_size = kwargs["chunk_size"]
+
+    res = {}
+
+    advantages = advantages.reshape(num_chunk, chunk_size, -1).transpose(1, 2)
+    res.update({"advantages": advantages})
+
+    if returns is not None:
+        returns = returns.reshape(num_chunk, chunk_size, -1).transpose(1, 2)
+        res.update({"returns": returns})
+
+    return res
