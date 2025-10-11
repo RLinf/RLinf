@@ -21,7 +21,7 @@ All types of contributions are encouraged and valued. See the [Table of Contents
 
 
 ## I Want To Contribute
-> All contributions (including the project team's contribution) takes the form of [GitHub Pull Requests](https://github.com/RLinf/RLinf/pulls).
+All contributions (including the project team's contribution) takes the form of [GitHub Pull Requests](https://github.com/RLinf/RLinf/pulls).
 To contribute, first you need to [fork the repository](https://github.com/RLinf/RLinf/fork) and clone it to your local machine.
 Then, create a new development branch from `main` for your contribution:
 ```bash
@@ -29,7 +29,7 @@ git checkout main
 git pull origin main
 git checkout -b feature/your-feature-name
 ```
-After you have made your changes, commit them with a clear and descriptive commit message:
+After you have made your changes, commit them with a clear and descriptive commit message. The `-s` flag is necessary, which adds a "Signed-off-by" line at the end of the commit message:
 ```bash
 git add .
 git commit -m "feat(embodied): add a clear and descriptive commit message" -s
@@ -46,8 +46,6 @@ Where `<type>` commonly includes the following (others can be found in the [Conv
 - `refactor`: refactoring production code, e.g. renaming a variable
 - `test`: adding missing tests, refactoring tests; no production code change
 - `chore`: updating build tasks, package manager configs, etc; no production code change.
-
-The `-s` flag is necessary, which adds a "Signed-off-by" line at the end of the commit message, certifying that you have the right to submit this work under the project's license.
 
 Finally, before pushing your changes to your fork, please run the pre-commit checks to ensure that your code adheres to the project's coding standards:
 ```bash

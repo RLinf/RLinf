@@ -42,7 +42,24 @@ jobs:
     openvla-ppo-test:
         runs-on: rlinf
         container:
-            image: rlinf/rlinf:agentic-openvla-rlinf0.1-torch2.5.1-transformer4.40
+            image: rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+            volumes:
+                - /mnt/public/dataset:/workspace/dataset
+                - /mnt/public/tokenizer:/workspace/tokenizer
+            options: --gpus="all" --shm-size=2g
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+            - name: OpenVLA test
+              timeout-minutes: 20
+              run: |
+                export REPO_PATH=$(pwd)
+                bash tests/e2e_tests/embodied/run_openvla.sh
+    openvlaoft-grpo-test:
+        runs-on: rlinf
+        container:
+            image: rlinf/rlinf:agentic-openvlaoft-rlinf0.1-torch2.5.1
             volumes:
                 - /mnt/public/dataset:/workspace/dataset
                 - /mnt/public/tokenizer:/workspace/tokenizer
@@ -51,7 +68,7 @@ jobs:
         steps:
             - name: Checkout code
               uses: actions/checkout@v4
-            - name: OpenVLA test
+            - name: OpenVLA-OFT test
               run: |
                 export REPO_PATH=$(pwd)
-                bash tests/e2e_tests/embodied/run_openvla.sh
+                bash tests/e2e_tests/embodied/run_openvlaoft_libero130.sh

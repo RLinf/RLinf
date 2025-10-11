@@ -48,11 +48,13 @@ jobs:
               run: pip install pytest
 
             - name: Run pytest
+              timeout-minutes: 20
               run: |
                 export PYTHONPATH=$(pwd):$(pwd)/megatron:$(pwd)/tests/unit_tests 
                 pytest tests/unit_tests
             
             - name: Run doctest
+              timeout-minutes: 20
               run: |
                 pytest --doctest-modules rlinf/scheduler
       
@@ -69,6 +71,7 @@ jobs:
               run: pip install pytest
 
             - name: Run pytest
+              timeout-minutes: 20
               run: |
                 export PYTHONPATH=$(pwd):$(pwd)/megatron:$(pwd)/tests/unit_tests 
                 pytest tests/unit_tests

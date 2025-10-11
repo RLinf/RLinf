@@ -21,12 +21,6 @@ RLinf 支持多种后端引擎，用于训练和推理。目前支持以下配�
 
    - **Huggingface**：简单易用，配套 Huggingface 生态提供的原生 API。
 
-安装方式
---------------------
-
-RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可以提供最快速、最可复现的环境。  
-如果你的系统无法使用 Docker 镜像，也可以选择在本地 Python 环境中手动安装。
-
 硬件要求
 ~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -70,19 +64,25 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
    * - NVIDIA Container Toolkit
      - 1.17.8
 
-使用 Docker 镜像安装
+
+安装方式
+--------------------
+
+RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可以提供最快速、最可复现的环境。  
+如果你的系统无法使用 Docker 镜像，也可以选择在本地 Python 环境中手动安装。
+
+安装方式1： Docker 镜像
 -------------------------
 
 我们提供了两个官方镜像，分别针对不同后端配置进行了优化：
 
-- **Megatron + SGLang/vLLM**：
+- **基于Megatron + SGLang/vLLM的数学推理镜像**：
 
   - ``rlinf/rlinf:math-rlinf0.1-torch2.5.1-sglang0.4.4-vllm0.7.1-megatron0.11.0-te2.1`` （用于增强大语言模型在 MATH 任务中的推理能力）
 
-- **FSDP + Huggingface**：
+- **基于FSDP + Huggingface的具身智能镜像**：
 
-  - ``rlinf/rlinf:agentic-openvla-rlinf0.1-torch2.5.1`` （适用于 OpenVLA 模型）  
-  - ``rlinf/rlinf:agentic-openvlaoft-rlinf0.1-torch2.5.1`` （适用于 OpenVLA-OFT 模型）
+  - ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` （适用于 OpenVLA/OpenVLA-OFT/Pi0 模型）
 
 确认适合你任务的镜像后，拉取镜像：
 
@@ -97,7 +97,6 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
    docker run -it --gpus all \
       --shm-size 100g \
       --net=host \
-      --env NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
       --name rlinf \
       rlinf/rlinf:CHOSEN_IMAGE /bin/bash
 
@@ -108,25 +107,30 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
+具身智能镜像中包含多个 Python 虚拟环境（venv），位于 ``/opt/venv`` 目录下，分别对应不同模型，即 ``openvla``、``openvla-oft`` 和 ``pi0``。
+默认环境设置为 ``openvla``。
+要切换到所需的 venv，可以使用内置脚本 `switch_env`：
+.. code-block:: bash
+
+   source switch_env <env_name> # 例如，source switch_env openvla-oft, source switch_env pi0 等
+
 .. tip::
 
    如果进行多节点训练，请将仓库克隆到共享存储路径，确保每个节点都能访问该代码。
 
-自定义环境安装
+安装方式2：UV 自定义环境
 -------------------------------
 **如果你已经使用了 Docker 镜像，下面步骤可跳过。**
 
-根据你的实验类型，安装分为三步进行：
+根据你的实验类型，安装分为两步进行：
 
-第一步，对于所有实验，请先完成 :ref:`共同依赖 <common-dependencies>` 中的依赖安装，  
-这一步已经包括了 **FSDP + Huggingface** 的完整配置。
+第一步，对于所有实验类型，请先完成 :ref:`共同依赖 <common-dependencies>` 中的依赖安装。
 
-第二步，如果你的实验使用的是 **Megatron 和 SGLang/vLLM** 后端，  
-请参考 :ref:`Megatron 和 SGLang/vLLM 依赖 <megatron-and-sglang-vllm-dependencies>` 安装相应依赖。
-（具身智能实验此步可忽略）
+第二步，根据你的实验类型，安装对应的依赖。  
 
-第三步，如果你要运行具身智能相关实验（如 OpenVLA、OpenVLA-OFT、Pi0），  
-请参考 :ref:`具身智能相关依赖 <embodied-dependencies>` 安装专用依赖项。
+* 如果你要运行数学推理实验，需要安装 **Megatron 和 SGLang/vLLM** 后端，请参考 :ref:`Megatron 和 SGLang/vLLM 依赖 <megatron-and-sglang-vllm-dependencies>` 安装相应依赖。
+
+* 如果你要运行具身智能相关实验（如 OpenVLA、OpenVLA-OFT、Pi0），请参考 :ref:`具身智能相关依赖 <embodied-dependencies>` 安装专用依赖项。
 
 .. _common-dependencies:
 
@@ -154,6 +158,10 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 
 Megatron 和 SGLang/vLLM 依赖
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. note::
+  如果你运行的是具身智能实验，则无需安装这些依赖。  
+  请直接跳转到 :ref:`具身智能相关依赖 <embodied-dependencies>` 部分。
 
 运行以下命令，安装 Megatron、SGLang/vLLM 及其所需依赖：
 

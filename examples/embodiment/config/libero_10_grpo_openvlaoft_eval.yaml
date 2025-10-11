@@ -141,6 +141,7 @@ actor:
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
     trust_remote_code: True
+    gradient_checkpointing: False
 
   optim:
     lr: 2.0e-5

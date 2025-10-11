@@ -313,7 +313,9 @@ class Worker(metaclass=WorkerMeta):
 
     PID = None
     current_worker = None
+    logging.basicConfig()
     logger = logging.getLogger(Cluster.SYS_NAME)
+    logger.setLevel(logging.INFO)
     torch_platform = torch.cuda
     torch_device_type = "cuda"
 

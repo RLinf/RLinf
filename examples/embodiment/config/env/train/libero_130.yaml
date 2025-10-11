@@ -1,5 +1,5 @@
 simulator_type: libero
-task_suite_name: libero_10
+task_suite_name: libero_130
 
 auto_reset: ${algorithm.auto_reset}
 ignore_terminations: ${algorithm.ignore_terminations}
@@ -25,3 +25,5 @@ video_cfg:
 init_params:
   camera_heights: 256
   camera_widths: 256
+
+use_ordered_reset_state_ids: True

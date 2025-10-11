@@ -19,9 +19,11 @@ import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import imageio
+import libero.libero.benchmark as benchmark
 import numpy as np
 import torch
 from libero.libero import get_libero_path
+from libero.libero.benchmark import Benchmark
 from libero.libero.envs import OffScreenRenderEnv
 from PIL import Image, ImageDraw, ImageFont
 
@@ -447,3 +449,47 @@ def save_rollout_video(
     for img in rollout_images:
         video_writer.append_data(img)
     video_writer.close()
+
+
+def get_benchmark_overridden(benchmark_name) -> Benchmark:
+    """
+    Return the Benchmark class for a given name.
+    For "libero_130": return a dynamically aggregated class from all suites.
+    For others: delegate to the original LIBERO get_benchmark.
+
+    Args:
+        benchmark_name: Name of the benchmark to get
+
+    Returns:
+        Benchmark class
+    """
+    name = str(benchmark_name).lower()
+    if name != "libero_130":
+        return benchmark.get_benchmark(benchmark_name)
+
+    libreo_cls = benchmark.BENCHMARK_MAPPING.get("libero_130", None)
+    if libreo_cls is not None:
+        return libreo_cls
+
+    # Build aggregated task map once, preserving order and de-duplicating by task name
+    aggregated_task_map: Dict[str, benchmark.Task] = {}
+    for suite_name in getattr(benchmark, "libero_suites", []):
+        suite_map = benchmark.task_maps.get(suite_name, {})
+        for task_name, task in suite_map.items():
+            if task_name not in aggregated_task_map:
+                aggregated_task_map[task_name] = task
+
+    class LIBERO_ALL(Benchmark):
+        def __init__(self, task_order_index=0):
+            super().__init__(task_order_index=task_order_index)
+            self.name = "libero_130"
+            self._make_benchmark()
+
+        def _make_benchmark(self):
+            tasks = list(aggregated_task_map.values())
+            self.tasks = tasks
+            self.n_tasks = len(self.tasks)
+
+    # Register for discoverability/help
+    benchmark.BENCHMARK_MAPPING["libero_130"] = LIBERO_ALL
+    return LIBERO_ALL

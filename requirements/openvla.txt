@@ -1,8 +1,2 @@
 openvla @ git+https://github.com/openvla/openvla.git
 flash-attn==2.5.5
-imageio[ffmpeg]
-robosuite==1.4.1
-bddl
-easydict
-cloudpickle
-gym

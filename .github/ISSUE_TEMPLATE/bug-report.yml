@@ -20,6 +20,22 @@ body:
     required: true
 - type: textarea
   attributes:
+    label: Log file
+    description: |
+      Please provide upload the log file or paste the full log messages when the bug happens.
+    value: |
+      You can find the log file in `logs/` folder or the $output_dir/$experiment_name folder (defined in the yaml config) if you are using our example scripts.
+
+      Log file:
+
+      If you cannot find the log, please provide the full log messages here.
+      ```
+      <paste log here>
+      ```
+  validations:
+    required: true
+- type: textarea
+  attributes:
     label: Environment
     description: |
       Please provide the environment you are using via the following command:
@@ -28,13 +44,13 @@ body:
       pip list | grep -E "torch|sglang|vllm|ray|transformers"
       nvidia-smi
       ```
-      Additionally, please provide the RLinf version, Megatron version if you are using Megatron, and docker image version if you are using our images
+      Additionally, please provide the RLinf version, Megatron version if you are using Megatron, and docker image tag if you are using our images
     value: |
       Python version:
       PIP list:
       RLinf version: 
       Megatron version: 
-      Docker image version: 
+      Docker image tag: 
       nvidia-smi:
   validations:
     required: true

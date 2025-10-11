@@ -26,6 +26,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
     get_fsdp_wrap_policy,
     init_fn,
 )
+from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import clear_memory
 
 
@@ -36,6 +37,7 @@ class FSDPModelManager:
 
     def __init__(self, cfg: DictConfig):
         self._cfg = cfg
+        self.logger = get_logger()
         self.torch_dtype = torch_dtype_from_precision(self._cfg.model.precision)
 
         assert (
@@ -78,7 +80,12 @@ class FSDPModelManager:
         """Setup model and optimizer."""
         module = self.model_provider_func()
 
-        module.gradient_checkpointing_enable()
+        # Enable gradient checkpointing if configured
+        if self._cfg.model.get("gradient_checkpointing", False):
+            self.logger.info("[FSDP] Enabling gradient checkpointing")
+            module.gradient_checkpointing_enable()
+        else:
+            self.logger.info("[FSDP] Gradient checkpointing is disabled")
 
         mixed_precision = MixedPrecision(
             param_dtype=self.torch_dtype,
