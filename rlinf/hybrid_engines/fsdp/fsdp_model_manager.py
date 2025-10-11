@@ -101,7 +101,7 @@ class FSDPModelManager:
         self.model = FSDP(
             module,
             param_init_fn=init_fn,
-            use_orig_params=False,
+            use_orig_params=True,
             auto_wrap_policy=auto_wrap_policy,
             device_id=int(os.environ["LOCAL_RANK"]),
             sharding_strategy=sharding_strategy,  # zero3
@@ -111,18 +111,20 @@ class FSDPModelManager:
 
         # NOTE: Currently we assume that only the value head contains "value_head" in its name.
         # The value head only serves for value prediction in RL algorithms like PPO.
+        # For SAC, we also support "q_value_head" parameters.
         param_groups = [
             {
                 "params": [
                     p
                     for n, p in self.model.named_parameters()
-                    if "value_head" not in n and p.requires_grad
+                    if "value_head" not in n and "q_value_head" not in n and p.requires_grad
                 ],
                 "lr": self._cfg.optim.lr,
                 "betas": betas,
             },
         ]
 
+        # Add value head parameters (for PPO/GAE)
         if self._cfg.model.vh_mode in ["a", "a0", "a6"]:
             param_groups.append(
                 {
@@ -132,6 +134,20 @@ class FSDPModelManager:
                         if "value_head" in n and p.requires_grad
                     ],
                     "lr": self._cfg.optim.value_lr,
+                    "betas": betas,
+                }
+            )
+        
+        # Add Q-value head parameters (for SAC)
+        if hasattr(self.model, 'q_value_head') or any("q_value_head" in n for n, _ in self.model.named_parameters()):
+            param_groups.append(
+                {
+                    "params": [
+                        p
+                        for n, p in self.model.named_parameters()
+                        if "q_value_head" in n and p.requires_grad
+                    ],
+                    "lr": self._cfg.optim.get("q_value_lr", self._cfg.optim.lr),
                     "betas": betas,
                 }
             )

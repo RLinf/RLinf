@@ -15,6 +15,7 @@
 from typing import Dict, Tuple
 
 import torch
+import torch.nn.functional as F
 
 from rlinf.algorithms.registry import register_policy_loss
 from rlinf.algorithms.utils import huber_loss
@@ -233,7 +234,7 @@ def compute_math_ppo_actor_loss(**kwargs):
     dual_clip_mask.logical_and_(loss_mask)
 
     clip_fraction = clip_mask.logical_and_(loss_mask).count_nonzero() / loss_mask_count
-    approx_kl = -approx_kl.sum() / loss_mask_count
+    approx_kl = approx_kl.sum() / loss_mask_count
 
     dual_cliped_ratio = torch.where(dual_clip_mask, ratio, 0)
 
@@ -247,6 +248,364 @@ def compute_math_ppo_actor_loss(**kwargs):
         "clip_fraction": clip_fraction.detach(),
     }
     return policy_loss, metrics_data
+
+
+@register_policy_loss("embodied_sac_gumbel")
+def compute_embodied_sac_gumbel_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
+    """
+    Compute SAC loss with Gumbel-Softmax for differentiable discrete actions.
+    
+    This version uses continuous action probabilities from Gumbel-Softmax
+    to enable gradient flow through discrete action sampling.
+    
+    Args:
+        q1_values (torch.Tensor): Q1 network predictions
+        q2_values (torch.Tensor): Q2 network predictions
+        target_q_values (torch.Tensor): Target Q-values
+        action_probs (torch.Tensor): Continuous action probabilities from Gumbel-Softmax [B, action_dim, vocab_size]
+        logprobs (torch.Tensor): Current policy log probabilities
+        entropy (torch.Tensor): Policy entropy
+        rewards (torch.Tensor): Rewards
+        dones (torch.Tensor): Done flags
+        gamma (float): Discount factor
+        alpha (float): Temperature parameter for entropy regularization
+        loss_mask (torch.Tensor, optional): Mask for valid loss computation
+        
+    Returns:
+        Tuple[torch.Tensor, Dict]: Total loss and metrics dictionary
+    """
+    # Extract arguments
+    q1_values = kwargs["q1_values"]
+    q2_values = kwargs["q2_values"] 
+    target_q_values = kwargs["target_q_values"]
+    action_probs = kwargs.get("action_probs", None)  # Gumbel-Softmax probabilities
+    logprobs = kwargs["logprobs"]
+    entropy = kwargs["entropy"]
+    rewards = kwargs["rewards"]
+    dones = kwargs["dones"]
+    gamma = kwargs.get("gamma", 0.99)
+    alpha = kwargs.get("alpha", 0.2)
+    loss_mask = kwargs.get("loss_mask", None)
+    
+    # Compute target Q-values for critic loss
+    with torch.no_grad():
+        next_q_values = target_q_values - alpha * logprobs
+        target_q = rewards + gamma * (1 - dones.float()) * next_q_values
+    
+    # Critic loss (MSE between Q-values and targets)
+    q1_loss = F.mse_loss(q1_values, target_q, reduction='none')
+    q2_loss = F.mse_loss(q2_values, target_q, reduction='none')
+    
+    if loss_mask is not None:
+        q1_loss = q1_loss * loss_mask
+        q2_loss = q2_loss * loss_mask
+        critic_loss = (q1_loss.sum() + q2_loss.sum()) / (2 * loss_mask.sum())
+    else:
+        critic_loss = (q1_loss.mean() + q2_loss.mean()) / 2
+    
+    # Actor loss with Gumbel-Softmax
+    min_q_values = torch.min(q1_values, q2_values)
+    
+    if action_probs is not None:
+        # Use continuous probabilities for gradient flow
+        # Expected Q-value under the policy distribution
+        # This enables gradients to flow through the discrete sampling
+        batch_size, action_dim, vocab_size = action_probs.shape
+        
+        # For each action dimension, compute expected Q-value
+        expected_q_values = []
+        for i in range(action_dim):
+            # Get action probabilities for this dimension
+            probs_i = action_probs[:, i, :]  # [B, vocab_size]
+            
+            # Compute expected Q-value for this action dimension
+            # This is a weighted sum of Q-values by action probabilities
+            # Note: This is a simplified approach - in practice, you might need
+            # to map action tokens back to their corresponding Q-values
+            expected_q_i = (probs_i * min_q_values.unsqueeze(-1)).sum(dim=-1)  # [B]
+            expected_q_values.append(expected_q_i)
+        
+        expected_q = torch.stack(expected_q_values, dim=1).mean(dim=1)  # [B]
+        
+        # Actor loss: maximize expected Q-value and entropy
+        actor_loss = alpha * logprobs - expected_q
+    else:
+        # Fallback to standard SAC actor loss
+        actor_loss = alpha * logprobs - min_q_values
+    
+    if loss_mask is not None:
+        actor_loss = (actor_loss * loss_mask).sum() / loss_mask.sum()
+    else:
+        actor_loss = actor_loss.mean()
+    
+    # Total loss
+    total_loss = critic_loss + actor_loss
+    
+    # Compute metrics
+    metrics = {
+        "sac_gumbel/critic_loss": critic_loss.detach().item(),
+        "sac_gumbel/actor_loss": actor_loss.detach().item(),
+        "sac_gumbel/q1_mean": q1_values.detach().mean().item(),
+        "sac_gumbel/q2_mean": q2_values.detach().mean().item(),
+        "sac_gumbel/target_q_mean": target_q.detach().mean().item(),
+        "sac_gumbel/entropy_mean": entropy.detach().mean().item(),
+        "sac_gumbel/alpha": alpha if isinstance(alpha, float) else alpha.detach().item(),
+        "sac_gumbel/logprob_mean": logprobs.detach().mean().item(),
+    }
+    
+    if action_probs is not None:
+        metrics["sac_gumbel/action_probs_entropy"] = -(action_probs * torch.log(action_probs + 1e-8)).sum(dim=-1).mean().item()
+    
+    return total_loss, metrics
+
+
+@register_policy_loss("embodied_sac")
+def compute_embodied_sac_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
+    """
+    Compute SAC (Soft Actor-Critic) loss for embodied RL.
+    
+    Args:
+        q1_values (torch.Tensor): Q1 network predictions
+        q2_values (torch.Tensor): Q2 network predictions
+        target_q_values (torch.Tensor): Target Q-values
+        logprobs (torch.Tensor): Current policy log probabilities
+        old_logprobs (torch.Tensor): Previous policy log probabilities (for comparison)
+        entropy (torch.Tensor): Policy entropy
+        rewards (torch.Tensor): Rewards
+        dones (torch.Tensor): Done flags
+        gamma (float): Discount factor
+        tau (float): Soft update coefficient for target networks
+        alpha (float): Temperature parameter for entropy regularization
+        target_entropy (float): Target entropy for automatic temperature tuning
+        loss_mask (torch.Tensor, optional): Mask for valid loss computation
+        
+    Returns:
+        Tuple[torch.Tensor, Dict]: Total loss and metrics dictionary
+    """
+    # Extract arguments
+    q1_values = kwargs["q1_values"]
+    q2_values = kwargs["q2_values"] 
+    target_q_values = kwargs["target_q_values"]
+    logprobs = kwargs["logprobs"]
+    entropy = kwargs["entropy"]
+    rewards = kwargs["rewards"]
+    dones = kwargs["dones"]
+    gamma = kwargs.get("gamma", 0.99)
+    alpha = kwargs.get("alpha", 0.2)
+    target_entropy = kwargs.get("target_entropy", None)
+    loss_mask = kwargs.get("loss_mask", None)
+    
+    # Ensure gamma and alpha are tensors with correct dtype
+    if not isinstance(gamma, torch.Tensor):
+        gamma = torch.tensor(gamma, dtype=q1_values.dtype, device=q1_values.device)
+    if not isinstance(alpha, torch.Tensor):
+        alpha = torch.tensor(alpha, dtype=q1_values.dtype, device=q1_values.device)
+    
+    # Ensure all input tensors have correct dtype
+    rewards = rewards.to(dtype=q1_values.dtype)
+    logprobs = logprobs.to(dtype=q1_values.dtype)
+    dones = dones.to(dtype=q1_values.dtype)
+    
+    # Debug: print shapes and dtypes
+    # print(f"SAC Loss - rewards shape: {rewards.shape}, dtype: {rewards.dtype}")
+    # print(f"SAC Loss - target_q_values shape: {target_q_values.shape}, dtype: {target_q_values.dtype}")
+    # print(f"SAC Loss - logprobs shape: {logprobs.shape}, dtype: {logprobs.dtype}")
+    # print(f"SAC Loss - dones shape: {dones.shape}, dtype: {dones.dtype}")
+    # print(f"SAC Loss - alpha shape: {alpha.shape if hasattr(alpha, 'shape') else 'scalar'}, dtype: {alpha.dtype if hasattr(alpha, 'dtype') else type(alpha)}")
+    # print(f"SAC Loss - gamma shape: {gamma.shape if hasattr(gamma, 'shape') else 'scalar'}, dtype: {gamma.dtype if hasattr(gamma, 'dtype') else type(gamma)}")
+    # (EmbodiedSACFSDPActor pid=1531607) SAC Loss - rewards shape: torch.Size([32]), dtype: torch.float32
+    # (EmbodiedSACFSDPActor pid=1531607) SAC Loss - target_q_values shape: torch.Size([32, 1]), dtype: torch.bfloat16
+    # (EmbodiedSACFSDPActor pid=1531607) SAC Loss - logprobs shape: torch.Size([32, 1]), dtype: torch.float32
+    # (EmbodiedSACFSDPActor pid=1531607) SAC Loss - dones shape: torch.Size([32]), dtype: torch.bool
+    # (EmbodiedSACFSDPActor pid=1531607) SAC Loss - alpha shape: torch.Size([]), dtype: torch.bfloat16
+    # (EmbodiedSACFSDPActor pid=1531607) SAC Loss - gamma shape: torch.Size([]), dtype: torch.bfloat16
+    # (EmbodiedSACFSDPActor pid=1531607) SAC Loss - next_q_values shape: torch.Size([32, 1])
+    # Compute target Q-values for critic loss
+    with torch.no_grad():
+        # Now logprobs should be [batch_size, 1] (entire action sequence probability)
+        next_q_values = target_q_values - alpha * logprobs
+        print(f"SAC Loss - next_q_values shape: {next_q_values.shape}")
+        
+        # Ensure rewards and dones match next_q_values shape
+        if rewards.dim() == 1:
+            rewards = rewards.unsqueeze(1)  # [batch_size] -> [batch_size, 1]
+        if dones.dim() == 1:
+            dones = dones.unsqueeze(1)  # [batch_size] -> [batch_size, 1]
+            
+        target_q = rewards + gamma * (1 - dones.to(dtype=gamma.dtype)) * next_q_values
+    
+    # Critic loss (MSE between Q-values and targets)
+    q1_loss = F.mse_loss(q1_values, target_q, reduction='none')
+    q2_loss = F.mse_loss(q2_values, target_q, reduction='none')
+    
+    if loss_mask is not None:
+        q1_loss = q1_loss * loss_mask
+        q2_loss = q2_loss * loss_mask
+        critic_loss = (q1_loss.sum() + q2_loss.sum()) / (2 * loss_mask.sum())
+    else:
+        critic_loss = (q1_loss.mean() + q2_loss.mean()) / 2
+    
+    # Actor loss (maximize Q-value and entropy)
+    min_q_values = torch.min(q1_values, q2_values)
+    actor_loss = alpha * logprobs - min_q_values
+    
+    if loss_mask is not None:
+        actor_loss = (actor_loss * loss_mask).sum() / loss_mask.sum()
+    else:
+        actor_loss = actor_loss.mean()
+    
+    # Total loss
+    total_loss = critic_loss + actor_loss
+    
+    # Compute metrics
+    metrics = {
+        "sac/critic_loss": critic_loss.detach().item(),
+        "sac/actor_loss": actor_loss.detach().item(),
+        "sac/q1_mean": q1_values.detach().mean().item(),
+        "sac/q2_mean": q2_values.detach().mean().item(),
+        "sac/target_q_mean": target_q.detach().mean().item(),
+        "sac/entropy_mean": entropy.detach().mean().item(),
+        "sac/alpha": alpha if isinstance(alpha, float) else alpha.detach().item(),
+        "sac/logprob_mean": logprobs.detach().mean().item(),
+    }
+    
+    return total_loss, metrics
+
+
+@register_policy_loss("embodied_sac_actor")
+def compute_embodied_sac_actor_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
+    """
+    Compute SAC actor loss only.
+    
+    Args:
+        q1_values (torch.Tensor): Q1 network predictions for current actions
+        q2_values (torch.Tensor): Q2 network predictions for current actions
+        logprobs (torch.Tensor): Log probabilities of current actions
+        entropy (torch.Tensor): Policy entropy
+        alpha (torch.Tensor or float): Temperature parameter
+        loss_mask (torch.Tensor, optional): Mask for valid loss computation
+        
+    Returns:
+        Tuple[torch.Tensor, Dict]: Actor loss and metrics
+    """
+    q1_values = kwargs["q1_values"]
+    q2_values = kwargs["q2_values"]
+    logprobs = kwargs["logprobs"]
+    entropy = kwargs["entropy"]
+    alpha = kwargs.get("alpha", 0.2)
+    loss_mask = kwargs.get("loss_mask", None)
+    
+    # Use minimum Q-value to reduce overestimation bias
+    min_q_values = torch.min(q1_values, q2_values)
+    
+    # Actor loss: maximize Q-value and entropy
+    # Equivalent to minimizing: alpha * log_prob - Q(s,a)
+    actor_loss = alpha * logprobs - min_q_values
+    
+    if loss_mask is not None:
+        actor_loss = (actor_loss * loss_mask).sum() / loss_mask.sum()
+    else:
+        actor_loss = actor_loss.mean()
+    
+    metrics = {
+        "sac/actor_loss": actor_loss.detach().item(),
+        "sac/q_mean": min_q_values.detach().mean().item(),
+        "sac/entropy_mean": entropy.detach().mean().item(),
+        "sac/logprob_mean": logprobs.detach().mean().item(),
+        "sac/alpha": alpha if isinstance(alpha, float) else alpha.detach().item(),
+    }
+    
+    return actor_loss, metrics
+
+
+@register_policy_loss("embodied_sac_critic")
+def compute_embodied_sac_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
+    """
+    Compute SAC critic loss only.
+    
+    Args:
+        q1_values (torch.Tensor): Q1 network predictions
+        q2_values (torch.Tensor): Q2 network predictions
+        target_q_values (torch.Tensor): Target Q-values
+        rewards (torch.Tensor): Rewards
+        dones (torch.Tensor): Done flags
+        gamma (float): Discount factor
+        loss_mask (torch.Tensor, optional): Mask for valid loss computation
+        
+    Returns:
+        Tuple[torch.Tensor, Dict]: Critic loss and metrics
+    """
+    q1_values = kwargs["q1_values"]
+    q2_values = kwargs["q2_values"]
+    target_q_values = kwargs["target_q_values"]
+    rewards = kwargs["rewards"]
+    dones = kwargs["dones"]
+    gamma = kwargs.get("gamma", 0.99)
+    loss_mask = kwargs.get("loss_mask", None)
+    
+    # Compute target Q-values
+    with torch.no_grad():
+        target_q = rewards + gamma * (1 - dones.float()) * target_q_values
+    
+    # Critic loss (MSE)
+    q1_loss = F.mse_loss(q1_values, target_q, reduction='none')
+    q2_loss = F.mse_loss(q2_values, target_q, reduction='none')
+    
+    if loss_mask is not None:
+        q1_loss = q1_loss * loss_mask
+        q2_loss = q2_loss * loss_mask
+        critic_loss = (q1_loss.sum() + q2_loss.sum()) / (2 * loss_mask.sum())
+    else:
+        critic_loss = (q1_loss.mean() + q2_loss.mean()) / 2
+    
+    metrics = {
+        "sac/critic_loss": critic_loss.detach().item(),
+        "sac/q1_mean": q1_values.detach().mean().item(),
+        "sac/q2_mean": q2_values.detach().mean().item(),
+        "sac/target_q_mean": target_q.detach().mean().item(),
+        "sac/q1_loss": q1_loss.detach().mean().item(),
+        "sac/q2_loss": q2_loss.detach().mean().item(),
+    }
+    
+    return critic_loss, metrics
+
+
+def compute_sac_temperature_loss(
+    log_alpha: torch.Tensor,
+    logprobs: torch.Tensor,
+    target_entropy: float,
+    loss_mask: torch.Tensor = None
+) -> Tuple[torch.Tensor, Dict]:
+    """
+    Compute temperature (alpha) loss for automatic entropy tuning in SAC.
+    
+    Args:
+        log_alpha (torch.Tensor): Log of temperature parameter
+        logprobs (torch.Tensor): Log probabilities from policy
+        target_entropy (float): Target entropy value
+        loss_mask (torch.Tensor, optional): Mask for valid loss computation
+        
+    Returns:
+        Tuple[torch.Tensor, Dict]: Temperature loss and metrics
+    """
+    # Temperature loss: minimize difference between current and target entropy
+    entropy_diff = -logprobs - target_entropy
+    
+    if loss_mask is not None:
+        entropy_diff = entropy_diff * loss_mask
+        alpha_loss = (log_alpha * entropy_diff.detach()).sum() / loss_mask.sum()
+    else:
+        alpha_loss = (log_alpha * entropy_diff.detach()).mean()
+    
+    metrics = {
+        "sac/alpha_loss": alpha_loss.detach().item(),
+        "sac/log_alpha": log_alpha.detach().item(),
+        "sac/alpha": log_alpha.exp().detach().item(),
+        "sac/entropy": -logprobs.detach().mean().item(),
+        "sac/target_entropy": target_entropy,
+    }
+    
+    return alpha_loss, metrics
 
 
 if __name__ == "__main__":

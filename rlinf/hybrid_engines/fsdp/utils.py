@@ -30,6 +30,7 @@ import functools
 
 import torch
 from accelerate import init_empty_weights
+from prismatic.extern.hf.modeling_prismatic import PrismaticProjector
 from torch.distributed.fsdp.wrap import (
     transformer_auto_wrap_policy,
 )
@@ -61,6 +62,7 @@ def get_init_weight_context_manager(use_meta_tensor=True):
 def get_fsdp_wrap_policy(module, config=None, is_lora=False):
     """
     FSDP wrap policy that handles both standard transformer models and VLA models.
+    SAC version with Q-value head support.
 
     Args:
         module: The model to wrap
@@ -110,18 +112,13 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False):
         policies.append(vit_wrap_policy)
 
         # Prismatic projector policy for VLA models
-        # The prismatic package initializes a DistributedOverwatch by default,
-        # which initializes accelerate.PartialState, which in turn
-        # initializes a torch.distributed process group in gloo.
-        # This results in default group being gloo, which does not support CUDA tensors and allreduce average.
-        from prismatic.extern.hf.modeling_prismatic import PrismaticProjector
-
         prismatic_fsdp_wrapping_policy = functools.partial(
             _module_wrap_policy,
             module_classes={PrismaticProjector},
         )
         policies.append(prismatic_fsdp_wrapping_policy)
 
+        # Value head policy (for PPO/GAE)
         if hasattr(module, "value_head"):
             from rlinf.models.embodiment.modules.value_head import ValueHead
 
@@ -129,6 +126,15 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False):
                 _module_wrap_policy, module_classes={ValueHead}
             )
             policies.append(value_head_policy)
+        
+        # Q-value head policy (for SAC)
+        if hasattr(module, "q_value_head"):
+            from rlinf.models.embodiment.modules.q_value_head import QValueHead, DoubleQValueHead
+
+            q_value_head_policy = functools.partial(
+                _module_wrap_policy, module_classes={QValueHead, DoubleQValueHead}
+            )
+            policies.append(q_value_head_policy)
 
     # Add transformer layer policies
     if fsdp_transformer_layer_cls_to_wrap is not None:
