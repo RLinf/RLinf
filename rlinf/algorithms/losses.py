@@ -196,7 +196,8 @@ def compute_math_ppo_actor_loss(**kwargs):
     loss_agg_func = kwargs["loss_agg_func"]
     logprobs = kwargs["logprobs"]
     old_logprobs = kwargs["old_logprobs"]
-    eps_clip = kwargs["eps_clip"]
+    clip_ratio_low = kwargs["clip_ratio_low"]
+    clip_ratio_high = kwargs["clip_ratio_high"]
     advantages = kwargs["advantages"]
     loss_mask = kwargs.get("loss_mask", None)
     c_clip = kwargs.get("c_clip", None)
@@ -212,7 +213,7 @@ def compute_math_ppo_actor_loss(**kwargs):
     ratio = torch.where(loss_mask, torch.exp(logprobs - old_logprobs), 0)
     approx_kl = torch.where(loss_mask, (logprobs - old_logprobs).detach(), 0.0)
 
-    clipped_ratio = torch.clamp(ratio, 1.0 - eps_clip, 1.0 + eps_clip)
+    clipped_ratio = torch.clamp(ratio, 1.0 - clip_ratio_low, 1.0 + clip_ratio_high)
     policy_loss1 = -advantages * ratio
     policy_loss2 = -advantages * clipped_ratio
 
@@ -232,17 +233,21 @@ def compute_math_ppo_actor_loss(**kwargs):
     clip_mask = policy_loss1.detach() < policy_loss2.detach()
     dual_clip_mask.logical_and_(loss_mask)
 
-    clip_fraction = clip_mask.logical_and_(loss_mask).count_nonzero() / loss_mask_count
-    approx_kl = -approx_kl.sum() / loss_mask_count
+    num_clipped = clip_mask.logical_and_(loss_mask).count_nonzero()
+
+    clip_fraction = num_clipped.float() / float(loss_mask_count)
+    approx_kl = -approx_kl.sum() / float(loss_mask_count)
 
     dual_cliped_ratio = torch.where(dual_clip_mask, ratio, 0)
 
     # Compile metrics for logging
     metrics_data = {
-        "policy_loss": masked_mean(policy_loss.detach(), loss_mask),
-        "ratio": masked_mean(ratio.detach(), loss_mask),
-        "clipped_ratio": masked_mean(clipped_ratio.detach(), loss_mask),
-        "dual_cliped_ratio": masked_mean(dual_cliped_ratio.detach(), loss_mask),
+        "policy_loss": masked_mean(policy_loss.detach(), loss_mask).detach(),
+        "ratio": masked_mean(ratio.detach(), loss_mask).detach(),
+        "clipped_ratio": masked_mean(clipped_ratio.detach(), loss_mask).detach(),
+        "dual_cliped_ratio": masked_mean(
+            dual_cliped_ratio.detach(), loss_mask
+        ).detach(),
         "approx_kl": approx_kl.detach(),
         "clip_fraction": clip_fraction.detach(),
     }

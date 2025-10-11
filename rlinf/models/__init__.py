@@ -17,7 +17,6 @@ import os
 
 import torch
 from omegaconf import DictConfig
-from peft import LoraConfig, PeftModel, get_peft_model
 from transformers import (
     AutoConfig,
     AutoImageProcessor,
@@ -172,6 +171,8 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
         model = model.cuda()
 
     if cfg.is_lora:
+        from peft import LoraConfig, PeftModel, get_peft_model
+
         if not hasattr(cfg, "lora_path") or cfg.lora_path is None:
             lora_config = LoraConfig(
                 r=cfg.lora_rank,

@@ -202,6 +202,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         self._actor_gpus = self._component_gpu_map.get("actor", None)
         self._inference_gpus = self._component_gpu_map.get("inference", None)
         self._rollout_gpus = self._component_gpu_map.get("rollout", None)
+        self._reward_gpus = self._component_gpu_map.get("reward", None)
         assert self._actor_gpus is not None, (
             "Actor GPUs must be specified in the component_placement config."
         )
@@ -224,11 +225,9 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             len(self._inference_gpus) if self._inference_gpus else 0
         )
         self._rollout_num_gpus = len(self._rollout_gpus)
+        self._reward_num_gpus = len(self._reward_gpus) if self._reward_gpus else 0
 
         if self._is_collocated():
-            assert self.actor_tp_size >= self.rollout_tp_size, (
-                f"Actor TP size {self.actor_tp_size} must be greater or equal to Rollout TP size {self.rollout_tp_size}."
-            )
             assert self._inference_gpus is None, (
                 "Inference GPUs must not be specified in collocated mode."
             )
@@ -280,20 +279,23 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 self._actor_gpus[0], self._actor_gpus[-1]
             )
 
-            actor_tp_size = self._config.actor.model.tensor_model_parallel_size
-            rollout_tp_size = self._config.rollout.tensor_parallel_size
-            assert actor_tp_size >= rollout_tp_size, (
-                f"Actor TP size ({actor_tp_size}) must be greater or equal to Rollout TP size ({rollout_tp_size})"
+            if self.actor_tp_size > self.rollout_tp_size:
+                assert self.actor_tp_size % self.rollout_tp_size == 0, (
+                    f"Actor TP size ({self.actor_tp_size}) must be divisible by Rollout TP size ({self.rollout_tp_size})"
+                )
+            stride = (
+                self.actor_tp_size // self.rollout_tp_size
+                if self.actor_tp_size > self.rollout_tp_size
+                else 1
             )
-            assert actor_tp_size % rollout_tp_size == 0, (
-                f"Actor TP size ({actor_tp_size}) must be divisible by Rollout TP size ({rollout_tp_size})"
-            )
-            stride = actor_tp_size // rollout_tp_size
             self._placements["rollout"] = PackedPlacementStrategy(
                 self._rollout_gpus[0],
                 self._rollout_gpus[-1],
-                num_accelerators_per_process=rollout_tp_size,
+                num_accelerators_per_process=self.rollout_tp_size,
                 stride=stride,
+            )
+            self._placements["reward"] = PackedPlacementStrategy(
+                self._reward_gpus[0], self._reward_gpus[-1]
             )
         elif self._placement_mode == PlacementMode.DISAGGREGATED:
             # Generate continuous placement strategies for components in a cluster.
@@ -310,6 +312,9 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             self._placements["actor"] = PackedPlacementStrategy(
                 self._actor_gpus[0], self._actor_gpus[-1]
             )
+            self._placements["reward"] = PackedPlacementStrategy(
+                self._reward_gpus[0], self._reward_gpus[-1]
+            )
 
     @property
     def is_disaggregated(self):
@@ -325,18 +330,18 @@ class ModelParallelComponentPlacement(ComponentPlacement):
     @property
     def actor_dp_size(self) -> int:
         return self._actor_num_gpus // (
-            self._config.actor.model.tensor_model_parallel_size
-            * self._config.actor.model.context_parallel_size
-            * self._config.actor.model.pipeline_model_parallel_size
+            self._config.actor.model.get("tensor_model_parallel_size", 1)
+            * self._config.actor.model.get("context_parallel_size", 1)
+            * self._config.actor.model.get("pipeline_model_parallel_size", 1)
         )
 
     @property
     def actor_tp_size(self) -> int:
-        return self._config.actor.model.tensor_model_parallel_size
+        return self._config.actor.model.get("tensor_model_parallel_size", 1)
 
     @property
     def actor_pp_size(self) -> int:
-        return self._config.actor.model.pipeline_model_parallel_size
+        return self._config.actor.model.get("pipeline_model_parallel_size", 1)
 
     @property
     def actor_world_size(self) -> int:
@@ -349,7 +354,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             and hasattr(self._config.inference, "model")
             and hasattr(self._config.inference.model, "tensor_model_parallel_size")
         ):
-            return self._config.inference.model.tensor_model_parallel_size
+            return self._config.inference.model.get("tensor_model_parallel_size", 1)
         else:
             return self.actor_tp_size
 
@@ -360,7 +365,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             and hasattr(self._config.inference, "model")
             and hasattr(self._config.inference.model, "pipeline_model_parallel_size")
         ):
-            return self._config.inference.model.pipeline_model_parallel_size
+            return self._config.inference.model.get("pipeline_model_parallel_size", 1)
         else:
             return self.actor_pp_size
 
@@ -377,14 +382,18 @@ class ModelParallelComponentPlacement(ComponentPlacement):
     @property
     def rollout_dp_size(self) -> int:
         return self._rollout_num_gpus // (
-            self._config.rollout.tensor_parallel_size
-            * self._config.rollout.pipeline_parallel_size
+            self._config.rollout.get("tensor_parallel_size", 1)
+            * self._config.rollout.get("pipeline_parallel_size", 1)
         )
 
     @property
     def rollout_tp_size(self) -> int:
-        return self._config.rollout.tensor_parallel_size
+        return self._config.rollout.get("tensor_parallel_size", 1)
 
     @property
     def rollout_world_size(self) -> int:
         return self._rollout_num_gpus
+
+    @property
+    def reward_world_size(self) -> int:
+        return self._reward_num_gpus

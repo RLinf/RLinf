@@ -14,7 +14,13 @@
 
 import multiprocessing
 import re
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import (
+    ProcessPoolExecutor,
+    as_completed,
+)
+from concurrent.futures import (
+    TimeoutError as FuturesTimeoutError,
+)
 from typing import List, Union
 
 import regex
@@ -348,22 +354,22 @@ def process_results(answer, solution):
         extracted_solution = extract_answer(solution, "math", use_last_number=True)
 
         if extracted_answer is None or extracted_answer.strip() in ["None", "none", ""]:
-            retval = 0
+            retval = -1
         elif extracted_solution is None or extracted_solution.strip() in [
             "None",
             "none",
             "",
         ]:
-            retval = 0
+            retval = -1
         elif math_equal(extracted_answer, extracted_solution, timeout=False):
             # elif call_with_timeout(math_equal, extracted_answer, extracted_solution):
             retval = 1
         else:
-            retval = 0
+            retval = -1
 
         return retval, (extracted_answer, extracted_solution)
     except Exception:
-        return 0, ("None", "None")
+        return -1, ("None", "None")
 
 
 def process_results_process(a, b, output_queue):
@@ -403,7 +409,7 @@ def math_verify_call(
             jobs.append(job)
         all_jobs.append(jobs)
 
-    labels = []
+    labels: List[int] = []
     has_timeout = False
     for jobs in all_jobs:
         label = 0
@@ -411,9 +417,12 @@ def math_verify_call(
             for job in as_completed(jobs, timeout=timeout):
                 x = job.result()
                 label = label or x
-        except TimeoutError:
+        except FuturesTimeoutError:
             has_timeout = True
-        labels.append(label)
+            for job in jobs:
+                job.cancel()
+        finally:
+            labels.append(label)
 
     if has_timeout:
         reset_global_process_pool()

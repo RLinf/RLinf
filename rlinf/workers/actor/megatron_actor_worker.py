@@ -14,7 +14,7 @@
 
 import copy
 from functools import partial
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.distributed
@@ -53,7 +53,6 @@ from rlinf.utils.data_iter_utils import (
 )
 from rlinf.utils.distributed import (
     RolloutDataBalance,
-    broadcast_tensor_within_mp,
     broadcast_tensor_within_pp,
     compute_rollout_metrics,
     masked_normalization,
@@ -115,10 +114,21 @@ class MegatronActor(MegatronModelManager, Worker):
         self.calculate_entropy_loss = (
             self.cfg.algorithm.entropy_bonus > 0 and self.calculate_entropy
         )
-        self.ratio_eps = self.cfg.algorithm.ratio_clip_eps
+        clip_ratio = self.cfg.algorithm.ratio_clip_eps
+        self.clip_ratio_low = (
+            self.cfg.algorithm.get("clip_ratio_low")
+            if self.cfg.algorithm.get("clip_ratio_low") is not None
+            else clip_ratio
+        )
+        self.clip_ratio_high = (
+            self.cfg.algorithm.get("clip_ratio_high")
+            if self.cfg.algorithm.get("clip_ratio_high") is not None
+            else clip_ratio
+        )
         self.logprob_forward_micro_batch_size = (
             self.cfg.algorithm.logprob_forward_micro_batch_size
         )
+
         self.kl_beta = self.cfg.algorithm.kl_beta
         self.kl_penalty_type = self.cfg.algorithm.kl_penalty_type
         self.clip_ratio_c = self.cfg.algorithm.clip_ratio_c
@@ -382,7 +392,8 @@ class MegatronActor(MegatronModelManager, Worker):
                     logprobs=curr_logprobs,
                     old_logprobs=prev_logprobs,
                     advantages=advantages,
-                    eps_clip=self.ratio_eps,
+                    clip_ratio_low=self.clip_ratio_low,
+                    clip_ratio_high=self.clip_ratio_high,
                     loss_mask=mask,
                 )
 
@@ -830,23 +841,27 @@ class MegatronActor(MegatronModelManager, Worker):
         self,
         input_channel: Channel,
         output_channel: Channel,
+        rollout_channel: Channel,
         compute_ref_logprobs: bool,
     ):
-        """Compute prev/ref logprobs using the actor Model's forward.
+        """
+        Compute prev/ref logprobs using the actor Model's forward.
 
         Args:
             input_channel: The input channel to read from.
             output_channel: The output channel to send results to.
+            rollout_channel: get the rollout channel's device lock in case of collision.
             compute_ref_logprobs: Whether to compute reference logprobs.
         """
         recv_batch_size = 0
         while recv_batch_size < self.total_batch_size_per_dp:
             batch, rollout_result = self.get_batch(input_channel)
             recv_batch_size += rollout_result.num_sequence
-
             # Must be called after batch is retrieved, suggesting that rollout has stopped
             # Otherwise, loading model might cause OOM in the collocated mode
-            self._load_weight_and_optimizer(input_channel)
+            self._load_weight_and_optimizer(
+                input_channel if self.is_pipeline else rollout_channel
+            )
 
             # Prev logprobs
             with self.worker_timer():
@@ -859,90 +874,11 @@ class MegatronActor(MegatronModelManager, Worker):
                 with cpu_weight_swap(self.model[0], self.ref_policy_state_dict):
                     ref_logprobs = self.inference_step(batch)
                     rollout_result.ref_logprobs = ref_logprobs.cpu()
-
             self.put_result(rollout_result, output_channel)
 
         assert recv_batch_size == self.total_batch_size_per_dp, (
             f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
         )
-
-    # Rewards
-    def compute_rewards(self, input_channel: Channel, output_channel: Channel):
-        """Compute rewards.
-
-        Args:
-            input_channel: The input channel to read from.
-            output_channel: The output channel to send results to.
-        """
-        assert self.reward_fn is not None, "reward_fn is not set"
-        if self.is_pipeline:
-            # In pipeline mode, rewards are computed in the rollout
-            with self.worker_timer():
-                return
-        recv_batch_size = 0
-        while recv_batch_size < self.total_batch_size_per_dp:
-            batch, rollout_result = self.get_batch(input_channel)
-            recv_batch_size += rollout_result.num_sequence
-
-            # Compute rule-based reward
-            with self.worker_timer():
-                if rollout_result.rewards is None:
-                    rollout_result.rewards = self._compute_batch_rewards(
-                        batch, rollout_result.answers
-                    ).cpu()
-
-            self.put_result(rollout_result, output_channel)
-
-        assert recv_batch_size == self.total_batch_size_per_dp, (
-            f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
-        )
-
-    def _compute_batch_rewards(
-        self, batch: Dict[str, torch.Tensor], answers: List[str]
-    ):
-        """Reward computation using non-model based reward."""
-        all_reward_scores = []
-        texts = []
-        for response, response_len in zip(
-            batch["input_ids"],
-            batch["response_lengths"],
-        ):
-            response = response[
-                self.cfg.data.max_prompt_length : self.cfg.data.max_prompt_length
-                + response_len
-            ]
-            texts.append(
-                self.tokenizer.decode(response.tolist(), skip_special_tokens=True)
-            )
-
-        if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
-            rewards = self.reward_fn(texts, answers)
-            if self.cfg.reward.reward_type == "math":
-                reward_scores = [
-                    self.cfg.reward.reward_scale
-                    if reward == 1
-                    else -self.cfg.reward.reward_scale
-                    for reward in rewards
-                ]
-            else:
-                reward_scores = rewards
-
-            all_reward_scores.extend(reward_scores)
-
-        if len(all_reward_scores) > 0:
-            new_all_rewards = []
-
-            for response in all_reward_scores:
-                if response is None:
-                    response = 0.0
-                new_all_rewards.append(response)
-
-            all_reward_scores = torch.as_tensor(
-                new_all_rewards,
-                dtype=torch.float,
-                device=torch.cuda.current_device(),
-            ).view(-1, 1)
-        return broadcast_tensor_within_mp(all_reward_scores).flatten().to("cpu")
 
     # Advantages and returns
     def compute_advantages_and_returns(
@@ -954,16 +890,11 @@ class MegatronActor(MegatronModelManager, Worker):
             input_channel: The input channel to read from.
             output_channel: The output channel to send results to.
         """
-        if self.is_pipeline:
-            # In pipeline mode, advantages are computed in the rollout
-            with self.worker_timer():
-                return
         clear_memory()
         recv_batch_size = 0
         while recv_batch_size < self.total_batch_size_per_dp:
             batch, rollout_result = self.get_batch(input_channel)
             recv_batch_size += rollout_result.num_sequence
-
             with self.worker_timer():
                 if rollout_result.advantages is None:
                     mask = batch["attention_mask"][:, -self.response_len :]
@@ -1033,7 +964,10 @@ class MegatronActor(MegatronModelManager, Worker):
     def _compute_rollout_metrics(self, batch):
         rollout_metrics, total_prompt_lengths, total_decode_lengths = (
             compute_rollout_metrics(
-                batch, self.cfg.data.max_prompt_length, self.response_len
+                batch,
+                self.cfg.data.max_prompt_length,
+                self.response_len,
+                self._world_size,
             )
         )
 

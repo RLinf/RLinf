@@ -52,29 +52,41 @@ jobs:
             - name: Checkout code
               uses: actions/checkout@v4
 
-            - name: SGLang Collocated mode
+            - name: Megatron SGLang Collocated mode
               timeout-minutes: 20
               run: |
                 export REPO_PATH=$(pwd)
-                bash tests/e2e_tests/math/sglang/run_collocated.sh
+                bash tests/e2e_tests/reasoning/run_collocated.sh qwen2.5-1.5b-grpo-collocated-mg-sgl
 
-            - name: vLLM Collocated mode
+            - name: Megatron vLLM Collocated mode
               timeout-minutes: 20
               run: |
                 export REPO_PATH=$(pwd)
-                bash tests/e2e_tests/math/vllm/run_collocated.sh
+                bash tests/e2e_tests/reasoning/run_collocated.sh qwen2.5-1.5b-grpo-collocated-mg-vllm
 
-            - name: SGLang Pipeline mode
+            - name: Megatron SGLang Pipeline mode
               timeout-minutes: 20
               run: |
                 export REPO_PATH=$(pwd)
-                bash tests/e2e_tests/math/sglang/run_pipeline.sh
+                bash tests/e2e_tests/reasoning/run_pipeline.sh qwen2.5-1.5b-grpo-pipeline-mg-sgl
 
-            - name: vLLM Pipeline mode
+            - name: Megatron vLLM Pipeline mode
               timeout-minutes: 20
               run: |
                 export REPO_PATH=$(pwd)
-                bash tests/e2e_tests/math/vllm/run_pipeline.sh
+                bash tests/e2e_tests/reasoning/run_pipeline.sh qwen2.5-1.5b-grpo-pipeline-mg-vllm
+
+            - name: FSDO SGLang Collocated mode
+              timeout-minutes: 20
+              run: |
+                export REPO_PATH=$(pwd)
+                bash tests/e2e_tests/reasoning/run_collocated.sh qwen2.5-1.5b-grpo-collocated-fsdp-sgl
+
+            - name: FSDP vLLM Collocated mode
+              timeout-minutes: 20
+              run: |
+                export REPO_PATH=$(pwd)
+                bash tests/e2e_tests/reasoning/run_collocated.sh qwen2.5-1.5b-grpo-collocated-fsdp-vllm
 
     qwen-grpo-test-sglang044:
         runs-on: rlinf
@@ -93,4 +105,4 @@ jobs:
               timeout-minutes: 20
               run: |
                 export REPO_PATH=$(pwd)
-                bash tests/e2e_tests/math/sglang/run_collocated.sh
+                bash tests/e2e_tests/reasoning/run_collocated.sh qwen2.5-1.5b-grpo-collocated-mg-sgl

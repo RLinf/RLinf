@@ -31,8 +31,10 @@ class SchedulerTask:
         workflow_graph: Optional[Dict[ComponentNode, List[ComponentNode]]] = None,
     ):
         self.cfg = cfg
-        self.is_math = cfg.runner.task_type == "math"
-        assert self.is_math, "Only math task is supported"
+        self.is_reasoning = cfg.runner.task_type == "reasoning"
+        assert self.is_reasoning, (
+            f"Only reasoning task is supported, current task type: {cfg.runner.task_type}"
+        )
 
         self.components_config = {
             "actor": {
@@ -71,7 +73,7 @@ class SchedulerTask:
         self.global_step_batch_size = self.rollout_batch_size * self.group_size
 
         if workflow_graph is None:
-            if self.is_math:
+            if self.is_reasoning:
                 actor = ComponentNode("actor")
                 inference = ComponentNode("inference")
                 rollout = ComponentNode("rollout")
@@ -179,7 +181,7 @@ class SchedulerTask:
 
     def time_division_multiplexing(self) -> List[Dict[str, Workflow]]:
         partitions: List[Dict[str, Workflow]] = get_workflow_partition(self.workflow)
-        if self.is_math:
+        if self.is_reasoning:
             valid_partitions = [
                 i for i in partitions if len(i) in [1, len(self.components_config)]
             ]
