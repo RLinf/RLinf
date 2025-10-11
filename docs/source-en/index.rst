@@ -29,8 +29,11 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
   - Disaggregated mode: enables fine-grained pipelining.
   - Hybrid mode: a customizable combination of different placement modes, integrating both collocated and disaggregated modes.
 
-- Auto-scheduling Strategy: automatically selects the most suitable execution mode based on the training workload, without the need for manual resource allocation.
-  
+- Auto Scheduling
+
+  - Dynamic Scheduling: dynamically schedule resource allocation, maximizing resource utilization.
+  - Static Scheduling: automatically select the most suitable execution mode based on the training workload, without the need for manual resource allocation.
+
 - Embodied Agent Support
 
   - Fast adaptation support for mainstream VLA models: `OpenVLA`_, `OpenVLA-OFT`_, `π₀`_

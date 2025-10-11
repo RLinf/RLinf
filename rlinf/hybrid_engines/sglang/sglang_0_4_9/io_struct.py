@@ -15,6 +15,19 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from sglang.srt.managers.schedule_batch import Req
+
+
+@dataclass
+class AbortGenerationInput:
+    pass
+
+
+@dataclass
+class AbortGenerationOutput:
+    waiting_reqs: List[Req]
+    running_reqs: List[Req]
+
 
 @dataclass
 class TaskMethodInput:

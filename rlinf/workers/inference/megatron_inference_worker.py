@@ -78,6 +78,9 @@ class MegatronInference(MegatronActor):
             self.cfg.inference = merged_cfg
 
     def sync_model_from_actor(self):
+        if self.is_weight_offloaded:
+            self.onload_model_weights_and_grad(load_grad=False)
+            self.is_weight_offloaded = False
         for rank in self._weight_dst_rank_in_inference:
             if self._rank == rank:
                 state_dict = self.recv(
