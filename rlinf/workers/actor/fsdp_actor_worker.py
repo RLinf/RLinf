@@ -56,7 +56,9 @@ from rlinf.utils.placement import (
 from rlinf.utils.utils import (
     compute_entropy_from_logits,
     compute_logprobs_from_logits,
+    cpu_weight_swap,
     masked_mean,
+    retrieve_model_state_dict_in_cpu,
     seq_mean_token_mean,
     seq_mean_token_sum,
 )
@@ -96,6 +98,8 @@ class FSDPActor(FSDPModelManager, Worker):
         self._rollout_group_name = cfg.rollout.group_name
         self._component_placement = placement
         self.is_data_io_rank = True
+        self.is_pipeline = self._component_placement.is_disaggregated
+        self.ref_policy_state_dict = None
 
         if self.cfg.algorithm.loss_agg_func == "token-mean":
             self.loss_agg_func = masked_mean
@@ -118,8 +122,13 @@ class FSDPActor(FSDPModelManager, Worker):
             reward_cls = get_reward_class(self.cfg.reward.reward_type)
             self.reward = reward_cls(self.cfg.reward)
 
-    def init_worker(self):
+    def init_worker(self) -> None:
         self.setup_model_and_optimizer()
+        if self.cfg.algorithm.kl_beta > 0 and self.cfg.actor.get(
+            "combine_reference_model", True
+        ):
+            self.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model)
+
         if self.cfg.actor.get("enable_offload", False):
             self.offload_fsdp_param_and_grad()
             self.offload_fsdp_optimizer()
@@ -128,7 +137,7 @@ class FSDPActor(FSDPModelManager, Worker):
             torch.cuda.empty_cache()
         self._setup_rollout_weight_dst_ranks()
 
-    def _setup_rollout_weight_dst_ranks(self):
+    def _setup_rollout_weight_dst_ranks(self) -> None:
         """Setup destination ranks for token and weight communication."""
         rank_map = RankMapper.get_actor_rank_to_rollout_rank_map(
             self._component_placement
@@ -138,11 +147,11 @@ class FSDPActor(FSDPModelManager, Worker):
             f"Actor rank {self._rank} will send weights to {self._weight_dst_rank_in_rollout}"
         )
 
-    def del_reshard_state_dict(self):
+    def del_reshard_state_dict(self) -> None:
         if hasattr(self, "rollout_state_dict"):
             del self.rollout_state_dict
 
-    def sync_model_to_rollout(self):
+    def sync_model_to_rollout(self) -> None:
         if self.cfg.actor.get("enable_offload", False):
             self.offload_fsdp_optimizer()
 
@@ -175,7 +184,7 @@ class FSDPActor(FSDPModelManager, Worker):
         if self.cfg.actor.get("enable_offload", False):
             self.offload_fsdp_param_and_grad()
 
-    def compute_logprobs(self):
+    def compute_logprobs(self) -> None:
         self.model.eval()
         self.rollout_batch["logprob"] = self.rollout_batch["prev_logprobs"]
 
@@ -191,7 +200,7 @@ class FSDPActor(FSDPModelManager, Worker):
         )
         return batch, result
 
-    def put_result(self, result: RolloutResult, channel: Channel):
+    def put_result(self, result: RolloutResult, channel: Channel) -> None:
         if channel.is_local:
             # Local channel, every process will put its own data locally
             # No need to broadcast
@@ -200,7 +209,7 @@ class FSDPActor(FSDPModelManager, Worker):
             if self.is_data_io_rank:
                 channel.put(result)
 
-    def _load_weight_and_optimizer(self, channel: Channel):
+    def _load_weight_and_optimizer(self, channel: Channel) -> None:
         # Acquire the GPUs to ensure that no one is using them before loading models
         # Otherwise, it may lead to OOM
         with channel.device_lock:
@@ -208,7 +217,81 @@ class FSDPActor(FSDPModelManager, Worker):
                 self.load_fsdp_param_and_grad(self.device)
                 self.load_fsdp_optimizer(self.device)
 
-    def run_training(self, input_channel: Channel):
+    @torch.no_grad()
+    def inference_step(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+        self.model.eval()
+        input_ids = batch["input_ids"]
+        attention_mask = batch["attention_mask"]
+        position_ids = batch["position_ids"]
+
+        multi_modal_inputs = {}
+        if "multi_modal_inputs" in batch.keys():
+            for key in batch["multi_modal_inputs"][0].keys():
+                multi_modal_inputs[key] = torch.cat(
+                    [inputs[key] for inputs in batch["multi_modal_inputs"]],
+                    dim=0,
+                ).cuda()
+
+        outputs = self.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            use_cache=False,
+            **multi_modal_inputs,
+        )
+
+        logits = outputs.logits
+        logits = logits[:, -self.response_len - 1 : -1, :]
+        logits = logits / self.cfg.algorithm.sampling_params.temperature
+
+        responses = input_ids[:, -self.response_len :]
+        logprobs = compute_logprobs_from_logits(
+            logits, responses, task_type=self.cfg.runner.task_type
+        )
+        return logprobs
+
+    def run_inference(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        rollout_channel: Channel,
+        compute_ref_logprobs: bool,
+    ) -> None:
+        """
+        Compute prev/ref logprobs using the actor Model's forward.
+
+        Args:
+            input_channel: The input channel to read from.
+            output_channel: The output channel to send results to.
+            rollout_channel: get the rollout channel's device lock in case of collision.
+            compute_ref_logprobs: Whether to compute reference logprobs.
+        """
+        recv_batch_size = 0
+        while recv_batch_size < self.total_batch_size_per_dp:
+            batch, rollout_result = self.get_batch(input_channel)
+            recv_batch_size += rollout_result.num_sequence
+            self._load_weight_and_optimizer(
+                input_channel if self.is_pipeline else rollout_channel
+            )
+
+            with self.worker_timer():
+                prev_logprobs = self.inference_step(batch)
+                rollout_result.prev_logprobs = prev_logprobs.cpu()
+
+            if compute_ref_logprobs:
+                assert self.ref_policy_state_dict is not None, (
+                    "Reference policy state dict is None but compute_ref_logprobs is True"
+                )
+                with cpu_weight_swap(self.model, self.ref_policy_state_dict):
+                    ref_logprobs = self.inference_step(batch)
+                    rollout_result.ref_logprobs = ref_logprobs.cpu()
+            self.put_result(rollout_result, output_channel)
+
+        assert recv_batch_size == self.total_batch_size_per_dp, (
+            f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
+        )
+
+    def run_training(self, input_channel: Channel) -> Tuple[Dict, list]:
         # Get all batches for this DP
         batches = []
         recv_batch_size = 0
@@ -408,7 +491,7 @@ class FSDPActor(FSDPModelManager, Worker):
 
         return rollout_metrics, training_metrics_list
 
-    def save_checkpoint(self, save_base_path, step):
+    def save_checkpoint(self, save_base_path: str, step: int) -> None:
         torch.distributed.barrier()
         model_state = self.get_model_state_dict()
         optim_state = self.get_optimizer_state_dict()
@@ -421,7 +504,7 @@ class FSDPActor(FSDPModelManager, Worker):
     # Advantages and returns
     def compute_advantages_and_returns(
         self, input_channel: Channel, output_channel: Channel
-    ):
+    ) -> None:
         """Compute the advantages and returns.
 
         Args:

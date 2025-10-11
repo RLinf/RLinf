@@ -186,7 +186,7 @@ def validate_rollout_cfg(cfg):
 
 def validate_model_cfg_by_hf_config(cfg, hf_model_path):
     # validate by hf config
-    hf_config = AutoConfig.from_pretrained(hf_model_path)
+    hf_config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=True)
 
     if "Qwen2ForCausalLM" in hf_config.architectures:
         qkv_bias = True

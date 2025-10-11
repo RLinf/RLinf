@@ -844,11 +844,13 @@ class MegatronActor(MegatronModelManager, Worker):
         rollout_channel: Channel,
         compute_ref_logprobs: bool,
     ):
-        """Compute prev/ref logprobs using the actor Model's forward.
+        """
+        Compute prev/ref logprobs using the actor Model's forward.
 
         Args:
             input_channel: The input channel to read from.
             output_channel: The output channel to send results to.
+            rollout_channel: get the rollout channel's device lock in case of collision.
             compute_ref_logprobs: Whether to compute reference logprobs.
         """
         recv_batch_size = 0

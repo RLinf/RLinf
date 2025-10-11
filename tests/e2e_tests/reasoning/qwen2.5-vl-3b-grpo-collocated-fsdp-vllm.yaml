@@ -124,7 +124,7 @@ data:
   dataset_name: robo2vlm
   max_prompt_length: 1024
   filter_prompt_by_length: True
-  rollout_batch_size: 8
+  rollout_batch_size: 16
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: prompt
