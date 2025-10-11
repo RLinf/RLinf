@@ -30,48 +30,54 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
     unit-tests-cuda:
-        runs-on: rlinf
-        container:
-            image: rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1
-            volumes:
-                - /mnt/public/dataset:/workspace/dataset
-                - /mnt/public/tokenizer:/workspace/tokenizer
-            options: --gpus="all" --shm-size=80g
+        runs-on: reason
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@v4
+              uses: actions/checkout@v5
 
             - name: Install pytest
-              run: pip install pytest
+              run: |
+                source switch_env reason
+                uv pip install pytest
 
             - name: Run pytest
               timeout-minutes: 20
               run: |
-                export PYTHONPATH=$(pwd):$(pwd)/megatron:$(pwd)/tests/unit_tests 
+                export PYTHONPATH=$(pwd):$(pwd)/megatron:$(pwd)/tests/unit_tests
+                source switch_env reason
                 pytest tests/unit_tests
             
             - name: Run doctest
               timeout-minutes: 20
               run: |
+                source switch_env reason
                 pytest --doctest-modules rlinf/scheduler
       
     unit-tests-cpu:
         runs-on: ubuntu-latest
-        container:
-            image: rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@v4
+              uses: actions/checkout@v5
 
-            - name: Install pytest
-              run: pip install pytest
+            - name: Install dependencies
+              run: |
+                pip install uv
+                uv venv
+                source .venv/bin/activate
+                UV_TORCH_BACKEND=auto uv sync
+                uv pip install pytest
 
             - name: Run pytest
               timeout-minutes: 20
               run: |
                 export PYTHONPATH=$(pwd):$(pwd)/megatron:$(pwd)/tests/unit_tests 
+                source .venv/bin/activate
                 pytest tests/unit_tests

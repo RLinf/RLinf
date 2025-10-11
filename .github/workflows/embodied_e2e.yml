@@ -40,35 +40,26 @@ concurrency:
 
 jobs:
     openvla-ppo-test:
-        runs-on: rlinf
-        container:
-            image: rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
-            volumes:
-                - /mnt/public/dataset:/workspace/dataset
-                - /mnt/public/tokenizer:/workspace/tokenizer
-            options: --gpus="all" --shm-size=2g
+        runs-on: embodied
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@v4
+              uses: actions/checkout@v5
             - name: OpenVLA test
               timeout-minutes: 20
               run: |
                 export REPO_PATH=$(pwd)
+                source switch_env openvla
                 bash tests/e2e_tests/embodied/run_openvla.sh
+
     openvlaoft-grpo-test:
-        runs-on: rlinf
-        container:
-            image: rlinf/rlinf:agentic-openvlaoft-rlinf0.1-torch2.5.1
-            volumes:
-                - /mnt/public/dataset:/workspace/dataset
-                - /mnt/public/tokenizer:/workspace/tokenizer
-            options: --gpus="all" --shm-size=2g -e NVIDIA_DRIVER_CAPABILITIES="compute,utility,graphics"
+        runs-on: embodied
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@v4
+              uses: actions/checkout@v5
             - name: OpenVLA-OFT test
               run: |
                 export REPO_PATH=$(pwd)
+                source switch_env openvla-oft
                 bash tests/e2e_tests/embodied/run_openvlaoft_libero130.sh

@@ -94,9 +94,8 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
    export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 
    # LIBERO 仓库路径
-   export LIBERO_REPO_PATH="/root/LIBERO"
-   export LIBERO_CONFIG_PATH=${LIBERO_REPO_PATH}
-   export PYTHONPATH=${LIBERO_REPO_PATH}:$PYTHONPATH
+   export LIBERO_PATH="/opt/LIBERO"
+   export PYTHONPATH=${LIBERO_PATH}:$PYTHONPATH
 
    export CUDA_LAUNCH_BLOCKING=1
    export HYDRA_FULL_ERROR=1

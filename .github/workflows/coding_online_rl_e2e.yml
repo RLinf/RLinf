@@ -40,17 +40,11 @@ concurrency:
 
 jobs:
     qwen-ppo-test:
-        runs-on: rlinf
-        container:
-            image: rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1
-            volumes:
-                - /mnt/public/dataset:/workspace/dataset
-                - /mnt/public/tokenizer:/workspace/tokenizer
-            options: --gpus="all" --shm-size=80g
+        runs-on: reason
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@v4
+              uses: actions/checkout@v5
 
             - name: Install dependencies
               run: |
@@ -59,4 +53,5 @@ jobs:
             - name: SGLang Collocated mode
               run: |
                 export REPO_PATH=$(pwd)
+                source switch_env reason
                 bash tests/e2e_tests/coding_online_rl/run_coding_online_rl.sh

@@ -7,12 +7,10 @@ export SRC_FILE="${EMBODIED_PATH}/eval_embodied_agent.py"
 export MUJOCO_GL="osmesa"
 export PYOPENGL_PLATFORM="osmesa"
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
-# NOTE: set LIBERO_REPO_PATH to the path of the LIBERO repo
-export LIBERO_REPO_PATH="/path/to/repo/LIBERO"
-# NOTE: set LIBERO_CONFIG_PATH for libero/libero/__init__.py
-export LIBERO_CONFIG_PATH=${LIBERO_REPO_PATH}
 
-export PYTHONPATH=${LIBERO_REPO_PATH}:$PYTHONPATH
+LIBERO_PATH=/opt/libero
+export PYTHONPATH=${LIBERO_PATH}:$PYTHONPATH
+
 export CUDA_LAUNCH_BLOCKING=1
 export HYDRA_FULL_ERROR=1
 
