@@ -41,8 +41,9 @@ except ImportError:
     transformer_engine = None
     HAVE_TE = False
 
-SUPPORTED_MODEL_ARCHS = ["qwen2.5", "openvla", "openvla_oft"]
+SUPPORTED_MODEL_ARCHS = ["qwen2.5", "openvla", "openvla_oft", "qwen3-30b"]
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
+
 __all__ = ["build_config"]
 
 
@@ -216,6 +217,12 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         cfg.model.hidden_dropout = getattr(hf_config, "hidden_dropout", 0.0)
         cfg.model.add_qkv_bias = qkv_bias
         cfg.model.layernorm_epsilon = hf_config.rms_norm_eps
+
+        # MoE model
+        cfg.model.num_moe_experts = getattr(hf_config, "num_experts", None)
+        cfg.model.moe_ffn_hidden_size = getattr(hf_config, "moe_intermediate_size", None)
+        cfg.model.moe_router_topk = getattr(hf_config, "num_experts_per_tok", 2)
+        cfg.model.head_dim = getattr(hf_config, "head_dim", cfg.model.hidden_size // cfg.model.num_attention_heads)
 
     return cfg
 
@@ -397,6 +404,9 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
         cfg.model.expert_model_parallel_size = cfg.model.expert_model_parallel_size = (
             cfg.model.get("expert_model_parallel_size", 1)
         )
+        cfg.model.expert_tensor_parallel_size = cfg.model.expert_tensor_parallel_size = (
+            cfg.model.get("expert_tensor_parallel_size", 1)
+        )
 
         cfg.model.position_embedding_type = cfg.model.get(
             "position_embedding_type", "learned_absolute"
@@ -424,6 +434,7 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
 
         cfg.model.variable_seq_lengths = cfg.model.get("variable_seq_lengths", True)
         cfg.model.add_bias_linear = cfg.model.get("add_bias_linear", False)
+        cfg.model.qk_layernorm = cfg.model.get("qk_layernorm", False)
 
         cfg.optim.fp16 = (
             torch_dtype_from_precision(cfg.model.precision) == torch.float16
@@ -787,8 +798,13 @@ def build_transformer_config(cfg) -> "TransformerConfig":
         "rotary_interleaved": rotary_interleaved,
         "deallocate_pipeline_outputs": False,
         "tp_only_amax_red": tp_only_amax_red,
+        "qk_layernorm": cfg.get("qk_layernorm", False),
+        "kv_channels": cfg.get("head_dim", None),
         # MoE related
         "num_moe_experts": cfg.get("num_moe_experts", None),
+        "moe_ffn_hidden_size": cfg.get("moe_ffn_hidden_size", None), 
+        # now the sequential mlp should ffn hidden size == moe_ffn_hidden_size
+        "ffn_hidden_size": cfg.get("moe_ffn_hidden_size", None) if cfg.get("moe_ffn_hidden_size", None) else cfg.get("ffn_hidden_size", None),
         "moe_router_load_balancing_type": cfg.get(
             "moe_router_load_balancing_type", "aux_loss"
         ),
