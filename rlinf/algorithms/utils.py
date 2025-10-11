@@ -72,6 +72,7 @@ def preprocess_loss_inputs(**kwargs) -> dict:
     advantages = kwargs["advantages"]
     entropy = kwargs.get("entropy", None)
     loss_mask = kwargs.get("loss_mask", None)
+    loss_mask_sum = kwargs.get("loss_mask_sum", None)
 
     bsz = logprobs.shape[0]
 
@@ -81,6 +82,8 @@ def preprocess_loss_inputs(**kwargs) -> dict:
         advantages = advantages.unsqueeze(-1)
         if loss_mask is not None:
             loss_mask = loss_mask.unsqueeze(-1)
+        if loss_mask_sum is not None:
+            loss_mask_sum = loss_mask_sum.unsqueeze(-1)
 
     elif logprob_type == "action_level":
         logprobs = logprobs.reshape(bsz, -1, single_action_dim).sum(dim=-1)
@@ -104,6 +107,7 @@ def preprocess_loss_inputs(**kwargs) -> dict:
             "advantages": advantages,
             "entropy": entropy,
             "loss_mask": loss_mask,
+            "loss_mask_sum": loss_mask_sum,
         }
     )
 

@@ -133,4 +133,7 @@ def compute_loss_mask(dones):
         1, 2
     )  # [n_chunk_step, actual_bsz, num_action_chunks]
 
-    return loss_mask
+    loss_mask_sum = loss_mask.sum(dim=(0, 2), keepdim=True)  # [1, bsz, 1]
+    loss_mask_sum = loss_mask_sum.expand_as(loss_mask)
+
+    return loss_mask, loss_mask_sum

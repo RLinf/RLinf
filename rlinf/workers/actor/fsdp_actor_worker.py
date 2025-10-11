@@ -156,9 +156,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             dones = rollout_batch[
                 "dones"
             ]  # [n_chunk_step, rollout_epoch x bsz, num_action_chunks]
-            loss_mask = compute_loss_mask(dones)
+            loss_mask, loss_mask_sum = compute_loss_mask(dones)
 
             rollout_batch["loss_mask"] = loss_mask
+            rollout_batch["loss_mask_sum"] = loss_mask_sum
 
         # filter data by rewards
         if self.cfg.algorithm.get("filter_rewards", False):
@@ -367,6 +368,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     "value_clip": self.cfg.algorithm.get("value_clip", None),
                     "huber_delta": self.cfg.algorithm.get("huber_delta", None),
                     "loss_mask": data.get("loss_mask", None),
+                    "loss_mask_sum": data.get("loss_mask_sum", None),
                     "max_episode_steps": self.cfg.env.train.max_episode_steps,
                 }
 

@@ -31,6 +31,7 @@ def compute_ppo_actor_loss(
     c_clip: Optional[float] = None,
     loss_agg_func: Optional[Callable[..., torch.Tensor]] = masked_mean,
     max_episode_steps: Optional[int] = None,
+    loss_mask_sum: Optional[torch.Tensor] = None,
     **kwargs,
 ) -> Tuple[torch.Tensor, Dict]:
     """
@@ -51,7 +52,10 @@ def compute_ppo_actor_loss(
         Tuple[torch.Tensor, Dict]: (actor_loss, metrics_dict)
     """
 
-    if max_episode_steps is not None and loss_mask is not None:
+    if max_episode_steps is not None and loss_mask_sum is not None and loss_mask is not None:
+        loss_mask_ratio = (
+            (loss_mask_sum * 1.0) / max_episode_steps
+        )
         loss_agg_func = masked_mean_ratio
 
     if loss_mask is None:
