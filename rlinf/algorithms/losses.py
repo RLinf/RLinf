@@ -52,6 +52,8 @@ def compute_ppo_actor_loss(
         Tuple[torch.Tensor, Dict]: (actor_loss, metrics_dict)
     """
 
+    loss_mask_ratio = None
+
     if (
         max_episode_steps is not None
         and loss_mask_sum is not None
