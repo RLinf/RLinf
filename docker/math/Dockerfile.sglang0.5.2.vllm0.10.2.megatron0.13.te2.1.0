@@ -1,0 +1,53 @@
+FROM pytorch/pytorch:2.8.0-cuda12.9-cudnn9-devel
+ARG MAX_JOBS=55
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git vim libibverbs-dev openssh-server sudo runit runit-systemd tmux \
+    build-essential python3-dev cmake pkg-config numactl \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN python -m pip install -i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple --upgrade pip setuptools wheel
+RUN pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+
+ENV HF_HOME=/opt/.cache/huggingface
+RUN mkdir -p $HF_HOME
+
+WORKDIR /opt
+RUN git clone https://github.com/NVIDIA/Megatron-LM.git && cd Megatron-LM && git checkout core_r0.13.0
+WORKDIR /opt
+RUN git clone --depth=1 https://github.com/RLinf/latex2sympy2.git && cd latex2sympy2 && pip install -e .
+
+RUN MAX_JOBS=${MAX_JOBS} pip install hydra-core==1.4.0.dev1 torchdata word2number vllm==0.10.2 \
+    datasets sentencepiece regex einops scipy wandb tensorboard nvitop accelerate pylatexenc pybind11 \
+    torch_memory_saver swanlab ray[default]
+
+ENV CUDNN_PATH=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/
+
+# RUN pip install 'flash-attn'==2.7.4.post1 --no-build-isolation
+RUN MAX_JOBS=${MAX_JOBS} pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.3/flash_attn-2.7.3+cu12torch2.8cxx11abiFALSE-cp311-cp311-linux_x86_64.whl  --no-build-isolation --use-pep517
+
+WORKDIR /opt
+RUN git clone --depth=1 https://github.com/NVIDIA/apex && cd apex && \
+    MAX_JOBS=${MAX_JOBS} pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation \
+        --config-settings "--build-option=--cpp_ext" \
+        --config-settings "--build-option=--cuda_ext" ./
+
+RUN MAX_JOBS=${MAX_JOBS} pip install 'transformer_engine[pytorch]==2.1.0' --no-build-isolation --use-pep517
+
+RUN MAX_JOBS=${MAX_JOBS} pip install 'sglang[all]==0.5.2.rc2'
+
+RUN MAX_JOBS=${MAX_JOBS} pip install flashinfer-python==0.3.0
+
+RUN MAX_JOBS=${MAX_JOBS} pip install triton==3.2.0
+
+
+
+RUN pip uninstall pynvml -y
+
+ENV PATH=/opt/conda/bin:$PATH
+ENV PYTHONPATH=/opt/Megatron-LM:$PYTHONPATH
+WORKDIR /workspace
+
+
+
+CMD ["/bin/bash"]
