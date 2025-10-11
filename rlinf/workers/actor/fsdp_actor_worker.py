@@ -239,12 +239,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "group_size": self.cfg.algorithm.get("group_size", 8),
             "reward_type": self.cfg.algorithm.reward_type,
             "loss_mask": self.rollout_batch.get("loss_mask", None),
+            "loss_mask_sum": self.rollout_batch.get("loss_mask_sum", None),
             "rollout_epoch": self.cfg.algorithm.get("rollout_epoch", 1),
         }
         kwargs = preprocess_advantages_inputs(**kwargs)
         advantages, returns = calculate_adv_and_returns(**kwargs)
 
-        self.rollout_batch.update({"advantages": advantages, "returns": returns})
+        self.rollout_batch.update({"advantages": advantages, "returns": returns, "loss_mask": kwargs["loss_mask"], "loss_mask_sum": kwargs["loss_mask_sum"]})
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
         return rollout_metrics
 
@@ -298,107 +299,108 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         assert rollout_size % batch_size_per_rank == 0, (
             f"{rollout_size} is not divisible by {batch_size_per_rank}"
         )
-        rollout_dataloader_iter = get_iterator_k_split(
-            self.rollout_batch,
-            rollout_size // batch_size_per_rank,
-        )
-
         metrics = {}
-        for train_global_batch in rollout_dataloader_iter:
-            # split batch into micro_batches
-            train_global_batch_size = train_global_batch["prev_logprobs"].shape[0]
-            assert (
-                train_global_batch_size
-                == self.cfg.actor.global_batch_size
-                // torch.distributed.get_world_size()
+        update_epoch = self.cfg.algorithm.get("update_epoch", 1)
+        for _ in range(update_epoch):
+            rollout_dataloader_iter = get_iterator_k_split(
+                self.rollout_batch,
+                rollout_size // batch_size_per_rank,
             )
-            assert train_global_batch_size % self.cfg.actor.micro_batch_size == 0, (
-                f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size}"
-            )
-            train_micro_batch = get_iterator_k_split(
-                train_global_batch,
-                train_global_batch_size // self.cfg.actor.micro_batch_size,
-            )
+            for train_global_batch in rollout_dataloader_iter:
+                # split batch into micro_batches
+                train_global_batch_size = train_global_batch["prev_logprobs"].shape[0]
+                assert (
+                    train_global_batch_size
+                    == self.cfg.actor.global_batch_size
+                    // torch.distributed.get_world_size()
+                )
+                assert train_global_batch_size % self.cfg.actor.micro_batch_size == 0, (
+                    f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size}"
+                )
+                train_micro_batch = get_iterator_k_split(
+                    train_global_batch,
+                    train_global_batch_size // self.cfg.actor.micro_batch_size,
+                )
 
-            self.optimizer.zero_grad()
-            for data in train_micro_batch:
-                for k, v in data.items():
-                    data[k] = v.to(f"cuda:{int(os.environ['LOCAL_RANK'])}")
+                self.optimizer.zero_grad()
+                for data in train_micro_batch:
+                    for k, v in data.items():
+                        data[k] = v.to(f"cuda:{int(os.environ['LOCAL_RANK'])}")
 
-                advantages = data["advantages"]
-                prev_logprobs = data["prev_logprobs"]
-                returns = data.get("returns", None)
-                prev_values = data.get("prev_values", None)
-                loss_mask = data.get("loss_mask", None)
-                loss_mask_sum = data.get("loss_mask_sum", None)
+                    advantages = data["advantages"]
+                    prev_logprobs = data["prev_logprobs"]
+                    returns = data.get("returns", None)
+                    prev_values = data.get("prev_values", None)
+                    loss_mask = data.get("loss_mask", None)
+                    loss_mask_sum = data.get("loss_mask_sum", None)
 
-                if self.cfg.actor.model.model_name in ["openpi", "openvla"]:
-                    data["temperature"] = (
-                        self.cfg.algorithm.sampling_params.temperature_train
+                    if self.cfg.actor.model.model_name in ["openpi", "openvla"]:
+                        data["temperature"] = (
+                            self.cfg.algorithm.sampling_params.temperature_train
+                        )
+                        data["top_k"] = self.cfg.algorithm.sampling_params.top_k
+
+                    compute_values = (
+                        True if self.cfg.algorithm.adv_type == "embodied_gae" else False
                     )
-                    data["top_k"] = self.cfg.algorithm.sampling_params.top_k
 
-                compute_values = (
-                    True if self.cfg.algorithm.adv_type == "embodied_gae" else False
+                    output_dict = self.model(
+                        data=data,
+                        compute_logprobs=True,
+                        compute_entropy=True,
+                        compute_values=compute_values,
+                    )
+
+                    if self.cfg.actor.model.model_name in ["openpi"]:
+                        prev_logprobs = output_dict["prev_logprobs"]
+
+                    kwargs = {
+                        "loss_type": self.cfg.algorithm.loss_type,
+                        "logprob_type": self.cfg.algorithm.logprob_type,
+                        "reward_type": self.cfg.algorithm.reward_type,
+                        "entropy_type": self.cfg.algorithm.entropy_type,
+                        "single_action_dim": self.cfg.actor.model.get("action_dim", 7),
+                        "logprobs": output_dict["logprobs"],
+                        "entropy": output_dict.get("entropy", None),
+                        "values": output_dict.get("values", None),
+                        "old_logprobs": prev_logprobs,
+                        "advantages": advantages,
+                        "returns": returns,
+                        "prev_values": prev_values,
+                        "clip_ratio_high": self.cfg.algorithm.clip_ratio_high,
+                        "clip_ratio_low": self.cfg.algorithm.clip_ratio_low,
+                        "value_clip": self.cfg.algorithm.get("value_clip", None),
+                        "huber_delta": self.cfg.algorithm.get("huber_delta", None),
+                        "entropy_bonus": self.cfg.algorithm.entropy_bonus,
+                        "loss_mask": loss_mask,
+                        "loss_mask_sum": loss_mask_sum,
+                        "max_episode_steps": self.cfg.env.train.max_episode_steps,
+                    }
+                    kwargs = preprocess_loss_inputs(**kwargs)
+
+                    loss, metrics_data = actor_loss(**kwargs)
+
+                    loss /= self.gradient_accumulation
+                    loss.backward()
+
+                    metrics_data["loss"] = loss.detach().item()
+                    append_to_dict(metrics, metrics_data)
+
+                torch.cuda.empty_cache()
+
+                grad_norm = self.model.clip_grad_norm_(
+                    max_norm=self.cfg.actor.optim.clip_grad
                 )
+                self.optimizer.step()
 
-                output_dict = self.model(
-                    data=data,
-                    compute_logprobs=True,
-                    compute_entropy=True,
-                    compute_values=compute_values,
-                )
-
-                if self.cfg.actor.model.model_name in ["openpi"]:
-                    prev_logprobs = output_dict["prev_logprobs"]
-
-                kwargs = {
-                    "loss_type": self.cfg.algorithm.loss_type,
-                    "logprob_type": self.cfg.algorithm.logprob_type,
-                    "entropy_type": self.cfg.algorithm.entropy_type,
-                    "single_action_dim": self.cfg.actor.model.get("action_dim", 7),
-                    "logprobs": output_dict["logprobs"],
-                    "entropy": output_dict.get("entropy", None),
-                    "values": output_dict.get("values", None),
-                    "old_logprobs": prev_logprobs,
-                    "advantages": advantages,
-                    "returns": returns,
-                    "prev_values": prev_values,
-                    "clip_ratio_high": self.cfg.algorithm.clip_ratio_high,
-                    "clip_ratio_low": self.cfg.algorithm.clip_ratio_low,
-                    "value_clip": self.cfg.algorithm.get("value_clip", None),
-                    "huber_delta": self.cfg.algorithm.get("huber_delta", None),
-                    "entropy_bonus": self.cfg.algorithm.entropy_bonus,
-                    "loss_mask": loss_mask,
-                    "loss_mask_sum": loss_mask_sum,
-                    "max_episode_steps": self.cfg.env.train.max_episode_steps,
+                self.optimizer.zero_grad()
+                data = {
+                    "actor/grad_norm": grad_norm.detach().item(),
+                    "actor/lr": self.optimizer.param_groups[0]["lr"],
                 }
-
-                kwargs = preprocess_loss_inputs(**kwargs)
-
-                loss, metrics_data = actor_loss(**kwargs)
-
-                loss /= self.gradient_accumulation
-                loss.backward()
-
-                metrics_data["loss"] = loss.detach().item()
-                append_to_dict(metrics, metrics_data)
-
-            torch.cuda.empty_cache()
-
-            grad_norm = self.model.clip_grad_norm_(
-                max_norm=self.cfg.actor.optim.clip_grad
-            )
-            self.optimizer.step()
-
-            self.optimizer.zero_grad()
-            data = {
-                "actor/grad_norm": grad_norm.detach().item(),
-                "actor/lr": self.optimizer.param_groups[0]["lr"],
-            }
-            if self.cfg.algorithm.adv_type == "embodied_gae":
-                data["critic/lr"] = self.optimizer.param_groups[1]["lr"]
-            append_to_dict(metrics, data)
+                if self.cfg.algorithm.adv_type == "embodied_gae":
+                    data["critic/lr"] = self.optimizer.param_groups[1]["lr"]
+                append_to_dict(metrics, data)
 
         mean_metric_dict = {key: np.mean(value) for key, value in metrics.items()}
         mean_metric_dict = all_reduce_dict(

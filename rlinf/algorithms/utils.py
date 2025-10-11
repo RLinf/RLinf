@@ -66,39 +66,34 @@ def preprocess_loss_inputs(**kwargs) -> dict:
     logprob_type = kwargs.get("logprob_type", None)
     entropy_type = kwargs.get("entropy_type", None)
     single_action_dim = kwargs.get("single_action_dim", None)
-
+    reward_type = kwargs.get("reward_type", None)
     logprobs = kwargs["logprobs"]
     old_logprobs = kwargs["old_logprobs"]
     advantages = kwargs["advantages"]
     entropy = kwargs.get("entropy", None)
     loss_mask = kwargs.get("loss_mask", None)
     loss_mask_sum = kwargs.get("loss_mask_sum", None)
-
+    if reward_type == "chunk_level":
+        advantages = advantages.squeeze(-1)
+        if loss_mask is not None:
+            loss_mask = loss_mask.squeeze(-1)
+        if loss_mask_sum is not None:
+            loss_mask_sum = loss_mask_sum.squeeze(-1)
     bsz = logprobs.shape[0]
-
     if logprob_type == "token_level":
         logprobs = logprobs.reshape(bsz, -1, single_action_dim)
         old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim)
-        advantages = advantages.unsqueeze(-1)
-        if loss_mask is not None:
-            loss_mask = loss_mask.unsqueeze(-1)
-            loss_mask_sum = loss_mask_sum.unsqueeze(-1)
 
-    elif logprob_type == "action_level":
+    elif logprob_type == "step_level":
         logprobs = logprobs.reshape(bsz, -1, single_action_dim).sum(dim=-1)
         old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim).sum(dim=-1)
 
     elif logprob_type == "chunk_level":
-        logprobs = logprobs.reshape(bsz, -1, single_action_dim).mean(dim=[1, 2])
-        old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim).mean(dim=[1, 2])
-        advantages = advantages.mean(dim=-1)
-        if loss_mask is not None:
-            loss_mask = loss_mask.max(dim=-1)[0]
-        if loss_mask_sum is not None:
-            loss_mask_sum = loss_mask_sum.max(dim=-1)[0]
+        logprobs = logprobs.reshape(bsz, -1, single_action_dim).sum(dim=[1, 2])
+        old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim).sum(dim=[1, 2])
 
     if entropy is not None:
-        if entropy_type == "action_level":
+        if entropy_type == "step_level":
             entropy = entropy.reshape(bsz, -1, single_action_dim).sum(dim=-1)
         elif entropy_type == "chunk_level":
             entropy = entropy.sum(dim=-1)

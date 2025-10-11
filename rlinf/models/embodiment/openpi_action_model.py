@@ -280,7 +280,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         return processed_obs
 
     def predict_action_batch(
-        self, env_obs, mode: Literal["train", "eval"] = "train", compute_values=False
+        self, env_obs, mode: Literal["train", "eval"] = "train", compute_values=True
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
         processed_obs = self._process_obs_from_env(env_obs)
         observation = _model.Observation.from_dict(processed_obs)
@@ -315,7 +315,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         observation: _model.Observation,
         noise=None,
         mode="train",
-        compute_values=False,
+        compute_values=True,
     ) -> torch.Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = observation.state.shape[0]
@@ -443,7 +443,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         past_key_values,
         mode,
         denoise_steps,
-        compute_values=False,
+        compute_values=True,
     ):
         """
         Sample the mean, variance and value of the action at a given timestep.
