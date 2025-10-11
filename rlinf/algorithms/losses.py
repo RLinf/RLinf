@@ -89,7 +89,7 @@ def compute_ppo_actor_loss(
         dual_clip_mask = torch.zeros_like(clip_mask)
 
     policy_loss = loss_agg_func(
-        policy_loss, loss_mask, max_episode_steps
+        policy_loss, loss_mask, loss_mask_ratio
     )  # default max_episode_steps is None
 
     clip_mask = policy_loss1.detach() < policy_loss2.detach()
