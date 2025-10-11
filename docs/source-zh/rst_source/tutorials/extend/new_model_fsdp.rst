@@ -100,13 +100,13 @@
           sequences = generated.sequences
           actions = sequences[:, -self.action_dim:]
           logits = torch.stack(generated.logits, dim=1)
-          if self.cfg.algorithm.require_values:
-              values = self.compute_values(generated.hidden_states)
+          if hasattr(self, "value_head"):
+              values = self.value_head(generated.hidden_states)
           else:
               values = torch.zeros_like(logits[..., :1])
           return actions, sequences, logits, values
 
-1. 模型加载
+3. 模型加载
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 修改 `rlinf/models/__init__.py` 中的 `get_model`，当 `cfg.model_name` 匹配时调用 `from_pretrained` 加载你的类。  
@@ -138,7 +138,7 @@
 
       return model
 
-1. 环境封装函数
+4. 环境封装函数
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 在 `rlinf/envs/your_env_wrapper.py` 中添加 `wrap_observation_your_model` 和 `wrap_chunk_actions_your_model`。  

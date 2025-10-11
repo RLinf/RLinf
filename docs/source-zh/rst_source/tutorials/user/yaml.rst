@@ -689,7 +689,6 @@ algorithm
     auto_reset: True
     ignore_terminations: True
     use_fixed_reset_state_ids: False
-    require_values: True
     normalize_advantages: True
     kl_penalty: kl
 
@@ -712,8 +711,6 @@ algorithm
 ``algorithm.ignore_terminations``：训练时是否忽略 episode 的终止信号（若开启，episode 仅在达到最大步数时结束）。
 
 ``algorithm.use_fixed_reset_state_ids``：是否使用固定 reset 状态 ID（GRPO 推荐 True，PPO 默认为 False，旨在随机化）。
-
-``algorithm.require_values``：是否需要同时计算价值函数。
 
 ``algorithm.normalize_advantages``：是否对优势值归一化处理。
 

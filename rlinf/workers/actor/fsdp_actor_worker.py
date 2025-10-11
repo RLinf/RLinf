@@ -245,7 +245,14 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         kwargs = preprocess_advantages_inputs(**kwargs)
         advantages, returns = calculate_adv_and_returns(**kwargs)
 
-        self.rollout_batch.update({"advantages": advantages, "returns": returns, "loss_mask": kwargs["loss_mask"], "loss_mask_sum": kwargs["loss_mask_sum"]})
+        self.rollout_batch.update(
+            {
+                "advantages": advantages,
+                "returns": returns,
+                "loss_mask": kwargs["loss_mask"],
+                "loss_mask_sum": kwargs["loss_mask_sum"],
+            }
+        )
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
         return rollout_metrics
 

@@ -40,7 +40,6 @@ algorithm:
   ignore_terminations: False
   use_fixed_reset_state_ids: True
 
-  require_values: False
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 8

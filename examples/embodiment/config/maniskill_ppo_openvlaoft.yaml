@@ -38,8 +38,6 @@ algorithm:
   auto_reset: True
   ignore_terminations: False
   use_fixed_reset_state_ids: False
-  require_values: True
-  shuffle_samples: True
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1

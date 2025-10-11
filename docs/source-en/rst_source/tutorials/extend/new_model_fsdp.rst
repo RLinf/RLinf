@@ -101,13 +101,13 @@ Implement `predict_action_batch` to wrap generation, decoding, and optional valu
           sequences = generated.sequences
           actions = sequences[:, -self.action_dim:]
           logits = torch.stack(generated.logits, dim=1)
-          if self.cfg.algorithm.require_values:
-              values = self.compute_values(generated.hidden_states)
+          if hasattr(self, "value_head"):
+              values = self.value_head(generated.hidden_states)
           else:
               values = torch.zeros_like(logits[..., :1])
           return actions, sequences, logits, values
 
-1. Model Loading
+3. Model Loading
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Modify `get_model` in `rlinf/models/__init__.py` to call `from_pretrained` for your class when `cfg.model_name` matches. This ensures checkpoints load with the correct dtype, dimensions, and LoRA hooks.
@@ -138,7 +138,7 @@ Modify `get_model` in `rlinf/models/__init__.py` to call `from_pretrained` for y
 
       return model
 
-1. Environment Wrapper Functions
+4. Environment Wrapper Functions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 

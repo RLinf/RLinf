@@ -109,7 +109,6 @@ def preprocess_loss_inputs(**kwargs) -> dict:
     values = expand_to_target_dim(values, target_shape)
     prev_values = expand_to_target_dim(prev_values, target_shape)
     returns = expand_to_target_dim(returns, target_shape)
-    
 
     if entropy is not None:
         if entropy_type == "step_level":
@@ -149,6 +148,7 @@ def preprocess_advantages_inputs(**kwargs) -> dict:
                 0
             ]
     return kwargs
+
 
 def expand_to_target_dim(tensor, target_shape):
     if tensor is None:

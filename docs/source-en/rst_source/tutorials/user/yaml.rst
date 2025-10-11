@@ -744,7 +744,6 @@ algorithm
     auto_reset: True
     ignore_terminations: True
     use_fixed_reset_state_ids: False
-    require_values: True
     normalize_advantages: True
     kl_penalty: kl
 
@@ -768,8 +767,6 @@ algorithm
 ``algorithm.ignore_terminations``: Ignore episode terminations during training (if enabled, episode only ends when it reaches the ``max_episode_steps``).
 
 ``algorithm.use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO.
-
-``algorithm.require_values``: Whether value function computation is required.
 
 ``algorithm.normalize_advantages``: Normalize advantages across the batch.
 
