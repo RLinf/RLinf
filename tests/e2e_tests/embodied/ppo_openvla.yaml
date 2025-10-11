@@ -36,7 +36,6 @@ algorithm:
   auto_reset: True
   ignore_terminations: True
   use_fixed_reset_state_ids: false
-  require_values: True
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
@@ -149,10 +148,11 @@ actor:
     vocab_size: 32000
     hidden_size: 4096
     policy_setup: "widowx_bridge"
-    vh_mode: "a0"
+    add_value_head: True
     image_size: [224, 224]
     is_lora: True
     lora_rank: 32
+    use_wrist_image: False
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
     trust_remote_code: True

@@ -76,7 +76,6 @@ The algorithm configuration is defined as follows:
    algorithm:
 
       # Core PPO settings (recommended not to change)
-      require_values: True
       normalize_advantages: True
       group_size: 1
       adv_type: embodied_gae
