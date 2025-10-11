@@ -33,8 +33,9 @@ from rlinf.utils.timers import NamedTimer
 def compute_rollout_metrics(
     rollout_batch, max_prompt_len, response_len, use_critic=False
 ):
+    print(f"rollout_batch: {rollout_batch}")
     device = torch.device(f"cuda:{torch.cuda.current_device()}")
-    advantages = rollout_batch["advantages"].to(device=device)
+    advantages = rollout_batch["advantages"].to(device=device) if rollout_batch["advantages"] is not None else None
     mask = rollout_batch["attention_mask"][:, -response_len:].to(device=device)
     prompt_lengths = rollout_batch["prompt_lengths"].clone().to(device=device)
     response_lengths = rollout_batch["response_lengths"].clone().to(device=device)

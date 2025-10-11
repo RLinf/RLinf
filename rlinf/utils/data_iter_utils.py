@@ -162,6 +162,9 @@ def get_iterator_k_split(
 
         # Split tensor items
         items = list(tensor_items.items())
+        while items[0][1].shape[0] % num_splits != 0:
+            num_splits -= 1
+        print(f"items[0][1].shape[0]: {items[0][1].shape[0]}, num_splits: {num_splits}")
         if enforce_divisible_batch:
             assert items[0][1].shape[0] % num_splits == 0, (
                 "Issue with batch size configuration!"

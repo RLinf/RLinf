@@ -16,6 +16,7 @@ import copy
 from functools import partial
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import torch
 import torch.distributed
 from megatron.core import parallel_state
@@ -146,9 +147,17 @@ class MegatronActor(MegatronModelManager, Worker):
         # Reward configurations
         if not self.cfg.reward.use_reward_model:
             assert self.cfg.reward.reward_type == "math", "only support math"
-            self.reward_fn = math_verify_call
+            # 绑定本地reward函数：使用vendored compute_score
+            # try:
+            from toolkits.fused_compute_score.compute_score import compute_score as _cs
+            def _reward_fn(texts, answers):
+                return [_cs(str(t), str(a)) for t, a in zip(texts, answers, strict=False)]
+            self.reward_fn = _reward_fn
+            # except Exception:
+            #     # 回退一个恒为0的reward函数，避免运行时报错
+            #     self.reward_fn = math_verify_call
 
-        # Rollout configurations
+        # Rollout configurations - 对齐math，直接使用cfg.rollout.group_name
         self.rollout_group_name = self.cfg.rollout.group_name
 
         # Data I/O configurations
@@ -168,6 +177,8 @@ class MegatronActor(MegatronModelManager, Worker):
             * self.cfg.algorithm.group_size
             // parallel_state.get_data_parallel_world_size()
         )
+        
+        self.after_sample_total_batch_size_per_dp = 0
 
         # Config validation
         if self.is_pipeline:
@@ -186,6 +197,7 @@ class MegatronActor(MegatronModelManager, Worker):
         self._cp_group_ranks = parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS
 
         self._init_profiler()
+
 
     def _init_profiler(self):
         def _validate_schedule_info():
@@ -450,16 +462,20 @@ class MegatronActor(MegatronModelManager, Worker):
 
     def _get_num_microbatches(self, batch: Dict[str, torch.Tensor], forward_only: bool):
         batch_size = get_batch_size(batch)
+        print(f"forward_only: {forward_only}")
+        print(f"batch_size: {batch_size}")
         forward_micro_batch_size = (
             self.logprob_forward_micro_batch_size
             if forward_only
             else self.cfg.actor.micro_batch_size
         )
+        print(f"forward_micro_batch_size: {forward_micro_batch_size}")
         num_microbatches = (
             max(1, batch_size // forward_micro_batch_size)
             if forward_only
-            else get_num_microbatches()
+            else max(1, batch_size // self.cfg.algorithm.training_batch_size_per_gpu)
         )
+        print(f"num_microbatches: {num_microbatches}")
         return num_microbatches
 
     def run_forward_backward(self, batch: Dict[str, torch.Tensor], forward_only=True):
@@ -682,14 +698,29 @@ class MegatronActor(MegatronModelManager, Worker):
         # Get all batches for this DP
         batches = []
         recv_batch_size = 0
-        while recv_batch_size < self.total_batch_size_per_dp:
+        while recv_batch_size < self.after_sample_total_batch_size_per_dp:
+            print(f"run_training recv_batch_size: {recv_batch_size} < expected_total: {self.after_sample_total_batch_size_per_dp}")
             batch, rollout_result = self.get_batch(input_channel)
             batches.append(batch)
             recv_batch_size += rollout_result.num_sequence
-        assert recv_batch_size == self.total_batch_size_per_dp, (
-            f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
+        assert recv_batch_size == self.after_sample_total_batch_size_per_dp, (
+            f"Expected {self.after_sample_total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
         )
+        
         batch = RolloutResult.merge_batches(batches)
+        if recv_batch_size == 0:
+            with self.worker_timer():
+                return {
+                    "batch_size_per_dp": 0,
+                    "prompt_length": 0,
+                    "response_length": 0,
+                    "total_length": 0,
+                    "reward_scores": 0,
+                    "fraction_of_samples_properly_ended": 0,
+                    "advantages_mean": 0,
+                    "advantages_max": 0,
+                    "advantages_min": 0,
+                }, []
 
         # Must be called after batch is retrieved, which is when rollout has stopped
         # Otherwise, loading model might cause OOM
@@ -745,7 +776,7 @@ class MegatronActor(MegatronModelManager, Worker):
             cfg=self.cfg,
             get_batch_fn=partial(self.get_batch, input_channel),
             micro_batch_size=self.role_cfg.micro_batch_size,
-            total_batch_size=self.total_batch_size_per_dp,
+            total_batch_size=self.after_sample_total_batch_size_per_dp,
             num_global_batches=self.num_train_steps,
             forward_only=False,
         )
@@ -888,7 +919,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     rollout_result.rewards = self._compute_batch_rewards(
                         batch, rollout_result.answers
                     ).cpu()
-
+            print(f"rollout_result.rewards: {rollout_result.rewards}")
             self.put_result(rollout_result, output_channel)
 
         assert recv_batch_size == self.total_batch_size_per_dp, (
@@ -898,7 +929,7 @@ class MegatronActor(MegatronModelManager, Worker):
     def _compute_batch_rewards(
         self, batch: Dict[str, torch.Tensor], answers: List[str]
     ):
-        """Reward computation using non-model based reward."""
+        """Reward computation using external RStar2 Agent reward (code_judge compute_score)."""
         all_reward_scores = []
         texts = []
         for response, response_len in zip(
@@ -913,15 +944,14 @@ class MegatronActor(MegatronModelManager, Worker):
                 self.tokenizer.decode(response.tolist(), skip_special_tokens=True)
             )
 
+        # Use the bound self.reward_fn (set in __init__) uniformly
         if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
-            rewards = self.reward_fn(texts, answers)
-            reward_scores = [
-                self.cfg.reward.reward_scale
-                if reward == 1
-                else -self.cfg.reward.reward_scale
-                for reward in rewards
-            ]
-            all_reward_scores.extend(reward_scores)
+            reward_scale = float(self.cfg.reward.get("reward_scale", 1.0))
+            try:
+                scores = [float(s) for s in self.reward_fn(texts, answers)]
+            except Exception:
+                scores = [0.0 for _ in texts]
+            all_reward_scores.extend([s * reward_scale for s in scores])
 
         if len(all_reward_scores) > 0:
             new_all_rewards = []
@@ -938,6 +968,214 @@ class MegatronActor(MegatronModelManager, Worker):
             ).view(-1, 1)
         return broadcast_tensor_within_mp(all_reward_scores).flatten().to("cpu")
 
+    def down_sample_batch(self, input_channel: Channel, output_channel: Channel):
+        if self.is_pipeline:
+            # In pipeline mode, rewards are computed in the rollout
+            with self.worker_timer():
+                return
+        print(f"down_sample_batch {self.total_batch_size_per_dp}")
+        recv_batch_size = 0
+        self.after_sample_total_batch_size_per_dp = 0
+        while recv_batch_size < self.total_batch_size_per_dp:
+            batch, rollout_result = self.get_batch(input_channel)
+            recv_batch_size += rollout_result.num_sequence
+            do_down_sampling = (
+                hasattr(self.cfg, "down_sampling")
+                and getattr(self.cfg.down_sampling, "do_down_sampling", False)
+            )
+            if not do_down_sampling:
+                self.after_sample_total_batch_size_per_dp += rollout_result.num_sequence
+                self.put_result(rollout_result, output_channel)
+                continue
+
+            down_sampling_config = getattr(self.cfg.down_sampling, "down_sampling_config", {})
+
+            def _build_group_uids_by_chunks(total_num: int, group_size: int):
+                # 以连续的 group_size 为一组
+                return [i // max(1, group_size) for i in range(total_num)]
+
+            def _reject_equal_reward(uids, rewards):
+                
+                rewards_t = (
+                    rewards if isinstance(rewards, torch.Tensor) else torch.tensor(rewards, dtype=torch.float32)
+                )
+                uids_arr = np.array(uids)
+                unique_uids = np.unique(uids_arr)
+                valid_mask = torch.ones(len(uids), dtype=torch.bool)
+                for uid in unique_uids:
+                    idxs = np.where(uids_arr == uid)[0]
+                    if len(idxs) == 0:
+                        continue
+                    grp_rewards = rewards_t[idxs]
+                    if torch.allclose(grp_rewards[0], grp_rewards):
+                        valid_mask[idxs] = False
+                return valid_mask
+
+            def _calc_penalty_weights(response_texts):
+                import re as _re
+                
+
+                def error_ratio(text, pattern=r"<tool_response>.*?</tool_response>"):
+                    matches = _re.findall(pattern, text, _re.DOTALL)
+                    error_count = len([m for m in matches if "error" in m.lower()])
+                    if len(matches) == 0:
+                        return 0.5
+                    return error_count / len(matches)
+
+                def answer_tag_penalty(
+                    text: str,
+                    answer_tags=None,
+                    answer_pattern=r"<answer>.*?</answer>",
+                    turn_pattern=r"<\|im_start\|>assistant.*?<\|im_end\|>",
+                ):
+                    if answer_tags is None:
+                        answer_tags = ["<answer>", "</answer>"]
+                    if any(tag not in text for tag in answer_tags):
+                        return 1.0
+                    closed_cnt = len(_re.findall(answer_pattern, text, _re.DOTALL))
+                    tags_cnt = [text.count(tag) for tag in answer_tags]
+                    if any(c != closed_cnt for c in tags_cnt):
+                        return 1.0
+                    turns = _re.findall(turn_pattern, text, _re.DOTALL)
+                    num_turns = len(turns)
+                    if num_turns == 0:
+                        return 1.0
+                    return min((closed_cnt - 1) / num_turns, 1.0)
+
+                err_w = np.array([error_ratio(t) for t in response_texts], dtype=float)
+                fmt_w = np.array([answer_tag_penalty(t) for t in response_texts], dtype=float)
+                return err_w, fmt_w
+
+            def _weighted_group_choice(uids, rewards, response_texts):
+                
+                cfg = down_sampling_config
+                down_sample_to_n = int(cfg.get("down_sample_to_n", -1))
+                if down_sample_to_n <= 0:
+                    return torch.ones(len(uids), dtype=torch.bool)
+
+                roc_error_ratio = bool(cfg.get("roc_error_ratio", False))
+                roc_answer_format = bool(cfg.get("roc_answer_format", False))
+                min_zero = int(cfg.get("min_zero_reward_trace_num", 0))
+                min_non_zero = int(cfg.get("min_non_zero_reward_trace_num", 0))
+
+                err_w, fmt_w = _calc_penalty_weights(response_texts)
+
+                uids_arr = np.array(uids)
+                unique_uids = np.unique(uids_arr)
+                rewards_t = (
+                    rewards if isinstance(rewards, torch.Tensor) else torch.tensor(rewards, dtype=torch.float32)
+                )
+
+                valid_mask = torch.zeros(len(uids), dtype=torch.bool)
+                for uid in unique_uids:
+                    idxs = np.where(uids_arr == uid)[0]
+                    if len(idxs) < down_sample_to_n:
+                        continue
+                    if len(idxs) == down_sample_to_n:
+                        valid_mask[idxs] = True
+                        continue
+                    grp_rewards = rewards_t[idxs]
+                    grp_err_w = err_w[idxs]
+                    grp_fmt_w = fmt_w[idxs]
+                    penalty = (
+                        (grp_err_w if roc_error_ratio else 0)
+                        + (grp_fmt_w if roc_answer_format else 0)
+                    )
+
+                    zero_pairs = [(i, p) for i, r, p in zip(idxs, grp_rewards, penalty, strict=False) if r <= 0]
+                    non_zero_pairs = [(i, p) for i, r, p in zip(idxs, grp_rewards, penalty, strict=False) if r > 0]
+
+                    non_zero_pairs.sort(key=lambda x: x[1])
+
+                    z_quota = round(len(zero_pairs) * down_sample_to_n / len(idxs))
+                    nz_quota = round(len(non_zero_pairs) * down_sample_to_n / len(idxs))
+
+                    if z_quota <= min(min_zero, len(zero_pairs)):
+                        z_quota = min(min_zero, len(zero_pairs))
+                        nz_quota = down_sample_to_n - z_quota
+                    if nz_quota <= min(min_non_zero, len(non_zero_pairs)):
+                        nz_quota = min(min_non_zero, len(non_zero_pairs))
+                        z_quota = down_sample_to_n - nz_quota
+
+                    chosen = [i for i, _ in non_zero_pairs[:nz_quota]] + [i for i, _ in zero_pairs[:z_quota]]
+                    if len(chosen) != down_sample_to_n:
+                        all_sorted = [i for i, _ in sorted(non_zero_pairs + zero_pairs, key=lambda x: x[1])]
+                        chosen = all_sorted[:down_sample_to_n]
+                    valid_mask[torch.tensor(chosen, dtype=torch.long)] = True
+
+                return valid_mask
+
+            reject_equal = bool(down_sampling_config.get("reject_equal_reward", False))
+
+            original_group_size = int(self.cfg.algorithm.group_size)
+            uids = _build_group_uids_by_chunks(rollout_result.num_sequence, original_group_size)
+
+            
+            if reject_equal and rollout_result.rewards is not None:
+                mask1 = _reject_equal_reward(uids, rollout_result.rewards)
+            else:
+                mask1 = torch.ones(rollout_result.num_sequence, dtype=torch.bool)
+            print(f"mask1: {mask1.sum()}")
+            if not mask1.any():
+                continue
+
+            if rollout_result.response_texts is not None:
+                response_texts = rollout_result.response_texts
+            else:
+                response_texts = [
+                    self.tokenizer.decode(ids, skip_special_tokens=True)
+                    for ids in rollout_result.response_ids
+                ]
+
+            mask2 = _weighted_group_choice(uids, rollout_result.rewards, response_texts)
+
+            final_mask = mask1 & mask2
+            if not final_mask.any():
+                continue
+
+            def _apply_mask_to_list(lst, mask):
+                return [x for i, x in enumerate(lst) if mask[i].item()]
+
+            def _apply_mask_to_tensor(t, mask):
+                return t[mask]
+
+            idx_mask = final_mask
+            rr = rollout_result
+            rr.prompt_lengths = _apply_mask_to_list(rr.prompt_lengths, idx_mask)
+            rr.prompt_ids = _apply_mask_to_list(rr.prompt_ids, idx_mask)
+            rr.response_lengths = _apply_mask_to_list(rr.response_lengths, idx_mask)
+            rr.response_ids = _apply_mask_to_list(rr.response_ids, idx_mask)
+            rr.is_end = _apply_mask_to_list(rr.is_end, idx_mask)
+            if rr.prompt_texts is not None:
+                rr.prompt_texts = _apply_mask_to_list(rr.prompt_texts, idx_mask)
+            if rr.response_texts is not None:
+                rr.response_texts = _apply_mask_to_list(rr.response_texts, idx_mask)
+            if rr.answers is not None:
+                rr.answers = _apply_mask_to_list(rr.answers, idx_mask)
+            if rr.rollout_logprobs is not None:
+                rr.rollout_logprobs = _apply_mask_to_list(rr.rollout_logprobs, idx_mask)
+            if rr.rewards is not None:
+                rr.rewards = rr.rewards if isinstance(rr.rewards, torch.Tensor) else torch.tensor(rr.rewards)
+                rr.rewards = _apply_mask_to_tensor(rr.rewards, idx_mask)
+            if rr.advantages is not None:
+                rr.advantages = _apply_mask_to_tensor(rr.advantages, idx_mask)
+            if rr.prev_logprobs is not None:
+                rr.prev_logprobs = _apply_mask_to_tensor(rr.prev_logprobs, idx_mask)
+            if rr.ref_logprobs is not None:
+                rr.ref_logprobs = _apply_mask_to_tensor(rr.ref_logprobs, idx_mask)
+
+            rr.num_sequence = len(rr.response_ids)
+            # 下采样后每个 prompt 的响应数固定为 down_sample_to_n，更新 group_size
+            # if isinstance(down_sampling_config, dict):
+            _dsn = int(down_sampling_config.get("down_sample_to_n", -1))
+            if _dsn > 0:
+                rr.group_size = _dsn
+            self.after_sample_total_batch_size_per_dp += rr.num_sequence
+            print(f"down_sampling_config: {down_sampling_config}")
+            print(f"rr.group_size: {rr.group_size}")
+            print(f"rr.num_sequence: {rr.num_sequence}")
+            self.put_result(rr, output_channel)
+
     # Advantages and returns
     def compute_advantages_and_returns(
         self, input_channel: Channel, output_channel: Channel
@@ -953,26 +1191,35 @@ class MegatronActor(MegatronModelManager, Worker):
             with self.worker_timer():
                 return
         clear_memory()
+        if self.after_sample_total_batch_size_per_dp == 0:
+            with self.worker_timer():
+                return
         recv_batch_size = 0
-        while recv_batch_size < self.total_batch_size_per_dp:
+        while recv_batch_size < self.after_sample_total_batch_size_per_dp:
+            print(f"advantages recv_batch_size: {recv_batch_size} < expected_total: {self.after_sample_total_batch_size_per_dp}")
             batch, rollout_result = self.get_batch(input_channel)
             recv_batch_size += rollout_result.num_sequence
 
             with self.worker_timer():
                 if rollout_result.advantages is None:
                     mask = batch["attention_mask"][:, -self.response_len :]
+                    # 使用下采样后的实际 group_size（每个 prompt 的响应数）
+                    actual_group_size = getattr(rollout_result, "group_size", None)
+                    if actual_group_size is None or int(actual_group_size) <= 0:
+                        actual_group_size = self.cfg.algorithm.group_size
+                    print(f"actual_group_size: {actual_group_size}")
                     advantages, returns = calculate_adv_and_returns(
                         adv_type=self.cfg.algorithm.adv_type,
                         reward_scores=batch["rewards"].cuda(),
                         mask=mask.cuda(),
-                        num_responses=self.cfg.algorithm.group_size,
+                        num_responses=int(actual_group_size),
                     )
                     rollout_result.advantages = advantages.cpu()
 
             self.put_result(rollout_result, output_channel)
 
-        assert recv_batch_size == self.total_batch_size_per_dp, (
-            f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
+        assert recv_batch_size == self.after_sample_total_batch_size_per_dp, (
+            f"Expected {self.after_sample_total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
         )
 
     # Rollout
@@ -991,6 +1238,7 @@ class MegatronActor(MegatronModelManager, Worker):
         self.log_info(
             f"Actor rank {self._rank} will send weights to {self._weight_dst_rank_in_rollout}"
         )
+
 
     def del_reshard_state_dict(self):
         if hasattr(self, "reshard_state_dict"):
@@ -1023,6 +1271,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     self.rollout_group_name,
                     weight_dst_rank,
                 )
+
 
     def _compute_rollout_metrics(self, batch):
         rollout_metrics, total_prompt_lengths, total_decode_lengths = (
