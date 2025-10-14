@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import torch
-from typing import Callable, Dict, Optional, Tuple
+from typing import Optional
 
 
 def huber_loss(error: torch.Tensor, delta: float) -> torch.Tensor:
