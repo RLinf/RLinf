@@ -353,6 +353,7 @@ Complete documentation for RLinf can be found [**Here**](https://rlinf.readthedo
 
   - [Embodied Intelligence Vision-Language-Action Model training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied.html)
   - [Math Reasoning Model Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/reasoning.html)
+  - [Rstar2 Reasoning Model Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/rstar2.html)
 
 **Advanced Features**
 

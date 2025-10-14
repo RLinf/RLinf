@@ -39,7 +39,7 @@ def compute_rollout_metrics(
     use_critic=False,
 ):
     device = torch.device(f"cuda:{torch.cuda.current_device()}")
-    advantages = rollout_batch["advantages"].to(device=device)
+    advantages = rollout_batch["advantages"].to(device=device) if rollout_batch["advantages"] is not None else None
     mask = rollout_batch["attention_mask"][:, -response_len:].to(device=device)
     prompt_lengths = rollout_batch["prompt_lengths"].clone().to(device=device)
     response_lengths = rollout_batch["response_lengths"].clone().to(device=device)

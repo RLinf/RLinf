@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+dynamic = ["version"]
+
+name = "code-judge"
+description = "Code Judge is a tool for evaluating codes."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+
+[tool.setuptools.dynamic]
+version = {attr = "app.version.__version__"}
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+concurrency = ["multiprocessing", "thread"]
+parallel = true
+sigterm = true
+source = ["app"]

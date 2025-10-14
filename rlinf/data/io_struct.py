@@ -133,6 +133,60 @@ class RolloutRequest:
 
         return splitted_requests
 
+    def repeat(self) -> "RolloutRequest":
+        """Repeat each input in the RolloutRequest a specified number of times.
+
+        Args:
+            times (int): The number of times to repeat each input.
+
+        Returns:
+            RolloutRequest: A new RolloutRequest with repeated inputs.
+        """
+        assert self.n > 0, "n must be greater than 0"
+
+        input_ids, answers = zip(
+            *[
+                (input_id, answer)
+                for input_id, answer in zip(self.input_ids, self.answers)
+                for _ in range(self.n)
+            ]
+        )
+        return RolloutRequest(
+            n=self.n,
+            input_ids=list(input_ids),
+            answers=list(answers),
+        )
+
+    def split(self, num_splits: int) -> List["RolloutRequest"]:
+        """Split the RolloutRequest into multiple smaller requests.
+
+        Args:
+            num_splits (int): The number of splits to create.
+
+        Returns:
+            List[RolloutRequest]: A list of smaller RolloutRequest instances.
+        """
+        assert num_splits > 0, "num_splits must be greater than 0"
+        assert len(self.input_ids) % num_splits == 0, (
+            f"Input IDs length {len(self.input_ids)} is not divisible by num_splits {num_splits}"
+        )
+
+        input_ids_split_list = split_list(self.input_ids, num_splits)
+        answers_split_list = split_list(self.answers, num_splits)
+
+        splitted_requests = []
+        for input_ids_batch, answers_batch in zip(
+            input_ids_split_list, answers_split_list
+        ):
+            request = RolloutRequest(
+                n=self.n,
+                input_ids=input_ids_batch,
+                answers=answers_batch,
+            )
+            splitted_requests.append(request)
+
+        return splitted_requests
+
     def repeat_and_split(
         self, rollout_batch_size: Optional[int] = None
     ) -> List["RolloutRequest"]:
@@ -193,97 +247,6 @@ class RolloutRequest:
         return splitted_requests
 
 
-class CompletionInfo:
-    def __init__(self, logger=None):
-        self.input_ids: Dict[int, List[int]] = {}  # hash -> input token IDs
-        self.complete_num: Dict[int, int] = {}  # hash -> completion count
-        self.results: Dict[int, List[Dict]] = {}  # hash -> list of results
-
-        self.num_requests: int = 0
-        self.num_completed: int = 0
-        self._num_returned: int = 0  # Number of results returned
-
-        self.n_result_each_request: int = 0
-
-        self.logger = logger
-
-    def hash(self, token_ids: List[int]) -> int:
-        """Generate a hash for the token IDs."""
-        return hash(tuple(token_ids))
-
-    def clear(self):
-        self.complete_num.clear()
-        self.input_ids.clear()
-        self.results.clear()
-        self.num_requests = 0
-        self.num_completed = 0
-        self._num_returned = 0
-
-    def add_request(self, req: RolloutRequest):
-        """Add a new request to the completion info."""
-        if self.n_result_each_request != 0:
-            assert self.n_result_each_request == req.n
-        else:
-            self.n_result_each_request = req.n
-
-        self.num_requests += len(req.input_ids)
-
-        for ids in req.input_ids:
-            hash_id = self.hash(ids)
-            if hash_id not in self.input_ids:
-                self.input_ids[hash_id] = ids
-                self.complete_num[hash_id] = 0
-                self.results[hash_id] = []
-            else:
-                assert self.input_ids[hash_id] == ids, (
-                    "Input IDs mismatch for existing hash ID"
-                )
-
-    def clear_and_set(self, req: RolloutRequest):
-        self.clear()
-        self.add_request(req)
-
-    def is_empty(self) -> bool:
-        return len(self.complete_num) == 0 and len(self.results) == 0
-
-    def record_result(self, token_ids: List[int], result: Dict) -> int:
-        hash_id = self.hash(token_ids)
-
-        self.complete_num[hash_id] += 1
-        self.results[hash_id].append(result)
-
-        if self.complete_num[hash_id] == self.n_result_each_request:
-            self.num_completed += 1
-            if self.logger is not None:
-                self.logger.debug(f"Completed all rollouts for hash: {hash_id}")
-
-        return self.complete_num[hash_id]
-
-    def is_completed(self, hash_id: int) -> bool:
-        return self.complete_num[hash_id] == self.n_result_each_request
-
-    def get_results(self, hash_id: int) -> List[Dict]:
-        """Get the results for the given token IDs."""
-        assert hash_id in self.results, "Hash ID not found in results"
-        assert self.complete_num[hash_id] == self.n_result_each_request, (
-            "Not all results for this hash ID are completed"
-        )
-        value = self.results.pop(hash_id)
-        return value
-
-    def record_returned(self):
-        """Record that a result has been returned."""
-        self._num_returned += 1
-        if self.logger is not None:
-            self.logger.debug(
-                f"Returned / Completed: {self._num_returned} / {self.num_completed}"
-            )
-
-    def all_returned(self) -> bool:
-        """Check if all results have been returned."""
-        return self._num_returned == self.num_requests
-
-
 @dataclass(kw_only=True)
 class RolloutResult:
     """
@@ -318,6 +281,7 @@ class RolloutResult:
     def _get_attention_masks_and_position_ids(
         prompt_lengths: torch.Tensor,
         response_lengths: torch.Tensor,
+        response_mask: torch.Tensor,
         max_prompt_len: int,
         total_len: int,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -337,8 +301,10 @@ class RolloutResult:
         # Broadcast [B, total_len]
         prompt_start = prompt_start.unsqueeze(1)
         response_end = response_end.unsqueeze(1)
-
-        attention_mask = (arange_ids >= prompt_start) & (arange_ids < response_end)
+        if response_mask is not None:
+            attention_mask = torch.cat([(torch.arange(max_prompt_len).unsqueeze(0).expand(response_mask.size(0), -1) >= prompt_start), response_mask], dim=1).bool()
+        else:
+            attention_mask = (arange_ids >= prompt_start) & (arange_ids < response_end)
 
         # =========================
         # Position IDs
@@ -785,9 +751,20 @@ class RolloutResult:
         response_lengths = torch.tensor(self.response_lengths)
         is_end = torch.tensor(self.is_end, dtype=torch.bool)
 
+        if self.response_mask is not None:
+            response_mask = batch_pad_to_fixed_len(
+                [torch.as_tensor(ids, dtype=torch.long) for ids in self.response_mask],
+                max_batch_len=max_response_len,
+                pad_token=pad_token,
+            )
+        else:
+            response_mask = None
+
+
         attention_mask, position_ids = self._get_attention_masks_and_position_ids(
             prompt_lengths=prompt_lengths,
             response_lengths=response_lengths,
+            response_mask=response_mask,
             max_prompt_len=data_seq_length,
             total_len=training_seq_length,
         )

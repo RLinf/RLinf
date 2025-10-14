@@ -13,6 +13,10 @@
 # limitations under the License.
 
 
+import re
+from enum import Enum
+from typing import List, Tuple
+
 import torch
 
 
@@ -34,6 +38,210 @@ def get_pp_reshard_fn(model_arch: str):
         )
 
 
+###########################
+# convert fn implementation
+###########################
+
+
+class TransformType(Enum):
+    SPLIT_QKV = "split_qkv"
+    SPLIT_QKV_BIAS = "split_qkv_bias"
+    SPLIT_FC1 = "split_fc1"
+    SPLIT_NONE = "split_none"
+
+
+class TransformFunc:
+    @staticmethod
+    def _split_gqa_tensor(
+        tensor: torch.Tensor, new_statedict: dict, weight_names: List[str], config
+    ) -> None:
+        hidden_size = config.model_config.hidden_size
+        num_attention_heads = config.model_config.num_attention_heads
+        num_query_groups = config.model_config.num_query_groups or num_attention_heads
+        head_dim = hidden_size // num_attention_heads
+
+        target_tp = config.reshard_tp_size
+        assert num_query_groups % target_tp == 0, (
+            "num_query_groups must be divisible by reshard_tp_size"
+        )
+        local_num_query_groups = num_query_groups // target_tp
+
+        # heads per query group
+        assert num_attention_heads % num_query_groups == 0, (
+            "num_attention_heads must be divisible by num_query_groups"
+        )
+        q_heads_per_group = num_attention_heads // num_query_groups
+
+        num_channel_qkv = q_heads_per_group + 2
+
+        if tensor.ndim == 2:
+            # Weight: [out_features, in_features]
+            out_features, in_features = tensor.shape
+            expected_out = local_num_query_groups * num_channel_qkv * head_dim
+            assert out_features == expected_out, (
+                f"Unexpected fused QKV weight shape {tensor.shape}, expect "
+                f"[{expected_out}, {in_features}] (local groups={local_num_query_groups})"
+            )
+
+            qkv = tensor.view(
+                local_num_query_groups, num_channel_qkv, head_dim, in_features
+            )
+            q, k, v = torch.split(
+                qkv, [q_heads_per_group, 1, 1], dim=1
+            )  # shapes: [G, qh, D, In], [G,1,D,In], [G,1,D,In]
+            q_full = q.reshape(-1, in_features).contiguous()
+            k_full = k.reshape(-1, in_features).contiguous()
+            v_full = v.reshape(-1, in_features).contiguous()
+        else:
+            # Bias: [out_features]
+            out_features = tensor.shape[0]
+            expected_out = local_num_query_groups * num_channel_qkv * head_dim
+            assert out_features == expected_out, (
+                f"Unexpected fused QKV bias shape {tensor.shape}, expect "
+                f"[{expected_out}] (local groups={local_num_query_groups})"
+            )
+
+            qkv = tensor.view(local_num_query_groups, num_channel_qkv, head_dim)
+            q, k, v = torch.split(qkv, [q_heads_per_group, 1, 1], dim=1)
+            q_full = q.reshape(-1).contiguous()
+            k_full = k.reshape(-1).contiguous()
+            v_full = v.reshape(-1).contiguous()
+
+        # Save to target names
+        new_statedict[weight_names[0]] = q_full.clone()
+        new_statedict[weight_names[1]] = k_full.clone()
+        new_statedict[weight_names[2]] = v_full.clone()
+
+    @staticmethod
+    def split_fc1(
+        linear_fc1: torch.Tensor, new_statedict: dict, weight_names: List[str], config
+    ) -> None:
+        assert weight_names is not None and len(weight_names) == 2, (
+            f"split_fc1 transform expects two weight names, got {weight_names}"
+        )
+
+        tp_size = config.model_config.tensor_model_parallel_size
+        target_tp = config.reshard_tp_size
+        split_size = linear_fc1.shape[0] // (tp_size // target_tp)
+        linear_fc1_slice = torch.split(linear_fc1, split_size, dim=0)
+
+        gate_proj_shards = []
+        up_proj_shards = []
+        for weight in linear_fc1_slice:
+            assert weight.shape[0] % 2 == 0, (
+                f"linear_fc1 weight shape {weight.shape} is not even along dim 0"
+            )
+            weight_chunk = torch.chunk(weight, 2, dim=0)
+            gate_proj_shards.append(weight_chunk[0])
+            up_proj_shards.append(weight_chunk[1])
+        gate_proj = torch.cat(gate_proj_shards, dim=0)
+        up_proj = torch.cat(up_proj_shards, dim=0)
+
+        new_statedict[weight_names[0]] = gate_proj.clone()
+        new_statedict[weight_names[1]] = up_proj.clone()
+
+    @staticmethod
+    def split_none(
+        tensor: torch.Tensor, new_statedict: dict, weight_names: List[str]
+    ) -> None:
+        assert weight_names is not None and len(weight_names) == 1, (
+            f"split_none transform expects one weight name, got {weight_names}"
+        )
+        new_statedict[weight_names[0]] = tensor.clone()
+
+    @staticmethod
+    def mega_name_qwen2_5_to_hf(name: str) -> Tuple[TransformType, List[str]]:
+        """
+        Convert qwen2_5 model weight megatron name to hf name and do shape transform if needed.
+
+        Args:
+            name (str): megatron model weight name
+
+        Returns:
+            (TransformType, List[str]): transform type and the corresponding hf model weight name
+        """
+        if "embedding.word_embeddings.weight" in name:
+            return (TransformType.SPLIT_NONE, ["model.embed_tokens.weight"])
+        if "decoder.final_layernorm.weight" in name:
+            return (TransformType.SPLIT_NONE, ["model.norm.weight"])
+        if "output_layer.weight" in name:
+            return (TransformType.SPLIT_NONE, ["lm_head.weight"])
+        layer_id, suffix = TransformFunc.extract_layer_info(name)
+        assert layer_id is not None, f"Cannot extract layer info from {name}"
+        result_pattern = "model.layers.{}.{}"
+        nmap = {
+            "self_attention.linear_proj.weight": (
+                TransformType.SPLIT_NONE,
+                ["self_attn.o_proj.weight"],
+            ),
+            "self_attention.linear_qkv.layer_norm_weight": (
+                TransformType.SPLIT_NONE,
+                ["input_layernorm.weight"],
+            ),
+            "self_attention.linear_qkv.weight": (
+                TransformType.SPLIT_QKV,
+                [
+                    "self_attn.q_proj.weight",
+                    "self_attn.k_proj.weight",
+                    "self_attn.v_proj.weight",
+                ],
+            ),
+            "self_attention.linear_qkv.bias": (
+                TransformType.SPLIT_QKV_BIAS,
+                [
+                    "self_attn.q_proj.bias",
+                    "self_attn.k_proj.bias",
+                    "self_attn.v_proj.bias",
+                ],
+            ),
+            "mlp.linear_fc1.layer_norm_weight": (
+                TransformType.SPLIT_NONE,
+                ["post_attention_layernorm.weight"],
+            ),
+            "mlp.linear_fc1.weight": (
+                TransformType.SPLIT_FC1,
+                ["mlp.gate_proj.weight", "mlp.up_proj.weight"],
+            ),
+            "mlp.linear_fc2.weight": (
+                TransformType.SPLIT_NONE,
+                ["mlp.down_proj.weight"],
+            ),
+        }
+
+        assert suffix in nmap, f"Cannot find mapping for {suffix}"
+
+        transform_type, suffixes = nmap[suffix]
+        return (
+            transform_type,
+            [result_pattern.format(layer_id, suffix) for suffix in suffixes],
+        )
+
+    @staticmethod
+    def convert_mega_qwen2_5_to_hf(model_state_dict: dict, config) -> dict:
+        new_statedict = {}
+        for name, param in model_state_dict.items():
+            transform_type, hf_names = TransformFunc.mega_name_qwen2_5_to_hf(name)
+            if transform_type == TransformType.SPLIT_QKV:
+                TransformFunc._split_gqa_tensor(param, new_statedict, hf_names, config)
+            elif transform_type == TransformType.SPLIT_QKV_BIAS:
+                TransformFunc._split_gqa_tensor(param, new_statedict, hf_names, config)
+            elif transform_type == TransformType.SPLIT_FC1:
+                TransformFunc.split_fc1(param, new_statedict, hf_names, config)
+            elif transform_type == TransformType.SPLIT_NONE:
+                TransformFunc.split_none(param, new_statedict, hf_names)
+            else:
+                raise NotImplementedError(
+                    f"Transform type {transform_type} not implemented"
+                )
+        return new_statedict
+
+    @staticmethod
+    def extract_layer_info(s):
+        pattern = r"layers\.(\d+)\.(.+)"
+        match = re.search(pattern, s)
+        if match:
+            return match.group(1), match.group(2)
+        return None, None
 ##############################
 # tp reshard fn implementation
 ##############################

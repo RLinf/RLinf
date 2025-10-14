@@ -537,7 +537,7 @@ class DisaggRankMapper(RankMapper):
         return (corresponding_rollout_dp_rank, corresponding_rollout_tp_rank)
 
 
-SUPPORTED_LLM_ROLLOUT_BACKENDS = ["vllm", "sglang"]
+SUPPORTED_LLM_ROLLOUT_BACKENDS = ["vllm", "sglang", "agentloop_sglang"]
 
 
 def get_rollout_backend_worker(
@@ -564,14 +564,27 @@ def get_rollout_backend_worker(
         else:
             raise ValueError(f"Unsupported placement mode: {placement.placement_mode}")
     elif rollout_backend == "sglang":
-        from rlinf.workers.rollout.sglang.sglang_worker import (
-            AsyncSGLangWorker,
-            SGLangWorker,
-        )
-
+        from rlinf.workers.rollout.sglang.sglang_worker import AsyncSGLangWorker
+ 
         if placement.placement_mode == PlacementMode.COLLOCATED:
-            return SGLangWorker
+            return AsyncSGLangWorker
         elif placement.placement_mode == PlacementMode.DISAGGREGATED:
             return AsyncSGLangWorker
         else:
             raise ValueError(f"Unsupported placement mode: {placement.placement_mode}")
+    # elif rollout_backend == "agentloop_sglang":
+    #     # For agentloop_sglang, we use a dummy worker since the actual rollout
+    #     # is handled directly in Rstar2Runner with SGLangGenerateWorker and ToolAgentLoop
+    #     from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
+
+    #     if placement.placement_mode == PlacementMode.COLLOCATED:
+    #         # Return SGLangWorker as a placeholder - actual AgentLoop logic is in Rstar2Runner
+    #         return SGLangWo
+    # rker
+    #     elif placement.placement_mode == PlacementMode.DISAGGREGATED:
+    #         # For now, only support collocated mode for AgentLoop
+    #         raise NotImplementedError(
+    #             "AgentLoop SGLang rollout backend does not support the pipeline mode yet."
+    #         )
+    #     else:
+    #         raise ValueError(f"Unsupported placement mode: {placement.placement_mode}")

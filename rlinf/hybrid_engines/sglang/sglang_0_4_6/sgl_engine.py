@@ -104,6 +104,11 @@ class Engine(_Engine):
             self.tokenizer_manager.offload_model_weights(obj, None)
         )
 
+    async def async_offload_model_weights(self):
+        """Async version of offload_model_weights to avoid event loop conflicts."""
+        obj = OffloadReqInput()
+        return await self.tokenizer_manager.offload_model_weights(obj, None)
+
     def sync_hf_weight(self):
         obj = SyncHFWeightInput()
         loop = asyncio.get_event_loop()

@@ -628,7 +628,8 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         cfg = validate_reasoning_cfg(cfg)
     elif cfg.runner.task_type == "coding_online_rl":
         cfg = validate_coding_online_rl_cfg(cfg)
-
+    else:
+        cfg = validate_reasoning_cfg(cfg)
     if (
         cfg.algorithm.adv_type == "embodied_grpo"
         or cfg.algorithm.adv_type == "math_grpo"
