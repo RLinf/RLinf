@@ -156,18 +156,6 @@ class MegatronActor(MegatronModelManager, Worker):
         self.ref_policy_state_dict = None
         self.is_pipeline = self.component_placement.is_disaggregated
 
-<<<<<<< HEAD
-        # Reward configurations
-        if not self.cfg.reward.use_reward_model:
-            assert self.cfg.reward.reward_type == "math", "only support math"
-            self.reward_fn = math_verify_call
-
-        self.safe_length = self.cfg.reward.get("safe_length", 16384)
-        self.max_length = self.cfg.reward.get("max_length", 20480)
-        self.buffer_length = self.max_length - self.safe_length
-
-=======
->>>>>>> main
         # Rollout configurations
         self.rollout_group_name = self.cfg.rollout.group_name
 
@@ -411,17 +399,8 @@ class MegatronActor(MegatronModelManager, Worker):
                     logprobs=curr_logprobs,
                     old_logprobs=prev_logprobs,
                     advantages=advantages,
-<<<<<<< HEAD
-                    clip_ratio_high=self.cfg.algorithm.get(
-                        "clip_ratio_high", self.ratio_eps
-                    ),
-                    clip_ratio_low=self.cfg.algorithm.get(
-                        "clip_ratio_low", self.ratio_eps
-                    ),
-=======
                     clip_ratio_low=self.clip_ratio_low,
                     clip_ratio_high=self.clip_ratio_high,
->>>>>>> main
                     loss_mask=mask,
                 )
 
@@ -914,96 +893,6 @@ class MegatronActor(MegatronModelManager, Worker):
             f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
         )
 
-<<<<<<< HEAD
-    # Rewards
-    def compute_rewards(self, input_channel: Channel, output_channel: Channel):
-        """Compute rewards.
-
-        Args:
-            input_channel: The input channel to read from.
-            output_channel: The output channel to send results to.
-        """
-        if self.is_pipeline:
-            # In pipeline mode, rewards are computed in the rollout
-            with self.worker_timer():
-                return
-        recv_batch_size = 0
-        while recv_batch_size < self.total_batch_size_per_dp:
-            batch, rollout_result = self.get_batch(input_channel)
-            recv_batch_size += rollout_result.num_sequence
-
-            # Compute rule-based reward
-            with self.worker_timer():
-                if rollout_result.rewards is None:
-                    rollout_result.rewards = self._compute_batch_rewards(
-                        batch, rollout_result.answers
-                    ).cpu()
-
-            self.put_result(rollout_result, output_channel)
-
-        assert recv_batch_size == self.total_batch_size_per_dp, (
-            f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
-        )
-
-    def _compute_batch_rewards(
-        self, batch: Dict[str, torch.Tensor], answers: List[str]
-    ):
-        """Reward computation using non-model based reward."""
-        all_reward_scores = []
-        texts = []
-        for response, response_len in zip(
-            batch["input_ids"],
-            batch["response_lengths"],
-        ):
-            response = response[
-                self.cfg.data.max_prompt_length : self.cfg.data.max_prompt_length
-                + response_len
-            ]
-            texts.append(
-                self.tokenizer.decode(response.tolist(), skip_special_tokens=True)
-            )
-
-        if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
-            rewards = self.reward_fn(texts, answers)
-            reward_scores = [
-                self.cfg.reward.reward_scale
-                if reward == 1
-                else -self.cfg.reward.reward_scale
-                for reward in rewards
-            ]
-            all_reward_scores.extend(reward_scores)
-
-        if len(all_reward_scores) > 0:
-            new_all_rewards = []
-
-            for response in all_reward_scores:
-                if response is None:
-                    response = 0.0
-                new_all_rewards.append(response)
-
-            all_reward_scores = torch.as_tensor(
-                new_all_rewards,
-                dtype=torch.float,
-                device=torch.cuda.current_device(),
-            ).view(-1, 1)
-
-        if self.cfg.reward.get("len_reward_penalty", 0) > 0:
-            len_reward = self.get_length_reward(batch["response_lengths"])
-            all_reward_scores += len_reward * self.cfg.reward.get(
-                "len_reward_penalty", 0
-            )
-
-        return broadcast_tensor_within_mp(all_reward_scores).flatten().to("cpu")
-
-    def get_length_reward(self, length):
-        # DAPO trick3: overlong reward shaping
-        rew = torch.clamp(
-            (length - self.safe_length) / self.buffer_length, max=0, min=-1
-        )
-        return rew
-
-=======
->>>>>>> main
     # Advantages and returns
     def compute_advantages_and_returns(
         self, input_channel: Channel, output_channel: Channel
