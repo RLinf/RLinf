@@ -40,11 +40,11 @@ algorithm:
   shuffle_samples: True
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
-  group_size: 8
+  group_size: 8  # NOTE: group_size * num_group_envs * rollout_epoch = global buffer size
   n_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}
   n_eval_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}
-  num_group_envs: 8
-  rollout_epoch: 8
+  num_group_envs: 8  # NOTE: num_group_envs should be a multiple of the world_size
+  rollout_epoch: 16
   reward_type: action_level  # action_level or chunk_level
   logprob_type: token_level
   entropy_type: token_level
@@ -112,7 +112,7 @@ actor:
   checkpoint_load_path: "/path/to/model/Openvla-oft-SFT-libero-object-traj1/"
   checkpoint_save_path: "../results"
   micro_batch_size: 32
-  global_batch_size: 8192
+  global_batch_size: 16384
   seed: 1234
   enable_offload: False
 
@@ -139,7 +139,7 @@ actor:
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
     trust_remote_code: True
-    gradient_checkpointing: False
+    gradient_checkpointing: True
 
   optim:
     lr: 2.0e-5
