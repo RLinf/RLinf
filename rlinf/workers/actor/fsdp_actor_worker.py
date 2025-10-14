@@ -389,7 +389,7 @@ class FSDPActor(FSDPModelManager, Worker):
                     )
                     clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
 
-                    loss, mbs_metrics_data = actor_loss(
+                    loss, mbs_metrics_data = policy_loss(
                         loss_type=self.cfg.algorithm.loss_type,
                         loss_agg_func=self.loss_agg_func,
                         logprobs=logprobs,
