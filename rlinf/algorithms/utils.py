@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import torch
+from typing import Callable, Dict, Optional, Tuple
 
 
 def huber_loss(error: torch.Tensor, delta: float) -> torch.Tensor:
@@ -62,18 +63,18 @@ def kl_penalty(
     raise NotImplementedError
 
 
-def preprocess_loss_inputs(**kwargs) -> dict:
-    logprob_type = kwargs.get("logprob_type", None)
-    entropy_type = kwargs.get("entropy_type", None)
-    single_action_dim = kwargs.get("single_action_dim", None)
-
-    logprobs = kwargs["logprobs"]
-    old_logprobs = kwargs["old_logprobs"]
-    advantages = kwargs["advantages"]
-    entropy = kwargs.get("entropy", None)
-    loss_mask = kwargs.get("loss_mask", None)
-    loss_mask_sum = kwargs.get("loss_mask_sum", None)
-
+def preprocess_loss_inputs(
+    logprobs: torch.Tensor,
+    old_logprobs: torch.Tensor,
+    advantages: torch.Tensor,
+    logprob_type: Optional[str] = None,
+    entropy_type: Optional[str] = None,
+    single_action_dim: Optional[int] = None,
+    entropy: Optional[torch.Tensor] = None,
+    loss_mask: Optional[torch.Tensor] = None,
+    loss_mask_sum: Optional[torch.Tensor] = None,
+    **kwargs,
+) -> dict:
     bsz = logprobs.shape[0]
 
     if logprob_type == "token_level":
@@ -114,22 +115,22 @@ def preprocess_loss_inputs(**kwargs) -> dict:
     return kwargs
 
 
-def preprocess_advantages_inputs(**kwargs) -> dict:
+def preprocess_advantages_inputs(
+    rewards: torch.Tensor,
+    dones: torch.Tensor,
+    values: Optional[torch.Tensor] = None,
+    loss_mask: Optional[torch.Tensor] = None,
+    reward_type: Optional[str] = None,
+    **kwargs,
+) -> dict:
     """
     Preprocess inputs before computing advantages & returns.
     Unify names & formats, align with math interfaces.
     """
-    reward_type = kwargs.get("reward_type", None)
     if reward_type == "chunk_level":
-        rewards = kwargs["rewards"]
-        dones = kwargs["dones"]
-        kwargs["rewards"] = rewards.sum(dim=-1, keepdim=True)
-        kwargs["dones"] = dones[..., -1:]
+        rewards = rewards.sum(dim=-1, keepdim=True)
+        dones = dones[..., -1:]
 
-    rewards = kwargs["rewards"]
-    dones = kwargs["dones"]
-    values = kwargs.get("values", None)
-    loss_mask = kwargs.get("loss_mask", None)
     num_chunk, bsz, chunk_size = rewards.shape
     n_steps = num_chunk * chunk_size
     kwargs.update(
@@ -176,13 +177,14 @@ def postprocess_loss_metric(metrics_data: dict) -> dict:
     return metrics_data
 
 
-def calculate_scores(**kwargs):
-    rewards = kwargs["rewards"]
-    bsz = kwargs["batch_size"]
-    n_steps = kwargs["n_steps"]
-    dones = kwargs["dones"]
-    group_size = kwargs["group_size"]
-
+def calculate_scores(
+    rewards: torch.Tensor,
+    dones: torch.Tensor,
+    bsz: int,
+    n_steps: int,
+    group_size: int,
+    **kwargs,
+) -> dict:
     scores = torch.zeros(bsz)
     for step in reversed(range(n_steps)):
         scores = scores * ~dones[step + 1]
@@ -194,7 +196,13 @@ def calculate_scores(**kwargs):
     return kwargs
 
 
-def postprocess_advantages_outputs(**kwargs):
+def postprocess_advantages_outputs(
+    advantages: torch.Tensor,
+    num_chunk: int,
+    chunk_size: int,
+    returns: Optional[torch.Tensor] = None,
+    **kwargs,
+) -> dict:
     """
     Post-process results for Embodiment tasks; unflatten tensors.
     """
