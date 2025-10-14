@@ -205,6 +205,10 @@ def postprocess_advantages_outputs(**kwargs):
 
     res = {}
 
+    # NOTE: to unify with math grpo, we transposed loss mask. Therefore, for embodied grpo, we need to transpose back here.
+    if kwargs["adv_type"] == "grpo":
+        advantages = advantages.transpose(0, 1)
+
     advantages = advantages.reshape(num_chunk, chunk_size, -1).transpose(1, 2)
     res.update({"advantages": advantages})
 
