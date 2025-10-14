@@ -113,6 +113,9 @@ RUN export PHYSX_VERSION=105.1-physx-5.3.1.patch0 && \
     wget -O $PHYSX_DIR/linux-so.zip https://github.com/sapien-sim/physx-precompiled/releases/download/$PHYSX_VERSION/linux-so.zip && \
     unzip $PHYSX_DIR/linux-so.zip -d $PHYSX_DIR && rm $PHYSX_DIR/linux-so.zip
 
+RUN git clone https://github.com/RLinf/LIBERO.git /opt/libero
+ENV PYTHONPATH=/opt/libero:$PYTHONPATH
+
 # Set default env
 RUN echo "source ${UV_PATH}/openvla/bin/activate" >> ~/.bashrc
 

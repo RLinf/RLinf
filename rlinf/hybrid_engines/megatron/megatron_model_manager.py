@@ -184,6 +184,7 @@ class MegatronModelManager:
         return model
 
     def optimizer_step(self, increment):
+        clear_memory()
         success, grad_norm, num_zeros_in_grad = self.optimizer.step()
 
         self.lr_scheduler.step(increment=increment)

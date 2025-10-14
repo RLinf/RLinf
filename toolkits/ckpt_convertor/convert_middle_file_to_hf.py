@@ -293,23 +293,12 @@ def convert_layer(args, mfst_loader: STLoaderLazy, saver: HFSTSaver, layer_idx):
                     layernorm_trans,
                     "decoder.final_layernorm.weight",
                 ),
-                "lm_head.weight": ("copy", linear_trans, "output_layer.weight"),
             }
         )
         if not args.tie_word_embeddings:
             model_strategy_map.update(
                 {
                     "lm_head.weight": ("copy", linear_trans, "output_layer.weight"),
-                }
-            )
-        else:
-            model_strategy_map.update(
-                {
-                    "lm_head.weight": (
-                        "copy",
-                        linear_trans,
-                        "embedding.word_embeddings.weight",
-                    ),
                 }
             )
     else:

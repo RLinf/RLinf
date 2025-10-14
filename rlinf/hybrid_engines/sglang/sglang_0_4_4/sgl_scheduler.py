@@ -108,10 +108,13 @@ class Scheduler(_Scheduler, Worker):
             placement
         )[(self.get_parent_rank(), self._rank)]
 
+        use_presharded_weights = (
+            False if self.cfg.actor.training_backend == "fsdp" else True
+        )
         # it's important to use load_weight to load resharded weight from megatron
         for _, module in self.tp_worker.worker.model_runner.model.named_modules():
             if hasattr(module, "use_presharded_weights"):
-                module.use_presharded_weights = True
+                module.use_presharded_weights = use_presharded_weights
 
         self._logger.info(
             f"Running Scheduler dp rank {self.get_parent_rank()}, tp rank {self.tp_rank}, corresponding actor weight rank = {self.actor_weight_rank}"

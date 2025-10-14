@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import atexit
 import gc
 import os
 import sys
@@ -19,6 +20,7 @@ from contextlib import contextmanager
 from functools import partial, wraps
 
 import torch
+import torch.nn.functional as F
 
 
 def clear_memory(sync=True):
@@ -135,6 +137,57 @@ def raw_mean(values, mask, axis=0):
         return values.mean()
 
 
+def logprobs_from_logits_flash_attn(logits, labels, inplace_backward=True):
+    from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
+
+    output = cross_entropy_loss(logits, labels, inplace_backward=inplace_backward)
+    assert isinstance(output, tuple), (
+        "please make sure flash-attn>=2.4.3 where cross_entropy_loss returns Tuple[losses, z_losses]."
+    )
+    return -output[0]
+
+
+def compute_logprobs_from_logits(logits, target, task_type="embodied"):
+    if task_type == "embodied":
+        logprobs = -F.cross_entropy(
+            logits, target=target, reduction="none"
+        )  # [B, action-dim]
+        return logprobs
+    batch_dim = logits.shape[:-1]
+    last_dim = logits.shape[-1]
+    logits = logits.reshape(-1, last_dim)
+    labels = target.reshape(-1)
+    logprobs = logprobs_from_logits_flash_attn(
+        logits, labels=labels, inplace_backward=False
+    )
+    logprobs = logprobs.view(*batch_dim)
+    return logprobs
+
+
+def entropy_from_logits(logits: torch.Tensor):
+    """Calculate entropy from logits."""
+    pd = torch.nn.functional.softmax(logits, dim=-1)
+    entropy = torch.logsumexp(logits, dim=-1) - torch.sum(pd * logits, dim=-1)
+    return entropy
+
+
+def compute_entropy_from_logits(logits, epsilon=1e-10, task_type="embodied"):
+    """
+    Compute entropy by logits.
+
+    Args:
+        logits: [B, vocab-size, seq-len]
+    Returns:
+        entropy: [B, seq-len]
+    """
+    if task_type == "embodied":
+        all_probs = F.softmax(logits, dim=1)  # [B, vocab-size, seq-len]
+        all_log_probs = torch.log(all_probs + epsilon)
+        entropy = -torch.sum(all_probs * all_log_probs, dim=1)  # [B, seq-len]
+        return entropy
+    return entropy_from_logits(logits=logits)
+
+
 class DualOutput:
     def __init__(self, file, terminal):
         self.file = file
@@ -178,32 +231,37 @@ def output_redirector(func):
         )
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
-        with open(log_path, "w", encoding="utf-8", buffering=1) as f:
-            dual_out = DualOutput(f, sys.stdout)
-            dual_err = DualOutput(f, sys.stderr)
+        f = open(log_path, "w", encoding="utf-8", buffering=1)
 
-            old_stdout = sys.stdout
-            old_stderr = sys.stderr
-            try:
-                sys.stdout = dual_out
-                sys.stderr = dual_err
-                return func(cfg, *args, **kwargs)
+        def close():
+            dual_out.flush()
+            dual_err.flush()
+            f.flush()
+            f.close()
 
-            except Exception as e:
-                import traceback
+        atexit.register(close)
 
-                error_msg = f"\nException occurred: {e}\n{traceback.format_exc()}\n"
-                dual_err.write(error_msg)
-                dual_err.flush()
-                f.flush()
-                raise
+        dual_out = DualOutput(f, sys.stdout)
+        dual_err = DualOutput(f, sys.stderr)
 
-            finally:
-                sys.stdout = old_stdout
-                sys.stderr = old_stderr
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        try:
+            sys.stdout = dual_out
+            sys.stderr = dual_err
+            return func(cfg, *args, **kwargs)
 
-                dual_out.flush()
-                dual_err.flush()
-                f.flush()
+        except Exception as e:
+            import traceback
+
+            error_msg = f"\nException occurred: {e}\n{traceback.format_exc()}\n"
+            dual_err.write(error_msg)
+            dual_err.flush()
+            f.flush()
+            raise
+
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
 
     return wrapper

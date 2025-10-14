@@ -58,7 +58,7 @@ def get_init_weight_context_manager(use_meta_tensor=True):
     return init_context
 
 
-def get_fsdp_wrap_policy(module, config=None, is_lora=False):
+def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_vla_model=False):
     """
     FSDP wrap policy that handles both standard transformer models and VLA models.
 
@@ -76,11 +76,8 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False):
     if config.get("disable", False):
         return None
 
-    # Check if this is a VLA model by looking for language_model attribute
-    is_vla_model = hasattr(module, "language_model")
-
     # Get transformer layer classes to wrap
-    if is_vla_model:
+    if hasattr(module, "language_model"):
         # For VLA models, get transformer classes from language_model submodule
         default_transformer_cls_names_to_wrap = getattr(
             module.language_model, "_no_split_modules", None

@@ -159,6 +159,12 @@ actor:
     trust_remote_code: True
     padding_side: "right"
 
+  fsdp:
+    forward_prefetch: False
+    limit_all_gathers: False
+    backward_prefetch: False
+    use_orig_params: False
+
 reward:
   use_reward_model: False
 

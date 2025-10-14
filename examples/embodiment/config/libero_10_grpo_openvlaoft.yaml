@@ -1,5 +1,5 @@
 defaults:
-  - env/train: libero_10_grpo
+  - env/train: libero_10
   - env/eval: libero_10
   - override hydra/job_logging: stdout
 
@@ -45,7 +45,7 @@ algorithm:
   n_eval_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}
   num_group_envs: 8
   rollout_epoch: 8
-  reward_type: step_level  # step_level or chunk_level
+  reward_type: action_level  # action_level or chunk_level
   logprob_type: token_level
   entropy_type: token_level
 
@@ -156,6 +156,12 @@ actor:
     use_fast: False
     trust_remote_code: True
     padding_side: "right"
+
+  fsdp:
+    forward_prefetch: False
+    limit_all_gathers: False
+    backward_prefetch: False
+    use_orig_params: False
 
 reward:
   use_reward_model: False

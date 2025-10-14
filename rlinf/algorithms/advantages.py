@@ -179,6 +179,168 @@ def compute_reinpp_advantages(
     return advantages, None
 
 
+@register_advantage("math_gae_no_critic")
+def compute_math_gae_no_critic_advantages_and_returns(**kwargs):
+    """
+    Calculate advantages and returns for math tasks using GAE without critic model.
+
+    This function implements a simplified advantage estimation for math tasks
+    without requiring a value function, similar to AReaL's disable_head approach.
+
+    Args:
+        reward_scores (torch.Tensor): Reward scores for math responses
+        mask (torch.Tensor): Attention mask of shape [bsz, seq_len] or [bsz, max_seq_len]
+        gamma (float): Discount factor
+        gae_lambda (float): GAE lambda parameter
+        normalize_advantages (bool): Whether to normalize advantages
+        normalize_returns (bool): Whether to normalize returns
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: (advantages, returns) tensors
+    """
+    reward_scores = kwargs["reward_scores"]
+    mask = kwargs["mask"]
+    gamma = kwargs.get("gamma", 1.0)
+    normalize_advantages = kwargs.get("normalize_advantages", True)
+    normalize_returns = kwargs.get("normalize_returns", False)
+
+    # For math tasks without critic, we use reward-to-go as baseline
+    bsz, seq_len = mask.shape
+
+    # Create reward structure: reward at the end of sequence
+    rewards = torch.zeros_like(mask, dtype=torch.float32)
+    rewards[:, -1] = reward_scores  # Put reward at the end of sequence
+
+    # Create done flags (episode ends at the last token)
+    dones = torch.zeros_like(mask, dtype=torch.bool)
+    dones[:, -1] = True
+
+    # Compute reward-to-go (cumulative discounted rewards)
+    returns = torch.zeros_like(mask, dtype=torch.float32)
+    cumulative_reward = 0
+
+    for t in reversed(range(seq_len)):
+        cumulative_reward = rewards[:, t] + gamma * cumulative_reward * (~dones[:, t])
+        returns[:, t] = cumulative_reward
+
+    # For no-critic setup, advantages are computed using reward-to-go
+    # with a simple baseline subtraction
+    advantages = returns.clone()
+
+    # Apply mask
+    advantages = advantages * mask
+    returns = returns * mask
+
+    # Simple baseline subtraction (mean of valid advantages)
+    if normalize_advantages:
+        valid_advantages = advantages[mask.bool()]
+        if len(valid_advantages) > 0:
+            mean_advantages = valid_advantages.mean()
+            std_advantages = valid_advantages.std()
+            advantages = (advantages - mean_advantages) / (std_advantages + 1e-5)
+
+    # Normalize returns if requested
+    if normalize_returns:
+        valid_returns = returns[mask.bool()]
+        if len(valid_returns) > 0:
+            mean_returns = valid_returns.mean()
+            std_returns = valid_returns.std()
+            returns = (returns - mean_returns) / (std_returns + 1e-5)
+
+    return advantages, returns
+
+
+@register_advantage("math_gae")
+def compute_math_gae_advantages_and_returns(**kwargs):
+    """
+    Calculate advantages and returns for math tasks using GAE.
+
+    This function implements Generalized Advantage Estimation (GAE) specifically
+    designed for math tasks, which may have different data structures compared
+    to embodied tasks.
+
+    Args:
+        reward_scores (torch.Tensor): Reward scores for math responses
+        values (torch.Tensor): Value predictions of shape [bsz, seq_len] or [bsz, max_seq_len]
+        mask (torch.Tensor): Attention mask of shape [bsz, seq_len] or [bsz, max_seq_len]
+        gamma (float): Discount factor
+        gae_lambda (float): GAE lambda parameter
+        normalize_advantages (bool): Whether to normalize advantages
+        normalize_returns (bool): Whether to normalize returns
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: (advantages, returns) tensors
+    """
+    reward_scores = kwargs["reward_scores"]
+    values = kwargs["values"]
+    mask = kwargs["mask"]
+    gamma = kwargs.get("gamma", 1.0)
+    gae_lambda = kwargs.get("gae_lambda", 1.0)
+    normalize_advantages = kwargs.get("normalize_advantages", True)
+    normalize_returns = kwargs.get("normalize_returns", False)
+
+    # For math tasks, we typically have [bsz, seq_len] tensors
+    bsz, seq_len = values.shape
+
+    # Create a simple reward structure for math tasks
+    # The reward is typically given at the end of the sequence
+    rewards = torch.zeros_like(values)
+    rewards[:, -1] = reward_scores  # Put reward at the end of sequence
+
+    # Create done flags (episode ends at the last token)
+    dones = torch.zeros_like(values, dtype=torch.bool)
+    dones[:, -1] = True
+
+    # Add bootstrap value for the next state (after the sequence)
+    next_values = torch.zeros(bsz, 1, device=values.device, dtype=values.dtype)
+
+    # Compute GAE advantages
+    advantages = torch.zeros_like(values)
+    returns = torch.zeros_like(values)
+
+    gae = 0
+    for t in reversed(range(seq_len)):
+        if t == seq_len - 1:
+            # Last timestep
+            delta = (
+                rewards[:, t]
+                + gamma * next_values[:, 0] * (~dones[:, t])
+                - values[:, t]
+            )
+        else:
+            # Regular timestep
+            delta = (
+                rewards[:, t] + gamma * values[:, t + 1] * (~dones[:, t]) - values[:, t]
+            )
+
+        gae = delta + gamma * gae_lambda * (~dones[:, t]) * gae
+        advantages[:, t] = gae
+        returns[:, t] = gae + values[:, t]
+
+    # Apply mask to advantages and returns
+    advantages = advantages * mask
+    returns = returns * mask
+
+    # Normalize advantages if requested
+    if normalize_advantages:
+        # Only normalize over valid (masked) positions
+        valid_advantages = advantages[mask.bool()]
+        if len(valid_advantages) > 0:
+            mean_advantages = valid_advantages.mean()
+            std_advantages = valid_advantages.std()
+            advantages = (advantages - mean_advantages) / (std_advantages + 1e-5)
+
+    # Normalize returns if requested
+    if normalize_returns:
+        valid_returns = returns[mask.bool()]
+        if len(valid_returns) > 0:
+            mean_returns = valid_returns.mean()
+            std_returns = valid_returns.std()
+            returns = (returns - mean_returns) / (std_returns + 1e-5)
+
+    return advantages, returns
+
+
 if __name__ == "__main__":
     from rlinf.algorithms.utils import (
         calculate_scores,

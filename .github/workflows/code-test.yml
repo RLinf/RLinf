@@ -1,0 +1,373 @@
+name: Code Test
+
+on:
+  push:
+    branches:
+      - "release/v[0-9].[0-9]"
+      - main
+  pull_request:
+    branches: [main]
+    types: [synchronize, labeled]
+  workflow_dispatch:
+
+concurrency:
+  group: code-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # =============================================== check changes ====================================================
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      file_filter: ${{ steps.filter.outputs.file_filter }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Fail if the PR does not have the 'run-ci' label
+        if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'run-ci')
+        run: |
+          echo "This pull request does not have the 'run-ci' label. Failing the workflow."
+          exit 1
+
+      - name: Fail if the PR is a draft
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft == true
+        run: |
+          echo "This pull request is a draft. Failing the workflow."
+          exit 1
+
+      - name: Detect file changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            file_filter:
+              - '**/*.py'
+              - 'tests/**'
+              - '.github/workflows/*.yml'
+              - '!docs/**'
+              - '!README.md'
+              - '*.yaml'
+              - '*.toml'
+              - '!ray_utils/**'
+              - '!requirements/**'
+
+  # =============================================== unit tests ====================================================
+
+  unit-tests-cuda:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.file_filter == 'true'
+    runs-on: reason
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install pytest
+        run: |
+          source switch_env reason
+          uv pip install pytest
+
+      - name: Run pytest
+        timeout-minutes: 20
+        run: |
+          export PYTHONPATH=$(pwd):$(pwd)/megatron:$(pwd)/tests/unit_tests
+          source switch_env reason
+          pytest tests/unit_tests
+
+      - name: Run doctest
+        timeout-minutes: 20
+        run: |
+          source switch_env reason
+          pytest --doctest-modules rlinf/scheduler
+
+  unit-tests-cpu:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.file_filter == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: |
+          pip install uv
+          uv venv
+          source .venv/bin/activate
+          UV_TORCH_BACKEND=auto uv sync
+          uv pip install pytest
+
+      - name: Run pytest
+        timeout-minutes: 20
+        run: |
+          export PYTHONPATH=$(pwd):$(pwd)/megatron:$(pwd)/tests/unit_tests 
+          source .venv/bin/activate
+          pytest tests/unit_tests
+
+  # =============================================== reason e2e tests ====================================================
+
+  reason-qwen-grpo-test:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.file_filter == 'true'
+    runs-on: reason
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Megatron SGLang Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-mg-sgl
+
+      - name: Megatron vLLM Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-mg-vllm
+
+      - name: Megatron SGLang Pipeline mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-mg-sgl
+
+      - name: Megatron vLLM Pipeline mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-mg-vllm
+
+      - name: FSDP SGLang Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-fsdp-sgl
+
+      - name: FSDP vLLM Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-fsdp-vllm
+
+
+  reason-qwen-grpo-test-rollout-logprobs:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.file_filter == 'true'
+    runs-on: reason
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Megatron SGLang Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-mg-sgl-rollout-logprobs
+
+      - name: Megatron vLLM Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-mg-vllm-rollout-logprobs
+
+      - name: Megatron SGLang Pipeline mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-mg-sgl-rollout-logprobs
+
+      - name: Megatron vLLM Pipeline mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-mg-vllm-rollout-logprobs
+
+      - name: FSDP SGLang Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-fsdp-sgl-rollout-logprobs
+
+      - name: FSDP vLLM Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-fsdp-vllm-rollout-logprobs
+
+  coding-online-rl-qwen-ppo-test:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.file_filter == 'true'
+    runs-on: reason
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: |
+          pip install httpx asyncio fuzzywuzzy
+
+      - name: SGLang Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/coding_online_rl/run.sh
+
+  qwen-vl-grpo-test:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.file_filter == 'true'
+    runs-on: reason
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: FSDP SGLang Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-vl-3b-grpo-collocated-fsdp-sgl
+
+      - name: FSDP vLLM Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-vl-3b-grpo-collocated-fsdp-vllm
+
+  # =============================================== embodied e2e tests ====================================================
+
+  embodied-maniskill-ppo-openvla-test:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.file_filter == 'true'
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: OpenVLA test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env openvla
+          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openvla
+          
+  embodied-maniskill-grpo-openvlaoft-test:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.file_filter == 'true'
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: OpenVLA test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env openvla-oft
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          bash tests/e2e_tests/embodied/run.sh maniskill_grpo_openvlaoft
+
+  embodied-libero-goal-grpo-openvlaoft-test:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.file_filter == 'true'
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: OpenVLA-OFT test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env openvla-oft
+          bash tests/e2e_tests/embodied/run.sh libero_goal_grpo_openvlaoft
+
+  embodied-libero-130-grpo-openvlaoft-test:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.file_filter == 'true'
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: OpenVLA-OFT test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env openvla-oft
+          bash tests/e2e_tests/embodied/run.sh libero_130_grpo_openvlaoft
+
+  # =============================================== auto placement tests ====================================================
+
+  static-auto-placement-test:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.file_filter == 'true'
+    runs-on: reason
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: auto-placement
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/auto_placement/run.sh
+
+# =============================================== finale ====================================================
+
+  pr-test-finish:
+    needs: [
+      check-changes,
+
+      # Unit tests
+      unit-tests-cuda, unit-tests-cpu,
+
+      # Reason e2e tests
+      reason-qwen-grpo-test, reason-qwen-grpo-test-rollout-logprobs,
+      coding-online-rl-qwen-ppo-test, qwen-vl-grpo-test,
+
+      # Embodied e2e tests
+      embodied-maniskill-ppo-openvla-test, embodied-maniskill-grpo-openvlaoft-test, embodied-libero-goal-grpo-openvlaoft-test,embodied-libero-130-grpo-openvlaoft-test,
+
+      # Auto placement tests
+      static-auto-placement-test
+    ]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      # Refer to https://github.com/sgl-project/sglang/blob/main/.github/workflows/pr-test.yml
+      - name: Check all dependent job statuses
+        run: |
+          # Convert the 'needs' context to a JSON string
+          json_needs='${{ toJson(needs) }}'
+
+          # Get a list of all job names from the JSON keys
+          job_names=$(echo "$json_needs" | jq -r 'keys_unsorted[]')
+
+          for job in $job_names; do
+            # For each job, extract its result
+            result=$(echo "$json_needs" | jq -r --arg j "$job" '.[$j].result')
+
+            # Print the job name and its result
+            echo "$job: $result"
+
+            # Check for failure or cancellation and exit if found
+            if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
+              echo "The above jobs failed."
+              exit 1
+            fi
+          done
+
+          # If the loop completes, all jobs were successful
+          echo "All jobs completed successfully"
+          exit 0

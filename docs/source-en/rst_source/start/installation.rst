@@ -204,3 +204,15 @@ Then, depending on the experiment type, install the required packages for ``open
 
    # For Pi0 experiments
    UV_TORCH_BACKEND=auto uv pip install -r requirements/pi0.txt --no-build-isolation
+
+Finally, Run the following to install the libero dependency.
+
+.. code-block:: shell
+
+  mkdir -p /opt && git clone https://github.com/RLinf/LIBERO.git /opt/libero
+
+Before using LIBERO, make sure its path is added to the `PYTHONPATH` environment variables.
+
+.. code-block:: shell
+  
+  export PYTHONPATH=/opt/libero:$PYTHONPATH

@@ -215,11 +215,155 @@ def compute_grpo_actor_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
     actor_loss, actor_metrics_data = compute_ppo_actor_loss(**kwargs)
     metrics_data.update(actor_metrics_data)
 
+<<<<<<< HEAD
     return actor_loss, metrics_data
 
 
 if __name__ == "__main__":
     # test grpo for math
+=======
+    loss_mask_ratio = (
+        (loss_mask_sum * 1.0) / max_episode_steps if loss_mask is not None else None
+    )
+
+    logratio = log_probs - old_log_prob
+    ratio = torch.exp(logratio)
+
+    # Compute clipped and unclipped policy gradient losses
+    policy_loss = -advantages * ratio
+    policy_loss2 = -advantages * torch.clamp(
+        ratio, 1.0 - clip_ratio_low, 1.0 + clip_ratio_high
+    )
+
+    if loss_mask is not None:
+        # Take the maximum of clipped and unclipped losses
+        policy_loss = (
+            torch.max(policy_loss, policy_loss2) / loss_mask_ratio
+        ) * loss_mask
+        policy_loss = policy_loss.mean()
+        clip_fraction = torch.gt(policy_loss2, policy_loss).float() * loss_mask
+        clip_fraction = clip_fraction.mean()
+        ppo_kl = (-logratio * loss_mask).mean()
+    else:
+        # Take the maximum of clipped and unclipped losses
+        policy_loss = torch.max(policy_loss, policy_loss2).mean()  # float
+        clip_fraction = torch.gt(policy_loss2, policy_loss).float().mean()  # float
+        ppo_kl = (-logratio).mean()
+
+    # Compile metrics for logging
+    metrics_data = {
+        "actor/raw_loss": policy_loss.detach().item(),
+        "actor/policy_loss": policy_loss.detach().item(),
+        "actor/policy_clipfrac": clip_fraction.detach().item(),
+        "actor/ppo_kl": ppo_kl.detach().item(),
+    }
+    return policy_loss, metrics_data
+
+
+@register_policy_loss("math_ppo_actor")
+def compute_math_ppo_actor_loss(**kwargs):
+    """
+    Compute PPO actor loss function.
+
+    There is no shape requirements for the inputs, but they must have the same shape.
+    Either [bs, max_seqlen] for batch padded inputs or [tot_seqlen] for padded inputs.
+
+    Args:
+        logprobs (torch.FloatTensor): Log probabilities of actions.
+        old_logprobs (torch.FloatTensor): Old log probabilities of actions.
+        advantages (torch.FloatTensor): GAE (normalized) advantages.
+        eps_clip (float): Clip ratio of PPO.
+        loss_mask (Optional[torch.BoolTensor], optional): Mask for loss computation.
+            1 if valid else 0. Defaults to None.
+
+    Returns:
+        Tuple[torch.Tensor, Dict]: Scalar loss and statistics.
+    """
+    loss_agg_func = kwargs["loss_agg_func"]
+    logprobs = kwargs["logprobs"]
+    old_logprobs = kwargs["old_logprobs"]
+    clip_ratio_low = kwargs["clip_ratio_low"]
+    clip_ratio_high = kwargs["clip_ratio_high"]
+    advantages = kwargs["advantages"]
+    loss_mask = kwargs.get("loss_mask", None)
+    c_clip = kwargs.get("c_clip", None)
+
+    assert logprobs.dtype == torch.float32
+    assert old_logprobs.dtype == torch.float32
+    assert advantages.dtype == torch.float32
+
+    assert loss_mask is not None
+
+    loss_mask_count = loss_mask.count_nonzero() or 1
+    # For numerical stability.
+    ratio = torch.where(loss_mask, torch.exp(logprobs - old_logprobs), 0)
+    approx_kl = torch.where(loss_mask, (logprobs - old_logprobs).detach(), 0.0)
+
+    clipped_ratio = torch.clamp(ratio, 1.0 - clip_ratio_low, 1.0 + clip_ratio_high)
+    policy_loss1 = -advantages * ratio
+    policy_loss2 = -advantages * clipped_ratio
+
+    clip_mask = policy_loss1.detach() < policy_loss2.detach()
+
+    policy_loss = torch.max(policy_loss1, policy_loss2)
+    if c_clip is not None:
+        assert c_clip > 1.0, c_clip
+        policy_loss3 = torch.sign(advantages) * c_clip * advantages
+        dual_clip_mask = policy_loss3.detach() < policy_loss.detach()
+        policy_loss = torch.min(policy_loss, policy_loss3)
+    else:
+        dual_clip_mask = torch.zeros_like(clip_mask)
+
+    policy_loss = loss_agg_func(policy_loss, loss_mask)
+
+    clip_mask = policy_loss1.detach() < policy_loss2.detach()
+    dual_clip_mask.logical_and_(loss_mask)
+
+    num_clipped = clip_mask.logical_and_(loss_mask).count_nonzero()
+
+    clip_fraction = num_clipped.float() / float(loss_mask_count)
+    approx_kl = -approx_kl.sum() / float(loss_mask_count)
+
+    dual_cliped_ratio = torch.where(dual_clip_mask, ratio, 0)
+
+    # Compile metrics for logging
+    metrics_data = {
+        "policy_loss": masked_mean(policy_loss.detach(), loss_mask).detach(),
+        "ratio": masked_mean(ratio.detach(), loss_mask).detach(),
+        "clipped_ratio": masked_mean(clipped_ratio.detach(), loss_mask).detach(),
+        "dual_cliped_ratio": masked_mean(
+            dual_cliped_ratio.detach(), loss_mask
+        ).detach(),
+        "approx_kl": approx_kl.detach(),
+        "clip_fraction": clip_fraction.detach(),
+    }
+    return policy_loss, metrics_data
+
+
+if __name__ == "__main__":
+    # test math_actor_loss_fn
+    torch.manual_seed(0)
+    bsz = 4
+    max_seqlen = 8
+    logprobs = torch.randn(bsz, max_seqlen)
+    old_logprobs = logprobs + torch.randn(bsz, max_seqlen) * 0.1
+    advantages = torch.randn(bsz, max_seqlen)
+    loss_mask = torch.randint(0, 2, (bsz, max_seqlen)).bool()
+    eps_clip = 0.2
+    kwargs = {
+        "logprobs": logprobs,
+        "old_logprobs": old_logprobs,
+        "advantages": advantages,
+        "eps_clip": eps_clip,
+        "loss_mask": loss_mask,
+        "loss_agg_func": lambda x, mask: (x * mask).sum() / (mask.sum() or 1),
+    }
+    loss, metrics_data = compute_math_ppo_actor_loss(**kwargs)
+    print(f"Policy loss: {loss=}")
+    print(f"Metrics: {metrics_data}")
+
+    # test grpo_actor_loss_fn
+>>>>>>> main
     torch.manual_seed(0)
     bsz = 4
     max_seqlen = 8
@@ -236,7 +380,12 @@ if __name__ == "__main__":
         "clip_ratio_low": clip_ratio_low,
         "clip_ratio_high": clip_ratio_high,
         "loss_mask": loss_mask,
+<<<<<<< HEAD
         "loss_agg_func": masked_mean,
+=======
+        "loss_mask_sum": loss_mask.sum(),
+        "max_episode_steps": 512,
+>>>>>>> main
     }
     loss, metrics_data = compute_grpo_actor_loss_fn(**kwargs)
     print(f"{loss=}, {metrics_data=}")
