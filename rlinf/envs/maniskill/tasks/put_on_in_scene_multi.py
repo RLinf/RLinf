@@ -672,6 +672,11 @@ class PutOnPlateInScene25(BaseEnv):
         self.extra_stats["extra_pos_gripper"] = gripper_p
         self.extra_stats["extra_q_gripper"] = gripper_q
 
+        self.task_metric_states = {
+            "episode_stats": self.episode_stats, 
+            "extra_stats": self.extra_stats
+        }
+
         return dict(**self.episode_stats, success=success)
 
     def is_final_subtask(self):
@@ -928,6 +933,10 @@ class PutOnPlateInScene25MainV3(PutOnPlateInScene25):
             self.episode_id[reset_env_ids] = episode_id
         else:
             raise ValueError(f"Invalid env_idx: {env_idx}")
+        
+        self.task_reset_states = {
+            "episode_id": self.episode_id,
+        }
 
     def _initialize_episode_pre(self, env_idx: torch.Tensor, options: dict):
         lc, lc_offset, lo, lo_offset, lp, lp_offset, l1, l2 = self.basic_obj_infos
