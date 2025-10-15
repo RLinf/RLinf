@@ -220,6 +220,12 @@ ManiSkill3 结果
      - Semantic
      - Position
      - 平均值
+   * - OpenVLA(Base)
+     - 53.91%
+     - 38.75%
+     - 35.75%
+     - 42.11%
+     - 39.10%
    * - |huggingface| `rl4vla <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_
      - 93.75%
      - 80.47%
@@ -228,16 +234,22 @@ ManiSkill3 结果
      - 79.15%
    * - |huggingface| `PPO-OpenVLA <https://huggingface.co/RLinf/RLinf-OpenVLA-PPO-ManiSkill3-25ood>`_
      - 96.09%
-     - 82.0%
-     - **80.6%**
-     - **89.3%**
-     - **82.2%**
+     - 82.03%
+     - **78.35%**
+     - **85.42%**
+     - **81.93%**
    * - |huggingface| `GRPO-OpenVLA <https://huggingface.co/RLinf/RLinf-OpenVLA-GRPO-ManiSkill3-25ood>`_
      - 84.38%
      - 74.69%
      - 72.99%
      - 77.86%
      - 75.15%
+   * - OpenVLA-OFT(Base)
+     - 28.13%
+     - 27.73%
+     - 12.95%
+     - 11.72%
+     - 18.29%
    * - |huggingface| `PPO-OpenVLA-OFT <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-PPO-ManiSkill3-25ood>`_
      - **97.66%**
      - **92.11%**
