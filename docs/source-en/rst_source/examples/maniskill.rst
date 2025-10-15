@@ -199,18 +199,18 @@ ManiSkill3 Results
 ~~~~~~~~~~~~~~~~~~
 
 As an illustrative example, we present the training results of the PPO algorithm in the ManiSkill3 environment. 
-Running on a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) achieved up to 90% success on ManiSkill3’s plate-25-main task, after 48 and 24 hours of PPO training, respectively.
+Running on a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) achieved up to 90% success on ManiSkill3’s plate-25-main task.
 
 .. raw:: html
 
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/embody-loss-1.jpeg" style="width: 100%;"/>
-       <p><em>OpenVLA (48h training)</em></p>
+       <img src="https://github.com/RLinf/misc/raw/main/pic/mani_openvla.png" style="width: 100%;"/>
+       <p><em>OpenVLA</em></p>
      </div>
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/embody-loss-2.jpeg" style="width: 100%;"/>
-       <p><em>OpenVLA-OFT (24h training)</em></p>
+       <img src="https://github.com/RLinf/misc/raw/main/pic/mani_openvlaoft.png" style="width: 100%;"/>
+       <p><em>OpenVLA-OFT</em></p>
      </div>
    </div>
 

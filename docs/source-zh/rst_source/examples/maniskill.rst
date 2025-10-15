@@ -195,12 +195,12 @@ ManiSkill3 结果
 
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/embody-loss-1.jpeg" style="width: 100%;"/>
-       <p><em>OpenVLA (48h training)</em></p>
+       <img src="https://github.com/RLinf/misc/raw/main/pic/mani_openvla.png" style="width: 100%;"/>
+       <p><em>OpenVLA</em></p>
      </div>
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/embody-loss-2.jpeg" style="width: 100%;"/>
-       <p><em>OpenVLA-OFT (24h training)</em></p>
+       <img src="https://github.com/RLinf/misc/raw/main/pic/mani_openvlaoft.png" style="width: 100%;"/>
+       <p><em>OpenVLA-OFT</em></p>
      </div>
    </div>
 
