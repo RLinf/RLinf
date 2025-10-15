@@ -146,25 +146,33 @@ def preprocess_advantages_inputs(
     # Transpose(1, 2) -> [num-chunk, chunk-size, bsz]
     # Reshape -> [n_steps, bsz]
     # Rewards [n_steps, bsz]
-    kwargs["rewards"] = rewards.transpose(1, 2).reshape(n_steps, bsz)
+    rewards = rewards.transpose(1, 2).reshape(n_steps, bsz)
 
     # Loss Mask (T steps) [bsz, n_steps]
     if loss_mask is not None:
-        kwargs["loss_mask"] = (
-            loss_mask.transpose(1, 2).reshape(n_steps, bsz).transpose(0, 1)
-        )
+        loss_mask = loss_mask.transpose(1, 2).reshape(n_steps, bsz).transpose(0, 1)
 
     # Dones (T+1 steps) [num-chunk+1, bsz, chunk-size]
     flattened_dones_full = dones.transpose(1, 2).reshape(
         (num_chunk + 1) * chunk_size, bsz
     )
-    kwargs["dones"] = flattened_dones_full[-(n_steps + 1) :]
+    dones = flattened_dones_full[-(n_steps + 1) :]
 
     if kwargs["adv_type"] == "gae":
         flattened_values_full = values.transpose(1, 2).reshape(
             (num_chunk + 1) * chunk_size, bsz
         )
-        kwargs["values"] = flattened_values_full[: n_steps + 1]
+        values = flattened_values_full[: n_steps + 1]
+
+    kwargs.update(
+        {
+            "rewards": rewards,
+            "dones": dones,
+            "values": values,
+            "loss_mask": loss_mask,
+            "reward_type": reward_type,
+        }
+    )
 
     return kwargs
 
@@ -192,7 +200,16 @@ def calculate_scores(
         scores += rewards[step]
     scores = scores.reshape(-1, group_size)
 
-    kwargs.update({"reward_scores": scores})
+    kwargs.update(
+        {
+            "reward_scores": scores,
+            "group_size": group_size,
+            "rewards": rewards,
+            "dones": dones,
+            "n_steps": n_steps,
+            "batch_size": batch_size,
+        }
+    )
 
     return kwargs
 
