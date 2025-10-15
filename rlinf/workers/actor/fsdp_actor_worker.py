@@ -500,6 +500,7 @@ class FSDPActor(FSDPModelManager, Worker):
                 if rollout_result.advantages is None:
                     mask = batch["attention_mask"][:, -self.response_len :]
                     advantages, returns = calculate_adv_and_returns(
+                        task_type=self.cfg.runner.task_type,
                         adv_type=self.cfg.algorithm.adv_type,
                         reward_scores=batch["rewards"].cuda(),
                         mask=mask.cuda(),

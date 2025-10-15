@@ -181,12 +181,12 @@ def postprocess_loss_metric(metrics_data: dict) -> dict:
 def calculate_scores(
     rewards: torch.Tensor,
     dones: torch.Tensor,
-    bsz: int,
+    batch_size: int,
     n_steps: int,
     group_size: int,
     **kwargs,
 ) -> dict:
-    scores = torch.zeros(bsz)
+    scores = torch.zeros(batch_size)
     for step in reversed(range(n_steps)):
         scores = scores * ~dones[step + 1]
         scores += rewards[step]
@@ -207,11 +207,6 @@ def postprocess_advantages_outputs(
     """
     Post-process results for Embodiment tasks; unflatten tensors.
     """
-    advantages = kwargs["advantages"]
-    returns = kwargs.get("returns", None)
-    num_chunk = kwargs["num_chunk"]
-    chunk_size = kwargs["chunk_size"]
-
     res = {}
 
     # NOTE: to unify with math grpo, we transposed loss mask. Therefore, for embodied grpo, we need to transpose back here.
