@@ -189,7 +189,7 @@ ManiSkill3 结果
 ~~~~~~~~~~~~~~~~~~~
 
 以下以 ManiSkill3 环境下的 PPO 训练为例：  
-在单机 8×H100 的设置下，OpenVLA（左）与 OpenVLA-OFT（右）在 plate-25-main 任务上，分别在 48 小时与 24 小时的 PPO 训练后，成功率最高达到 90%。
+在单机 8×H100 的设置下，OpenVLA（左）与 OpenVLA-OFT（右）在 plate-25-main 任务上，成功率达到 90% 以上。
 
 .. raw:: html
 
