@@ -214,7 +214,8 @@ Running on a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) a
      </div>
    </div>
 
-Our fine-tuned models achieved the following accuracies on the Vision, Semantic, and Position tasks under out-of-distribution (OOD) evaluation. 
+
+We evaluated on both training and OOD(out-of-distribution) scenarios. The OOD setting includes variations on Vision, Semantic, and Position.
 The best-performing model for each task is highlighted in bold.
 
 .. note:: 
@@ -225,35 +226,41 @@ The best-performing model for each task is highlighted in bold.
    :widths: 40 15 15 18 15
 
    * - Model
+     - Training Setting
      - Vision
      - Semantic
      - Position 
      - Average
-   * - |huggingface| `rl4vla <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_
-     - 76.6%
-     - 75.4%
-     - 77.6%
-     - 76.1%
-   * - |huggingface| `GRPO-OpenVLA-OFT <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-ManiSkill3-25ood>`_
-     - **84.6%**
-     - 51.6%
-     - 42.9%
-     - 61.5%
-   * - |huggingface| `PPO-OpenVLA-OFT <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-PPO-ManiSkill3-25ood>`_
-     - 80.5%
-     - 56.6%
-     - 56.1%
-     - 64.5%
+* - |huggingface| `rl4vla <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_
+     - 93.75%
+     - 80.47%
+     - 75.00%
+     - 81.77%
+     - 79.15%
    * - |huggingface| `PPO-OpenVLA <https://huggingface.co/RLinf/RLinf-OpenVLA-PPO-ManiSkill3-25ood>`_
+     - 96.09%
      - 82.0%
      - **80.6%**
      - **89.3%**
      - **82.2%**
    * - |huggingface| `GRPO-OpenVLA <https://huggingface.co/RLinf/RLinf-OpenVLA-GRPO-ManiSkill3-25ood>`_
-     - 74.7%
-     - 74.4%
-     - 81.6%
-     - 75.5%
+     - 84.38%
+     - 74.69%
+     - 72.99%
+     - 77.86%
+     - 75.15%
+   * - |huggingface| `PPO-OpenVLA-OFT <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-PPO-ManiSkill3-25ood>`_
+     - **97.66%**
+     - **92.11%**
+     - 64.84%
+     - 73.57%
+     - 77.05%
+   * - |huggingface| `GRPO-OpenVLA-OFT <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-ManiSkill3-25ood>`_
+     - 94.14%
+     - 84.69%
+     - 45.54%
+     - 44.66%
+     - 60.64%
 
 .. note:: 
    The ``rl4vla`` model refers to PPO combined with OpenVLA under a **small batch size**, and thus should only be compared with our PPO+OpenVLA trained under similar conditions. 
