@@ -19,6 +19,7 @@ import sys
 from contextlib import contextmanager
 from functools import partial, wraps
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -174,6 +175,44 @@ def compute_entropy_from_logits(logits, epsilon=1e-10, task_type="embodied"):
         entropy = -torch.sum(all_probs * all_log_probs, dim=1)  # [B, seq-len]
         return entropy
     return entropy_from_logits(logits=logits)
+
+
+def quat_2_euler(quat: np.ndarray):
+    """Convert quaternion to euler angles (xyz order)."""
+    from scipy.spatial.transform import Rotation as R
+
+    return R.from_quat(quat).as_euler("xyz")
+
+
+def euler_2_quat(xyz: np.ndarray):
+    """Convert euler angles (xyz order) to quaternion."""
+    from pyquaternion import Quaternion
+
+    yaw, pitch, roll = xyz
+    yaw = np.pi - yaw
+    yaw_matrix = np.array(
+        [
+            [np.cos(yaw), -np.sin(yaw), 0.0],
+            [np.sin(yaw), np.cos(yaw), 0.0],
+            [0, 0, 1.0],
+        ]
+    )
+    pitch_matrix = np.array(
+        [
+            [np.cos(pitch), 0.0, np.sin(pitch)],
+            [0.0, 1.0, 0.0],
+            [-np.sin(pitch), 0, np.cos(pitch)],
+        ]
+    )
+    roll_matrix = np.array(
+        [
+            [1.0, 0, 0],
+            [0, np.cos(roll), -np.sin(roll)],
+            [0, np.sin(roll), np.cos(roll)],
+        ]
+    )
+    rot_mat = yaw_matrix.dot(pitch_matrix.dot(roll_matrix))
+    return Quaternion(matrix=rot_mat).elements
 
 
 class DualOutput:
