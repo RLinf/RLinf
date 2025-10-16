@@ -36,7 +36,7 @@ logging.getLogger().setLevel(logging.INFO)
 
 SUPPORTED_MODEL_ARCHS = ["qwen2.5", "qwen2.5_vl", "openvla", "openvla_oft"]
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
-SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl"]
+SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl", "rstar2"]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
 
@@ -628,7 +628,8 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         cfg = validate_reasoning_cfg(cfg)
     elif cfg.runner.task_type == "coding_online_rl":
         cfg = validate_coding_online_rl_cfg(cfg)
-
+    else:
+        cfg = validate_reasoning_cfg(cfg)
     if (
         cfg.algorithm.adv_type == "embodied_grpo"
         or cfg.algorithm.adv_type == "math_grpo"
