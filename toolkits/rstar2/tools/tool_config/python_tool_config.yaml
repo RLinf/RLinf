@@ -1,5 +1,5 @@
 tools:
-  - class_name: "toolkits.tools.code_judge_tool.PythonTool"
+  - class_name: "toolkits.rstar2.tools.code_judge_tool.PythonTool"
     config: 
       type: native
       request_processor_concurrency: 16

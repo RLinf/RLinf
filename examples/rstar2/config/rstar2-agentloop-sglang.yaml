@@ -103,7 +103,7 @@ rollout:
 
   rollout_backend: sglang     # Use AgentLoop with SGLang backend
 
-  tool_config_path: "./toolkits/tools/tool_config/python_tool_config.yaml"
+  tool_config_path: "./toolkits/rstar2/tools/tool_config/python_tool_config.yaml"
 
   # AgentLoop specific configs
   max_user_turns: 3
