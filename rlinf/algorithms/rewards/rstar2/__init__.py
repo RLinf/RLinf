@@ -16,7 +16,7 @@ from typing import List
 
 from omegaconf import DictConfig
 
-from toolkits.fused_compute_score.compute_score import compute_score
+from toolkits.rstar2.fused_compute_score.compute_score import compute_score
 
 
 class Rstar2Reward:

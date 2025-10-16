@@ -133,60 +133,6 @@ class RolloutRequest:
 
         return splitted_requests
 
-    def repeat(self) -> "RolloutRequest":
-        """Repeat each input in the RolloutRequest a specified number of times.
-
-        Args:
-            times (int): The number of times to repeat each input.
-
-        Returns:
-            RolloutRequest: A new RolloutRequest with repeated inputs.
-        """
-        assert self.n > 0, "n must be greater than 0"
-
-        input_ids, answers = zip(
-            *[
-                (input_id, answer)
-                for input_id, answer in zip(self.input_ids, self.answers)
-                for _ in range(self.n)
-            ]
-        )
-        return RolloutRequest(
-            n=self.n,
-            input_ids=list(input_ids),
-            answers=list(answers),
-        )
-
-    def split(self, num_splits: int) -> List["RolloutRequest"]:
-        """Split the RolloutRequest into multiple smaller requests.
-
-        Args:
-            num_splits (int): The number of splits to create.
-
-        Returns:
-            List[RolloutRequest]: A list of smaller RolloutRequest instances.
-        """
-        assert num_splits > 0, "num_splits must be greater than 0"
-        assert len(self.input_ids) % num_splits == 0, (
-            f"Input IDs length {len(self.input_ids)} is not divisible by num_splits {num_splits}"
-        )
-
-        input_ids_split_list = split_list(self.input_ids, num_splits)
-        answers_split_list = split_list(self.answers, num_splits)
-
-        splitted_requests = []
-        for input_ids_batch, answers_batch in zip(
-            input_ids_split_list, answers_split_list
-        ):
-            request = RolloutRequest(
-                n=self.n,
-                input_ids=input_ids_batch,
-                answers=answers_batch,
-            )
-            splitted_requests.append(request)
-
-        return splitted_requests
-
     def repeat_and_split(
         self, rollout_batch_size: Optional[int] = None
     ) -> List["RolloutRequest"]:
@@ -267,6 +213,7 @@ class RolloutResult:
     answers: Optional[List[str | dict]] = None
     image_data: Optional[Union[List[List[bytes]], List[List[str]]]] = None
     multi_modal_inputs: Optional[List[dict]] = None
+    response_mask: Optional[List[List[int]]] = None
     # Inference
     # Only set when recompute_logprobs is False
     rollout_logprobs: Optional[List[List[float]]] = None

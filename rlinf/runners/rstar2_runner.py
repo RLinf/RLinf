@@ -33,7 +33,7 @@ from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.runner_utils import check_progress, local_mkdir_safe
 from rlinf.utils.timers import Timer
-from toolkits.tools import SharedToolManager, get_shared_tools
+from toolkits.rstar2.tools import SharedToolManager, get_shared_tools
 from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
 from rlinf.workers.reward.reward_worker import RewardWorker
@@ -466,13 +466,13 @@ class Rstar2Runner:
     def _put_batch(self, batch: Dict[str, torch.Tensor]):
         prompt_ids = batch["prompt"].tolist()
         lengths = batch["length"].tolist()
-        answers = batch["answer"].tolist()
+        answers = batch["answer"]
         image_data = batch["image_data"]
         multi_modal_inputs = batch["multi_modal_inputs"]
         prompts = [ids[-pmp_len:] for ids, pmp_len in zip(prompt_ids, lengths)]
         rollout_dp_size = self.component_placement.rollout_dp_size
 
-        for input_ids, answers in zip(
+        for input_ids, answers, image_data, multi_modal_inputs in zip(
             split_list(prompts, rollout_dp_size, enforce_divisible_batch=False),
             split_list(answers, rollout_dp_size, enforce_divisible_batch=False),
             split_list(image_data, rollout_dp_size, enforce_divisible_batch=False),
