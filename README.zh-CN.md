@@ -30,6 +30,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 
 
 ## 最新动态
+- [2025/10] Pi0的强化学习微调已经上线! 文档：[π₀模型强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/pi0.html)
 - [2025/10] RLinf 正式支持在线强化学习！文档：[coding_online_rl](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/coding_online_rl.html)，同时发布文章 [《首个开源的Agent在线强化学习框架RLinf-Online！让你的Agent今天比昨天更聪明》](https://mp.weixin.qq.com/s/jmohmDokuWLhQHFueSHZIQ)。
 - [2025/10] RLinf算法技术报告 [《RLinf-VLA：一个统一且高效的VLA+RL训练框架》](https://arxiv.org/abs/2510.06710) 已正式发布。
 - [2025/09] <img src="https://github.githubassets.com/images/icons/emoji/unicode/1f525.png" width="18" /> [示例库](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) 已更新，用户可以在其中找到多种可直接使用的示例！
