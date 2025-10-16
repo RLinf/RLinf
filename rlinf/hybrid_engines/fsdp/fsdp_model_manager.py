@@ -46,7 +46,8 @@ class FSDPModelManager:
         self.logger = get_logger()
         self.torch_dtype = torch_dtype_from_precision(self._cfg.model.precision)
 
-        self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
+        if cfg.get("tokenizer", {}).get("tokenizer_model", None) is not None:
+            self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
 
     def model_provider_func(self) -> torch.nn.Module:
         cfg = self._cfg
@@ -120,8 +121,18 @@ class FSDPModelManager:
             sharding_strategy = ShardingStrategy.SHARD_GRAD_OP
         else:
             sharding_strategy = ShardingStrategy.NO_SHARD
+
+        is_vla_model = (
+            True
+            if self._cfg.model.get("model_name", None) in ["openvla", "openvla_oft"]
+            else False
+        )
+
         auto_wrap_policy = get_fsdp_wrap_policy(
-            module=module, config=None, is_lora=self._cfg.model.is_lora
+            module=module,
+            config=None,
+            is_lora=self._cfg.model.is_lora,
+            is_vla_model=is_vla_model,
         )
 
         betas = (self._cfg.optim.adam_beta1, self._cfg.optim.adam_beta2)
@@ -134,44 +145,46 @@ class FSDPModelManager:
             sharding_strategy=sharding_strategy,  # zero3
             mixed_precision=mixed_precision,
             sync_module_states=True,
-            forward_prefetch=self._cfg.fsdp.forward_prefetch,
+            forward_prefetch=self._cfg.fsdp_config.forward_prefetch,
             backward_prefetch=(
                 BackwardPrefetch.BACKWARD_PRE
-                if self._cfg.fsdp.backward_prefetch
+                if self._cfg.fsdp_config.backward_prefetch
                 else None
             ),
-            limit_all_gathers=self._cfg.fsdp.limit_all_gathers,
-            use_orig_params=self._cfg.fsdp.use_orig_params,
+            limit_all_gathers=self._cfg.fsdp_config.limit_all_gathers,
+            use_orig_params=self._cfg.fsdp_config.use_orig_params,
         )
 
-        # NOTE: Currently we assume that only the value head contains "value_head" in its name.
-        # The value head only serves for value prediction in RL algorithms like PPO.
-        param_groups = [
-            {
-                "params": [
-                    p
-                    for n, p in self.model.named_parameters()
-                    if "value_head" not in n and p.requires_grad
-                ],
-                "lr": self._cfg.optim.lr,
-                "betas": betas,
-            },
-        ]
+        params_actor = []
+        params_critic = []
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                if "value_head" in name or "model.value_head" in name:
+                    params_critic.append(param)
+                else:
+                    params_actor.append(param)
 
-        if self._cfg.model.get("vh_mode", None) in ["a", "a0", "a6"]:
-            param_groups.append(
-                {
-                    "params": [
-                        p
-                        for n, p in self.model.named_parameters()
-                        if "value_head" in n and p.requires_grad
-                    ],
-                    "lr": self._cfg.optim.value_lr,
-                    "betas": betas,
-                }
+        if len(params_critic) > 0:
+            self.optimizer = optim.AdamW(
+                [
+                    {"params": params_actor, "lr": self._cfg.optim.lr, "betas": betas},
+                    {
+                        "params": params_critic,
+                        "lr": self._cfg.optim.value_lr,
+                        "betas": betas,
+                    },
+                ]
             )
-
-        self.optimizer = optim.AdamW(param_groups)
+        else:
+            self.optimizer = optim.AdamW(
+                [
+                    {
+                        "params": params_actor,
+                        "lr": self._cfg.optim.lr,
+                        "betas": betas,
+                    },
+                ]
+            )
 
     def get_model_state_dict(self):
         with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT):

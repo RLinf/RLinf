@@ -91,11 +91,3 @@ NUM_ACTIONS_CHUNK = constants["NUM_ACTIONS_CHUNK"]
 ACTION_DIM = constants["ACTION_DIM"]
 PROPRIO_DIM = constants["PROPRIO_DIM"]
 ACTION_PROPRIO_NORMALIZATION_TYPE = constants["ACTION_PROPRIO_NORMALIZATION_TYPE"]
-
-# Print which robot platform constants are being used (for debugging)
-print(f"Using {ROBOT_PLATFORM} constants:")
-print(f"  NUM_ACTIONS_CHUNK = {NUM_ACTIONS_CHUNK}")
-print(f"  ACTION_DIM = {ACTION_DIM}")
-print(f"  PROPRIO_DIM = {PROPRIO_DIM}")
-print(f"  ACTION_PROPRIO_NORMALIZATION_TYPE = {ACTION_PROPRIO_NORMALIZATION_TYPE}")
-print("If needed, manually set the correct constants in `prismatic/vla/constants.py`!")

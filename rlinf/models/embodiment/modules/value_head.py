@@ -16,29 +16,50 @@ import torch.nn as nn
 
 
 class ValueHead(nn.Module):
-    def __init__(self, hidden_size, output_dim=1):
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_sizes=(512, 128),
+        output_dim: int = 1,
+        activation: str = "gelu",  # 'relu' or 'gelu'
+        bias_last: bool = False,
+    ):
         super().__init__()
-        self.head_l1 = nn.Linear(hidden_size, 512)
-        self.head_act1 = nn.GELU()
-        self.head_l2 = nn.Linear(512, 128)
-        self.head_act2 = nn.GELU()
-        self.head_l3 = nn.Linear(128, output_dim, bias=False)
 
-        self._init_weights()
+        layers = []
+        in_dim = input_dim
 
-    def _init_weights(self):
-        nn.init.kaiming_normal_(
-            self.head_l1.weight, mode="fan_out", nonlinearity="relu"
-        )
-        nn.init.zeros_(self.head_l1.bias)
-        nn.init.kaiming_normal_(
-            self.head_l2.weight, mode="fan_out", nonlinearity="relu"
-        )
-        nn.init.zeros_(self.head_l2.bias)
-        nn.init.normal_(self.head_l3.weight, mean=0.0, std=0.02)
+        if activation.lower() == "relu":
+            act = nn.ReLU
+        elif activation.lower() == "gelu":
+            act = nn.GELU
+        else:
+            raise ValueError(f"Unsupported activation: {activation}")
+
+        for h in hidden_sizes:
+            layers.append(nn.Linear(in_dim, h))
+            layers.append(act())
+            in_dim = h
+
+        layers.append(nn.Linear(in_dim, output_dim, bias=bias_last))
+
+        self.mlp = nn.Sequential(*layers)
+
+        self._init_weights(activation.lower())
+
+    def _init_weights(self, nonlinearity="relu"):
+        for m in self.mlp:
+            if isinstance(m, nn.Linear):
+                if m is self.mlp[-1]:
+                    nn.init.normal_(m.weight, mean=0.0, std=0.02)
+                    if m.bias is not None:
+                        nn.init.zeros_(m.bias)
+                else:
+                    nn.init.kaiming_normal_(
+                        m.weight, mode="fan_out", nonlinearity=nonlinearity
+                    )
+                    if m.bias is not None:
+                        nn.init.zeros_(m.bias)
 
     def forward(self, x):
-        x = self.head_act1(self.head_l1(x))
-        x = self.head_act2(self.head_l2(x))
-        x = self.head_l3(x)
-        return x
+        return self.mlp(x)

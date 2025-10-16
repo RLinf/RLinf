@@ -189,61 +189,80 @@ ManiSkill3 结果
 ~~~~~~~~~~~~~~~~~~~
 
 以下以 ManiSkill3 环境下的 PPO 训练为例：  
-在单机 8×H100 的设置下，OpenVLA（左）与 OpenVLA-OFT（右）在 plate-25-main 任务上，分别在 48 小时与 24 小时的 PPO 训练后，成功率最高达到 90%。
+在单机 8×H100 的设置下，OpenVLA（左）与 OpenVLA-OFT（右）在 plate-25-main 任务上，成功率达到 90% 以上。
 
 .. raw:: html
 
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/embody-loss-1.jpeg" style="width: 100%;"/>
-       <p><em>OpenVLA (48h training)</em></p>
+       <img src="https://github.com/RLinf/misc/raw/main/pic/mani_openvla.png" style="width: 100%;"/>
+       <p><em>OpenVLA</em></p>
      </div>
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/embody-loss-2.jpeg" style="width: 100%;"/>
-       <p><em>OpenVLA-OFT (24h training)</em></p>
+       <img src="https://github.com/RLinf/misc/raw/main/pic/mani_openvlaoft.png" style="width: 100%;"/>
+       <p><em>OpenVLA-OFT</em></p>
      </div>
    </div>
 
-我们在 OOD（分布外）评估下，对 Vision、Semantic、Position 三类任务进行测试，  
+我们在训练场景和 OOD（分布外）场景进行了评估。其中 OOD 包括 Vision、Semantic、Position。  
 每类任务最优模型以粗体标注。
 
 .. note::
-   为公平对比，这里采用与 ``rl4vla`` 相同的 OOD 测试集。
+   为公平对比，这里采用与 ``rl4vla``（[论文链接](https://arxiv.org/abs/2505.19789)） 相同的 OOD 测试集。
 
 .. list-table:: **ManiSkill3 上 OpenVLA 与 OpenVLA-OFT 的模型结果**
    :header-rows: 1
    :widths: 40 15 15 18 15
 
    * - 模型
+     - 训练场景
      - Vision
      - Semantic
      - Position
      - 平均值
+   * - OpenVLA(Base)
+     - 53.91%
+     - 38.75%
+     - 35.75%
+     - 42.11%
+     - 39.10%
    * - |huggingface| `rl4vla <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_
-     - 76.6%
-     - 75.4%
-     - 77.6%
-     - 76.1%
-   * - |huggingface| `GRPO-OpenVLA-OFT <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-ManiSkill3-25ood>`_
-     - **84.6%**
-     - 51.6%
-     - 42.9%
-     - 61.5%
-   * - |huggingface| `PPO-OpenVLA-OFT <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-PPO-ManiSkill3-25ood>`_
-     - 80.5%
-     - 56.6%
-     - 56.1%
-     - 64.5%
+     - 93.75%
+     - 80.47%
+     - 75.00%
+     - 81.77%
+     - 79.15%
    * - |huggingface| `PPO-OpenVLA <https://huggingface.co/RLinf/RLinf-OpenVLA-PPO-ManiSkill3-25ood>`_
-     - 82.0%
-     - **80.6%**
-     - **89.3%**
-     - **82.2%**
+     - 96.09%
+     - 82.03%
+     - **78.35%**
+     - **85.42%**
+     - **81.93%**
    * - |huggingface| `GRPO-OpenVLA <https://huggingface.co/RLinf/RLinf-OpenVLA-GRPO-ManiSkill3-25ood>`_
-     - 74.7%
-     - 74.4%
-     - 81.6%
-     - 75.5%
+     - 84.38%
+     - 74.69%
+     - 72.99%
+     - 77.86%
+     - 75.15%
+   * - OpenVLA-OFT(Base)
+     - 28.13%
+     - 27.73%
+     - 12.95%
+     - 11.72%
+     - 18.29%
+   * - |huggingface| `PPO-OpenVLA-OFT <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-PPO-ManiSkill3-25ood>`_
+     - **97.66%**
+     - **92.11%**
+     - 64.84%
+     - 73.57%
+     - 77.05%
+   * - |huggingface| `GRPO-OpenVLA-OFT <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-ManiSkill3-25ood>`_
+     - 94.14%
+     - 84.69%
+     - 45.54%
+     - 44.66%
+     - 60.64%
+   
 
 .. note::
    ``rl4vla`` 指在 **小 batch** 条件下，使用 PPO + OpenVLA 的设置，仅应与我们在类似条件下的 PPO+OpenVLA 对比。  

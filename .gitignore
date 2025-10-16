@@ -15,5 +15,8 @@ logs/*
 *.so
 .venv
 uv.lock
-assets/
+assets
+openpi
+lerobot
+data
 roboverse_data/

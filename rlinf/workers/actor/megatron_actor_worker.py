@@ -966,7 +966,7 @@ class MegatronActor(MegatronModelManager, Worker):
                 batch,
                 self.cfg.data.max_prompt_length,
                 self.response_len,
-                self._world_size,
+                parallel_state.get_data_parallel_world_size(),
                 dp_group=parallel_state.get_data_parallel_group(),
             )
         )

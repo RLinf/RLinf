@@ -36,8 +36,6 @@ algorithm:
   auto_reset: False
   ignore_terminations: False
   use_fixed_reset_state_ids: True
-  require_values: False
-  shuffle_samples: True
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 8
@@ -62,6 +60,10 @@ algorithm:
 
   gamma: 0.99
   gae_lambda: 0.95
+
+  reward_coef: 5.0
+  max_episode_steps: 512
+  use_ordered_reset_state_ids: True
 
   sampling_params:
     use_greedy: False
@@ -131,10 +133,11 @@ actor:
     vocab_size: 32000
     hidden_size: 4096
     policy_setup: "widowx_bridge"
-    vh_mode: "a0"
+    add_value_head: False
     image_size: [224, 224]
     is_lora: False
     lora_rank: 32
+    use_wrist_image: False
     num_images_in_input: 1
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True

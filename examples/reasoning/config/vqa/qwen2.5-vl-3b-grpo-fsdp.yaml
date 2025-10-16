@@ -202,7 +202,7 @@ actor:
     trust_remote_code: True
     padding_side: 'right'
 
-  fsdp:
+  fsdp_config:
     forward_prefetch: True
     limit_all_gathers: True
     backward_prefetch: True

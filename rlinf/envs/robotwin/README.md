@@ -29,7 +29,7 @@ Add the robotwin directory to your Python path:
 ```bash
 cd third_party/robtowin
 bash script/_install.sh
-export PYTHONPATH="/mnt/public/xusi/third_party/robotwin":$PYTHONPATH
+export PYTHONPATH="/path/to/robotwin":$PYTHONPATH
 ```
 
 ### 4. Configure Asset Paths (Auto completed, refer to script/_install.sh)
