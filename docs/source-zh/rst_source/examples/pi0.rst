@@ -126,7 +126,7 @@ actor** 之间的流水线重叠，从而提升 rollout 效率。
    -  **π₀ +
       PPO**\ ：\ ``examples/embodiment/config/libero_10_ppo_openpi.yaml``
    -  **π₀ +
-      GRPO**\ ：\ ``examples/embodiment/config/libero_10_ppo_openpi.yaml``
+      GRPO**\ ：\ ``examples/embodiment/config/libero_10_grpo_openpi.yaml``
 
 **4. 启动命令**
 

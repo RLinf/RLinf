@@ -174,7 +174,7 @@ command:
    bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
 
 For example, to train the π₀ model using the PPO algorithm in
-the ManiSkill3 environment, run:
+the LIBERO environment, run:
 
 ::
 
