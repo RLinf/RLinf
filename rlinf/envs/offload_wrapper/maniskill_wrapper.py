@@ -83,7 +83,7 @@ class ManiskillEnv(BaseManiskillEnv, EnvOffloadMixin):
             "user_defined_task_reset_states": user_defined_task_reset_states,
             "user_defined_task_metric_states": recursive_to_device(
                 user_defined_task_metric_states, "cpu"
-            )
+            ),
         }
 
         if self.record_metrics:

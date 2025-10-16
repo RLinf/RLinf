@@ -674,7 +674,7 @@ class PutOnPlateInScene25(BaseEnv):
 
         self.task_metric_states = {
             "episode_stats": self.episode_stats,
-            "extra_stats": self.extra_stats
+            "extra_stats": self.extra_stats,
         }
 
         return dict(**self.episode_stats, success=success)
