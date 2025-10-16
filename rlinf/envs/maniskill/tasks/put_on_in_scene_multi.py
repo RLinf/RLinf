@@ -673,7 +673,7 @@ class PutOnPlateInScene25(BaseEnv):
         self.extra_stats["extra_q_gripper"] = gripper_q
 
         self.task_metric_states = {
-            "episode_stats": self.episode_stats, 
+            "episode_stats": self.episode_stats,
             "extra_stats": self.extra_stats
         }
 
@@ -933,7 +933,7 @@ class PutOnPlateInScene25MainV3(PutOnPlateInScene25):
             self.episode_id[reset_env_ids] = episode_id
         else:
             raise ValueError(f"Invalid env_idx: {env_idx}")
-        
+
         self.task_reset_states = {
             "episode_id": self.episode_id,
         }

@@ -61,9 +61,9 @@ class ManiskillEnv(BaseManiskillEnv, EnvOffloadMixin):
         for key, value in user_defined_task_reset_states.items():
             if torch.is_tensor(value):
                 user_defined_task_reset_states[key] = value.cpu()
-        
+
         user_defined_task_metric_states = getattr(self.env, "task_metric_states", {})
-        
+
         simulator_state = {
             "sim_state": env_state,
             "sim_timestep": self.env.unwrapped.scene.get_timestep(),
@@ -115,9 +115,7 @@ class ManiskillEnv(BaseManiskillEnv, EnvOffloadMixin):
         }
         for key, value in state["user_defined_task_reset_states"].items():
             options[key] = value.to(self.env.device)
-        
-        print("Reconfiguring environment with options:", options)
-        
+
         self.env.reset(seed=self.seed, options=options)
 
         self.env.set_state(state["sim_state"])
@@ -150,7 +148,9 @@ class ManiskillEnv(BaseManiskillEnv, EnvOffloadMixin):
         self._generator.set_state(state["generator_state"])
         self.is_start = state["is_start"]
 
-        task_metric_states = recursive_to_device(state["user_defined_task_metric_states"], self.device)
+        task_metric_states = recursive_to_device(
+            state["user_defined_task_metric_states"], self.device
+        )
         for key, value in task_metric_states.items():
             setattr(self.env, key, value)
 
