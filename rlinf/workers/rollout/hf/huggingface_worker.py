@@ -302,11 +302,13 @@ class MultiStepRolloutWorker(Worker):
                     for key, value in env_info_list.items():
                         eval_info[f"env_info/{key}"].append(value)
 
-        env_batch = await self.recv_env_batch()
-        if "meta" in env_batch:
-            env_info_list = env_batch["meta"]
-            for key, value in env_info_list.items():
-                eval_info[f"env_info/{key}"].append(value)
+        for i in range(self.stage_num):
+            env_batch = await self.recv_env_batch()
+            if "meta" in env_batch:
+                env_info_list = env_batch["meta"]
+                for key, value in env_info_list.items():
+                    eval_info[f"env_info/{key}"].append(value)
+
         eval_metrics = create_rollout_batch(eval_info)
         if self.cfg.rollout.get("enable_offload", False):
             self.offload_model()

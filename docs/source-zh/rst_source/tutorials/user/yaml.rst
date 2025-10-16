@@ -725,7 +725,7 @@ algorithm
 
 ``algorithm.rollout_epoch``：每个训练步骤前的 rollout 轮数。
 
-``algorithm.reward_type``：奖励聚合层级（chunk_level、token_level、step_level）。
+``algorithm.reward_type``：奖励聚合层级（chunk_level、action_level）。
 
 ``algorithm.logprob_type``：对数概率的计算层级。
 

@@ -96,23 +96,25 @@ class EnvWorker(Worker):
             from rlinf.envs.maniskill.maniskill_env import ManiskillEnv
 
             if not only_eval:
-                for _ in range(self.stage_num):
+                for stage_id in range(self.stage_num):
                     self.simulator_list.append(
                         EnvManager(
                             self.cfg.env.train,
                             rank=self._rank,
-                            world_size=self._world_size,
+                            seed_offset=self._rank * self.stage_num + stage_id,
+                            total_num_processes=self._world_size,
                             env_cls=ManiskillEnv,
                             enable_offload=enable_offload,
                         )
                     )
             if self.cfg.runner.val_check_interval > 0 or only_eval:
-                for _ in range(self.stage_num):
+                for stage_id in range(self.stage_num):
                     self.eval_simulator_list.append(
                         EnvManager(
                             self.cfg.env.eval,
                             rank=self._rank,
-                            world_size=self._world_size,
+                            seed_offset=self._rank * self.stage_num + stage_id,
+                            total_num_processes=self._world_size,
                             env_cls=ManiskillEnv,
                             enable_offload=enable_offload,
                         )
@@ -146,23 +148,25 @@ class EnvWorker(Worker):
             from rlinf.envs.libero.libero_env import LiberoEnv
 
             if not only_eval:
-                for _ in range(self.stage_num):
+                for stage_id in range(self.stage_num):
                     self.simulator_list.append(
                         EnvManager(
                             self.cfg.env.train,
                             rank=self._rank,
-                            world_size=self._world_size,
+                            seed_offset=self._rank * self.stage_num + stage_id,
+                            total_num_processes=self._world_size * self.stage_num,
                             env_cls=LiberoEnv,
                             enable_offload=enable_offload,
                         )
                     )
             if self.cfg.runner.val_check_interval > 0 or only_eval:
-                for _ in range(self.stage_num):
+                for stage_id in range(self.stage_num):
                     self.eval_simulator_list.append(
                         EnvManager(
                             self.cfg.env.eval,
                             rank=self._rank,
-                            world_size=self._world_size,
+                            seed_offset=self._rank * self.stage_num + stage_id,
+                            total_num_processes=self._world_size * self.stage_num,
                             env_cls=LiberoEnv,
                             enable_offload=enable_offload,
                         )
@@ -171,24 +175,26 @@ class EnvWorker(Worker):
             from rlinf.envs.robotwin.RoboTwin_env import RoboTwin
 
             if not only_eval:
-                for _ in range(self.stage_num):
+                for stage_id in range(self.stage_num):
                     self.simulator_list.append(
                         EnvManager(
                             self.cfg.env.train,
                             rank=self._rank,
-                            world_size=self._world_size,
+                            seed_offset=self._rank * self.stage_num + stage_id,
+                            total_num_processes=self._world_size * self.stage_num,
                             env_cls=RoboTwin,
                             enable_offload=enable_offload,
                         )
-                        # RoboTwin(self.cfg.env.train, rank=self._rank, world_size=self._world_size)
+                        # RoboTwin(self.cfg.env.train, rank=self._rank, total_num_processes=self._world_size)
                     )
             if self.cfg.runner.val_check_interval > 0 or only_eval:
-                for _ in range(self.stage_num):
+                for stage_id in range(self.stage_num):
                     self.eval_simulator_list.append(
                         EnvManager(
                             self.cfg.env.eval,
                             rank=self._rank,
-                            world_size=self._world_size,
+                            seed_offset=self._rank * self.stage_num + stage_id,
+                            total_num_processes=self._world_size,
                             env_cls=RoboTwin,
                             enable_offload=enable_offload,
                         )
@@ -308,13 +314,13 @@ class EnvWorker(Worker):
         if mode == "train":
             if self.cfg.env.train.video_cfg.save_video:
                 for i in range(self.stage_num):
-                    self.simulator_list[i].flush_video(video_sub_dir=f"stage_{i}")
+                    self.simulator_list[i].flush_video()
             for i in range(self.stage_num):
                 self.simulator_list[i].update_reset_state_ids()
         elif mode == "eval":
             if self.cfg.env.eval.video_cfg.save_video:
                 for i in range(self.stage_num):
-                    self.eval_simulator_list[i].flush_video(video_sub_dir=f"stage_{i}")
+                    self.eval_simulator_list[i].flush_video()
 
     def split_env_batch(self, env_batch, gather_id, mode):
         env_batch_i = {}

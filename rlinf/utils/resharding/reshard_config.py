@@ -17,7 +17,9 @@ from typing import Callable
 
 from megatron.core.transformer import TransformerConfig
 
-from .utils import get_convert_fn, get_pp_reshard_fn, get_tp_reshard_fn
+from rlinf.utils.convertor.utils import get_mg2hf_convertor
+
+from .utils import get_pp_reshard_fn, get_tp_reshard_fn
 
 
 @dataclass
@@ -37,7 +39,7 @@ class ReshardConfig:
     """Resharding pp size."""
 
     convert_fn: Callable = None
-    """Convert function to use for converting the model parameters' weight and name from training engine to rollout engine."""
+    """Function to convert the model weights from megatron format to HuggingFace format."""
 
     tp_reshard_fn: Callable = None
     """Resharding function to use for resharding the model parallelism from tensor_model_parallel_size to reshard_tp_size."""
@@ -59,7 +61,8 @@ class ReshardConfig:
             )
 
         if self.convert_fn is None and self.reshard_weights_format != "mcore":
-            self.convert_fn = get_convert_fn(self.model_arch)
+            self._convertor = get_mg2hf_convertor(self.model_arch, self, strict=True)
+            self.convert_fn = self._convertor.convert
 
         if self.tp_reshard_fn is None:
             self.tp_reshard_fn = get_tp_reshard_fn(self.model_arch)

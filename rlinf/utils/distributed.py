@@ -31,7 +31,12 @@ from rlinf.utils.timers import NamedTimer
 
 
 def compute_rollout_metrics(
-    rollout_batch, max_prompt_len, response_len, use_critic=False
+    rollout_batch,
+    max_prompt_len,
+    response_len,
+    dp_world_size,
+    dp_group=None,
+    use_critic=False,
 ):
     device = torch.device(f"cuda:{torch.cuda.current_device()}")
     advantages = rollout_batch["advantages"].to(device=device)
@@ -40,8 +45,6 @@ def compute_rollout_metrics(
     response_lengths = rollout_batch["response_lengths"].clone().to(device=device)
     reward_scores = rollout_batch["rewards"].clone().to(device=device)
     is_end = rollout_batch["is_end"].clone().float().to(device=device)
-
-    dp_world_size = parallel_state.get_data_parallel_world_size()
 
     prompt_lengths_list = [
         torch.empty_like(prompt_lengths) for _ in range(dp_world_size)
@@ -52,12 +55,12 @@ def compute_rollout_metrics(
     torch.distributed.all_gather(
         prompt_lengths_list,
         prompt_lengths,
-        group=parallel_state.get_data_parallel_group(),
+        group=dp_group,
     )
     torch.distributed.all_gather(
         decode_lengths_list,
         response_lengths,
-        group=parallel_state.get_data_parallel_group(),
+        group=dp_group,
     )
 
     total_prompt_lengths = torch.cat(prompt_lengths_list, dim=0)
@@ -66,22 +69,22 @@ def compute_rollout_metrics(
     torch.distributed.all_reduce(
         prompt_lengths,
         torch.distributed.ReduceOp.AVG,
-        group=parallel_state.get_data_parallel_group(),
+        group=dp_group,
     )
     torch.distributed.all_reduce(
         response_lengths,
         torch.distributed.ReduceOp.AVG,
-        group=parallel_state.get_data_parallel_group(),
+        group=dp_group,
     )
     torch.distributed.all_reduce(
         reward_scores,
         torch.distributed.ReduceOp.AVG,
-        group=parallel_state.get_data_parallel_group(),
+        group=dp_group,
     )
     torch.distributed.all_reduce(
         is_end,
         torch.distributed.ReduceOp.AVG,
-        group=parallel_state.get_data_parallel_group(),
+        group=dp_group,
     )
 
     valid_adv = torch.masked_select(advantages, mask)
@@ -90,12 +93,12 @@ def compute_rollout_metrics(
     torch.distributed.all_reduce(
         n_valid_token,
         op=torch.distributed.ReduceOp.SUM,
-        group=parallel_state.get_data_parallel_group(),
+        group=dp_group,
     )
     torch.distributed.all_reduce(
         adv_sum,
         op=torch.distributed.ReduceOp.SUM,
-        group=parallel_state.get_data_parallel_group(),
+        group=dp_group,
     )
     adv_mean = adv_sum / n_valid_token
 
@@ -107,7 +110,7 @@ def compute_rollout_metrics(
     torch.distributed.all_reduce(
         reduce_tensor,
         torch.distributed.ReduceOp.MAX,
-        group=parallel_state.get_data_parallel_group(),
+        group=dp_group,
     )
     adv_min, adv_max = reduce_tensor.tolist()
 

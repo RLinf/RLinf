@@ -53,3 +53,13 @@ UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla_oft.txt --no-build-
 # For Pi0 experiment
 UV_TORCH_BACKEND=auto uv pip install -r requirements/pi0.txt --no-build-isolation
 ```
+
+Finally, Run the following to install the libero dependency.
+
+```shell
+mkdir -p /opt && git clone https://github.com/RLinf/LIBERO.git /opt/libero
+```
+Before using LIBERO, make sure its path is added to the `PYTHONPATH` environment variables.
+```shell
+export PYTHONPATH=/opt/libero:$PYTHONPATH
+```

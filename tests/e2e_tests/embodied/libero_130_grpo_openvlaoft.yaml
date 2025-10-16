@@ -13,7 +13,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: all
+    actor,env,rollout: 0-3
 
 runner:
   task_type: embodied
@@ -23,7 +23,7 @@ runner:
     experiment_name: "ci-test"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 3
+  max_epochs: 1
   max_steps: -1
 
   only_eval: False
@@ -156,6 +156,12 @@ actor:
     use_fast: False
     trust_remote_code: True
     padding_side: "right"
+
+  fsdp:
+    forward_prefetch: True
+    limit_all_gathers: True
+    backward_prefetch: True
+    use_orig_params: True
 
 reward:
   use_reward_model: False

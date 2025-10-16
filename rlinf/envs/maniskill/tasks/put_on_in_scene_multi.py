@@ -14,7 +14,6 @@
 
 import os
 from pathlib import Path
-from typing import Optional
 
 import cv2
 import numpy as np
@@ -745,11 +744,8 @@ class PutOnPlateInScene25(BaseEnv):
 
         return rgb_ret
 
-    def get_obs(self, info: Optional[dict] = None, unflattened=True):
-        assert unflattened
-        obs = super().get_obs(info)
-
-        # "greenscreen" process
+    def _get_obs_sensor_data(self, apply_texture_transforms=True):
+        sensor_obs = super()._get_obs_sensor_data(apply_texture_transforms)
         if (
             self.obs_mode_struct.visual.rgb
             and self.obs_mode_struct.visual.segmentation
@@ -757,27 +753,23 @@ class PutOnPlateInScene25(BaseEnv):
         ):
             # get the actor ids of objects to manipulate; note that objects here are not articulated
             camera_name = self.rgb_camera_name
-            assert "segmentation" in obs["sensor_data"][camera_name].keys()
+            assert "segmentation" in sensor_obs[camera_name].keys()
 
-            overlay_img = self.overlay_images.to(
-                obs["sensor_data"][camera_name]["rgb"].device
-            )
-            overlay_texture = self.overlay_textures.to(
-                obs["sensor_data"][camera_name]["rgb"].device
-            )
-            overlay_mix = self.overlay_mix.to(
-                obs["sensor_data"][camera_name]["rgb"].device
-            )
+            raw_rgb_device = sensor_obs[camera_name]["rgb"].device
+
+            overlay_img = self.overlay_images.to(raw_rgb_device)
+            overlay_texture = self.overlay_textures.to(raw_rgb_device)
+            overlay_mix = self.overlay_mix.to(raw_rgb_device)
 
             green_screened_rgb = self._green_sceen_rgb(
-                obs["sensor_data"][camera_name]["rgb"],
-                obs["sensor_data"][camera_name]["segmentation"],
+                sensor_obs[camera_name]["rgb"],
+                sensor_obs[camera_name]["segmentation"],
                 overlay_img,
                 overlay_texture,
                 overlay_mix,
             )
-            obs["sensor_data"][camera_name]["rgb"] = green_screened_rgb
-        return obs
+            sensor_obs[camera_name]["rgb"] = green_screened_rgb
+        return sensor_obs
 
     # widowx
     @property

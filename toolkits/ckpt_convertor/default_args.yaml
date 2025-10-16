@@ -65,6 +65,16 @@ explict_model:
     head_dim: 128
     num_layers: 28
     tie_word_embeddings: true
+  'Qwen2.5-Coder-1.5B':
+    model_type: qwen_2
+    num_attention_heads: 12
+    num_query_groups: 2
+    head_dim: 128
+    num_layers: 28
+    te_ln_linear_qkv: True
+    te_ln_linear_mlp_fc1: True
+    te_ln_add_extra_state: True # pay attention if precision is fp8 mixture
+    tie_word_embeddings: true
 
 model_type:
   deepseek:

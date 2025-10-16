@@ -15,8 +15,9 @@
 from typing import Any, Optional
 
 import torch
-import torch.nn.functional as F
 from transformers.generation import TopKLogitsWarper
+
+from rlinf.utils.utils import compute_entropy_from_logits, compute_logprobs_from_logits
 
 
 def default_logits_processor(logits, action_tokens, vocab_size, n_action_bins):
@@ -32,28 +33,6 @@ def default_logits_processor(logits, action_tokens, vocab_size, n_action_bins):
     ret = {"logprobs": logprobs, "entropy": entropy}
 
     return ret
-
-
-def compute_logprobs_from_logits(logits, target):
-    logprobs = -F.cross_entropy(
-        logits, target=target, reduction="none"
-    )  # [B, action-dim]
-    return logprobs
-
-
-def compute_entropy_from_logits(logits, epsilon=1e-10):
-    """
-    Compute entropy by logits.
-
-    Args:
-        logits: [B, vocab-size, seq-len]
-    Returns:
-        entropy: [B, seq-len]
-    """
-    all_probs = F.softmax(logits, dim=1)  # [B, vocab-size, seq-len]
-    all_log_probs = torch.log(all_probs + epsilon)
-    entropy = -torch.sum(all_probs * all_log_probs, dim=1)  # [B, seq-len]
-    return entropy
 
 
 def custom_forward(

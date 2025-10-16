@@ -7,7 +7,9 @@ export SRC_FILE="${EMBODIED_PATH}/train_embodied_agent.py"
 export MUJOCO_GL="egl"
 export PYOPENGL_PLATFORM="egl"
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
-export LIBERO_CONFIG_PATH="/path/to/repo/LIBERO_CONFIG_PATH"
+
+LIBERO_PATH=/opt/libero
+export PYTHONPATH=${LIBERO_PATH}:$PYTHONPATH
 
 export CUDA_LAUNCH_BLOCKING=1
 export HYDRA_FULL_ERROR=1
