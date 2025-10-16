@@ -72,14 +72,6 @@ Algorithm
    -  Compute the advantage of each action by subtracting the group’s
       mean reward.
 
-3. **π₀**
-
-   -  Vision–language multimodal fusion with an independent action
-      expert module
-   
-   -  Action generation via velocity-field integration
-   -  Value head for critic function
-
 --------------
 
 Running Scripts
