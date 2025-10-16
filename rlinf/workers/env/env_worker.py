@@ -117,6 +117,31 @@ class EnvWorker(Worker):
                             enable_offload=enable_offload,
                         )
                     )
+        elif self.cfg.env.train.simulator_type == "roboverse":
+            from rlinf.envs.roboverse.roboverse_env import RoboVerseEnv
+
+            if not only_eval:
+                for _ in range(self.stage_num):
+                    self.simulator_list.append(
+                        EnvManager(
+                            self.cfg.env.train,
+                            rank=self._rank,
+                            world_size=self._world_size,
+                            env_cls=RoboVerseEnv,
+                            enable_offload=enable_offload,
+                        )
+                    )
+            if self.cfg.runner.val_check_interval > 0 or only_eval:
+                for _ in range(self.stage_num):
+                    self.eval_simulator_list.append(
+                        EnvManager(
+                            self.cfg.env.eval,
+                            rank=self._rank,
+                            world_size=self._world_size,
+                            env_cls=RoboVerseEnv,
+                            enable_offload=enable_offload,
+                        )
+                    )
         elif self.cfg.env.train.simulator_type == "libero":
             from rlinf.envs.libero.libero_env import LiberoEnv
 

@@ -135,6 +135,9 @@ def prepare_observations_for_vla(
     elif simulator_type == "robotwin":
         images = raw_obs["images"]
         image_tensor = images.to(device=device, dtype=precision)
+    elif simulator_type == "roboverse":
+        images = raw_obs["images"]
+        image_tensor = images.to(device=device, dtype=precision)
     else:
         raise NotImplementedError
 

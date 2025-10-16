@@ -16,3 +16,4 @@ logs/*
 .venv
 uv.lock
 assets/
+roboverse_data/
