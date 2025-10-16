@@ -45,6 +45,8 @@ dependencies = [
     "torch-memory-saver",
     "setuptools>=69.5.1,<75.9",
     "ninja",
+    "pre-commit",
+    "ruff",
 
     # Logging
     "swanlab",
@@ -76,6 +78,13 @@ embodied = [
     "cloudpickle",
     "gym",
 ]
+franka = [
+    "pyyaml",
+    "rospkg",
+    "empy==3.3.4",
+    "gymnasium",
+    "pyrealsense2"
+]
 
 [tool.uv]
 prerelease = "allow"
@@ -83,6 +92,7 @@ conflicts = [
     [
       { extra = "sglang-vllm" },
       { extra = "embodied" },
+      { extra = "franka" },
     ],
 ]
 override-dependencies = [

@@ -1,9 +1,13 @@
 ARG BUILD_TARGET=reason
 
-FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-reason
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied
+# Franka depends on ros-noetic, which is not available on Ubuntu 22.04
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu20.04 AS base-image-franka
+
+FROM base-image-$BUILD_TARGET AS base-image
 
 SHELL ["/bin/bash", "-c"]
-ENV PATH=/opt/conda/bin:$PATH
 ENV DEBIAN_FRONTEND=noninteractive
 RUN sed -i 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -108,7 +112,7 @@ RUN source ${UV_PATH}/openvla/bin/activate && \
 
 # Install SAPIEN PhysX Patch
 RUN export PHYSX_VERSION=105.1-physx-5.3.1.patch0 && \
-    export PHYSX_DIR=~/.sapien/physx/$PHYSX_VERSION && \ 
+    export PHYSX_DIR=~/.sapien/physx/$PHYSX_VERSION && \
     mkdir -p $PHYSX_DIR && \
     wget -O $PHYSX_DIR/linux-so.zip https://github.com/sapien-sim/physx-precompiled/releases/download/$PHYSX_VERSION/linux-so.zip && \
     unzip $PHYSX_DIR/linux-so.zip -d $PHYSX_DIR && rm $PHYSX_DIR/linux-so.zip
@@ -118,6 +122,30 @@ ENV PYTHONPATH=/opt/libero:$PYTHONPATH
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla/bin/activate" >> ~/.bashrc
+
+FROM base-image as franka-image
+
+RUN sh -c 'echo "deb http://mirrors.ustc.edu.cn/ros/ubuntu/ focal main" > /etc/apt/sources.list.d/ros-latest.list'
+
+RUN apt-key adv --keyserver 'hkp://keyserver.ubuntu.com:80' --recv-key C1CF6E31E6BADE8868B172B4F42ED6FBAB17C654
+RUN apt update && apt install ros-noetic-ros-base ros-noetic-libfranka ros-noetic-franka-ros -y
+
+RUN uv venv franka && source ${UV_PATH}/franka/bin/activate && \
+    UV_TORCH_BACKEND=auto uv sync --active && \
+    uv sync --extra franka --active
+
+# Install serl_franka_controller
+ENV ROS_CATKIN_PATH=/opt/catkin_ws
+RUN mkdir -p ${ROS_CATKIN_PATH}/src && cd ${ROS_CATKIN_PATH}/src && \
+    git clone https://github.com/rail-berkeley/serl_franka_controllers && \
+    source /opt/ros/noetic/setup.sh && \
+    cd ${ROS_CATKIN_PATH} && catkin_make --pkg serl_franka_controllers 
+
+RUN echo "source ${ROS_CATKIN_PATH}/devel/setup.sh" >> ${UV_PATH}/franka/bin/activate
+RUN echo "source /opt/ros/noetic/setup.sh" >> ${UV_PATH}/franka/bin/activate
+
+# Set default env
+RUN echo "source ${UV_PATH}/franka/bin/activate" >> ~/.bashrc
 
 FROM ${BUILD_TARGET}-image AS final-image
 
