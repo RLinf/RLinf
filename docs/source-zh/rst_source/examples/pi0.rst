@@ -67,14 +67,14 @@
    # 方式1：使用 git clone
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal
-   
+
    # 方式2：使用 huggingface-hub
-   pip install huggingface-hub   
+   pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal
 
 **2. RLinf-Pi0-SFT-Long 模型**
 
-该模型专门用于处理 Long （libero10）类型任务。
+该模型专门用于处理 Long（libero10）类型任务。
 
 .. code:: bash
 
@@ -82,9 +82,9 @@
    # 方式1：使用 git clone
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-Pi0-SFT-Long
-   
+
    # 方式2：使用 huggingface-hub
-   pip install huggingface-hub   
+   pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-SFT-Long
 
 **模型选择指南**
