@@ -122,24 +122,27 @@ class EnvWorker(Worker):
         elif self.cfg.env.train.simulator_type == "roboverse":
             from rlinf.envs.roboverse.roboverse_env import RoboVerseEnv
 
+
             if not only_eval:
-                for _ in range(self.stage_num):
+                for stage_id in range(self.stage_num):
                     self.simulator_list.append(
                         EnvManager(
                             self.cfg.env.train,
                             rank=self._rank,
-                            world_size=self._world_size,
+                            seed_offset=self._rank * self.stage_num + stage_id,
+                            total_num_processes=self._world_size,
                             env_cls=RoboVerseEnv,
                             enable_offload=enable_offload,
                         )
                     )
             if self.cfg.runner.val_check_interval > 0 or only_eval:
-                for _ in range(self.stage_num):
+                for stage_id in range(self.stage_num):
                     self.eval_simulator_list.append(
                         EnvManager(
                             self.cfg.env.eval,
                             rank=self._rank,
-                            world_size=self._world_size,
+                            seed_offset=self._rank * self.stage_num + stage_id,
+                            total_num_processes=self._world_size,
                             env_cls=RoboVerseEnv,
                             enable_offload=enable_offload,
                         )
@@ -336,9 +339,11 @@ class EnvWorker(Worker):
                         f"key {key}, length: {length}, batch_size: {self.batch_size}"
                     )
                 elif mode == "eval":
+                    print(value)
                     assert length == self.eval_batch_size, (
                         f"key {key}, length: {length}, batch_size: {self.eval_batch_size}"
                     )
+                    exit(0)
                 env_batch_i[key] = value[
                     gather_id * length // self.gather_num : (gather_id + 1)
                     * length
