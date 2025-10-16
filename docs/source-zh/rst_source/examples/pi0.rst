@@ -52,6 +52,48 @@
    -  对于每个状态/提示，策略生成 *G* 个独立动作
    -  以组内平均奖励为基线，计算每个动作的相对优势
 
+模型下载
+--------
+
+在开始训练之前，您需要下载相应的预训练模型。我们提供了两个不同的模型：
+
+**1. RLinf-Pi0-SFT-Spatial-Object-Goal 模型**
+
+该模型专门用于处理 object、goal、spatial 类型的任务。
+
+.. code:: bash
+
+   # 下载 Spatial-Object-Goal 模型（选择以下任一方式）
+   # 方式1：使用 git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal
+   
+   # 方式2：使用 huggingface-hub
+   pip install huggingface-hub   
+   hf download RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal
+
+**2. RLinf-Pi0-SFT-Long 模型**
+
+该模型专门用于处理 Long （libero10）类型任务。
+
+.. code:: bash
+
+   # 下载 Long 模型（选择以下任一方式）
+   # 方式1：使用 git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-SFT-Long
+   
+   # 方式2：使用 huggingface-hub
+   pip install huggingface-hub   
+   hf download RLinf/RLinf-Pi0-SFT-Long
+
+**模型选择指南**
+
+- 如果您要训练 **object、goal、spatial** 类型的任务，请使用 `RLinf-Pi0-SFT-Spatial-Object-Goal` 模型
+- 如果您要训练 **libero10** 的 Long 类型任务，请使用 `RLinf-Pi0-SFT-Long` 模型
+
+下载完成后，请确保在配置文件中正确指定模型路径。
+
 运行脚本
 --------
 
@@ -111,7 +153,7 @@ actor** 之间的流水线重叠，从而提升 rollout 效率。
 
 你可以通过配置 ``noise_level`` 以及 ``num_steps`` ，设置不同的加噪强度以及流匹配步数。
 
-你可以通过修改 ``noise_method`` 使用不同的加噪方式。我们提供\ `flow_sde <https://arxiv.org/abs/2507.21802>`__\ 和\ `reinflow <https://arxiv.org/abs/2505.22094>`__\ 两种方式。
+你可以通过修改 ``noise_method`` 使用不同的加噪方式。我们提供\ `flow_sde <https://arxiv.org/abs/2505.05470>`__\ 和\ `reinflow <https://arxiv.org/abs/2505.22094>`__\ 两种方式。
 
 **3. 配置文件**
 

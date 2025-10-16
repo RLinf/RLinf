@@ -74,6 +74,48 @@ Algorithm
 
 --------------
 
+Model Download
+--------------
+
+Before starting training, you need to download the corresponding pretrained models. We provide two different options:
+
+**1. RLinf-Pi0-SFT-Spatial-Object-Goal Model**
+
+This model is designed specifically for handling object, goal, and spatial task types.
+
+.. code:: bash
+
+   # Download the Spatial-Object-Goal model (choose either method)
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal
+
+   # Method 2: Using huggingface-hub
+   pip install huggingface-hub
+   hf download RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal
+
+**2. RLinf-Pi0-SFT-Long Model**
+
+This model is dedicated to handling Long (libero10) task type.
+
+.. code:: bash
+
+   # Download the Long model (choose either method)
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-SFT-Long
+
+   # Method 2: Using huggingface-hub
+   pip install huggingface-hub
+   hf download RLinf/RLinf-Pi0-SFT-Long
+
+**Model Selection Guide**
+
+- If you want to train **object, goal, or spatial** task types, please use the `RLinf-Pi0-SFT-Spatial-Object-Goal` model.
+- If you want to train the **Long** task type for libero10, please use the `RLinf-Pi0-SFT-Long` model.
+
+After downloading, please make sure to specify the model path correctly in your configuration file.
+
 Running Scripts
 ---------------
 
@@ -140,7 +182,7 @@ interference, eliminating the need for offload functionality.
   the noise intensity and flow-matching steps.
 | Different noise injection methods can be chosen via ``noise_method``.
   We provide two options:
-  `flow_sde <https://arxiv.org/abs/2507.21802>`__ and
+  `flow_sde <https://arxiv.org/abs/2505.05470>`__ and
   `reinflow <https://arxiv.org/abs/2505.22094>`__.
 
 --------------
