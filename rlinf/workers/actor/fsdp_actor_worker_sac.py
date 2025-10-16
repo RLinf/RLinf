@@ -19,19 +19,21 @@ import numpy as np
 import torch
 from omegaconf import DictConfig
 from torch.distributed.device_mesh import init_device_mesh
+from tqdm import tqdm
 
 import rlinf.algorithms  # noqa: F401
-from rlinf.algorithms.losses_sac import compute_sac_temperature_loss
-
 # import rlinf.algorithms.advantages_sac  # noqa: F401
 from rlinf.algorithms.registry import actor_loss
 from rlinf.algorithms.replay_buffer import SACReplayBuffer
-from rlinf.hybrid_engines.fsdp.fsdp_model_manager_sac import (
+from rlinf.algorithms.losses import compute_sac_temperature_loss
+from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
+from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
 )
 from rlinf.models import get_model
-from rlinf.models.embodiment.model_utils_sac import custom_forward
-from rlinf.scheduler import Worker
+from rlinf.models.embodiment.model_utils import custom_forward
+from rlinf.scheduler import Cluster, Worker
+from rlinf.utils.data_iter_utils import get_iterator_k_split
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
     append_to_dict,
@@ -42,7 +44,7 @@ from rlinf.utils.metric_utils import (
 from rlinf.utils.placement import HybridComponentPlacement
 
 
-class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
+class EmbodiedFSDPActor(FSDPModelManager, Worker):
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
         super().__init__(cfg.actor)
@@ -57,7 +59,7 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
 
         self._env_group_name = cfg.env.group_name
         self._rollout_group_name = cfg.rollout.group_name
-        self._component_placement = HybridComponentPlacement(cfg)
+        self._component_placement = HybridComponentPlacement(cfg, Cluster())
         self._weight_dst_rank_in_rollout = self._rank
         if self._weight_dst_rank_in_rollout >= self._component_placement.get_world_size(
             "rollout"
@@ -74,7 +76,7 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
         self.channel.create_queue(
             cfg.actor.channel.queue_name, maxsize=cfg.actor.channel.queue_size
         )
-
+        
         # SAC-specific initialization
         self.replay_buffer = None
         self.target_model = None
@@ -93,7 +95,7 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
             torch.cuda.synchronize()
             gc.collect()
             torch.cuda.empty_cache()
-
+    
     def setup_sac_components(self):
         """Initialize SAC-specific components"""
         # Initialize replay buffer
@@ -103,16 +105,16 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
             device=self.device,
             seed=self.cfg.actor.get("seed", 1234)
         )
-
+        
         # Initialize target model (copy of main model)
         # Note: We need to wait until the main model is set up before creating target model
         self.target_model = None
         self.target_model_initialized = False
-
+        
         # Initialize temperature parameter for automatic entropy tuning
         if self.cfg.algorithm.get("auto_entropy_tuning", True):
             target_entropy = self.cfg.algorithm.get(
-                "target_entropy",
+                "target_entropy", 
                 -self.cfg.actor.model.action_dim  # Heuristic: -|A|
             )
             self.target_entropy = target_entropy
@@ -122,63 +124,69 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
                 device=self.device
             )
             self.alpha_optimizer = torch.optim.Adam(
-                [self.log_alpha],
+                [self.log_alpha], 
                 lr=self.cfg.algorithm.get("alpha_lr", 3e-4)
             )
         else:
             self.alpha = self.cfg.algorithm.get("alpha", 0.2)
-
+    
     def initialize_target_model(self):
         """Initialize target model after main model is set up"""
         if self.target_model is None and self.model is not None:
             # Create target model with same structure as main model
             from rlinf.models import get_model
             self.target_model = get_model(
-                self.cfg.actor.checkpoint_load_path,
+                self.cfg.actor.checkpoint_load_path, 
                 self.cfg.actor.model
             )
-
+            
             # Add Q-value head to target model (same as main model)
             if hasattr(self.model, 'q_value_head'):
-                from rlinf.models.embodiment.modules.q_value_head import (
-                    DoubleQValueHead,
-                )
-
+                from rlinf.models.embodiment.modules.q_value_head import DoubleQValueHead
+                
                 # Get model dimensions
                 hidden_size = self.target_model.config.hidden_size if hasattr(self.target_model.config, 'hidden_size') else 4096
                 action_dim = self.cfg.actor.model.action_dim
-
+                use_separate_processing = self.cfg.actor.model.get('q_network_separate_processing', True)
+                
                 # Add Q-value head to the target model
-                self.target_model.q_value_head = DoubleQValueHead(hidden_size, action_dim)
-
+                self.target_model.q_value_head = DoubleQValueHead(
+                    hidden_size, 
+                    action_dim, 
+                    use_separate_processing=use_separate_processing
+                )
+                
                 # Ensure Q-value head uses the same dtype as the target model
                 model_dtype = next(self.target_model.parameters()).dtype
                 self.target_model.q_value_head = self.target_model.q_value_head.to(dtype=model_dtype)
-
-                self.log_on_first_rank(f"Added DoubleQValueHead to target model: hidden_size={hidden_size}, action_dim={action_dim}, dtype={model_dtype}")
-
+                
+                self.log_on_first_rank(
+                    f"Added DoubleQValueHead to target model: hidden_size={hidden_size}, action_dim={action_dim}, "
+                    f"dtype={model_dtype}, separate_processing={use_separate_processing}"
+                )
+            
             self.target_model.to(self.device)
             self.target_model.eval()
-
+            
             # Copy parameters from main model to target model
             self.soft_update_target_model(tau=1.0)  # Hard copy initially
             self.target_model_initialized = True
             self.log_on_first_rank("Target model initialized successfully")
-
+    
     def soft_update_target_model(self, tau: float = None):
         """Soft update target model parameters"""
         if tau is None:
             tau = self.cfg.algorithm.get("tau", 0.005)
-
+        
         if not self.target_model_initialized:
             self.log_on_first_rank("Target model not initialized, skipping soft update")
             return
-
+        
         with torch.no_grad():
             # Get state dicts for both models
             main_state_dict = self.model.state_dict()
             target_state_dict = self.target_model.state_dict()
-
+            
             # Only update parameters that exist in both models and have matching shapes
             for name, param in main_state_dict.items():
                 if name in target_state_dict:
@@ -187,7 +195,7 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
                         target_state_dict[name] = tau * param + (1.0 - tau) * target_param
                     else:
                         self.log_on_first_rank(f"Skipping parameter {name} due to shape mismatch: {param.shape} vs {target_param.shape}")
-
+            
             # Load updated state dict to target model
             self.target_model.load_state_dict(target_state_dict)
 
@@ -201,19 +209,27 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
         if model is not None:
             # Add Q-value head for SAC
             from rlinf.models.embodiment.modules.q_value_head import DoubleQValueHead
-
+            
             # Get model dimensions
             hidden_size = model.config.hidden_size if hasattr(model.config, 'hidden_size') else 4096
             action_dim = self.cfg.actor.model.action_dim
-
+            use_separate_processing = self.cfg.actor.model.get('q_network_separate_processing', True)
+            
             # Add Q-value head to the model
-            model.q_value_head = DoubleQValueHead(hidden_size, action_dim)
-
+            model.q_value_head = DoubleQValueHead(
+                hidden_size, 
+                action_dim,
+                use_separate_processing=use_separate_processing
+            )
+            
             # Ensure Q-value head uses the same dtype as the main model
             model_dtype = next(model.parameters()).dtype
             model.q_value_head = model.q_value_head.to(dtype=model_dtype)
-
-            self.log_on_first_rank(f"Added DoubleQValueHead to model: hidden_size={hidden_size}, action_dim={action_dim}, dtype={model_dtype}")
+            
+            self.log_on_first_rank(
+                f"Added DoubleQValueHead to model: hidden_size={hidden_size}, action_dim={action_dim}, "
+                f"dtype={model_dtype}, separate_processing={use_separate_processing}"
+            )
             return model
         return super().model_provider_func()
 
@@ -241,10 +257,10 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
 
         # Get full state dict and filter out SAC-specific parameters for rollout worker
         full_state_dict = self.get_model_state_dict()
-
+        
         # Filter out q_value_head parameters as rollout worker doesn't need them
         state_dict = {k: v for k, v in full_state_dict.items() if not k.startswith('q_value_head')}
-
+        
         if self._weight_dst_rank_in_rollout is not None:
             self.send(
                 state_dict, self._rollout_group_name, self._weight_dst_rank_in_rollout
@@ -284,14 +300,14 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
                 )
 
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
-
+        
         # Add transitions to replay buffer
         self.add_to_replay_buffer(self.rollout_batch)
-
+    
     def add_to_replay_buffer(self, rollout_batch):
         """Add rollout data to replay buffer as transitions"""
         n_steps, batch_size, num_chunks = rollout_batch["rewards"].shape
-
+        
         for step in range(n_steps - 1):  # -1 because we need next observations
             for batch_idx in range(batch_size):
                 for chunk_idx in range(num_chunks):
@@ -301,14 +317,14 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
                         'pixel_values': rollout_batch["pixel_values"][step, batch_idx],
                         'attention_mask': rollout_batch["attention_mask"][step, batch_idx]
                     }
-
+                    
                     # Next observations
                     next_observations = {
                         'input_ids': rollout_batch["input_ids"][step + 1, batch_idx],
                         'pixel_values': rollout_batch["pixel_values"][step + 1, batch_idx],
                         'attention_mask': rollout_batch["attention_mask"][step + 1, batch_idx]
                     }
-
+                    
                     # Create transition
                     transition = {
                         'observations': observations,
@@ -318,26 +334,6 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
                         'dones': rollout_batch["dones"][step + 1, batch_idx, chunk_idx],
                         'logprobs': rollout_batch.get("prev_logprobs", torch.zeros_like(rollout_batch["rewards"]))[step, batch_idx, chunk_idx]
                     }
-                    # for keys, value in rollout_batch.items():
-                    #     print(f"{keys}: {value.shape}")
-                    # (EmbodiedSACFSDPActor pid=474101) dones: torch.Size([11, 1, 1])
-                    # (EmbodiedSACFSDPActor pid=474101) input_ids: torch.Size([10, 1, 30])
-                    # (EmbodiedSACFSDPActor pid=474101) pixel_values: torch.Size([10, 1, 1, 6, 224, 224])
-                    # (EmbodiedSACFSDPActor pid=474101) attention_mask: torch.Size([10, 1, 30])
-                    # (EmbodiedSACFSDPActor pid=474101) action_tokens: torch.Size([10, 1, 1, 7])
-                    # (EmbodiedSACFSDPActor pid=474101) prev_logprobs: torch.Size([10, 1, 7])
-                    # (EmbodiedSACFSDPActor pid=474101) prev_values: torch.Size([11, 1, 1])
-                    # (EmbodiedSACFSDPActor pid=474101) rewards: torch.Size([10, 1, 1])
-                    # (EmbodiedSACFSDPActor pid=474104) dones: torch.Size([11, 1, 1])
-                    # (EmbodiedSACFSDPActor pid=474104) input_ids: torch.Size([10, 1, 30])
-                    # (EmbodiedSACFSDPActor pid=474104) pixel_values: torch.Size([10, 1, 1, 6, 224, 224])
-                    # (EmbodiedSACFSDPActor pid=474104) attention_mask: torch.Size([10, 1, 30])
-                    # (EmbodiedSACFSDPActor pid=474104) action_tokens: torch.Size([10, 1, 1, 7])
-                    # (EmbodiedSACFSDPActor pid=474104) prev_logprobs: torch.Size([10, 1, 7])
-                    # (EmbodiedSACFSDPActor pid=474104) prev_values: torch.Size([11, 1, 1])
-                    # (EmbodiedSACFSDPActor pid=474104) rewards: torch.Size([10, 1, 1])
-                    # for keys, value in transition.items():
-                    #     print(f"{keys}: {value.shape}")
                     self.replay_buffer.add(transition)
 
     def _process_received_rollout_batch(self, rollout_batch):
@@ -430,7 +426,7 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
         """
         # SAC uses Q-values directly, no advantages/returns computation needed
         self.log_on_first_rank("SAC algorithm: skipping advantages/returns computation")
-
+        
         # Just compute basic rollout metrics without advantages/returns
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
         return rollout_metrics
@@ -449,15 +445,15 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
 
         self.model.train()
         metrics = {}
-
+        
         # Number of gradient updates per training call
         num_updates = self.cfg.algorithm.get("num_updates_per_step", 1)
         batch_size = self.cfg.actor.micro_batch_size
-
+        
         for update_idx in range(num_updates):
             # Sample batch from replay buffer
             batch = self.replay_buffer.sample(batch_size)
-
+            
             # Move batch to device
             for k, v in batch.items():
                 if isinstance(v, torch.Tensor):
@@ -467,14 +463,14 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
                         sub_k: sub_v.to(self.device) if isinstance(sub_v, torch.Tensor) else sub_v
                         for sub_k, sub_v in v.items()
                     }
-
+            
             # Forward pass for current observations with Q-network
             current_output = self._forward_model(
-                batch['observations'],
+                batch['observations'], 
                 batch['actions'],
                 q_network=True
             )
-
+            
             # Forward pass for next observations using target network
             with torch.no_grad():
                 if self.target_model_initialized:
@@ -488,24 +484,24 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
                         batch['next_observations'],
                         sample_actions=True
                     )
-
+            
             # Compute SAC losses (critic and actor)
             loss_metrics = self._compute_sac_losses(
-                current_output,
-                next_output,
+                current_output, 
+                next_output, 
                 batch
             )
-
+            
             # Backward pass and optimization
             total_loss = loss_metrics['total_loss']
             self.optimizer.zero_grad()
             total_loss.backward()
-
+            
             grad_norm = self.model.clip_grad_norm_(
                 max_norm=self.cfg.actor.optim.clip_grad
             )
             self.optimizer.step()
-
+            
             # Update temperature parameter if using automatic entropy tuning
             if hasattr(self, 'log_alpha') and self.log_alpha is not None:
                 alpha_loss, alpha_metrics = compute_sac_temperature_loss(
@@ -517,11 +513,11 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
                 alpha_loss.backward()
                 self.alpha_optimizer.step()
                 loss_metrics.update(alpha_metrics)
-
+            
             # Soft update target network
             if self.target_model_initialized and self.update_step % self.cfg.algorithm.get("target_update_freq", 1) == 0:
                 self.soft_update_target_model()
-
+            
             # Collect metrics
             loss_metrics.update({
                 "sac/total_loss": total_loss.detach().item(),
@@ -530,7 +526,7 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
                 "replay_buffer/size": len(self.replay_buffer),
                 "replay_buffer/utilization": len(self.replay_buffer) / self.replay_buffer.capacity
             })
-
+            
             append_to_dict(metrics, loss_metrics)
             self.update_step += 1
 
@@ -552,7 +548,7 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
                     mean_metric_dict[key] = value.detach().cpu().item()
                 else:
                     mean_metric_dict[key] = value
-
+        
         mean_metric_dict = all_reduce_dict(
             mean_metric_dict, op=torch.distributed.ReduceOp.AVG
         )
@@ -562,13 +558,13 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
         torch.cuda.empty_cache()
 
         return mean_metric_dict
-
+    
     def _forward_model(self, observations, actions=None, q_network=False, sample_actions=False):
         """Forward pass through the model"""
         # 添加调试信息
         self.log_on_first_rank(f"DEBUG: observations type: {type(observations)}")
         self.log_on_first_rank(f"DEBUG: input_ids type: {type(observations['input_ids'])}")
-
+        
         input_ids = observations['input_ids']
         if not isinstance(input_ids, torch.Tensor):
             self.log_on_first_rank(f"ERROR: input_ids is not tensor: {type(input_ids)}")
@@ -576,21 +572,21 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
         input_ids = observations['input_ids']
         pixel_values = observations['pixel_values']
         attention_mask = observations['attention_mask']
-
+        
         action_token_len = self.model.action_dim * self.model.num_action_chunks
-
+        
         # Convert action tokens to action features if needed for Q-network
         action_features = None
         if q_network and actions is not None:
             action_features = self._convert_actions_to_features(actions)
-
+        
         if sample_actions:
             # Sample new actions from policy
             logits_processor_args = {
                 "vocab_size": self.model.vocab_size,
                 "n_action_bins": self.model.config.n_action_bins,
             }
-
+            
             output_dict = custom_forward(
                 self.model,
                 input_ids=input_ids,
@@ -613,7 +609,7 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
                 "vocab_size": self.model.vocab_size,
                 "n_action_bins": self.model.config.n_action_bins,
             }
-
+            
             output_dict = custom_forward(
                 self.model,
                 input_ids=input_ids,
@@ -629,38 +625,60 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
                 use_gumbel_softmax=self.cfg.algorithm.get("use_gumbel_softmax", True),  # Enable Gumbel-Softmax
                 gumbel_temperature=self.cfg.algorithm.get("gumbel_temperature", 1.0),  # Gumbel temperature
             )
-
+        
         return output_dict
-
+    
     def _convert_actions_to_features(self, actions):
-        """Convert action tokens to features suitable for Q-network input"""
-        # Simple conversion: flatten action tokens and convert to model dtype
+        """Convert action tokens to features suitable for Q-network input
+        
+        Args:
+            actions: Action tokens [batch_size, action_dim], values are token IDs
+                     For n_action_bins=256, valid range is [vocab_size - 256, vocab_size - 1]
+                     
+        Returns:
+            action_features: Normalized action features [batch_size, action_dim], range [0, 1]
+        """
         batch_size = actions.shape[0]
         model_dtype = next(self.model.parameters()).dtype
-
+        
         # Convert to float first, then to model dtype
-        action_features = actions.view(batch_size, -1).float().to(dtype=model_dtype)
-
-        # Normalize action features to a reasonable range
-        # Ensure n_action_bins is also in the correct dtype
-        n_action_bins = torch.tensor(self.model.config.n_action_bins, dtype=model_dtype, device=actions.device)
-        action_features = action_features / n_action_bins
-
+        action_features = actions.view(batch_size, -1).float()
+        
+        # Map action tokens to [0, n_action_bins-1] range
+        # action tokens are in range [vocab_size - n_action_bins, vocab_size - 1]
+        vocab_size = self.model.vocab_size
+        n_action_bins = self.model.config.n_action_bins
+        
+        # Subtract vocab_size - n_action_bins to get [0, n_action_bins-1]
+        action_features = action_features - (vocab_size - n_action_bins)
+        
+        # Normalize to [0, 1] range
+        action_features = action_features / (n_action_bins - 1)
+        
+        # Convert to model dtype
+        action_features = action_features.to(dtype=model_dtype)
+        
+        self.log_on_first_rank(
+            f"[DEBUG] Actions converted: shape={action_features.shape}, "
+            f"range=[{action_features.min():.4f}, {action_features.max():.4f}], "
+            f"mean={action_features.mean():.4f}, std={action_features.std():.4f}"
+        )
+        
         return action_features
-
+    
     # def _forward_target_model(self, observations, sample_actions=True):
     #     """Forward pass through target model"""
     #     input_ids = observations['input_ids']
     #     pixel_values = observations['pixel_values']
     #     attention_mask = observations['attention_mask']
-
+        
     #     action_token_len = self.target_model.action_dim * self.target_model.num_action_chunks
-
+        
     #     logits_processor_args = {
     #         "vocab_size": self.target_model.vocab_size,
     #         "n_action_bins": self.target_model.config.n_action_bins,
     #     }
-
+        
     #     # For target model, we sample actions and then compute Q-values
     #     output_dict = custom_forward(
     #         self.target_model,
@@ -674,24 +692,24 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
     #         top_k=self.cfg.algorithm.sampling_params.top_k,
     #         logits_processor_args=logits_processor_args,
     #     )
-
+        
     #     return output_dict
-
+    
     def _forward_target_model(self, observations, sample_actions=True):
         """Forward pass through target model"""
         input_ids = observations['input_ids']
         pixel_values = observations['pixel_values']
         attention_mask = observations['attention_mask']
-
+        
         action_token_len = self.target_model.action_dim * self.target_model.num_action_chunks
-
+        
         if sample_actions:
             # First, sample actions from target model (without Q-network)
             logits_processor_args = {
                 "vocab_size": self.target_model.vocab_size,
                 "n_action_bins": self.target_model.config.n_action_bins,
             }
-
+            
             # Sample actions without Q-network computation
             # output_dict = custom_forward(
             #     self.target_model,
@@ -705,8 +723,8 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
             #     top_k=self.cfg.algorithm.sampling_params.top_k,
             #     logits_processor_args=logits_processor_args,
             # )
-
-            from rlinf.models.embodiment.model_utils_sac import sample_logits_processor
+            
+            from rlinf.models.embodiment.model_utils import sample_logits_processor
 
             output_dict = custom_forward(
                 self.target_model,
@@ -723,16 +741,16 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
                 use_gumbel_softmax=self.cfg.algorithm.get("use_gumbel_softmax", True),  # Enable Gumbel-Softmax
                 gumbel_temperature=self.cfg.algorithm.get("gumbel_temperature", 1.0),  # Gumbel temperature
             )
-
+            
             # Now compute Q-values using the sampled actions
             sampled_actions = output_dict['action_tokens']
             action_features = self._convert_actions_to_features(sampled_actions)
-
+            
             # Forward pass with Q-network using sampled actions
             # Update logits_processor_args to include the sampled action_tokens
             q_logits_processor_args = logits_processor_args.copy()
             q_logits_processor_args["action_tokens"] = sampled_actions
-
+            
             q_output_dict = custom_forward(
                 self.target_model,
                 input_ids=input_ids,
@@ -748,7 +766,7 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
                 use_gumbel_softmax=self.cfg.algorithm.get("use_gumbel_softmax", True),  # Enable Gumbel-Softmax
                 gumbel_temperature=self.cfg.algorithm.get("gumbel_temperature", 1.0),  # Gumbel temperature
             )
-
+            
             # Merge outputs
             output_dict.update(q_output_dict)
         else:
@@ -757,7 +775,7 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
                 "vocab_size": self.target_model.vocab_size,
                 "n_action_bins": self.target_model.config.n_action_bins,
             }
-
+            
             output_dict = custom_forward(
                 self.target_model,
                 input_ids=input_ids,
@@ -772,9 +790,9 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
                 use_gumbel_softmax=self.cfg.algorithm.get("use_gumbel_softmax", True),  # Enable Gumbel-Softmax
                 gumbel_temperature=self.cfg.algorithm.get("gumbel_temperature", 1.0),  # Gumbel temperature
             )
-
+        
         return output_dict
-
+    
     def _compute_sac_losses(self, current_output, next_output, batch):
         """Compute SAC actor and critic losses"""
         # Get current alpha value and ensure correct dtype
@@ -783,10 +801,10 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
             alpha = self.log_alpha.exp().to(dtype=model_dtype)
         else:
             alpha = torch.tensor(self.alpha, dtype=model_dtype, device=self.device)
-
+        
         # Ensure all tensors are in the correct dtype
         gamma = torch.tensor(self.cfg.algorithm.get("gamma", 0.99), dtype=model_dtype, device=self.device)
-
+        
         # Prepare loss arguments for SAC
         kwargs = {
             "loss_type": self.cfg.algorithm.loss_type,
@@ -800,11 +818,11 @@ class EmbodiedSACFSDPActor(FSDPModelManager, Worker):
             "gamma": gamma,
             "alpha": alpha,
         }
-
+        
         # Compute SAC loss
         loss, metrics_data = actor_loss(**kwargs)
         metrics_data["total_loss"] = loss
-
+        
         return metrics_data
 
     def save_checkpoint(self, save_base_path, step):

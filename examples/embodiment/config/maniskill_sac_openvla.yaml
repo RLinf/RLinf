@@ -47,7 +47,6 @@ algorithm:
   n_chunk_steps: 10
   n_eval_chunk_steps: 10
   # training rollout mbs
-  rollout_micro_batch_size: 128
   num_group_envs: 16
   rollout_epoch: 1
 
@@ -161,6 +160,7 @@ actor:
     hidden_size: 4096
     policy_setup: "widowx_bridge"
     vh_mode: "q_network"  # Use Q-network instead of value head
+    q_network_separate_processing: True  # Use separate pathways for state and action (recommended)
     image_size: [224, 224]
     is_lora: True
     lora_rank: 32

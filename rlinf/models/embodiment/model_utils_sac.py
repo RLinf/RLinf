@@ -83,19 +83,42 @@ def compute_entropy_from_logits(logits, epsilon=1e-10):
     return entropy
 
 
-def _convert_action_tokens_to_features(action_tokens, model):
-    """Convert action tokens to features suitable for Q-network input"""
-    batch_size = action_tokens.shape[0]
-    model_dtype = next(model.parameters()).dtype
-
+def _convert_actions_to_features(self, actions):
+    """Convert action tokens to features suitable for Q-network input
+    
+    Args:
+        actions: Action tokens [batch_size, action_dim], values are token IDs
+                    For n_action_bins=256, valid range is [vocab_size - 256, vocab_size - 1]
+                    
+    Returns:
+        action_features: Normalized action features [batch_size, action_dim], range [0, 1]
+    """
+    batch_size = actions.shape[0]
+    model_dtype = next(self.model.parameters()).dtype
+    
     # Convert to float first, then to model dtype
-    action_features = action_tokens.view(batch_size, -1).float().to(dtype=model_dtype)
-
-    # Normalize action features to a reasonable range
-    # Ensure n_action_bins is also in the correct dtype
-    n_action_bins = torch.tensor(model.config.n_action_bins, dtype=model_dtype, device=action_tokens.device)
-    action_features = action_features / n_action_bins
-
+    action_features = actions.view(batch_size, -1).float()
+    
+    # Map action tokens to [0, n_action_bins-1] range
+    # action tokens are in range [vocab_size - n_action_bins, vocab_size - 1]
+    vocab_size = self.model.vocab_size
+    n_action_bins = self.model.config.n_action_bins
+    
+    # Subtract vocab_size - n_action_bins to get [0, n_action_bins-1]
+    action_features = action_features - (vocab_size - n_action_bins)
+    
+    # Normalize to [0, 1] range
+    action_features = action_features / (n_action_bins - 1)
+    
+    # Convert to model dtype
+    action_features = action_features.to(dtype=model_dtype)
+    
+    self.log_on_first_rank(
+        f"[DEBUG] Actions converted: shape={action_features.shape}, "
+        f"range=[{action_features.min():.4f}, {action_features.max():.4f}], "
+        f"mean={action_features.mean():.4f}, std={action_features.std():.4f}"
+    )
+    
     return action_features
 
 
