@@ -18,10 +18,12 @@ import torch
 
 from rlinf.algorithms.utils import (
     calculate_scores,
-    postprocess_advantages_outputs,
+    postprocess_embodied_advantages_outputs,
     postprocess_loss_metric,
-    preprocess_advantages_inputs,
+    preprocess_embodied_advantages_inputs,
+    preprocess_reasoning_advantages_inputs,
     preprocess_loss_inputs,
+    postprocess_reasoning_advantages_outputs,
 )
 
 ADV_REGISTRY: Dict[str, Callable] = {}
@@ -92,14 +94,17 @@ def calculate_adv_and_returns(**kwargs) -> Tuple[torch.Tensor, Optional[torch.Te
 
     task_type = kwargs["task_type"]
     if task_type == "embodied":
-        kwargs = preprocess_advantages_inputs(**kwargs)
+        kwargs = preprocess_embodied_advantages_inputs(**kwargs)
         if adv_type != "gae":
             kwargs = calculate_scores(**kwargs)
         advantages, returns = fn(**kwargs)
         kwargs.update({"advantages": advantages})
         if returns is not None:
             kwargs.update({"returns": returns})
-        res = postprocess_advantages_outputs(**kwargs)
+        res = postprocess_embodied_advantages_outputs(**kwargs)
     else:
-        res = fn(**kwargs)
+        # reasoning tasks
+        kwargs = preprocess_reasoning_advantages_inputs(**kwargs)
+        advantages, returns = fn(**kwargs)
+        res = postprocess_reasoning_advantages_outputs(advantages, returns)
     return res

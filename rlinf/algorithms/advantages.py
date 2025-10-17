@@ -17,20 +17,20 @@ from typing import Optional, Tuple
 import torch
 
 from rlinf.algorithms.registry import register_advantage
-from rlinf.algorithms.utils import kl_penalty, normalize_array
+from rlinf.algorithms.utils import kl_penalty, safe_normalize, safe_normalize_2
 from rlinf.utils.utils import masked_mean
 
 
 @register_advantage("gae")
 def compute_gae_advantages_and_returns(
     rewards: torch.Tensor,
-    dones: torch.Tensor,
     gamma: float = 1.0,
     gae_lambda: float = 1.0,
     values: Optional[torch.Tensor] = None,
     normalize_advantages: bool = True,
     normalize_returns: bool = False,
     loss_mask: Optional[torch.Tensor] = None,
+    dones: Optional[torch.Tensor] = None,
     **kwargs,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
@@ -42,8 +42,8 @@ def compute_gae_advantages_and_returns(
     using mean and standard deviation for stable training.
 
     Args:
-        rewards (torch.Tensor): Rewards per timestep.
-        values (torch.Tensor): Value function estimates.
+        rewards (torch.Tensor): Rewards per timestep. Shape: [seq_len, bsz].
+        values (torch.Tensor): Value function estimates. Shape: [seq_len, bsz].
         dones (torch.Tensor): Done flags (1 if episode ended, else 0).
         gamma (float, optional): Discount factor. Defaults to 1.0.
         gae_lambda (float, optional): GAE smoothing factor. Defaults to 1.0.
@@ -53,29 +53,27 @@ def compute_gae_advantages_and_returns(
     Returns:
         Tuple[torch.Tensor, torch.Tensor]: (advantages, returns)
     """
-    T = rewards.shape[1]
+    T = rewards.shape[0]
     advantages = torch.zeros_like(rewards)
     returns = torch.zeros_like(rewards)
-    gae = torch.zeros_like(rewards[:, 0])
-    next_values = torch.zeros_like(rewards[:, 0])
+    gae = 0
     critic_free = values is None
 
-    for t in reversed(range(T)):
+    for step in reversed(range(T)):
         if critic_free:
-            delta = rewards[:, t]
+            delta = rewards[step]
         else:
-            v_next = next_values[:, 0] if t == T - 1 else values[:, t + 1]
-            v_t = values[:, t]
-            delta = rewards[:, t] + gamma * v_next * (~dones[:, t]) - v_t
+            delta = rewards[step] + gamma * values[step + 1] * (~dones[step + 1]) - values[step]
 
-        gae = delta + gamma * gae_lambda * (~dones[:, t]) * gae
-        advantages[:, t] = gae
-        returns[:, t] = gae if critic_free else gae + v_t
+        gae = delta + gamma * gae_lambda * (~dones[step + 1]) * gae
+        returns[step] = gae if critic_free else gae + values[step]
+
+    advantages = returns - values[:-1] if not critic_free else returns
 
     if normalize_advantages:
-        advantages = normalize_array(advantages, mask=loss_mask)
+        advantages = safe_normalize(advantages, loss_mask=loss_mask)
     if normalize_returns:
-        returns = normalize_array(returns, mask=loss_mask)
+        returns = safe_normalize(returns, loss_mask=loss_mask)
 
     return advantages, returns
 
@@ -180,80 +178,3 @@ def compute_reinpp_advantages(
     advantages = (advantages - mean) * rstd
 
     return advantages, None
-
-
-if __name__ == "__main__":
-    from rlinf.algorithms.utils import (
-        calculate_scores,
-        postprocess_advantages_outputs,
-        preprocess_advantages_inputs,
-    )
-
-    # test ppo adv for embodiment
-    torch.manual_seed(0)
-    rewards = torch.randn(4, 2, 3)
-    values = torch.randn(5, 2, 3)
-    dones = torch.zeros(5, 2, 3).bool()
-    dones[-1] = 1
-    kwargs = {
-        "rewards": rewards,
-        "values": values,
-        "dones": dones,
-        "gamma": 0.99,
-        "gae_lambda": 0.95,
-        "adv_type": "gae",
-    }
-    kwargs = preprocess_advantages_inputs(**kwargs)
-    advantages, returns = compute_gae_advantages_and_returns(**kwargs)
-    kwargs.update({"advantages": advantages, "returns": returns})
-    kwargs = postprocess_advantages_outputs(**kwargs)
-    advantages, returns = kwargs["advantages"], kwargs.get("returns", None)
-    print(advantages.mean(), advantages.shape)
-    print(returns.mean(), returns.shape)
-
-    # test grpo adv for embodiment
-    torch.manual_seed(0)
-    rewards = torch.randn(4, 4, 3)  # num_chunk, bsz, chunk_size
-    dones = torch.zeros(5, 4, 3).bool()
-    loss_mask = torch.rand_like(rewards) > 0.5
-    dones[-1] = 1
-    kwargs = {
-        "rewards": rewards,
-        "dones": dones,
-        "loss_mask": loss_mask,
-        "group_size": 2,
-        "adv_type": "grpo",
-    }
-    kwargs = preprocess_advantages_inputs(**kwargs)
-    kwargs = calculate_scores(**kwargs)
-    advantages, returns = compute_grpo_advantages(**kwargs)
-    kwargs.update({"advantages": advantages, "returns": returns})
-    kwargs = postprocess_advantages_outputs(**kwargs)
-    advantages, returns = kwargs["advantages"], kwargs.get("returns", None)
-    print(advantages.mean(), advantages.shape, advantages.min(), advantages.max())
-
-    # test grpo for math
-    torch.manual_seed(0)
-    rewards = torch.randn(4)
-    loss_mask = torch.rand(4, 2) > 0.3
-    group_size = 2
-    advantages, _ = compute_grpo_advantages(
-        reward_scores=rewards,
-        loss_mask=loss_mask,
-        group_size=group_size,
-    )
-    print(advantages.mean(), advantages.std(), advantages.shape)
-
-    # test reinforce++ for math
-    torch.manual_seed(0)
-    rewards = torch.randn(4)
-    loss_mask = torch.zeros(4, 2).bool()
-    loss_mask[:, :-1] = 1
-    group_size = 2
-    advantages, _ = compute_reinpp_advantages(
-        reward_scores=rewards,
-        loss_mask=loss_mask,
-        group_size=group_size,
-        use_reinpp_baseline=True,
-    )
-    print(advantages.mean(), advantages.std(), advantages.shape)
