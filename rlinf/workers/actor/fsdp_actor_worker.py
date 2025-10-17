@@ -409,6 +409,7 @@ class FSDPActor(FSDPModelManager, Worker):
                         clip_ratio_high=clip_ratio_high,
                         clip_ratio_c=clip_ratio_c,
                         loss_mask=loss_mask,
+                        task_type=self.cfg.runner.task_type,
                     )
 
                     entropy_loss = torch.tensor(0.0, device=torch.cuda.current_device())
@@ -512,9 +513,9 @@ class FSDPActor(FSDPModelManager, Worker):
                     advantages, returns = calculate_adv_and_returns(
                         task_type=self.cfg.runner.task_type,
                         adv_type=self.cfg.algorithm.adv_type,
-                        reward_scores=batch["rewards"].cuda(),
-                        mask=mask.cuda(),
-                        num_responses=self.cfg.algorithm.group_size,
+                        rewards=batch["rewards"].cuda(),
+                        loss_mask=mask.cuda(),
+                        group_size=self.cfg.algorithm.group_size,
                     )
                     rollout_result.advantages = advantages.cpu()
 
@@ -861,6 +862,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         "loss_mask": loss_mask,
                         "loss_mask_sum": loss_mask_sum,
                         "max_episode_steps": self.cfg.env.train.max_episode_steps,
+                        "task_type": self.cfg.runner.task_type,
                     }
                     loss, metrics_data = policy_loss(**kwargs)
 

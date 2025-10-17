@@ -909,7 +909,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     advantages, _ = calculate_adv_and_returns(
                         task_type=self.cfg.runner.task_type,
                         adv_type=self.cfg.algorithm.adv_type,
-                        reward_scores=batch["rewards"].cuda(),
+                        rewards=batch["rewards"].cuda(),
                         loss_mask=mask.cuda(),
                         group_size=self.cfg.algorithm.group_size,
                         kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
