@@ -33,6 +33,8 @@ class ValueHead(nn.Module):
             act = nn.ReLU
         elif activation.lower() == "gelu":
             act = nn.GELU
+        elif activation.lower() == "tanh":
+            act = nn.Tanh
         else:
             raise ValueError(f"Unsupported activation: {activation}")
 
@@ -48,6 +50,9 @@ class ValueHead(nn.Module):
         self._init_weights(activation.lower())
 
     def _init_weights(self, nonlinearity="relu"):
+        if nonlinearity == "gelu":
+            return
+        
         for m in self.mlp:
             if isinstance(m, nn.Linear):
                 if m is self.mlp[-1]:
