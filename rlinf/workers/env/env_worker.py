@@ -245,6 +245,7 @@ class EnvWorker(Worker):
             model_name=self.cfg.actor.model.model_name,
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
             action_dim=self.cfg.actor.model.action_dim,
+            policy=self.cfg.actor.model.policy_setup,
         )
         env_info = {}
 
@@ -292,6 +293,7 @@ class EnvWorker(Worker):
             model_name=self.cfg.actor.model.model_name,
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
             action_dim=self.cfg.actor.model.action_dim,
+            policy=self.cfg.actor.model.policy_setup,
         )
         env_info = {}
 

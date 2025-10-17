@@ -42,6 +42,7 @@ SUPPORTED_MODEL_ARCHS = [
     "openvla_oft",
     "qwen3_moe",
     "openpi",
+    "mlp",
 ]
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
 SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl"]
@@ -265,8 +266,8 @@ def validate_fsdp_cfg(cfg: DictConfig, resume_dir: Optional[str] = None) -> Dict
             config.amp = {}
         config.amp.enabled = config.amp.get("enabled", False)
         config.amp.precision = config.amp.get("precision", "bf16")
-        assert config.amp.precision in ["fp16", "bf16"], (
-            "fsdp.amp.precision must be one of ['fp16', 'bf16']"
+        assert config.amp.precision in ["fp16", "bf16", "fp32"], (
+            "fsdp.amp.precision must be one of ['fp16', 'bf16', 'fp32']"
         )
         config.amp.use_grad_scaler = config.amp.get("use_grad_scaler", False)
         return config
@@ -662,6 +663,8 @@ def validate_embodied_cfg(cfg):
                     return "arm_pd_ee_delta_pose_align_interpolate_by_planner_gripper_pd_joint_target_delta_pos_interpolate_by_planner"
                 elif "widowx" in robot:
                     return "arm_pd_ee_target_delta_pose_align2_gripper_pd_joint_pos"
+                elif "panda-qpos" in robot:
+                    return None
                 else:
                     raise NotImplementedError(f"Robot {robot} not supported")
 
