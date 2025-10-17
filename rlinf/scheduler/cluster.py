@@ -208,6 +208,7 @@ class Cluster:
         # Launch managers
         from .manager import (
             CollectiveManager,
+            DeviceLockManager,
             NodeManager,
             WorkerManager,
         )
@@ -227,6 +228,11 @@ class Cluster:
                 ray.remote(NodeManager)
                 .options(name=NodeManager.MANAGER_NAME)
                 .remote(self._nodes)
+            )
+            self._lock_manager = (
+                ray.remote(DeviceLockManager)
+                .options(name=DeviceLockManager.MANAGER_NAME)
+                .remote()
             )
         except ValueError:
             # If the WorkerManager is already running, we need to switch the namespace

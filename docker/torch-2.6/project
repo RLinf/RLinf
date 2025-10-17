@@ -45,6 +45,10 @@ dependencies = [
     "torch-memory-saver",
     "setuptools>=69.5.1,<75.9",
     "ninja",
+    "pytest",
+    "gsutil",
+    "ruff",
+    "pre-commit",
 
     # Logging
     "swanlab",

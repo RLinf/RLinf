@@ -50,11 +50,13 @@ UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla.txt --no-build-isol
 # For OpenVLA-oft experiment
 UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla_oft.txt --no-build-isolation
 
-# For Pi0 experiment
-UV_TORCH_BACKEND=auto uv pip install -r requirements/pi0.txt --no-build-isolation
+# For openpi experiment
+UV_TORCH_BACKEND=auto GIT_LFS_SKIP_SMUDGE=1 uv pip install -r requirements/openpi.txt
+cp -r .venv/lib/python3.11/site-packages/openpi/models_pytorch/transformers_replace/* .venv/lib/python3.11/site-packages/transformers/
+TOKENIZER_DIR=/root/.cache/openpi/big_vision/ && mkdir -p $TOKENIZER_DIR && gsutil -m cp -r gs://big_vision/paligemma_tokenizer.model $TOKENIZER_DIR
 ```
 
-Finally, Run the following to install the libero dependency.
+Finally, Run the following to install the LIBERO dependency.
 
 ```shell
 mkdir -p /opt && git clone https://github.com/RLinf/LIBERO.git /opt/libero

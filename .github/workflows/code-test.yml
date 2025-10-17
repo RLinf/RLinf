@@ -44,13 +44,8 @@ jobs:
             file_filter:
               - '**/*.py'
               - 'tests/**'
-              - '.github/workflows/*.yml'
-              - '!docs/**'
-              - '!README.md'
+              - '.github/workflows/code-test.yml'
               - '*.yaml'
-              - '*.toml'
-              - '!ray_utils/**'
-              - '!requirements/**'
 
   # =============================================== unit tests ====================================================
 
@@ -70,7 +65,7 @@ jobs:
       - name: Run pytest
         timeout-minutes: 20
         run: |
-          export PYTHONPATH=$(pwd):$(pwd)/megatron:$(pwd)/tests/unit_tests
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
           source switch_env reason
           pytest tests/unit_tests
 
@@ -99,7 +94,7 @@ jobs:
       - name: Run pytest
         timeout-minutes: 20
         run: |
-          export PYTHONPATH=$(pwd):$(pwd)/megatron:$(pwd)/tests/unit_tests 
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests 
           source .venv/bin/activate
           pytest tests/unit_tests
 

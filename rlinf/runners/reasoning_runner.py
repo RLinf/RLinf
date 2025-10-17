@@ -347,7 +347,6 @@ class ReasoningRunner:
                         infer_handle: Handle = self.inference.run_inference(
                             input_channel=self.reward_channel,
                             output_channel=self.inference_channel,
-                            rollout_channel=self.rollout_channel,
                             compute_ref_logprobs=self.compute_ref_logprobs,
                         )
                         inference_channel = self.inference_channel

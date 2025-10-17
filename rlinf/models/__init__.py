@@ -185,8 +185,10 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
         )
 
         # config
-        # todo chenk: merge openpi config with the rl config
-        actor_train_config = _config.get_config("pi0_libero")
+        if getattr(cfg.openpi, "pi05", False):
+            actor_train_config = _config.get_config("pi05_libero")
+        else:
+            actor_train_config = _config.get_config("pi0_libero")
         actor_model_config = actor_train_config.model
         actor_model_config = OpenPi0Config(**actor_model_config.__dict__)
         override_config_kwargs = cfg.openpi

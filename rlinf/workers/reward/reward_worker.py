@@ -67,7 +67,7 @@ class RewardWorker(Worker):
             with self.worker_timer():
                 if rollout_result.rewards is None:
                     if self.cfg.reward.use_reward_model:
-                        with input_channel.device_lock:
+                        with self.device_lock:
                             batch = rollout_result.to_actor_batch(
                                 self.cfg.data.max_prompt_length,
                                 self.cfg.actor.model.encoder_seq_length,

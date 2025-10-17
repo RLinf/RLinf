@@ -83,7 +83,7 @@ We provide two official Docker images optimized for different backend configurat
 
 - **Embodied with FSDP + Huggingface**:  
 
-  - ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` (for the OpenVLA/OpenVLA-OFT/Pi0 model)
+  - ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` (for the OpenVLA/OpenVLA-OFT/openpi model)
 
 Once you've identified the appropriate image for your setup, pull the Docker image:
 
@@ -108,13 +108,16 @@ Inside the container, clone the RLinf repository:
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-The embodied image contains multiple Python virtual environments (venv) located in the `/opt/venv` directory for different models, namely ``openvla``, ``openvla-oft``, and ``pi0``.
+The embodied image contains multiple Python virtual environments (venv) located in the `/opt/venv` directory for different models, namely ``openvla``, ``openvla-oft``, and ``openpi``.
 The default environment is set to ``openvla``.
 To switch to the desired venv, use the built-in script `switch_env`:
 
 .. code-block:: bash
 
-   source switch_env <env_name> # e.g., source switch_env openvla-oft, source switch_env pi0, etc.
+   source switch_env <env_name>
+   # source switch_env openvla
+   # source switch_env openvla-oft
+   # source switch_env openpi
 
 .. tip::
 
@@ -133,7 +136,7 @@ Next, install the specific dependencies based on your experiment type.
 
 * For reasoning experiments using **Megatron** and **SGLang/vLLM** backends, follow the :ref:`Megatron and SGLang/vLLM Dependencies <megatron-and-sglang-vllm-dependencies>` section to install all required packages.  
 
-* For embodied intelligence experiments (e.g., OpenVLA, OpenVLA-OFT and Pi0), follow the :ref:`Embodied Dependencies <embodied-dependencies>` section to install their specific dependencies.
+* For embodied intelligence experiments (e.g., OpenVLA, OpenVLA-OFT and OpenPI), follow the :ref:`Embodied Dependencies <embodied-dependencies>` section to install their specific dependencies.
 
 .. _common-dependencies:
 
@@ -192,7 +195,7 @@ For embodied experiments, first install the necessary system dependencies (curre
    uv sync --extra embodied
    bash requirements/install_embodied_deps.sh # Must be run after the above command
 
-Then, depending on the experiment type, install the required packages for ``openvla``, ``openvla-oft`` and ``pi0``:
+Then, depending on the experiment type, install the required packages for ``openvla``, ``openvla-oft`` and ``openpi``:
 
 .. code-block:: shell
 
@@ -202,10 +205,12 @@ Then, depending on the experiment type, install the required packages for ``open
    # For OpenVLA-oft experiment
    UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla_oft.txt --no-build-isolation
 
-   # For Pi0 experiments
-   UV_TORCH_BACKEND=auto uv pip install -r requirements/pi0.txt --no-build-isolation
+   # For openpi experiment
+   UV_TORCH_BACKEND=auto GIT_LFS_SKIP_SMUDGE=1 uv pip install -r requirements/openpi.txt
+   cp -r .venv/lib/python3.11/site-packages/openpi/models_pytorch/transformers_replace/* .venv/lib/python3.11/site-packages/transformers/
+   TOKENIZER_DIR=/root/.cache/openpi/big_vision/ && mkdir -p $TOKENIZER_DIR && gsutil -m cp -r gs://big_vision/paligemma_tokenizer.model $TOKENIZER_DIR
 
-Finally, Run the following to install the libero dependency.
+Finally, Run the following to install the LIBERO dependency.
 
 .. code-block:: shell
 

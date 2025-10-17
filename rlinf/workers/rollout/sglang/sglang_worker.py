@@ -174,7 +174,7 @@ class SGLangWorker(Worker):
         requests = request.repeat_and_split(self._rollout_batch_size)
 
         # Acquire the GPUs to ensure no one is using them during rollout
-        output_channel.device_lock.acquire()
+        self.device_lock.acquire()
         rollout_results = []
         for request in requests:
             # Generate outputs using the SGLang engine.
@@ -208,7 +208,7 @@ class SGLangWorker(Worker):
         # This avoids running SGLang and Megatron simultaneously
         self._stop()
         # Release the GPUs once the engine has offloaded
-        output_channel.device_lock.release()
+        self.device_lock.release()
         rollout_result_list = RolloutResult.split_result_list_by_group(rollout_results)
         for rollout_result in rollout_result_list:
             output_channel.put(rollout_result)

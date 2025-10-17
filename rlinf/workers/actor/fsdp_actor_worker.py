@@ -191,10 +191,10 @@ class FSDPActor(FSDPModelManager, Worker):
             if self.is_data_io_rank:
                 channel.put(result)
 
-    def _load_weight_and_optimizer(self, channel: Channel) -> None:
+    def _load_weight_and_optimizer(self) -> None:
         # Acquire the GPUs to ensure that no one is using them before loading models
         # Otherwise, it may lead to OOM
-        with channel.device_lock:
+        with self.device_lock:
             if self.cfg.actor.get("enable_offload", False):
                 self.load_fsdp_param_and_grad(self.device)
                 self.load_fsdp_optimizer(self.device)
@@ -236,7 +236,6 @@ class FSDPActor(FSDPModelManager, Worker):
         self,
         input_channel: Channel,
         output_channel: Channel,
-        rollout_channel: Channel,
         compute_ref_logprobs: bool,
     ) -> None:
         """
@@ -245,28 +244,41 @@ class FSDPActor(FSDPModelManager, Worker):
         Args:
             input_channel: The input channel to read from.
             output_channel: The output channel to send results to.
-            rollout_channel: get the rollout channel's device lock in case of collision.
             compute_ref_logprobs: Whether to compute reference logprobs.
         """
         recv_batch_size = 0
         while recv_batch_size < self.total_batch_size_per_dp:
             batch, rollout_result = self.get_batch(input_channel)
             recv_batch_size += rollout_result.num_sequence
-            self._load_weight_and_optimizer(
-                input_channel if self.is_pipeline else rollout_channel
-            )
+            self._load_weight_and_optimizer()
 
+            num_splits = (
+                rollout_result.num_sequence
+                // self.cfg.algorithm.logprob_forward_micro_batch_size
+            )
+            micro_batches_iter = get_iterator_k_split(
+                batch,
+                num_splits=num_splits,
+            )
+            micro_batches = list(micro_batches_iter)
+
+            prev_logprobs = []
             with self.worker_timer():
-                prev_logprobs = self.inference_step(batch)
-                rollout_result.prev_logprobs = prev_logprobs.cpu()
+                for micro_batch in micro_batches:
+                    prev_logprobs.append(self.inference_step(micro_batch).cpu())
+
+                rollout_result.prev_logprobs = torch.cat(prev_logprobs)
 
             if compute_ref_logprobs:
                 assert self.ref_policy_state_dict is not None, (
                     "Reference policy state dict is None but compute_ref_logprobs is True"
                 )
+                ref_logprobs = []
                 with cpu_weight_swap(self.model, self.ref_policy_state_dict):
-                    ref_logprobs = self.inference_step(batch)
-                    rollout_result.ref_logprobs = ref_logprobs.cpu()
+                    for micro_batch in micro_batches:
+                        ref_logprobs.append(self.inference_step(micro_batch).cpu())
+                    rollout_result.ref_logprobs = torch.cat(ref_logprobs)
+
             self.put_result(rollout_result, output_channel)
 
         assert recv_batch_size == self.total_batch_size_per_dp, (
@@ -287,7 +299,7 @@ class FSDPActor(FSDPModelManager, Worker):
         batch = RolloutResult.merge_batches(batches)
         # Must be called after batch is retrieved, which is when rollout has stopped
         # Otherwise, loading model might cause OOM
-        self._load_weight_and_optimizer(input_channel)
+        self._load_weight_and_optimizer()
 
         global_batches = get_iterator_k_split(
             batch,

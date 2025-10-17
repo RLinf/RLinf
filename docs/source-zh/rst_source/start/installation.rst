@@ -82,7 +82,7 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 
 - **基于FSDP + Huggingface的具身智能镜像**：
 
-  - ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` （适用于 OpenVLA/OpenVLA-OFT/Pi0 模型）
+  - ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` （适用于 OpenVLA/OpenVLA-OFT/OpenPI 模型）
 
 确认适合你任务的镜像后，拉取镜像：
 
@@ -107,12 +107,16 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-具身智能镜像中包含多个 Python 虚拟环境（venv），位于 ``/opt/venv`` 目录下，分别对应不同模型，即 ``openvla``、``openvla-oft`` 和 ``pi0``。
+具身智能镜像中包含多个 Python 虚拟环境（venv），位于 ``/opt/venv`` 目录下，分别对应不同模型，即 ``openvla``、``openvla-oft`` 和 ``openpi``。
 默认环境设置为 ``openvla``。
 要切换到所需的 venv，可以使用内置脚本 `switch_env`：
+
 .. code-block:: bash
 
-   source switch_env <env_name> # 例如，source switch_env openvla-oft, source switch_env pi0 等
+   source switch_env <env_name>
+   # source switch_env openvla
+   # source switch_env openvla-oft
+   # source switch_env openpi
 
 .. tip::
 
@@ -130,7 +134,7 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 
 * 如果你要运行数学推理实验，需要安装 **Megatron 和 SGLang/vLLM** 后端，请参考 :ref:`Megatron 和 SGLang/vLLM 依赖 <megatron-and-sglang-vllm-dependencies>` 安装相应依赖。
 
-* 如果你要运行具身智能相关实验（如 OpenVLA、OpenVLA-OFT、Pi0），请参考 :ref:`具身智能相关依赖 <embodied-dependencies>` 安装专用依赖项。
+* 如果你要运行具身智能相关实验（如 OpenVLA、OpenVLA-OFT、openpi），请参考 :ref:`具身智能相关依赖 <embodied-dependencies>` 安装专用依赖项。
 
 .. _common-dependencies:
 
@@ -187,7 +191,7 @@ Megatron 和 SGLang/vLLM 依赖
 .. code-block:: shell
 
    uv sync --extra embodied
-   bash requirements/install_embodied_deps.sh # Must be run after the above command
+   bash requirements/install_embodied_deps.sh # 必须在上述命令后运行
 
 接着，根据具体实验类型安装对应的 Python 包：
 
@@ -199,10 +203,13 @@ Megatron 和 SGLang/vLLM 依赖
    # OpenVLA-oft 实验所需依赖
    UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla_oft.txt --no-build-isolation
 
-   # Pi0 实验所需依赖
-   UV_TORCH_BACKEND=auto uv pip install -r requirements/pi0.txt --no-build-isolation
+   # openpi 实验所需依赖
+   # For openpi experiment
+   UV_TORCH_BACKEND=auto GIT_LFS_SKIP_SMUDGE=1 uv pip install -r requirements/openpi.txt
+   cp -r .venv/lib/python3.11/site-packages/openpi/models_pytorch/transformers_replace/* .venv/lib/python3.11/site-packages/transformers/
+   TOKENIZER_DIR=/root/.cache/openpi/big_vision/ && mkdir -p $TOKENIZER_DIR && gsutil -m cp -r gs://big_vision/paligemma_tokenizer.model $TOKENIZER_DIR
 
-最后，运行以下命令安装 libero 依赖。
+最后，运行以下命令安装 LIBERO 依赖。
 
 .. code-block:: shell
 

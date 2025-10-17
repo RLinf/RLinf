@@ -37,8 +37,8 @@ the model is cited in `paper <https://arxiv.org/abs/2505.19789>`_
 .. note:: 
    If you have installed RLinf via the Docker image (see :doc:`./installation`), please make sure you have switched to the right Python environment for the target model.
    The default environment is set to ``openvla``. 
-   To switch to OpenVLA-OFT or Pi0, use the built-in script `switch_env`: 
-   ``source switch_env openvla-oft`` or ``source switch_env pi0``.
+   To switch to OpenVLA-OFT or openpi, use the built-in script `switch_env`: 
+   ``source switch_env openvla-oft`` or ``source switch_env openpi``.
 
    If you have installed RLinf in a custom environment, please ensure that you have installed the model's corresponding dependencies as described in :doc:`./installation`.
 

@@ -438,19 +438,18 @@ class VLLMWorker(Worker):
         rollout_request: RolloutRequest = await input_channel.get(
             async_op=True
         ).async_wait()
-        output_channel.device_lock.acquire()
-        batched_requests = self._pre_process_rollout_request(rollout_request)
-        with self.worker_timer():
-            for requests in batched_requests:
-                rollout_tasks: List[asyncio.Task] = []
-                for request in requests:
-                    rollout_tasks.append(
-                        asyncio.create_task(
-                            self.rollout_and_return(
-                                request=request, output_channel=output_channel
+        with self.device_lock:
+            batched_requests = self._pre_process_rollout_request(rollout_request)
+            with self.worker_timer():
+                for requests in batched_requests:
+                    rollout_tasks: List[asyncio.Task] = []
+                    for request in requests:
+                        rollout_tasks.append(
+                            asyncio.create_task(
+                                self.rollout_and_return(
+                                    request=request, output_channel=output_channel
+                                )
                             )
                         )
-                    )
-                await asyncio.gather(*rollout_tasks)
-            await self._stop()
-        output_channel.device_lock.release()
+                    await asyncio.gather(*rollout_tasks)
+                await self._stop()

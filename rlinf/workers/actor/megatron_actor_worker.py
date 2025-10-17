@@ -233,10 +233,10 @@ class MegatronActor(MegatronModelManager, Worker):
             "megatron_forward_backward", self.use_profiler
         )
 
-    def _load_weight_and_optimizer(self, channel: Channel):
+    def _load_weight_and_optimizer(self):
         # Acquire the GPUs to ensure that no one is using them before loading models
         # Otherwise, it may lead to OOM
-        with channel.device_lock:
+        with self.device_lock:
             if self.is_weight_offloaded:
                 self.onload_model_weights_and_grad(load_grad=self.offload_grad)
                 self.is_weight_offloaded = False
@@ -712,7 +712,7 @@ class MegatronActor(MegatronModelManager, Worker):
 
         # Must be called after batch is retrieved, which is when rollout has stopped
         # Otherwise, loading model might cause OOM
-        self._load_weight_and_optimizer(input_channel)
+        self._load_weight_and_optimizer()
         self._training_setup()
 
         # Advantage normalization
@@ -755,7 +755,7 @@ class MegatronActor(MegatronModelManager, Worker):
 
     def run_training_pipeline(self, input_channel: Channel):
         """Run the training loop for the actor."""
-        self._load_weight_and_optimizer(input_channel)
+        self._load_weight_and_optimizer()
         self._training_setup()
         # Built iterator for Megatron's pipeline schedule to run
         # NOTE: We cannot iterate over the iterator here, as Megatron's pipeline schedule is responsible for iterating over data
@@ -848,7 +848,6 @@ class MegatronActor(MegatronModelManager, Worker):
         self,
         input_channel: Channel,
         output_channel: Channel,
-        rollout_channel: Optional[Channel],
         compute_ref_logprobs: bool,
     ):
         """
@@ -866,11 +865,7 @@ class MegatronActor(MegatronModelManager, Worker):
             recv_batch_size += rollout_result.num_sequence
             # Must be called after batch is retrieved, suggesting that rollout has stopped
             # Otherwise, loading model might cause OOM in the collocated mode
-            self._load_weight_and_optimizer(
-                input_channel
-                if self.is_pipeline or rollout_channel is None
-                else rollout_channel
-            )
+            self._load_weight_and_optimizer()
 
             # Prev logprobs
             with self.worker_timer():

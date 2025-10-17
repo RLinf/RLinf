@@ -30,9 +30,10 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 
 ## What's NEW!
-- [2025/10] RLinf now officially supports online reinforcement learning! Doc: [coding_online_rl](https://rlinf.readthedocs.io/en/latest/rst_source/examples/coding_online_rl.html), Blog post: [The first open-source agent online RL framework RLinf-Online](https://mp.weixin.qq.com/s/jmohmDokuWLhQHFueSHZIQ).
-- [2025/10] The RLinf Algorithm Technical Report [RLinf-VLA: A Unified and Efficient Framework for VLA+RL Training](https://arxiv.org/abs/2510.06710) is released.
-- [2025/09] <img src="https://github.githubassets.com/images/icons/emoji/unicode/1f525.png" width="18" /> [Example Gallery](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) is updated, users can find various off-the-shelf examples!
+- [2025/10] 🔥 RLinf supports reinforcement learning fine-tuning for Pi 0! Doc: [RL on π₀ Models](https://rlinf.readthedocs.io/en/latest/rst_source/examples/pi0.html) 
+- [2025/10] 🔥 RLinf now officially supports online reinforcement learning! Doc: [coding_online_rl](https://rlinf.readthedocs.io/en/latest/rst_source/examples/coding_online_rl.html), Blog post: [The first open-source agent online RL framework RLinf-Online](https://mp.weixin.qq.com/s/jmohmDokuWLhQHFueSHZIQ).
+- [2025/10] 🔥 The RLinf Algorithm Technical Report [RLinf-VLA: A Unified and Efficient Framework for VLA+RL Training](https://arxiv.org/abs/2510.06710) is released.
+- [2025/09] 🔥 [Example Gallery](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) is updated, users can find various off-the-shelf examples!
 - [2025/09] The paper [RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Micro Flow Transformation](https://arxiv.org/abs/2509.15965) is released.
 - [2025/09] The [report on RLinf by Machine Heart](https://mp.weixin.qq.com/s/Xtv4gDu3lhDDGadLrzt6Aw)  is released. 
 - [2025/08] RLinf is open-sourced. The formal v0.1 will be released soon.
@@ -317,13 +318,13 @@ and exhibits greater stability.
 ## Roadmap
 
 ### 1. System-Level Enhancements
-- [ ] Support for heterogeneous GPUs  
+- [X] Support for heterogeneous GPUs  
 - [ ] Support for asynchronous pipeline execution  
 - [ ] Support for Mixture of Experts (MoE)  
-- [ ] Support for vLLM inference backend
+- [X] Support for vLLM inference backend
 
 ### 2. Application-Level Extensions
-- [ ] Support for Vision-Language Models (VLMs) training  
+- [X] Support for Vision-Language Models (VLMs) training  
 - [ ] Support for deep searcher agent training  
 - [ ] Support for multi-agent training  
 - [ ] Support for integration with more embodied simulators (e.g., [Meta-World](https://github.com/Farama-Foundation/Metaworld), [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis), [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin))  
