@@ -57,7 +57,7 @@
 
 在开始训练之前，您需要下载相应的预训练模型。我们提供了两个不同的模型：
 
-**1. RLinf-Pi0-SFT-Spatial-Object-Goal 模型**
+**Option #1 RLinf-Pi0-SFT-Spatial-Object-Goal 模型**
 
 该模型专门用于处理 object、goal、spatial 类型的任务。
 
@@ -72,7 +72,7 @@
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal
 
-**2. RLinf-Pi0-SFT-Long 模型**
+**Option #2 RLinf-Pi0-SFT-Long 模型**
 
 该模型专门用于处理 Long（libero10）类型任务。
 

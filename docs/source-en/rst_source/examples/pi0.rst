@@ -79,7 +79,7 @@ Model Download
 
 Before starting training, you need to download the corresponding pretrained models. We provide two different options:
 
-**1. RLinf-Pi0-SFT-Spatial-Object-Goal Model**
+**Option #1 RLinf-Pi0-SFT-Spatial-Object-Goal Model**
 
 This model is designed specifically for handling object, goal, and spatial task types.
 
@@ -94,7 +94,7 @@ This model is designed specifically for handling object, goal, and spatial task 
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal
 
-**2. RLinf-Pi0-SFT-Long Model**
+**Option #2 RLinf-Pi0-SFT-Long Model**
 
 This model is dedicated to handling Long (libero10) task type.
 
@@ -114,7 +114,7 @@ This model is dedicated to handling Long (libero10) task type.
 - If you want to train **object, goal, or spatial** task types, please use the `RLinf-Pi0-SFT-Spatial-Object-Goal` model.
 - If you want to train the **Long** task type for libero10, please use the `RLinf-Pi0-SFT-Long` model.
 
-After downloading, please make sure to specify the model path correctly in your configuration file.
+After downloading, please make sure to specify the model path correctly in your configuration yaml file.
 
 Running Scripts
 ---------------
