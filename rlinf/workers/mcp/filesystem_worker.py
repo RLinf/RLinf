@@ -437,17 +437,7 @@ class MCPFilesystemClientWorker(Worker):
             session = self.sessions.pop(session_id)
             await session.cleanup()
             self.log_info(f"Removed MCP session: {session_id}")
-    
-    def process_request(self, request: MCPRequest) -> MCPResponse:
-        """Process the request (synchronous wrapper)."""
-        # This method is called by the scheduler
-        # For async processing, we use the async request processor
-        # This is a fallback for synchronous calls
-        try:
-            return asyncio.run(self._process_mcp_request(request))
-        except Exception as e:
-            raise e
-    
+        
     def cleanup(self):
         """Cleanup worker resources."""
         if self.logger:
