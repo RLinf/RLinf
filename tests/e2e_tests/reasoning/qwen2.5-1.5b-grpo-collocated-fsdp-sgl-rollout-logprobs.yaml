@@ -199,7 +199,7 @@ actor:
     limit_all_gathers: True
     backward_prefetch: True
     use_orig_params: True
-    optimize_modules: True
+    use_liger_kernel: True
 
 reward:
   group_name: "RewardGroup"
