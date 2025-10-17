@@ -30,9 +30,9 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 
 
 ## 最新动态
-- [2025/10] Pi0的强化学习微调已经上线! 文档：[π₀模型强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/pi0.html)
-- [2025/10] RLinf 正式支持在线强化学习！文档：[coding_online_rl](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/coding_online_rl.html)，同时发布文章 [《首个开源的Agent在线强化学习框架RLinf-Online！让你的Agent今天比昨天更聪明》](https://mp.weixin.qq.com/s/jmohmDokuWLhQHFueSHZIQ)。
-- [2025/10] RLinf算法技术报告 [《RLinf-VLA：一个统一且高效的VLA+RL训练框架》](https://arxiv.org/abs/2510.06710) 已正式发布。
+- [2025/10] <img src="https://github.githubassets.com/images/icons/emoji/unicode/1f525.png" width="18" /> Pi0的强化学习微调已经上线! 文档：[π₀模型强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/pi0.html)
+- [2025/10] <img src="https://github.githubassets.com/images/icons/emoji/unicode/1f525.png" width="18" /> RLinf 正式支持在线强化学习！文档：[coding_online_rl](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/coding_online_rl.html)，同时发布文章 [《首个开源的Agent在线强化学习框架RLinf-Online！让你的Agent今天比昨天更聪明》](https://mp.weixin.qq.com/s/jmohmDokuWLhQHFueSHZIQ)。
+- [2025/10] <img src="https://github.githubassets.com/images/icons/emoji/unicode/1f525.png" width="18" /> RLinf算法技术报告 [《RLinf-VLA：一个统一且高效的VLA+RL训练框架》](https://arxiv.org/abs/2510.06710) 已正式发布。
 - [2025/09] <img src="https://github.githubassets.com/images/icons/emoji/unicode/1f525.png" width="18" /> [示例库](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) 已更新，用户可以在其中找到多种可直接使用的示例！
 - [2025/09] 我们的论文 [《RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Micro Flow Transformation》](https://arxiv.org/abs/2509.15965)已正式发布。
 - [2025/09] 机器之心关于 RLinf 的报道[《首个为具身智能而生的大规模强化学习框架RLinf！清华、北京中关村学院、无问芯穹等重磅开源》](https://mp.weixin.qq.com/s/Xtv4gDu3lhDDGadLrzt6Aw)已经发布。
@@ -318,16 +318,16 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 ## 路线图
 
 ### 1. 系统级增强
-- [ ] 支持异构 GPU
+- [X] 支持异构 GPU
 
 - [ ] 支持异步流水线执行
 
 - [ ] 支持专家混合（Mixture of Experts, MoE）
 
-- [ ] 支持 vLLM 推理后端
+- [X] 支持 vLLM 推理后端
 
 ### 2. 应用级扩展
-- [ ] 支持视觉-语言模型（VLMs）训练
+- [X] 支持视觉-语言模型（VLMs）训练
 
 - [ ] 支持深度搜索智能体训练
 
