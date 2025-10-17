@@ -64,6 +64,193 @@ def kl_penalty(
     raise NotImplementedError
 
 
+def preprocess_embodied_advantages_inputs(
+    rewards: torch.Tensor,
+    dones: torch.Tensor,
+    values: Optional[torch.Tensor] = None,
+    loss_mask: Optional[torch.Tensor] = None,
+    loss_mask_sum: Optional[torch.Tensor] = None,
+    **kwargs,
+) -> dict:
+    """
+    Preprocess inputs before computing advantages & returns.
+    Unify names & formats, align with math interfaces.
+    """
+    if kwargs["reward_type"] == "chunk_level":
+        # TODO: need check
+        # rewards, dones, loss_mask, loss_mask_sum: [n_chunk_steps, bsz, num_action_chunks] -> [n_chunk_steps, bsz, 1]
+        rewards = rewards.sum(dim=-1, keepdim=True)
+        dones = dones.max(dim=-1, keepdim=True)[0]
+        if loss_mask is not None:
+            loss_mask = loss_mask.max(dim=-1, keepdim=True)[0]
+        if loss_mask_sum is not None:
+            loss_mask_sum = loss_mask_sum.max(dim=-1, keepdim=True)[0]
+
+    num_chunk, bsz, chunk_size = rewards.shape
+    n_steps = num_chunk * chunk_size
+    kwargs.update(
+        {
+            "num_chunk": num_chunk,
+            "batch_size": bsz,
+            "chunk_size": chunk_size,
+            "n_steps": n_steps,
+        }
+    )
+
+    # Transpose(1, 2) -> [num-chunk, chunk-size, bsz]
+    # Reshape -> [n_steps, bsz]
+    # Rewards [n_steps, bsz]
+    rewards = rewards.transpose(1, 2).reshape(n_steps, bsz)
+
+    # Loss Mask (T steps) [bsz, n_steps]
+    if loss_mask is not None:
+        loss_mask = loss_mask.transpose(1, 2).reshape(n_steps, bsz)
+
+    # Dones (T+1 steps) [num-chunk+1, bsz, chunk-size]
+    flattened_dones_full = dones.transpose(1, 2).reshape(
+        (num_chunk + 1) * chunk_size, bsz
+    )
+    dones = flattened_dones_full[-(n_steps + 1) :]
+
+    if kwargs["adv_type"] == "gae":
+        flattened_values_full = values.transpose(1, 2).reshape(
+            (num_chunk + 1) * chunk_size, bsz
+        )
+        values = flattened_values_full[: n_steps + 1]
+
+    kwargs.update(
+        {
+            "rewards": rewards,
+            "dones": dones,
+            "values": values,
+            "loss_mask": loss_mask,
+            "loss_mask_sum": loss_mask_sum,
+        }
+    )
+
+    return kwargs
+
+
+def calculate_scores(
+    rewards: torch.Tensor,
+    dones: torch.Tensor,
+    **kwargs,
+) -> dict:
+    scores = torch.zeros(kwargs["batch_size"])
+    for step in reversed(range(kwargs["n_steps"])):
+        scores = scores * ~dones[step + 1]
+        scores += rewards[step]
+    scores = scores.reshape(-1, kwargs["group_size"])
+
+    kwargs.update(
+        {
+            "rewards": scores,
+            "dones": dones,
+        }
+    )
+
+    return kwargs
+
+
+def postprocess_embodied_advantages_outputs(
+    advantages: torch.Tensor,
+    num_chunk: int,
+    chunk_size: int,
+    returns: Optional[torch.Tensor] = None,
+    **kwargs,
+) -> dict:
+    """
+    Post-process results for Embodiment tasks; unflatten tensors.
+    """
+    res = {}
+
+    advantages = advantages.reshape(num_chunk, chunk_size, -1).transpose(1, 2)
+    res.update({"advantages": advantages})
+
+    if returns is not None:
+        returns = returns.reshape(num_chunk, chunk_size, -1).transpose(1, 2)
+        res.update({"returns": returns})
+
+    return res
+
+
+def preprocess_reasoning_advantages_inputs(
+    rewards: torch.Tensor,
+    loss_mask: torch.Tensor,
+    values: Optional[torch.Tensor] = None,
+    **kwargs,
+) -> dict:
+    # NOTE: to align with embodied inputs, we transpose loss mask and rewards when needed.
+
+    bsz, seq_len = loss_mask.shape
+    loss_mask = loss_mask.transpose(0, 1)  # [seq_len, bsz]
+
+    assert rewards.ndim == 1, f"Unsupported reward shape {rewards.shape}"
+
+    if kwargs["adv_type"] == "gae":
+        expanded_rewards = torch.zeros(
+            (seq_len, bsz), dtype=rewards.dtype, device=rewards.device
+        )
+        expanded_rewards[-1] = rewards  # only last token has reward
+        kwargs.update({"rewards": expanded_rewards})
+
+    elif kwargs["adv_type"] == "grpo":
+        grouped_rewards = (
+            rewards.reshape(-1, kwargs["group_size"]).transpose(0, 1).contiguous()
+        )
+        kwargs.update(
+            {
+                "rewards": grouped_rewards,
+            }
+        )
+
+    elif kwargs["adv_type"] == "reinpp":
+        kwargs.update({"rewards": rewards.unsqueeze(0)})
+
+    if values is not None:  # [bsz, seq_len]
+        assert values.ndim == 2, f"Unsupported values shape {values.shape}"
+        values = values.transpose(0, 1)  # [seq_len, bsz]
+        # pad values with zeros at the end for bootstrapping
+        values = torch.cat(
+            [
+                values,
+                torch.zeros(
+                    (1, values.shape[-1]), dtype=values.dtype, device=values.device
+                ),
+            ],
+            dim=0,
+        )  # [seq_len+1, bsz]
+
+        kwargs.update({"values": values})
+
+    # Create done flags (episode ends at the last token)
+    dones = torch.zeros(seq_len + 1, bsz, dtype=torch.bool)
+    dones[-1] = True
+    kwargs.update(
+        {
+            "dones": dones,
+            "loss_mask": loss_mask,
+        }
+    )
+
+    return kwargs
+
+
+def postprocess_reasoning_advantages_outputs(
+    advantages: torch.Tensor,
+    returns: Optional[torch.Tensor] = None,
+) -> dict:
+    """
+    Post-process results for Reasoning tasks; transpose tensors back.
+    """
+
+    advantages = advantages.transpose(0, 1)  # [bsz, seq_len]
+    if returns is not None:
+        returns = returns.transpose(0, 1)  # [bsz, seq_len]
+
+    return advantages, returns
+
+
 def preprocess_loss_inputs(
     logprobs: torch.Tensor,
     old_logprobs: torch.Tensor,
@@ -145,127 +332,6 @@ def preprocess_loss_inputs(
     return kwargs
 
 
-def preprocess_embodied_advantages_inputs(
-    rewards: torch.Tensor,
-    dones: torch.Tensor,
-    values: Optional[torch.Tensor] = None,
-    loss_mask: Optional[torch.Tensor] = None,
-    loss_mask_sum: Optional[torch.Tensor] = None,
-    **kwargs,
-) -> dict:
-    """
-    Preprocess inputs before computing advantages & returns.
-    Unify names & formats, align with math interfaces.
-    """
-    if kwargs["reward_type"] == "chunk_level":
-        # TODO: need check
-        # rewards, dones, loss_mask, loss_mask_sum: [n_chunk_steps, bsz, num_action_chunks] -> [n_chunk_steps, bsz, 1]
-        rewards = rewards.sum(dim=-1, keepdim=True)
-        dones = dones.max(dim=-1, keepdim=True)[0]
-        if loss_mask is not None:
-            loss_mask = loss_mask.max(dim=-1, keepdim=True)[0]
-        if loss_mask_sum is not None:
-            loss_mask_sum = loss_mask_sum.max(dim=-1, keepdim=True)[0]
-
-    num_chunk, bsz, chunk_size = rewards.shape
-    n_steps = num_chunk * chunk_size
-    kwargs.update(
-        {
-            "num_chunk": num_chunk,
-            "batch_size": bsz,
-            "chunk_size": chunk_size,
-            "n_steps": n_steps,
-        }
-    )
-
-    # Transpose(1, 2) -> [num-chunk, chunk-size, bsz]
-    # Reshape -> [n_steps, bsz]
-    # Rewards [n_steps, bsz]
-    rewards = rewards.transpose(1, 2).reshape(n_steps, bsz)
-
-    # Loss Mask (T steps) [bsz, n_steps]
-    if loss_mask is not None:
-        if kwargs["adv_type"] == "gae":
-            loss_mask = loss_mask.transpose(1, 2).reshape(n_steps, bsz)
-        else:
-            # NOTE: to unify with math grpo, we transpose loss mask here.
-            loss_mask = loss_mask.transpose(1, 2).reshape(n_steps, bsz).transpose(0, 1)
-
-    # Dones (T+1 steps) [num-chunk+1, bsz, chunk-size]
-    flattened_dones_full = dones.transpose(1, 2).reshape(
-        (num_chunk + 1) * chunk_size, bsz
-    )
-    dones = flattened_dones_full[-(n_steps + 1) :]
-
-    if kwargs["adv_type"] == "gae":
-        flattened_values_full = values.transpose(1, 2).reshape(
-            (num_chunk + 1) * chunk_size, bsz
-        )
-        values = flattened_values_full[: n_steps + 1]
-
-    kwargs.update(
-        {
-            "rewards": rewards,
-            "dones": dones,
-            "values": values,
-            "loss_mask": loss_mask,
-            "loss_mask_sum": loss_mask_sum,
-        }
-    )
-
-    return kwargs
-
-def preprocess_reasoning_advantages_inputs(
-    rewards: torch.Tensor,
-    loss_mask: torch.Tensor,
-    values: Optional[torch.Tensor] = None,
-    **kwargs,
-) -> dict:
-
-    bsz, seq_len = loss_mask.shape
-    loss_mask = loss_mask.transpose(0, 1)  # [seq_len, bsz]
-
-    assert rewards.ndim == 1, f"Unsupported reward shape {rewards.shape}"
-    reward_scores = torch.zeros((seq_len, bsz), dtype=rewards.dtype, device=rewards.device)
-    reward_scores[-1] = rewards  # only last token has reward
-
-    if values is not None: # [bsz, seq_len]
-        assert values.ndim == 2, f"Unsupported values shape {values.shape}"
-        values = values.transpose(0, 1)  # [seq_len, bsz]
-        # pad values with zeros at the end for bootstrapping
-        values = torch.cat([values, torch.zeros((1, values.shape[-1]), dtype=values.dtype, device=values.device)], dim=0) # [seq_len+1, bsz]
-
-    # Create done flags (episode ends at the last token)
-    dones = torch.zeros_like(values, dtype=torch.bool)
-    dones[-1] = True
-
-    print(reward_scores.shape, loss_mask.shape, dones.shape, values.shape if values is not None else None)
-
-    kwargs.update(
-        {
-            "rewards": reward_scores,
-            "loss_mask": loss_mask,
-            "dones": dones,
-            "values": values,
-        }
-    )
-
-    return kwargs
-
-def postprocess_reasoning_advantages_outputs(
-    advantages: torch.Tensor,
-    returns: Optional[torch.Tensor] = None,
-) -> dict:
-    """
-    Post-process results for Reasoning tasks; transpose tensors back.
-    """
-
-    advantages = advantages.transpose(0, 1)  # [bsz, seq_len]
-    if returns is not None:
-        returns = returns.transpose(0, 1)  # [bsz, seq_len]
-
-    return advantages, returns
-
 def postprocess_loss_metric(metrics_data: dict) -> dict:
     for k, v in metrics_data.items():
         if isinstance(v, torch.Tensor):
@@ -273,60 +339,6 @@ def postprocess_loss_metric(metrics_data: dict) -> dict:
         elif isinstance(v, (float, int)):
             metrics_data[k] = v
     return metrics_data
-
-
-def calculate_scores(
-    rewards: torch.Tensor,
-    dones: torch.Tensor,
-    batch_size: int,
-    n_steps: int,
-    group_size: int,
-    **kwargs,
-) -> dict:
-    scores = torch.zeros(batch_size)
-    for step in reversed(range(n_steps)):
-        scores = scores * ~dones[step + 1]
-        scores += rewards[step]
-    scores = scores.reshape(-1, group_size)
-
-    kwargs.update(
-        {
-            "reward_scores": scores,
-            "group_size": group_size,
-            "rewards": rewards,
-            "dones": dones,
-            "n_steps": n_steps,
-            "batch_size": batch_size,
-        }
-    )
-
-    return kwargs
-
-
-def postprocess_embodied_advantages_outputs(
-    advantages: torch.Tensor,
-    num_chunk: int,
-    chunk_size: int,
-    returns: Optional[torch.Tensor] = None,
-    **kwargs,
-) -> dict:
-    """
-    Post-process results for Embodiment tasks; unflatten tensors.
-    """
-    res = {}
-
-    # NOTE: to unify with math grpo, we transposed loss mask. Therefore, for embodied grpo, we need to transpose back here.
-    if kwargs["adv_type"] == "grpo":
-        advantages = advantages.transpose(0, 1)
-
-    advantages = advantages.reshape(num_chunk, chunk_size, -1).transpose(1, 2)
-    res.update({"advantages": advantages})
-
-    if returns is not None:
-        returns = returns.reshape(num_chunk, chunk_size, -1).transpose(1, 2)
-        res.update({"returns": returns})
-
-    return res
 
 
 def expand_to_target_dim(tensor, target_shape):
@@ -338,28 +350,8 @@ def expand_to_target_dim(tensor, target_shape):
     return tensor
 
 
-def safe_normalize(
-    array: torch.Tensor,
-    loss_mask: Optional[torch.Tensor] = None,
-) -> torch.Tensor:
-    if loss_mask is not None:
-        mean = array[loss_mask].mean()
-        std = array[loss_mask].std(correction=0)
-    else:
-        mean = array.mean()
-        std = array.std(correction=0)
-    if std < 1e-8 or torch.isinf(std).any() or torch.isnan(std).any():
-        array = torch.zeros_like(array)
-    else:
-        array = (array - mean) / (std + 1e-8)
-
-    return array
-
-def safe_normalize_2(array, loss_mask):
-    array = array * loss_mask
-
-    # Only normalize over valid (masked) positions
-    valid_array = array[loss_mask.bool()]
+def safe_normalize(array, loss_mask):
+    valid_array = array[loss_mask]
     if len(valid_array) > 0:
         mean = valid_array.mean()
         std = valid_array.std()

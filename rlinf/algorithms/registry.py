@@ -98,10 +98,9 @@ def calculate_adv_and_returns(**kwargs) -> Tuple[torch.Tensor, Optional[torch.Te
         if adv_type != "gae":
             kwargs = calculate_scores(**kwargs)
         advantages, returns = fn(**kwargs)
-        kwargs.update({"advantages": advantages})
-        if returns is not None:
-            kwargs.update({"returns": returns})
-        res = postprocess_embodied_advantages_outputs(**kwargs)
+        res = postprocess_embodied_advantages_outputs(
+            advantages=advantages, returns=returns, **kwargs
+        )
     else:
         # reasoning tasks
         kwargs = preprocess_reasoning_advantages_inputs(**kwargs)
