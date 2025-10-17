@@ -178,13 +178,7 @@ class LiberoEnv(gym.Env):
                     trial_ids.append(reset_state_id - start_pivot)
                     break
                 start_pivot = end_pivot
-        print(
-            "get task and trial id",
-            self.cumsum_trial_id_bins,
-            reset_state_ids,
-            task_ids,
-            trial_ids,
-        )
+
         return np.array(task_ids), np.array(trial_ids)
 
     def _get_reset_states(self, env_idx):
@@ -247,7 +241,7 @@ class LiberoEnv(gym.Env):
         return infos
 
     def _extract_image_and_state(self, obs):
-        if self.cfg.num_images_in_input > 1:
+        if self.cfg.get("use_wrist_image", False):
             return {
                 "full_image": get_libero_image(obs),
                 "wrist_image": get_libero_wrist_image(obs),
@@ -298,8 +292,7 @@ class LiberoEnv(gym.Env):
         if reconfig_env_idx:
             env_fn_params = self.get_env_fn_params(reconfig_env_idx)
             self.env.reconfigure_env_fns(env_fn_params, reconfig_env_idx)
-
-        self.env.seed([0] * len(env_idx))
+        self.env.seed(self.seed * len(env_idx))
         self.env.reset(id=env_idx)
         init_state = self._get_reset_states(env_idx=env_idx)
         self.env.set_init_state(init_state=init_state, id=env_idx)
@@ -319,8 +312,9 @@ class LiberoEnv(gym.Env):
 
         self._reconfigure(reset_state_ids, env_idx)
 
-        for _ in range(10):
+        for _ in range(15):
             zero_actions = np.zeros((self.num_envs, 7))
+            zero_actions[:, -1] = -1
             raw_obs, _reward, terminations, info_lists = self.env.step(zero_actions)
 
         obs = self._wrap_obs(raw_obs)
@@ -353,7 +347,6 @@ class LiberoEnv(gym.Env):
         raw_obs, _reward, terminations, info_lists = self.env.step(actions)
         infos = list_of_dict_to_dict_of_list(info_lists)
         truncations = self.elapsed_steps >= self.cfg.max_episode_steps
-
         obs = self._wrap_obs(raw_obs)
 
         step_reward = self._calc_step_reward(terminations)

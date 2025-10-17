@@ -56,26 +56,26 @@ First, ensure you have installed the RLinf framework and its dependencies:
 
       # Please replace http://xxx:xx/ with the actual RLinf online code completion service address
 
-      models:
       # Add a model for code completion
-      - name: my-autocomplete
-         provider: openai
-         model: Qwen2.5-Coder-1.5B
-         apiBase: http://xxx:8081/v1
-         apiKey: xxx
-         roles:
+      models:
+        - name: my-autocomplete
+          provider: openai
+          model: Qwen2.5-Coder-1.5B
+          apiBase: http://xxx:8081/v1
+          apiKey: xxx
+          roles:
             - autocomplete
 
       # Add sending user feedback on whether to accept code completions
       tabAutocompleteOptions:
-      enableCompletionTracking: true
-      completionTrackingUrl: http://xxx:8082/api/training/submit
-      completionTrackingHeaders:
-         Authorization: "Bearer test-token"
-         X-Project-ID: "test-project"
-      maxPromptTokens: 1024
-      debounceDelay: 350
-      multilineCompletions: "auto"
+        enableCompletionTracking: true
+        completionTrackingUrl: http://xxx:8082/api/training/submit
+        completionTrackingHeaders:
+          Authorization: Bearer test-token
+          X-Project-ID: test-project
+        maxPromptTokens: 1024
+        debounceDelay: 350
+        multilineCompletions: auto
 
    After modifying and saving, open the Continue extension from the left panel, click the "Settings" gear button in the top right corner, and ensure "Autocomplete Model" is set to my-autocomplete in the "Models" page.
 

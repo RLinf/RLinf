@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 from omegaconf import DictConfig
@@ -1013,3 +1013,191 @@ class BatchResizingIterator:
             )
 
             return self._get_next_micro_batch()
+
+
+def put_tensor_cpu(data_dict):
+    if data_dict is None:
+        return None
+
+    for key, value in data_dict.items():
+        if isinstance(value, dict):
+            data_dict[key] = put_tensor_cpu(value)
+        if isinstance(value, torch.Tensor):
+            data_dict[key] = value.cpu().contiguous()
+    return data_dict
+
+
+@dataclass(kw_only=True)
+class EnvOutput:
+    simulator_type: str
+    obs: Dict[str, Any]
+    final_obs: Optional[Dict[str, Any]] = None
+    dones: Optional[torch.Tensor] = None  # [B]
+    rewards: Optional[torch.Tensor] = None  # [B]
+
+    def __post_init__(self):
+        self.obs = put_tensor_cpu(self.obs)
+        self.final_obs = (
+            put_tensor_cpu(self.final_obs) if self.final_obs is not None else None
+        )
+        self.dones = self.dones.cpu().contiguous() if self.dones is not None else None
+        self.rewards = (
+            self.rewards.cpu().contiguous() if self.rewards is not None else None
+        )
+
+    def prepare_observations(self, obs: Dict[str, Any]) -> Dict[str, Any]:
+        wrist_image_tensor = None
+        if self.simulator_type == "libero":
+            image_tensor = torch.stack(
+                [
+                    value.clone().permute(2, 0, 1)
+                    for value in obs["images_and_states"]["full_image"]
+                ]
+            )
+            if "wrist_image" in obs["images_and_states"]:
+                wrist_image_tensor = torch.stack(
+                    [
+                        value.clone().permute(2, 0, 1)
+                        for value in obs["images_and_states"]["wrist_image"]
+                    ]
+                )
+        elif self.simulator_type == "maniskill":
+            image_tensor = obs["images"]
+        elif self.simulator_type == "robotwin":
+            image_tensor = obs["images"]
+        else:
+            raise NotImplementedError
+
+        states = None
+        if "images_and_states" in obs and "state" in obs["images_and_states"]:
+            states = obs["images_and_states"]["state"]
+
+        task_descriptions = (
+            list(obs["task_descriptions"]) if "task_descriptions" in obs else None
+        )
+
+        return {
+            "images": image_tensor,
+            "wrist_images": wrist_image_tensor,
+            "states": states,
+            "task_descriptions": task_descriptions,
+        }
+
+    def to_dict(self):
+        env_output_dict = {}
+
+        env_output_dict["obs"] = self.prepare_observations(self.obs)
+        env_output_dict["final_obs"] = (
+            self.prepare_observations(self.final_obs)
+            if self.final_obs is not None
+            else None
+        )
+        env_output_dict["dones"] = self.dones
+        env_output_dict["rewards"] = self.rewards
+
+        return env_output_dict
+
+
+@dataclass(kw_only=True)
+class EmbodiedRolloutResult:
+    # required
+    prev_logprobs: List[torch.Tensor] = field(default_factory=list)
+    prev_values: List[torch.Tensor] = field(default_factory=list)
+    dones: List[torch.Tensor] = field(default_factory=list)
+    rewards: List[torch.Tensor] = field(default_factory=list)
+
+    forward_inputs: List[Dict[str, Any]] = field(default_factory=list)
+
+    def __post_init__(self):
+        self.prev_logprobs = (
+            [prev_logprob.cpu().contiguous() for prev_logprob in self.prev_logprobs]
+            if self.prev_logprobs is not None
+            else []
+        )
+        self.prev_values = (
+            [prev_value.cpu().contiguous() for prev_value in self.prev_values]
+            if self.prev_values is not None
+            else []
+        )
+        self.dones = (
+            [done.cpu().contiguous() for done in self.dones]
+            if self.dones is not None
+            else []
+        )
+        self.rewards = (
+            [reward.cpu().contiguous() for reward in self.rewards]
+            if self.rewards is not None
+            else []
+        )
+
+        self.forward_inputs = [
+            put_tensor_cpu(forward_inputs) for forward_inputs in self.forward_inputs
+        ]
+
+    def append_result(self, result: Dict[str, Any]):
+        self.prev_logprobs.append(
+            result["prev_logprobs"].cpu().contiguous()
+        ) if "prev_logprobs" in result else []
+        self.prev_values.append(
+            result["prev_values"].cpu().contiguous()
+        ) if "prev_values" in result else []
+        self.dones.append(
+            result["dones"].cpu().contiguous()
+        ) if "dones" in result else []
+        self.rewards.append(
+            result["rewards"].cpu().contiguous()
+        ) if "rewards" in result else []
+
+        self.forward_inputs.append(put_tensor_cpu(result["forward_inputs"]))
+
+    def to_dict(self):
+        rollout_result_dict = {}
+        rollout_result_dict["prev_logprobs"] = (
+            torch.stack(self.prev_logprobs, dim=0).cpu().contiguous()
+            if len(self.prev_logprobs) > 0
+            else None
+        )
+        rollout_result_dict["prev_values"] = (
+            torch.stack(self.prev_values, dim=0).cpu().contiguous()
+            if len(self.prev_values) > 0
+            else None
+        )
+        rollout_result_dict["dones"] = (
+            torch.stack(self.dones, dim=0).cpu().contiguous()
+            if len(self.dones) > 0
+            else None
+        )
+        rollout_result_dict["rewards"] = (
+            torch.stack(self.rewards, dim=0).cpu().contiguous()
+            if len(self.rewards) > 0
+            else None
+        )
+        merged_forward_inputs = {}
+        for data in self.forward_inputs:
+            for k, v in data.items():
+                if k in merged_forward_inputs:
+                    merged_forward_inputs[k].append(v)
+                else:
+                    merged_forward_inputs[k] = [v]
+        for k in merged_forward_inputs.keys():
+            assert k not in ["dones", "rewards", "prev_logprobs", "prev_values"]
+            rollout_result_dict[k] = (
+                torch.stack(merged_forward_inputs[k], dim=0).cpu().contiguous()
+            )
+
+        return rollout_result_dict
+
+    def to_splited_dict(self, split_size) -> List[Dict[str, Any]]:
+        rollout_result_list = []
+        for i in range(split_size):
+            rollout_result_list.append(self.to_dict())
+
+            for key, value in rollout_result_list[i].items():
+                if isinstance(value, torch.Tensor):
+                    rollout_result_list[i][key] = torch.chunk(value, split_size, dim=1)[
+                        i
+                    ].contiguous()
+                else:
+                    raise ValueError(f"Unsupported type: {type(value)}")
+
+        return rollout_result_list

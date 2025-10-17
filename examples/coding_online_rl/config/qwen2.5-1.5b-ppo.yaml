@@ -12,6 +12,7 @@ cluster:
     rollout: 0-3
     inference: 4-5
     actor: 6-7
+    reward: 0-3
 
 runner:
   task_type: coding_online_rl
@@ -34,7 +35,7 @@ runner:
 
   resume_dir: null
   experiment_name: online-ppo-1.5b-pipeline
-  output_dir: /mnt/public/zhuchunyang_rl/logs
+  output_dir: /path/to/results
 
 algorithm:
   group_size: 1
@@ -116,7 +117,7 @@ rollout:
 
   gpu_memory_utilization: 0.55
 
-  model_dir: /mnt/public/hf_models/Qwen2.5-Coder-1.5B
+  model_dir: /path/to/model/Qwen2.5-Coder-1.5B
   model_arch: qwen2.5
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
@@ -297,4 +298,3 @@ server:
   tracking_rollout:
     host: 0.0.0.0
     port: 8082
-    enable_dummy_data: True

@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 logging.getLogger().setLevel(logging.INFO)
 
-SUPPORTED_MODEL_ARCHS = ["qwen2.5", "qwen2.5_vl", "openvla", "openvla_oft"]
+SUPPORTED_MODEL_ARCHS = ["qwen2.5", "qwen2.5_vl", "openvla", "openvla_oft", "openpi"]
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
 SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl"]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
@@ -48,6 +48,8 @@ def torch_dtype_from_precision(precision: Union[int, str]) -> torch.dtype:
         return torch.float16
     elif precision in [32, "32", "32-true"]:
         return torch.float32
+    elif precision in [None]:
+        return None
     else:
         raise ValueError(
             f"Could not parse the precision of `{precision}` to a valid torch.dtype"
@@ -226,10 +228,20 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
 def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
     with open_dict(cfg):
-        cfg.fsdp.forward_prefetch = cfg.fsdp.get("forward_prefetch", False)
-        cfg.fsdp.limit_all_gathers = cfg.fsdp.get("limit_all_gathers", False)
-        cfg.fsdp.backward_prefetch = cfg.fsdp.get("backward_prefetch", False)
-        cfg.fsdp.use_orig_params = cfg.fsdp.get("use_orig_params", False)
+        if "fsdp_config" not in cfg:
+            cfg.fsdp_config = OmegaConf.create({})
+        cfg.fsdp_config.forward_prefetch = cfg.get("fsdp_config", {}).get(
+            "forward_prefetch", False
+        )
+        cfg.fsdp_config.limit_all_gathers = cfg.get("fsdp_config", {}).get(
+            "limit_all_gathers", False
+        )
+        cfg.fsdp_config.backward_prefetch = cfg.get("fsdp_config", {}).get(
+            "backward_prefetch", False
+        )
+        cfg.fsdp_config.use_orig_params = cfg.get("fsdp_config", {}).get(
+            "use_orig_params", False
+        )
     return cfg
 
 
@@ -537,6 +549,13 @@ def validate_embodied_cfg(cfg):
             cfg.env.eval.init_params.control_mode = get_robot_control_mode(
                 cfg.actor.model.policy_setup
             )
+        if cfg.env.train.simulator_type == "libero":
+            if cfg.actor.model.get("num_images_in_input", 1) > 1:
+                assert cfg.actor.model.get("use_wrist_image", False), (
+                    "Invalid config: Multiple input images are enabled "
+                    "(num_images_in_input > 1) but 'use_wrist_image' is set to False. "
+                    "Please enable wrist images by setting 'use_wrist_image=True'."
+                )
     return cfg
 
 

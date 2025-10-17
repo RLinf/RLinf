@@ -35,7 +35,6 @@ algorithm:
   auto_reset: False
   ignore_terminations: False
   use_fixed_reset_state_ids: True
-  require_values: False
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 2
@@ -128,7 +127,7 @@ actor:
     vocab_size: 32000
     hidden_size: 4096
     policy_setup: "widowx_bridge"
-    vh_mode: "a0"
+    add_value_head: False
     image_size: [224, 224]
     is_lora: True
     lora_rank: 32

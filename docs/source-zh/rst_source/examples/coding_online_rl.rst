@@ -57,26 +57,26 @@
 
       # 请将 http://xxx:xx/ 替换为实际的 RLinf 在线代码补全服务地址
 
-      models:
       # 添加一个模型，用于代码补全
-      - name: my-autocomplete
-         provider: openai
-         model: Qwen2.5-Coder-1.5B
-         apiBase: http://xxx:8081/v1
-         apiKey: xxx
-         roles:
+      models:
+        - name: my-autocomplete
+          provider: openai
+          model: Qwen2.5-Coder-1.5B
+          apiBase: http://xxx:8081/v1
+          apiKey: xxx
+          roles:
             - autocomplete
 
       # 添加发送用户是否接受代码补全的反馈
       tabAutocompleteOptions:
-      enableCompletionTracking: true
-      completionTrackingUrl: http://xxx:8082/api/training/submit
-      completionTrackingHeaders:
-         Authorization: "Bearer test-token"
-         X-Project-ID: "test-project"
-      maxPromptTokens: 1024
-      debounceDelay: 350
-      multilineCompletions: "auto"
+        enableCompletionTracking: true
+        completionTrackingUrl: http://xxx:8082/api/training/submit
+        completionTrackingHeaders:
+          Authorization: Bearer test-token
+          X-Project-ID: test-project
+        maxPromptTokens: 1024
+        debounceDelay: 350
+        multilineCompletions: auto
 
    修改并保存完成后，从左侧面板打开 Continue 扩展，点击右上角的 "设置" 齿轮按钮，在 "Models" 页面确保 "Autocomplete 模型" 选用 my-autocomplete。
 

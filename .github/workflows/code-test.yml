@@ -306,6 +306,20 @@ jobs:
           source switch_env openvla-oft
           bash tests/e2e_tests/embodied/run.sh libero_130_grpo_openvlaoft
 
+  embodied-libero-spatial-ppo-openpi-test:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.file_filter == 'true'
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: OPENPI test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env openpi
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi
+
   # =============================================== auto placement tests ====================================================
 
   static-auto-placement-test:
@@ -330,14 +344,21 @@ jobs:
       check-changes,
 
       # Unit tests
-      unit-tests-cuda, unit-tests-cpu,
+      unit-tests-cuda,
+      unit-tests-cpu,
 
       # Reason e2e tests
-      reason-qwen-grpo-test, reason-qwen-grpo-test-rollout-logprobs,
-      coding-online-rl-qwen-ppo-test, qwen-vl-grpo-test,
+      reason-qwen-grpo-test,
+      reason-qwen-grpo-test-rollout-logprobs,
+      coding-online-rl-qwen-ppo-test,
+      qwen-vl-grpo-test,
 
       # Embodied e2e tests
-      embodied-maniskill-ppo-openvla-test, embodied-maniskill-grpo-openvlaoft-test, embodied-libero-goal-grpo-openvlaoft-test,embodied-libero-130-grpo-openvlaoft-test,
+      embodied-maniskill-ppo-openvla-test,
+      embodied-maniskill-grpo-openvlaoft-test,
+      embodied-libero-goal-grpo-openvlaoft-test,
+      embodied-libero-130-grpo-openvlaoft-test,
+      embodied-libero-spatial-ppo-openpi-test,
 
       # Auto placement tests
       static-auto-placement-test

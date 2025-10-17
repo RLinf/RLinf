@@ -74,11 +74,28 @@ def preprocess_loss_inputs(
     entropy: Optional[torch.Tensor] = None,
     loss_mask: Optional[torch.Tensor] = None,
     loss_mask_sum: Optional[torch.Tensor] = None,
+    values: Optional[torch.Tensor] = None,
+    prev_values: Optional[torch.Tensor] = None,
+    returns: Optional[torch.Tensor] = None,
+    reward_type: Optional[str] = None,
     **kwargs,
 ) -> dict:
-    bsz = logprobs.shape[0]
+    if reward_type == "chunk_level":
+        advantages = advantages.flatten()
+        if loss_mask is not None:
+            loss_mask = loss_mask.flatten()
+        if loss_mask_sum is not None:
+            loss_mask_sum = loss_mask_sum.flatten()
+        if values is not None:
+            values = values.flatten()
+        if prev_values is not None:
+            prev_values = prev_values.flatten()
+        if returns is not None:
+            returns = returns.flatten()
 
+    bsz = logprobs.shape[0]
     if logprob_type == "token_level":
+        # logprobs, old_logprobs: [bsz, num_action_chunks, action_dim] -> [bsz, num_action_chunks, action_dim]
         logprobs = logprobs.reshape(bsz, -1, single_action_dim)
         old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim)
         advantages = advantages.unsqueeze(-1)
@@ -88,13 +105,22 @@ def preprocess_loss_inputs(
             loss_mask_sum = loss_mask_sum.unsqueeze(-1)
 
     elif logprob_type == "action_level":
+        # logprobs, old_logprobs: [bsz, num_action_chunks, action_dim] -> [bsz, num_action_chunks]
         logprobs = logprobs.reshape(bsz, -1, single_action_dim).sum(dim=-1)
         old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim).sum(dim=-1)
 
     elif logprob_type == "chunk_level":
-        logprobs = logprobs.sum(dim=-1)
-        old_logprobs = old_logprobs.sum(dim=-1)
-        advantages = advantages.sum(dim=-1)
+        # logprobs, old_logprobs: [bsz, num_action_chunks, action_dim] -> [bsz]
+        logprobs = logprobs.reshape(bsz, -1, single_action_dim).sum(dim=[1, 2])
+        old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim).sum(dim=[1, 2])
+
+    target_shape = logprobs.shape
+    advantages = expand_to_target_dim(advantages, target_shape)
+    loss_mask = expand_to_target_dim(loss_mask, target_shape)
+    loss_mask_sum = expand_to_target_dim(loss_mask_sum, target_shape)
+    values = expand_to_target_dim(values, target_shape)
+    prev_values = expand_to_target_dim(prev_values, target_shape)
+    returns = expand_to_target_dim(returns, target_shape)
 
     if entropy is not None:
         if entropy_type == "action_level":
@@ -110,6 +136,9 @@ def preprocess_loss_inputs(
             "entropy": entropy,
             "loss_mask": loss_mask,
             "loss_mask_sum": loss_mask_sum,
+            "values": values,
+            "prev_values": prev_values,
+            "returns": returns,
         }
     )
 
@@ -129,8 +158,16 @@ def preprocess_advantages_inputs(
     Unify names & formats, align with math interfaces.
     """
     if reward_type == "chunk_level":
-        rewards = rewards.sum(dim=-1, keepdim=True)
-        dones = dones[..., -1:]
+        # TODO: need check
+        # rewards, dones, loss_mask, loss_mask_sum: [n_chunk_steps, bsz, num_action_chunks] -> [n_chunk_steps, bsz, 1]
+        kwargs["rewards"] = kwargs["rewards"].sum(dim=-1, keepdim=True)
+        kwargs["dones"] = kwargs["dones"].max(dim=-1, keepdim=True)[0]
+        if "loss_mask" in kwargs and kwargs["loss_mask"] is not None:
+            kwargs["loss_mask"] = kwargs["loss_mask"].max(dim=-1, keepdim=True)[0]
+        if "loss_mask_sum" in kwargs and kwargs["loss_mask_sum"] is not None:
+            kwargs["loss_mask_sum"] = kwargs["loss_mask_sum"].max(dim=-1, keepdim=True)[
+                0
+            ]
 
     num_chunk, bsz, chunk_size = rewards.shape
     n_steps = num_chunk * chunk_size
@@ -238,3 +275,30 @@ def postprocess_advantages_outputs(
         res.update({"returns": returns})
 
     return res
+
+
+def expand_to_target_dim(tensor, target_shape):
+    if tensor is None:
+        return None
+    if tensor.shape != target_shape:
+        while len(tensor.shape) < len(target_shape):
+            tensor = tensor.unsqueeze(-1)
+    return tensor
+
+
+def normalize_array(
+    array: torch.Tensor,
+    loss_mask: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    if loss_mask is not None:
+        mean = array[loss_mask].mean()
+        std = array[loss_mask].std(correction=0)
+    else:
+        mean = array.mean()
+        std = array.std(correction=0)
+    if std < 1e-8 or torch.isinf(std).any() or torch.isnan(std).any():
+        array = torch.zeros_like(array)
+    else:
+        array = (array - mean) / (std + 1e-8)
+
+    return array

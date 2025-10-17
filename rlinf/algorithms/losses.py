@@ -120,6 +120,9 @@ def compute_ppo_critic_loss(
     prev_values: torch.Tensor,
     value_clip: float,
     huber_delta: float,
+    loss_mask: Optional[torch.Tensor] = None,
+    max_episode_steps: Optional[int] = None,
+    loss_mask_sum: Optional[torch.Tensor] = None,
     **kwargs,
 ) -> Tuple[torch.Tensor, Dict]:
     """
@@ -135,14 +138,29 @@ def compute_ppo_critic_loss(
     Returns:
         Tuple[torch.Tensor, Dict]: (critic_loss, metrics_dict)
     """
+    loss_mask_ratio = None
+    loss_agg_func = raw_mean
+
+    if (
+        max_episode_steps is not None
+        and loss_mask_sum is not None
+        and loss_mask is not None
+    ):
+        loss_mask_ratio = (loss_mask_sum * 1.0) / max_episode_steps
+        loss_agg_func = masked_mean_ratio
 
     value_pred_clipped = prev_values + (values - prev_values).clamp(
         -value_clip, value_clip
-    )
+    )  # [bsz, ] | [bsz, chunk-step]
 
-    value_loss_original = huber_loss(returns - values, huber_delta)
-    value_loss_clipped = huber_loss(returns - value_pred_clipped, huber_delta)
-    value_loss = torch.max(value_loss_original, value_loss_clipped).mean()
+    value_loss_original = huber_loss(
+        returns - values, huber_delta
+    )  # [bsz, ] | [bsz, chunk-step]
+    value_loss_clipped = huber_loss(
+        returns - value_pred_clipped, huber_delta
+    )  # [bsz, ] | [bsz, chunk-step]
+    value_loss = torch.max(value_loss_original, value_loss_clipped)
+    value_loss = loss_agg_func(value_loss, loss_mask, loss_mask_ratio)
 
     value_clip_indicator = (value_pred_clipped - prev_values).abs() > value_clip
     value_clip_ratio = value_clip_indicator.float().mean()
