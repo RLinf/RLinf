@@ -256,9 +256,7 @@ def preprocess_loss_inputs(
     old_logprobs: torch.Tensor,
     advantages: torch.Tensor,
     logprob_type: Optional[str] = None,
-    entropy_type: Optional[str] = None,
     single_action_dim: Optional[int] = None,
-    entropy: Optional[torch.Tensor] = None,
     loss_mask: Optional[torch.Tensor] = None,
     loss_mask_sum: Optional[torch.Tensor] = None,
     values: Optional[torch.Tensor] = None,
@@ -309,18 +307,11 @@ def preprocess_loss_inputs(
     prev_values = expand_to_target_dim(prev_values, target_shape)
     returns = expand_to_target_dim(returns, target_shape)
 
-    if entropy is not None:
-        if entropy_type == "action_level":
-            entropy = entropy.reshape(bsz, -1, single_action_dim).sum(dim=-1)
-        elif entropy_type == "chunk_level":
-            entropy = entropy.sum(dim=-1)
-
     kwargs.update(
         {
             "logprobs": logprobs,
             "old_logprobs": old_logprobs,
             "advantages": advantages,
-            "entropy": entropy,
             "loss_mask": loss_mask,
             "loss_mask_sum": loss_mask_sum,
             "values": values,

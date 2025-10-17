@@ -53,6 +53,7 @@ from rlinf.utils.utils import (
     compute_logprobs_from_logits,
     cpu_weight_swap,
     masked_mean,
+    reshape_entropy,
     retrieve_model_state_dict_in_cpu,
     seq_mean_token_mean,
     seq_mean_token_sum,
@@ -827,13 +828,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         data["top_k"] = self.cfg.algorithm.sampling_params.top_k
 
                     compute_values = (
-                        True if self.cfg.algorithm.adv_type == "embodied_gae" else False
+                        True if self.cfg.algorithm.adv_type == "gae" else False
                     )
 
                     output_dict = self.model(
                         data=data,
                         compute_logprobs=True,
-                        compute_entropy=True,
+                        compute_entropy=self.cfg.algorithm.entropy_bonus > 0,
                         compute_values=compute_values,
                         use_cache=False,
                     )
@@ -845,10 +846,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         "loss_type": self.cfg.algorithm.loss_type,
                         "logprob_type": self.cfg.algorithm.logprob_type,
                         "reward_type": self.cfg.algorithm.reward_type,
-                        "entropy_type": self.cfg.algorithm.entropy_type,
                         "single_action_dim": self.cfg.actor.model.get("action_dim", 7),
                         "logprobs": output_dict["logprobs"],
-                        "entropy": output_dict.get("entropy", None),
                         "values": output_dict.get("values", None),
                         "old_logprobs": prev_logprobs,
                         "advantages": advantages,
@@ -858,13 +857,25 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         "clip_ratio_low": self.cfg.algorithm.clip_ratio_low,
                         "value_clip": self.cfg.algorithm.get("value_clip", None),
                         "huber_delta": self.cfg.algorithm.get("huber_delta", None),
-                        "entropy_bonus": self.cfg.algorithm.entropy_bonus,
                         "loss_mask": loss_mask,
                         "loss_mask_sum": loss_mask_sum,
                         "max_episode_steps": self.cfg.env.train.max_episode_steps,
                         "task_type": self.cfg.runner.task_type,
                     }
                     loss, metrics_data = policy_loss(**kwargs)
+
+                    entropy_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+                    if self.cfg.algorithm.entropy_bonus > 0:
+                        entropy = output_dict["entropy"]
+                        entropy = reshape_entropy(
+                            entropy,
+                            entropy_type=self.cfg.algorithm.entropy_type,
+                            action_dim=self.cfg.actor.model.get("action_dim", 7),
+                            batch_size=output_dict["logprobs"].shape[0],
+                        )
+                        entropy_loss = masked_mean(entropy, mask=loss_mask)
+                        loss -= self.cfg.algorithm.entropy_bonus * entropy_loss
+                    metrics_data["entropy_loss"] = entropy_loss.detach().item()
 
                     loss /= self.gradient_accumulation
                     loss.backward()
@@ -884,7 +895,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     "actor/grad_norm": grad_norm.detach().item(),
                     "actor/lr": self.optimizer.param_groups[0]["lr"],
                 }
-                if self.cfg.algorithm.adv_type == "embodied_gae":
+                if self.cfg.algorithm.adv_type == "gae":
                     data["critic/lr"] = self.optimizer.param_groups[1]["lr"]
                 append_to_dict(metrics, data)
 

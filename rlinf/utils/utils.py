@@ -137,6 +137,15 @@ def raw_mean(values, mask, axis=0):
         return values.mean()
 
 
+def reshape_entropy(entropy, entropy_type, action_dim=7, batch_size=1):
+    if entropy is not None:
+        if entropy_type == "action_level":
+            entropy = entropy.reshape(batch_size, -1, action_dim).sum(dim=-1)
+        elif entropy_type == "chunk_level":
+            entropy = entropy.sum(dim=-1)
+    return entropy
+
+
 def logprobs_from_logits_flash_attn(logits, labels, inplace_backward=True):
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
 
