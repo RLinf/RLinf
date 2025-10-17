@@ -110,9 +110,13 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 具身智能镜像中包含多个 Python 虚拟环境（venv），位于 ``/opt/venv`` 目录下，分别对应不同模型，即 ``openvla``、``openvla-oft`` 和 ``openpi``。
 默认环境设置为 ``openvla``。
 要切换到所需的 venv，可以使用内置脚本 `switch_env`：
+
 .. code-block:: bash
 
-   source switch_env <env_name> # 例如，source switch_env openvla-oft, source switch_env openpi 等
+   source switch_env <env_name>
+   # source switch_env openvla
+   # source switch_env openvla-oft
+   # source switch_env openpi
 
 .. tip::
 
@@ -187,7 +191,7 @@ Megatron 和 SGLang/vLLM 依赖
 .. code-block:: shell
 
    uv sync --extra embodied
-   bash requirements/install_embodied_deps.sh # Must be run after the above command
+   bash requirements/install_embodied_deps.sh # 必须在上述命令后运行
 
 接着，根据具体实验类型安装对应的 Python 包：
 

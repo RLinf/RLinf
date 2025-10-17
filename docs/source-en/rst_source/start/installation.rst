@@ -114,7 +114,10 @@ To switch to the desired venv, use the built-in script `switch_env`:
 
 .. code-block:: bash
 
-   source switch_env <env_name> # e.g., source switch_env openvla-oft, source switch_env openpi, etc.
+   source switch_env <env_name>
+   # source switch_env openvla
+   # source switch_env openvla-oft
+   # source switch_env openpi
 
 .. tip::
 

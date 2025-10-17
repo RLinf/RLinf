@@ -24,7 +24,7 @@ These ensure proper character encoding with the `C.UTF-8` locale.
 Install the required packages, including Sphinx, from the `requirements.txt` file:
 
 ```bash
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
 
 ---
@@ -33,26 +33,19 @@ pip install -r requirements.txt
 
 With your environment ready, build the documentation using Sphinx. Source files are in the `source` directory, and output HTML files go to `build/html`.
 
-Run this command to build the documentation:
-
-```bash
-sphinx-build source-en build/html # change to source-zh for Chinese docs
-```
-
-### Using `sphinx-autobuild` for Live Reloading
-
-For a smoother development experience, use `sphinx-autobuild` to rebuild the documentation automatically when source files change:
-
-```bash
-sphinx-autobuild source-en build/html # change to source-zh for Chinese docs
-```
-
-This starts a local server and updates the documentation on file changes.
-
-## To keep it simple  
-Just run the following command. It will automatically set the environment variables and run the `sphinx-autobuild` command:  
+You can simply run the following command to build the English docs and open a server for preview and live reloading:
 ```bash
 bash autobuild.sh
+```
+To build the Chinese docs, run this:
+
+```bash
+bash autobuild.sh zh
+```
+
+To build without running the preview server, run this command:
+```bash
+sphinx-build source-en build/html # change to source-zh for Chinese docs
 ```
 
 ---
