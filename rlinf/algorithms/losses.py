@@ -173,14 +173,13 @@ def compute_ppo_critic_loss(
     return value_loss, metrics_data
 
 
-@register_policy_loss("ppo")
+@register_policy_loss("actor_critic")
 def compute_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
     """
     Compute PPO actor loss function.
 
     Args:
         logprobs (torch.Tensor): Log probabilities of actions
-        entropy (torch.Tensor): Entropy values
         values (torch.Tensor): Current value predictions
         old_log_prob (torch.Tensor): Previous log probabilities
         advantages (torch.Tensor): Advantage values
@@ -190,7 +189,6 @@ def compute_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
         clip_ratio_high (float): Upper clipping ratio for PPO
         value_clip (float): Value clipping threshold
         huber_delta (float): Huber loss delta parameter
-        entropy_bonus (float): Entropy bonus coefficient
 
     Returns:
         Tuple[torch.Tensor, Dict]: Loss and metrics dictionary
@@ -206,7 +204,7 @@ def compute_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
     return loss, metrics_data
 
 
-@register_policy_loss("grpo")
+@register_policy_loss("actor")
 def compute_grpo_actor_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
     """
     Compute actor loss for Group Relative Policy Optimization (GRPO).
