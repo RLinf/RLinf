@@ -20,10 +20,10 @@ from rlinf.algorithms.utils import (
     calculate_scores,
     postprocess_embodied_advantages_outputs,
     postprocess_loss_metric,
-    preprocess_embodied_advantages_inputs,
-    preprocess_reasoning_advantages_inputs,
-    preprocess_loss_inputs,
     postprocess_reasoning_advantages_outputs,
+    preprocess_embodied_advantages_inputs,
+    preprocess_loss_inputs,
+    preprocess_reasoning_advantages_inputs,
 )
 
 ADV_REGISTRY: Dict[str, Callable] = {}
