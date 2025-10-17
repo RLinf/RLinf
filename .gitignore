@@ -15,7 +15,4 @@ logs/*
 *.so
 .venv
 uv.lock
-assets
-openpi
-lerobot
-data
+rlinf/envs/maniskill/assets
