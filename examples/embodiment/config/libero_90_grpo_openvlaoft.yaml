@@ -160,6 +160,13 @@ actor:
     trust_remote_code: True
     padding_side: "right"
 
+  fsdp_config:
+    forward_prefetch: False
+    limit_all_gathers: False
+    backward_prefetch: False
+    use_orig_params: False
+    optimize_modules: False
+
 reward:
   use_reward_model: False
 
