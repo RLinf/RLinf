@@ -1,0 +1,21 @@
+cluster:
+  num_nodes: 1
+  num_gpus_per_node: 2
+  component_placement:
+    model: 0-1
+
+client:
+  group_name: "mcp_client_group"
+  placement_strategy:
+    type: "node"
+    node_id: 0
+
+runner:
+  task_type: mcp
+  experiment_name: test-mcp
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: test-mcp
+    experiment_name: ${runner.experiment_name}
+    log_level: INFO
+  output_dir: ../results
