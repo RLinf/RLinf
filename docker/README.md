@@ -15,10 +15,10 @@ You can reduce the number of compile threads by adding `--build-arg APEX_BUILD_T
 
 The built Docker image contains one or multiple Python virtual environments (venv) in the `/opt/venv` directory, depending on the `BUILD_TARGET`.
 
-Currently, the reasoning image contains one venv named `reason` in `/opt/venv/reason`, while the embodied image contains three venvs named `openvla`, `openvla-oft` and `pi0` in `/opt/venv/`.
+Currently, the reasoning image contains one venv named `reason` in `/opt/venv/reason`, while the embodied image contains three venvs named `openvla`, `openvla-oft` and `openpi` in `/opt/venv/`.
 
 To switch to the desired venv, we have a built-in script `switch_env` that can switch among venvs in a single command.
 
 ```shell
-source switch_env <env_name> # e.g., source switch_env openvla-oft, source switch_env pi0, etc.
+source switch_env <env_name> # e.g., source switch_env openvla-oft, source switch_env openpi, etc.
 ```

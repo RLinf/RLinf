@@ -133,7 +133,7 @@ Next, install the specific dependencies based on your experiment type.
 
 * For reasoning experiments using **Megatron** and **SGLang/vLLM** backends, follow the :ref:`Megatron and SGLang/vLLM Dependencies <megatron-and-sglang-vllm-dependencies>` section to install all required packages.  
 
-* For embodied intelligence experiments (e.g., OpenVLA, OpenVLA-OFT and openpi), follow the :ref:`Embodied Dependencies <embodied-dependencies>` section to install their specific dependencies.
+* For embodied intelligence experiments (e.g., OpenVLA, OpenVLA-OFT and OpenPI), follow the :ref:`Embodied Dependencies <embodied-dependencies>` section to install their specific dependencies.
 
 .. _common-dependencies:
 
