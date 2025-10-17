@@ -242,6 +242,9 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
         cfg.fsdp_config.use_orig_params = cfg.get("fsdp_config", {}).get(
             "use_orig_params", False
         )
+        cfg.fsdp_config.optimize_modules = cfg.get("fsdp_config", {}).get(
+            "optimize_modules", False
+        )
     return cfg
 
 

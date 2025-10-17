@@ -67,7 +67,7 @@ class FSDPModelManager:
         )
 
         if use_gptq:
-            from auto_gptq import AutoGPTQForCausalLM
+            from auto_gptq import AutoGPTQForCausalLM  # type: ignore[import-not-found]
 
             model_wrapper = AutoGPTQForCausalLM.from_quantized(
                 cfg.model.model_path,
@@ -96,7 +96,63 @@ class FSDPModelManager:
 
         if torch.distributed.is_initialized():
             torch.distributed.barrier()
+
+        if cfg.fsdp_config.optimize_modules:
+            self._optimize_model_modules(model)
+
         return model
+
+    def _optimize_model_modules(self, model: torch.nn.Module) -> None:
+        if self._cfg.model.get("gptq_model", False) or self._cfg.model.get(
+            "load_in_8bit", False
+        ):
+            self.logger.info(
+                "[FSDP] Skip using liger-kernel optimized modules for GPTQ/8bit models."
+            )
+            return
+        try:
+            from liger_kernel.transformers import (
+                apply_liger_kernel_to_qwen2,
+                apply_liger_kernel_to_qwen2_5_vl,
+            )
+
+            MODEL_ARCH_APPLY_FUNC = {
+                "qwen2.5": (
+                    apply_liger_kernel_to_qwen2,
+                    {
+                        "rope": True,
+                        "rms_norm": True,
+                        "swiglu": True,
+                        "fused_linear_cross_entropy": True,
+                    },
+                ),
+                "qwen2.5-vl": (
+                    apply_liger_kernel_to_qwen2_5_vl,
+                    {
+                        "rope": True,
+                        "rms_norm": True,
+                        "swiglu": True,
+                        "fused_linear_cross_entropy": True,
+                    },
+                ),
+            }
+            model_arch = self._cfg.model.get("model_arch", "").lower()
+            if model_arch in MODEL_ARCH_APPLY_FUNC:
+                apply_func, apply_kwargs = MODEL_ARCH_APPLY_FUNC[model_arch]
+                apply_func(
+                    model=model,
+                    **apply_kwargs,
+                )
+                self.logger.info(
+                    f"[FSDP] Applied liger-kernel optimizations for model_arch: {model_arch}, used kwargs: {apply_kwargs}"
+                )
+            else:
+                self.logger.info(
+                    f"[FSDP] No liger-kernel optimizations applied for model_arch: {model_arch}"
+                )
+                return
+        except Exception as e:
+            self.logger.warning(f"[FSDP] Liger kernels not applied: {e}")
 
     def setup_model_and_optimizer(self):
         """Setup model and optimizer."""

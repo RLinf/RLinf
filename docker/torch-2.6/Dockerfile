@@ -61,6 +61,7 @@ RUN source switch_env reason && uv pip install https://github.com/RLinf/apex/rel
 RUN source switch_env reason && uv pip install transformer_engine[pytorch]==2.1.0 --no-build-isolation
 RUN source switch_env reason && uv pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
 RUN source switch_env reason && uv pip uninstall pynvml
+RUN source switch_env reason && uv pip install liger-kernel
 
 # Set default env
 RUN echo "source ${UV_PATH}/reason/bin/activate" >> ~/.bashrc
