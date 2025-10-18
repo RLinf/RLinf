@@ -16,7 +16,7 @@ import faulthandler
 import logging
 import os
 import signal
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import psutil
 import setproctitle
@@ -41,6 +41,7 @@ from sglang.srt.utils import (
     suppress_other_loggers,
 )
 from sglang.utils import get_exception_traceback
+from tqdm import tqdm
 
 from rlinf.scheduler import Worker, WorkerAddress
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
@@ -177,18 +178,19 @@ class Scheduler(_Scheduler, Worker):
         # self.cuda_info("After offload Model weights and kv cache")
         return OffloadReqOutput()
 
-    def sync_hf_weight(self, recv_req: SyncHFWeightInput):
-        use_cudagraph = not self.cfg.rollout.enforce_eager
+    def reload_hf_weight(self, state_dict: Dict[str, Any]):
+        # Batch load HF weights in sglang
+
         colocate = self.placement_mode == PlacementMode.COLLOCATED
-
-        assert use_cudagraph, "use_cudagraph must be True now."
-
-        state_dict = self.recv(
-            src_group_name=self._actor_group_name,
-            src_rank=self.actor_weight_rank,
-        )
-
         model = self.tp_worker.worker.model_runner.model
+
+        # now the bucket size is 4GB
+        bucket_size = 4 * 1024 * 1024 * 1024
+        batch_weights = []
+        current_bucket = []
+
+        # divide state_dict into buckets to load in sglang
+        current_bucket_size = 0
 
         if colocate:
             self.resume_memory_occupation(ResumeMemoryOccupationReqInput())
@@ -200,12 +202,65 @@ class Scheduler(_Scheduler, Worker):
                 list_args[6] = torch.cuda.current_device()
                 new_weight = func(*list_args)
 
-                model.load_weights([(name, new_weight)])
-                del new_weight
+                # load weight in bf16, so the size is 2 * numel
+                if current_bucket_size + (new_weight.numel() * 2) > bucket_size:
+                    assert len(current_bucket) > 0, "current_bucket is empty"
+                    batch_weights.append(current_bucket)
+                    current_bucket = []
+                    current_bucket_size = 0
+
+                # add weight to current bucket
+                current_bucket.append((name, new_weight))
+                current_bucket_size += new_weight.numel() * 2
+
+            assert len(current_bucket) > 0, "current_bucket is empty"
+            # load the last bucket
+            batch_weights.append(current_bucket)
+
+            for bucket in tqdm(
+                batch_weights,
+                disable=self.get_parent_rank() != 0 or self.tp_rank != 0,
+                desc="Load weights",
+            ):
+                model.load_weights(bucket)
+                for name, weight in bucket:
+                    del weight
+                bucket.clear()
         else:
-            # disaggregate mode, recv tensor directly
             for name, tensor in state_dict.items():
-                model.load_weights([(name, tensor)])
+                # load weight in bf16, so the size is 2 * numel
+                if current_bucket_size + (tensor.numel() * 2) > bucket_size:
+                    assert len(current_bucket) > 0, "current_bucket is empty"
+                    batch_weights.append(current_bucket)
+                    current_bucket = []
+                    current_bucket_size = 0
+
+                # add weight to current bucket
+                current_bucket.append((name, tensor))
+                current_bucket_size += tensor.numel() * 2
+
+            assert len(current_bucket) > 0, "current_bucket is empty"
+            # load the last bucket
+            batch_weights.append(current_bucket)
+
+            for bucket in tqdm(
+                batch_weights,
+                disable=self.get_parent_rank() != 0 or self.tp_rank != 0,
+                desc="Load weights",
+            ):
+                model.load_weights(bucket)
+                bucket.clear()
+
+    def sync_hf_weight(self, recv_req: SyncHFWeightInput):
+        use_cudagraph = not self.cfg.rollout.enforce_eager
+        assert use_cudagraph, "use_cudagraph must be True now."
+
+        state_dict = self.recv(
+            src_group_name=self._actor_group_name,
+            src_rank=self.actor_weight_rank,
+        )
+        self.reload_hf_weight(state_dict)
+
         self.flush_cache()
         self.sync_in_tp("sync_hf_weight")
         return SyncHFWeightOutput()

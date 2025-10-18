@@ -260,6 +260,9 @@ class MegatronActor(MegatronModelManager, Worker):
             model_config=self.transformer_config,
             reshard_tp_size=self.cfg.rollout.tensor_parallel_size,
             reshard_pp_size=self.cfg.rollout.pipeline_parallel_size,
+            mg_ep_size=self.cfg.actor.model.expert_model_parallel_size,
+            mg_tpe_size=self.cfg.actor.model.expert_tensor_parallel_size,
+            moe_grouped_gemm=self.cfg.actor.model.get("moe_grouped_gemm", None),
         )
         self.rollout_weights_reshard = MegatronCoreWeightReshard(rollout_reshard_config)
         self._setup_rollout_weight_dst_ranks()
@@ -815,7 +818,7 @@ class MegatronActor(MegatronModelManager, Worker):
     def _get_inference_model_state_dict(self):
         """Get the state dictionary of the model for inference."""
         return self.inference_weights_reshard.gather_and_reshard_model(
-            unwrap_model(self.model)
+            unwrap_model(self.model), self._weight_dst_rank_in_rollout
         )
 
     def sync_model_to_inference(self):
@@ -831,6 +834,8 @@ class MegatronActor(MegatronModelManager, Worker):
 
     @torch.no_grad()
     def inference_step(self, batch):
+        # set the megatron actor in inference step
+        set_sync_funcs(self, forward_only=True)
         set_eval(self)
         return self.run_forward_backward(batch, forward_only=True)
 
@@ -910,7 +915,7 @@ class MegatronActor(MegatronModelManager, Worker):
     def _get_rollout_model_state_dict(self):
         """Get the state dictionary of the model for rollout."""
         return self.rollout_weights_reshard.gather_and_reshard_model(
-            unwrap_model(self.model)
+            unwrap_model(self.model), self._weight_dst_rank_in_rollout
         )
 
     def _setup_rollout_weight_dst_ranks(self):
