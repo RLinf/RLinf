@@ -29,8 +29,8 @@ from torch.multiprocessing.reductions import reduce_tensor
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import (
-    actor_loss,
     calculate_adv_and_returns,
+    policy_loss,
 )
 from rlinf.algorithms.utils import kl_penalty
 from rlinf.data.io_struct import (
@@ -249,9 +249,10 @@ class MegatronActor(MegatronModelManager, Worker):
 
         ref_policy_state_dict = None
         # only need this if we are running with inital kl penalty & full-parameter tuning
-        if self.cfg.algorithm.kl_beta > 0 and self.cfg.actor.get(
-            "combine_reference_model", True
-        ):
+        if (
+            self.cfg.algorithm.kl_beta > 0
+            or self.cfg.algorithm.get("reinpp_kl_beta", 0) > 0
+        ) and self.cfg.actor.get("combine_reference_model", True):
             ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model[0])
         self.ref_policy_state_dict = ref_policy_state_dict
 
@@ -381,9 +382,18 @@ class MegatronActor(MegatronModelManager, Worker):
                 if "ref_logprobs" in batch:
                     ref_logprobs = batch["ref_logprobs"]
 
+                if self.cfg.algorithm.get("importance_sampling_fix", False):
+                    inference_prev_logprobs = prev_logprobs
+                    training_prev_logprobs = batch["megatron_prev_logprobs"]
+                    advantages = advantages * torch.clamp(
+                        (training_prev_logprobs - inference_prev_logprobs).exp(),
+                        min=self.cfg.algorithm.importance_sampling_clip,
+                    )
+
                 mask = batch["attention_mask"][:, -response_len:]
 
-                loss, metrics_data = actor_loss(
+                loss, metrics_data = policy_loss(
+                    task_type=self.cfg.runner.task_type,
                     loss_type=self.cfg.algorithm.loss_type,
                     loss_agg_func=self.loss_agg_func,
                     logprobs=curr_logprobs,
@@ -408,7 +418,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     loss = loss + kl_loss * self.kl_beta
 
                 # Logging and early stopping according to KL (logp vs ref) or importance ratio (new logp vs old logp).
-                _imp = metrics_data["ratio"]
+                _imp = metrics_data["actor/ratio"]
                 torch.distributed.all_reduce(
                     _imp, group=parallel_state.get_data_parallel_group()
                 )
@@ -860,7 +870,11 @@ class MegatronActor(MegatronModelManager, Worker):
             # Prev logprobs
             with self.worker_timer():
                 prev_logprobs = self.inference_step(batch)
-                rollout_result.prev_logprobs = prev_logprobs.cpu()
+
+                if self.cfg.algorithm.get("importance_sampling_fix", False):
+                    rollout_result.megatron_prev_logprobs = prev_logprobs.cpu()
+                else:
+                    rollout_result.prev_logprobs = prev_logprobs.cpu()
 
             # Ref logprobs
             if compute_ref_logprobs:
@@ -892,11 +906,23 @@ class MegatronActor(MegatronModelManager, Worker):
             with self.worker_timer():
                 if rollout_result.advantages is None:
                     mask = batch["attention_mask"][:, -self.response_len :]
-                    advantages, returns = calculate_adv_and_returns(
+                    advantages, _ = calculate_adv_and_returns(
+                        task_type=self.cfg.runner.task_type,
                         adv_type=self.cfg.algorithm.adv_type,
-                        reward_scores=batch["rewards"].cuda(),
-                        mask=mask.cuda(),
-                        num_responses=self.cfg.algorithm.group_size,
+                        rewards=batch["rewards"].cuda(),
+                        loss_mask=mask.cuda(),
+                        group_size=self.cfg.algorithm.group_size,
+                        kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
+                        kl_penalty_type=self.kl_penalty_type,
+                        logprob=batch["prev_logprobs"].cuda()
+                        if "prev_logprobs" in batch
+                        else None,
+                        ref_logprob=batch["ref_logprobs"].cuda()
+                        if "ref_logprobs" in batch
+                        else None,
+                        use_reinpp_baseline=self.cfg.algorithm.get(
+                            "use_reinpp_baseline", False
+                        ),
                     )
                     rollout_result.advantages = advantages.cpu()
 

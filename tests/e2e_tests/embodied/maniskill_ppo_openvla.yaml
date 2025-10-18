@@ -45,8 +45,8 @@ algorithm:
   num_group_envs: 8
   rollout_epoch: 1
 
-  adv_type: embodied_gae
-  loss_type: embodied_ppo
+  adv_type: gae
+  loss_type: actor_critic
   reward_type: chunk_level
   logprob_type: "action_level"
   entropy_type: "action_level"

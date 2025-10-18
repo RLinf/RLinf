@@ -309,6 +309,7 @@ class RolloutResult:
     rollout_logprobs: Optional[List[List[float]]] = None
     prev_logprobs: Optional[torch.Tensor] = None
     ref_logprobs: Optional[torch.Tensor] = None
+    megatron_prev_logprobs: Optional[torch.Tensor] = None
 
     @property
     def batch_size(self):
@@ -563,7 +564,10 @@ class RolloutResult:
                 merged_result.ref_logprobs = merge_tensor(
                     merged_result.ref_logprobs, res.ref_logprobs
                 )
-
+            if res.megatron_prev_logprobs is not None:
+                merged_result.megatron_prev_logprobs = merge_tensor(
+                    merged_result.megatron_prev_logprobs, res.megatron_prev_logprobs
+                )
         return merged_result
 
     @staticmethod
@@ -841,6 +845,9 @@ class RolloutResult:
 
         if self.ref_logprobs is not None:
             batch["ref_logprobs"] = self.ref_logprobs.cuda()
+
+        if self.megatron_prev_logprobs is not None:
+            batch["megatron_prev_logprobs"] = self.megatron_prev_logprobs.cuda()
 
         if self.rewards is not None:
             batch["rewards"] = self.rewards.cuda()
