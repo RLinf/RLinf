@@ -165,9 +165,9 @@ actor:
 
     seq_length: ${runner.seq_length}
     encoder_seq_length: ${runner.seq_length}
+    model_arch: ${rollout.model_arch}
     model_path: /path/to/model/Qwen2.5-VL-3B-Instruct/
 
-    model_arch: ${rollout.model_arch}
 
   optim:
     optimizer: adam
@@ -202,11 +202,12 @@ actor:
     trust_remote_code: True
     padding_side: 'right'
 
-  fsdp_config:
-    forward_prefetch: True
-    limit_all_gathers: True
-    backward_prefetch: True
-    use_orig_params: True
+  fsdp_config:                  # below are fsdp configs, for more details, see https://pytorch.org/docs/stable/fsdp.html and https://huggingface.co/docs/accelerate/package_reference/fsdp
+    forward_prefetch: True      # if True, FSDP will explicitly prefetches the next upcoming all-gather while executing in the forward pass. only use with static graphs. Overlaps communication with computation to improve performance.
+    limit_all_gathers: True     # if True, FSDP will synchronizes CPU threads to limit the number of concurrent all-gathers. Only affects strategies that schedule all-gathers
+    backward_prefetch: 'pre'    # options are null, 'pre', 'post'. if 'pre', FSDP will prefetch the next upcoming all-gather while computing gradients. if 'post', FSDP will prefetch the next all-gather until current gradient is computed.    
+    use_orig_params: True       # if True, FSDP will use module's original paramters, it means it will expose nn.Module.named_parameters rather than FlatParameter
+    use_liger_kernel: True      # if True, liger_kernel will be used for FSDP, note that currently supported models in RLinf are [qwen2.5, qwen2.5-vl], for more details, see liger_kernel's doc
 
 reward:
   group_name: "RewardGroup"

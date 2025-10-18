@@ -237,11 +237,21 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             "limit_all_gathers", False
         )
         cfg.fsdp_config.backward_prefetch = cfg.get("fsdp_config", {}).get(
-            "backward_prefetch", False
+            "backward_prefetch", None
         )
         cfg.fsdp_config.use_orig_params = cfg.get("fsdp_config", {}).get(
             "use_orig_params", False
         )
+        cfg.fsdp_config.use_liger_kernel = cfg.get("fsdp_config", {}).get(
+            "use_liger_kernel", False
+        )
+
+        assert cfg.fsdp_config.backward_prefetch in [
+            None,
+            "pre",
+            "post",
+        ], "fsdp_config.backward_prefetch must be one of [None, 'pre', 'post']"
+
     return cfg
 
 
