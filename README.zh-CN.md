@@ -122,7 +122,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
     <td style="text-align:center;">39.10%</td>
   </tr>
   <tr>
-    <td style="text-align:center;"><a href="https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">RL4VLA (PPO)</td>
+    <td style="text-align:center;"><a href="https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">RL4VLA (PPO)</a></td>
     <td style="text-align:center;">93.75%</td>
     <td style="text-align:center;">80.47%</td>
     <td style="text-align:center;">75.00%</td>
@@ -146,7 +146,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
     <td style="text-align:center;"><strong>81.93%</strong></td>
   </tr>
   <tr>
-    <th colspan="6" style="text-align:center;"></th>
+    <td colspan="6" style="text-align:center;"></td>
   </tr>
   <tr>
     <td style="text-align:center;">OpenVLA-OFT (Base)</td>
@@ -186,8 +186,8 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
     <th style="text-align:center;">Spatial</th>
     <th style="text-align:center;">Object</th>
     <th style="text-align:center;">Goal</th>
-    <th style="text-align:center;">10</th>
-    <th style="text-align:center;">90</th>
+    <th style="text-align:center;">LIBERO-10</th>
+    <th style="text-align:center;">LIBERO-90</th>
     <th style="text-align:center;">Avg.</th>
   </tr>
   <tr>
@@ -201,12 +201,12 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
   </tr>
   <tr>
     <td style="text-align:center;"><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">OpenVLA-OFT (RLinf-GRPO)</td>
-    <td style="text-align:center;"><strong>99.40%<strong></td>
-    <td style="text-align:center;"><strong>99.80%<strong></td>
-    <td style="text-align:center;"><strong>98.79%<strong></td>
-    <td style="text-align:center;"><strong>93.95%<strong></td>
-    <td style="text-align:center;"><strong>98.59%<strong></td>
-    <td style="text-align:center;"><strong>98.11%<strong></td>
+    <td style="text-align:center;"><strong>99.40%</strong></td>
+    <td style="text-align:center;"><strong>99.80%</strong></td>
+    <td style="text-align:center;"><strong>98.79%</strong></td>
+    <td style="text-align:center;"><strong>93.95%</strong></td>
+    <td style="text-align:center;"><strong>98.59%</strong></td>
+    <td style="text-align:center;"><strong>98.11%</strong></td>
   </tr>
   <tr>
     <td style="text-align:center;">Δ Improvement</td>

@@ -123,7 +123,7 @@ and exhibits greater stability.
     <td style="text-align:center;">39.10%</td>
   </tr>
   <tr>
-    <td style="text-align:center;"><a href="https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">RL4VLA (PPO)</td>
+    <td style="text-align:center;"><a href="https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">RL4VLA (PPO)</a></td>
     <td style="text-align:center;">93.75%</td>
     <td style="text-align:center;">80.47%</td>
     <td style="text-align:center;">75.00%</td>
@@ -202,12 +202,12 @@ and exhibits greater stability.
   </tr>
   <tr>
     <td style="text-align:center;"><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">OpenVLA-OFT (RLinf-GRPO)</td>
-    <td style="text-align:center;"><strong>99.40%<strong></td>
-    <td style="text-align:center;"><strong>99.80%<strong></td>
-    <td style="text-align:center;"><strong>98.79%<strong></td>
-    <td style="text-align:center;"><strong>93.95%<strong></td>
-    <td style="text-align:center;"><strong>98.59%<strong></td>
-    <td style="text-align:center;"><strong>98.11%<strong></td>
+    <td style="text-align:center;"><strong>99.40%</strong></td>
+    <td style="text-align:center;"><strong>99.80%</strong></td>
+    <td style="text-align:center;"><strong>98.79%</strong></td>
+    <td style="text-align:center;"><strong>93.95%</strong></td>
+    <td style="text-align:center;"><strong>98.59%</strong></td>
+    <td style="text-align:center;"><strong>98.11%</strong></td>
   </tr>
   <tr>
     <td style="text-align:center;">Δ Improvement</td>
