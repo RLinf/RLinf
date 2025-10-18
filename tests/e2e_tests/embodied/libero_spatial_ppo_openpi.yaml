@@ -116,7 +116,7 @@ actor:
   checkpoint_load_path: "/workspace/dataset/pi0_libero"
   checkpoint_save_path: "../results"
   micro_batch_size: 16
-  global_batch_size: 256 # maximun : global batch size = micro batch size * actor num_processes.
+  global_batch_size: 256 # maximum : global batch size = micro batch size * actor num_processes.
   seed: 42
   enable_offload: False
 
