@@ -182,77 +182,6 @@ def compute_embodied_grpo_advantages(
     return advantages, advantages
 
 
-@register_advantage("math_gae_no_critic")
-def compute_math_gae_no_critic_advantages_and_returns(**kwargs):
-    """
-    Calculate advantages and returns for math tasks using GAE without critic model.
-
-    This function implements a simplified advantage estimation for math tasks
-    without requiring a value function, similar to AReaL's disable_head approach.
-
-    Args:
-        reward_scores (torch.Tensor): Reward scores for math responses
-        mask (torch.Tensor): Attention mask of shape [bsz, seq_len] or [bsz, max_seq_len]
-        gamma (float): Discount factor
-        gae_lambda (float): GAE lambda parameter
-        normalize_advantages (bool): Whether to normalize advantages
-        normalize_returns (bool): Whether to normalize returns
-
-    Returns:
-        Tuple[torch.Tensor, torch.Tensor]: (advantages, returns) tensors
-    """
-    reward_scores = kwargs["reward_scores"]
-    mask = kwargs["mask"]
-    gamma = kwargs.get("gamma", 1.0)
-    normalize_advantages = kwargs.get("normalize_advantages", True)
-    normalize_returns = kwargs.get("normalize_returns", False)
-
-    # For math tasks without critic, we use reward-to-go as baseline
-    bsz, seq_len = mask.shape
-
-    # Create reward structure: reward at the end of sequence
-    rewards = torch.zeros_like(mask, dtype=torch.float32)
-    rewards[:, -1] = reward_scores  # Put reward at the end of sequence
-
-    # Create done flags (episode ends at the last token)
-    dones = torch.zeros_like(mask, dtype=torch.bool)
-    dones[:, -1] = True
-
-    # Compute reward-to-go (cumulative discounted rewards)
-    returns = torch.zeros_like(mask, dtype=torch.float32)
-    cumulative_reward = 0
-
-    for t in reversed(range(seq_len)):
-        cumulative_reward = rewards[:, t] + gamma * cumulative_reward * (~dones[:, t])
-        returns[:, t] = cumulative_reward
-
-    # For no-critic setup, advantages are computed using reward-to-go
-    # with a simple baseline subtraction
-    advantages = returns.clone()
-
-    # Apply mask
-    advantages = advantages * mask
-    returns = returns * mask
-
-    # Simple baseline subtraction (mean of valid advantages)
-    if normalize_advantages:
-        valid_advantages = advantages[mask.bool()]
-        if len(valid_advantages) > 0:
-            mean_advantages = valid_advantages.mean()
-            std_advantages = valid_advantages.std()
-            advantages = (advantages - mean_advantages) / (std_advantages + 1e-5)
-
-    # Normalize returns if requested
-    if normalize_returns:
-        valid_returns = returns[mask.bool()]
-        if len(valid_returns) > 0:
-            mean_returns = valid_returns.mean()
-            std_returns = valid_returns.std()
-            returns = (returns - mean_returns) / (std_returns + 1e-5)
-
-    return advantages, returns
-
-
 @register_advantage("math_gae")
 def compute_math_gae_advantages_and_returns(**kwargs):
     """
@@ -369,6 +298,29 @@ def compute_math_grpo_advantages(**kwargs):
     return advantages, None
 
 
+@register_advantage("coding_ppo")
+def compute_coding_ppo_advantages(**kwargs):
+    """
+    Calculate advantages for coding tasks using PPO (without critic model).
+    """
+    reward_scores = kwargs["reward_scores"]
+    mask = kwargs["mask"]
+    normalize_advantages = kwargs.get("normalize_advantages", False)
+
+    advantages = reward_scores
+    advantages = (torch.zeros_like(mask) + advantages.view(-1, 1)) * mask
+
+    # Simple baseline subtraction (mean of valid advantages)
+    if normalize_advantages:
+        valid_advantages = advantages[mask.bool()]
+        if len(valid_advantages) > 0:
+            mean_advantages = valid_advantages.mean()
+            std_advantages = valid_advantages.std()
+            advantages = (advantages - mean_advantages) / (std_advantages + 1e-5)
+
+    return advantages, None
+
+
 if __name__ == "__main__":
     # test compute_ppo_advantages_and_returns
     torch.manual_seed(0)
@@ -397,3 +349,39 @@ if __name__ == "__main__":
         normalize_advantages=False,
     )
     print(advantages)
+
+    # test compute_math_gae_advantages_and_returns
+    torch.manual_seed(0)
+    reward_scores = torch.randn(8)  # 8 samples
+    values = torch.randn(8, 10)  # [bsz, seq_len]
+    mask = torch.ones(8, 10)  # all positions are valid
+    advantages, returns = compute_math_gae_advantages_and_returns(
+        reward_scores=reward_scores,
+        values=values,
+        mask=mask,
+        gamma=0.99,
+        gae_lambda=0.95,
+        normalize_advantages=True,
+        normalize_returns=False,
+    )
+    print("Math GAE advantages mean:", advantages.mean())
+    print("Math GAE returns mean:", returns.mean())
+
+    # test compute_math_grpo_advantages
+    torch.manual_seed(0)
+    reward_scores = torch.randn(12)  # 12 samples
+    mask = torch.ones(12, 8)  # [bsz, seq_len]
+    num_responses = 4  # 3 groups of 4 responses each
+    advantages, _ = compute_math_grpo_advantages(
+        reward_scores=reward_scores, mask=mask, num_responses=num_responses
+    )
+    print("Math GRPO advantages mean:", advantages.mean())
+
+    # test compute_coding_ppo_advantages
+    torch.manual_seed(0)
+    reward_scores = torch.randn(6)  # 6 samples
+    mask = torch.ones(6, 5)  # [bsz, seq_len]
+    advantages, _ = compute_coding_ppo_advantages(
+        reward_scores=reward_scores, mask=mask, normalize_advantages=True
+    )
+    print("Coding PPO advantages mean:", advantages.mean())
