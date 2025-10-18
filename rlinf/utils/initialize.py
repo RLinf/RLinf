@@ -79,6 +79,25 @@ def set_megatron_args(cfg):
 
     args.iteration = 0
 
+    args.transformer_impl = cfg.model.get("transformer_impl", "transformer_engine")
+    args.swiglu = cfg.model.activation in ["swiglu", "fast-swiglu"]
+    args.untie_embeddings_and_output_weights = (
+        not cfg.model.share_embeddings_and_output_weights
+    )
+
+    # If padded_vocab_size is None, it will pad tokenizer.vocab_size according to make_vocab_size_divisible_by and tp size.
+    # In RLinf, padded_vocab_size is set to hf_config.vocab_size, so make_vocab_size_divisible_by=1
+    args.padded_vocab_size = cfg.model.override_vocab_size
+    args.make_vocab_size_divisible_by = 1
+    if cfg.model.normalization in ["rmsnorm", "RMSNorm"]:
+        args.normalization = "RMSNorm"
+    args.tensor_model_parallel_size = cfg.model.tensor_model_parallel_size
+    args.pipeline_model_parallel_size = cfg.model.pipeline_model_parallel_size
+    args.context_parallel_size = cfg.model.context_parallel_size
+    args.ddp_bucket_size = cfg.megatron.ddp_bucket_size
+    args.overlap_grad_reduce = cfg.optim.overlap_grad_reduce
+    args.overlap_param_gather = cfg.optim.overlap_param_gather
+
     set_args(args)
 
     return args

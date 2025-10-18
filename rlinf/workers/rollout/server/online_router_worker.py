@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import copy
 import json
 import random
 import time
@@ -27,7 +28,7 @@ from pydantic import BaseModel
 
 from rlinf.scheduler import Worker
 from rlinf.utils.placement import ComponentPlacement
-from rlinf.workers.rollout.sglang.sglang_worker import AsyncSGLangWorker
+from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
 
 
 class CompleteRequest(BaseModel):
@@ -66,6 +67,9 @@ class OnlineRouterWorker(Worker):
         self._server_host = cfg.server.online_router.get("host", "0.0.0.0")
         self._server_port = cfg.server.online_router.get("port", 8081)
         self._rollout_instance_num = placement.rollout_dp_size
+        self._sampling_params = SGLangWorker.get_sampling_param_from_config(self._cfg)
+        if "stop" in self._cfg.algorithm.sampling_params:
+            self._sampling_params["stop"] = self._cfg.algorithm.sampling_params["stop"]
 
         # Sync weight state management
         self._sync_model_lock = asyncio.Lock()
@@ -139,12 +143,15 @@ class OnlineRouterWorker(Worker):
         try:
             # Forward request to rollout worker
             sglang_instance_id = random.randint(0, self._rollout_instance_num - 1)
+            if request.stop is not None:
+                sampling_params = copy.deepcopy(self._sampling_params)
+                sampling_params["stop"] = request.stop
             generate_result = (
                 await self.rollout_worker.execute_on(sglang_instance_id)
-                .agenerate(request.prompt, stop=request.stop)
+                .async_generate(prompt=request.prompt, sampling_params=sampling_params)
                 .async_wait()
             )
-            generated_text = generate_result[0]["text"]
+            generate_result = generate_result[0][0]
 
             if not request.stream:
                 # Create response
@@ -152,10 +159,10 @@ class OnlineRouterWorker(Worker):
                     id=str(request_id),
                     choices=[
                         {
-                            "text": generated_text,
+                            "text": generate_result["text"],
                             "index": 0,
                             "logprobs": None,
-                            "finish_reason": generate_result[0]["meta_info"][
+                            "finish_reason": generate_result["meta_info"][
                                 "finish_reason"
                             ]["type"],
                         }
@@ -175,7 +182,7 @@ class OnlineRouterWorker(Worker):
                         "model": "test-model",
                         "choices": [
                             {
-                                "text": generated_text,
+                                "text": generate_result["text"],
                                 "index": 0,
                                 "logprobs": None,
                                 "finish_reason": "stop",
@@ -204,7 +211,7 @@ class OnlineRouterWorker(Worker):
             if request_id in self._active_requests:
                 del self._active_requests[request_id]
 
-    async def init_worker(self, rollout_worker: AsyncSGLangWorker):
+    async def init_worker(self, rollout_worker: SGLangWorker):
         """Initialize the worker."""
         self.rollout_worker = rollout_worker
 

@@ -1,4 +1,4 @@
-Auto Scheduling Strategy
+Auto Placement
 ================================
 
 Auto Placement before RL training

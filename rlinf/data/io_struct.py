@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import uuid
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -192,84 +194,195 @@ class RolloutRequest:
 
         return splitted_requests
 
+    def to_seq_group_infos(self) -> List["SeqGroupInfo"]:
+        """Convert the RolloutRequest into a list of SeqGroupInfo objects.
+
+        Returns:
+            List[SeqGroupInfo]: A list of SeqGroupInfo objects.
+        """
+        return [
+            SeqGroupInfo(
+                id=uuid.uuid4().int,
+                input_ids=input_ids,
+                answer=answers,
+                group_size=self.n,
+                image_data=image_data,
+                multi_modal_inputs=multi_modal_inputs,
+            )
+            for input_ids, answers, image_data, multi_modal_inputs in zip(
+                self.input_ids,
+                self.answers,
+                self.image_data,
+                self.multi_modal_inputs,
+                strict=True,
+            )
+        ]
+
+
+class FinishReasonEnum(StrEnum):
+    ABORT = "abort"
+    STOP = "stop"
+    LENGTH = "length"
+
+
+@dataclass
+class SeqGroupInfo:
+    """
+    SeqGroupInfo represents a group of sequences and tracks their processing status and results.
+
+    Each SeqGroupInfo instance corresponds to a single input sequence that is expanded into `group_size` sequences
+
+    Attributes:
+        id (int): Unique identifier for the sequence group.
+        input_ids (List[int]): List of input IDs of the original sequence.
+        answer (List[str]): List of answers of the original sequence.(One sequence can have multiple equivalent answers)
+        group_size (int): Number of sequences in the group.
+        idx_completed (set[int]): Set of indices for sequences that have completed rollout and are ready for evaluation.
+        idx_aborted (set[int]): Set of indices for sequences that have been aborted. These sequences need to be re-rolled out before they can be evaluated.
+        results (List[Optional[Dict]]): List storing result dictionaries for each sequence, or None if not yet available.
+
+    Methods:
+        record_sglang_result(idx: int, result: Dict):
+            Records the result for a sequence at the given index.
+            Updates completion or abortion status based on the result's finish reason.
+            Handles overwriting of existing results and concatenates output IDs if necessary.
+
+        num_completed (int):
+            Returns the number of completed sequences.
+
+        num_aborted (int):
+            Returns the number of aborted sequences.
+
+        num_returned (int):
+            Returns the total number of sequences that have either completed or aborted.
+
+        num_running (int):
+            Returns the number of sequences still running.
+
+        all_returned (bool):
+            Returns True if all sequences have either completed or aborted.
+
+        all_completed (bool):
+            Returns True if all sequences have completed.
+    """
+
+    id: int
+    input_ids: List[int]
+    answer: List[str]
+    group_size: int
+    idx_completed: set[int] = field(init=False, compare=False)
+    idx_aborted: set[int] = field(init=False, compare=False)
+    results: List[Optional[Dict]] = field(init=False, compare=False)
+    image_data: Optional[List] = None
+    multi_modal_inputs: Optional[List] = None
+
+    def __post_init__(self):
+        assert self.group_size > 0, "group_size must be greater than 0"
+        self.idx_completed = set()
+        self.idx_aborted = set()
+        self.results = [None for _ in range(self.group_size)]
+
+    def record_sglang_result(self, idx: int, result: Dict, logger=None):
+        finished_reason = result["meta_info"]["finish_reason"]["type"]
+        match finished_reason:
+            case FinishReasonEnum.ABORT:
+                self.idx_aborted.add(idx)
+            case FinishReasonEnum.STOP | FinishReasonEnum.LENGTH:
+                self.idx_completed.add(idx)
+            case _:
+                raise ValueError(f"Unknown finish reason: {finished_reason}")
+        if self.results[idx] is None:
+            self.results[idx] = result
+        else:
+            prev_output_ids = self.results[idx]["output_ids"]
+            self.results[idx] = result
+            self.results[idx]["output_ids"] = prev_output_ids + result["output_ids"]
+
+    def __hash__(self):
+        return self.id
+
+    @property
+    def num_completed(self) -> int:
+        return len(self.idx_completed)
+
+    @property
+    def num_aborted(self) -> int:
+        return len(self.idx_aborted)
+
+    @property
+    def num_returned(self) -> int:
+        return self.num_completed + self.num_aborted
+
+    @property
+    def num_running(self) -> int:
+        return self.group_size - self.num_returned
+
+    @property
+    def all_returned(self) -> bool:
+        return self.num_returned == self.group_size
+
+    @property
+    def all_completed(self) -> bool:
+        return self.num_completed == self.group_size
+
 
 class CompletionInfo:
     def __init__(self, logger=None):
         self.input_ids: Dict[int, List[int]] = {}  # hash -> input token IDs
         self.complete_num: Dict[int, int] = {}  # hash -> completion count
         self.results: Dict[int, List[Dict]] = {}  # hash -> list of results
+        self.input_ids_map: Dict[int, List[Dict]] = {}  # unique_id -> input_ids
+        self.answers: Dict[int, List[str]] = {}  # unique_id -> answer
+        self.abort_results: Dict[
+            int, List[Dict]
+        ] = {}  # unique_id -> list of abort results
 
         self.num_requests: int = 0
         self.num_completed: int = 0
         self._num_returned: int = 0  # Number of results returned
 
         self.n_result_each_request: int = 0
+        self.unique_id_inc = 0
 
         self.logger = logger
 
-    def hash(self, token_ids: List[int]) -> int:
-        """Generate a hash for the token IDs."""
-        return hash(tuple(token_ids))
-
-    def clear(self):
-        self.complete_num.clear()
-        self.input_ids.clear()
-        self.results.clear()
-        self.num_requests = 0
-        self.num_completed = 0
-        self._num_returned = 0
-
-    def add_request(self, req: RolloutRequest):
-        """Add a new request to the completion info."""
-        if self.n_result_each_request != 0:
-            assert self.n_result_each_request == req.n
-        else:
-            self.n_result_each_request = req.n
-
-        self.num_requests += len(req.input_ids)
-
-        for ids in req.input_ids:
-            hash_id = self.hash(ids)
-            if hash_id not in self.input_ids:
-                self.input_ids[hash_id] = ids
-                self.complete_num[hash_id] = 0
-                self.results[hash_id] = []
-            else:
-                assert self.input_ids[hash_id] == ids, (
-                    "Input IDs mismatch for existing hash ID"
-                )
-
-    def clear_and_set(self, req: RolloutRequest):
-        self.clear()
-        self.add_request(req)
-
     def is_empty(self) -> bool:
-        return len(self.complete_num) == 0 and len(self.results) == 0
+        return len(self.results) == 0
 
-    def record_result(self, token_ids: List[int], result: Dict) -> int:
-        hash_id = self.hash(token_ids)
+    def record_result(self, unique_id: int, result: Dict) -> int:
+        # only in ["abort", "stop", "length"]
+        finished_reason = result["meta_info"]["finish_reason"]["type"]
+        self.complete_num[unique_id] += 1
+        if finished_reason == "abort":
+            self.abort_results[unique_id].append(result)
+        else:
+            self.results[unique_id].append(result)
 
-        self.complete_num[hash_id] += 1
-        self.results[hash_id].append(result)
+            if len(self.results[unique_id]) == self.n_result_each_request:
+                self.num_completed += 1
 
-        if self.complete_num[hash_id] == self.n_result_each_request:
-            self.num_completed += 1
-            if self.logger is not None:
-                self.logger.debug(f"Completed all rollouts for hash: {hash_id}")
+        return len(self.results[unique_id])
 
-        return self.complete_num[hash_id]
+    def is_completed(self, unique_id: int) -> bool:
+        return len(self.results[unique_id]) == self.n_result_each_request
 
-    def is_completed(self, hash_id: int) -> bool:
-        return self.complete_num[hash_id] == self.n_result_each_request
-
-    def get_results(self, hash_id: int) -> List[Dict]:
+    def pop_results(self, unique_id: int):
         """Get the results for the given token IDs."""
-        assert hash_id in self.results, "Hash ID not found in results"
-        assert self.complete_num[hash_id] == self.n_result_each_request, (
+        assert unique_id in self.input_ids_map, "Hash ID not found in input_ids_map"
+        assert unique_id in self.answers, "Hash ID not found in answers"
+        assert unique_id in self.results, "Hash ID not found in results"
+        assert unique_id in self.abort_results, "Hash ID not found in abort_results"
+        assert len(self.results[unique_id]) == self.n_result_each_request, (
             "Not all results for this hash ID are completed"
         )
-        value = self.results.pop(hash_id)
-        return value
+        assert len(self.abort_results[unique_id]) == 0, (
+            "Any results for this hash ID are aborted"
+        )
+        input_ids = self.input_ids_map.pop(unique_id)
+        answer = self.answers.pop(unique_id)
+        self.abort_results.pop(unique_id)
+        results = self.results.pop(unique_id)
+        return input_ids, answer, results
 
     def record_returned(self):
         """Record that a result has been returned."""
@@ -282,6 +395,18 @@ class CompletionInfo:
     def all_returned(self) -> bool:
         """Check if all results have been returned."""
         return self._num_returned == self.num_requests
+
+    def add_unique_id(self, input_ids, answer) -> int:
+        unique_id = self.unique_id_inc
+        self.unique_id_inc += 1
+
+        self.input_ids_map[unique_id] = input_ids
+        self.answers[unique_id] = answer
+        self.results[unique_id] = []
+        self.abort_results[unique_id] = []
+        self.complete_num[unique_id] = 0
+        self.num_requests += 1
+        return unique_id
 
 
 @dataclass(kw_only=True)
@@ -919,6 +1044,10 @@ class BatchResizingIterator:
         self.prefetch_micro_batch = None  # Used for computing batch info
         self.global_batch_done = False
         self.batches = []
+
+    def reset_total_batch_size(self, total_batch_size: int):
+        self.total_batch_size = total_batch_size
+        self.global_batch_size = total_batch_size // self.num_global_batches
 
     def check_finished_global_batch(self):
         assert self.global_batch_done, (

@@ -7,9 +7,13 @@ It explains both the design philosophy and the practical configuration required 
 - :doc:`online-scaling`  
    Provides an overview of the mechanism, focusing on the design principles behind RLinf’s adaptive scaling capabilities.
 
-- :doc:`auto-scheduling`  
-   Details the concrete implementation of automatic scheduling in RLinf,  
+- :doc:`dynamic-scheduling`  
+   Details the concrete implementation of dynamic scheduling in RLinf,  
    including how to configure it properly to enable dynamic scheduling.
+
+- :doc:`auto-placement`  
+   Details the concrete implementation of auto-placement in RLinf,  
+   including how to configure it properly to enable auto-placement.
 
 
 .. toctree::
@@ -17,4 +21,5 @@ It explains both the design philosophy and the practical configuration required 
    :maxdepth: 1
 
    online-scaling
-   auto-scheduling
+   dynamic-scheduling
+   auto-placement

@@ -200,11 +200,12 @@ def middle_file_to_mg(convert_config: ConvertorConfig) -> None:
 
     if convert_config.process_num > 1:
         operation_aware_initializer = OperationAwareDeviceInitializer(convert_config)
-        with ProcessPoolExecutor(
-            convert_config.process_num
-        ) as saver_exec, ProcessPoolExecutor(
-            convert_config.process_num, initializer=operation_aware_initializer
-        ) as mp_exec:
+        with (
+            ProcessPoolExecutor(convert_config.process_num) as saver_exec,
+            ProcessPoolExecutor(
+                convert_config.process_num, initializer=operation_aware_initializer
+            ) as mp_exec,
+        ):
             spliter_handles = []
             saver_handles = []
             nums_pp_rank = {}

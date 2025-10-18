@@ -16,7 +16,6 @@ import glob
 import os
 from typing import Literal
 
-import safetensors
 import safetensors.torch
 
 from .tensor_operations import Load, Operation

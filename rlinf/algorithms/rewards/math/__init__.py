@@ -37,5 +37,8 @@ class MathReward:
             List[float]: A list of reward scores, one for each response.
         """
 
-        rewards = math_verify_call(response, reference)
-        return [float(reward) * self.scale for reward in rewards]
+        is_correct_list = math_verify_call(response, reference)
+        return [
+            float(1 if is_correct else -1) * self.scale
+            for is_correct in is_correct_list
+        ]

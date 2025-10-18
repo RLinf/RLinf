@@ -51,7 +51,7 @@ class MegatronCoreWeightReshard:
         for subgroup_ranks in all_subgroups:
             key = tuple(subgroup_ranks)
             if key not in self.tp_subgroups:
-                self.tp_subgroups[key] = torch.distributed.new_group(
+                self.tp_subgroups[key] = parallel_state.create_group(
                     subgroup_ranks, backend="nccl"
                 )
 

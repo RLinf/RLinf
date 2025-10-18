@@ -27,6 +27,7 @@ from tqdm import tqdm
 from rlinf.data.io_struct import RolloutRequest
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
+from rlinf.scheduler.dynamic_scheduler.scheduler_worker import SchedulerWorker
 from rlinf.utils.data_iter_utils import split_list
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
@@ -57,11 +58,12 @@ class ReasoningRunner:
         inference: Optional[MegatronInference],
         actor: MegatronActor,
         reward: RewardWorker,
+        scheduler: SchedulerWorker = None,
     ):
         """"""
         self.cfg = cfg
         self.component_placement = placement
-        self.is_pipeline = self.component_placement.is_disaggregated
+        self.is_pipeline = self.component_placement.is_pipeline
         self.has_dedicated_inference = inference is not None
 
         # Workers
@@ -70,6 +72,12 @@ class ReasoningRunner:
         # Collocated mode uses actor as inference
         self.inference = inference if self.has_dedicated_inference else self.actor
         self.reward = reward
+
+        # Scheduler task
+        self.scheduler = scheduler
+        self.use_pre_process_policy = (scheduler is not None) and getattr(
+            self.cfg.cluster, "use_pre_process_policy", False
+        )
 
         # Data channels
         self.dataloader_channel = Channel.create("DataLoader")
@@ -172,6 +180,8 @@ class ReasoningRunner:
 
         # Init workers
         self.rollout.init_worker().wait()
+        if self.use_pre_process_policy:
+            self.rollout.offload_engine().wait()
         self.actor.init_worker().wait()
         if self.has_dedicated_inference:
             self.inference.init_worker().wait()
@@ -293,13 +303,13 @@ class ReasoningRunner:
             self.dataloader_channel.put(request, async_op=True)
 
     def _sync_weights(self):
-        self.actor.sync_model_to_rollout()
-        self.rollout.sync_model_from_actor().wait()
-        self.actor.del_reshard_state_dict().wait()
-
         if self.has_dedicated_inference:
             self.actor.sync_model_to_inference()
             self.inference.sync_model_from_actor().wait()
+
+        self.actor.get_model_state_and_offload().wait()
+        self.actor.sync_model_to_rollout_transfer()
+        self.rollout.sync_model_from_actor().wait()
 
     def run(self):
         epoch_iter = range(self.epoch, self.cfg.runner.max_epochs)
@@ -323,6 +333,9 @@ class ReasoningRunner:
 
                     with self.timer("sync_weights"):
                         self._sync_weights()
+
+                    if self.scheduler is not None:
+                        scheduler_handle = self.scheduler.run()
 
                     # Rollout
                     rollout_handle: Handle = self.rollout.rollout(
@@ -360,6 +373,9 @@ class ReasoningRunner:
                     )
 
                     metrics = actor_handle.wait()
+
+                    if self.scheduler is not None:
+                        scheduler_handle.wait()
                     actor_rollout_metrics = metrics[0][0]
                     actor_training_metrics = metrics[0][1]
                     self.global_steps += 1
