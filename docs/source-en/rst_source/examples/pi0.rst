@@ -1,8 +1,8 @@
-π₀ Model Reinforcement Learning Training
+π\ :sub:`0`\  and π\ :sub:`0.5`\  models Reinforcement Learning Training
 ===================================================
 
-This example provides a complete guide to fine-tuning the π₀
-algorithm with reinforcement learning in the **LIBERO** environment
+This example provides a complete guide to fine-tuning the 
+π\ :sub:`0`\  and π\ :sub:`0.5`\  algorithm with reinforcement learning in the **LIBERO** environment
 using the **RLinf** framework. It covers the entire process—from
 environment setup and core algorithm design to training configuration,
 evaluation, and visualization—along with reproducible commands and
@@ -40,7 +40,7 @@ Environment
 
 **Task Description Format**
 
-   π₀ directly uses the environment-provided natural-language
+   π\ :sub:`0`\  and π\ :sub:`0.5`\  directly use the environment-provided natural-language
    task description as the language model input.
 
 **Data Structure**
@@ -77,7 +77,11 @@ Algorithm
 Model Download
 --------------
 
-Before starting training, you need to download the corresponding pretrained models. We provide two different options:
+Before starting training, you need to download the corresponding pretrained models. Based on the algorithm type you want to use, we provide different model options:
+
+**π**\ :sub:`0`\  **Model Download**
+
+π\ :sub:`0`\  provides two different model options based on task type:
 
 **Option #1 RLinf-Pi0-SFT-Spatial-Object-Goal Model**
 
@@ -109,11 +113,26 @@ This model is dedicated to handling Long (libero10) task type.
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-SFT-Long
 
+**π**\ :sub:`0.5`\  **Model Download**
+
+π\ :sub:`0.5`\  provides a unified model that is suitable for all task types, including object, goal, spatial, and Long types.
+
+.. code:: bash
+
+   # Download the model (choose either method)
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Pi05-SFT
+
+   # Method 2: Using huggingface-hub
+   pip install huggingface-hub
+   hf download RLinf/RLinf-Pi05-SFT
+
 **Model Selection Guide**
 
-- If you want to train **object, goal, or spatial** task types, please use the `RLinf-Pi0-SFT-Spatial-Object-Goal` model.
-- If you want to train the **Long** task type for libero10, please use the `RLinf-Pi0-SFT-Long` model.
-
+- If you want to train **object, goal, or spatial** task on π\ :sub:`0`\  model, please use the `RLinf-Pi0-SFT-Spatial-Object-Goal` model.
+- If you want to train the **Long** task on π\ :sub:`0`\  model, please use the `RLinf-Pi0-SFT-Long` model.
+- If you want to train tasks on π\ :sub:`0.5`\  model, please use the `RLinf-Pi05-SFT` model.
 After downloading, please make sure to specify the model path correctly in your configuration yaml file.
 
 Running Scripts
@@ -165,7 +184,7 @@ interference, eliminating the need for offload functionality.
 
 --------------
 
-**2. π₀ Key Parameter Configuration**
+**2. Model Key Parameter Configuration**
 
 .. code:: yaml
 
@@ -177,6 +196,8 @@ interference, eliminating the need for offload functionality.
      action_env_dim: ${actor.model.action_dim}
      noise_method: "flow_sde"
      add_value_head: False
+     pi05: False 
+     value_after_vlm: False
 
 | You can adjust ``noise_level`` and ``num_steps`` to control
   the noise intensity and flow-matching steps.
@@ -185,16 +206,22 @@ interference, eliminating the need for offload functionality.
   `flow_sde <https://arxiv.org/abs/2505.05470>`__ and
   `reinflow <https://arxiv.org/abs/2505.22094>`__.
 
+You can set ``pi05: True`` to enable π\ :sub:`0.5`\  mode, and set ``value_after_vlm`` to control the input path of state features: True to input to VLM part (π\ :sub:`0.5`\  default configuration), False to input to action expert (π\ :sub:`0`\  default configuration).
+
 --------------
 
 **3. Configuration Files**
 
-   Using *libero-10* as an example:
+Using libero-10 as an example:
 
--  **π₀ + PPO**:
+- π\ :sub:`0`\ + PPO:
    ``examples/embodiment/config/libero_10_ppo_openpi.yaml``
--  **π₀ + GRPO**:
+- π\ :sub:`0`\ + GRPO:
    ``examples/embodiment/config/libero_10_grpo_openpi.yaml``
+- π\ :sub:`0.5`\ + PPO:
+   ``examples/embodiment/config/libero_10_ppo_openpi_pi05.yaml``
+- π\ :sub:`0.5`\ + GRPO:
+   ``examples/embodiment/config/libero_10_grpo_openpi_pi05.yaml``
 
 --------------
 
@@ -207,7 +234,7 @@ command:
 
    bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
 
-For example, to train the π₀ model using the PPO algorithm in
+For example, to train the π\ :sub:`0`\  model using the PPO algorithm in
 the LIBERO environment, run:
 
 ::
@@ -279,10 +306,10 @@ Visualization and Results
 **LIBERO Results**
 ~~~~~~~~~~~~~~~~~~
 
-We trained π₀ with PPO and GRPO in the LIBERO environment.
+We trained π\ :sub:`0`\  and π\ :sub:`0.5`\  with PPO and GRPO in the LIBERO environment.
 The results achieved through our RL training are shown below:
 
-.. list-table:: **π₀ model results on LIBERO**
+.. list-table:: **π**\ :sub:`0`\  **model results on LIBERO**
    :header-rows: 1
 
    * - Model
@@ -292,23 +319,53 @@ The results achieved through our RL training are shown below:
      - Long 
      - Average
 
-   * - π₀ (few-shot)
+   * - π\ :sub:`0`\ (few-shot)
      - 65.3%
      - 50.0%
      - 64.4%
      - 49.8%
      - 57.4%
 
-   * - PPO-π₀-RLinf
+   * - PPO-π\ :sub:`0`\-RLinf
      - **98.4%**
      - **99.4%**
      - **97.2%**
      - **90.0%**
      - **96.3%**
 
-   * - GRPO-π₀-RLinf
+   * - GRPO-π\ :sub:`0`\-RLinf
      - 97.8%
      - 97.8%
      - 78.6%
      - 81.4%
      - 88.9%
+.. list-table:: **π**\ :sub:`0.5`\  **model results on LIBERO**
+   :header-rows: 1
+
+   * - Model
+     - Spatial 
+     - Goal 
+     - Object 
+     - Long 
+     - Average
+
+   * - π\ :sub:`0.5`\ (few-shot)
+     - 84.6%
+     - 95.4%
+     - 84.6%
+     - 44.2%
+     - 77.2%
+
+   * - PPO-π\ :sub:`0.5`-RLinf
+     - **99.6%**
+     - **100%**
+     - **97.4%**
+     - **90.6%**
+     - **96.9%**
+
+   * - GRPO-π\ :sub:`0.5`-RLinf
+     - 97.4%
+     - 99.8%
+     - 91.2%
+     - 77.6%
+     - 91.5%

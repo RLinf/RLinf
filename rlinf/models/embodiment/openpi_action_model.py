@@ -100,9 +100,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
                 activation="relu",
                 bias_last=True,
             )
-        self.use_vlm_value = (
-            getattr(self.config, 'value_after_vlm', False)
-            and getattr(self.config, 'add_value_head', False)
+        self.use_vlm_value = getattr(self.config, "value_after_vlm", False) and getattr(
+            self.config, "add_value_head", False
         )
         if self.config.noise_method == "reinflow":
             self.reinflow_explore_noise_net = ExploreNoiseNet(
