@@ -1,8 +1,8 @@
-π\ :sub:`0`\  and π\ :sub:`0.5`\  models Reinforcement Learning Training
+Reinforcement Learning on π\ :sub:`0`\  and π\ :sub:`0.5`\  Models
 ===================================================
 
 This example provides a complete guide to fine-tuning the 
-π\ :sub:`0`\  and π\ :sub:`0.5`\  algorithm with reinforcement learning in the **LIBERO** environment
+π\ :sub:`0`\  and π\ :sub:`0.5`\  algorithms with reinforcement learning in the **LIBERO** environment
 using the **RLinf** framework. It covers the entire process—from
 environment setup and core algorithm design to training configuration,
 evaluation, and visualization—along with reproducible commands and

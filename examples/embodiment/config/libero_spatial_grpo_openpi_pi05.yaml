@@ -140,7 +140,7 @@ actor:
       noise_method: "flow_sde" 
       add_value_head: False
       pi05: True
-      value_after_vlm: True
+      value_after_vlm: False
       value_vlm_mode: "mean_token"
 
   optim:
