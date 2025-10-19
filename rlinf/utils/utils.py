@@ -100,7 +100,9 @@ def configure_batch_sizes(rank, mbs, gbs, dp=1):
 
 def masked_mean(values, mask, axis=None):
     """Compute mean of tensor with a masked values."""
-    if (~mask).all():
+    if mask is None:
+        return values.mean(axis=axis)
+    elif (~mask).all():
         return (values * mask).sum(axis=axis)
     else:
         return (values * mask).sum(axis=axis) / mask.sum(axis=axis)

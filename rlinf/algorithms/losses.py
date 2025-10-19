@@ -64,7 +64,6 @@ def compute_ppo_actor_loss(
 
     if loss_mask is None:
         loss_mask = torch.ones_like(logprobs).bool()
-        loss_agg_func = raw_mean
 
     assert logprobs.dtype == torch.float32
     assert old_logprobs.dtype == torch.float32
@@ -105,9 +104,9 @@ def compute_ppo_actor_loss(
     # Compile metrics for logging
     metrics_data = {
         "actor/policy_loss": policy_loss.detach(),
-        "actor/ratio": raw_mean(ratio.detach(), loss_mask),
-        "actor/clipped_ratio": raw_mean(clipped_ratio.detach(), loss_mask),
-        "actor/dual_cliped_ratio": raw_mean(dual_cliped_ratio.detach(), loss_mask),
+        "actor/ratio": masked_mean(ratio.detach(), loss_mask),
+        "actor/clipped_ratio": masked_mean(clipped_ratio.detach(), loss_mask),
+        "actor/dual_cliped_ratio": masked_mean(dual_cliped_ratio.detach(), loss_mask),
         "actor/approx_kl": approx_kl.detach(),
         "actor/clip_fraction": clip_fraction.detach(),
     }
