@@ -40,6 +40,7 @@ class OpenPi0Config(Pi0Config):
     noise_method: str = "flow_sde"  # flow_sde, flow_cps
     safe_get_logprob: bool = False
     joint_logprob: bool = False
+    double_layer: bool = False
     detach_critic_input: bool = False
     chunk_critic_input: bool = False
     add_value_head: bool = False

@@ -315,6 +315,20 @@ jobs:
           source switch_env openpi
           bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi
 
+  embodied-libero-spatial-ppo-openpi05-test:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.file_filter == 'true'
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: OPENPI test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env openpi
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi05
+
   # =============================================== auto placement tests ====================================================
 
   static-auto-placement-test:
@@ -354,6 +368,7 @@ jobs:
       embodied-libero-goal-grpo-openvlaoft-test,
       embodied-libero-130-grpo-openvlaoft-test,
       embodied-libero-spatial-ppo-openpi-test,
+      embodied-libero-spatial-ppo-openpi05-test,
 
       # Auto placement tests
       static-auto-placement-test
