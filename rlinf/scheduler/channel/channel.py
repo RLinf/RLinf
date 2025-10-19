@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import time
-from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import ray
@@ -231,7 +230,6 @@ class Channel:
         self._current_worker = current_worker
         self._local_channel = local_channel
         self._maxsize = maxsize
-        self._device_lock = DeviceLockProxy(self)
         if self._local_channel is not None:
             self._local_channel_id = id(self._local_channel)
             Channel.local_channel_map[self._local_channel_id] = self._local_channel
@@ -242,11 +240,6 @@ class Channel:
     def is_local(self):
         """Check if the channel is a local channel."""
         return self._local_channel is not None
-
-    @property
-    def device_lock(self):
-        """Get the accelerator (GPU) device lock for the channel."""
-        return self._device_lock
 
     def create_queue(self, queue_name: str, maxsize: int = 0):
         """Create a new queue in the channel. No effect if a queue with the same name already exists.
@@ -509,57 +502,3 @@ class Channel:
             Channel.local_channel_map[self._local_channel_id] = self._local_channel
         if self._current_worker is None:
             self._current_worker = Worker.current_worker
-
-
-class DeviceLockProxy(AbstractContextManager):
-    """The proxy to manage accelerator device locks for the channel."""
-
-    def __init__(self, channel: Channel):
-        """Initialize the device lock proxy."""
-        self._channel = channel
-
-    def acquire(self):
-        """Lock accelerator devices for the current worker.
-
-        This is useful for resource isolation, e.g., accelerator memory and computation resources, when multiple workers run on the same accelerators.
-        """
-        if self._channel._current_worker is not None and not self._channel.is_local:
-            ray.get(
-                self._channel._channel_worker_actor.acquire_devices.remote(
-                    self._channel._current_worker.worker_address,
-                    self._channel._current_worker.global_accelerator_ids,
-                )
-            )
-        elif self._channel.is_local:
-            # Ignore local channel, which already suggests that the channel is used by the same process
-            # And thus no synchronization is required.
-            pass
-        else:
-            raise ValueError(
-                "Cannot lock accelerators when the channel is not used in a worker."
-            )
-
-    def release(self):
-        """Unlock accelerators for the current worker."""
-        if self._channel._current_worker is not None and not self._channel.is_local:
-            ray.get(
-                self._channel._channel_worker_actor.release_devices.remote(
-                    self._channel._current_worker.worker_address,
-                    self._channel._current_worker.global_accelerator_ids,
-                )
-            )
-        elif self._channel.is_local:
-            pass
-        else:
-            raise ValueError(
-                "Cannot unlock accelerators when the channel is not used in a worker."
-            )
-
-    def __enter__(self):
-        """Enter the runtime context related to this object."""
-        self.acquire()
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        """Exit the runtime context related to this object."""
-        self.release()

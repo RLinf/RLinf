@@ -65,14 +65,13 @@
   from rlinf.models.embodiment.modules.value_head import ValueHead
 
   class YourModelForRLActionPrediction(YourBaseModel):
-      def __init__(self, config, hidden_size, unnorm_key, vh_mode, action_dim):
+      def __init__(self, config, hidden_size, unnorm_key, action_dim):
           super().__init__(config)
           self._init_logits_processor()
           action_norm_stats = self.get_action_stats(unnorm_key)
           self.min_action = np.array(action_norm_stats["q01"])
           self.max_action = np.array(action_norm_stats["q99"])
           self.value_head = ValueHead(hidden_size)
-          self.vh_mode = vh_mode
           self.action_dim = action_dim
 
       def _init_logits_processor(self):
@@ -101,8 +100,8 @@
           sequences = generated.sequences
           actions = sequences[:, -self.action_dim:]
           logits = torch.stack(generated.logits, dim=1)
-          if self.cfg.algorithm.require_values:
-              values = self.compute_values(generated.hidden_states)
+          if hasattr(self, "value_head"):
+              values = self.value_head(generated.hidden_states)
           else:
               values = torch.zeros_like(logits[..., :1])
           return actions, sequences, logits, values
@@ -127,7 +126,6 @@
               torch_dtype=torch_dtype,
               hidden_size=cfg.hidden_size,
               unnorm_key=cfg.unnorm_key,
-              vh_mode=cfg.vh_mode,
               action_dim=cfg.action_token_len,
               attn_implementation=cfg.attn_implementation,
               low_cpu_mem_usage=cfg.low_cpu_mem_usage,
@@ -209,9 +207,9 @@
     precision: "bf16"
     vocab_size: 32000
     hidden_size: 4096
-    vh_mode: "a0"
     image_size: [224, 224]
     is_lora: False
+    use_wrist_image: False
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
     trust_remote_code: True

@@ -1,0 +1,156 @@
+defaults:
+  - env/train: libero_10
+  - env/eval: libero_10
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "test_openpi"
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: 1000
+  max_steps: -1
+
+  val_check_interval: -1
+  save_interval: 40
+  seq_length: 4096
+  max_prompt_length: 50
+
+algorithm:
+  auto_reset: False
+  ignore_terminations: False
+  use_fixed_reset_state_ids: True
+  normalize_advantages: True
+  kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
+  group_size: 8
+  max_episode_steps: 480
+  use_ordered_reset_state_ids: False
+  reward_coef: 1.0
+  n_chunk_steps: 48
+  n_eval_chunk_steps: 48
+  num_group_envs: 8
+  rollout_epoch: 8
+  reward_type: chunk_level
+  logprob_type: chunk_level
+  entropy_type: token_level
+
+  update_epoch: 4
+  adv_type: embodied_grpo
+  loss_type: embodied_grpo
+  loss_agg_func: "token-mean" 
+  kl_beta: 0.0
+  entropy_bonus: 0
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+  clip_ratio_c: 3.0
+  value_clip: 0.2
+  huber_delta: 10.0
+
+  gamma: 0.99
+  gae_lambda: 0.95
+
+  filter_rewards: False
+  rewards_lower_bound: 0.1
+  rewards_upper_bound: 0.9
+  # params for generation
+  sampling_params:
+    use_greedy: False
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+    add_BOS: False
+
+  # length argument for autoregressive sampling
+  # max length means max amount of tokens to generate
+  length_params:
+    max_new_token: null
+    max_length: 1024
+    min_length: 1
+
+env:
+  group_name: "EnvGroup"
+  channel:
+    name: "env_buffer_list"
+    queue_name: "obs_buffer"
+    queue_size: 0
+  enable_offload: False
+
+rollout:
+  group_name: "RolloutGroup"
+  channel:
+    name: ${env.channel.name}
+    queue_name: "action_buffer"
+    queue_size: 0
+  mode: "colocate"
+  generation_backend: "huggingface"
+  model_dir: "/path/to/model/openpi"
+  recompute_logprobs: False
+  unnorm_key: libero_10
+  enable_offload: False
+  pipeline_stage_num: 1
+
+actor:
+  group_name: "ActorGroup"
+  channel:
+    name: ${env.channel.name}
+    queue_name: "replay_buffer"
+    queue_size: 0
+  training_backend: "fsdp"
+  checkpoint_load_path: "/path/to/model/openpi"
+  checkpoint_save_path: "../results"
+  micro_batch_size: 128
+  global_batch_size: 2048 # maximun : global batch size = micro batch size * actor num_processes.
+  seed: 42
+  enable_offload: False
+
+  model:
+    model_name: "openpi"
+    precision: null
+    num_action_chunks: 10 # interface for the env
+    action_dim: 7
+    is_lora: False
+    use_wrist_image: True
+    use_proprio: True
+    num_steps: 4
+    sharding_strategy: "no_shard"
+    # openpi specific parameters
+    openpi:
+      noise_level: 0.5
+      action_chunk: ${actor.model.num_action_chunks}
+      num_steps: ${actor.model.num_steps}
+      train_expert_only: True
+      action_env_dim: ${actor.model.action_dim}
+      noise_method: "flow_sde" 
+      add_value_head: False
+      detach_critic_input: False
+
+  optim:
+    lr: 5.0e-6
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-05
+    clip_grad: 2.0
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

@@ -20,11 +20,12 @@ import gym
 import numpy as np
 import torch
 from libero.libero import get_libero_path
-from libero.libero.benchmark import Benchmark, get_benchmark
+from libero.libero.benchmark import Benchmark
 from libero.libero.envs import OffScreenRenderEnv
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.envs.libero.utils import (
+    get_benchmark_overridden,
     get_libero_image,
     get_libero_wrist_image,
     list_of_dict_to_dict_of_list,
@@ -38,11 +39,11 @@ from rlinf.envs.libero.venv import ReconfigureSubprocEnv
 
 
 class LiberoEnv(gym.Env):
-    def __init__(self, cfg, rank, world_size):
-        self.rank = rank
+    def __init__(self, cfg, seed_offset, total_num_processes):
+        self.seed_offset = seed_offset
         self.cfg = cfg
-        self.world_size = world_size
-        self.seed = self.cfg.seed + rank
+        self.total_num_processes = total_num_processes
+        self.seed = self.cfg.seed + seed_offset
         self._is_start = True
         self.num_envs = self.cfg.num_envs
         self.group_size = self.cfg.group_size
@@ -56,7 +57,7 @@ class LiberoEnv(gym.Env):
         self._generator_ordered = np.random.default_rng(seed=0)
         self.start_idx = 0
 
-        self.task_suite: Benchmark = get_benchmark(cfg.task_suite_name)()
+        self.task_suite: Benchmark = get_benchmark_overridden(cfg.task_suite_name)()
 
         self._compute_total_num_group_envs()
         self.reset_state_ids_all = self.get_reset_state_ids_all()
@@ -147,20 +148,22 @@ class LiberoEnv(gym.Env):
 
     def get_reset_state_ids_all(self):
         reset_state_ids = np.arange(self.total_num_group_envs)
-        valid_size = len(reset_state_ids) - (len(reset_state_ids) % self.world_size)
+        valid_size = len(reset_state_ids) - (
+            len(reset_state_ids) % self.total_num_processes
+        )
         self._generator_ordered.shuffle(reset_state_ids)
         reset_state_ids = reset_state_ids[:valid_size]
-        reset_state_ids = reset_state_ids.reshape(self.world_size, -1)
+        reset_state_ids = reset_state_ids.reshape(self.total_num_processes, -1)
         return reset_state_ids
 
     def _get_ordered_reset_state_ids(self, num_reset_states):
-        reset_state_ids = self.reset_state_ids_all[self.rank][
+        if self.start_idx + num_reset_states > len(self.reset_state_ids_all[0]):
+            self.reset_state_ids_all = self.get_reset_state_ids_all()
+            self.start_idx = 0
+        reset_state_ids = self.reset_state_ids_all[self.seed_offset][
             self.start_idx : self.start_idx + num_reset_states
         ]
         self.start_idx = self.start_idx + num_reset_states
-        if self.start_idx >= len(self.reset_state_ids_all[0]):
-            self.reset_state_ids_all = self.get_reset_state_ids_all()
-            self.start_idx = 0
         return reset_state_ids
 
     def _get_task_and_trial_ids_from_reset_state_ids(self, reset_state_ids):
@@ -175,13 +178,7 @@ class LiberoEnv(gym.Env):
                     trial_ids.append(reset_state_id - start_pivot)
                     break
                 start_pivot = end_pivot
-        print(
-            "get task and trial id",
-            self.cumsum_trial_id_bins,
-            reset_state_ids,
-            task_ids,
-            trial_ids,
-        )
+
         return np.array(task_ids), np.array(trial_ids)
 
     def _get_reset_states(self, env_idx):
@@ -244,7 +241,7 @@ class LiberoEnv(gym.Env):
         return infos
 
     def _extract_image_and_state(self, obs):
-        if self.cfg.num_images_in_input > 1:
+        if self.cfg.get("use_wrist_image", False):
             return {
                 "full_image": get_libero_image(obs),
                 "wrist_image": get_libero_wrist_image(obs),
@@ -295,8 +292,7 @@ class LiberoEnv(gym.Env):
         if reconfig_env_idx:
             env_fn_params = self.get_env_fn_params(reconfig_env_idx)
             self.env.reconfigure_env_fns(env_fn_params, reconfig_env_idx)
-
-        self.env.seed([0] * len(env_idx))
+        self.env.seed(self.seed * len(env_idx))
         self.env.reset(id=env_idx)
         init_state = self._get_reset_states(env_idx=env_idx)
         self.env.set_init_state(init_state=init_state, id=env_idx)
@@ -316,8 +312,9 @@ class LiberoEnv(gym.Env):
 
         self._reconfigure(reset_state_ids, env_idx)
 
-        for _ in range(10):
+        for _ in range(15):
             zero_actions = np.zeros((self.num_envs, 7))
+            zero_actions[:, -1] = -1
             raw_obs, _reward, terminations, info_lists = self.env.step(zero_actions)
 
         obs = self._wrap_obs(raw_obs)
@@ -350,7 +347,6 @@ class LiberoEnv(gym.Env):
         raw_obs, _reward, terminations, info_lists = self.env.step(actions)
         infos = list_of_dict_to_dict_of_list(info_lists)
         truncations = self.elapsed_steps >= self.cfg.max_episode_steps
-
         obs = self._wrap_obs(raw_obs)
 
         step_reward = self._calc_step_reward(terminations)
@@ -473,7 +469,7 @@ class LiberoEnv(gym.Env):
         self.render_images.append(full_image)
 
     def flush_video(self, video_sub_dir: Optional[str] = None):
-        output_dir = os.path.join(self.video_cfg.video_base_dir, f"rank_{self.rank}")
+        output_dir = os.path.join(self.video_cfg.video_base_dir, f"seed_{self.seed}")
         if video_sub_dir is not None:
             output_dir = os.path.join(output_dir, f"{video_sub_dir}")
         save_rollout_video(

@@ -19,10 +19,10 @@ import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import imageio
+import libero.libero.benchmark as benchmark
 import numpy as np
 import torch
-from libero.libero import get_libero_path
-from libero.libero.envs import OffScreenRenderEnv
+from libero.libero.benchmark import Benchmark
 from PIL import Image, ImageDraw, ImageFont
 
 
@@ -217,80 +217,6 @@ def list_of_dict_to_dict_of_list(
     return output
 
 
-def get_libero_env(
-    task: Any, model_family: str, seed: int = 0, resolution: int = 256
-) -> Tuple[OffScreenRenderEnv, str]:
-    """
-    Initializes and returns the LIBERO environment, along with the task description.
-
-    Args:
-        task: LIBERO task object
-        model_family: Model family name
-        seed: Random seed for environment
-        resolution: Camera resolution
-
-    Returns:
-        Tuple of (environment, task_description)
-    """
-    task_description = task.language
-    task_bddl_file = os.path.join(
-        get_libero_path("bddl_files"), task.problem_folder, task.bddl_file
-    )
-    env_args = {
-        "bddl_file_name": task_bddl_file,
-        "camera_heights": resolution,
-        "camera_widths": resolution,
-    }
-    env = OffScreenRenderEnv(**env_args)
-    env.seed(
-        seed
-    )  # IMPORTANT: seed seems to affect object positions even when using fixed initial state
-    return env, task_description
-
-
-def get_libero_dummy_action(model_family: str) -> List[int]:
-    """
-    Get dummy/no-op action, used to roll out the simulation while the robot does nothing.
-
-    Args:
-        model_family: Model family name
-
-    Returns:
-        List of zero actions for robot control
-    """
-    return [0, 0, 0, 0, 0, 0, -1]
-
-
-def resize_image(
-    img: np.ndarray, resize_size: Union[int, Tuple[int, int]]
-) -> np.ndarray:
-    """
-    Takes numpy array corresponding to a single image and returns resized image as numpy array.
-    NOTE (Moo Jin): To make input images in distribution with respect to the inputs seen at training time, we follow
-                    the same resizing scheme used in the Octo dataloader, which OpenVLA uses for training.
-
-    Args:
-        img: Input image as numpy array
-        resize_size: Target size for resizing
-
-    Returns:
-        Resized image as numpy array
-    """
-
-    import tensorflow as tf
-
-    assert isinstance(resize_size, tuple)
-    # Resize to image size expected by model
-    img = tf.image.encode_jpeg(img)  # Encode as JPEG, as done in RLDS dataset builder
-    img = tf.io.decode_image(
-        img, expand_animations=False, dtype=tf.uint8
-    )  # Immediately decode back
-    img = tf.image.resize(img, resize_size, method="lanczos3", antialias=True)
-    img = tf.cast(tf.clip_by_value(tf.round(img), 0, 255), tf.uint8)
-    img = img.numpy()
-    return img
-
-
 def get_libero_image(obs: Dict[str, np.ndarray]) -> np.ndarray:
     """
     Extracts image from observations and preprocesses it.
@@ -307,7 +233,7 @@ def get_libero_image(obs: Dict[str, np.ndarray]) -> np.ndarray:
 
 
 def get_libero_wrist_image(
-    obs: Dict[str, np.ndarray], resize_size: Union[int, Tuple[int, int]]
+    obs: Dict[str, np.ndarray], resize_size: Union[int, Tuple[int, int]] = 224
 ) -> np.ndarray:
     """
     Extracts wrist camera image from observations and preprocesses it.
@@ -319,12 +245,8 @@ def get_libero_wrist_image(
     Returns:
         Preprocessed wrist camera image as numpy array
     """
-    assert isinstance(resize_size, int) or isinstance(resize_size, tuple)
-    if isinstance(resize_size, int):
-        resize_size = (resize_size, resize_size)
     img = obs["robot0_eye_in_hand_image"]
     img = img[::-1, ::-1]  # IMPORTANT: rotate 180 degrees to match train preprocessing
-    img = resize_image(img, resize_size)
     return img
 
 
@@ -355,80 +277,6 @@ def quat2axisangle(quat: np.ndarray) -> np.ndarray:
     return (quat[:3] * 2.0 * math.acos(quat[3])) / den
 
 
-def get_image_resize_size(cfg: Any) -> int:
-    """
-    Gets image resize size for a model class.
-    If `resize_size` is an int, then the resized image will be a square.
-    Else, the image will be a rectangle.
-
-    Args:
-        cfg: Configuration object containing model_family
-
-    Returns:
-        Resize size for the specified model family
-    """
-    if cfg.model_family == "openvla":
-        resize_size = 224
-    else:
-        raise ValueError("Unexpected `model_family` found in config.")
-    return resize_size
-
-
-def normalize_gripper_action(action: np.ndarray, binarize: bool = True) -> np.ndarray:
-    """
-    Normalize gripper action from [0,1] to [-1,+1] range.
-
-    This is necessary for some environments because the dataset wrapper
-    standardizes gripper actions to [0,1]. Note that unlike the other action
-    dimensions, the gripper action is not normalized to [-1,+1] by default.
-
-    Normalization formula: y = 2 * (x - orig_low) / (orig_high - orig_low) - 1
-
-    Args:
-        action: Action array with gripper action in the last dimension
-        binarize: Whether to binarize gripper action to -1 or +1
-
-    Returns:
-        np.ndarray: Action array with normalized gripper action
-    """
-    # Create a copy to avoid modifying the original
-    normalized_action = action.copy()
-
-    # Normalize the last action dimension to [-1,+1]
-    orig_low, orig_high = 0.0, 1.0
-    normalized_action[..., -1] = (
-        2 * (normalized_action[..., -1] - orig_low) / (orig_high - orig_low) - 1
-    )
-
-    if binarize:
-        # Binarize to -1 or +1
-        normalized_action[..., -1] = np.sign(normalized_action[..., -1])
-
-    return normalized_action
-
-
-def invert_gripper_action(action: np.ndarray) -> np.ndarray:
-    """
-    Flip the sign of the gripper action (last dimension of action vector).
-
-    This is necessary for environments where -1 = open, +1 = close, since
-    the RLDS dataloader aligns gripper actions such that 0 = close, 1 = open.
-
-    Args:
-        action: Action array with gripper action in the last dimension
-
-    Returns:
-        np.ndarray: Action array with inverted gripper action
-    """
-    # Create a copy to avoid modifying the original
-    inverted_action = action.copy()
-
-    # Invert the gripper action
-    inverted_action[..., -1] = inverted_action[..., -1] * -1.0
-
-    return inverted_action
-
-
 def save_rollout_video(
     rollout_images: List[np.ndarray], output_dir: str, video_name: str, fps: int = 30
 ) -> None:
@@ -447,3 +295,47 @@ def save_rollout_video(
     for img in rollout_images:
         video_writer.append_data(img)
     video_writer.close()
+
+
+def get_benchmark_overridden(benchmark_name) -> Benchmark:
+    """
+    Return the Benchmark class for a given name.
+    For "libero_130": return a dynamically aggregated class from all suites.
+    For others: delegate to the original LIBERO get_benchmark.
+
+    Args:
+        benchmark_name: Name of the benchmark to get
+
+    Returns:
+        Benchmark class
+    """
+    name = str(benchmark_name).lower()
+    if name != "libero_130":
+        return benchmark.get_benchmark(benchmark_name)
+
+    libreo_cls = benchmark.BENCHMARK_MAPPING.get("libero_130", None)
+    if libreo_cls is not None:
+        return libreo_cls
+
+    # Build aggregated task map once, preserving order and de-duplicating by task name
+    aggregated_task_map: Dict[str, benchmark.Task] = {}
+    for suite_name in getattr(benchmark, "libero_suites", []):
+        suite_map = benchmark.task_maps.get(suite_name, {})
+        for task_name, task in suite_map.items():
+            if task_name not in aggregated_task_map:
+                aggregated_task_map[task_name] = task
+
+    class LIBERO_ALL(Benchmark):
+        def __init__(self, task_order_index=0):
+            super().__init__(task_order_index=task_order_index)
+            self.name = "libero_130"
+            self._make_benchmark()
+
+        def _make_benchmark(self):
+            tasks = list(aggregated_task_map.values())
+            self.tasks = tasks
+            self.n_tasks = len(self.tasks)
+
+    # Register for discoverability/help
+    benchmark.BENCHMARK_MAPPING["libero_130"] = LIBERO_ALL
+    return LIBERO_ALL

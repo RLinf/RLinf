@@ -38,7 +38,6 @@ algorithm:
   auto_reset: False
   ignore_terminations: False
   use_fixed_reset_state_ids: True
-  require_values: False
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 8
@@ -46,8 +45,7 @@ algorithm:
   n_eval_chunk_steps: 10
   num_group_envs: 32
   rollout_epoch: 1
-
-  reward_type: step_level
+  reward_type: action_level  # action_level or chunk_level
   logprob_type: token_level
   entropy_type: token_level
 
@@ -130,16 +128,18 @@ actor:
     vocab_size: 32000
     hidden_size: 4096
     policy_setup: "widowx_bridge"
-    vh_mode: "a0"
+    add_value_head: False
     image_size: [224, 224]
     is_lora: True
     lora_rank: 32
     lora_path: /path/to/model/oft-sft/lora_004000
     ckpt_path: null
+    use_wrist_image: False
     num_images_in_input: 1
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
     trust_remote_code: True
+    gradient_checkpointing: False
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
@@ -155,6 +155,12 @@ actor:
     adam_beta2: 0.999
     adam_eps: 1.0e-05
     clip_grad: 10.0
+
+  fsdp:
+    forward_prefetch: False
+    limit_all_gathers: False
+    backward_prefetch: False
+    use_orig_params: False
 
 reward:
   use_reward_model: False

@@ -38,8 +38,7 @@
 
 /tests @andylin-hao
 /toolkits/auto_placement @i-Taozi
-/toolkits/ckpt_convertor @Louis-J
+/toolkits/ckpt_convertor @qurakchin
 
 /.pre-commit-config.yaml @andylin-hao
 /pyproject.toml @andylin-hao
-/README.md @zhexuanxu

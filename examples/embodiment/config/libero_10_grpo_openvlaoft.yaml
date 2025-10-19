@@ -1,5 +1,5 @@
 defaults:
-  - env/train: libero_10_grpo
+  - env/train: libero_10
   - env/eval: libero_10
   - override hydra/job_logging: stdout
 
@@ -36,16 +36,14 @@ algorithm:
   auto_reset: False
   ignore_terminations: False
   use_fixed_reset_state_ids: True
-  require_values: False
-  shuffle_samples: True
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
-  group_size: 8
+  group_size: 8  # NOTE: group_size * num_group_envs * rollout_epoch = global buffer size
   n_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}
   n_eval_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}
-  num_group_envs: 8
-  rollout_epoch: 8
-  reward_type: step_level  # step_level or chunk_level
+  num_group_envs: 8  # NOTE: num_group_envs should be a multiple of the world_size
+  rollout_epoch: 16
+  reward_type: action_level  # action_level or chunk_level
   logprob_type: token_level
   entropy_type: token_level
 
@@ -62,6 +60,10 @@ algorithm:
 
   gamma: 0.99
   gae_lambda: 0.95
+
+  reward_coef: 5.0
+  max_episode_steps: 512
+  use_ordered_reset_state_ids: True
 
   sampling_params:
     use_greedy: False
@@ -113,7 +115,7 @@ actor:
   checkpoint_load_path: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
   checkpoint_save_path: "../results"
   micro_batch_size: 32
-  global_batch_size: 8192
+  global_batch_size: 16384
   seed: 1234
   enable_offload: False
 
@@ -132,14 +134,15 @@ actor:
     vocab_size: 32000
     hidden_size: 4096
     policy_setup: "widowx_bridge"
-    vh_mode: "a0"
+    add_value_head: False
     image_size: [224, 224]
     is_lora: False
     lora_rank: 32
-    num_images_in_input: 1
+    use_wrist_image: False
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
     trust_remote_code: True
+    gradient_checkpointing: True
 
   optim:
     lr: 2.0e-5
@@ -155,6 +158,12 @@ actor:
     use_fast: False
     trust_remote_code: True
     padding_side: "right"
+
+  fsdp:
+    forward_prefetch: False
+    limit_all_gathers: False
+    backward_prefetch: False
+    use_orig_params: False
 
 reward:
   use_reward_model: False

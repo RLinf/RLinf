@@ -17,15 +17,22 @@ import os
 import torch
 import torch.optim as optim
 from omegaconf import DictConfig
+from torch.distributed.fsdp import (
+    BackwardPrefetch,
+    MixedPrecision,
+    ShardingStrategy,
+    StateDictType,
+)
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp import MixedPrecision, ShardingStrategy, StateDictType
-from transformers import AutoModelForCausalLM
+from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForVision2Seq
 
 from rlinf.config import torch_dtype_from_precision
+from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.hybrid_engines.fsdp.utils import (
     get_fsdp_wrap_policy,
     init_fn,
 )
+from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import clear_memory
 
 
@@ -36,49 +43,71 @@ class FSDPModelManager:
 
     def __init__(self, cfg: DictConfig):
         self._cfg = cfg
+        self.logger = get_logger()
         self.torch_dtype = torch_dtype_from_precision(self._cfg.model.precision)
 
-        assert (
-            self.torch_dtype == torch.float16 or self.torch_dtype == torch.bfloat16
-        ), (
-            f"Precision {self._cfg.model.precision} is not supported, only support bf16 and fp16."
-        )
+        if cfg.get("tokenizer", {}).get("tokenizer_model", None) is not None:
+            self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
 
     def model_provider_func(self) -> torch.nn.Module:
-        if self._cfg.model.get("gptq_model", False):
+        cfg = self._cfg
+        use_gptq = cfg.model.get("gptq_model", False)
+        load_in_8bit = cfg.model.get("load_in_8bit", False)
+
+        use_triton = cfg.get("use_triton", True)
+
+        assert torch.cuda.is_available(), "CUDA is not available."
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        device = torch.device(f"cuda:{local_rank}")
+
+        model_config = AutoConfig.from_pretrained(
+            cfg.model.model_path,
+            trust_remote_code=True,
+            attn_implementation="flash_attention_2",
+        )
+
+        if use_gptq:
             from auto_gptq import AutoGPTQForCausalLM
 
             model_wrapper = AutoGPTQForCausalLM.from_quantized(
-                self._cfg.model.model_path, device="cuda:0", use_triton=True
+                cfg.model.model_path,
+                device=device,
+                use_triton=use_triton,
             )
             model = model_wrapper.model
-        elif self._cfg.model.get("load_in_8bit", False):
+        elif load_in_8bit:
             model = AutoModelForCausalLM.from_pretrained(
-                self._cfg.model.model_path,
-                device_map=self._cfg.model.get("device_map", "auto"),
+                cfg.model.model_path,
+                config=model_config,
                 load_in_8bit=True,
             )
         else:
-            # default load in float16
-            model = AutoModelForCausalLM.from_pretrained(
-                self._cfg.model.model_path,
-                torch_dtype=self.torch_dtype,
-                device_map=self._cfg.model.get("device_map", "auto"),
-                trust_remote_code=True,
-                use_safetensors=self._cfg.model.get("use_safetensors", False),
-            )
-            if torch.cuda.is_available():
-                model = model.cuda()
-            if self.torch_dtype == torch.float16:
-                model = model.half()
+            if type(model_config) in AutoModelForVision2Seq._model_mapping.keys():
+                auto_model_class = AutoModelForVision2Seq
+            else:
+                auto_model_class = AutoModelForCausalLM
 
+            model = auto_model_class.from_pretrained(
+                cfg.model.model_path,
+                torch_dtype=self.torch_dtype,
+                config=model_config,
+                trust_remote_code=True,
+            )
+
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
         return model
 
     def setup_model_and_optimizer(self):
         """Setup model and optimizer."""
         module = self.model_provider_func()
 
-        module.gradient_checkpointing_enable()
+        # Enable gradient checkpointing if configured
+        if self._cfg.model.get("gradient_checkpointing", False):
+            self.logger.info("[FSDP] Enabling gradient checkpointing")
+            module.gradient_checkpointing_enable()
+        else:
+            self.logger.info("[FSDP] Gradient checkpointing is disabled")
 
         mixed_precision = MixedPrecision(
             param_dtype=self.torch_dtype,
@@ -92,8 +121,18 @@ class FSDPModelManager:
             sharding_strategy = ShardingStrategy.SHARD_GRAD_OP
         else:
             sharding_strategy = ShardingStrategy.NO_SHARD
+
+        is_vla_model = (
+            True
+            if self._cfg.model.get("model_name", None) in ["openvla", "openvla_oft"]
+            else False
+        )
+
         auto_wrap_policy = get_fsdp_wrap_policy(
-            module=module, config=None, is_lora=self._cfg.model.is_lora
+            module=module,
+            config=None,
+            is_lora=self._cfg.model.is_lora,
+            is_vla_model=is_vla_model,
         )
 
         betas = (self._cfg.optim.adam_beta1, self._cfg.optim.adam_beta2)
@@ -101,42 +140,51 @@ class FSDPModelManager:
         self.model = FSDP(
             module,
             param_init_fn=init_fn,
-            use_orig_params=False,
             auto_wrap_policy=auto_wrap_policy,
             device_id=int(os.environ["LOCAL_RANK"]),
             sharding_strategy=sharding_strategy,  # zero3
             mixed_precision=mixed_precision,
             sync_module_states=True,
+            forward_prefetch=self._cfg.fsdp_config.forward_prefetch,
+            backward_prefetch=(
+                BackwardPrefetch.BACKWARD_PRE
+                if self._cfg.fsdp_config.backward_prefetch
+                else None
+            ),
+            limit_all_gathers=self._cfg.fsdp_config.limit_all_gathers,
+            use_orig_params=self._cfg.fsdp_config.use_orig_params,
         )
 
-        # NOTE: Currently we assume that only the value head contains "value_head" in its name.
-        # The value head only serves for value prediction in RL algorithms like PPO.
-        param_groups = [
-            {
-                "params": [
-                    p
-                    for n, p in self.model.named_parameters()
-                    if "value_head" not in n and p.requires_grad
-                ],
-                "lr": self._cfg.optim.lr,
-                "betas": betas,
-            },
-        ]
+        params_actor = []
+        params_critic = []
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                if "value_head" in name or "model.value_head" in name:
+                    params_critic.append(param)
+                else:
+                    params_actor.append(param)
 
-        if self._cfg.model.vh_mode in ["a", "a0", "a6"]:
-            param_groups.append(
-                {
-                    "params": [
-                        p
-                        for n, p in self.model.named_parameters()
-                        if "value_head" in n and p.requires_grad
-                    ],
-                    "lr": self._cfg.optim.value_lr,
-                    "betas": betas,
-                }
+        if len(params_critic) > 0:
+            self.optimizer = optim.AdamW(
+                [
+                    {"params": params_actor, "lr": self._cfg.optim.lr, "betas": betas},
+                    {
+                        "params": params_critic,
+                        "lr": self._cfg.optim.value_lr,
+                        "betas": betas,
+                    },
+                ]
             )
-
-        self.optimizer = optim.AdamW(param_groups)
+        else:
+            self.optimizer = optim.AdamW(
+                [
+                    {
+                        "params": params_actor,
+                        "lr": self._cfg.optim.lr,
+                        "betas": betas,
+                    },
+                ]
+            )
 
     def get_model_state_dict(self):
         with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT):

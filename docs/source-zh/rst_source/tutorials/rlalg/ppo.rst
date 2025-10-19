@@ -77,7 +77,6 @@ PPO 的目标函数定义如下：
    algorithm:
 
       # 核心 PPO 设置（建议不要修改）
-      require_values: True
       normalize_advantages: True
       group_size: 1
       adv_type: embodied_gae

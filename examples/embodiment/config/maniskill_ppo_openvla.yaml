@@ -38,7 +38,6 @@ algorithm:
   auto_reset: True
   ignore_terminations: False
   use_fixed_reset_state_ids: False
-  require_values: True
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
@@ -46,7 +45,7 @@ algorithm:
   n_eval_chunk_steps: 80
   num_group_envs: 128
   rollout_epoch: 1
-  reward_type: step_level
+  reward_type: action_level
   logprob_type: action_level
   entropy_type: action_level
 
@@ -129,14 +128,16 @@ actor:
     vocab_size: 32000
     hidden_size: 4096
     policy_setup: "widowx_bridge"
-    vh_mode: "a0"
+    add_value_head: True
     image_size: [224, 224]
     is_lora: True
     lora_rank: 32
     ckpt_path: null
+    use_wrist_image: False
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
     trust_remote_code: True
+    gradient_checkpointing: False
 
   optim:
     lr: 1.0e-4
@@ -152,6 +153,12 @@ actor:
     use_fast: False
     trust_remote_code: True
     padding_side: "right"
+
+  fsdp:
+    forward_prefetch: False
+    limit_all_gathers: False
+    backward_prefetch: False
+    use_orig_params: False
 
 reward:
   use_reward_model: False

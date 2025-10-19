@@ -14,12 +14,14 @@
 
 import os
 import time
-from typing import Type
+from typing import Type, TypeVar
 
 import ray
 from ray._private import worker
 
 from ..cluster import Cluster
+
+ManagerClsType = TypeVar("ManagerClsType")
 
 
 class ManagerProxy:
@@ -87,7 +89,7 @@ class Manager:
     PID = None
 
     @classmethod
-    def get_proxy(cls):
+    def get_proxy(cls: Type[ManagerClsType]) -> Type[ManagerClsType]:
         """Get the singleton proxy for the Manager class.
 
         Returns:

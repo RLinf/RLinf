@@ -313,7 +313,9 @@ class Worker(metaclass=WorkerMeta):
 
     PID = None
     current_worker = None
+    logging.basicConfig()
     logger = logging.getLogger(Cluster.SYS_NAME)
+    logger.setLevel(logging.INFO)
     torch_platform = torch.cuda
     torch_device_type = "cuda"
 
@@ -431,6 +433,10 @@ class Worker(metaclass=WorkerMeta):
         self._lock = threading.Lock()
         self._stacklevel = 4 if self._is_ray_actor else 3
 
+        from .lock import DeviceLock
+
+        self._device_lock = DeviceLock(self)
+
         Worker.current_worker = self
         self._has_initialized = True
 
@@ -454,6 +460,11 @@ class Worker(metaclass=WorkerMeta):
         This is used to interact with the scheduler and register the worker.
         """
         return self._manager_proxy
+
+    @property
+    def device_lock(self):
+        """Get the DeviceLock instance for this worker."""
+        return self._device_lock
 
     @classmethod
     def create_group(

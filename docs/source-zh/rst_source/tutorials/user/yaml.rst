@@ -689,7 +689,6 @@ algorithm
     auto_reset: True
     ignore_terminations: True
     use_fixed_reset_state_ids: False
-    require_values: True
     normalize_advantages: True
     kl_penalty: kl
 
@@ -713,8 +712,6 @@ algorithm
 
 ``algorithm.use_fixed_reset_state_ids``：是否使用固定 reset 状态 ID（GRPO 推荐 True，PPO 默认为 False，旨在随机化）。
 
-``algorithm.require_values``：是否需要同时计算价值函数。
-
 ``algorithm.normalize_advantages``：是否对优势值归一化处理。
 
 ``algorithm.n_chunk_steps``：每个 rollout epoch 中的 chunk 数量（调用模型 predict 的次数）。
@@ -725,7 +722,7 @@ algorithm
 
 ``algorithm.rollout_epoch``：每个训练步骤前的 rollout 轮数。
 
-``algorithm.reward_type``：奖励聚合层级（chunk_level、token_level、step_level）。
+``algorithm.reward_type``：奖励聚合层级（chunk_level、action_level）。
 
 ``algorithm.logprob_type``：对数概率的计算层级。
 
@@ -822,13 +819,13 @@ actor
       vocab_size: 32000
       hidden_size: 4096
       policy_setup: "widowx_bridge"
-      vh_mode: "a0"
       image_size: [224, 224]
       is_lora: True
       lora_rank: 32
       lora_path: /storage/models/oft-sft/lora_004000
       ckpt_path: null
       num_images_in_input: 1
+      use_wrist_image: False
       attn_implementation: "flash_attention_2"
       low_cpu_mem_usage: True
       trust_remote_code: True
@@ -889,8 +886,6 @@ actor
 
 ``actor.model.policy_setup``：策略配置（widowx_bridge）。  
 
-``actor.model.vh_mode``：价值头模式（a0）。
-
 ``actor.model.image_size``：输入图像尺寸 [H, W]。  
 
 ``actor.model.is_lora / lora_rank / lora_path``：是否使用 LoRA、秩与权重路径。  
@@ -898,6 +893,8 @@ actor
 ``actor.model.ckpt_path``：模型 checkpoint 路径。  
 
 ``actor.model.num_images_in_input``：输入的图像数量。  
+
+``actor.model.use_wrist_image``：是否使用机器人末端手腕（wrist）上的摄像头拍摄的图像。  
 
 ``actor.model.attn_implementation``：注意力实现（flash_attention_2）。  
 
@@ -996,9 +993,9 @@ actor
 
 .. code:: yaml
 
-  num_images_in_input: 1
+  use_wrist_image: False
 
-``num_images_in_input``：模型输入的图像数量（单相机视角为 1）。
+``use_wrist_image``：是否使用机器人末端手腕（wrist）上的摄像头拍摄的图像。
 
 **环境规模**
 

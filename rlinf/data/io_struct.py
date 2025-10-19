@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 from omegaconf import DictConfig
-from vllm.outputs import CompletionOutput
-from vllm.outputs import RequestOutput as VllmRequestOutput
 
-from rlinf.data.datasets import batch_pad_to_fixed_len
+if TYPE_CHECKING:
+    from vllm.outputs import CompletionOutput
+    from vllm.outputs import RequestOutput as VllmRequestOutput
+
+from rlinf.data.datasets.utils import batch_pad_to_fixed_len
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
     split_list,
@@ -47,14 +49,16 @@ class RolloutRequest:
     Attr
     input_ids: List of input token IDs for rollout
     n: Number of completions to generate for each input
-    idx: List of unique identifiers for the requests, used for tracking
-    input_lengths: List of lengths of the input sequences, corresponding to input_ids
+    image_data: list of image data (bytes or URLs) for multimodal inputs
     answers: Optional list of answers for the requests, if available
+    multi_modal_inputs: list of multi-modal inputs for the requests
     """
 
     n: int
     input_ids: List[List[int]]
+    image_data: Union[List[List[bytes]], List[List[str]]]
     answers: List[str]
+    multi_modal_inputs: List[Dict]
 
     def repeat(self) -> "RolloutRequest":
         """Repeat each input in the RolloutRequest a specified number of times.
@@ -67,10 +71,15 @@ class RolloutRequest:
         """
         assert self.n > 0, "n must be greater than 0"
 
-        input_ids, answers = zip(
+        input_ids, answers, image_data, multi_modal_inputs = zip(
             *[
-                (input_id, answer)
-                for input_id, answer in zip(self.input_ids, self.answers)
+                (input_id, answer, image_data, multi_modal_inputs)
+                for input_id, answer, image_data, multi_modal_inputs in zip(
+                    self.input_ids,
+                    self.answers,
+                    self.image_data,
+                    self.multi_modal_inputs,
+                )
                 for _ in range(self.n)
             ]
         )
@@ -78,6 +87,8 @@ class RolloutRequest:
             n=self.n,
             input_ids=list(input_ids),
             answers=list(answers),
+            image_data=list(image_data),
+            multi_modal_inputs=list(multi_modal_inputs),
         )
 
     def split(self, num_splits: int) -> List["RolloutRequest"]:
@@ -96,15 +107,27 @@ class RolloutRequest:
 
         input_ids_split_list = split_list(self.input_ids, num_splits)
         answers_split_list = split_list(self.answers, num_splits)
+        image_data_split_list = split_list(self.image_data, num_splits)
+        multi_modal_inputs_split_list = split_list(self.multi_modal_inputs, num_splits)
 
         splitted_requests = []
-        for input_ids_batch, answers_batch in zip(
-            input_ids_split_list, answers_split_list
+        for (
+            input_ids_batch,
+            answers_batch,
+            image_data_batch,
+            multi_modal_inputs_batch,
+        ) in zip(
+            input_ids_split_list,
+            answers_split_list,
+            image_data_split_list,
+            multi_modal_inputs_split_list,
         ):
             request = RolloutRequest(
                 n=self.n,
                 input_ids=input_ids_batch,
                 answers=answers_batch,
+                image_data=image_data_batch,
+                multi_modal_inputs=multi_modal_inputs_batch,
             )
             splitted_requests.append(request)
 
@@ -113,14 +136,24 @@ class RolloutRequest:
     def repeat_and_split(
         self, rollout_batch_size: Optional[int] = None
     ) -> List["RolloutRequest"]:
-        input_ids, answers = zip(
+        input_ids, answers, image_data, multi_modal_inputs = zip(
             *[
-                (input_id, answer)
-                for input_id, answer in zip(self.input_ids, self.answers)
+                (input_id, answer, image_data, multi_modal_inputs)
+                for input_id, answer, image_data, multi_modal_inputs in zip(
+                    self.input_ids,
+                    self.answers,
+                    self.image_data,
+                    self.multi_modal_inputs,
+                )
                 for _ in range(self.n)
             ]
         )
-        input_ids, answers = (list(input_ids), list(answers))
+        input_ids, answers, image_data, multi_modal_inputs = (
+            list(input_ids),
+            list(answers),
+            list(image_data),
+            list(multi_modal_inputs),
+        )
 
         # Split input ids based on rollout_batch_size_per_gpu
         if rollout_batch_size is None:
@@ -134,14 +167,26 @@ class RolloutRequest:
         splitted_requests = []
         input_ids_split_list = split_list(input_ids, num_batches)
         answers_split_list = split_list(answers, num_batches)
+        image_data_split_list = split_list(image_data, num_batches)
+        multi_modal_inputs_split_list = split_list(multi_modal_inputs, num_batches)
 
-        for input_ids_batch, answers_batch in zip(
-            input_ids_split_list, answers_split_list
+        for (
+            input_ids_batch,
+            answers_batch,
+            image_data_batch,
+            multi_modal_inputs_batch,
+        ) in zip(
+            input_ids_split_list,
+            answers_split_list,
+            image_data_split_list,
+            multi_modal_inputs_split_list,
         ):
             request = RolloutRequest(
                 n=self.n,
                 input_ids=input_ids_batch,
                 answers=answers_batch,
+                image_data=image_data_batch,
+                multi_modal_inputs=multi_modal_inputs_batch,
             )
             splitted_requests.append(request)
 
@@ -256,8 +301,9 @@ class RolloutResult:
     advantages: Optional[List[float] | torch.Tensor] = None
     prompt_texts: Optional[List[str]] = None
     response_texts: Optional[List[str]] = None
-    answers: Optional[List[str]] = None
-
+    answers: Optional[List[str | dict]] = None
+    image_data: Optional[Union[List[List[bytes]], List[List[str]]]] = None
+    multi_modal_inputs: Optional[List[dict]] = None
     # Inference
     # Only set when recompute_logprobs is False
     rollout_logprobs: Optional[List[List[float]]] = None
@@ -308,12 +354,13 @@ class RolloutResult:
     @staticmethod
     def from_vllm_results(
         group_size: int,
-        results: List[VllmRequestOutput],
+        results: List["VllmRequestOutput"],
         answers: Optional[List[str]] = None,
+        multi_modal_inputs: Optional[List[Dict]] = None,
         return_logprobs: bool = False,
     ) -> "RolloutResult":
         def get_logprobs(
-            response_ids: List[int], output: CompletionOutput
+            response_ids: List[int], output: "CompletionOutput"
         ) -> List[float]:
             logprobs = []
             returned_logprobs = output.logprobs
@@ -325,6 +372,13 @@ class RolloutResult:
             return logprobs
 
         num_sequences = len(results) * group_size
+
+        if multi_modal_inputs:
+            mm_inputs = []
+            for mm_input in multi_modal_inputs:
+                mm_inputs.extend([mm_input] * group_size)
+        else:
+            mm_inputs = None
 
         prompt_lengths = []
         prompt_ids = []
@@ -368,6 +422,7 @@ class RolloutResult:
             response_ids=response_ids,
             response_lengths=response_lengths,
             response_texts=response_texts,
+            multi_modal_inputs=mm_inputs,
             is_end=is_end,
         )
         if return_logprobs:
@@ -380,6 +435,8 @@ class RolloutResult:
         group_size: int,
         input_ids: List[List[int]],
         answers: Optional[List[List[int]]] = None,
+        image_data: Optional[Union[List[List[bytes]], List[List[str]]]] = None,
+        multi_modal_inputs: Optional[List[Dict]] = None,
         return_logprobs: bool = False,
     ) -> "RolloutResult":
         """Create a MathRolloutResult from the given results and input IDs.
@@ -406,6 +463,8 @@ class RolloutResult:
             response_lengths=[len(res["output_ids"]) for res in results],
             response_ids=[res["output_ids"] for res in results],
             answers=answers,
+            image_data=image_data,
+            multi_modal_inputs=multi_modal_inputs,
             is_end=[
                 res["meta_info"]["finish_reason"]["type"] == "stop" for res in results
             ],
@@ -507,6 +566,161 @@ class RolloutResult:
 
         return merged_result
 
+    @staticmethod
+    def split_result_list_by_group(
+        rollout_results: List["RolloutResult"],
+    ) -> List["RolloutResult"]:
+        """
+        Split RolloutResult objects by group_size.
+
+        If input has only one RolloutResult, split it into multiple RolloutResult objects by group_size.
+        If input has multiple RolloutResult objects, split each one and merge the results.
+
+        Args:
+            rollout_results: List of input RolloutResult objects
+
+        Returns:
+            List of RolloutResult objects grouped by group_size
+        """
+        assert len(rollout_results) > 0, "No rollout results to split."
+
+        all_split_results = []
+
+        for rollout_result in rollout_results:
+            split_results = RolloutResult._split_single_result_by_group(rollout_result)
+            all_split_results.extend(split_results)
+
+        return all_split_results
+
+    @staticmethod
+    def _split_single_result_by_group(
+        rollout_result: "RolloutResult",
+    ) -> List["RolloutResult"]:
+        """
+        Split a single RolloutResult into multiple RolloutResult objects by group_size.
+
+        Args:
+            rollout_result: The RolloutResult to be split
+
+        Returns:
+            List of split RolloutResult objects
+        """
+        group_size = rollout_result.group_size
+        num_sequence = rollout_result.num_sequence
+
+        assert num_sequence % group_size == 0, (
+            f"num_sequence ({num_sequence}) must be divisible by group_size ({group_size})"
+        )
+
+        num_groups = num_sequence // group_size
+        split_results = []
+
+        # Split list fields
+        prompt_lengths_split = split_list(rollout_result.prompt_lengths, num_groups)
+        prompt_ids_split = split_list(rollout_result.prompt_ids, num_groups)
+        response_lengths_split = split_list(rollout_result.response_lengths, num_groups)
+        response_ids_split = split_list(rollout_result.response_ids, num_groups)
+        is_end_split = split_list(rollout_result.is_end, num_groups)
+
+        # Handle optional fields
+        answers_split = None
+        if rollout_result.answers is not None:
+            answers_split = split_list(rollout_result.answers, num_groups)
+
+        image_data_split = None
+        if rollout_result.image_data is not None:
+            image_data_split = split_list(rollout_result.image_data, num_groups)
+
+        multi_modal_inputs_split = None
+        if rollout_result.multi_modal_inputs is not None:
+            multi_modal_inputs_split = split_list(
+                rollout_result.multi_modal_inputs, num_groups
+            )
+
+        prompt_texts_split = None
+        if rollout_result.prompt_texts is not None:
+            prompt_texts_split = split_list(rollout_result.prompt_texts, num_groups)
+
+        response_texts_split = None
+        if rollout_result.response_texts is not None:
+            response_texts_split = split_list(rollout_result.response_texts, num_groups)
+
+        rollout_logprobs_split = None
+        if rollout_result.rollout_logprobs is not None:
+            rollout_logprobs_split = split_list(
+                rollout_result.rollout_logprobs, num_groups
+            )
+
+        # Handle tensor fields
+        rewards_split = None
+        if rollout_result.rewards is not None:
+            if isinstance(rollout_result.rewards, torch.Tensor):
+                rewards_split = torch.chunk(rollout_result.rewards, num_groups, dim=0)
+            else:
+                rewards_split = split_list(rollout_result.rewards, num_groups)
+
+        advantages_split = None
+        if rollout_result.advantages is not None:
+            if isinstance(rollout_result.advantages, torch.Tensor):
+                advantages_split = torch.chunk(
+                    rollout_result.advantages, num_groups, dim=0
+                )
+            else:
+                advantages_split = split_list(rollout_result.advantages, num_groups)
+
+        prev_logprobs_split = None
+        if rollout_result.prev_logprobs is not None:
+            prev_logprobs_split = torch.chunk(
+                rollout_result.prev_logprobs, num_groups, dim=0
+            )
+
+        ref_logprobs_split = None
+        if rollout_result.ref_logprobs is not None:
+            ref_logprobs_split = torch.chunk(
+                rollout_result.ref_logprobs, num_groups, dim=0
+            )
+
+        # Create split RolloutResult objects
+        for i in range(num_groups):
+            split_result = RolloutResult(
+                num_sequence=group_size,
+                group_size=group_size,
+                prompt_lengths=prompt_lengths_split[i],
+                prompt_ids=prompt_ids_split[i],
+                response_lengths=response_lengths_split[i],
+                response_ids=response_ids_split[i],
+                is_end=is_end_split[i],
+                answers=answers_split[i] if answers_split is not None else None,
+                image_data=image_data_split[i]
+                if image_data_split is not None
+                else None,
+                multi_modal_inputs=multi_modal_inputs_split[i]
+                if multi_modal_inputs_split is not None
+                else None,
+                prompt_texts=prompt_texts_split[i]
+                if prompt_texts_split is not None
+                else None,
+                response_texts=response_texts_split[i]
+                if response_texts_split is not None
+                else None,
+                rollout_logprobs=rollout_logprobs_split[i]
+                if rollout_logprobs_split is not None
+                else None,
+                rewards=rewards_split[i] if rewards_split is not None else None,
+                advantages=advantages_split[i]
+                if advantages_split is not None
+                else None,
+                prev_logprobs=prev_logprobs_split[i]
+                if prev_logprobs_split is not None
+                else None,
+                ref_logprobs=ref_logprobs_split[i]
+                if ref_logprobs_split is not None
+                else None,
+            )
+            split_results.append(split_result)
+
+        return split_results
+
     def to_actor_batch(
         self,
         data_seq_length: int,
@@ -603,6 +817,12 @@ class RolloutResult:
             "response_lengths": response_lengths.cuda(),
         }
 
+        if (
+            self.multi_modal_inputs is not None
+            and self.multi_modal_inputs[0] is not None
+        ):
+            batch["multi_modal_inputs"] = self.multi_modal_inputs
+
         if self.advantages is not None:
             if isinstance(self.advantages, torch.Tensor):
                 batch["advantages"] = self.advantages.cuda()
@@ -648,14 +868,16 @@ class RolloutResult:
             return merged_batch
         if len(batches) == 1:
             return batches[0]
+
         for key in batches[0].keys():
-            assert torch.is_tensor(batches[0][key]), (
-                f"Expected tensor for key {key} in batches, got {type(batches[0][key])}"
-            )
-            assert torch.is_tensor(batches[0][key]), (
-                f"Expected tensor for key {key} in batches, got {type(batches[0][key])}"
-            )
-            merged_batch[key] = torch.cat([batch[key] for batch in batches], dim=0)
+            if torch.is_tensor(batches[0][key]):
+                merged_batch[key] = torch.cat([batch[key] for batch in batches], dim=0)
+            elif isinstance(batches[0][key], list):
+                merged_batch[key] = []
+                for batch in batches:
+                    merged_batch[key].extend(batch[key])
+            else:
+                raise ValueError(f"Unsupported batch key type: {type(batches[0][key])}")
         return merged_batch
 
 
@@ -784,3 +1006,191 @@ class BatchResizingIterator:
             )
 
             return self._get_next_micro_batch()
+
+
+def put_tensor_cpu(data_dict):
+    if data_dict is None:
+        return None
+
+    for key, value in data_dict.items():
+        if isinstance(value, dict):
+            data_dict[key] = put_tensor_cpu(value)
+        if isinstance(value, torch.Tensor):
+            data_dict[key] = value.cpu().contiguous()
+    return data_dict
+
+
+@dataclass(kw_only=True)
+class EnvOutput:
+    simulator_type: str
+    obs: Dict[str, Any]
+    final_obs: Optional[Dict[str, Any]] = None
+    dones: Optional[torch.Tensor] = None  # [B]
+    rewards: Optional[torch.Tensor] = None  # [B]
+
+    def __post_init__(self):
+        self.obs = put_tensor_cpu(self.obs)
+        self.final_obs = (
+            put_tensor_cpu(self.final_obs) if self.final_obs is not None else None
+        )
+        self.dones = self.dones.cpu().contiguous() if self.dones is not None else None
+        self.rewards = (
+            self.rewards.cpu().contiguous() if self.rewards is not None else None
+        )
+
+    def prepare_observations(self, obs: Dict[str, Any]) -> Dict[str, Any]:
+        wrist_image_tensor = None
+        if self.simulator_type == "libero":
+            image_tensor = torch.stack(
+                [
+                    value.clone().permute(2, 0, 1)
+                    for value in obs["images_and_states"]["full_image"]
+                ]
+            )
+            if "wrist_image" in obs["images_and_states"]:
+                wrist_image_tensor = torch.stack(
+                    [
+                        value.clone().permute(2, 0, 1)
+                        for value in obs["images_and_states"]["wrist_image"]
+                    ]
+                )
+        elif self.simulator_type == "maniskill":
+            image_tensor = obs["images"]
+        elif self.simulator_type == "robotwin":
+            image_tensor = obs["images"]
+        else:
+            raise NotImplementedError
+
+        states = None
+        if "images_and_states" in obs and "state" in obs["images_and_states"]:
+            states = obs["images_and_states"]["state"]
+
+        task_descriptions = (
+            list(obs["task_descriptions"]) if "task_descriptions" in obs else None
+        )
+
+        return {
+            "images": image_tensor,
+            "wrist_images": wrist_image_tensor,
+            "states": states,
+            "task_descriptions": task_descriptions,
+        }
+
+    def to_dict(self):
+        env_output_dict = {}
+
+        env_output_dict["obs"] = self.prepare_observations(self.obs)
+        env_output_dict["final_obs"] = (
+            self.prepare_observations(self.final_obs)
+            if self.final_obs is not None
+            else None
+        )
+        env_output_dict["dones"] = self.dones
+        env_output_dict["rewards"] = self.rewards
+
+        return env_output_dict
+
+
+@dataclass(kw_only=True)
+class EmbodiedRolloutResult:
+    # required
+    prev_logprobs: List[torch.Tensor] = field(default_factory=list)
+    prev_values: List[torch.Tensor] = field(default_factory=list)
+    dones: List[torch.Tensor] = field(default_factory=list)
+    rewards: List[torch.Tensor] = field(default_factory=list)
+
+    forward_inputs: List[Dict[str, Any]] = field(default_factory=list)
+
+    def __post_init__(self):
+        self.prev_logprobs = (
+            [prev_logprob.cpu().contiguous() for prev_logprob in self.prev_logprobs]
+            if self.prev_logprobs is not None
+            else []
+        )
+        self.prev_values = (
+            [prev_value.cpu().contiguous() for prev_value in self.prev_values]
+            if self.prev_values is not None
+            else []
+        )
+        self.dones = (
+            [done.cpu().contiguous() for done in self.dones]
+            if self.dones is not None
+            else []
+        )
+        self.rewards = (
+            [reward.cpu().contiguous() for reward in self.rewards]
+            if self.rewards is not None
+            else []
+        )
+
+        self.forward_inputs = [
+            put_tensor_cpu(forward_inputs) for forward_inputs in self.forward_inputs
+        ]
+
+    def append_result(self, result: Dict[str, Any]):
+        self.prev_logprobs.append(
+            result["prev_logprobs"].cpu().contiguous()
+        ) if "prev_logprobs" in result else []
+        self.prev_values.append(
+            result["prev_values"].cpu().contiguous()
+        ) if "prev_values" in result else []
+        self.dones.append(
+            result["dones"].cpu().contiguous()
+        ) if "dones" in result else []
+        self.rewards.append(
+            result["rewards"].cpu().contiguous()
+        ) if "rewards" in result else []
+
+        self.forward_inputs.append(put_tensor_cpu(result["forward_inputs"]))
+
+    def to_dict(self):
+        rollout_result_dict = {}
+        rollout_result_dict["prev_logprobs"] = (
+            torch.stack(self.prev_logprobs, dim=0).cpu().contiguous()
+            if len(self.prev_logprobs) > 0
+            else None
+        )
+        rollout_result_dict["prev_values"] = (
+            torch.stack(self.prev_values, dim=0).cpu().contiguous()
+            if len(self.prev_values) > 0
+            else None
+        )
+        rollout_result_dict["dones"] = (
+            torch.stack(self.dones, dim=0).cpu().contiguous()
+            if len(self.dones) > 0
+            else None
+        )
+        rollout_result_dict["rewards"] = (
+            torch.stack(self.rewards, dim=0).cpu().contiguous()
+            if len(self.rewards) > 0
+            else None
+        )
+        merged_forward_inputs = {}
+        for data in self.forward_inputs:
+            for k, v in data.items():
+                if k in merged_forward_inputs:
+                    merged_forward_inputs[k].append(v)
+                else:
+                    merged_forward_inputs[k] = [v]
+        for k in merged_forward_inputs.keys():
+            assert k not in ["dones", "rewards", "prev_logprobs", "prev_values"]
+            rollout_result_dict[k] = (
+                torch.stack(merged_forward_inputs[k], dim=0).cpu().contiguous()
+            )
+
+        return rollout_result_dict
+
+    def to_splited_dict(self, split_size) -> List[Dict[str, Any]]:
+        rollout_result_list = []
+        for i in range(split_size):
+            rollout_result_list.append(self.to_dict())
+
+            for key, value in rollout_result_list[i].items():
+                if isinstance(value, torch.Tensor):
+                    rollout_result_list[i][key] = torch.chunk(value, split_size, dim=1)[
+                        i
+                    ].contiguous()
+                else:
+                    raise ValueError(f"Unsupported type: {type(value)}")
+
+        return rollout_result_list

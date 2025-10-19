@@ -23,7 +23,7 @@ runner:
     experiment_name: "test_openvla"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 5
+  max_epochs: 1000
   max_steps: -1
 
   only_eval: False
@@ -36,19 +36,18 @@ algorithm:
   auto_reset: True
   ignore_terminations: True
   use_fixed_reset_state_ids: False
-  require_values: True
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
 
-  n_chunk_steps: 10
-  n_eval_chunk_steps: 10
+  n_chunk_steps: 80
+  n_eval_chunk_steps: 80
   # training rollout mbs
   rollout_micro_batch_size: 64
-  num_group_envs: 8
+  num_group_envs: 32
   rollout_epoch: 1
 
-  reward_type: step_level
+  reward_type: action_level
   logprob_type: action_level
   entropy_type: action_level
 
@@ -123,7 +122,7 @@ actor:
   checkpoint_save_path: "../results"
 
   micro_batch_size: 20
-  global_batch_size: 80
+  global_batch_size: 160
   seed: 1234
   enable_offload: True
 
@@ -152,14 +151,16 @@ actor:
     vocab_size: 32000
     hidden_size: 4096
     policy_setup: "widowx_bridge"
-    vh_mode: "a0"
+    add_value_head: True
     image_size: [224, 224]
     is_lora: True
     lora_rank: 32
     ckpt_path: null
+    use_wrist_image: False
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
     trust_remote_code: True
+    gradient_checkpointing: False
 
   optim:
     lr: 1.0e-4
@@ -168,6 +169,12 @@ actor:
     adam_beta2: 0.95
     adam_eps: 1.0e-05
     clip_grad: 1.0
+
+  fsdp:
+    forward_prefetch: False
+    limit_all_gathers: False
+    backward_prefetch: False
+    use_orig_params: False
 
 reward:
   use_reward_model: False

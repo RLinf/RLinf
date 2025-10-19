@@ -66,32 +66,52 @@ def preprocess_loss_inputs(**kwargs) -> dict:
     logprob_type = kwargs.get("logprob_type", None)
     entropy_type = kwargs.get("entropy_type", None)
     single_action_dim = kwargs.get("single_action_dim", None)
-
+    reward_type = kwargs.get("reward_type", None)
     logprobs = kwargs["logprobs"]
     old_logprobs = kwargs["old_logprobs"]
     advantages = kwargs["advantages"]
     entropy = kwargs.get("entropy", None)
     loss_mask = kwargs.get("loss_mask", None)
     loss_mask_sum = kwargs.get("loss_mask_sum", None)
+    values = kwargs.get("values", None)
+    prev_values = kwargs.get("prev_values", None)
+    returns = kwargs.get("returns", None)
 
+    if reward_type == "chunk_level":
+        advantages = advantages.flatten()
+        if loss_mask is not None:
+            loss_mask = loss_mask.flatten()
+        if loss_mask_sum is not None:
+            loss_mask_sum = loss_mask_sum.flatten()
+        if values is not None:
+            values = values.flatten()
+        if prev_values is not None:
+            prev_values = prev_values.flatten()
+        if returns is not None:
+            returns = returns.flatten()
     bsz = logprobs.shape[0]
-
     if logprob_type == "token_level":
+        # logprobs, old_logprobs: [bsz, num_action_chunks, action_dim] -> [bsz, num_action_chunks, action_dim]
         logprobs = logprobs.reshape(bsz, -1, single_action_dim)
         old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim)
-        advantages = advantages.unsqueeze(-1)
-        if loss_mask is not None:
-            loss_mask = loss_mask.unsqueeze(-1)
-            loss_mask_sum = loss_mask_sum.unsqueeze(-1)
 
     elif logprob_type == "action_level":
+        # logprobs, old_logprobs: [bsz, num_action_chunks, action_dim] -> [bsz, num_action_chunks]
         logprobs = logprobs.reshape(bsz, -1, single_action_dim).sum(dim=-1)
         old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim).sum(dim=-1)
 
     elif logprob_type == "chunk_level":
-        logprobs = logprobs.sum(dim=-1)
-        old_logprobs = old_logprobs.sum(dim=-1)
-        advantages = advantages.sum(dim=-1)
+        # logprobs, old_logprobs: [bsz, num_action_chunks, action_dim] -> [bsz]
+        logprobs = logprobs.reshape(bsz, -1, single_action_dim).sum(dim=[1, 2])
+        old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim).sum(dim=[1, 2])
+
+    target_shape = logprobs.shape
+    advantages = expand_to_target_dim(advantages, target_shape)
+    loss_mask = expand_to_target_dim(loss_mask, target_shape)
+    loss_mask_sum = expand_to_target_dim(loss_mask_sum, target_shape)
+    values = expand_to_target_dim(values, target_shape)
+    prev_values = expand_to_target_dim(prev_values, target_shape)
+    returns = expand_to_target_dim(returns, target_shape)
 
     if entropy is not None:
         if entropy_type == "action_level":
@@ -107,6 +127,9 @@ def preprocess_loss_inputs(**kwargs) -> dict:
             "entropy": entropy,
             "loss_mask": loss_mask,
             "loss_mask_sum": loss_mask_sum,
+            "values": values,
+            "prev_values": prev_values,
+            "returns": returns,
         }
     )
 
@@ -119,8 +142,22 @@ def preprocess_advantages_inputs(**kwargs) -> dict:
     """
     reward_type = kwargs.get("reward_type", None)
     if reward_type == "chunk_level":
-        rewards = kwargs["rewards"]
-        dones = kwargs["dones"]
-        kwargs["rewards"] = rewards.sum(dim=-1, keepdim=True)
-        kwargs["dones"] = dones[..., -1:]
+        # rewards, dones, loss_mask, loss_mask_sum: [n_chunk_steps, bsz, num_action_chunks] -> [n_chunk_steps, bsz, 1]
+        kwargs["rewards"] = kwargs["rewards"].sum(dim=-1, keepdim=True)
+        kwargs["dones"] = kwargs["dones"].max(dim=-1, keepdim=True)[0]
+        if "loss_mask" in kwargs and kwargs["loss_mask"] is not None:
+            kwargs["loss_mask"] = kwargs["loss_mask"].max(dim=-1, keepdim=True)[0]
+        if "loss_mask_sum" in kwargs and kwargs["loss_mask_sum"] is not None:
+            kwargs["loss_mask_sum"] = kwargs["loss_mask_sum"].max(dim=-1, keepdim=True)[
+                0
+            ]
     return kwargs
+
+
+def expand_to_target_dim(tensor, target_shape):
+    if tensor is None:
+        return None
+    if tensor.shape != target_shape:
+        while len(tensor.shape) < len(target_shape):
+            tensor = tensor.unsqueeze(-1)
+    return tensor

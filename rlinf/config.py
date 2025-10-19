@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import dataclasses
+import importlib.util
 import logging
 import os
 from dataclasses import asdict
@@ -24,22 +25,19 @@ from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
 from transformers import AutoConfig
 
+from rlinf.scheduler.cluster import Cluster
+from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
+
 if TYPE_CHECKING:
     from megatron.core.model_parallel_config import ModelParallelConfig
     from megatron.core.transformer.transformer_config import TransformerConfig
 
 logging.getLogger().setLevel(logging.INFO)
 
-try:
-    import transformer_engine
-
-    HAVE_TE = True
-except ImportError:
-    transformer_engine = None
-    HAVE_TE = False
-
-SUPPORTED_MODEL_ARCHS = ["qwen2.5", "openvla", "openvla_oft"]
+SUPPORTED_MODEL_ARCHS = ["qwen2.5", "qwen2.5_vl", "openvla", "openvla_oft", "openpi"]
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
+SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl"]
+SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
 
 
@@ -50,6 +48,8 @@ def torch_dtype_from_precision(precision: Union[int, str]) -> torch.dtype:
         return torch.float16
     elif precision in [32, "32", "32-true"]:
         return torch.float32
+    elif precision in [None]:
+        return None
     else:
         raise ValueError(
             f"Could not parse the precision of `{precision}` to a valid torch.dtype"
@@ -188,7 +188,7 @@ def validate_rollout_cfg(cfg):
 
 def validate_model_cfg_by_hf_config(cfg, hf_model_path):
     # validate by hf config
-    hf_config = AutoConfig.from_pretrained(hf_model_path)
+    hf_config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=True)
 
     if "Qwen2ForCausalLM" in hf_config.architectures:
         qkv_bias = True
@@ -196,8 +196,16 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         qkv_bias = getattr(hf_config, "attention_bias", False)
 
     with open_dict(cfg):
-        if hf_config.rope_scaling is not None:
-            cfg.model.seq_len_interpolation_factor = hf_config.rope_scaling["factor"]
+        rs = getattr(hf_config, "rope_scaling", None)
+        if isinstance(rs, dict):
+            rtype = rs.get("type", "")
+            if rtype in {"linear", "dynamic", "ntk", "yarn"}:
+                f = rs.get("factor")
+                if f is not None:
+                    cfg.model.seq_len_interpolation_factor = float(f)
+            else:
+                # mrope
+                cfg.model.seq_len_interpolation_factor = None
         cfg.model.override_vocab_size = hf_config.vocab_size
         cfg.model.max_position_embeddings = hf_config.max_position_embeddings
         cfg.model.rotary_base = hf_config.rope_theta
@@ -214,6 +222,26 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         cfg.model.add_qkv_bias = qkv_bias
         cfg.model.layernorm_epsilon = hf_config.rms_norm_eps
 
+    return cfg
+
+
+def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
+    OmegaConf.set_struct(cfg, True)
+    with open_dict(cfg):
+        if "fsdp_config" not in cfg:
+            cfg.fsdp_config = OmegaConf.create({})
+        cfg.fsdp_config.forward_prefetch = cfg.get("fsdp_config", {}).get(
+            "forward_prefetch", False
+        )
+        cfg.fsdp_config.limit_all_gathers = cfg.get("fsdp_config", {}).get(
+            "limit_all_gathers", False
+        )
+        cfg.fsdp_config.backward_prefetch = cfg.get("fsdp_config", {}).get(
+            "backward_prefetch", False
+        )
+        cfg.fsdp_config.use_orig_params = cfg.get("fsdp_config", {}).get(
+            "use_orig_params", False
+        )
     return cfg
 
 
@@ -521,10 +549,17 @@ def validate_embodied_cfg(cfg):
             cfg.env.eval.init_params.control_mode = get_robot_control_mode(
                 cfg.actor.model.policy_setup
             )
+        if cfg.env.train.simulator_type == "libero":
+            if cfg.actor.model.get("num_images_in_input", 1) > 1:
+                assert cfg.actor.model.get("use_wrist_image", False), (
+                    "Invalid config: Multiple input images are enabled "
+                    "(num_images_in_input > 1) but 'use_wrist_image' is set to False. "
+                    "Please enable wrist images by setting 'use_wrist_image=True'."
+                )
     return cfg
 
 
-def validate_math_cfg(cfg: DictConfig) -> DictConfig:
+def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
     assert cfg.rollout.model_arch in SUPPORTED_MODEL_ARCHS, (
         f"Model {cfg.rollout.model_arch} is not supported"
     )
@@ -555,13 +590,63 @@ def validate_math_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
+    assert cfg.rollout.model_arch == "qwen2.5", (
+        f"Model {cfg.rollout.model_arch} is not supported"
+    )
+
+    assert cfg.algorithm.recompute_logprobs != cfg.rollout.return_logprobs, (
+        "Exactly one of `algorithm.recompute_logprobs` or `rollout.return_logprobs` must be True to compute `prev_logprobs`."
+    )
+
+    assert cfg.algorithm.recompute_logprobs, (
+        "Online coding task must use recompute_logprobs"
+    )
+
+    assert cfg.actor.training_backend == "megatron", (
+        "Online coding task must use megatron training backend"
+    )
+
+    cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
+    component_placement = ModelParallelComponentPlacement(cfg, cluster)
+    assert component_placement.placement_mode == PlacementMode.DISAGGREGATED, (
+        "Online coding task must use disaggregated placement mode"
+    )
+
+    with open_dict(cfg):
+        cfg.algorithm.training_batch_size_per_gpu = cfg.algorithm.get(
+            "training_batch_size_per_gpu", 1
+        )
+        cfg.algorithm.n_minibatches = cfg.algorithm.get("n_minibatches", 1)
+        cfg.algorithm.max_num_gen_batches = cfg.algorithm.get("max_num_gen_batches", 1)
+        cfg.actor.micro_batch_size = cfg.algorithm.training_batch_size_per_gpu
+        cfg.actor.global_batch_size = (
+            cfg.data.rollout_batch_size
+            * cfg.algorithm.group_size
+            // cfg.algorithm.n_minibatches
+        )
+        assert cfg.actor.micro_batch_size >= 1
+        assert cfg.actor.global_batch_size >= 1
+        assert cfg.runner.seq_length > cfg.data.max_prompt_length, (
+            f"runner.seq_length ({cfg.runner.seq_length}) must be greater than data.max_prompt_length ({cfg.data.max_prompt_length})"
+        )
+
+        cfg.rollout = validate_rollout_cfg(cfg.rollout)
+    return cfg
+
+
 def validate_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
 
+    assert cfg.runner.task_type in SUPPORTED_TASK_TYPE, (
+        f"task_type must be one of {SUPPORTED_TASK_TYPE}"
+    )
     if cfg.runner.task_type == "embodied":
         cfg = validate_embodied_cfg(cfg)
-    if cfg.runner.task_type == "math":
-        cfg = validate_math_cfg(cfg)
+    elif cfg.runner.task_type == "reasoning":
+        cfg = validate_reasoning_cfg(cfg)
+    elif cfg.runner.task_type == "coding_online_rl":
+        cfg = validate_coding_online_rl_cfg(cfg)
 
     if (
         cfg.algorithm.adv_type == "embodied_grpo"
@@ -569,13 +654,21 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     ):
         assert cfg.algorithm.group_size > 1
 
+    assert cfg.actor.training_backend in SUPPORTED_TRAINING_BACKENDS, (
+        f"Unsupported training_backend {cfg.actor.training_backend}. Supported training backends are {SUPPORTED_TRAINING_BACKENDS}."
+    )
+
     if cfg.actor.training_backend == "megatron":
         cfg.actor = validate_megatron_cfg(cfg.actor)
         cfg.actor = validate_model_cfg_by_hf_config(cfg.actor, cfg.rollout.model_dir)
+    elif cfg.actor.training_backend == "fsdp":
+        cfg.actor = validate_fsdp_cfg(cfg.actor)
 
     if cfg.critic.use_critic_model and cfg.critic.training_backend == "megatron":
         cfg.critic = validate_megatron_cfg(cfg.critic)
-        cfg = validate_model_cfg_by_hf_config(cfg.critic, cfg.rollout.model_dir)
+        cfg.critic = validate_model_cfg_by_hf_config(cfg.critic, cfg.rollout.model_dir)
+    elif cfg.critic.use_critic_model and cfg.critic.training_backend == "fsdp":
+        cfg.critic = validate_fsdp_cfg(cfg.critic)
 
     return cfg
 
@@ -706,7 +799,10 @@ def build_transformer_config(cfg) -> "TransformerConfig":
     tp_only_amax_red = cfg.get("tp_only_amax_red", False)
 
     if cfg.get("enable_cuda_graph", False):
-        assert HAVE_TE, "Transformer Engine is required for cudagraphs."
+        if importlib.util.find_spec("transformer_engine") is None:
+            raise ImportError(
+                "Can not import transformer_engine, which is required for cudagraphs."
+            )
         assert cfg.get("use_te_rng_tracker", False), (
             "Transformer engine's RNG tracker is required for cudagraphs, this can be enabled with \
             'use_te_rng_tracker=True'."

@@ -40,10 +40,12 @@ as well as reinforcement learning training examples on real robots.
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/waiting_icon.jpg"
+       <img src="https://github.com/RLinf/misc/raw/main/pic/pi0_icon.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[Ongoing]RL on π₀ Models</b><br>
+         <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/pi0.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>RL on π₀ Models</b>
+         </a><br>
          Significant improvement in RL training on π₀
        </p>
      </div>
@@ -129,13 +131,13 @@ The following examples include agent workflow construction, online RL training, 
 
    <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/math_numbers_small.jpg"
+       <img src="https://github.com/RLinf/misc/raw/main/pic/coding_online_rl_offline_numbers.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/cursor_onlinerl.html" target="_blank" style="text-decoration: underline; color: blue;">
+         <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/coding_online_rl.html" target="_blank" style="text-decoration: underline; color: blue;">
           <b>Open-Source Online RL for Code Completion</b>
          </a><br>
-         End-to-end online RL with RLinf + Continue, improving model performance by xx%
+         End-to-end online RL with RLinf + Continue, improving model performance by 52%
        </p>
      </div>
 
@@ -195,4 +197,6 @@ Thanks to this decoupled design, workers can be flexibly and dynamically schedul
 
    maniskill
    libero
+   pi0
    reasoning
+   coding_online_rl

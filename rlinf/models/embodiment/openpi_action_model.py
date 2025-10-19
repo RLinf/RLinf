@@ -1,0 +1,697 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import random
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Literal, Tuple
+
+import jax
+import numpy as np
+import torch
+from openpi import transforms as _transforms
+from openpi.models import model as _model
+from openpi.models.pi0_config import Pi0Config
+from openpi.models_pytorch.pi0_pytorch import PI0Pytorch, make_att_2d_masks
+
+from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
+from rlinf.models.embodiment.modules.value_head import ValueHead
+
+
+@dataclass(frozen=True)
+class OpenPi0Config(Pi0Config):
+    # config for rl
+    noise_level: bool = 0.5
+    action_chunk: int = 5
+    train_expert_only: bool = False
+    action_env_dim: int = 7  # for libero
+    num_steps: int = 10
+    noise_method: str = "flow_sde"  # flow_sde, flow_cps
+    safe_get_logprob: bool = False
+    joint_logprob: bool = False
+    detach_critic_input: bool = False
+    chunk_critic_input: bool = False
+    add_value_head: bool = False
+    noise_anneal: bool = False
+    noise_params: List = field(
+        default_factory=lambda: [0.7, 0.3, 400]
+    )  # noise_start, noise_end, noise_anneal_steps
+    ignore_last: bool = False
+    value_after_vlm: bool = False
+    value_vlm_mode: str = "mean_token"  # last_token, mean_token, first_token
+
+
+class OpenPi0ForRLActionPrediction(PI0Pytorch):
+    """Pi0 model for reinforcement learning action prediction.
+
+    This is a template class that defines the interfaces needed for RL training.
+    You need to implement all the methods marked with 'TODO: Implement'.
+    """
+
+    @property
+    def _no_split_modules(self) -> list[str]:
+        # Currently, PaliGemmaForConditionalGeneration only support DDP, as many of it's modules are called without forward
+        return [
+            "PaliGemmaForConditionalGeneration",
+            "GemmaDecoderLayer",
+            "SiglipVisionEmbeddings",
+            "GemmaRMSNorm",
+            "GemmaForCausalLM",
+            "GemmaRotaryEmbedding",
+        ]
+
+    def __init__(
+        self,
+        config: OpenPi0Config,
+    ):
+        # Override `sample_actions` to prevent parent class polymorphic call
+        sample_actions_func = self.sample_actions
+        super().__init__(config)
+        self.sample_actions = sample_actions_func
+
+        # rl model init
+        if self.config.value_after_vlm:
+            assert not self.config.joint_logprob, (
+                "joint logprob is not tested for value_after_vlm mode"
+            )
+            assert not (self.config.double_layer and self.config.joint_logprob), (
+                "double_layer and joint_logprob can not be set at the same time"
+            )
+            proj_width = 2048
+        else:
+            proj_width = 1024
+        self.global_step = 0
+        if self.config.add_value_head:
+            self.value_head = ValueHead(
+                input_dim=proj_width,
+                hidden_sizes=(512, 256, 128),
+                output_dim=1,
+                activation="relu",
+                bias_last=True,
+            )
+
+        if self.config.noise_method == "reinflow":
+            self.reinflow_explore_noise_net = ExploreNoiseNet(
+                in_dim=proj_width,
+                out_dim=self.config.action_dim,
+                hidden_dims=[128, 64],
+                activation_type="tanh",
+                noise_logvar_range=[0.08, 0.16],
+                noise_scheduler_type="learn",
+            )
+
+    def set_global_step(self, global_step):
+        self.global_step = global_step
+
+    def setup_wrappers(
+        self,
+        transforms: Sequence[_transforms.DataTransformFn] = (),
+        output_transforms: Sequence[_transforms.DataTransformFn] = (),
+    ):
+        self._input_transform = _transforms.compose(transforms)
+        self._output_transform = _transforms.compose(output_transforms)
+
+    def input_transform(self, obs: dict, transpose=True):
+        inputs = jax.tree.map(lambda x: x, obs)
+        # process input
+        first_process = "prompt" in inputs.keys()
+        if first_process:
+            inputs.pop("prompt")
+        else:
+            inputs = {
+                value: inputs[value]
+                for value in inputs.keys()
+                if value
+                in ["observation/image", "observation/wrist_image", "observation/state"]
+            }
+        # tensor -> numpy
+        inputs = jax.tree.map(
+            lambda x: np.asarray(x.detach().cpu()) if torch.is_tensor(x) else x, inputs
+        )
+        batch_size = next(v.shape[0] for v in inputs.values() if hasattr(v, "shape"))
+        # split & transform
+        transformed_samples = []
+        for i in range(batch_size):
+            sample = jax.tree.map(lambda x: x[i], inputs)
+            # convert from [3,256,256] -> [256,256,3]
+            if transpose:
+                sample = jax.tree.map(
+                    lambda x: x.transpose(1, 2, 0)
+                    if len(x.shape) == 3 and transpose
+                    else x,
+                    sample,
+                )
+            else:
+                sample = jax.tree.map(lambda x: x if len(x.shape) == 3 else x, sample)
+            if first_process:
+                sample["prompt"] = obs["prompt"][i]
+            else:
+                sample["prompt"] = "xxxx"
+            transformed_sample = self._input_transform(sample)
+            transformed_samples.append(transformed_sample)
+        # recombine
+        inputs = jax.tree.map(
+            lambda *torch_arr: torch.from_numpy(np.asarray(torch_arr).copy()),
+            *transformed_samples,
+        )
+        # inputs = jax.tree.map(lambda *x: torch.stack(x, axis=0), inputs)
+        if not first_process:
+            inputs["tokenized_prompt"] = obs["tokenized_prompt"]
+            inputs["tokenized_prompt_mask"] = obs["tokenized_prompt_mask"]
+        return inputs
+
+    def output_transform(self, outputs):
+        # split & transform
+        batch_size = outputs["actions"].shape[0]
+        transformed_samples = []
+        for i in range(batch_size):
+            sample = jax.tree.map(lambda x: np.asarray(x[i].detach().cpu()), outputs)
+            sample = self._output_transform(sample)
+            transformed_samples.append(sample)
+        # recombine
+        outputs = jax.tree.map(
+            lambda *torch_arr: torch.from_numpy(np.asarray(torch_arr).copy()),
+            *transformed_samples,
+        )
+        outputs["actions"] = outputs["actions"][:, : self.config.action_chunk]
+        return outputs
+
+    def forward(
+        self,
+        data: dict[str, torch.Tensor],
+        **kwargs,
+    ) -> Dict[str, Any]:
+        compute_values = kwargs.get("compute_values", False)
+
+        chains = data["chains"]
+        denoise_inds = data["denoise_inds"]
+        # input transform
+        observation = self.input_transform(data)
+        observation = _model.Observation.from_dict(observation)
+        images, img_masks, lang_tokens, lang_masks, state = (
+            self._preprocess_observation(observation, train=False)
+        )
+        # transfer to device
+        device = chains.device
+        images = [img.to(device) for img in images]
+        img_masks = [img_mask.to(device) for img_mask in img_masks]
+        state = state.to(device)
+        # get log prob
+        log_probs, value_t = self.get_log_prob_value(
+            images,
+            img_masks,
+            lang_tokens,
+            lang_masks,
+            state,
+            chains,
+            denoise_inds,
+            compute_values,
+        )
+        log_probs = log_probs[
+            :, :, : self.config.action_chunk, : self.config.action_env_dim
+        ]
+        # post process
+        if self.config.joint_logprob:
+            log_probs = log_probs.mean(dim=1)
+            prev_logprobs = data["prev_logprobs"].mean(dim=1)
+        else:
+            bsize = log_probs.shape[0]
+            log_probs = log_probs[:, 0]
+            prev_logprobs = data["prev_logprobs"]
+            prev_logprobs = prev_logprobs[
+                torch.arange(bsize),
+                denoise_inds[:, 0],
+                : self.config.action_chunk,
+                : self.config.action_env_dim,
+            ]
+        value_t = value_t.mean(dim=-1, keepdim=False)
+        return {
+            "logprobs": log_probs,
+            "prev_logprobs": prev_logprobs,
+            "values": value_t,
+            "entropy": None,
+        }
+
+    def input_processor(self, env_processed_obs):
+        to_process_obs = {
+            "observation/image": env_processed_obs["images"],
+            "observation/wrist_image": env_processed_obs["wrist_images"],
+            "observation/state": env_processed_obs["states"],
+            "prompt": env_processed_obs["task_descriptions"],
+        }
+        processed_obs = self.input_transform(to_process_obs)
+        device = next(self.parameters()).device
+        for key, value in processed_obs.items():
+            if isinstance(value, list):
+                processed_obs[key] = [
+                    item.to(device=device).contiguous()
+                    if torch.is_tensor(item)
+                    else item
+                    for item in value
+                ]
+            elif torch.is_tensor(value):
+                processed_obs[key] = value.to(device=device).contiguous()
+            elif isinstance(value, dict):
+                for sub_key, sub_value in value.items():
+                    processed_obs[key][sub_key] = sub_value.to(
+                        device=device
+                    ).contiguous()
+        return processed_obs
+
+    def predict_action_batch(
+        self, env_obs, mode: Literal["train", "eval"] = "train", compute_values=True
+    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+        processed_obs = self.input_processor(env_obs)
+        observation = _model.Observation.from_dict(processed_obs)
+        outputs = self.sample_actions(
+            observation, mode=mode, compute_values=compute_values
+        )
+        actions = self.output_transform(
+            {"actions": outputs["actions"], "state": observation.state}
+        )["actions"].numpy()
+
+        forward_inputs = {
+            "chains": outputs["chains"],
+            "denoise_inds": outputs["denoise_inds"],
+            "observation/image": env_obs["images"],
+            "observation/wrist_image": env_obs["wrist_images"],
+            "observation/state": env_obs["states"],
+            "tokenized_prompt": processed_obs["tokenized_prompt"],
+            "tokenized_prompt_mask": processed_obs["tokenized_prompt_mask"],
+        }
+
+        result = {
+            "prev_logprobs": outputs["prev_logprobs"],
+            "prev_values": outputs["prev_values"],
+            "forward_inputs": forward_inputs,
+        }
+
+        return actions, result
+
+    @torch.no_grad()
+    def sample_actions(
+        self,
+        observation: _model.Observation,
+        noise=None,
+        mode="train",
+        compute_values=True,
+    ) -> torch.Tensor:
+        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
+        bsize = observation.state.shape[0]
+        device = observation.state.device
+        num_steps = self.config.num_steps
+        if noise is None:
+            actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
+            noise = self.sample_noise(actions_shape, device)
+
+        images, img_masks, lang_tokens, lang_masks, state = (
+            self._preprocess_observation(observation, train=False)
+        )
+
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks
+        )
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+
+        # Compute image and language key value cache
+        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
+        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
+
+        prefix_output, past_key_values = self.paligemma_with_expert.forward(
+            attention_mask=prefix_att_2d_masks_4d,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+        )
+
+        x_t = noise
+        # add sde sample and traj collect
+        chains = []
+        log_probs = []
+        values = []
+        chains.append(x_t)
+
+        # add value based on the vlm for pi05, expert for pi0
+        if self.config.value_after_vlm:
+            values_vlm = self.get_value_from_vlm(prefix_output)
+        if self.config.joint_logprob:
+            initial_log_prob = self.get_logprob_norm(
+                x_t, torch.zeros_like(noise), torch.ones_like(noise)
+            )
+            log_probs.append(initial_log_prob)
+
+        # In the joint logprob mode, we need to sample the logprob for each denoise step
+        # In the non-joint logprob mode, only one denoise step is sampled and ode-sde mix sampling is used
+        # denoise index
+        if mode == "train":
+            if self.config.joint_logprob:
+                denoise_inds = torch.arange(num_steps)
+            else:
+                if self.config.noise_method == "flow_sde":
+                    if self.config.ignore_last:
+                        denoise_inds = torch.tensor(
+                            [random.randint(0, num_steps - 2)] * num_steps
+                        )
+                    else:
+                        denoise_inds = torch.tensor(
+                            [random.randint(0, num_steps - 1)] * num_steps
+                        )
+                elif self.config.noise_method == "flow_cps":
+                    # the last denoising step of the flow-cps is deterministic
+                    denoise_inds = torch.tensor(
+                        [random.randint(0, num_steps - 1)] * num_steps
+                    )
+                elif self.config.noise_method == "reinflow":
+                    denoise_inds = torch.tensor(
+                        [random.randint(0, num_steps - 1)] * num_steps
+                    )
+        else:
+            denoise_inds = torch.tensor([-1] * num_steps)
+        denoise_inds = denoise_inds[None].repeat(bsize, 1)
+
+        # denoise step
+        for idx in range(num_steps):
+            # sample mean var val
+            if idx == denoise_inds[0][idx]:
+                x_t_mean, x_t_std, value_t = self.sample_mean_var_val(
+                    x_t,
+                    idx,
+                    state,
+                    prefix_pad_masks,
+                    past_key_values,
+                    "train",
+                    num_steps,
+                    compute_values,
+                )
+            else:
+                x_t_mean, x_t_std, value_t = self.sample_mean_var_val(
+                    x_t,
+                    idx,
+                    state,
+                    prefix_pad_masks,
+                    past_key_values,
+                    "eval",
+                    num_steps,
+                    compute_values,
+                )
+            # Euler step - use new tensor assignment instead of in-place operation
+            x_t = x_t_mean + self.sample_noise(x_t.shape, device) * x_t_std
+            log_prob = self.get_logprob_norm(x_t, x_t_mean, x_t_std)
+            # store
+            values.append(value_t)
+            chains.append(x_t)
+            log_probs.append(log_prob)
+        x_0 = x_t
+        chains = torch.stack(chains, dim=1)
+        log_probs = torch.stack(log_probs, dim=1)[
+            :, :, : self.config.action_chunk, : self.config.action_env_dim
+        ]
+        if self.config.value_after_vlm:
+            values = values_vlm[:, None]
+        else:
+            values = torch.stack(values, dim=1).mean(dim=-1, keepdim=True)
+        return {
+            "actions": x_0,
+            "chains": chains,
+            "prev_logprobs": log_probs,
+            "prev_values": values,
+            "denoise_inds": denoise_inds,
+        }
+
+    def sample_mean_var_val(
+        self,
+        x_t,
+        idx,
+        state,
+        prefix_pad_masks,
+        past_key_values,
+        mode,
+        denoise_steps,
+        compute_values=True,
+    ):
+        """
+        Sample the mean, variance and value of the action at a given timestep.
+        Rollout sample (idx is int) and actor get_log_prob_value (idx is tensor) will load this function.
+        """
+        # expand the shape
+        bsize = state.shape[0]
+        device = state.device
+        if isinstance(idx, int):
+            idx = torch.tensor(idx).expand(bsize)
+        # build parameters
+        if self.config.noise_anneal:
+            # noise annealing
+            noise_start, noise_end, anneal_steps = self.config.noise_params
+            noise_level = (
+                noise_start
+                + (noise_end - noise_start)
+                * min(self.global_step, anneal_steps)
+                / anneal_steps
+            )
+            noise_level = torch.tensor(noise_level).to(device)
+        else:
+            # fixed noise level
+            noise_level = torch.tensor(self.config.noise_level).to(device)
+        timesteps = torch.linspace(1, 1 / denoise_steps, denoise_steps, device=device)
+        timesteps = torch.cat([timesteps, torch.tensor([0.0], device=device)])
+        # input parameters
+        t_input = timesteps[idx]
+        delta = timesteps[idx] - timesteps[idx + 1]
+        # velocity prediction
+        suffix_out = self.get_suffix_out(
+            state,
+            prefix_pad_masks,
+            past_key_values,
+            x_t,
+            t_input,
+        )
+        v_t = self.action_out_proj(suffix_out)  # [bs,n_action_steps,max_action_dim]
+        # value prediction
+        if (
+            self.config.add_value_head
+            and compute_values
+            and not self.config.value_after_vlm
+        ):
+            # use chunk critic input
+            if self.config.chunk_critic_input:
+                suffix_out_value = torch.mean(
+                    suffix_out[:, : self.config.action_chunk], dim=1, keepdim=False
+                )
+            else:
+                suffix_out_value = torch.mean(suffix_out, dim=1, keepdim=False)
+            # detach critic input
+            if self.config.detach_critic_input:
+                suffix_out_value = suffix_out_value.detach()
+            value_t = self.value_head(suffix_out_value)[:, 0]
+        else:
+            value_t = torch.zeros((bsize), device=device)
+        # ode sde mix sampling
+        delta = delta[:, None, None].expand_as(x_t)
+        t_input = t_input[:, None, None].expand_as(x_t)
+        x0_pred = x_t - v_t * t_input
+        x1_pred = x_t + v_t * (1 - t_input)
+        if mode == "eval":
+            x0_weight = 1 - (t_input - delta)
+            x1_weight = t_input - delta
+            x_t_std = torch.zeros_like(t_input)
+        elif mode == "train":
+            if self.config.noise_method == "flow_sde":
+                sigmas = (
+                    noise_level
+                    * torch.sqrt(
+                        timesteps
+                        / (1 - torch.where(timesteps == 1, timesteps[1], timesteps))
+                    )[:-1]
+                )
+                sigma_i = sigmas[idx][:, None, None].expand_as(x_t)
+                x0_weight = torch.ones_like(t_input) - (t_input - delta)
+                x1_weight = t_input - delta - sigma_i**2 * delta / (2 * t_input)
+                x_t_std = torch.sqrt(delta) * sigma_i
+            elif self.config.noise_method == "flow_cps":
+                pi = torch.pi
+                cos_term = torch.cos(pi * noise_level / 2).to(device)
+                sin_term = torch.sin(pi * noise_level / 2).to(device)
+                x0_weight = torch.ones_like(t_input) - (t_input - delta)
+                x1_weight = (t_input - delta) * cos_term
+                x_t_std = (t_input - delta) * sin_term
+            elif self.config.noise_method == "reinflow":
+                x0_weight = 1 - (t_input - delta)
+                x1_weight = t_input - delta
+                x_t_std = self.reinflow_explore_noise_net(suffix_out)
+            else:
+                raise ValueError(f"Invalid noise method: {self.config.noise_method}")
+        x_t_mean = x0_pred * x0_weight + x1_pred * x1_weight
+        return x_t_mean, x_t_std, value_t
+
+    def get_suffix_out(
+        self,
+        state,
+        prefix_pad_masks,
+        past_key_values,
+        x_t,
+        timestep,
+    ):
+        """Apply one denoising step of the noise `x_t` at a given timestep."""
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = (
+            self.embed_suffix(state, x_t, timestep)
+        )
+
+        suffix_len = suffix_pad_masks.shape[1]
+        batch_size = prefix_pad_masks.shape[0]
+        prefix_len = prefix_pad_masks.shape[1]
+
+        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(
+            batch_size, suffix_len, prefix_len
+        )
+
+        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+
+        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
+
+        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
+
+        # Prepare attention masks
+        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
+        self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = (
+            "eager"  # noqa: SLF001
+        )
+
+        outputs_embeds, _ = self.paligemma_with_expert.forward(
+            attention_mask=full_att_2d_masks_4d,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=[None, suffix_embs],
+            use_cache=False,
+            adarms_cond=[None, adarms_cond],
+        )
+
+        suffix_out = outputs_embeds[1]
+        suffix_out = suffix_out[:, -self.config.action_horizon :]
+        suffix_out = suffix_out.to(dtype=torch.float32)
+        return suffix_out
+
+    # TODO: to check potential nan here
+    def get_logprob_norm(self, sample, mu, sigma):
+        # logprob = log p(x|mu,sigma) = -log(sigma) - 0.5 * log(2 * pi) - 0.5 * ((x - mu) / sigma) ** 2
+        if self.config.safe_get_logprob:
+            log_prob = -torch.pow((sample - mu), 2)
+        else:
+            mask = sigma == 0
+            sigma_safe = torch.where(mask, torch.ones_like(sigma), sigma)
+            constant_term = -torch.log(sigma_safe) - 0.5 * torch.log(
+                2 * torch.pi * torch.ones_like(sample)
+            )
+            exponent_term = -0.5 * torch.pow((sample - mu) / sigma_safe, 2)
+            log_prob = constant_term + exponent_term
+            log_prob = torch.where(mask, torch.zeros_like(log_prob), log_prob)
+        return log_prob
+
+    def preprocess_for_train(self, data):
+        return data
+
+    def get_log_prob_value(
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+        state,
+        chains,
+        denoise_inds,
+        compute_values=False,
+    ):
+        bsize = state.shape[0]
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks
+        )
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+
+        # Compute image and language key value cache
+        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
+        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
+
+        # Compute image and language key value cache
+        [prefix_output, _], past_key_values = self.paligemma_with_expert.forward(
+            attention_mask=prefix_att_2d_masks_4d,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+        )
+        chains_log_probs = []
+        chains_values = []
+        if self.config.joint_logprob:
+            num_steps = self.config.num_steps
+            initial_log_prob = self.get_logprob_norm(
+                chains[:, 0],
+                torch.zeros_like(chains[:, 0]),
+                torch.ones_like(chains[:, 0]),
+            )
+            chains_log_probs.append(initial_log_prob)
+        else:
+            num_steps = 1
+        for idx in range(num_steps):
+            denoise_ind = denoise_inds[:, idx]
+            chains_pre = chains[torch.arange(bsize), denoise_ind]
+            chains_next = chains[torch.arange(bsize), denoise_ind + 1]
+            x_t_mean, x_t_std, value_t = self.sample_mean_var_val(
+                chains_pre,
+                denoise_ind,
+                state,
+                prefix_pad_masks,
+                past_key_values,
+                "train",
+                self.config.num_steps,
+            )
+            log_probs = self.get_logprob_norm(chains_next, x_t_mean, x_t_std)
+            chains_log_probs.append(log_probs)
+            if self.config.value_after_vlm:
+                chains_values.append(self.get_value_from_vlm(prefix_output))
+            else:
+                chains_values.append(value_t)
+        chains_log_probs = torch.stack(chains_log_probs, dim=1)
+        chains_values = torch.stack(chains_values, dim=1)
+        return chains_log_probs, chains_values
+
+    def get_value_from_vlm(self, prefix_output):
+        # prefix_output:
+        # pi05: [bs, (256 * 3 + 200) = 968, 2048]
+        # pi0: [bs, (256 * 3 + 48) = 816, 1024]
+        if self.config.pi05:
+            lang_length = 200
+            all_length = 968
+        else:
+            lang_length = 48
+            all_length = 816
+        if self.config.value_vlm_mode == "mean_token":
+            prefix_mask = [True] * 512 + [False] * 256 + [True] * lang_length
+        elif self.config.value_vlm_mode == "last_token":
+            prefix_mask = [False] * (all_length - 1) + [True] * 1
+        elif self.config.value_vlm_mode == "first_token":
+            prefix_mask = [True] * 1 + [False] * (all_length - 1)
+        prefix_out_value = prefix_output[:, prefix_mask, :]
+        prefix_out_value = prefix_out_value.mean(dim=1, keepdim=False)
+        prefix_out_value = prefix_out_value.to(dtype=torch.float32)
+        values_vlm = self.value_head(prefix_out_value)[:, 0]
+        return values_vlm
+
+    def freeze_vlm(self):
+        if self.config.train_expert_only:
+            self.paligemma_with_expert.paligemma.eval()
+            for params in self.paligemma_with_expert.paligemma.parameters():
+                params.requires_grad = False
