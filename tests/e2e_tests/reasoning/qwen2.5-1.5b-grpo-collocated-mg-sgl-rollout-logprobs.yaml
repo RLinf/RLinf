@@ -158,7 +158,7 @@ actor:
 
     tensor_model_parallel_size: 2
     pipeline_model_parallel_size: 1
-    context_parallel_size: 2
+    context_parallel_size: 1
 
     activation: swiglu
     sequence_parallel: True

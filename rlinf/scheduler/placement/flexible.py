@@ -54,11 +54,11 @@ class FlexiblePlacementStrategy(PlacementStrategy):
         >>> cluster = Cluster(num_nodes=1)
         >>>
         >>> # `FlexiblePlacementStrategy` allows you to specify the *global* accelerator/GPU IDs for each process.
-        >>> placement = FlexiblePlacementStrategy([[4, 5], [6], [7]])
+        >>> placement = FlexiblePlacementStrategy([[0, 1], [2], [3]])
         >>> my_worker = MyWorker.create_group().launch(
         ...     cluster=cluster, name="flexible_placement", placement_strategy=placement
         ... )
-        >>> # This will run 3 processes on the first node's GPU 4, 5, 6, 7, where the first process uses GPUs 4 and 5, the second process uses GPU 6, and the third process uses GPU 7.
+        >>> # This will run 3 processes on the first node's GPU 0, 1, 2, 3, where the first process uses GPUs 0 and 1, the second process uses GPU 2, and the third process uses GPU 3.
         >>> my_worker.available_gpus().wait()
         [2, 1, 1]
 

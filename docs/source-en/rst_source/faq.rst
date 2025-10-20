@@ -5,7 +5,42 @@ Below are RLinf’s frequently asked questions. This section will be continuousl
 
 ------
 
-**1. NCCL “cuda invalid argument” During Task Transfer**
+RuntimeError: The MUJOCO_EGL_DEVICE_ID environment variable must be an integer between 0 and 0 (inclusive), got 1.
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Symptom:** The above error message when running simulators with MUJOCO_GL environment variable set to "egl".
+
+**Cause:** This error occurs because your GPU environment is not properly setup for graphics rendering, especially on NVIDIA GPUs.
+
+**Fix:** Check whether you have this file `/usr/lib/x86_64-linux-gnu/libEGL_nvidia.so.0`. 
+
+1. If you have this file, check whether you also have `/usr/share/glvnd/egl_vendor.d/10_nvidia.json`. If not, create this file and add the following content:
+
+   .. code-block:: json
+
+      {
+         "file_format_version" : "1.0.0",
+         "ICD" : {
+            "library_path" : "libEGL_nvidia.so.0"
+         }
+      }
+
+   And add the following environment variable to your running script:
+
+   .. code-block:: shell
+
+      export NVIDIA_DRIVER_CAPABILITIES="all"
+
+2. If you do not have this file, it means your NVIDIA driver is not properly installed with the graphics capability. You can try the following solutions:
+
+   * Reinstall the NVIDIA driver with the correct options to enable graphics capabilities. There are several options that disable the graphics driver during and after installation of the NVIDIA driver like modeset and module parameters. So if you are not sure, follow the NVIDIA's documentation https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/index.html#id29 to install the **Desktop version** of driver, **not Compute-Only version**.
+
+   * Use **osmesa** for rendering, change the `MUJOCO_GL` and `PYOPENGL_PLATFORM` environment variables in our running script to "osmesa" for this. However, this may cause the rollout process to be 10x slower than EGL as it uses CPU for rendering.
+
+------
+
+NCCL “cuda invalid argument” During Task Transfer
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Symptom:** P2P task transmission fails with ``NCCL cuda invalid argument``.
 
@@ -17,7 +52,8 @@ Below are RLinf’s frequently asked questions. This section will be continuousl
 
 ------
 
-**2. NCCL “cuda invalid argument” When SGLang Loads parameters**
+NCCL “cuda invalid argument” When SGLang Loads parameters
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Symptom:** SGLang reports ``NCCL cuda invalid argument`` while loading weights.
 
@@ -29,7 +65,8 @@ placed on the GPUs implied by your ``cluster.component_placement`` settings.
 
 ------
 
-**3. CUDA CUresult Error (result=2) in torch_memory_saver.cpp**
+CUDA CUresult Error (result=2) in torch_memory_saver.cpp
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Symptom:**
 ``CUresult error result=2 file=csrc/torch_memory_saver.cpp func=cu_mem_create line=103``
@@ -45,7 +82,8 @@ buffers; often happens if inference weights were not unloaded before an update.
 
 ------
 
-**4. Gloo Timeout / “Global rank x is not part of group”**
+Gloo Timeout / "Global rank x is not part of group"
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Symptoms:**
 
@@ -63,7 +101,8 @@ generation from completing. Megatron then waits until Gloo times out.
 
 ------
 
-**5. Numerical Precision / Inference backend**
+Numerical Precision / Inference backend
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Tip:** By default, SGLang uses **flashinfer** for attention. For stability or
 compatibility, try **triton**:
@@ -75,7 +114,8 @@ compatibility, try **triton**:
 
 ------
 
-**6. Cannot Connect to GCS at ip:port**
+Cannot Connect to GCS at ip:port
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Symptom:** Worker nodes cannot reach the Ray head (GCS) at the given address.
 

@@ -9,9 +9,9 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    rollout: 0-3
-    inference: 4-5
-    actor: 6-7
+    rollout: 0
+    inference: 1
+    actor: 2
     reward: 0-3
 
 runner:
@@ -108,9 +108,9 @@ inference:
   group_name: "InferenceGroup"
   load_from_actor: True
   model:
-    tensor_model_parallel_size: 2
+    tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
-    sequence_parallel: True
+    sequence_parallel: False
 
 rollout:
   group_name: "RolloutGroup"
@@ -180,11 +180,11 @@ actor:
     precision: fp16
     add_bias_linear: False
 
-    tensor_model_parallel_size: 2
+    tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
 
     activation: swiglu
-    sequence_parallel: True
+    sequence_parallel: False
     # recompute_method: block
     # recompute_granularity: selective
 

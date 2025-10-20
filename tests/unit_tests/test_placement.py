@@ -224,7 +224,7 @@ class TestPlacementStrategies:
 
         placement = PackedPlacementStrategy(
             start_accelerator_id=0,
-            end_accelerator_id=7,
+            end_accelerator_id=cluster.num_accelerators_in_cluster - 1,
             stride=stride,
             num_accelerators_per_process=num_gpus_per_process,
         )

@@ -50,41 +50,41 @@ class PackedPlacementStrategy(PlacementStrategy):
         >>> cluster = Cluster(num_nodes=1)
         >>>
         >>> # `PackedPlacementStrategy` will fill up nodes with workers before moving to the next node.
-        >>> placement = PackedPlacementStrategy(start_accelerator_id=4, end_accelerator_id=7)
+        >>> placement = PackedPlacementStrategy(start_accelerator_id=0, end_accelerator_id=3)
         >>> my_worker = MyWorker.create_group().launch(
         ...     cluster=cluster, name="packed_placement", placement_strategy=placement
         ... )
-        >>> my_worker.available_gpus().wait() # This will run 4 processes on the first node's GPU 4, 5, 6, 7, each using 1 GPU.
+        >>> my_worker.available_gpus().wait() # This will run 4 processes on the first node's GPU 0, 1, 2, 3, each using 1 GPU.
         [1, 1, 1, 1]
         >>>
         >>>
         >>> # `num_accelerators_per_process` allows for one process to hold multiple accelerators/GPUs.
         >>> # For example, if you want a process to hold 4 GPUs, you can set the `num_accelerators_per_process` to 4.
         >>> placement_chunked = PackedPlacementStrategy(
-        ...     start_accelerator_id=0, end_accelerator_id=7, num_accelerators_per_process=4
+        ...     start_accelerator_id=0, end_accelerator_id=3, num_accelerators_per_process=2
         ... )
         >>> my_worker_chunked = MyWorker.create_group().launch(
         ...     cluster=cluster,
         ...     name="chunked_placement",
         ...     placement_strategy=placement_chunked,
         ... )
-        >>> my_worker_chunked.available_gpus().wait()  # This will run 2 processes, each using 4 GPUs (0-3 and 4-7) of the first node.
-        [4, 4]
+        >>> my_worker_chunked.available_gpus().wait()  # This will run 2 processes, each using 2 GPUs (0-1 and 2-3) of the first node.
+        [2, 2]
         >>>
         >>>
         >>> # `stride` allows for strided placement of workers across GPUs.
         >>> # For example, if you want to place workers on every second GPU, you can set the stride to 2.
         >>> placement_strided = PackedPlacementStrategy(
-        ...     start_accelerator_id=0, end_accelerator_id=7, stride=2, num_accelerators_per_process=2
+        ...     start_accelerator_id=0, end_accelerator_id=3, stride=2, num_accelerators_per_process=2
         ... )
         >>> my_worker_strided = MyWorker.create_group().launch(
         ...     cluster=cluster,
         ...     name="strided_placement",
         ...     placement_strategy=placement_strided,
         ... )
-        >>> # This will run 4 processes, each using 2 GPUs (0,2 1,3 4,6 5,7) of the first node.
+        >>> # This will run 2 processes, each using 2 GPUs (0,2 1,3) of the first node.
         >>> my_worker_strided.available_gpus().wait()
-        [2, 2, 2, 2]
+        [2, 2]
 
     """
 

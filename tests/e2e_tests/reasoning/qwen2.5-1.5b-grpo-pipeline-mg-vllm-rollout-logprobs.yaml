@@ -8,10 +8,9 @@ hydra:
 
 cluster:
   num_nodes: 1
-  num_gpus_per_node: 8
   component_placement:
-    rollout: 0-3
-    actor: 4-7
+    rollout: 0-1
+    actor: 2-3
     reward: 0-3
 
 runner:
