@@ -95,7 +95,7 @@ class MultiStepRolloutWorker(Worker):
         )
         kwargs["do_sample"] = do_sample
 
-        if self.cfg.actor.model.model_name in ["openpi"]:
+        if self.cfg.actor.model.model_name in ["openpi", "gr00t"]:
             kwargs = {"mode": mode}
 
         with torch.no_grad():
