@@ -19,24 +19,19 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Union
 import numpy as np
 import torch
 import torch.distributed
+from torch.distributed import ProcessGroup
+from typing_extensions import Self
 
 try:
     from megatron.core import parallel_state
 except ImportError:
     parallel_state = None  # type: ignore
-from torch.distributed import ProcessGroup
-from typing_extensions import Self
 
 from rlinf.utils.timers import NamedTimer
 
 
 def compute_rollout_metrics(
-    rollout_batch,
-    max_prompt_len,
-    response_len,
-    dp_world_size,
-    dp_group=None,
-    use_critic=False,
+    rollout_batch, max_prompt_len, response_len, use_critic=False
 ):
     device = torch.device(f"cuda:{torch.cuda.current_device()}")
     advantages = rollout_batch["advantages"].to(device=device)
@@ -45,6 +40,8 @@ def compute_rollout_metrics(
     response_lengths = rollout_batch["response_lengths"].clone().to(device=device)
     reward_scores = rollout_batch["rewards"].clone().to(device=device)
     is_end = rollout_batch["is_end"].clone().float().to(device=device)
+
+    dp_world_size = parallel_state.get_data_parallel_world_size()
 
     prompt_lengths_list = [
         torch.empty_like(prompt_lengths) for _ in range(dp_world_size)
@@ -55,12 +52,12 @@ def compute_rollout_metrics(
     torch.distributed.all_gather(
         prompt_lengths_list,
         prompt_lengths,
-        group=dp_group,
+        group=parallel_state.get_data_parallel_group(),
     )
     torch.distributed.all_gather(
         decode_lengths_list,
         response_lengths,
-        group=dp_group,
+        group=parallel_state.get_data_parallel_group(),
     )
 
     total_prompt_lengths = torch.cat(prompt_lengths_list, dim=0)
@@ -69,22 +66,22 @@ def compute_rollout_metrics(
     torch.distributed.all_reduce(
         prompt_lengths,
         torch.distributed.ReduceOp.AVG,
-        group=dp_group,
+        group=parallel_state.get_data_parallel_group(),
     )
     torch.distributed.all_reduce(
         response_lengths,
         torch.distributed.ReduceOp.AVG,
-        group=dp_group,
+        group=parallel_state.get_data_parallel_group(),
     )
     torch.distributed.all_reduce(
         reward_scores,
         torch.distributed.ReduceOp.AVG,
-        group=dp_group,
+        group=parallel_state.get_data_parallel_group(),
     )
     torch.distributed.all_reduce(
         is_end,
         torch.distributed.ReduceOp.AVG,
-        group=dp_group,
+        group=parallel_state.get_data_parallel_group(),
     )
 
     valid_adv = torch.masked_select(advantages, mask)
@@ -93,12 +90,12 @@ def compute_rollout_metrics(
     torch.distributed.all_reduce(
         n_valid_token,
         op=torch.distributed.ReduceOp.SUM,
-        group=dp_group,
+        group=parallel_state.get_data_parallel_group(),
     )
     torch.distributed.all_reduce(
         adv_sum,
         op=torch.distributed.ReduceOp.SUM,
-        group=dp_group,
+        group=parallel_state.get_data_parallel_group(),
     )
     adv_mean = adv_sum / n_valid_token
 
@@ -110,7 +107,7 @@ def compute_rollout_metrics(
     torch.distributed.all_reduce(
         reduce_tensor,
         torch.distributed.ReduceOp.MAX,
-        group=dp_group,
+        group=parallel_state.get_data_parallel_group(),
     )
     adv_min, adv_max = reduce_tensor.tolist()
 
@@ -151,18 +148,21 @@ class RolloutDataBalance(UserDict):
         if isinstance(key, int):
             if not self._ordered_keys:
                 raise IndexError(
-                    f"RolloutDataBalance is empty or has no ordered keys for integer indexing. Data keys: {list(self.data.keys())}"
+                    f"RolloutDataBalance is empty or has no ordered keys for integer indexing. "
+                    f"Data keys: {list(self.data.keys())}"
                 )
             if 0 <= key < len(self._ordered_keys):
                 actual_key = self._ordered_keys[key]
                 if actual_key not in self.data:
                     raise KeyError(
-                        f"Internal error: Key '{actual_key}' (from index {key}) not in data. Ordered: {self._ordered_keys}. Data: {list(self.data.keys())}"
+                        f"Internal error: Key '{actual_key}' (from index {key}) not in data. "
+                        f"Ordered: {self._ordered_keys}. Data: {list(self.data.keys())}"
                     )
                 return self.data[actual_key]
             else:
                 raise IndexError(
-                    f"Integer index {key} out of range for {len(self._ordered_keys)} ordered keys. Ordered: {self._ordered_keys}"
+                    f"Integer index {key} out of range for {len(self._ordered_keys)} ordered keys. "
+                    f"Ordered: {self._ordered_keys}"
                 )
         return super().__getitem__(key)
 
@@ -490,7 +490,8 @@ def broadcast_tensor_within_pp(
     """
     tensor: Should be a valid tensor on src rank and None elsewhere
     dtype: no dtype means that the dtype is inferred
-    from_last: True=broadcast from the last PP rank and False=broadcast from first PP rank (default=True)
+    from_last: True=broadcast from the last PP rank and False=broadcast from first PP rank
+    (default=True)
     """
     if parallel_state.get_pipeline_model_parallel_world_size() > 1:
         return broadcast_tensor(
@@ -640,7 +641,8 @@ def masked_global_mean_var(values, mask, group=None):
 
     NOTE: the variance here is uncorrected
 
-    mask and values must have same shape, with mask being {0,1} with 1 being the values we want to keep
+    mask and values must have same shape, with mask being {0,1} with 1 being the values we
+    want to keep
     """
     assert values.shape == mask.shape, (values.shape, mask.shape)
     values = values.to(device=torch.cuda.current_device())
@@ -677,7 +679,8 @@ def report_device_info(info_str):
     memory_reserved = torch.cuda.memory_reserved() / 2**30
 
     print(
-        f"[Rank {torch.distributed.get_rank()}] {info_str}, {free_gpu_memory=:.2f} GiB, {total_gpu_memory=:.2f} GiB, {memory_allocated=:.2f} GiB, {memory_reserved=:.2f} GiB"
+        f"[Rank {torch.distributed.get_rank()}] {info_str}, {free_gpu_memory=:.2f} GiB, "
+        f"{total_gpu_memory=:.2f} GiB, {memory_allocated=:.2f} GiB, {memory_reserved=:.2f} GiB"
     )
 
 
@@ -732,7 +735,8 @@ def all_reduce_dict(
 
 
 class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
-    """Compute entropy and cross-entropy (corresponding to log-probs) in a single forward pass. Returns (entropy, ce_loss)."""
+    """Compute entropy and cross-entropy (corresponding to log-probs) in a single forward
+    pass. Returns (entropy, ce_loss)."""
 
     @staticmethod
     def forward(
@@ -743,7 +747,11 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
         calculate_entropy_loss: bool = True,
     ):
         """Forward pass: returns two tensors — entropy and cross-entropy loss"""
+        # Store original dtype and use float32 for numerical stability
+        orig_dtype = vocab_parallel_logits.dtype
         vocab_parallel_logits = vocab_parallel_logits.float()
+
+        # Subtract max for numerical stability
         logits_max = vocab_parallel_logits.max(dim=-1, keepdim=True).values
         torch.distributed.all_reduce(
             logits_max,
@@ -751,6 +759,8 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
             group=parallel_state.get_tensor_model_parallel_group(),
         )
         norm_logits = vocab_parallel_logits - logits_max
+
+        # Compute exp directly for efficiency
         exp_logits = norm_logits.exp()
         sum_exp_logits = exp_logits.sum(dim=-1, keepdim=True)
 
@@ -763,8 +773,7 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
         softmax = exp_logits.div_(sum_exp_logits)
         sum_exp_logits_log = sum_exp_logits.log()
 
-        entropy = torch.zeros_like(logits_max.squeeze(-1))
-
+        # Always compute sum_softmax_times_logits as it's needed for backward pass
         sum_softmax_times_logits = (softmax * vocab_parallel_logits).sum(
             dim=-1, keepdim=True
         )
@@ -772,11 +781,15 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
             sum_softmax_times_logits,
             group=parallel_state.get_tensor_model_parallel_group(),
         )
-        entropy = (
-            logits_max.squeeze(-1)
-            + sum_exp_logits_log.squeeze(-1)
-            - sum_softmax_times_logits.squeeze(-1)
-        )
+
+        if calculate_entropy_loss:
+            entropy = (
+                logits_max.squeeze(-1)
+                + sum_exp_logits_log.squeeze(-1)
+                - sum_softmax_times_logits.squeeze(-1)
+            )
+        else:
+            entropy = torch.zeros_like(logits_max.squeeze(-1))
 
         partition_vocab_size = norm_logits.size(-1)
         rank = parallel_state.get_tensor_model_parallel_rank()
@@ -836,6 +849,10 @@ class _VocabParallelEntropyAndCrossEntropy(torch.autograd.Function):
                 masked_target_1d,
                 calculate_entropy_tensor,
             )
+
+        # Restore original dtype
+        entropy = entropy.to(orig_dtype)
+        ce_loss = ce_loss.to(orig_dtype)
 
         return entropy, ce_loss
 
@@ -920,12 +937,55 @@ def vocab_parallel_entropy_and_log_probs(
     target: torch.Tensor,
     label_smoothing: float = 0.0,
     calculate_entropy_loss: bool = True,
+    chunk_size: int = 512,
 ):
-    """Perform a single forward pass to obtain entropy and log_probs (-cross_entropy)"""
-    entropy, ce_loss = _VocabParallelEntropyAndCrossEntropy.apply(
-        vocab_parallel_logits, target, label_smoothing, calculate_entropy_loss
-    )
-    log_probs = -ce_loss
+    """
+    Compute entropy and log probabilities with chunking optimization.
+
+    Args:
+        vocab_parallel_logits: Input logits tensor [batch_size, seq_len, vocab_size]
+        target: Target labels [batch_size, seq_len]
+        label_smoothing: Label smoothing coefficient
+        calculate_entropy_loss: Whether to calculate entropy
+        chunk_size: Chunk size for sequence length dimension
+
+    Returns:
+        entropy: Entropy values [batch_size, seq_len]
+        log_probs: Log probabilities [batch_size, seq_len]
+    """
+    batch_size, seq_len, vocab_size = vocab_parallel_logits.shape
+
+    # Use direct computation for small sequences
+    if seq_len <= chunk_size:
+        entropy, ce_loss = _VocabParallelEntropyAndCrossEntropy.apply(
+            vocab_parallel_logits, target, label_smoothing, calculate_entropy_loss
+        )
+        log_probs = -ce_loss
+        return entropy, log_probs
+
+    # Process in chunks along sequence dimension
+    entropy_chunks = []
+    log_probs_chunks = []
+
+    for chunk_start in range(0, seq_len, chunk_size):
+        chunk_end = min(chunk_start + chunk_size, seq_len)
+
+        # Extract current chunk data
+        logits_chunk = vocab_parallel_logits[:, chunk_start:chunk_end, :]
+        target_chunk = target[:, chunk_start:chunk_end]
+
+        # Process chunk
+        entropy_chunk, ce_loss_chunk = _VocabParallelEntropyAndCrossEntropy.apply(
+            logits_chunk, target_chunk, label_smoothing, calculate_entropy_loss
+        )
+
+        entropy_chunks.append(entropy_chunk)
+        log_probs_chunks.append(-ce_loss_chunk)
+
+    # Concatenate results along sequence dimension
+    entropy = torch.cat(entropy_chunks, dim=1)
+    log_probs = torch.cat(log_probs_chunks, dim=1)
+
     return entropy, log_probs
 
 
@@ -1005,7 +1065,8 @@ class ScopedTimer:
             self._timer.stop(name=name)
             if name in self._duration_log:
                 raise ValueError(
-                    f"Attempted to store new duration for {name=} before consuming last measurement. Call consume_durations() to consume the last set of measurements."
+                    f"Attempted to store new duration for {name=} before consuming last "
+                    f"measurement. Call consume_durations() to consume the last set of measurements."
                 )
             self._duration_log[name] = self._timer.get(name=name)
 
