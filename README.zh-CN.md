@@ -77,6 +77,10 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 ## 主要成果
 ### 具身智能
 
+- RLinf 同时支持 PPO 与 GRPO 算法，为视觉-语言-动作（Vision-Language-Action, VLA）模型提供最先进的训练能力。
+- 该框架与主流具身智能基准测试（如 ManiSkill3 与 LIBERO）无缝集成，并在多样化的评测指标上均取得了优异表现。
+
+#### OpenVLA 和 OpenVLA-OFT 结果
 
 <div align="center">
 <table border="0">
@@ -222,6 +226,8 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 </table>
 </div>
 
+#### &pi;<sub>0</sub> 和 &pi;<sub>0.5</sub> 结果
+
 <div align="center">
 <table style="text-align:center; width:80%; margin:0 auto;">
   <tr>
@@ -332,9 +338,6 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 </table>
 </div>
 
-
-- RLinf 同时支持 PPO 与 GRPO 算法，为视觉-语言-动作（Vision-Language-Action, VLA）模型提供最先进的训练能力。
-- 该框架与主流具身智能基准测试（如 ManiSkill3 与 LIBERO）无缝集成，并在多样化的评测指标上均取得了优异表现。
 
 
 ### 数学推理

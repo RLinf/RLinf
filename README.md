@@ -76,6 +76,10 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 ## Main Results
 ### Embodied Intelligence
 
+- RLinf supports both PPO and GRPO algorithms, enabling state-of-the-art training for Vision-Language-Action models.
+- The framework provides seamless integration with mainstream embodied intelligence benchmarks, including ManiSkill3 and LIBERO, and achieves strong performance across diverse evaluation metrics.
+
+#### OpenVLA and OpenVLA-OFT Results
 
 <div align="center">
 <table border="0">
@@ -223,6 +227,8 @@ and exhibits greater stability.
 </table>
 </div>
 
+#### &pi;<sub>0</sub> and &pi;<sub>0.5</sub>  Results
+
 <div align="center">
 <table style="text-align:center; width:80%; margin:0 auto;">
   <tr>
@@ -332,10 +338,6 @@ and exhibits greater stability.
   </tr>
 </table>
 </div>
-
-
-- RLinf supports both PPO and GRPO algorithms, enabling state-of-the-art training for Vision-Language-Action models.
-- The framework provides seamless integration with mainstream embodied intelligence benchmarks, including ManiSkill3 and LIBERO, and achieves strong performance across diverse evaluation metrics.
 
 
 ### Math Reasoning
