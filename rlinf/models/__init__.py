@@ -263,6 +263,37 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
             num_action_chunks=cfg.num_action_chunks,
             add_value_head=cfg.add_value_head,
         )
+    elif cfg.model_name == "gr00t":
+        from gr00t.experiment.data_config import load_data_config
+
+        data_config = load_data_config(
+            "rlinf.models.embodiment.gr00t.modality_config:ManiskillWidowXDataConfig"
+        )
+        modality_config = data_config.modality_config()
+        modality_transform = data_config.transform()
+
+        from pathlib import Path
+
+        from .embodiment.gr00t_action_model import GR00T_N1_5_ForRLActionPrediction
+
+        # The transformer rigisteration is done in gr00t/model/gr00t_n1.py
+        model_path = Path(model_path)
+        if not model_path.exists():
+            # raise error or it triggers auto download from hf(It's cool but we don't have internet connection.)
+            raise FileNotFoundError(f"Model path does not exist: {model_path}")
+
+        model = GR00T_N1_5_ForRLActionPrediction.from_pretrained(
+            model_path,
+            torch_dtype=torch.bfloat16,
+            embodiment_tag="gr1",  # This tag determines the state encoder and action head to use
+            modality_config=modality_config,
+            modality_transform=modality_transform,
+            denoising_steps=cfg.denoising_steps,
+            action_horizon=cfg.num_action_chunks,
+            tune_visual=False,
+            tune_llm=False,
+        )
+        model.to(torch_dtype)
 
     else:
         return None
