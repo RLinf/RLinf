@@ -172,13 +172,12 @@ class MegatronActor(MegatronModelManager, Worker):
         ) % parallel_state.get_data_parallel_world_size() == 0, (
             f"rollout_batch_size * group_size must be divisible by {role} data parallel size."
         )
-        self.before_sample_batch_size_per_dp = (
+        self.total_batch_size_per_dp = (
             self.cfg.data.rollout_batch_size
             * self.cfg.algorithm.group_size
             // parallel_state.get_data_parallel_world_size()
         )
         
-        self.total_batch_size_per_dp = 0
 
         # Config validation
         if self.is_pipeline:
@@ -375,6 +374,7 @@ class MegatronActor(MegatronModelManager, Worker):
                 return output, id_func
 
             def loss_func(output):
+                # print(f"before Rank {torch.distributed.get_rank()}")
                 curr_logprobs = output["log_probs"][
                     :, -response_len - 1 : -1
                 ].contiguous()
@@ -397,20 +397,20 @@ class MegatronActor(MegatronModelManager, Worker):
                     clip_ratio_high=self.clip_ratio_high,
                     loss_mask=mask,
                 )
-
+                # print(f"after_loss Rank {torch.distributed.get_rank()}")
                 entropy_loss = torch.zeros(1, device=loss.device)
                 if self.calculate_entropy:
                     entropy = output["entropy"][:, -response_len - 1 : -1].contiguous()
                     entropy_loss = self.loss_agg_func(entropy, mask=mask)
                     if self.calculate_entropy_loss:
                         loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
-
+                # print(f"after_entropy Rank {torch.distributed.get_rank()}")
                 kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
                 if self.kl_beta > 0 and ref_logprobs is not None:
                     kld = kl_penalty(curr_logprobs, ref_logprobs, self.kl_penalty_type)
                     kl_loss = self.loss_agg_func(kld, mask)
                     loss = loss + kl_loss * self.kl_beta
-
+                # print(f"after_kl Rank {torch.distributed.get_rank()}")
                 # Logging and early stopping according to KL (logp vs ref) or importance ratio (new logp vs old logp).
                 _imp = metrics_data["ratio"]
                 torch.distributed.all_reduce(
@@ -454,7 +454,7 @@ class MegatronActor(MegatronModelManager, Worker):
                 for k, v in metrics_data.items():
                     if v is not None:
                         metrics_data[k] = average_losses_across_data_parallel_group([v])
-
+                # print(f"afterRank {torch.distributed.get_rank()}: loss {loss.item()}")
                 return loss, metrics_data
 
             return output, loss_func
@@ -498,6 +498,7 @@ class MegatronActor(MegatronModelManager, Worker):
             total_seqlen = get_seq_length(batch)
             num_microbatches = self._get_num_microbatches(batch, forward_only)
             batch_iter = get_iterator_k_split(batch, num_splits=num_microbatches)
+            print(f"Rank {torch.distributed.get_rank()}: total_seqlen {total_seqlen}, num_microbatches {num_microbatches}")
 
         fwd_bwd_function = get_forward_backward_func()
         self.num_microbatches = num_microbatches
@@ -507,6 +508,7 @@ class MegatronActor(MegatronModelManager, Worker):
 
         if forward_only:
             self._forward_only_record.start()
+        print("before forward_backward")
         forward_outputs = fwd_bwd_function(
             forward_step_func=self.get_forward_step_func(),
             data_iterator=self.make_data_iterator_list(batch_iter),
@@ -517,6 +519,7 @@ class MegatronActor(MegatronModelManager, Worker):
             micro_batch_size=1,
             collect_non_loss_data=forward_only,
         )
+        print("after forward_backward")
         if forward_only:
             self._forward_only_record.stop()
 
@@ -660,8 +663,8 @@ class MegatronActor(MegatronModelManager, Worker):
 
     def _dp_load_balance(self, batch: Dict[str, torch.Tensor]):
         batch_size = batch["input_ids"].shape[0]
-        assert batch_size == self.before_sample_batch_size_per_dp, (
-            f"DP Load balance is only available when a single batch contains all data, e.g., in collocated mode. But got {batch_size=} and {self.before_sample_batch_size_per_dp=}."
+        assert batch_size == self.total_batch_size_per_dp, (
+            f"DP Load balance is only available when a single batch contains all data, e.g., in collocated mode. But got {batch_size=} and {self.total_batch_size_per_dp=}."
         )
         batch = RolloutDataBalance.from_rollout_batches(
             rollout_batches=batch,
@@ -695,10 +698,13 @@ class MegatronActor(MegatronModelManager, Worker):
         # Get all batches for this DP
         batches = []
         recv_batch_size = 0
+        print("total_batch_size_per_dp", self.total_batch_size_per_dp)
         while recv_batch_size < self.total_batch_size_per_dp:
             batch, rollout_result = self.get_batch(input_channel)
             batches.append(batch)
             recv_batch_size += rollout_result.num_sequence
+            print("recv_batch_size", recv_batch_size)
+        
         assert recv_batch_size == self.total_batch_size_per_dp, (
             f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
         )
@@ -869,7 +875,7 @@ class MegatronActor(MegatronModelManager, Worker):
             compute_ref_logprobs: Whether to compute reference logprobs.
         """
         recv_batch_size = 0
-        while recv_batch_size < self.before_sample_batch_size_per_dp:
+        while recv_batch_size < self.total_batch_size_per_dp:
             batch, rollout_result = self.get_batch(input_channel)
             recv_batch_size += rollout_result.num_sequence
             # Must be called after batch is retrieved, suggesting that rollout has stopped
@@ -893,8 +899,8 @@ class MegatronActor(MegatronModelManager, Worker):
                     rollout_result.ref_logprobs = ref_logprobs.cpu()
             self.put_result(rollout_result, output_channel)
 
-        assert recv_batch_size == self.before_sample_batch_size_per_dp, (
-            f"Expected {self.before_sample_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
+        assert recv_batch_size == self.total_batch_size_per_dp, (
+            f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
         )
 
     def down_sample_batch(self, input_channel: Channel, output_channel: Channel):
@@ -903,8 +909,7 @@ class MegatronActor(MegatronModelManager, Worker):
             with self.worker_timer():
                 return
         recv_batch_size = 0
-        self.total_batch_size_per_dp = 0
-        while recv_batch_size < self.before_sample_batch_size_per_dp:
+        while recv_batch_size < self.total_batch_size_per_dp:
             batch, rollout_result = self.get_batch(input_channel)
             recv_batch_size += rollout_result.num_sequence
             do_down_sampling = (
@@ -912,7 +917,6 @@ class MegatronActor(MegatronModelManager, Worker):
                 and getattr(self.cfg.down_sampling, "do_down_sampling", False)
             )
             if not do_down_sampling:
-                self.total_batch_size_per_dp += rollout_result.num_sequence
                 self.put_result(rollout_result, output_channel)
                 continue
 
@@ -1043,8 +1047,6 @@ class MegatronActor(MegatronModelManager, Worker):
                 mask1 = _reject_equal_reward(uids, rollout_result.rewards)
             else:
                 mask1 = torch.ones(rollout_result.num_sequence, dtype=torch.bool)
-            if not mask1.any():
-                continue
 
             if rollout_result.response_texts is not None:
                 response_texts = rollout_result.response_texts
@@ -1057,8 +1059,6 @@ class MegatronActor(MegatronModelManager, Worker):
             mask2 = _weighted_group_choice(uids, rollout_result.rewards, response_texts)
 
             final_mask = mask1 & mask2
-            if not final_mask.any():
-                continue
 
             def _apply_mask_to_list(lst, mask):
                 return [x for i, x in enumerate(lst) if mask[i].item()]
@@ -1093,13 +1093,12 @@ class MegatronActor(MegatronModelManager, Worker):
             if rr.ref_logprobs is not None:
                 rr.ref_logprobs = _apply_mask_to_tensor(rr.ref_logprobs, idx_mask)
 
-            rr.num_sequence = len(rr.response_ids)
+            # rr.num_sequence = len(rr.response_ids)
             # 下采样后每个 prompt 的响应数固定为 down_sample_to_n，更新 group_size
             # if isinstance(down_sampling_config, dict):
             _dsn = int(down_sampling_config.get("down_sample_to_n", -1))
             if _dsn > 0:
                 rr.group_size = _dsn
-            self.total_batch_size_per_dp += rr.num_sequence
             self.put_result(rr, output_channel)
 
     # Advantages and returns
@@ -1113,15 +1112,12 @@ class MegatronActor(MegatronModelManager, Worker):
             output_channel: The output channel to send results to.
         """
         clear_memory()
-        if self.total_batch_size_per_dp == 0:
-            with self.worker_timer():
-                return
         recv_batch_size = 0
         while recv_batch_size < self.total_batch_size_per_dp:
             batch, rollout_result = self.get_batch(input_channel)
             recv_batch_size += rollout_result.num_sequence
             with self.worker_timer():
-                if rollout_result.advantages is None:
+                if rollout_result.advantages is None and len(rollout_result.prompt_ids) > 0:
                     mask = batch["attention_mask"][:, -self.response_len :]
                     # 使用下采样后的实际 group_size（每个 prompt 的响应数）
                     actual_group_size = getattr(rollout_result, "group_size", None)

@@ -35,6 +35,10 @@ class RewardWorker(Worker):
             * self.cfg.algorithm.get("group_size", 1)
             // self._world_size
         )
+        print(f"total_batch_size_per_dp: {self.total_batch_size_per_dp}")
+        print(f"rollout_batch_size: {self.cfg.data.rollout_batch_size}")
+        print(f"group_size: {self.cfg.algorithm.get('group_size', 1)}")
+        print(f"world_size: {self._world_size}")
 
     def init_worker(self):
         if self.cfg.reward.use_reward_model:

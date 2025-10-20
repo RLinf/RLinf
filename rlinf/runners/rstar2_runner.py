@@ -37,6 +37,7 @@ from toolkits.rstar2.tools import SharedToolManager, get_shared_tools
 from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
 from rlinf.workers.reward.reward_worker import RewardWorker
+from rlinf.workers.agent_loop.tool_agent_loop import ToolAgentLoop
 
 if typing.TYPE_CHECKING:
     from rlinf.workers.agent_loop.tool_agent_loop import ToolAgentLoop
@@ -58,6 +59,7 @@ class Rstar2Runner:
         rollout: Union["SGLangWorker", "VLLMWorker"],
         inference: Optional[MegatronInference],
         actor: MegatronActor,
+        agentloop: ToolAgentLoop,
         reward: RewardWorker,
         down_sample: Optional[Worker] = None,
     ):
@@ -73,6 +75,7 @@ class Rstar2Runner:
         self.rollout = rollout  # 存储rollout_worker引用
         # Collocated mode uses actor as inference
         self.inference = inference if self.has_dedicated_inference else self.actor
+        self.agentloop = agentloop
         self.reward = reward
         self.down_sample = down_sample if self.has_dedicated_down_sample else self.actor
         # Tools
@@ -165,193 +168,31 @@ class Rstar2Runner:
             f"{len(self.val_dataloader)}"
         )
 
-    def _pre_process_rollout_request(self, request: RolloutRequest):
-        """Split rollout request into smaller groups (reference: SGLangWorker._pre_process_rollout_request).
-
-        Returns: List[List[RolloutRequest]]
-        - Outer list: batches
-        - Inner list: requests aligned to group_size
+    def _get_tool_config(self):
+        """获取工具配置（可序列化），而不是工具实例
+        
+        Returns:
+            工具配置路径（str）或配置对象（dict/DictConfig），可以安全地传递给Ray workers
         """
-        group_size = request.n
-        repeated_request = request.repeat()
-
-        # Derive rollout batch size similar to AsyncSGLangWorker
-        per_gpu = self.cfg.algorithm.get("rollout_batch_size_per_gpu", None)
-        if per_gpu is None:
-            rollout_batch_size = None
+        # 检查是否有工具配置文件路径
+        tool_config_path = getattr(self.cfg, 'tool_config_path', None)
+        if hasattr(self.cfg, 'rollout') and hasattr(self.cfg.rollout, 'tool_config_path'):
+            tool_config_path = self.cfg.rollout.tool_config_path
+        
+        if tool_config_path is not None:
+            # 返回配置文件路径（字符串是可序列化的）
+            logging.info(f"Using tool config file: {tool_config_path}")
+            return tool_config_path
         else:
-            tp = getattr(self.component_placement, "rollout_tp_size", 1)
-            pp = getattr(self.component_placement, "rollout_pipeline_parallel_size", 1)
-            rollout_batch_size = per_gpu * tp * pp
-
-        if rollout_batch_size is not None:
-            assert len(repeated_request.input_ids) % rollout_batch_size == 0, (
-                f"rollout_batch_size {rollout_batch_size} must divide the total number of requests {len(repeated_request)}"
-            )
-            num_batch = len(repeated_request.input_ids) // rollout_batch_size
-        else:
-            num_batch = 1
-
-        split_requests = repeated_request.split(num_batch)
-        if self.component_placement.is_disaggregated:
-            num_prompts_per_request = len(split_requests[0].input_ids) // group_size
-            return [r.split(num_prompts_per_request) for r in split_requests]
-        else:
-            return [r.split(1) for r in split_requests]
-
-    async def _get_shared_tools(self):
-        """获取共享工具实例"""
-        if self._shared_tools is None:
-            logging.info("Initializing shared tools...")
-            
-            # 检查是否有工具配置文件路径
-            tool_config_path = getattr(self.cfg, 'tool_config_path', None)
-            if hasattr(self.cfg, 'rollout') and hasattr(self.cfg.rollout, 'tool_config_path'):
-                tool_config_path = self.cfg.rollout.tool_config_path
-            
-            if tool_config_path is not None:
-                # 使用配置文件加载工具
-                logging.info(f"Loading tools from config file: {tool_config_path}")
-                self._shared_tools = await get_shared_tools(tool_config_path)
+            # 返回配置对象（确保可序列化）
+            logging.info("Using tool config from cfg object")
+            # 将OmegaConf DictConfig转换为普通dict以确保序列化
+            from omegaconf import OmegaConf
+            if hasattr(self.cfg, 'tools'):
+                return OmegaConf.to_container(self.cfg.tools, resolve=True)
             else:
-                # 使用传统的配置对象方式
-                logging.info("Loading tools from config object")
-                self._shared_tools = await get_shared_tools(self.cfg)
-            
-            logging.info(f"Shared tools initialized: {list(self._shared_tools.keys())}")
-        
-        return self._shared_tools
-
-    def _run_agentloop_rollout(self):
-        """运行AgentLoop rollout - 参考SGLangWorker的rollout方法"""
-        import asyncio
-        import time
-        
-        async def _async_rollout():
-            try:
-                # 从输入通道获取请求 - 参考SGLangWorker
-                rollout_request: RolloutRequest = await self.dataloader_channel.get(
-                    async_op=True
-                ).async_wait()
-
-                # 使用 SGLangWorker 的默认采样参数，不需要传入
-                
-                # 预处理：拆分请求为小批次和对齐group的子请求
-                request_groups_list = self._pre_process_rollout_request(rollout_request)
-
-                last_results = []
-                from rlinf.data.io_struct import RolloutResult
-                for request_groups in request_groups_list:
-                    rollout_tasks = []
-                    for group in request_groups:
-                        # 为当前group创建任务（直接调用本地 ToolAgentLoop）
-                        
-                        for raw_id, input_ids in enumerate(group.input_ids):
-                            task = asyncio.create_task(
-                                self._async_agentloop_generate(raw_id, input_ids)
-                            )
-                            rollout_tasks.append(task)
-
-                    # 等待所有任务完成，保持顺序
-                    task_results = await asyncio.gather(*rollout_tasks)
-                    results = []
-                    for raw_id, input_ids, result in task_results:
-                        results.append(result)
-
-                    # 汇总为 RolloutResult 对象，供后续 actor 使用
-                    # Clip to model limits to avoid mask/position size mismatch
-                    max_prompt_len = int(self.cfg.data.max_prompt_length)
-                    max_total_len = int(self.cfg.actor.model.encoder_seq_length)
-                    max_resp_len = max(1, max_total_len - max_prompt_len)
-
-                    prompt_ids = [r["input_ids"][:max_prompt_len] for r in results]
-                    response_ids = [r["output_ids"][:max_resp_len] for r in results]
-                    prompt_lengths = [len(p) for p in prompt_ids]
-                    response_lengths = [len(o) for o in response_ids]
-                    response_mask = [r["response_mask"][:max_resp_len] for r in results]
-                    is_end = [True for _ in results]
-                    print(f"len(results): {len(results)}")
-                    rollout_obj = RolloutResult(
-                        num_sequence=len(results),
-                        group_size=group.n,
-                        prompt_lengths=prompt_lengths,
-                        prompt_ids=prompt_ids,
-                        response_lengths=response_lengths,
-                        response_ids=response_ids,
-                        is_end=is_end,
-                        answers=group.answers,
-                        response_mask=response_mask,
-                    )
-
-                    # 将结果发送到输出通道（回退为直接发送）
-                    await self.rollout_channel.put(rollout_obj, async_op=True).async_wait()
-                    last_results = results
-
-                return last_results
-                
-            except Exception as e:
-                logging.error(f"Error in AgentLoop rollout: {e}")
-                raise
-        
-        # 运行异步rollout（本地），并返回本地句柄
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        t0 = time.time()
-        try:
-            results = loop.run_until_complete(_async_rollout())
-            duration = time.time() - t0
-
-            class _LocalHandle:
-                def __init__(self, results_obj, duration_sec: float):
-                    self._results = results_obj
-                    self._duration = duration_sec
-
-                def wait(self):
-                    return self._results
-
-                def consume_duration(self, reduction_type: str | None = None):
-                    return self._duration
-            self.rollout.offload_engine().wait()
-            return _LocalHandle(results, duration)
-        finally:
-            loop.close()
+                return {}
     
-    async def _async_agentloop_generate(self, raw_id: int, input_ids: List[int]):
-        """异步AgentLoop生成 - 使用共享工具避免重复初始化"""
-        try:
-            # 获取共享工具实例
-            shared_tools = await self._get_shared_tools()
-            
-            # 为避免并发冲突，每个任务使用独立的ToolAgentLoop实例，但共享工具
-            from rlinf.workers.agent_loop.tool_agent_loop import ToolAgentLoop
-            task_agent_loop = ToolAgentLoop(
-                self.cfg,
-                self.component_placement,
-                tools=shared_tools,
-                rollout=self.rollout,
-            )
-            
-            # 使用默认采样参数，ToolAgentLoop内部会调用SGLangWorker的agenerate
-            agent_output = await task_agent_loop.run(input_ids, {})
-
-            # 构建结果 - 参考SGLangWorker的结果格式（保持 output_ids 为 ids）
-            result = {
-                "input_ids": input_ids,
-                "output_ids": agent_output.response_ids,
-                "response_lengths": len(agent_output.response_ids),
-                "finished": True,  # AgentLoop总是完成
-                "num_turns": agent_output.num_turns,
-                "prompt_text": agent_output.prompt_text,
-                "response_text": agent_output.response_text,
-                "response_mask": agent_output.response_mask,
-            }
-            
-            return raw_id, input_ids, result
-            
-        except Exception as e:
-            logging.error(f"Error in AgentLoop generate (raw_id={raw_id}): {e}")
-            raise
-
     def init_workers(self):
         # Must be done before actor init
         if self.cfg.runner.resume_dir is None:
@@ -465,6 +306,7 @@ class Rstar2Runner:
 
     def _put_batch(self, batch: Dict[str, torch.Tensor]):
         prompt_ids = batch["prompt"].tolist()
+        print("prompt_ids: ", len(prompt_ids))
         lengths = batch["length"].tolist()
         answers = batch["answer"]
         image_data = batch["image_data"]
@@ -510,11 +352,15 @@ class Rstar2Runner:
             desc="Global Step",
             ncols=620,
         )
-
+        # 获取工具配置（可序列化），而不是工具实例
+        tool_config = self._get_tool_config()
+        logging.info(f"Tool config prepared for workers: {tool_config}")
+        import asyncio 
         self.run_timer.start_time()
         for _ in epoch_iter:
             for batch in self.train_dataloader:
                 with self.timer("step"):
+                    print("before prepare_data")
                     with self.timer("prepare_data"):
                         self._put_batch(batch)
 
@@ -522,14 +368,23 @@ class Rstar2Runner:
                         self._sync_weights()
 
                     # Rollout - 使用AgentLoop
-                    rollout_handle: Handle = self._run_agentloop_rollout()
+                    # 传递工具配置而不是工具实例，避免Ray序列化错误
+                    rollout_handle: Handle = self.agentloop.run_agentloop_rollout(
+                        input_channel=self.dataloader_channel,
+                        output_channel=self.rollout_channel,
+                        tool_config=tool_config,
+                        rollout=self.rollout,
+                    )
+                    rollout_handle.wait()
+                    self.rollout.offload_engine().wait()
 
                     # Rewards
                     reward_handle: Handle = self.reward.compute_rewards(
                         input_channel=self.rollout_channel,
                         output_channel=self.reward_channel,
                     )
-                    
+            
+                    print("after reward")
                     if self.recompute_logprobs:
                         # Inference prev/ref logprobs
                         infer_handle: Handle = self.inference.run_inference(
@@ -543,12 +398,12 @@ class Rstar2Runner:
                         infer_handle = None
                         inference_channel = self.reward_channel
 
-                    
+
                     down_sample_handle: Handle = self.down_sample.down_sample_batch(
                         input_channel=inference_channel,
                         output_channel=self.down_sample_channel,
                     )
-
+                    print("after down_sample")
                     # Advantages and returns
                     adv_handle: Handle = self.actor.compute_advantages_and_returns(
                         input_channel=self.down_sample_channel,

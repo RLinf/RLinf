@@ -24,11 +24,13 @@ from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.runners.rstar2_runner import Rstar2Runner
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
+from rlinf.scheduler import NodePlacementStrategy
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.actor import get_actor_worker
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
 from rlinf.workers.reward.reward_worker import RewardWorker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
+from rlinf.workers.agent_loop.tool_agent_loop import ToolAgentLoop
 
 """Script to start RStar2 training with AgentLoop (替代传统rollout)"""
 mp.set_start_method("spawn", force=True)
@@ -42,6 +44,14 @@ def main(cfg) -> None:
 
     cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
     component_placement = ModelParallelComponentPlacement(cfg, cluster)
+
+    #AgentLoop group
+    agentloop_placement_strategy = NodePlacementStrategy([0]*cfg.cluster.agentloop_placement_num)
+    agentloop_group = ToolAgentLoop.create_group(cfg, component_placement).launch(
+        cluster,
+        name=cfg.agentloop.group_name,
+        placement_strategy=agentloop_placement_strategy,
+    )
 
     # Rollout group - 对齐math_runner
     rollout_worker_cls = get_rollout_backend_worker(cfg, component_placement)
@@ -93,6 +103,7 @@ def main(cfg) -> None:
         val_dataset=val_ds,
         inference=inference_group,
         actor=actor_group,
+        agentloop=agentloop_group,
         rollout=rollout_group,  # 添加rollout_worker
         reward=reward_group,
     )

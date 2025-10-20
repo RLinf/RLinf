@@ -19,16 +19,39 @@ import logging
 import os
 from typing import Any, Optional
 from uuid import uuid4
+from typing import Dict, List
+from dataclasses import dataclass, field
 from megatron.core import parallel_state
+from rlinf.scheduler import Channel, Worker
+from transformers import AutoTokenizer
+from omegaconf import DictConfig
+from rlinf.utils.placement import ModelParallelComponentPlacement
+from rlinf.data.tokenizers import hf_tokenizer
+from rlinf.data.io_struct import (
+    RolloutRequest,
+    RolloutResult,
+)
 
-from .agent_loop import AgentLoopOutput
 from .tool_parser import FunctionCall, ToolParser, ToolResponse
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("RLINF_LOGGING_LEVEL", "WARN"))
 
+@dataclass
+class AgentLoopOutput:
+    """Agent loop output."""
+    prompt_ids: list[int]
+    """Prompt token ids."""
+    response_ids: list[int]
+    """Response token ids including LLM generated token, tool response token."""
+    response_mask: list[int]
+    """Response mask, 1 for LLM generated token, 0 for tool response token."""
+    response_logprobs: Optional[list[float]] = None
+    """Log probabilities for the response tokens."""
+    num_turns: int = 0
+    """Number of chat turns, including user, assistant, tool."""
 
-class ToolAgentLoop:
+class ToolAgentLoop(Worker):
     """Simple tool agent loop that can interact with tools.
 
     重构为普通类：不再继承 Worker，也不使用 WorkerGroup/Channel。
@@ -37,55 +60,156 @@ class ToolAgentLoop:
 
     def __init__(
         self, 
-        config, 
-        placement,
-        **kwargs
+        cfg: DictConfig, 
+        placement: ModelParallelComponentPlacement,
     ):
+        Worker.__init__(self)
         # 初始化AgentLoopBase的功能
-        self.config = config
-        self._placement = placement
+        self.cfg = cfg
+        self.component_placement = placement
         self.loop = asyncio.get_event_loop()
         
-        # 自己创建tokenizer，参考SGLangWorker的实现
-        from transformers import AutoTokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(config.rollout.model_dir)
-        
+        self.tokenizer = AutoTokenizer.from_pretrained(cfg.rollout.model_dir)
+       
         # Configuration
-        self.max_user_turns = config.rollout.get("max_user_turns", 5)
-        self.max_assistant_turns = config.rollout.get("max_assistant_turns", 5)
-        self.max_parallel_calls = config.rollout.get("max_parallel_calls", 3)
-        self.max_tool_response_length = config.rollout.get("max_tool_response_length", 500)
-        self.tool_response_truncate_side = config.rollout.get("tool_response_truncate_side", "right")
+        self.max_user_turns = cfg.agentloop.get("max_user_turns", 5)
+        self.max_assistant_turns = cfg.agentloop.get("max_assistant_turns", 5)
+        self.max_parallel_calls = cfg.agentloop.get("max_parallel_calls", 3)
+        self.max_tool_response_length = cfg.agentloop.get("max_tool_response_length", 500)
+        self.tool_response_truncate_side = cfg.agentloop.get("tool_response_truncate_side", "right")
         
         # Initialize tool parser
         self.tool_parser = ToolParser.get_tool_parser("hermes", self.tokenizer)
         
-        # Tools registry: expect rstar2-style tools to be injected via kwargs["tools"].
-        # If not provided, keep empty dict (no mock tools).
-        self.tools = kwargs.get("tools", {})
-        
-        # Log tool information for debugging
-        if self.tools:
-            logger.info(f"ToolAgentLoop initialized with {len(self.tools)} tools: {list(self.tools.keys())}")
-            # Check if tools are shared instances
-            for tool_name, tool in self.tools.items():
-                if hasattr(tool, 'request_processor') and tool.request_processor:
-                    is_running = getattr(tool.request_processor, '_running', False)
-                    logger.debug(f"Tool {tool_name}: request_processor running={is_running}")
-        else:
-            logger.info("ToolAgentLoop initialized with no tools")
-        
+        # Tools registry: 存储工具实例（在worker本地初始化）
+        self.tools = None
+        # 存储工具配置（可序列化）
+        self.tool_config = None
+        self._tools_initialized = False
+    
         # 持有 rollout（AsyncSGLangWorker 的 group 句柄）
-        self.rollout = kwargs.get("rollout")
+        self.rollout = None
 
         # Chat template configuration
-        self.apply_chat_template_kwargs = config.data.get("apply_chat_template_kwargs", {})
+        self.apply_chat_template_kwargs = cfg.data.get("apply_chat_template_kwargs", {})
 
         self.system_prompt = self.tokenizer.apply_chat_template(
             [{}], add_generation_prompt=False, tokenize=True, **self.apply_chat_template_kwargs
         )
+        
+    def _pre_process_rollout_request(
+        self, request: RolloutRequest
+    ) -> List[List[RolloutRequest]]:
+        """Split rollout request into smaller groups (reference: SGLangWorker._pre_process_rollout_request).
 
-    async def run(self, prompt_ids: list[int], sampling_params: dict[str, Any], **kwargs) -> AgentLoopOutput:
+        Returns: List[List[RolloutRequest]]
+        - Outer list: batches
+        - Inner list: requests aligned to group_size
+        """
+        group_size = request.n
+        repeated_request = request.repeat()
+
+        # Derive rollout batch size similar to AsyncSGLangWorker
+        per_gpu = self.cfg.algorithm.get("rollout_batch_size_per_gpu", None)
+        if per_gpu is None:
+            rollout_batch_size = None
+        else:
+            tp = getattr(self.component_placement, "rollout_tp_size", 1)
+            pp = getattr(self.component_placement, "rollout_pipeline_parallel_size", 1)
+            rollout_batch_size = per_gpu * tp * pp
+
+        if rollout_batch_size is not None:
+            assert len(repeated_request.input_ids) % rollout_batch_size == 0, (
+                f"rollout_batch_size {rollout_batch_size} must divide the total number of requests {len(repeated_request)}"
+            )
+            num_batch = len(repeated_request.input_ids) // rollout_batch_size
+        else:
+            num_batch = 1
+
+        split_requests = repeated_request.split(num_batch)
+        if self.component_placement.is_disaggregated:
+            num_prompts_per_request = len(split_requests[0].input_ids) // group_size
+            return [r.split(num_prompts_per_request) for r in split_requests]
+        else:
+            return [r.split(1) for r in split_requests]
+
+    
+    async def run_agentloop_rollout(self, input_channel: Channel, output_channel: Channel, tool_config, rollout):
+        """运行AgentLoop rollout - 参考SGLangWorker的rollout方法
+        
+        Args:
+            input_channel: 输入通道
+            output_channel: 输出通道
+            tool_config: 工具配置（可序列化的配置路径或配置字典），而不是工具实例
+            rollout: rollout worker实例
+        """
+        # 存储工具配置而不是工具实例
+        self.tool_config = tool_config
+        self.rollout = rollout
+        
+        # 在worker本地初始化工具（如果尚未初始化）
+        if not self._tools_initialized:
+            await self._initialize_tools_locally()
+            self._tools_initialized = True
+        # 从输入通道获取请求 - 参考SGLangWorker
+        request: RolloutRequest = input_channel.get()
+        # output_channel.gpu_lock.acquire()
+        # Repeat prompts based on the group_size config
+        requests = self._pre_process_rollout_request(request)
+        self.log_info(
+            f"outer_loop size: {len(requests)}, group_size: {len(requests[0])}"
+        )
+        with self.worker_timer():
+            for request_groups in requests:
+                rollout_tasks = []
+                for group in request_groups:
+                    # 为当前group创建任务（直接调用本地 ToolAgentLoop）
+                    
+                    for raw_id, input_ids in enumerate(group.input_ids):
+                        task = asyncio.create_task(
+                            self.run(input_ids)
+                        )
+                        rollout_tasks.append(task)
+
+                # 等待所有任务完成，保持顺序
+                task_results = await asyncio.gather(*rollout_tasks)
+                results = []
+                for result in task_results:
+                    results.append(result)
+
+                # 汇总为 RolloutResult 对象，供后续 actor 使用
+                # Clip to model limits to avoid mask/position size mismatch
+                max_prompt_len = int(self.cfg.data.max_prompt_length)
+                max_total_len = int(self.cfg.actor.model.encoder_seq_length)
+                max_resp_len = max(1, max_total_len - max_prompt_len)
+
+                prompt_ids = [r.prompt_ids[:max_prompt_len] for r in results]
+                response_ids = [r.response_ids[:max_resp_len] for r in results]
+                prompt_lengths = [len(p) for p in prompt_ids]
+                response_lengths = [len(o) for o in response_ids]
+                response_mask = [r.response_mask[:max_resp_len] for r in results]
+                is_end = [True for _ in results]
+                # print(f"len(results): {len(results)}")
+                rollout_obj = RolloutResult(
+                    num_sequence=len(results),
+                    group_size=group.n,
+                    prompt_lengths=prompt_lengths,
+                    prompt_ids=prompt_ids,
+                    response_lengths=response_lengths,
+                    response_ids=response_ids,
+                    is_end=is_end,
+                    answers=group.answers,
+                    response_mask=response_mask,
+                )
+
+                # 将结果发送到输出通道（回退为直接发送）
+                await output_channel.put(
+                    rollout_obj, async_op=True
+                ).async_wait()
+        
+            # self.rollout.offload_engine().wait()
+
+    async def run(self, prompt_ids: list[int], **kwargs) -> AgentLoopOutput:
         """Run the tool agent loop with token ids as input, return ids.
 
         - 使用 rollout.agenerate 直接生成 response_ids（token ids）。
@@ -94,7 +218,6 @@ class ToolAgentLoop:
         if self.rollout is None:
             raise RuntimeError("Rollout worker is not provided to ToolAgentLoop")
 
-        request_id = uuid4().hex
         response_mask = []
         response_logprobs = []
         user_turns, assistant_turns = 0, 0
@@ -104,14 +227,14 @@ class ToolAgentLoop:
         while True:
             # Generate response from LLM
             # 截断上下文，避免超过模型最大长度
-            max_prompt_len = int(self.config.data.get("max_prompt_length", 1024))
-            max_total_len = int(self.config.actor.model.encoder_seq_length)
+            max_prompt_len = int(self.cfg.data.get("max_prompt_length", 1024))
+            max_total_len = int(self.cfg.actor.model.encoder_seq_length)
             max_resp_len = max(1, max_total_len - max_prompt_len)
 
             if len(prompt_ids) > max_prompt_len:
                 prompt_ids = prompt_ids[-max_prompt_len:]
 
-            response_ids = await self._agenerate(prompt_ids, sampling_params)
+            response_ids = await self._agenerate(prompt_ids)
             if len(response_ids) > max_resp_len:
                 response_ids = response_ids[:max_resp_len]
 
@@ -120,7 +243,7 @@ class ToolAgentLoop:
             # print(f"response_mask: {len(response_mask)}")
             assistant_turns += 1
             # Check termination conditions
-            if len(response_mask) >= self.config.rollout.get("response_length", 1024):
+            if len(response_mask) >= self.cfg.rollout.get("response_length", 1024):
                 break
             if self.max_assistant_turns and assistant_turns >= self.max_assistant_turns:
                 break
@@ -129,6 +252,7 @@ class ToolAgentLoop:
             
             # Extract tool calls from response
             _, tool_calls = await self.tool_parser.extract_tool_calls(response_ids)
+            # print(f"tool_calls: {tool_calls}")
             if not tool_calls:
                 break
             
@@ -174,7 +298,7 @@ class ToolAgentLoop:
                 ),
             )
             tool_response_ids = tool_response_ids[len(self.system_prompt) :]
-            if len(response_mask) + len(tool_response_ids) >= self.response_length:
+            if len(response_mask) + len(tool_response_ids) >= self.cfg.rollout.get("response_length", 1024):
                 break
             # Add tool response tokens
             prompt_ids += tool_response_ids
@@ -185,23 +309,17 @@ class ToolAgentLoop:
         response_ids = prompt_ids[-len(response_mask):]
         prompt_ids = prompt_ids[:len(prompt_ids) - len(response_mask)]
         
-        # Decode text for output
-        prompt_text = self.tokenizer.decode(prompt_ids, skip_special_tokens=True)
-        response_text = self.tokenizer.decode(response_ids, skip_special_tokens=True)
         return AgentLoopOutput(
             prompt_ids=prompt_ids,
             response_ids=response_ids,
             response_mask=response_mask,
             response_logprobs=response_logprobs,
-            multi_modal_data={},
             num_turns=user_turns + assistant_turns + 1,
-            prompt_text=prompt_text,
-            response_text=response_text,
         )
 
-    async def _agenerate(self, prompt_ids: list[int], sampling_params: dict[str, Any]) -> list[int]:
+    async def _agenerate(self, prompt_ids: list[int]) -> list[int]:
         import random
-        instance_num = self.config.rollout.get("rollout_instance_num", 1)
+        instance_num = self.cfg.rollout.get("rollout_instance_num", 4)
         sglang_instance_id = random.randint(0, max(1, instance_num) - 1)
         generate_result = await self.rollout.execute_on(sglang_instance_id).agenerate(prompt_ids).async_wait()
         # print(generate_result)
@@ -265,6 +383,46 @@ class ToolAgentLoop:
             except Exception:
                 logger.warning("Failed to release tool instance", exc_info=True)
 
+    async def _initialize_tools_locally(self):
+        """在worker本地初始化工具实例
+        
+        这个方法在Ray worker中被调用，用于在本地创建工具实例，
+        避免从主进程传递不可序列化的工具对象。
+        """
+        if self.tool_config is None:
+            logger.warning("No tool config provided, tools will not be initialized")
+            self.tools = {}
+            return
+        
+        try:
+            logger.info(f"Initializing tools locally in worker with config: {self.tool_config}")
+            
+            # 根据配置类型初始化工具
+            if isinstance(self.tool_config, str):
+                # 如果是配置文件路径
+                from toolkits.rstar2.tools.tool_registry import load_tools_from_config
+                self.tools = await load_tools_from_config(self.tool_config)
+            elif isinstance(self.tool_config, dict):
+                # 如果是配置字典
+                from toolkits.rstar2.tools.shared_tool_manager import SharedToolManager
+                manager = SharedToolManager()
+                # 将dict转换为DictConfig（如果需要）
+                from omegaconf import DictConfig, OmegaConf
+                if not isinstance(self.tool_config, DictConfig):
+                    config_obj = OmegaConf.create(self.tool_config)
+                else:
+                    config_obj = self.tool_config
+                self.tools = await manager._create_tools_from_config_object(config_obj)
+            else:
+                logger.error(f"Unsupported tool_config type: {type(self.tool_config)}")
+                self.tools = {}
+            
+            logger.info(f"Tools initialized locally: {list(self.tools.keys())}")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize tools locally: {e}", exc_info=True)
+            self.tools = {}
+    
     def init_worker(self):
         # 兼容旧接口（无实际操作）
         logger.info("ToolAgentLoop ready")

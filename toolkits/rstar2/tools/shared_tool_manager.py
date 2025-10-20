@@ -90,33 +90,55 @@ class SharedToolManager:
             logger.error(f"Failed to load tools from config file {config_file}: {e}")
             raise
     
-    async def _create_tools_from_config_object(self, cfg: DictConfig) -> Dict[str, Any]:
+    async def _create_tools_from_config_object(self, cfg: Union[DictConfig, Dict]) -> Dict[str, Any]:
         """
         创建工具实例
         
         Args:
-            cfg: 配置对象
+            cfg: 配置对象（DictConfig或dict）
             
         Returns:
             Dict[str, Any]: 工具字典
         """
         tools = {}
         
+        # 统一处理cfg，支持DictConfig和dict
+        # 对于DictConfig，使用.get()方法
+        # 对于dict，也使用.get()方法
+        tools_config = None
+        if isinstance(cfg, dict):
+            tools_config = cfg.get("tools", {})
+        else:
+            # DictConfig
+            tools_config = cfg.get("tools", {})
+        
         # 添加CodeJudge工具（如果配置了）
-        if cfg.get("tools", {}).get("code_judge"):
+        code_judge_config = None
+        if isinstance(tools_config, dict):
+            code_judge_config = tools_config.get("code_judge")
+        else:
+            # DictConfig
+            code_judge_config = tools_config.get("code_judge") if tools_config else None
+            
+        if code_judge_config:
             try:
-                from toolkits.tools.code_judge_tool import CodeJudgeTool, PythonTool, SimJupyterTool
+                from toolkits.rstar2.tools.code_judge_tool import CodeJudgeTool, PythonTool, SimJupyterTool
                 
-                code_judge_config = cfg.tools.code_judge
+                # 统一获取配置值的方法
+                def get_config_value(config, key, default):
+                    if isinstance(config, dict):
+                        return config.get(key, default)
+                    else:
+                        return config.get(key, default)
                 
                 # 创建PythonTool实例
                 python_tool = PythonTool(
                     name="python_code_with_standard_io",
-                    host_addr=code_judge_config.get("host_addr", "localhost"),
-                    host_port=code_judge_config.get("host_port", 8088),
-                    batch_size=code_judge_config.get("batch_size", 4),
-                    concurrency=code_judge_config.get("concurrency", 2),
-                    batch_timeout_seconds=code_judge_config.get("batch_timeout_seconds", 30.0),
+                    host_addr=get_config_value(code_judge_config, "host_addr", "localhost"),
+                    host_port=get_config_value(code_judge_config, "host_port", 8088),
+                    batch_size=get_config_value(code_judge_config, "batch_size", 4),
+                    concurrency=get_config_value(code_judge_config, "concurrency", 2),
+                    batch_timeout_seconds=get_config_value(code_judge_config, "batch_timeout_seconds", 30.0),
                 )
                 
                 # 启动工具的请求处理器
@@ -125,14 +147,14 @@ class SharedToolManager:
                 tools["python_code_with_standard_io"] = python_tool
                 
                 # 如果配置了jupyter工具
-                if code_judge_config.get("enable_jupyter", False):
+                if get_config_value(code_judge_config, "enable_jupyter", False):
                     jupyter_tool = SimJupyterTool(
                         name="jupyter_code",
-                        host_addr=code_judge_config.get("host_addr", "localhost"),
-                        host_port=code_judge_config.get("host_port", 8088),
-                        batch_size=code_judge_config.get("batch_size", 4),
-                        concurrency=code_judge_config.get("concurrency", 2),
-                        batch_timeout_seconds=code_judge_config.get("batch_timeout_seconds", 30.0),
+                        host_addr=get_config_value(code_judge_config, "host_addr", "localhost"),
+                        host_port=get_config_value(code_judge_config, "host_port", 8088),
+                        batch_size=get_config_value(code_judge_config, "batch_size", 4),
+                        concurrency=get_config_value(code_judge_config, "concurrency", 2),
+                        batch_timeout_seconds=get_config_value(code_judge_config, "batch_timeout_seconds", 30.0),
                     )
                     await jupyter_tool._start_request_processor()
                     tools["jupyter_code"] = jupyter_tool

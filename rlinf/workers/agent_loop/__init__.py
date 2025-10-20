@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .agent_loop import AgentLoopBase, AgentLoopOutput
 from .tool_agent_loop import ToolAgentLoop
 
-__all__ = ["AgentLoopBase", "AgentLoopOutput", "ToolAgentLoop"]
+__all__ = ["ToolAgentLoop"]
