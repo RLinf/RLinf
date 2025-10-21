@@ -50,19 +50,15 @@ class FrankaRobotState:
 class FrankaController(Worker):
     """Franka robot arm controller."""
 
-    def __init__(
-        self, robot_ip: str, gripper_ip: str, ros_pkg: str = "serl_franka_controllers"
-    ):
+    def __init__(self, robot_ip: str, ros_pkg: str = "serl_franka_controllers"):
         """Initialize the Franka robot arm controller.
 
         Args:
             robot_ip (str): The IP address of the robot arm.
-            gripper_ip (str): The IP address of the gripper.
         """
         super().__init__()
         self._logger = get_logger()
         self._robot_ip = robot_ip
-        self._gripper_ip = gripper_ip
         self._ros_pkg = ros_pkg
 
         self._ros = ROSController()

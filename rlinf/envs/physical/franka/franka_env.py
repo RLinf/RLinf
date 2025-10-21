@@ -34,7 +34,6 @@ from .franka_controller import FrankaController, FrankaRobotState
 @dataclass
 class FrankaRobotConfig:
     robot_ip: str
-    gripper_ip: str
     cameras: List[CameraInfo] = [
         CameraInfo(name="wrist_1", serial_number="serial_1"),
         CameraInfo(name="wrist_2", serial_number="serial_2"),
@@ -90,9 +89,9 @@ class FrankaEnv(gym.Env):
         cluster = Cluster()
         self._node_id = Worker.current_worker._node_id
         placement = NodePlacementStrategy(node_ids=[self._node_id])
-        self._controller = FrankaController.create_group(
-            self._config.robot_ip, self._config.gripper_ip
-        ).launch(cluster=cluster, placement_strategy=placement)
+        self._controller = FrankaController.create_group(self._config.robot_ip).launch(
+            cluster=cluster, placement_strategy=placement
+        )
 
         # Init cameras
         if self._config.cameras is not None:
