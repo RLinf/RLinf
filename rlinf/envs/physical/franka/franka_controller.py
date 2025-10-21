@@ -221,7 +221,7 @@ class FrankaController(Worker):
         )
 
         self._wait_robot()
-        self.log_info(f"Impedance controller status: {self._impedance.status()}")
+        self.log_debug(f"Start Impedance controller: {self._impedance.status()}")
 
     def stop_impedance(self):
         """Stop the impedance controller."""
@@ -229,6 +229,7 @@ class FrankaController(Worker):
             self._impedance.terminate()
             self._impedance = None
             self._wait_robot()
+        self.log_debug("Stop Impedance controller")
 
     def clear_errors(self):
         self._ros.put_channel(self._arm_reset_channel, ErrorRecoveryActionGoal())
@@ -292,6 +293,7 @@ class FrankaController(Worker):
         )
 
         self._ros.put_channel(self._arm_equilibrium_channel, pose_msg)
+        self.log_debug(f"Move arm to position: {position}")
 
     def move_gripper(self, position: int, speed: float = 0.3):
         """
@@ -308,6 +310,7 @@ class FrankaController(Worker):
         move_msg.goal.speed = speed
 
         self._ros.put_channel(self._gripper_move_channel, move_msg)
+        self.log_debug(f"Move gripper to position: {position}")
 
     def open_gripper(self):
         """Open the gripper."""
