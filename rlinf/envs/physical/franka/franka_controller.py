@@ -73,15 +73,16 @@ class FrankaController(Worker):
         self._robot_ip = robot_ip
         self._ros_pkg = ros_pkg
 
+        # Franka state
+        self._state = FrankaRobotState()
+
+        # ROS controller
         self._ros = ROSController()
         self._init_ros_channels()
 
         # roslaunch processes
         self._impedance: psutil.Process = None
         self._joint: psutil.Process = None
-
-        # Franka state
-        self._state = FrankaRobotState()
 
         # Start impedance control
         self.start_impedance()
@@ -200,6 +201,19 @@ class FrankaController(Worker):
             self._logger.debug(
                 f"Joint position reached {self._state.arm_joint_position}"
             )
+
+    def is_robot_up(self) -> bool:
+        """Check if all ROS channels are connected.
+
+        Returns:
+            bool: True if all ROS channels are connected, False otherwise.
+        """
+        arm_state_status = self._ros.get_input_channel_status(self._arm_state_channel)
+        gripper_state_status = self._ros.get_input_channel_status(
+            self._gripper_state_channel
+        )
+
+        return arm_state_status and gripper_state_status
 
     def get_state(self) -> FrankaRobotState:
         """Get the current state of the Franka robot.
@@ -322,6 +336,8 @@ class FrankaController(Worker):
         move_msg.goal.speed = 0.3
 
         self._ros.put_channel(self._gripper_move_channel, move_msg)
+        self._state.gripper_open = True
+        self.log_debug("Open gripper")
 
     def close_gripper(self):
         """Close the gripper."""
@@ -333,3 +349,5 @@ class FrankaController(Worker):
         grasp_msg.goal.force = 130
 
         self._ros.put_channel(self._gripper_grasp_channel, grasp_msg)
+        self._state.gripper_open = False
+        self.log_debug("Close gripper")

@@ -64,6 +64,20 @@ class ROSController:
         # ROS channels
         self._output_channels: Dict[str, rospy.Publisher] = {}
         self._input_channels: Dict[str, rospy.Subscriber] = {}
+        self._input_channel_status: Dict[str, bool] = {}
+
+    def get_input_channel_status(self, name: str) -> bool:
+        """Get the status of a ROS input channel.
+
+        Args:
+            name: The name of the ROS input channel.
+
+        Returns:
+            bool: The status of the ROS input channel.
+        """
+        if name not in self._input_channel_status:
+            return False
+        return self._input_channel_status.get(name, False)
 
     def create_ros_channel(
         self, name: str, data_class: rospy.Message, queue_size: Optional[int] = None
@@ -89,7 +103,16 @@ class ROSController:
             data_class: The message data class for the ROS channel.
             callback: The callback function to handle incoming messages.
         """
-        self._input_channels[name] = rospy.Subscriber(name, data_class, callback)
+
+        def callback_wrapper(*args, **kwargs):
+            # When the callback is called, mark the channel as active
+            self._input_channel_status[name] = True
+            return callback(*args, **kwargs)
+
+        self._input_channel_status[name] = False
+        self._input_channels[name] = rospy.Subscriber(
+            name, data_class, callback_wrapper
+        )
 
     def put_channel(self, name: str, data: rospy.Message):
         """Put data into a ROS Publisher channel.

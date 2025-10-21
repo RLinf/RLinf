@@ -13,6 +13,6 @@
 # limitations under the License.
 
 
-from .franka_env import FrankaEnv
+from .franka_env import FrankaEnv, FrankaRobotConfig, FrankaRobotState
 
-__all__ = ["FrankaEnv"]
+__all__ = ["FrankaEnv", "FrankaRobotState", "FrankaRobotConfig"]

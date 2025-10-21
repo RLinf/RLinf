@@ -49,7 +49,7 @@ class FrankaRobotConfig:
     max_num_steps: int = 100
     reward_threshold: np.ndarray = field(default_factory=lambda: np.zeros(6))
     action_scale: np.ndarray = field(
-        default_factory=lambda: np.zeros(3)
+        default_factory=lambda: np.ones(3)
     )  # [xyz move scale, orientation scale, gripper scale]
     enable_random_reset: bool = False
     random_xy_range: float = 0.0
@@ -94,6 +94,17 @@ class FrankaEnv(gym.Env):
         self._controller = FrankaController.create_group(self._config.robot_ip).launch(
             cluster=cluster, placement_strategy=placement
         )
+        start_time = time.time()
+        # Wait for the robot to be ready
+        while not self._controller.is_robot_up().wait()[0]:
+            time.sleep(0.5)
+            if time.time() - start_time > 30:
+                self._logger.warning(
+                    f"Waited {time.time() - start_time} seconds for Franka robot to be ready."
+                )
+
+        # Init action and observation spaces
+        self._init_action_obs_spaces()
 
         # Init cameras
         if self._config.cameras is not None:
@@ -119,7 +130,6 @@ class FrankaEnv(gym.Env):
             self.next_position[:3] + xyz_delta * self._config.action_scale[0]
         )
 
-        # GET ORIENTATION FROM ACTION
         self.next_position[3:] = (
             Rotation.from_euler("xyz", action[3:6] * self._config.action_scale[1])
             * Rotation.from_quat(self._franka_state.arm_position[3:])
@@ -297,13 +307,15 @@ class FrankaEnv(gym.Env):
 
     def _gripper_action(self, position: float, is_binary: bool = True):
         if is_binary:
+            print(
+                f"Gripper action: {position}, {self._config.binary_gripper_threshold}, {self._franka_state.gripper_open}"
+            )
             if (
                 position <= -self._config.binary_gripper_threshold
                 and self._franka_state.gripper_open
             ):
                 # Close gripper
                 self._controller.close_gripper().wait()
-                self._franka_state.gripper_open = False
                 return True
             elif (
                 position >= self._config.binary_gripper_threshold
@@ -311,6 +323,7 @@ class FrankaEnv(gym.Env):
             ):
                 # Open gripper
                 self._controller.open_gripper().wait()
+                time.sleep(0.6)
                 return True
             else:  # No change
                 return False
