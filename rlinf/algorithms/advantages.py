@@ -155,6 +155,77 @@ def compute_embodied_grpo_advantages(
     return advantages, advantages
 
 
+@register_advantage("math_gae_no_critic")
+def compute_math_gae_no_critic_advantages_and_returns(**kwargs):
+    """
+    Calculate advantages and returns for math tasks using GAE without critic model.
+
+    This function implements a simplified advantage estimation for math tasks
+    without requiring a value function, similar to AReaL's disable_head approach.
+
+    Args:
+        reward_scores (torch.Tensor): Reward scores for math responses
+        mask (torch.Tensor): Attention mask of shape [bsz, seq_len] or [bsz, max_seq_len]
+        gamma (float): Discount factor
+        gae_lambda (float): GAE lambda parameter
+        normalize_advantages (bool): Whether to normalize advantages
+        normalize_returns (bool): Whether to normalize returns
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: (advantages, returns) tensors
+    """
+    reward_scores = kwargs["reward_scores"]
+    mask = kwargs["mask"]
+    gamma = kwargs.get("gamma", 1.0)
+    normalize_advantages = kwargs.get("normalize_advantages", True)
+    normalize_returns = kwargs.get("normalize_returns", False)
+
+    # For math tasks without critic, we use reward-to-go as baseline
+    bsz, seq_len = mask.shape
+
+    # Create reward structure: reward at the end of sequence
+    rewards = torch.zeros_like(mask, dtype=torch.float32)
+    rewards[:, -1] = reward_scores  # Put reward at the end of sequence
+
+    # Create done flags (episode ends at the last token)
+    dones = torch.zeros_like(mask, dtype=torch.bool)
+    dones[:, -1] = True
+
+    # Compute reward-to-go (cumulative discounted rewards)
+    returns = torch.zeros_like(mask, dtype=torch.float32)
+    cumulative_reward = 0
+
+    for t in reversed(range(seq_len)):
+        cumulative_reward = rewards[:, t] + gamma * cumulative_reward * (~dones[:, t])
+        returns[:, t] = cumulative_reward
+
+    # For no-critic setup, advantages are computed using reward-to-go
+    # with a simple baseline subtraction
+    advantages = returns.clone()
+
+    # Apply mask
+    advantages = advantages * mask
+    returns = returns * mask
+
+    # Simple baseline subtraction (mean of valid advantages)
+    if normalize_advantages:
+        valid_advantages = advantages[mask.bool()]
+        if len(valid_advantages) > 0:
+            mean_advantages = valid_advantages.mean()
+            std_advantages = valid_advantages.std()
+            advantages = (advantages - mean_advantages) / (std_advantages + 1e-5)
+
+    # Normalize returns if requested
+    if normalize_returns:
+        valid_returns = returns[mask.bool()]
+        if len(valid_returns) > 0:
+            mean_returns = valid_returns.mean()
+            std_returns = valid_returns.std()
+            returns = (returns - mean_returns) / (std_returns + 1e-5)
+
+    return advantages, returns
+
+
 @register_advantage("math_gae")
 def compute_math_gae_advantages_and_returns(**kwargs):
     """
