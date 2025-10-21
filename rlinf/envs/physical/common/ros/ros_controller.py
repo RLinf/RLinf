@@ -14,6 +14,7 @@
 
 import os
 import pathlib
+import sys
 import time
 from typing import Callable, Dict, Optional
 
@@ -52,7 +53,9 @@ class ROSController:
                         break
 
                 if self._ros_core is None:
-                    self._ros_core = psutil.Popen(["roscore"])
+                    self._ros_core = psutil.Popen(
+                        ["roscore"], stdout=sys.stdout, stderr=sys.stdout
+                    )
                     time.sleep(1)  # Wait for roscore to start
 
         # Initialize ros node

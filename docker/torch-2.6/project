@@ -91,6 +91,7 @@ franka = [
     "pyrealsense2",
     "pyquaternion",
     "opencv-python",
+    "defusedxml",
 ]
 
 [tool.uv]

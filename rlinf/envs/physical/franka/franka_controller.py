@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import List
@@ -146,7 +146,9 @@ class FrankaController(Worker):
         self._state.arm_force = np.array(list(msg.K_F_ext_hat_K)[:3])
         self._state.arm_torque = np.array(list(msg.K_F_ext_hat_K)[3:])
         try:
-            self._state.arm_velocity = self._arm_jacobian @ self._arm_joint_velocity
+            self._state.arm_velocity = (
+                self._state.arm_jacobian @ self._state.arm_joint_velocity
+            )
         except Exception as e:
             self._state.arm_velocity = np.zeros(6)
             self._logger.warning(
@@ -212,13 +214,14 @@ class FrankaController(Worker):
                 self._ros_pkg,
                 "impedance.launch",
                 "robot_ip:=" + self._robot_ip,
-                "load_gripper:='true'",
+                "load_gripper:=true",
             ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=sys.stdout,
+            stderr=sys.stdout,
         )
 
         self._wait_robot()
+        self.log_info(f"Impedance controller status: {self._impedance.status()}")
 
     def stop_impedance(self):
         """Stop the impedance controller."""
@@ -255,7 +258,7 @@ class FrankaController(Worker):
                 "robot_ip:=" + self._robot_ip,
                 "load_gripper:='true'",
             ],
-            stdout=subprocess.PIPE,
+            stdout=sys.stdout,
         )
         self._wait_robot()
         self._logger.debug("Joint reset begins")
