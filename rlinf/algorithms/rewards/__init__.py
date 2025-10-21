@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from rlinf.algorithms.rewards.code import CodeRewardOffline, CodeRewardOnline
+from rlinf.algorithms.rewards.code import CodeRewardOffline
 from rlinf.algorithms.rewards.math import MathReward
 from rlinf.algorithms.rewards.vqa import VQAReward
 
@@ -31,5 +31,4 @@ reward_registry = {}
 
 register_reward("math", MathReward)
 register_reward("vqa", VQAReward)
-register_reward("code_online", CodeRewardOnline)
 register_reward("code_offline", CodeRewardOffline)

@@ -8,7 +8,6 @@ hydra:
 
 cluster:
   num_nodes: 1
-  num_gpus_per_node: 8
   component_placement:
     actor,rollout,reward: all
 
@@ -24,7 +23,7 @@ runner:
   max_steps: -1
 
   val_check_interval: 1
-  save_interval: 20
+  save_interval: 10
 
   seq_length: 8192
 
@@ -32,7 +31,7 @@ runner:
   max_tokens_per_mbs: 8192
 
   resume_dir: null
-  experiment_name: Qwen2.5-Coder-1.5B-grpo-offline
+  experiment_name: Qwen2.5-Coder-1.5B-grpo-llm_judge
   output_dir: ./results
 
 algorithm:
@@ -89,7 +88,7 @@ rollout:
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
-  detokenize: False            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
+  detokenize: False           # Whether to detokenize the output.
   padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
   eos: null                   # will be tokenizer.eos_token_id if null.
 
@@ -198,7 +197,7 @@ actor:
     use_distributed_optimizer: True
     overlap_grad_reduce: False
     overlap_param_gather: False
-    optimizer_enable_pin: false
+    optimizer_enable_pin: False
     overlap_param_gather_with_optimizer_step: False
     clip_grad: 0.8
     loss_scale: 65536
@@ -256,8 +255,8 @@ actor:
       schedule_repeat: 1 # inference and training will repeat such times
       # schedule_wait: it will be set at runtime
 
-
 reward:
+  # online rl get reward from user judge.
   group_name: "RewardGroup"
   use_reward_model: False
   reward_type: code_offline

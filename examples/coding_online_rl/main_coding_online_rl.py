@@ -30,7 +30,7 @@ from rlinf.workers.rollout.server.online_router_worker import OnlineRouterWorker
 from rlinf.workers.rollout.server.server_rollout_worker import ServerRolloutWorker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
 
-"""Script to start GRPO training"""
+"""Script to start PPO training"""
 mp.set_start_method("spawn", force=True)
 
 
@@ -82,7 +82,7 @@ def main(cfg) -> None:
             placement_strategy=inference_placement_strategy,
         )
 
-    # GRPO Actor group
+    # PPO Actor group
     actor_placement_strategy = component_placement.get_strategy("actor")
     actor_group = MegatronActor.create_group(cfg, component_placement).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement_strategy

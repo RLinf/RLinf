@@ -18,19 +18,7 @@ from omegaconf import DictConfig
 
 from toolkits.code_verifier.verify import (
     fim_llm_as_judge_verify_call,
-    fim_user_judge_verify_call,
 )
-
-
-class CodeRewardOnline:
-    def __init__(self, config: DictConfig):
-        self.scale = config.get("reward_scale", 1.0)
-
-    def get_reward(
-        self, response: List[str], reference: List[List[str]]
-    ) -> List[float]:
-        rewards = fim_user_judge_verify_call(response, reference)
-        return [float(reward) * self.scale for reward in rewards]
 
 
 class CodeRewardOffline:
@@ -41,7 +29,7 @@ class CodeRewardOffline:
         self,
         response: List[str],
         reference: List[List[str]],
-        prompts: Optional[List[str]] = None,
+        prompts: List[str],
     ) -> List[float]:
         rewards = fim_llm_as_judge_verify_call(response, reference, prompts)
         return [float(reward) * self.scale for reward in rewards]
