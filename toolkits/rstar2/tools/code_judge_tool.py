@@ -46,7 +46,7 @@ class CodeJudgeTool(BaseTool):
     Supports both config-based initialization (verl style) and direct parameter initialization (RLinf style).
     """
     def __init__(self, config: dict = None, tool_schema: OpenAIFunctionToolSchema = None, 
-                 name: str = None, *, host_addr: str = "localhost", host_port: str | int = "8088", 
+                 name: str = None, *, host_addr: str = "localhost", host_port: str | int = "8000", 
                  batch_size: int = 1, concurrency: int = 1, batch_timeout_seconds: float = 30.0):
         # Support both verl-style (config dict) and RLinf-style (direct params) initialization
         if config is None and name is not None:
@@ -67,7 +67,7 @@ class CodeJudgeTool(BaseTool):
         self._instance_dict = {}
 
         host_addr = self.config.get("host_addr", "localhost")
-        host_port = self.config.get("host_port", "8088")
+        host_port = self.config.get("host_port", "8000")
         run_jupyter_tool_calls_on_server_async = partial(
             run_tool_calls_on_server_async,
             generate_tool_call_code=generate_tool_call_code,

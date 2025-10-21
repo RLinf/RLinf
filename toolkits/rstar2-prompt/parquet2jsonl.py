@@ -193,16 +193,10 @@ def convert_parquet_to_jsonl(input_file: str, output_file: Optional[str] = None,
                     content = extract_content_from_source_prompt(row['source_prompt'])
                     print(f"提取的 content 前200字符: {content[:200]}...")
                 
-                # 应用ninja template
-                formatted_prompt = apply_ninja_template(
-                    row['source_prompt'], 
-                    row['solution'],
-                    tools
-                )
                 
                 # 创建JSON对象
                 json_obj = {
-                    "prompt": formatted_prompt,
+                    "prompt": list(row['source_prompt']),
                     "task": row.get('task', 'math'),
                     "query_id": row.get('query_id', f"{idx:08d}"),
                     "solutions": [row['solution']] if isinstance(row['solution'], str) else row['solution']
@@ -239,12 +233,12 @@ def main():
     )
     parser.add_argument('input_file', help='输入的parquet文件路径')
     parser.add_argument('-o', '--output', help='输出的jsonl文件路径（可选，默认为同名.jsonl文件）')
-    parser.add_argument('-t', '--tools', help='工具定义的YAML文件路径（可选）')
+
     parser.add_argument('-v', '--verbose', action='store_true', help='显示详细信息')
     
     args = parser.parse_args()
     
-    convert_parquet_to_jsonl(args.input_file, args.output, args.tools, args.verbose)
+    convert_parquet_to_jsonl(args.input_file, args.output, args.verbose)
 
 if __name__ == "__main__":
     main()

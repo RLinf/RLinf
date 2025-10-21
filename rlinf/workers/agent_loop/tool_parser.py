@@ -108,6 +108,7 @@ class HermesToolParser(ToolParser):
     async def extract_tool_calls(self, responses_ids: list[int]) -> tuple[str, list[FunctionCall]]:
         loop = asyncio.get_running_loop()
         text = await loop.run_in_executor(None, self.tokenizer.decode, responses_ids)
+        
         # print(f"text: {text}")
         if self.tool_call_start_token not in text or self.tool_call_end_token not in text:
             return text, []

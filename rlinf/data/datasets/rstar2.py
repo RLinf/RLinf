@@ -41,7 +41,7 @@ from rlinf.data.datasets.item import DatasetItem
 from rlinf.data.datasets.utils import batch_pad_to_fixed_len
 
 
-class MathDataset(Dataset):
+class Rstar2Dataset(Dataset):
     def __init__(
         self,
         data_paths: Union[str, List[str]],
@@ -65,7 +65,9 @@ class MathDataset(Dataset):
 
             for item in self.data:
                 try:
-                    _, L = self.encode(item[self.prompt_key])
+                    # print(f"item: {item}")
+                    # print(f"item[self.prompt_key][0]['context']: {item[self.prompt_key][0]['content']}")
+                    _, L = self.encode(item[self.prompt_key][0]['content'])
                     if L <= self.max_prompt_length:
                         filtered.append(item)
                 except Exception:
@@ -123,17 +125,9 @@ class MathDataset(Dataset):
         Return a single prompt.
         """
 
-        prompt = self.data[idx][self.prompt_key]
-
-        answer = self.data[idx]["solutions"]
-        # print(f"prompt: {prompt}")
-        # print(f"answer: {answer}")
-        prompt_tokens, prompt_length = self.encode(prompt)
-        # print(f"prompt_tokens: {prompt_tokens}")
-        # print(f"prompt_length: {prompt_length}")
-        # print(f"decode prompt: {self.tokenizer.decode(prompt_tokens)}")
+        message = self.data[idx][self.prompt_key]
+        prompt_tokens, prompt_length = self.encode(message[0]['content'])
         prompt_tokens_tensor = torch.as_tensor(prompt_tokens, dtype=torch.int64)
-
         if prompt_length > self.max_prompt_length:
             print(
                 f"prompt_tokens_tensor length {prompt_length} exceeds the max_prompt_length {self.max_prompt_length}",
@@ -147,11 +141,14 @@ class MathDataset(Dataset):
             self.tokenizer.eos_token_id,
             left_pad=True,
         )[0]
+
+        answer = self.data[idx]["solutions"]
         output = DatasetItem(
             prompt=prompt_tokens_tensor,
             length=prompt_length,
             answer=answer,
             idx=idx,
             image_data=[],
+            raw_prompt = message,
         )
         return output

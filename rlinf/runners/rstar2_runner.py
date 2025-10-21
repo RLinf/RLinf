@@ -306,7 +306,7 @@ class Rstar2Runner:
 
     def _put_batch(self, batch: Dict[str, torch.Tensor]):
         prompt_ids = batch["prompt"].tolist()
-        print("prompt_ids: ", len(prompt_ids))
+        raw_prompts = batch["raw_prompt"]
         lengths = batch["length"].tolist()
         answers = batch["answer"]
         image_data = batch["image_data"]
@@ -314,13 +314,14 @@ class Rstar2Runner:
         prompts = [ids[-pmp_len:] for ids, pmp_len in zip(prompt_ids, lengths)]
         rollout_dp_size = self.component_placement.rollout_dp_size
 
-        for input_ids, answers, image_data, multi_modal_inputs in zip(
+        for input_ids, answers, image_data, multi_modal_inputs, raw_prompts in zip(
             split_list(prompts, rollout_dp_size, enforce_divisible_batch=False),
             split_list(answers, rollout_dp_size, enforce_divisible_batch=False),
             split_list(image_data, rollout_dp_size, enforce_divisible_batch=False),
             split_list(
                 multi_modal_inputs, rollout_dp_size, enforce_divisible_batch=False
             ),
+            split_list(raw_prompts, rollout_dp_size, enforce_divisible_batch=False),
         ):
             request = RolloutRequest(
                 n=self.cfg.algorithm.group_size,
@@ -328,6 +329,7 @@ class Rstar2Runner:
                 answers=answers,
                 image_data=image_data,
                 multi_modal_inputs=multi_modal_inputs,
+                raw_prompts=raw_prompts,
             )
             self.dataloader_channel.put(request, async_op=True)
 

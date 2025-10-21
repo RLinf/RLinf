@@ -135,7 +135,7 @@ class SharedToolManager:
                 python_tool = PythonTool(
                     name="python_code_with_standard_io",
                     host_addr=get_config_value(code_judge_config, "host_addr", "localhost"),
-                    host_port=get_config_value(code_judge_config, "host_port", 8088),
+                    host_port=get_config_value(code_judge_config, "host_port", 8000),
                     batch_size=get_config_value(code_judge_config, "batch_size", 4),
                     concurrency=get_config_value(code_judge_config, "concurrency", 2),
                     batch_timeout_seconds=get_config_value(code_judge_config, "batch_timeout_seconds", 30.0),
@@ -151,7 +151,7 @@ class SharedToolManager:
                     jupyter_tool = SimJupyterTool(
                         name="jupyter_code",
                         host_addr=get_config_value(code_judge_config, "host_addr", "localhost"),
-                        host_port=get_config_value(code_judge_config, "host_port", 8088),
+                        host_port=get_config_value(code_judge_config, "host_port", 8000),
                         batch_size=get_config_value(code_judge_config, "batch_size", 4),
                         concurrency=get_config_value(code_judge_config, "concurrency", 2),
                         batch_timeout_seconds=get_config_value(code_judge_config, "batch_timeout_seconds", 30.0),
