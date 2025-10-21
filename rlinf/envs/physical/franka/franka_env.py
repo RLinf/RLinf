@@ -15,7 +15,7 @@
 import copy
 import queue
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
 import cv2
@@ -34,30 +34,32 @@ from .franka_controller import FrankaController, FrankaRobotState
 @dataclass
 class FrankaRobotConfig:
     robot_ip: str
-    cameras: List[CameraInfo] = [
-        CameraInfo(name="wrist_1", serial_number="serial_1"),
-        CameraInfo(name="wrist_2", serial_number="serial_2"),
-    ]
+    cameras: List[CameraInfo] = field(
+        default_factory=lambda: [
+            CameraInfo(name="wrist_1", serial_number="serial_1"),
+            CameraInfo(name="wrist_2", serial_number="serial_2"),
+        ]
+    )
     step_frequency: float = 10.0  # Max number of steps per second
     # Positions are stored in eular angles (xyz for position, rzryrx for orientation)
     # It will be converted to quaternions internally
-    target_position: np.ndarray = np.zeros(6)
-    reset_position: np.ndarray = np.zeros(6)
+    target_position: np.ndarray = field(default_factory=lambda: np.zeros(6))
+    reset_position: np.ndarray = field(default_factory=lambda: np.zeros(6))
     # Algorithm parameters
     max_num_steps: int = 100
-    reward_threshold: np.ndarray = np.zeros(6)
-    action_scale: np.ndarray = np.zeros(
-        3
+    reward_threshold: np.ndarray = field(default_factory=lambda: np.zeros(6))
+    action_scale: np.ndarray = field(
+        default_factory=lambda: np.zeros(3)
     )  # [xyz move scale, orientation scale, gripper scale]
     enable_random_reset: bool = False
     random_xy_range: float = 0.0
     random_rz_range: float = 0.0
     # Robot parameters
     # Same as the position arrays: first 3 are position limits, last 3 are orientation limits
-    position_limit_min: np.ndarray = np.zeros(6)
-    position_limit_max: np.ndarray = np.zeros(6)
-    compliance_param: Dict[str, float] = {}
-    precision_param: Dict[str, float] = {}
+    position_limit_min: np.ndarray = field(default_factory=lambda: np.zeros(6))
+    position_limit_max: np.ndarray = field(default_factory=lambda: np.zeros(6))
+    compliance_param: Dict[str, float] = field(default_factory=dict)
+    precision_param: Dict[str, float] = field(default_factory=dict)
     binary_gripper_threshold: float = 0.5
     enable_gripper_penalty: bool = True
     gripper_penalty: float = 0.1

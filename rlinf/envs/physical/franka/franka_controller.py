@@ -14,7 +14,7 @@
 
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 
 import geometry_msgs.msg as geom_msg
@@ -35,13 +35,25 @@ from rlinf.utils.logging import get_logger
 @dataclass
 class FrankaRobotState:
     # https://docs.ros.org/en/kinetic/api/libfranka/html/structfranka_1_1RobotState.html
-    arm_position: np.ndarray = np.zeros(7)  # FrankaState.O_T_EE
-    arm_velocity: np.ndarray = np.zeros(6)
-    arm_joint_position: np.ndarray = np.zeros(7)  # FrankaState.q
-    arm_joint_velocity: np.ndarray = np.zeros(7)  # FrankaState.dq
-    arm_force: np.ndarray = np.zeros(3)  # FrankaState.K_F_ext_hat_K[0:3]
-    arm_torque: np.ndarray = np.zeros(3)  # FrankaState.K_F_ext_hat_K[3:6]
-    arm_jacobian: np.ndarray = np.zeros((6, 7))  # ZeroJacobian.zero_jacobian
+    arm_position: np.ndarray = field(
+        default_factory=lambda: np.zeros(7)
+    )  # FrankaState.O_T_EE
+    arm_velocity: np.ndarray = field(default_factory=lambda: np.zeros(6))
+    arm_joint_position: np.ndarray = field(
+        default_factory=lambda: np.zeros(7)
+    )  # FrankaState.q
+    arm_joint_velocity: np.ndarray = field(
+        default_factory=lambda: np.zeros(7)
+    )  # FrankaState.dq
+    arm_force: np.ndarray = field(
+        default_factory=lambda: np.zeros(3)
+    )  # FrankaState.K_F_ext_hat_K[0:3]
+    arm_torque: np.ndarray = field(
+        default_factory=lambda: np.zeros(3)
+    )  # FrankaState.K_F_ext_hat_K[3:6]
+    arm_jacobian: np.ndarray = field(
+        default_factory=lambda: np.zeros((6, 7))
+    )  # ZeroJacobian.zero_jacobian
 
     gripper_position: int = 0  # Sum(JointState.position)
     gripper_open: bool = False
