@@ -83,6 +83,9 @@ class FrankaController(Worker):
         # Franka state
         self._state = FrankaRobotState()
 
+        # Start impedance control
+        self.start_impedance()
+
     def _init_ros_channels(self):
         """Initialize ROS channels for communication."""
 
@@ -110,7 +113,7 @@ class FrankaController(Worker):
         # Gripper control channels
         self._gripper_move_channel = "/franka_gripper/move/goal"
         self._gripper_grasp_channel = "/franka_gripper/grasp/goal"
-        self._gripper_state_channel = "/franka_gripper/grasp/state"
+        self._gripper_state_channel = "/franka_gripper/joint_states"
         self._ros.create_ros_channel(
             self._gripper_move_channel, MoveActionGoal, queue_size=1
         )
