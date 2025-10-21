@@ -95,11 +95,12 @@ class FrankaEnv(gym.Env):
         ).launch(cluster=cluster, placement_strategy=placement)
 
         # Init cameras
-        assert len(self._config.cameras) == 2, (
-            "Currently FrankaEnv only support 2 cameras from wrist_1 and wrist_2."
-        )
-        self._cameras: List[Camera] = []
-        self._open_cameras(self._config.cameras)
+        if self._config.cameras is not None:
+            assert len(self._config.cameras) == 2, (
+                "Currently FrankaEnv only support 2 cameras from wrist_1 and wrist_2."
+            )
+            self._cameras: List[Camera] = []
+            self._open_cameras(self._config.cameras)
 
     def step(self, action: np.ndarray):
         """Take a step in the environment.
@@ -239,6 +240,12 @@ class FrankaEnv(gym.Env):
 
     def _get_camera_frames(self) -> Dict[str, np.ndarray]:
         """Get frames from all cameras."""
+        if not self._config.cameras:
+            # Return empty frames if no cameras are configured
+            return {
+                "wrist_1": np.zeros((128, 128, 3), dtype=np.uint8),
+                "wrist_2": np.zeros((128, 128, 3), dtype=np.uint8),
+            }
         frames = {}
         for camera in self._cameras:
             try:
