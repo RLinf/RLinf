@@ -1,5 +1,6 @@
 **Summary**
-Tonghe Zhang created this repo to generate motion plannig data for $\pi$-like VLAs tha receives vision, text and proprioception states, in particular.
+feat(embodied): pi0 data generation and postprocessing. 
+
 
 **Detailed Functionalities**
 Tonghe also provides the script for
