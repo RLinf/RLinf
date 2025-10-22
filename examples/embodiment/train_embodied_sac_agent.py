@@ -38,7 +38,7 @@ from rlinf.config import validate_cfg
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.workers.actor.fsdp_actor_worker_sac import EmbodiedSACFSDPActor
+from rlinf.workers.actor.fsdp_actor_worker_sac import EmbodiedFSDPActor as EmbodiedSACFSDPActor
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
@@ -56,10 +56,8 @@ def main(cfg) -> None:
     """
     cfg = validate_cfg(cfg)
 
-    cluster = Cluster(
-        num_nodes=cfg.cluster.num_nodes, num_gpus_per_node=cfg.cluster.num_gpus_per_node
-    )
-    component_placement = HybridComponentPlacement(cfg)
+    cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
+    component_placement = HybridComponentPlacement(cfg, cluster)
 
     # Create actor worker group (SAC version)
     actor_placement = component_placement.get_strategy("actor")

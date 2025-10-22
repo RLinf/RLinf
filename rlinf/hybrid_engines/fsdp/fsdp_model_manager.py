@@ -161,14 +161,18 @@ class FSDPModelManager:
         except Exception as e:
             self.logger.warning(f"[FSDP] Liger kernels not applied: {e}")
 
-    def setup_model_and_optimizer(self):
+    def setup_model_and_optimizer(self, initialize_target=False):
         """Setup model and optimizer."""
         module = self.model_provider_func()
+        if initialize_target:
+            target_module = self.model_provider_func()
 
         # Enable gradient checkpointing if configured
         if self._cfg.model.get("gradient_checkpointing", False):
             self.logger.info("[FSDP] Enabling gradient checkpointing")
             module.gradient_checkpointing_enable()
+            if initialize_target:
+                target_module.gradient_checkpointing_enable()
         else:
             self.logger.info("[FSDP] Gradient checkpointing is disabled")
 
@@ -222,13 +226,34 @@ class FSDPModelManager:
             use_orig_params=self._cfg.fsdp_config.use_orig_params,
         )
 
+        if initialize_target:
+            target_module.requires_grad_(False)
+            
+            self.target_model = FSDP(
+                target_module,
+                param_init_fn=init_fn,
+                auto_wrap_policy=auto_wrap_policy,
+                device_id=int(os.environ["LOCAL_RANK"]),
+                sharding_strategy=sharding_strategy,  # zero3
+                mixed_precision=mixed_precision,
+                sync_module_states=True,
+                forward_prefetch=self._cfg.fsdp_config.forward_prefetch,
+                backward_prefetch=(
+                    BackwardPrefetch.BACKWARD_PRE
+                    if self._cfg.fsdp_config.backward_prefetch
+                    else None
+                ),
+                limit_all_gathers=self._cfg.fsdp_config.limit_all_gathers,
+                use_orig_params=self._cfg.fsdp_config.use_orig_params,
+            )
+            self.target_model_initialized = True
+
         self.build_optimizer(enable_warmup=self.critic_warmup_steps > 0)
 
     def build_optimizer(self, enable_warmup=False):
         assert hasattr(self, "model")
 
         betas = (self._cfg.optim.adam_beta1, self._cfg.optim.adam_beta2)
-
         params_actor = []
         params_critic = []
         if enable_warmup:
@@ -241,34 +266,62 @@ class FSDPModelManager:
                         continue
                     param.requires_grad = False
         else:
-            for name, param in self.model.named_parameters():
-                if (
-                    len(self.store_requires_grad_param_name) > 0
-                    and name in self.store_requires_grad_param_name
-                ):
-                    param.requires_grad = True
+            if not hasattr(self.model, "q_value_head"):
+                for name, param in self.model.named_parameters():
+                    if (
+                        len(self.store_requires_grad_param_name) > 0
+                        and name in self.store_requires_grad_param_name
+                    ):
+                        param.requires_grad = True
 
-                if param.requires_grad:
-                    if "value_head" in name or "model.value_head" in name:
-                        params_critic.append(param)
-                    else:
-                        params_actor.append(param)
+                    if param.requires_grad:
+                        if "value_head" in name or "model.value_head" in name:
+                            params_critic.append(param)
+                        else:
+                            params_actor.append(param)
 
-        param_groups = []
-        if len(params_actor) > 0:
-            param_groups.append(
-                {"params": params_actor, "lr": self._cfg.optim.lr, "betas": betas}
-            )
-        if len(params_critic) > 0:
-            param_groups.append(
-                {
-                    "params": params_critic,
-                    "lr": self._cfg.optim.value_lr,
-                    "betas": betas,
-                }
-            )
+                param_groups = []
+                if len(params_actor) > 0:
+                    param_groups.append(
+                        {"params": params_actor, "lr": self._cfg.optim.lr, "betas": betas}
+                    )
+                if len(params_critic) > 0:
+                    param_groups.append(
+                        {
+                            "params": params_critic,
+                            "lr": self._cfg.optim.value_lr,
+                            "betas": betas,
+                        }
+                    )
 
-        self.optimizer = torch.optim.AdamW(param_groups)
+                self.optimizer = torch.optim.AdamW(param_groups)
+            else:
+                for name, param in self.model.named_parameters():
+                    if param.requires_grad:
+                        if "q_value_head" in name:
+                            print(name)
+                            params_critic.append(param)
+                        else:
+                            params_actor.append(param)
+                if len(params_critic) > 0:
+                    self.optimizer = optim.Adam(
+                        [
+                            {
+                                "params": params_actor, 
+                            "lr": self._cfg.optim.lr, 
+                            #  "betas": betas
+                            },
+                            
+                        ]
+                    )
+                    self.qf_optimizer = optim.Adam(
+                        [{
+                            "params": params_critic,
+                            "lr": self._cfg.optim.value_lr,
+                            # "betas": betas,
+                        },
+                        ]
+                    )
 
     def optimizer_step(self):
         grad_norm = self.model.clip_grad_norm_(max_norm=self.cfg.actor.optim.clip_grad)
@@ -292,6 +345,11 @@ class FSDPModelManager:
     def get_model_state_dict(self):
         with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT):
             state_dict = self.model.state_dict()
+        return state_dict
+    
+    def get_target_model_state_dict(self):
+        with FSDP.state_dict_type(self.target_model, StateDictType.FULL_STATE_DICT):
+            state_dict = self.target_model.state_dict()
         return state_dict
 
     def get_optimizer_state_dict(self):

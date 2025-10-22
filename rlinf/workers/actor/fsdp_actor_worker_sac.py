@@ -17,7 +17,15 @@ import os
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from omegaconf import DictConfig
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp import (
+    BackwardPrefetch,
+    MixedPrecision,
+    ShardingStrategy,
+    StateDictType,
+)
 from torch.distributed.device_mesh import init_device_mesh
 from tqdm import tqdm
 
@@ -25,13 +33,12 @@ import rlinf.algorithms  # noqa: F401
 # import rlinf.algorithms.advantages_sac  # noqa: F401
 from rlinf.algorithms.registry import actor_loss
 from rlinf.algorithms.replay_buffer import SACReplayBuffer
-from rlinf.algorithms.losses import compute_sac_temperature_loss
 from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
 )
 from rlinf.models import get_model
-from rlinf.models.embodiment.model_utils import custom_forward
+from rlinf.models.embodiment.model_utils_sac import custom_forward
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.data_iter_utils import get_iterator_k_split
 from rlinf.utils.distributed import all_reduce_dict
@@ -85,10 +92,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.update_step = 0
 
     def init_worker(self):
-        self.setup_model_and_optimizer()
+        self.setup_model_and_optimizer(initialize_target=True)
         self.setup_sac_components()
-        # Initialize target model after main model is set up
-        self.initialize_target_model()
+        self.soft_update_target_model(tau=1.0)
         if self.cfg.actor.get("enable_offload", False):
             self.offload_fsdp_param_and_grad()
             self.offload_fsdp_optimizer()
@@ -106,161 +112,50 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             seed=self.cfg.actor.get("seed", 1234)
         )
         
-        # Initialize target model (copy of main model)
-        # Note: We need to wait until the main model is set up before creating target model
-        self.target_model = None
-        self.target_model_initialized = False
-        
         # Initialize temperature parameter for automatic entropy tuning
-        if self.cfg.algorithm.get("auto_entropy_tuning", True):
+        if self.cfg.algorithm.get("auto_entropy_tuning", False):
             target_entropy = self.cfg.algorithm.get(
                 "target_entropy", 
                 -self.cfg.actor.model.action_dim  # Heuristic: -|A|
             )
             self.target_entropy = target_entropy
-            self.log_alpha = torch.tensor(
-                np.log(self.cfg.algorithm.get("initial_alpha", 0.2)),
-                requires_grad=True,
-                device=self.device
-            )
+            self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
+            self.alpha = self.log_alpha.exp().item()
             self.alpha_optimizer = torch.optim.Adam(
                 [self.log_alpha], 
                 lr=self.cfg.algorithm.get("alpha_lr", 3e-4)
             )
         else:
             self.alpha = self.cfg.algorithm.get("alpha", 0.2)
-    
-    def initialize_target_model(self):
-        """Initialize target model after main model is set up"""
-        if self.target_model is None and self.model is not None:
-            # Create target model with same structure as main model
-            from rlinf.models import get_model
-            self.target_model = get_model(
-                self.cfg.actor.checkpoint_load_path, 
-                self.cfg.actor.model
-            )
-            
-            # Add Q-value head to target model (same as main model)
-            if hasattr(self.model, 'q_value_head'):
-                from rlinf.models.embodiment.modules.q_value_head import DoubleQValueHead
-                
-                # Get model dimensions
-                hidden_size = self.target_model.config.hidden_size if hasattr(self.target_model.config, 'hidden_size') else 4096
-                action_dim = self.cfg.actor.model.action_dim
-                use_separate_processing = self.cfg.actor.model.get('q_network_separate_processing', True)
-                
-                # Add Q-value head to the target model
-                self.target_model.q_value_head = DoubleQValueHead(
-                    hidden_size, 
-                    action_dim, 
-                    use_separate_processing=use_separate_processing
-                )
-                
-                # Ensure Q-value head uses the same dtype as the target model
-                model_dtype = next(self.target_model.parameters()).dtype
-                self.target_model.q_value_head = self.target_model.q_value_head.to(dtype=model_dtype)
-                
-                self.log_on_first_rank(
-                    f"Added DoubleQValueHead to target model: hidden_size={hidden_size}, action_dim={action_dim}, "
-                    f"dtype={model_dtype}, separate_processing={use_separate_processing}"
-                )
-            
-            self.target_model.to(self.device)
-            self.target_model.eval()
-            
-            # Copy parameters from main model to target model
-            self.soft_update_target_model(tau=1.0)  # Hard copy initially
-            self.target_model_initialized = True
-            self.log_on_first_rank("Target model initialized successfully")
-    
+
     def soft_update_target_model(self, tau: float = None):
         """Soft update target model parameters"""
         if tau is None:
-            tau = self.cfg.algorithm.get("tau", 0.005)
+            tau = self.cfg.algorithm.get("tau", 0.01)
         
-        if not self.target_model_initialized:
-            self.log_on_first_rank("Target model not initialized, skipping soft update")
-            return
+        assert self.target_model_initialized
         
         with torch.no_grad():
-            # Get state dicts for both models
-            main_state_dict = self.model.state_dict()
-            target_state_dict = self.target_model.state_dict()
+            online_params = self.model.parameters()
+            target_params = self.target_model.parameters()
             
-            # Only update parameters that exist in both models and have matching shapes
-            for name, param in main_state_dict.items():
-                if name in target_state_dict:
-                    target_param = target_state_dict[name]
-                    if param.shape == target_param.shape:
-                        target_state_dict[name] = tau * param + (1.0 - tau) * target_param
-                    else:
-                        self.log_on_first_rank(f"Skipping parameter {name} due to shape mismatch: {param.shape} vs {target_param.shape}")
-            
-            # Load updated state dict to target model
-            self.target_model.load_state_dict(target_state_dict)
+            for online_param, target_param in zip(online_params, target_params):
+                target_param.data.mul_(1.0 - tau)
+                target_param.data.add_(online_param.data * tau)
 
-    # def model_provider_func(self):
-    #     model = get_model(self.cfg.actor.checkpoint_load_path, self.cfg.actor.model)
-    #     if model is not None:
-    #         return model
-    #     return super().model_provider_func()
     def model_provider_func(self):
         model = get_model(self.cfg.actor.checkpoint_load_path, self.cfg.actor.model)
         if model is not None:
-            # Add Q-value head for SAC
-            from rlinf.models.embodiment.modules.q_value_head import DoubleQValueHead
-            
-            # Get model dimensions
-            hidden_size = model.config.hidden_size if hasattr(model.config, 'hidden_size') else 4096
-            action_dim = self.cfg.actor.model.action_dim
-            use_separate_processing = self.cfg.actor.model.get('q_network_separate_processing', True)
-            
-            # Add Q-value head to the model
-            model.q_value_head = DoubleQValueHead(
-                hidden_size, 
-                action_dim,
-                use_separate_processing=use_separate_processing
-            )
-            
-            # Ensure Q-value head uses the same dtype as the main model
-            model_dtype = next(model.parameters()).dtype
-            model.q_value_head = model.q_value_head.to(dtype=model_dtype)
-            
-            self.log_on_first_rank(
-                f"Added DoubleQValueHead to model: hidden_size={hidden_size}, action_dim={action_dim}, "
-                f"dtype={model_dtype}, separate_processing={use_separate_processing}"
-            )
             return model
         return super().model_provider_func()
 
-    # def sync_model_to_rollout(self):
-    #     if next(self.model.parameters()).is_cpu:
-    #         self.load_fsdp_param_and_grad(self.device)
-    #         self.load_fsdp_optimizer(self.device)
-
-    #     state_dict = self.get_model_state_dict()
-    #     if self._weight_dst_rank_in_rollout is not None:
-    #         self.send(
-    #             state_dict, self._rollout_group_name, self._weight_dst_rank_in_rollout
-    #         )
-    #     if self.cfg.actor.get("enable_offload", False):
-    #         self.offload_fsdp_param_and_grad()
-    #         self.offload_fsdp_optimizer()
-    #         torch.cuda.synchronize()
-    #         del state_dict
-    #         gc.collect()
-    #         torch.cuda.empty_cache()
     def sync_model_to_rollout(self):
         if next(self.model.parameters()).is_cpu:
             self.load_fsdp_param_and_grad(self.device)
             self.load_fsdp_optimizer(self.device)
 
-        # Get full state dict and filter out SAC-specific parameters for rollout worker
-        full_state_dict = self.get_model_state_dict()
         
-        # Filter out q_value_head parameters as rollout worker doesn't need them
-        state_dict = {k: v for k, v in full_state_dict.items() if not k.startswith('q_value_head')}
-        
+        state_dict = self.get_model_state_dict()
         if self._weight_dst_rank_in_rollout is not None:
             self.send(
                 state_dict, self._rollout_group_name, self._weight_dst_rank_in_rollout
@@ -270,7 +165,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self.offload_fsdp_optimizer()
             torch.cuda.synchronize()
             del state_dict
-            del full_state_dict
             gc.collect()
             torch.cuda.empty_cache()
 
@@ -281,7 +175,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         self.rollout_batch = {}
         recv_list = []
-        for i in range(split_num):
+        for _ in range(split_num):
             recv_list.append(
                 await self.channel.get(
                     queue_name=self._replay_buffer_name, async_op=True
@@ -290,51 +184,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         # shape [num_chunk, bsz, chunk_size], cat dim 1
         for key in recv_list[0].keys():
-            if "env_info/" not in key:
-                self.rollout_batch[key] = torch.cat(
-                    [recv_list[i][key] for i in range(split_num)], dim=1
-                )
-            else:
-                self.rollout_batch[key] = torch.cat(
-                    [recv_list[i][key] for i in range(split_num)], dim=0
-                )
+            self.rollout_batch[key] = torch.cat(
+                [recv_list[i][key] for i in range(split_num)], dim=1
+            )
 
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
-        
-        # Add transitions to replay buffer
-        self.add_to_replay_buffer(self.rollout_batch)
-    
-    def add_to_replay_buffer(self, rollout_batch):
-        """Add rollout data to replay buffer as transitions"""
-        n_steps, batch_size, num_chunks = rollout_batch["rewards"].shape
-        
-        for step in range(n_steps - 1):  # -1 because we need next observations
-            for batch_idx in range(batch_size):
-                for chunk_idx in range(num_chunks):
-                    # Current observations
-                    observations = {
-                        'input_ids': rollout_batch["input_ids"][step, batch_idx],
-                        'pixel_values': rollout_batch["pixel_values"][step, batch_idx],
-                        'attention_mask': rollout_batch["attention_mask"][step, batch_idx]
-                    }
-                    
-                    # Next observations
-                    next_observations = {
-                        'input_ids': rollout_batch["input_ids"][step + 1, batch_idx],
-                        'pixel_values': rollout_batch["pixel_values"][step + 1, batch_idx],
-                        'attention_mask': rollout_batch["attention_mask"][step + 1, batch_idx]
-                    }
-                    
-                    # Create transition
-                    transition = {
-                        'observations': observations,
-                        'actions': rollout_batch["action_tokens"][step, batch_idx, chunk_idx],
-                        'rewards': rollout_batch["rewards"][step, batch_idx, chunk_idx],
-                        'next_observations': next_observations,
-                        'dones': rollout_batch["dones"][step + 1, batch_idx, chunk_idx],
-                        'logprobs': rollout_batch.get("prev_logprobs", torch.zeros_like(rollout_batch["rewards"]))[step, batch_idx, chunk_idx]
-                    }
-                    self.replay_buffer.add(transition)
+
+        self.replay_buffer.add_rollout_batch(self.rollout_batch)
 
     def _process_received_rollout_batch(self, rollout_batch):
         """
@@ -448,7 +304,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         
         # Number of gradient updates per training call
         num_updates = self.cfg.algorithm.get("num_updates_per_step", 1)
-        batch_size = self.cfg.actor.micro_batch_size
+        batch_size = self.cfg.actor.global_batch_size
         
         for update_idx in range(num_updates):
             # Sample batch from replay buffer
@@ -464,70 +320,99 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         for sub_k, sub_v in v.items()
                     }
             
-            # Forward pass for current observations with Q-network
-            current_output = self._forward_model(
-                batch['observations'], 
-                batch['actions'],
-                q_network=True
-            )
-            
-            # Forward pass for next observations using target network
+            curr_obs = {
+                key[len("transitions/obs/"):]: value for key, value in batch.items()
+                if "transitions/obs/" in key
+            }
+            next_obs = {
+                key[len("transitions/next_obs/"):]: value for key, value in batch.items()
+                if "transitions/next_obs/" in key
+            }
+
+            loss_kwargs = {}
+
             with torch.no_grad():
-                if self.target_model_initialized:
-                    next_output = self._forward_target_model(
-                        batch['next_observations'],
-                        sample_actions=True  # Sample new actions for next state
-                    )
-                else:
-                    # If target model not ready, use main model
-                    next_output = self._forward_model(
-                        batch['next_observations'],
-                        sample_actions=True
-                    )
+                next_state_actions, next_results = self.model.predict_action_batch(
+                    next_obs, return_action_type="torch_flatten"
+                )
+                next_state_log_pi = next_results["prev_logprobs"]
+                next_state_log_pi = next_state_log_pi.sum(dim=-1, keepdim=True)
+
+                qf1_next_target, qf2_next_target = self.target_model.get_q_values(
+                    next_obs, next_state_actions
+                )
+                min_qf_next_target, _ = torch.min(
+                    torch.cat((qf1_next_target, qf2_next_target), dim=1), 
+                    dim=1, keepdim=True
+                )
+
+                gamma = 0.8
+                min_qf_next_target = min_qf_next_target - self.alpha * next_state_log_pi
+                target_q_values = batch["rewards"] + gamma * min_qf_next_target
+
             
-            # Compute SAC losses (critic and actor)
-            loss_metrics = self._compute_sac_losses(
-                current_output, 
-                next_output, 
-                batch
+            data_q1_values, data_q2_values = self.model.get_q_values(
+                curr_obs, batch["action"] 
             )
+
+            q1_loss = F.mse_loss(data_q1_values, target_q_values)
+            q2_loss = F.mse_loss(data_q2_values, target_q_values)
+            critic_loss = q1_loss + q2_loss
+            self.qf_optimizer.zero_grad()
+            critic_loss.backward()
+            self.qf_optimizer.step()
+
+            pi, log_pi = self.model(curr_obs)
+            log_pi = log_pi.sum(dim=-1, keepdim=True)
+            qf1_pi, qf2_pi = self.model.get_q_values(
+                curr_obs, pi
+            )
+            min_qf_pi, _ = torch.min(
+                torch.cat((qf1_pi, qf2_pi), dim=1), 
+                dim=1, keepdim=True
+            )
+            actor_loss = ((self.alpha*log_pi) - min_qf_pi).mean()
             
             # Backward pass and optimization
-            total_loss = loss_metrics['total_loss']
             self.optimizer.zero_grad()
-            total_loss.backward()
-            
-            grad_norm = self.model.clip_grad_norm_(
-                max_norm=self.cfg.actor.optim.clip_grad
-            )
+            actor_loss.backward()
             self.optimizer.step()
             
             # Update temperature parameter if using automatic entropy tuning
             if hasattr(self, 'log_alpha') and self.log_alpha is not None:
-                alpha_loss, alpha_metrics = compute_sac_temperature_loss(
-                    self.log_alpha,
-                    current_output['logprobs'],
-                    self.target_entropy
-                )
+                with torch.no_grad():
+                    _, log_pi = self.model(curr_obs)
+                alpha_loss = (-self.log_alpha.exp() * (log_pi + self.target_entropy)).mean()
                 self.alpha_optimizer.zero_grad()
                 alpha_loss.backward()
+                torch.distributed.all_reduce(self.log_alpha.grad, op=torch.distributed.ReduceOp.AVG)
                 self.alpha_optimizer.step()
-                loss_metrics.update(alpha_metrics)
+                self.alpha = self.log_alpha.exp().item()
             
-            # Soft update target network
+            # # Soft update target network
             if self.target_model_initialized and self.update_step % self.cfg.algorithm.get("target_update_freq", 1) == 0:
                 self.soft_update_target_model()
-            
+                
+            loss = actor_loss + critic_loss
             # Collect metrics
-            loss_metrics.update({
-                "sac/total_loss": total_loss.detach().item(),
-                "actor/grad_norm": grad_norm.detach().item(),
+            metrics_data = {
+                "sac/total_loss": loss.detach().item(),
+                "sac/alpha": self.alpha, 
+                # "actor/grad_norm": grad_norm.detach().item(),
                 "actor/lr": self.optimizer.param_groups[0]["lr"],
+                "critic/lr": self.qf_optimizer.param_groups[0]["lr"], 
+                "sac/actor_loss": actor_loss.detach().item(), 
+                "sac/critic_loss": critic_loss.detach().item(), 
+                "sac/qf1_loss": q1_loss.detach().item(), 
+                "sac/qf2_loss": q2_loss.detach().item(), 
+                "sac/qf1_values": data_q1_values.mean().detach().item(), 
+                "sac/qf2_values": data_q2_values.mean().detach().item(), 
+                "sac/current_q": min_qf_pi.mean().detach().item(), 
                 "replay_buffer/size": len(self.replay_buffer),
                 "replay_buffer/utilization": len(self.replay_buffer) / self.replay_buffer.capacity
-            })
+            }
             
-            append_to_dict(metrics, loss_metrics)
+            append_to_dict(metrics, metrics_data)
             self.update_step += 1
 
         # Average metrics across updates
@@ -556,274 +441,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         torch.cuda.synchronize()
         torch.distributed.barrier()
         torch.cuda.empty_cache()
-
         return mean_metric_dict
-    
-    def _forward_model(self, observations, actions=None, q_network=False, sample_actions=False):
-        """Forward pass through the model"""
-        # 添加调试信息
-        self.log_on_first_rank(f"DEBUG: observations type: {type(observations)}")
-        self.log_on_first_rank(f"DEBUG: input_ids type: {type(observations['input_ids'])}")
-        
-        input_ids = observations['input_ids']
-        if not isinstance(input_ids, torch.Tensor):
-            self.log_on_first_rank(f"ERROR: input_ids is not tensor: {type(input_ids)}")
-            return {}
-        input_ids = observations['input_ids']
-        pixel_values = observations['pixel_values']
-        attention_mask = observations['attention_mask']
-        
-        action_token_len = self.model.action_dim * self.model.num_action_chunks
-        
-        # Convert action tokens to action features if needed for Q-network
-        action_features = None
-        if q_network and actions is not None:
-            action_features = self._convert_actions_to_features(actions)
-        
-        if sample_actions:
-            # Sample new actions from policy
-            logits_processor_args = {
-                "vocab_size": self.model.vocab_size,
-                "n_action_bins": self.model.config.n_action_bins,
-            }
-            
-            output_dict = custom_forward(
-                self.model,
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                pixel_values=pixel_values,
-                action_token_len=action_token_len,
-                q_network=q_network,
-                value_head_mode=self.cfg.actor.model.get("vh_mode", "a0"),
-                temperature=self.cfg.algorithm.sampling_params.temperature_train,
-                top_k=self.cfg.algorithm.sampling_params.top_k,
-                logits_processor_args=logits_processor_args,
-                action_features=action_features,
-                use_gumbel_softmax=self.cfg.algorithm.get("use_gumbel_softmax", True),  # Enable Gumbel-Softmax
-                gumbel_temperature=self.cfg.algorithm.get("gumbel_temperature", 1.0),  # Gumbel temperature
-            )
-        else:
-            # Use provided actions
-            logits_processor_args = {
-                "action_tokens": actions,
-                "vocab_size": self.model.vocab_size,
-                "n_action_bins": self.model.config.n_action_bins,
-            }
-            
-            output_dict = custom_forward(
-                self.model,
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                pixel_values=pixel_values,
-                action_token_len=action_token_len,
-                q_network=q_network,
-                value_head_mode=self.cfg.actor.model.get("vh_mode", "a0"),
-                temperature=self.cfg.algorithm.sampling_params.temperature_train,
-                top_k=self.cfg.algorithm.sampling_params.top_k,
-                logits_processor_args=logits_processor_args,
-                action_features=action_features,
-                use_gumbel_softmax=self.cfg.algorithm.get("use_gumbel_softmax", True),  # Enable Gumbel-Softmax
-                gumbel_temperature=self.cfg.algorithm.get("gumbel_temperature", 1.0),  # Gumbel temperature
-            )
-        
-        return output_dict
-    
-    def _convert_actions_to_features(self, actions):
-        """Convert action tokens to features suitable for Q-network input
-        
-        Args:
-            actions: Action tokens [batch_size, action_dim], values are token IDs
-                     For n_action_bins=256, valid range is [vocab_size - 256, vocab_size - 1]
-                     
-        Returns:
-            action_features: Normalized action features [batch_size, action_dim], range [0, 1]
-        """
-        batch_size = actions.shape[0]
-        model_dtype = next(self.model.parameters()).dtype
-        
-        # Convert to float first, then to model dtype
-        action_features = actions.view(batch_size, -1).float()
-        
-        # Map action tokens to [0, n_action_bins-1] range
-        # action tokens are in range [vocab_size - n_action_bins, vocab_size - 1]
-        vocab_size = self.model.vocab_size
-        n_action_bins = self.model.config.n_action_bins
-        
-        # Subtract vocab_size - n_action_bins to get [0, n_action_bins-1]
-        action_features = action_features - (vocab_size - n_action_bins)
-        
-        # Normalize to [0, 1] range
-        action_features = action_features / (n_action_bins - 1)
-        
-        # Convert to model dtype
-        action_features = action_features.to(dtype=model_dtype)
-        
-        self.log_on_first_rank(
-            f"[DEBUG] Actions converted: shape={action_features.shape}, "
-            f"range=[{action_features.min():.4f}, {action_features.max():.4f}], "
-            f"mean={action_features.mean():.4f}, std={action_features.std():.4f}"
-        )
-        
-        return action_features
-    
-    # def _forward_target_model(self, observations, sample_actions=True):
-    #     """Forward pass through target model"""
-    #     input_ids = observations['input_ids']
-    #     pixel_values = observations['pixel_values']
-    #     attention_mask = observations['attention_mask']
-        
-    #     action_token_len = self.target_model.action_dim * self.target_model.num_action_chunks
-        
-    #     logits_processor_args = {
-    #         "vocab_size": self.target_model.vocab_size,
-    #         "n_action_bins": self.target_model.config.n_action_bins,
-    #     }
-        
-    #     # For target model, we sample actions and then compute Q-values
-    #     output_dict = custom_forward(
-    #         self.target_model,
-    #         input_ids=input_ids,
-    #         attention_mask=attention_mask,
-    #         pixel_values=pixel_values,
-    #         action_token_len=action_token_len,
-    #         q_network=True,
-    #         value_head_mode=self.cfg.actor.model.get("vh_mode", "a0"),
-    #         temperature=self.cfg.algorithm.sampling_params.temperature_train,
-    #         top_k=self.cfg.algorithm.sampling_params.top_k,
-    #         logits_processor_args=logits_processor_args,
-    #     )
-        
-    #     return output_dict
-    
-    def _forward_target_model(self, observations, sample_actions=True):
-        """Forward pass through target model"""
-        input_ids = observations['input_ids']
-        pixel_values = observations['pixel_values']
-        attention_mask = observations['attention_mask']
-        
-        action_token_len = self.target_model.action_dim * self.target_model.num_action_chunks
-        
-        if sample_actions:
-            # First, sample actions from target model (without Q-network)
-            logits_processor_args = {
-                "vocab_size": self.target_model.vocab_size,
-                "n_action_bins": self.target_model.config.n_action_bins,
-            }
-            
-            # Sample actions without Q-network computation
-            # output_dict = custom_forward(
-            #     self.target_model,
-            #     input_ids=input_ids,
-            #     attention_mask=attention_mask,
-            #     pixel_values=pixel_values,
-            #     action_token_len=action_token_len,
-            #     q_network=False,  # Don't compute Q-values yet
-            #     value_head_mode=self.cfg.actor.model.get("vh_mode", "a0"),
-            #     temperature=self.cfg.algorithm.sampling_params.temperature_train,
-            #     top_k=self.cfg.algorithm.sampling_params.top_k,
-            #     logits_processor_args=logits_processor_args,
-            # )
-            
-            from rlinf.models.embodiment.model_utils import sample_logits_processor
-
-            output_dict = custom_forward(
-                self.target_model,
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                pixel_values=pixel_values,
-                action_token_len=action_token_len,
-                q_network=False,  # Don't compute Q-values yet
-                value_head_mode=self.cfg.actor.model.get("vh_mode", "a0"),
-                temperature=self.cfg.algorithm.sampling_params.temperature_train,
-                top_k=self.cfg.algorithm.sampling_params.top_k,
-                logits_processor=sample_logits_processor,  # Use sampling processor
-                logits_processor_args=logits_processor_args,
-                use_gumbel_softmax=self.cfg.algorithm.get("use_gumbel_softmax", True),  # Enable Gumbel-Softmax
-                gumbel_temperature=self.cfg.algorithm.get("gumbel_temperature", 1.0),  # Gumbel temperature
-            )
-            
-            # Now compute Q-values using the sampled actions
-            sampled_actions = output_dict['action_tokens']
-            action_features = self._convert_actions_to_features(sampled_actions)
-            
-            # Forward pass with Q-network using sampled actions
-            # Update logits_processor_args to include the sampled action_tokens
-            q_logits_processor_args = logits_processor_args.copy()
-            q_logits_processor_args["action_tokens"] = sampled_actions
-            
-            q_output_dict = custom_forward(
-                self.target_model,
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                pixel_values=pixel_values,
-                action_token_len=action_token_len,
-                q_network=True,  # Now compute Q-values
-                value_head_mode=self.cfg.actor.model.get("vh_mode", "a0"),
-                temperature=self.cfg.algorithm.sampling_params.temperature_train,
-                top_k=self.cfg.algorithm.sampling_params.top_k,
-                logits_processor_args=q_logits_processor_args,
-                action_features=action_features,
-                use_gumbel_softmax=self.cfg.algorithm.get("use_gumbel_softmax", True),  # Enable Gumbel-Softmax
-                gumbel_temperature=self.cfg.algorithm.get("gumbel_temperature", 1.0),  # Gumbel temperature
-            )
-            
-            # Merge outputs
-            output_dict.update(q_output_dict)
-        else:
-            # Use provided actions (if any)
-            logits_processor_args = {
-                "vocab_size": self.target_model.vocab_size,
-                "n_action_bins": self.target_model.config.n_action_bins,
-            }
-            
-            output_dict = custom_forward(
-                self.target_model,
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                pixel_values=pixel_values,
-                action_token_len=action_token_len,
-                q_network=True,
-                value_head_mode=self.cfg.actor.model.get("vh_mode", "a0"),
-                temperature=self.cfg.algorithm.sampling_params.temperature_train,
-                top_k=self.cfg.algorithm.sampling_params.top_k,
-                logits_processor_args=logits_processor_args,
-                use_gumbel_softmax=self.cfg.algorithm.get("use_gumbel_softmax", True),  # Enable Gumbel-Softmax
-                gumbel_temperature=self.cfg.algorithm.get("gumbel_temperature", 1.0),  # Gumbel temperature
-            )
-        
-        return output_dict
-    
-    def _compute_sac_losses(self, current_output, next_output, batch):
-        """Compute SAC actor and critic losses"""
-        # Get current alpha value and ensure correct dtype
-        model_dtype = next(self.model.parameters()).dtype
-        if hasattr(self, 'log_alpha') and self.log_alpha is not None:
-            alpha = self.log_alpha.exp().to(dtype=model_dtype)
-        else:
-            alpha = torch.tensor(self.alpha, dtype=model_dtype, device=self.device)
-        
-        # Ensure all tensors are in the correct dtype
-        gamma = torch.tensor(self.cfg.algorithm.get("gamma", 0.99), dtype=model_dtype, device=self.device)
-        
-        # Prepare loss arguments for SAC
-        kwargs = {
-            "loss_type": self.cfg.algorithm.loss_type,
-            "q1_values": current_output.get("q1_values"),
-            "q2_values": current_output.get("q2_values"),
-            "target_q_values": next_output.get("q_values"),  # Use min of target Q1, Q2
-            "logprobs": current_output["logprobs"],
-            "entropy": current_output["entropy"],
-            "rewards": batch["rewards"],
-            "dones": batch["dones"],
-            "gamma": gamma,
-            "alpha": alpha,
-        }
-        
-        # Compute SAC loss
-        loss, metrics_data = actor_loss(**kwargs)
-        metrics_data["total_loss"] = loss
-        
-        return metrics_data
 
     def save_checkpoint(self, save_base_path, step):
         torch.distributed.barrier()
@@ -834,3 +452,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             torch.save(model_state, os.path.join(save_base_path, "model.pt"))
             torch.save(optim_state, os.path.join(save_base_path, "optim.pt"))
         torch.distributed.barrier()
+
+    def set_global_step(self, global_step):
+        if hasattr(self.model, "set_global_step"):
+            self.model.set_global_step(global_step)

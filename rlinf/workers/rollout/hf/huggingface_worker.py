@@ -102,23 +102,47 @@ class MultiStepRolloutWorker(Worker):
 
         return actions, result
 
-    def update_env_output(self, i, env_output):
+    def update_env_output(self, i, env_output, next_extracted_obs):
+        if isinstance(next_extracted_obs, torch.Tensor):
+            real_next_extracted_obs = next_extracted_obs.clone()
+        elif isinstance(next_extracted_obs, dict):
+            real_next_extracted_obs = dict()
+            for key, value in next_extracted_obs.items():
+                if value is None:
+                    continue
+                assert isinstance(value, torch.Tensor), f"{key}, {type(value)}"
+                real_next_extracted_obs[key] = value
+        else:
+            raise NotImplementedError
+        
+
         # first step for env_batch
         if env_output["rewards"] is None:
             self.buffer_list[i].dones.append(env_output["dones"].contiguous().cpu())
-            return
+            return real_next_extracted_obs
 
+        
         self.buffer_list[i].rewards.append(env_output["rewards"].cpu().contiguous())
         self.buffer_list[i].dones.append(env_output["dones"].bool().cpu().contiguous())
 
         # Note: currently this is not correct for chunk-size>1 with partial reset
         if env_output["dones"].any() and self.cfg.env.train.auto_reset:
-            if hasattr(self.hf_model, "value_head"):
+            if hasattr(self.hf_model, "value_head") or hasattr(self.hf_model, "q_value_head"):
                 dones = env_output["dones"]
 
                 final_obs = env_output["final_obs"]
                 with torch.no_grad():
-                    actions, result = self.predict(final_obs)
+                    final_extracted_obs = self.hf_model.preprocess_env_obs(
+                        final_obs
+                    )
+                    if isinstance(real_next_extracted_obs, torch.Tensor):
+                        real_next_extracted_obs[dones] = final_extracted_obs[dones]
+                    elif isinstance(real_next_extracted_obs, dict):
+                        for key in real_next_extracted_obs.keys():
+                            dones_mask = dones.expand_as(final_extracted_obs[key])
+                            real_next_extracted_obs[key][dones_mask] = final_extracted_obs[key][dones_mask]
+                    
+                    actions, result = self.predict(final_extracted_obs)
                     if "prev_values" in result:
                         _final_values = result["prev_values"]
                     else:
@@ -131,6 +155,7 @@ class MultiStepRolloutWorker(Worker):
                 self.buffer_list[i].rewards[-1][:, -1] += (
                     self.cfg.algorithm.gamma * final_values.cpu()
                 )
+        return real_next_extracted_obs
 
     async def generate(self):
         if self.cfg.rollout.get("enable_offload", False):
@@ -142,20 +167,51 @@ class MultiStepRolloutWorker(Worker):
             desc="Generating Rollout Epochs",
             disable=(self._rank != 0),
         ):
-            for _ in range(self.cfg.algorithm.n_chunk_steps):
+            extracted_obs = [None for i in range(self.stage_num)]
+            for chunk_step in range(self.cfg.algorithm.n_chunk_steps):
                 for i in range(self.stage_num):
                     env_output = await self.recv_env_output()
-                    self.update_env_output(i, env_output)
-                    actions, result = self.predict(env_output["obs"])
+
+                    next_extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"]) # 但这里没有 final obs
+                    real_next_extracted_obs = self.update_env_output(i, env_output, next_extracted_obs) # 这里处理了 final obs
+
+                    actions, result = self.predict(next_extracted_obs) # results 里面才包含这一步 obs 的格式
 
                     self.buffer_list[i].append_result(result)
+
+                    if extracted_obs[i] is not None:
+                        self.buffer_list[i].add_transition(extracted_obs[i], real_next_extracted_obs)
+                    
+                    extracted_obs[i] = real_next_extracted_obs
 
                     await self.send_chunk_actions(actions)
 
             for i in range(self.stage_num):
                 env_output = await self.recv_env_output()
-                self.update_env_output(i, env_output)
-                actions, result = self.predict(env_output["obs"])
+                next_extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"])
+                
+                real_next_extracted_obs = dict()
+                for key, value in next_extracted_obs.items():
+                    if value is None:
+                        continue
+                    assert isinstance(value, torch.Tensor), f"{key}, {type(value)}"
+                    real_next_extracted_obs[key] = value
+                
+                if env_output["dones"].any() and self.cfg.env.train.auto_reset:
+                    dones = env_output["dones"]
+                    final_obs = env_output["final_obs"]
+                    with torch.no_grad():
+                        final_extracted_obs = self.hf_model.preprocess_env_obs(
+                            final_obs
+                        )
+                    for key in real_next_extracted_obs.keys():
+                        dones_mask = dones.expand_as(final_extracted_obs[key])
+                        real_next_extracted_obs[key][dones_mask] = final_extracted_obs[key][dones_mask]
+
+                self.buffer_list[i].add_transition(extracted_obs[i], real_next_extracted_obs)
+
+                self.update_env_output(i, env_output, next_extracted_obs)
+                actions, result = self.predict(next_extracted_obs)
                 if "prev_values" in result:
                     self.buffer_list[i].prev_values.append(
                         result["prev_values"].cpu().contiguous()
@@ -189,8 +245,26 @@ class MultiStepRolloutWorker(Worker):
         self.hf_model = self.hf_model.to(self.device)
 
     def sync_model_from_actor(self):
+        prev_weights = self.hf_model.state_dict().copy()
         param_state_dict = self.recv(self._actor_group_name, src_rank=self._rank)
         self.hf_model.load_state_dict(param_state_dict)
+        curr_weights = self.hf_model.state_dict()
+
+        # import os
+        # import time
+        # torch.save(curr_weights, f"rollout_{os.getpid()}_{time.time()}.pt")
+
+        should_same = True
+        for key in prev_weights.keys():
+            if torch.any(prev_weights[key] != param_state_dict[key]):
+                should_same = False
+        same = True
+        for key in prev_weights.keys():
+            if torch.any(prev_weights[key]!=curr_weights[key]):
+                same = False
+        print(f"{same=}, {should_same=}")
+        
+
         del param_state_dict
         gc.collect()
         torch.cuda.empty_cache()

@@ -48,13 +48,17 @@ class SACReplayBuffer:
         ]
 
         # Initialize storage
-        self.buffer = deque(maxlen=capacity)
+        # self.buffer = deque(maxlen=capacity)
+        self.buffer = {}
+        self.buffer_dict = {}
+
         self.position = 0
 
         # Set random seed
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
+            self.random_generator = torch.Generator()
 
     def add(self, transition: Dict[str, torch.Tensor]):
         """
@@ -84,6 +88,20 @@ class SACReplayBuffer:
 
         self.buffer.append(cpu_transition)
 
+    def add_rollout_batch(self, rollout_batch: Dict[str, torch.Tensor]):
+        # [n-chunk-steps, actor-bsz, ...]
+        for key, value in rollout_batch.items():
+            new_value = value.reshape(value.shape[0]*value.shape[1], *value.shape[2:]).cpu()
+            if key not in self.buffer:
+                self.buffer[key] = deque(maxlen=self.capacity)
+            self.buffer[key].extend([v for v in new_value])
+        
+        self.buffer_dict = dict()
+
+        for key, value in self.buffer.items():
+            self.buffer_dict[key] = torch.stack(list(self.buffer[key]))
+        print(f"{self.buffer_dict.keys()=}")
+
     def sample(self, batch_size: int) -> Dict[str, torch.Tensor]:
         """
         Sample a batch of transitions from the buffer.        
@@ -92,100 +110,53 @@ class SACReplayBuffer:
         Returns:
             Dictionary containing batched transitions
         """
-        if len(self.buffer) < batch_size:
-            raise ValueError(f"Buffer size {len(self.buffer)} < batch_size {batch_size}")
-
+        buffer_size = len(self.buffer["rewards"])
         # Random sampling
-        transitions = random.sample(self.buffer, batch_size)
-
-        # Collate transitions into batches
-        batch = self._collate_transitions(transitions)
-
-        # Move to target device
-        batch = self._move_to_device(batch, self.device)
-
-        return batch
-
-    def _collate_transitions(self, transitions: List[Dict]) -> Dict[str, torch.Tensor]:
-        """Collate list of transitions into batched tensors."""
+        transition_ids = torch.randint(
+            low=0, high=buffer_size, size=(batch_size, ), 
+            generator=self.random_generator
+        )
         batch = {}
-
-        # Handle observations
-        if 'observations' in transitions[0]:
-            batch['observations'] = {}
-            for obs_key in self.observation_keys:
-                if obs_key in transitions[0]['observations']:
-                    obs_list = [t['observations'][obs_key] for t in transitions]
-                    batch['observations'][obs_key] = torch.stack(obs_list, dim=0)
-
-        # Handle next observations
-        if 'next_observations' in transitions[0]:
-            batch['next_observations'] = {}
-            for obs_key in self.observation_keys:
-                if obs_key in transitions[0]['next_observations']:
-                    next_obs_list = [t['next_observations'][obs_key] for t in transitions]
-                    batch['next_observations'][obs_key] = torch.stack(next_obs_list, dim=0)
-
-        # Handle other keys
-        for key in ['actions', 'rewards', 'dones', 'action_tokens', 'logprobs']:
-            if key in transitions[0]:
-                values = [t[key] for t in transitions]
-                if isinstance(values[0], torch.Tensor):
-                    batch[key] = torch.stack(values, dim=0)
-                else:
-                    batch[key] = torch.tensor(values)
-
+        for key in self.buffer_dict:
+            batch[key] = self.buffer_dict[key][transition_ids].to(self.device)
+        
         return batch
 
-    def _move_to_device(self, batch: Dict, device: str) -> Dict:
-        """Move batch tensors to target device."""
-        device_batch = {}
-        for key, value in batch.items():
-            if isinstance(value, torch.Tensor):
-                device_batch[key] = value.to(device)
-            elif isinstance(value, dict):
-                device_batch[key] = {
-                    k: v.to(device) if isinstance(v, torch.Tensor) else v
-                    for k, v in value.items()
-                }
-            else:
-                device_batch[key] = value
-        return device_batch
 
     def __len__(self) -> int:
         """Return current buffer size."""
-        return len(self.buffer)
+        return len(self.buffer["rewards"])
 
     def is_ready(self, min_size: int) -> bool:
         """Check if buffer has enough samples for training."""
-        return len(self.buffer) >= min_size
+        return len(self.buffer["rewards"]) >= min_size
 
     def clear(self):
         """Clear the buffer."""
-        self.buffer.clear()
+        self.buffer = {}
+        self.buffer_dict = {}
         self.position = 0
 
     def get_stats(self) -> Dict[str, float]:
         """Get buffer statistics."""
-        if len(self.buffer) == 0:
+        if len(self.buffer["rewards"]) == 0:
             return {"size": 0, "capacity": self.capacity, "utilization": 0.0}
 
         # Calculate basic stats
         stats = {
-            "size": len(self.buffer),
+            "size": len(self.buffer["rewards"]),
             "capacity": self.capacity,
-            "utilization": len(self.buffer) / self.capacity
+            "utilization": len(self.buffer["rewards"]) / self.capacity
         }
 
         # Calculate reward statistics if available
-        if self.buffer and 'rewards' in self.buffer[0]:
-            rewards = [t['rewards'].item() if isinstance(t['rewards'], torch.Tensor)
-                      else t['rewards'] for t in self.buffer]
+        if "rewards" in self.buffer_dict:
+            rewards = self.buffer_dict["rewards"]
             stats.update({
-                "mean_reward": np.mean(rewards),
-                "std_reward": np.std(rewards),
-                "min_reward": np.min(rewards),
-                "max_reward": np.max(rewards)
+                "mean_reward": rewards.mean(),
+                "std_reward": rewards.std(),
+                "min_reward": rewards.min(),
+                "max_reward": rewards.max()
             })
 
         return stats

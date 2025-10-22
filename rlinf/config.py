@@ -551,7 +551,9 @@ def validate_embodied_cfg(cfg):
                 elif "widowx" in robot:
                     return "arm_pd_ee_target_delta_pose_align2_gripper_pd_joint_pos"
                 elif "panda-qpos" in robot:
-                    return None
+                    return "pd_joint_delta_pos"
+                elif "panda-ee" in robot:
+                    return "pd_ee_delta_pos"
                 else:
                     raise NotImplementedError(f"Robot {robot} not supported")
 

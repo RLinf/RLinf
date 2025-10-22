@@ -1107,6 +1107,7 @@ class EmbodiedRolloutResult:
     prev_values: List[torch.Tensor] = field(default_factory=list)
     dones: List[torch.Tensor] = field(default_factory=list)
     rewards: List[torch.Tensor] = field(default_factory=list)
+    transitions: List[Tuple[torch.Tensor, torch.Tensor]] = field(default_factory=list)
 
     forward_inputs: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -1132,6 +1133,13 @@ class EmbodiedRolloutResult:
             else []
         )
 
+        self.transitions = (
+            [
+                (put_tensor_cpu(obs), put_tensor_cpu(next_obs)) 
+                for obs, next_obs in self.transitions
+            ] if self.transitions is not None else []
+        )
+
         self.forward_inputs = [
             put_tensor_cpu(forward_inputs) for forward_inputs in self.forward_inputs
         ]
@@ -1151,6 +1159,11 @@ class EmbodiedRolloutResult:
         ) if "rewards" in result else []
 
         self.forward_inputs.append(put_tensor_cpu(result["forward_inputs"]))
+
+    def add_transition(self, obs, next_obs):
+        self.transitions.append(
+            (put_tensor_cpu(obs), put_tensor_cpu(next_obs))
+        )
 
     def to_dict(self):
         rollout_result_dict = {}
@@ -1174,13 +1187,32 @@ class EmbodiedRolloutResult:
             if len(self.rewards) > 0
             else None
         )
+
         merged_forward_inputs = {}
+        
+        for obs, next_obs in self.transitions:
+            # only consider the case that obs is dict
+            for orig_key in obs.keys():
+                obs_key = f"transitions/obs/{orig_key}"
+                if obs_key in merged_forward_inputs:
+                    merged_forward_inputs[obs_key].append(obs[orig_key])
+                else:
+                    merged_forward_inputs[obs_key] = [obs[orig_key]]
+                
+                next_obs_key = f"transitions/next_obs/{orig_key}"
+                if next_obs_key in merged_forward_inputs:
+                    merged_forward_inputs[next_obs_key].append(next_obs[orig_key])
+                else:
+                    merged_forward_inputs[next_obs_key] = [next_obs[orig_key]]
+                
+
         for data in self.forward_inputs:
             for k, v in data.items():
                 if k in merged_forward_inputs:
                     merged_forward_inputs[k].append(v)
                 else:
                     merged_forward_inputs[k] = [v]
+ 
         for k in merged_forward_inputs.keys():
             assert k not in ["dones", "rewards", "prev_logprobs", "prev_values"]
             rollout_result_dict[k] = (

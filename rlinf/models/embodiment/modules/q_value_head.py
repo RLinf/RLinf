@@ -60,15 +60,15 @@ class QValueHead(nn.Module):
             self.fusion_l4 = nn.Linear(128, output_dim, bias=False)
         else:
             # Original simple concatenation approach
-            self.head_l1 = nn.Linear(hidden_size + action_dim, 512)
-            self.head_act1 = nn.GELU()
-            self.head_l2 = nn.Linear(512, 256)
-            self.head_act2 = nn.GELU()
-            self.head_l3 = nn.Linear(256, 128)
-            self.head_act3 = nn.GELU()
-            self.head_l4 = nn.Linear(128, output_dim, bias=False)
+            self.head_l1 = nn.Linear(hidden_size + action_dim, 256)
+            self.head_act1 = nn.ReLU()
+            self.head_l2 = nn.Linear(256, 256)
+            self.head_act2 = nn.ReLU()
+            self.head_l3 = nn.Linear(256, 256)
+            self.head_act3 = nn.ReLU()
+            self.head_l4 = nn.Linear(256, output_dim)
 
-        self._init_weights()
+        # self._init_weights()
 
     def _init_weights(self):
         """Initialize weights using Xavier/Kaiming initialization"""
