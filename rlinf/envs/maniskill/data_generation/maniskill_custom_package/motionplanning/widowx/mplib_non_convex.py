@@ -21,13 +21,36 @@
 # SOFTWARE.
 
 
+# MIT License
+
+# Copyright (c) 2024 simpler-env
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
 import os
 from typing import Optional, Sequence
-import numpy as np
 
+import numpy as np
 from mplib import Planner
 from mplib.pymp import ArticulatedModel, PlanningWorld
 from mplib.pymp.planning import ompl
+
 
 class NonConvexPlanner(Planner):
     """Motion planner"""
@@ -88,9 +111,9 @@ class NonConvexPlanner(Planner):
         for i, link in enumerate(self.user_link_names):
             self.link_name_2_idx[link] = i
 
-        assert (
-            move_group in self.user_link_names
-        ), f"end-effector not found as one of the links in {self.user_link_names}"
+        assert move_group in self.user_link_names, (
+            f"end-effector not found as one of the links in {self.user_link_names}"
+        )
         self.move_group = move_group
         self.robot.set_move_group(self.move_group)
         self.move_group_joint_indices = self.robot.get_move_group_joint_indices()
@@ -99,12 +122,12 @@ class NonConvexPlanner(Planner):
         self.joint_limits = np.concatenate(self.pinocchio_model.get_joint_limits())
         self.joint_vel_limits = (
             joint_vel_limits
-            if len(joint_vel_limits)
+            if joint_vel_limits
             else np.ones(len(self.move_group_joint_indices))
         )
         self.joint_acc_limits = (
             joint_acc_limits
-            if len(joint_acc_limits)
+            if joint_acc_limits
             else np.ones(len(self.move_group_joint_indices))
         )
         self.move_group_link_id = self.link_name_2_idx[self.move_group]
@@ -123,4 +146,3 @@ class NonConvexPlanner(Planner):
 
         self.planning_world = PlanningWorld([self.robot], ["robot"], [], [])
         self.planner = ompl.OMPLPlanner(world=self.planning_world)
-        

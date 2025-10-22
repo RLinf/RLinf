@@ -21,11 +21,12 @@
 # SOFTWARE.
 
 
-import os
 import glob
 import json
+import os
+from typing import Any, Dict, List
+
 import numpy as np
-from typing import Dict, Any, List, Tuple
 
 
 def list_npz_files(input_dir: str) -> List[str]:
@@ -52,5 +53,3 @@ def write_jsonl(path: str, rows: List[Dict[str, Any]]) -> None:
     with open(path, "w") as f:
         for row in rows:
             f.write(json.dumps(row) + "\n")
-
-

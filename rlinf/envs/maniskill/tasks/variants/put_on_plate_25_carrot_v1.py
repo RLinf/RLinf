@@ -1,11 +1,33 @@
+# MIT License
+
+# Copyright (c) 2024 simpler-env
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+
 import numpy as np
 import torch
-from transforms3d.euler import euler2quat
-
 from mani_skill.envs.tasks.digital_twins.bridge_dataset_eval.base_env import (
     BaseBridgeEnv,
 )
 from mani_skill.utils.registration import register_env
+from transforms3d.euler import euler2quat
 
 
 @register_env(
@@ -64,5 +86,3 @@ class PutOnPlateInScene25MainCarrotV3(BaseBridgeEnv):
 
     def get_language_instruction(self, **kwargs):
         return ["put carrot on plate"] * self.num_envs
-
- 

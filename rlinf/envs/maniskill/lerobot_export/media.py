@@ -21,10 +21,10 @@
 # SOFTWARE.
 
 
-import os
-import numpy as np
-import cv2
 from typing import List
+
+import cv2
+import numpy as np
 
 
 def save_video_from_pil_images(images: List, output_path: str, fps: int = 24) -> None:
@@ -38,5 +38,3 @@ def save_video_from_pil_images(images: List, output_path: str, fps: int = 24) ->
         frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
         writer.write(frame)
     writer.release()
-
-

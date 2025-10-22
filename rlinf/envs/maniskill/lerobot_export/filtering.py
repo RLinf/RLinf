@@ -21,7 +21,6 @@
 # SOFTWARE.
 
 
-from typing import Tuple
 import numpy as np
 
 
@@ -96,5 +95,3 @@ def apply_action_filter(
         check_gripper=check_gripper,
     )
     return filter_with_tail_keep(base_mask, keep_last_n=keep_last_n)
-
-

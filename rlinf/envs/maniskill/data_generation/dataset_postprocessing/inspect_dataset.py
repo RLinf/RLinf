@@ -21,8 +21,8 @@
 # SOFTWARE.
 
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 import pyarrow.parquet as pq
 
 path = "/mnt/mnt/public/liuzhihao/openpi-main/data/libero/data/chunk-000/episode_000999.parquet"
@@ -37,6 +37,7 @@ df = pd.read_parquet(path, engine="pyarrow")  # or engine="fastparquet"
 
 print("\n=== DataFrame shape ===")
 print(df.shape)
+
 
 def get_item_shape(value):
     if hasattr(value, "shape") and isinstance(getattr(value, "shape"), tuple):
@@ -57,6 +58,7 @@ def get_item_shape(value):
     # scalars (int/float/bool/None/etc.)
     return ()
 
+
 print("\n=== Column dtypes and sample item shapes ===")
 for col in df.columns:
     pandas_dtype = df[col].dtype
@@ -68,4 +70,6 @@ for col in df.columns:
     else:
         sample_type = "<all-null>"
         sample_shape = ()
-    print(f"{col}: pandas_dtype={pandas_dtype}, sample_type={sample_type}, sample_shape={sample_shape}")
+    print(
+        f"{col}: pandas_dtype={pandas_dtype}, sample_type={sample_type}, sample_shape={sample_shape}"
+    )

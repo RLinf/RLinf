@@ -21,7 +21,8 @@
 # SOFTWARE.
 
 
-from typing import Dict, Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
+
 import numpy as np
 
 
@@ -46,7 +47,9 @@ class RollingStats:
             self.min = np.minimum(self.min, row)
             self.max = np.maximum(self.max, row)
 
-    def finalize(self, reshape: Optional[Tuple[int, int, int]] = None) -> Dict[str, Any]:
+    def finalize(
+        self, reshape: Optional[Tuple[int, int, int]] = None
+    ) -> Dict[str, Any]:
         var = np.zeros_like(self.mean)
         if self.count > 1:
             var = self.M2 / (self.count - 1)
@@ -62,7 +65,7 @@ class RollingStats:
             std = std
             min_val = self.min
             max_val = self.max
-        
+
         return {
             "count": [int(self.count)],
             "mean": mean.tolist(),
@@ -90,5 +93,3 @@ def compute_image_channel_stats(images: np.ndarray) -> Dict[str, Any]:
     reshaped = arr.reshape(-1, c)
     rs.update(reshaped)
     return rs.finalize(reshape=(c, 1, 1))
-
-

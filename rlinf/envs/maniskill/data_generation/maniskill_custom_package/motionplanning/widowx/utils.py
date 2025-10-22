@@ -21,15 +21,35 @@
 # SOFTWARE.
 
 
+# MIT License
+
+# Copyright (c) 2024 simpler-env
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+
 import numpy as np
-import sapien
 import sapien.physx as physx
-import sapien.render
 import trimesh
-from transforms3d import quaternions
-from mani_skill.utils.structs import Actor
 from mani_skill.utils import common
 from mani_skill.utils.geometry.trimesh_utils import get_component_mesh
+from mani_skill.utils.structs import Actor
 
 
 def get_actor_obb(actor: Actor, to_world_frame=True, vis=False):
@@ -67,7 +87,7 @@ def compute_grasp_info_by_obb(
         depth: displacement from hand to tcp along the approaching vector. Usually finger length.
         ortho: whether to orthogonalize closing  w.r.t. approaching.
     """
-    
+
     extents = np.array(obb.primitive.extents)
     T = np.array(obb.primitive.transform)
 
@@ -89,8 +109,8 @@ def compute_grasp_info_by_obb(
         vec1 = T[:3, ind1]
         vec2 = T[:3, ind2]
         if np.abs(target_closing @ vec1) < np.abs(target_closing @ vec2):
-            ind1 = inds0[0:-1][inds1[1]] # inds1[1]
-            ind2 = inds0[0:-1][inds1[0]] # inds1[0]
+            ind1 = inds0[0:-1][inds1[1]]  # inds1[1]
+            ind2 = inds0[0:-1][inds1[0]]  # inds1[0]
     closing = T[:3, ind1]
 
     # Flip if far from target
@@ -111,14 +131,23 @@ def compute_grasp_info_by_obb(
         closing = closing - (approaching @ closing) * approaching
         closing = common.np_normalize_vector(closing)
 
-    grasp_info = dict(
-        approaching=approaching, closing=closing, center=center, extents=extents
-    )
+    grasp_info = {
+        "approaching": approaching,
+        "closing": closing,
+        "center": center,
+        "extents": extents,
+    }
     return grasp_info
 
 
-def get_grasp_info(actor:Actor, obb, depth, offset, approaching=(0, 0, -1)):
-    T = actor.pose.to_transformation_matrix().cpu().numpy().squeeze(0).astype(np.float64)
+def get_grasp_info(actor: Actor, obb, depth, offset, approaching=(0, 0, -1)):
+    T = (
+        actor.pose.to_transformation_matrix()
+        .cpu()
+        .numpy()
+        .squeeze(0)
+        .astype(np.float64)
+    )
     approaching = np.array(approaching)
     extents = np.array(obb.extents)
     closing_vec = T[:3, 1]
@@ -130,7 +159,10 @@ def get_grasp_info(actor:Actor, obb, depth, offset, approaching=(0, 0, -1)):
         center += offset
     closing_vec = closing_vec - (approaching @ closing_vec) * approaching
     closing_vec = common.np_normalize_vector(closing_vec)
-    grasp_info = dict(
-        approaching=approaching, closing=closing_vec, center=center, extents=extents
-    )
+    grasp_info = {
+        "approaching": approaching,
+        "closing": closing_vec,
+        "center": center,
+        "extents": extents,
+    }
     return grasp_info

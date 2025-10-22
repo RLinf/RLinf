@@ -21,7 +21,7 @@
 # SOFTWARE.
 
 
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
 
 def make_info_json(
@@ -56,7 +56,9 @@ def make_info_json(
     }
 
 
-def make_episode_row(episode_index: int, tasks: List[str], length: int) -> Dict[str, Any]:
+def make_episode_row(
+    episode_index: int, tasks: List[str], length: int
+) -> Dict[str, Any]:
     return {"episode_index": episode_index, "tasks": tasks, "length": length}
 
 
@@ -66,5 +68,3 @@ def make_task_row(task_index: int, task: str) -> Dict[str, Any]:
 
 def make_episode_stats_row(episode_index: int, stats: Dict[str, Any]) -> Dict[str, Any]:
     return {"episode_index": episode_index, "stats": stats}
-
-

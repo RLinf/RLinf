@@ -103,14 +103,16 @@ class ManiskillEnv(gym.Env):
     def total_num_group_envs(self):
         if hasattr(self.env.unwrapped, "total_num_trials"):
             return self.env.unwrapped.total_num_trials
-        
+
         # Tonghe revised on 10/03/2025.
         # assert hasattr(self.env, "xyz_configs") and hasattr(self.env, "quat_configs")
         assert self.env.get_wrapper_attr("xyz_configs") is not None
         assert self.env.get_wrapper_attr("quat_configs") is not None
 
         # return len(self.env.xyz_configs) * len(self.env.quat_configs)
-        return len(self.env.unwrapped.xyz_configs) * len(self.env.unwrapped.quat_configs)
+        return len(self.env.unwrapped.xyz_configs) * len(
+            self.env.unwrapped.quat_configs
+        )
 
     @property
     def num_envs(self):
@@ -145,7 +147,6 @@ class ManiskillEnv(gym.Env):
         self.update_reset_state_ids()
 
     def update_reset_state_ids(self, eval_epoch=0):
-        # Tonghe added eval_epoch on 10/04/2025.
         reset_state_ids = torch.randint(
             low=0,
             high=len(self.all_reset_state_ids),
@@ -159,38 +160,40 @@ class ManiskillEnv(gym.Env):
     def _extract_obs_image(self, raw_obs):
         obs_image = raw_obs["sensor_data"]["3rd_view_camera"]["rgb"].to(torch.uint8)
         obs_image = obs_image.permute(0, 3, 1, 2)  # [B, C, H, W]
-        # Tonghe added on 10/03/2025
-        proprioception: torch.Tensor = self.env.unwrapped.agent.robot.get_qpos().to(obs_image.device)  # qpos. To see the link to the definition of get_qpos(), remote the ".unwrapped" and click onto the function. 
-
-        # extracted_obs = {"images": obs_image, 
-        #                  "task_descriptions": self.instruction}
-        # Tonghe revised on 10/03/2025
-        extracted_obs = {"images": obs_image, 
-                         "state": proprioception, 
-                        "task_descriptions": self.instruction}
+        proprioception: torch.Tensor = self.env.unwrapped.agent.robot.get_qpos().to(
+            obs_image.device
+        )
+        extracted_obs = {
+            "images": obs_image,
+            "state": proprioception,
+            "task_descriptions": self.instruction,
+        }
         return extracted_obs
 
     def _calc_step_reward(self, info):
         """
         The SimplerEnv defines info["success"] as src_on_target, but this may not be enough to test a successful pick-and-place, because the robot could throw object to place but also get info['success']==True.
-        We consider src_on_target & is_src_obj_grasped as a trully successful pick&place, which implies robot gripper places, but not throws, the object on the plate.  
-        But we also encourage the robot to grasp continuously.  
-        to hack the reward. 
+        We consider src_on_target & is_src_obj_grasped as a trully successful pick&place, which implies robot gripper places, but not throws, the object on the plate.
+        But we also encourage the robot to grasp continuously.
+        to hack the reward.
         """
         reward = torch.zeros(self.num_envs, dtype=torch.float32).to(
             self.env.unwrapped.device
         )  # [B, ]   # unwrapped added by Tonghe on 10/03/2025.
-        reward += info["consecutive_grasp"] * 0.1    # encourage continuous grasping. 
-        
-        reward += info["is_src_obj_grasped"] * 0.1   # in the env, success means src_on_target. But we make it stricter, that we ask obj on plate & gripped grasps it, so that robot does not throw things on the plate. 
+        reward += info["consecutive_grasp"] * 0.1  # encourage continuous grasping.
+
+        reward += (
+            info["is_src_obj_grasped"] * 0.1
+        )  # in the env, success means src_on_target. But we make it stricter, that we ask obj on plate & gripped grasps it, so that robot does not throw things on the plate.
         reward += (info["success"] & info["is_src_obj_grasped"]) * 1.0
-        
+
         # diff
         reward_diff = reward - self.prev_step_reward
         self.prev_step_reward = reward
 
-        if reward == None:
-            from termcolor import colored 
+        if reward is None:
+            from termcolor import colored
+
             print(colored(f"reward={reward}!!", "red"))
         if self.use_rel_reward:
             return reward_diff
@@ -236,8 +239,9 @@ class ManiskillEnv(gym.Env):
         episode_info["return"] = self.returns.clone()
         episode_info["episode_len"] = self.elapsed_steps.clone()
         episode_info["reward"] = episode_info["return"] / episode_info["episode_len"]
-        # Tonghe added on 10/04/2025
-        episode_info["task_id"] = torch.zeros_like(self.success_once, dtype=torch.int8).to(self.success_once.device)
+        episode_info["task_id"] = torch.zeros_like(
+            self.success_once, dtype=torch.int8
+        ).to(self.success_once.device)
         infos["episode"] = episode_info
         return infos
 
@@ -261,8 +265,6 @@ class ManiskillEnv(gym.Env):
     ) -> Tuple[Array, Array, Array, Array, Dict]:
         if actions is None:
             assert self._is_start, "Actions must be provided after the first reset."
-        # Tonghe revised on 10/03/2025.
-        # When at the first step, return reward=None. This really makes sense. But we can also make it zero
         if self.is_start:
             extracted_obs, infos = self.reset(
                 seed=self.seed,
@@ -281,22 +283,19 @@ class ManiskillEnv(gym.Env):
                 # self.add_new_frames(infos=infos)
                 self.add_new_frames_from_obs(extracted_obs, infos=infos, rewards=None)
             # start_reward=None
-            start_reward=truncations = torch.zeros(
+            start_reward = truncations = torch.zeros(
                 self.num_envs, dtype=torch.float, device=self.device
-            ) # Tonghe revised on 10/03/2025 to prevent reward=None concatenate problem during chunk resets.
+            )  # Tonghe revised on 10/03/2025 to prevent reward=None concatenate problem during chunk resets.
             return extracted_obs, start_reward, terminations, truncations, infos
 
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
         extracted_obs = self._extract_obs_image(raw_obs)
         step_reward = self._calc_step_reward(infos)
-        # Tonghe added on 10/03/2025
-        # if step_reward==None:
-        #     from termcolor import colored 
-        #     print(colored(f"step_reward={step_reward}!!", "red"))
-        if self.video_cfg.save_video:
-            # self.add_new_frames(infos=infos, rewards=step_reward) # Tonghe Honzhi debug on 10/06/2025 change it from add_new_frames to fix the table color bug. 
-            self.add_new_frames_from_obs(extracted_obs, infos=infos, rewards=step_reward) # Tonghe Honzhi debug on 10/06/2025 change it from add_new_frames to fix the table color bug. 
 
+        if self.video_cfg.save_video:
+            self.add_new_frames_from_obs(
+                extracted_obs, infos=infos, rewards=step_reward
+            )
         infos = self._record_metrics(step_reward, infos)
         if isinstance(terminations, bool):
             terminations = torch.tensor([terminations], device=self.device)
@@ -310,34 +309,17 @@ class ManiskillEnv(gym.Env):
 
         dones = torch.logical_or(terminations, truncations)
 
-        # Auto reset handling. 
         _auto_reset = auto_reset and self.auto_reset
         if dones.any() and _auto_reset:
-            # Tonghe: here we overwrite infos. 
-            """
-            When we call self._handle_auto_reset and replace the infos with its return values, 
-            we call self.reset, which is ManiSkill env's reset, located at <conda_env_name>/lib/python3.10/site-packages/mani_skill/envs/sapien_env.py 
-            you can see that this function reset() actually resets the agent, controller to initial pose, and then 
-            calls info = self.get_info() to update this info. what happens in this argument is that the 
-            custom env calls info.update(self.evaluate()) evaluate on the initialized robot, 
-            so the success flags should be wiped out and all reset envs should have success=False. 
-            So we cannot rely on the "infos['success']" flags to determine if a maniskill env has just succeeded or ot, 
-            as it will be immediately overwritte by False. 
-            
-            In current implementation, the only thing that stores the info['succcess'] flag of each environment BEFORE autoreset, 
-            is the step_reward. According to _calc_step_reward, 
-            step_reward = 0, 0.1, or 0.2 when not successful. 
-            step_reward = 1.1 or 1.2     when info['success'] & is_src_obj_grasped, which we consider a truly successful trial. 
-            """
             extracted_obs, infos = self._handle_auto_reset(dones, extracted_obs, infos)
-        
+
         return extracted_obs, step_reward, terminations, truncations, infos
 
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
         # print(f"Debug:: calling chunk_step: chunk_size={chunk_size}")
-        
+
         chunk_rewards = []
         raw_chunk_terminations = []
         raw_chunk_truncations = []
@@ -346,7 +328,7 @@ class ManiskillEnv(gym.Env):
             actions = chunk_actions[:, i]
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
                 actions, auto_reset=False
-            )# Don't reset within chunk, but later do auto reset after chunk execution. 
+            )  # Don't reset within chunk, but later do auto reset after chunk execution.
             chunk_rewards.append(step_reward)
             raw_chunk_terminations.append(terminations)
             raw_chunk_truncations.append(truncations)
@@ -363,7 +345,7 @@ class ManiskillEnv(gym.Env):
         past_truncations = raw_chunk_truncations.any(dim=1)
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
-        # Reset after chunk execution. 
+        # Reset after chunk execution.
         if past_dones.any() and self.auto_reset:
             extracted_obs, infos = self._handle_auto_reset(
                 past_dones, extracted_obs, infos
@@ -385,16 +367,15 @@ class ManiskillEnv(gym.Env):
     def _handle_auto_reset(self, dones, extracted_obs, infos):
         final_obs = torch_clone_dict(extracted_obs)
         final_info = torch_clone_dict(infos)
-        
-        # Reset those environments that received a 'done' flag. 
+
+        # Reset those environments that received a 'done' flag.
         reset_env_idx = torch.arange(0, self.num_envs, device=self.device)[dones]
         options = {"env_idx": reset_env_idx}
         if self.use_fixed_reset_state_ids:
-            options.update(episode_id=self.reset_state_ids[reset_env_idx]) 
+            options.update(episode_id=self.reset_state_ids[reset_env_idx])
             # In the customized simpler envs, episode_id refers to a specific task. To fix this id enhances reproduciability but hurts diversity.
-        
+
         extracted_obs, infos = self.reset(options=options)
-        # gymnasium calls it final observation but it really is just o_{t+1} or the true next observation
         infos["final_observation"] = final_obs
         infos["final_info"] = final_info
         infos["_final_info"] = dones
@@ -456,10 +437,9 @@ class ManiskillEnv(gym.Env):
         image = self.render(infos, rewards)
         self.render_images.append(image)
 
-    # Hongzhi added on 10/05/2025
     def add_new_frames_from_obs(self, raw_obs, infos=None, rewards=None):
         raw_imgs = common.to_numpy(raw_obs["images"].permute(0, 2, 3, 1))
-        
+
         # Add statistics overlay if info_on_video is enabled and infos are provided
         if self.video_cfg.info_on_video and infos is not None:
             scalar_info = gym_utils.extract_scalars_from_info(
@@ -473,20 +453,18 @@ class ManiskillEnv(gym.Env):
                     ]
                 else:
                     scalar_info["reward"] = float(scalar_info["reward"])
-            
+
             # Overlay info on each image
             for i in range(len(raw_imgs)):
                 info_item = {
                     k: v if np.size(v) == 1 else v[i] for k, v in scalar_info.items()
                 }
                 raw_imgs[i] = put_info_on_image(raw_imgs[i], info_item)
-        
+
         raw_full_img = tile_images(raw_imgs, nrows=int(np.sqrt(self.num_envs)))
         self.render_images.append(raw_full_img)
-    
-    def flush_video(self, video_sub_dir: Optional[str] = None, verbose_hint=False):
-        if verbose_hint:
-            print(f"@@@@@@@@@@@@ flush video to video_sub_dir={video_sub_dir}")
+
+    def flush_video(self, video_sub_dir: Optional[str] = None):
         output_dir = os.path.join(self.video_cfg.video_base_dir, f"rank_{self.rank}")
         if video_sub_dir is not None:
             output_dir = os.path.join(output_dir, f"{video_sub_dir}")

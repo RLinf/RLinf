@@ -21,8 +21,8 @@
 # SOFTWARE.
 
 
-import os
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -49,5 +49,3 @@ def episode_to_table(rows: List[Dict[str, Any]]) -> pa.Table:
 def write_episode_parquet(output_path: str, rows: List[Dict[str, Any]]) -> None:
     table = episode_to_table(rows)
     pq.write_table(table, output_path)
-
-

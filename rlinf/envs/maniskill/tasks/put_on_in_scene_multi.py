@@ -37,6 +37,7 @@ from transforms3d.euler import euler2quat
 
 CARROT_DATASET_DIR = Path(__file__).parent / ".." / "assets" / "carrot"
 
+
 class PutOnPlateInScene25(BaseEnv):
     """Base Digital Twin environment for digital twins of the BridgeData v2"""
 
@@ -808,7 +809,7 @@ class PutOnPlateInScene25(BaseEnv):
 )
 class PutOnPlateInScene25MainV3(PutOnPlateInScene25):
     def __init__(self, obj_set="train", **kwargs):
-        # Tonghe add default value "train" for obj_set to generate train set data for SFT. 
+        # Tonghe add default value "train" for obj_set to generate train set data for SFT.
         self.obj_set = obj_set
         self._prep_init()
 
@@ -824,8 +825,8 @@ class PutOnPlateInScene25MainV3(PutOnPlateInScene25):
         self.model_db_plate: dict[str, dict] = io_utils.load_json(
             CARROT_DATASET_DIR / "more_plate" / "model_db.json"
         )
-        
-        # Tonghe comment this out to allow various plate types      
+
+        # Tonghe comment this out to allow various plate types
         # only_plate_name = list(self.model_db_plate.keys())[0]  # Whyonly use the first plate?
         # self.model_db_plate = {
         #     k: v for k, v in self.model_db_plate.items() if k == only_plate_name
@@ -876,18 +877,18 @@ class PutOnPlateInScene25MainV3(PutOnPlateInScene25):
     @property
     def basic_obj_infos(self):
         """
-        lc: number of carrot types, maximum is 25. 
+        lc: number of carrot types, maximum is 25.
         lc_offset: offset of carrot types
-        
-        lo: number of table types, maximum is 21. 
+
+        lo: number of table types, maximum is 21.
         lo_offset: offset of table types
-        
-        lp: number of plate types, maximum is 17. 
+
+        lp: number of plate types, maximum is 17.
         lp_offset: offset of plate types
-        
+
         l1: number of xyz configurations
         l2: number of quat configurations
-        
+
         """
         if self.obj_set == "train":
             lc = 16
