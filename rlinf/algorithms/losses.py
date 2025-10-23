@@ -18,7 +18,7 @@ import torch
 
 from rlinf.algorithms.registry import register_policy_loss
 from rlinf.algorithms.utils import huber_loss
-from rlinf.utils.utils import masked_mean, masked_mean_ratio, raw_mean
+from rlinf.utils.utils import masked_mean, masked_mean_ratio
 
 
 def compute_ppo_actor_loss(
@@ -138,7 +138,7 @@ def compute_ppo_critic_loss(
         Tuple[torch.Tensor, Dict]: (critic_loss, metrics_dict)
     """
     loss_mask_ratio = None
-    loss_agg_func = raw_mean
+    loss_agg_func = masked_mean
 
     if (
         max_episode_steps is not None

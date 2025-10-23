@@ -134,13 +134,6 @@ def masked_mean_ratio(
     return (values / loss_mask_ratio * mask).mean()
 
 
-def raw_mean(values: torch.Tensor, mask: torch.Tensor, axis: int = 0):
-    if mask is not None:
-        return (values * mask).mean()
-    else:
-        return values.mean()
-
-
 def reshape_entropy(entropy, entropy_type, action_dim=7, batch_size=1):
     if entropy is not None:
         if entropy_type == "action_level":
