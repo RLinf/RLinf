@@ -17,20 +17,21 @@ import torch.nn as nn
 from torch.distributions.normal import Normal
 import numpy as np
 
-from .modules.utils import layer_init
+from .modules.utils import layer_init, get_act_func
 from .modules.value_head import ValueHead
-from .modules.q_value_head import DoubleQValueHead
+from .modules.q_head import DoubleQHead
 from .base_policy import BasePolicy
 
 LOG_STD_MAX = 2
 LOG_STD_MIN = -5
-# For SAC state-based PickCube
-class MLPPolicy2(BasePolicy):
+
+# For PPO state-based PickCube
+class MLPPolicy(BasePolicy):
     def __init__(
             self, 
             obs_dim, action_dim, 
-            hidden_dim, num_action_chunks,
-            add_value_head, add_q_value_head=False, 
+            hidden_dim, num_action_chunks, 
+            add_value_head, add_q_head, 
             ):
         super().__init__()
         self.obs_dim = obs_dim
@@ -38,51 +39,79 @@ class MLPPolicy2(BasePolicy):
         # self.hidden_dim = hidden_dim
         self.num_action_chunks = num_action_chunks
 
+        # default setting
+        independent_std = True
+        activation = "relu" 
+        action_scale = None 
+        final_tanh = False
+
+        assert add_value_head + add_q_head <=1
         if add_value_head:
-            raise NotImplementedError
-        if add_q_value_head:
-            self.q_value_head = DoubleQValueHead(
+            self.value_head = ValueHead(
+                obs_dim, hidden_sizes=(256, 256, 256), 
+                activation="tanh"
+            )
+        if add_q_head:
+            independent_std = False
+            activation = "tanh"
+            action_scale = 1, -1
+            final_tanh = True
+            self.q_head = DoubleQHead(
                 hidden_size=obs_dim,
                 action_dim=action_dim,
                 use_separate_processing=False
             )
 
+        self.final_tanh = final_tanh
+        
+        act = get_act_func(activation)
+
         self.backbone = nn.Sequential(
             nn.Linear(obs_dim, 256),
-            nn.ReLU(),
+            act(),
             nn.Linear(256, 256),
-            nn.ReLU(),
+            act(),
             nn.Linear(256, 256),
-            nn.ReLU(),
-            
+            act(),   
         )
-        self.fc_mean = nn.Linear(256, action_dim)
-        self.fc_logstd = nn.Linear(256, action_dim)
+        self.actor_mean = nn.Linear(256, action_dim)
 
-        # this should be loaded from cfg
-        h, l = 1.0, -1.0
-        self.register_buffer("action_scale", torch.tensor((h - l) / 2.0, dtype=torch.float32))
-        self.register_buffer("action_bias", torch.tensor((h + l) / 2.0, dtype=torch.float32))
-        # will be saved in the state_dict
-    
-    def to(self, device):
-        self.action_scale = self.action_scale.to(device)
-        self.action_bias = self.action_bias.to(device)
-        return super().to(device)
-    
+        self.independent_std = independent_std
+        if independent_std:
+            self.actor_logstd = nn.Parameter(torch.ones(1, action_dim) * -0.5)
+        else:
+            self.actor_logstd = nn.Linear(256, action_dim)
+
+        
+        if action_scale is not None:
+            h, l = action_scale
+            self.register_buffer("action_scale", torch.tensor((h - l) / 2.0, dtype=torch.float32))
+            self.register_buffer("action_bias", torch.tensor((h + l) / 2.0, dtype=torch.float32))
+        else:
+            self.action_scale = None
+        
     def _preprocess_obs(self, env_obs):
         return env_obs["states"].to("cuda")
     
     def forward(
-            self,
-            env_obs,
-            **kwargs
-        ):
+        self, forward_type, **kwargs
+    ):
+        if forward_type == "sac_forward":
+            return self.sac_forward(**kwargs)
+        elif forward_type == "sac_q_forward":
+            return self.get_q_values(**kwargs)
+        elif forward_type == "default_forward":
+            return self.default_forward(**kwargs)
+        else:
+            raise NotImplementedError
 
+    def sac_forward(
+        self, env_obs, **kwargs
+    ):
         obs = self._preprocess_obs(env_obs)
         feat = self.backbone(obs)
-        action_mean = self.fc_mean(feat)
-        action_logstd = self.fc_logstd(feat)
+        action_mean = self.actor_mean(feat)
+        action_logstd = self.actor_logstd(feat)
         action_logstd = torch.tanh(action_logstd)
         action_logstd = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (action_logstd + 1)
 
@@ -99,99 +128,8 @@ class MLPPolicy2(BasePolicy):
         chunk_logprobs = chunk_logprobs - torch.log(self.action_scale * (1 - action_normalized.pow(2)) + 1e-6)
 
         return action, chunk_logprobs
-
-    def predict_action_batch(
-            self, env_obs,
-            calulate_logprobs=True,
-            calulate_values=True,
-            return_action_type="numpy_chunk", 
-            **kwargs
-        ):
-        obs = self._preprocess_obs(env_obs)
-        feat = self.backbone(obs)
-        action_mean = self.fc_mean(feat)
-        action_logstd = self.fc_logstd(feat)
-        action_logstd = torch.tanh(action_logstd)
-        action_logstd = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (action_logstd + 1)
-
-        action_std = torch.exp(action_logstd)
-        probs = Normal(action_mean, action_std)
-        raw_action = probs.rsample()
-        
-
-        # for sac
-        action_normalized = torch.tanh(raw_action)
-        # action_normalized = raw_action
-        action = action_normalized * self.action_scale + self.action_bias
-        
-        chunk_logprobs = probs.log_prob(raw_action)
-        # print(f"raw: {chunk_logprobs.mean()}, {chunk_logprobs.sum(dim=-1).mean()}")
-        chunk_logprobs = chunk_logprobs - torch.log(self.action_scale * (1 - action_normalized.pow(2)) + 1e-6)
-        # print(f"scale: {chunk_logprobs.mean()}, {chunk_logprobs.sum(dim=-1).mean()}")
-
-        if return_action_type == "numpy_chunk":
-            chunk_actions = action.reshape(-1, self.num_action_chunks, self.action_dim)
-            chunk_actions = chunk_actions.cpu().numpy()
-        elif return_action_type == "torch_flatten":
-            chunk_actions = action.clone()
-        else:
-            raise NotImplementedError
-        
-        if hasattr(self, "value_head") and calulate_values:
-            chunk_values = self.value_head(obs)
-        else:
-            chunk_values = torch.zeros_like(chunk_logprobs[..., :1])
-
-        forward_inputs = {
-            "obs": obs,
-            "action": action
-        }
-        result = {
-            "prev_logprobs": chunk_logprobs,
-            "prev_values": chunk_values,
-            "forward_inputs": forward_inputs,
-        }
-        return chunk_actions, result
     
-    def get_q_values(self, raw_obs, actions):
-        obs = self._preprocess_obs(raw_obs)
-        return self.q_value_head(obs, actions)
-
-# For PPO state-based PickCube
-class MLPPolicy(BasePolicy):
-    def __init__(
-            self, 
-            obs_dim, action_dim, 
-            hidden_dim, num_action_chunks, add_value_head, add_q_value_head=False):
-        super().__init__()
-        self.obs_dim = obs_dim
-        self.action_dim = action_dim
-        # self.hidden_dim = hidden_dim
-        self.num_action_chunks = num_action_chunks
-
-        if add_value_head:
-            self.value_head = ValueHead(obs_dim, hidden_sizes=(256, 256, 256), activation="tanh")
-        if add_q_value_head:
-            self.q_value_head = DoubleQValueHead(
-                hidden_size=obs_dim,
-                action_dim=action_dim,
-            )
-
-        self.actor_mean = nn.Sequential(
-            layer_init(nn.Linear(obs_dim, 256)),
-            nn.Tanh(),
-            layer_init(nn.Linear(256, 256)),
-            nn.Tanh(),
-            layer_init(nn.Linear(256, 256)),
-            nn.Tanh(),
-            layer_init(nn.Linear(256, action_dim), std=0.01*np.sqrt(2)),
-        )
-        self.actor_logstd = nn.Parameter(torch.ones(1, action_dim) * -0.5)
-
-    def _preprocess_obs(self, env_obs):
-        return env_obs["states"].to("cuda")
-    
-    def forward(
+    def default_forward(
             self,
             data,
             compute_logprobs=True,
@@ -203,7 +141,8 @@ class MLPPolicy(BasePolicy):
         obs = data["obs"]
         action = data["action"]
 
-        action_mean = self.actor_mean(obs)
+        feat = self.backbone(obs)
+        action_mean = self.actor_mean(feat)
 
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
@@ -220,14 +159,6 @@ class MLPPolicy(BasePolicy):
             if getattr(self, "value_head", None):
                 values = self.value_head(obs)
                 output_dict.update(values=values)
-            elif getattr(self, "q_value_head", None):
-                if not sample_actions:
-                    q1_values, q2_values = self.q_value_head(obs, action)
-                else:
-                    new_action = probs.sample()
-                    q1_values, q2_values = self.q_value_head(obs, new_action)
-                output_dict.update(q1_values=q1_values)
-                output_dict.update(q2_values=q2_values)
             else:
                 raise NotImplementedError
         return output_dict
@@ -240,12 +171,31 @@ class MLPPolicy(BasePolicy):
             **kwargs
         ):
         obs = self._preprocess_obs(env_obs)
-        action_mean = self.actor_mean(obs)
+        feat = self.backbone(obs)
+        action_mean = self.actor_mean(feat)
 
-        action_logstd = self.actor_logstd.expand_as(action_mean)
+        if self.independent_std:
+            action_logstd = self.actor_logstd.expand_as(action_mean)
+        else:
+            action_logstd = self.actor_logstd(feat)
+        
+        if self.final_tanh:
+            action_logstd = torch.tanh(action_logstd)
+            action_logstd = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (action_logstd + 1)
+        
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
-        action = probs.rsample()
+
+        raw_action = probs.rsample()
+        chunk_logprobs = probs.log_prob(raw_action)
+
+        if self.action_scale is not None:
+            action_normalized = torch.tanh(raw_action)
+            action = action_normalized * self.action_scale + self.action_bias
+
+            chunk_logprobs = chunk_logprobs - torch.log(self.action_scale * (1 - action_normalized.pow(2)) + 1e-6)
+        else:
+            action = raw_action
 
         if return_action_type == "numpy_chunk":
             chunk_actions = action.reshape(-1, self.num_action_chunks, self.action_dim)
@@ -255,7 +205,6 @@ class MLPPolicy(BasePolicy):
         else:
             raise NotImplementedError
         
-        chunk_logprobs = probs.log_prob(action)
 
         if hasattr(self, "value_head") and calulate_values:
             chunk_values = self.value_head(obs)
@@ -275,7 +224,7 @@ class MLPPolicy(BasePolicy):
     
     def get_q_values(self, raw_obs, actions):
         obs = self._preprocess_obs(raw_obs)
-        return self.q_value_head(obs, actions)
+        return self.q_head(obs, actions)
 
 
 class SharedBackboneMLPPolicy(nn.Module):

@@ -16,7 +16,7 @@ import torch
 import torch.nn as nn
 
 
-class QValueHead(nn.Module):
+class QHead(nn.Module):
     """
     Q-value head for SAC critic networks.
     Processes state and action separately before fusion to handle dimension imbalance.
@@ -130,14 +130,14 @@ class QValueHead(nn.Module):
         return q_values
 
 
-class DoubleQValueHead(nn.Module):
+class DoubleQHead(nn.Module):
     """
     Double Q-network for SAC to reduce overestimation bias.
     """
     def __init__(self, hidden_size, action_dim, output_dim=1, use_separate_processing=True):
         super().__init__()
-        self.q1 = QValueHead(hidden_size, action_dim, output_dim, use_separate_processing)
-        self.q2 = QValueHead(hidden_size, action_dim, output_dim, use_separate_processing)
+        self.q1 = QHead(hidden_size, action_dim, output_dim, use_separate_processing)
+        self.q2 = QHead(hidden_size, action_dim, output_dim, use_separate_processing)
     
     def forward(self, state_features, action_features):
         """

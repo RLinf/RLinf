@@ -266,7 +266,7 @@ class FSDPModelManager:
                         continue
                     param.requires_grad = False
         else:
-            if not hasattr(self.model, "q_value_head"):
+            if not hasattr(self.model, "q_head"):
                 for name, param in self.model.named_parameters():
                     if (
                         len(self.store_requires_grad_param_name) > 0
@@ -298,7 +298,7 @@ class FSDPModelManager:
             else:
                 for name, param in self.model.named_parameters():
                     if param.requires_grad:
-                        if "q_value_head" in name:
+                        if "q_head" in name:
                             print(name)
                             params_critic.append(param)
                         else:

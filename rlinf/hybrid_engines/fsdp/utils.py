@@ -68,12 +68,12 @@ def get_small_model_fsdp_wrap_policy(module):
             _module_wrap_policy, module_classes={ValueHead}
         )
         return value_head_policy
-    if hasattr(module, "q_value_head"):
-        from rlinf.models.embodiment.modules.q_value_head import DoubleQValueHead
-        value_head_policy = functools.partial(
-            _module_wrap_policy, module_classes={DoubleQValueHead}
+    if hasattr(module, "q_head"):
+        from rlinf.models.embodiment.modules.q_head import DoubleQHead
+        q_head_policy = functools.partial(
+            _module_wrap_policy, module_classes={DoubleQHead}
         )
-        return value_head_policy
+        return q_head_policy
     raise NotImplementedError
 
 

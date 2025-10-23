@@ -128,14 +128,13 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False):
             policies.append(value_head_policy)
 
         # Q-value head policy (for SAC)
-        if hasattr(module, "q_value_head"):
-            from rlinf.models.embodiment.modules.q_value_head import (
-                DoubleQValueHead,
-                QValueHead,
+        if hasattr(module, "q_head"):
+            from rlinf.models.embodiment.modules.q_head import (
+                DoubleQHead, QHead,
             )
 
             q_value_head_policy = functools.partial(
-                _module_wrap_policy, module_classes={QValueHead, DoubleQValueHead}
+                _module_wrap_policy, module_classes={QHead, DoubleQHead}
             )
             policies.append(q_value_head_policy)
 
