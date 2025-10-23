@@ -841,7 +841,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         use_cache=False,
                     )
 
-                    if self.cfg.actor.model.model_name in ["openpi"]:
+                    if self.cfg.actor.model.model_name in ["openpi", "gr00t"]:
                         prev_logprobs = output_dict["prev_logprobs"]
 
                     kwargs = {
