@@ -41,9 +41,9 @@
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/pi0.html" target="_blank" style="text-decoration: underline; color: blue;">
-          <b>π₀模型强化学习训练</b>
+          <b>π₀和π₀.₅模型强化学习训练</b>
          </a><br>
-         在π₀上实现强化学习的效果跃升
+         在π₀和π₀.₅上实现强化学习的效果跃升
        </p>
      </div>
    </div>

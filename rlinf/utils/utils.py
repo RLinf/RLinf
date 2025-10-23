@@ -98,7 +98,7 @@ def configure_batch_sizes(rank, mbs, gbs, dp=1):
     )
 
 
-def masked_mean(values, mask, axis=None):
+def masked_mean(values: torch.Tensor, mask: torch.Tensor, axis=None):
     """Compute mean of tensor with a masked values."""
     if mask is None:
         return values.mean(axis=axis)
@@ -108,18 +108,18 @@ def masked_mean(values, mask, axis=None):
         return (values * mask).sum(axis=axis) / mask.sum(axis=axis)
 
 
-def masked_sum(values, mask, axis=None):
+def masked_sum(values: torch.Tensor, mask: torch.Tensor, axis=None):
     """Compute mean of tensor with a masked values."""
     return (values * mask).sum(axis=axis)
 
 
-def seq_mean_token_sum(values, mask):
+def seq_mean_token_sum(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
     seq_losses = torch.sum(values * mask, dim=-1)  # token-sum
     loss = torch.mean(seq_losses)  # seq-mean
     return loss
 
 
-def seq_mean_token_mean(values, mask):
+def seq_mean_token_mean(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
     seq_losses = torch.sum(values * mask, dim=-1) / torch.sum(
         mask, dim=-1
     )  # token-mean
@@ -127,12 +127,14 @@ def seq_mean_token_mean(values, mask):
     return loss
 
 
-def masked_mean_ratio(values, mask, loss_mask_ratio=None):
+def masked_mean_ratio(
+    values: torch.Tensor, mask: torch.Tensor, loss_mask_ratio: torch.Tensor
+):
     # for embodied tasks
     return (values / loss_mask_ratio * mask).mean()
 
 
-def raw_mean(values, mask, axis=0):
+def raw_mean(values: torch.Tensor, mask: torch.Tensor, axis: int = 0):
     if mask is not None:
         return (values * mask).mean()
     else:

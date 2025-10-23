@@ -67,7 +67,7 @@ class FSDPModelManager:
         )
 
         if use_gptq:
-            from auto_gptq import AutoGPTQForCausalLM
+            from auto_gptq import AutoGPTQForCausalLM  # type: ignore[import-not-found]
 
             model_wrapper = AutoGPTQForCausalLM.from_quantized(
                 cfg.model.model_path,
@@ -96,7 +96,63 @@ class FSDPModelManager:
 
         if torch.distributed.is_initialized():
             torch.distributed.barrier()
+
+        if cfg.fsdp_config.use_liger_kernel:
+            self._optimize_with_liger_kernel(model)
+
         return model
+
+    def _optimize_with_liger_kernel(self, model: torch.nn.Module) -> None:
+        if self._cfg.model.get("gptq_model", False) or self._cfg.model.get(
+            "load_in_8bit", False
+        ):
+            self.logger.info(
+                "[FSDP] Skip using liger-kernel optimized modules for GPTQ/8bit models."
+            )
+            return
+        try:
+            from liger_kernel.transformers import (
+                apply_liger_kernel_to_qwen2,
+                apply_liger_kernel_to_qwen2_5_vl,
+            )
+
+            MODEL_ARCH_APPLY_FUNC = {
+                "qwen2.5": (
+                    apply_liger_kernel_to_qwen2,
+                    {
+                        "rope": True,
+                        "rms_norm": True,
+                        "swiglu": True,
+                        "fused_linear_cross_entropy": True,
+                    },
+                ),
+                "qwen2.5-vl": (
+                    apply_liger_kernel_to_qwen2_5_vl,
+                    {
+                        "rope": True,
+                        "rms_norm": True,
+                        "swiglu": True,
+                        "fused_linear_cross_entropy": True,
+                    },
+                ),
+            }
+            model_arch = self._cfg.model.get("model_arch", "").lower()
+            if model_arch in MODEL_ARCH_APPLY_FUNC:
+                apply_func, apply_kwargs = MODEL_ARCH_APPLY_FUNC[model_arch]
+                apply_func(
+                    model=model,
+                    **apply_kwargs,
+                )
+                self.logger.info(
+                    f"[FSDP] Applied liger-kernel optimizations for model_arch: {model_arch}, used kwargs: {apply_kwargs}"
+                )
+            else:
+                self.logger.info(
+                    f"[FSDP] No liger-kernel optimizations applied for model_arch: {model_arch}"
+                )
+                return
+        except Exception as e:
+            self.logger.warning(f"[FSDP] Liger kernels not applied: {e}")
 
     def setup_model_and_optimizer(self):
         """Setup model and optimizer."""
@@ -136,7 +192,16 @@ class FSDPModelManager:
         )
 
         betas = (self._cfg.optim.adam_beta1, self._cfg.optim.adam_beta2)
-
+        if self._cfg.fsdp_config.backward_prefetch is None:
+            backward_prefetch = None
+        elif self._cfg.fsdp_config.backward_prefetch == "pre":
+            backward_prefetch = BackwardPrefetch.BACKWARD_PRE
+        elif self._cfg.fsdp_config.backward_prefetch == "post":
+            backward_prefetch = BackwardPrefetch.BACKWARD_POST
+        else:
+            raise ValueError(
+                f"Invalid fsdp_config.backward_prefetch: {self._cfg.fsdp_config.backward_prefetch}"
+            )
         self.model = FSDP(
             module,
             param_init_fn=init_fn,
@@ -146,11 +211,7 @@ class FSDPModelManager:
             mixed_precision=mixed_precision,
             sync_module_states=True,
             forward_prefetch=self._cfg.fsdp_config.forward_prefetch,
-            backward_prefetch=(
-                BackwardPrefetch.BACKWARD_PRE
-                if self._cfg.fsdp_config.backward_prefetch
-                else None
-            ),
+            backward_prefetch=backward_prefetch,
             limit_all_gathers=self._cfg.fsdp_config.limit_all_gathers,
             use_orig_params=self._cfg.fsdp_config.use_orig_params,
         )

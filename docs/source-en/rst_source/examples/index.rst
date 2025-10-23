@@ -44,9 +44,9 @@ as well as reinforcement learning training examples on real robots.
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/pi0.html" target="_blank" style="text-decoration: underline; color: blue;">
-          <b>RL on π₀ Models</b>
+          <b>RL on π₀ and π₀.₅ Models</b>
          </a><br>
-         Significant improvement in RL training on π₀
+         Significant improvement in RL training on π₀ and π₀.₅
        </p>
      </div>
    </div>

@@ -5,7 +5,44 @@
 
 ------
 
-**1. 任务迁移时出现 NCCL “cuda invalid argument”**
+RuntimeError: The MUJOCO_EGL_DEVICE_ID environment variable must be an integer between 0 and 0 (inclusive), got 1.
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**现象：** 运行设置了 MUJOCO_GL 环境变量为 "egl" 的模拟器时出现上述错误信息。
+
+**原因：** 该错误是因为您的 GPU 环境未正确设置图形渲染，尤其是在 NVIDIA GPU 上。
+
+**修复：** 检查您是否有此文件 `/usr/lib/x86_64-linux-gnu/libEGL_nvidia.so.0`。
+
+1. 如果您有此文件，请检查您是否还拥有 `/usr/share/glvnd/egl_vendor.d/10_nvidia.json`。如果没有，请创建此文件并添加以下内容：
+
+   .. code-block:: json
+
+      {
+         "file_format_version" : "1.0.0",
+         "ICD" : {
+            "library_path" : "libEGL_nvidia.so.0"
+         }
+      }
+
+   然后在您的运行脚本中添加以下环境变量：
+
+   .. code-block:: shell
+
+      export NVIDIA_DRIVER_CAPABILITIES="all"
+
+2. 如果您没有此文件，则表示您的 NVIDIA 驱动程序未正确安装图形功能。您可以尝试以下解决方案：
+
+   * 重新安装 NVIDIA 驱动程序，并使用正确的选项启用图形功能。安装 NVIDIA 驱动程序时，有几个选项会禁用图形驱动程序。因此，如果您不确定，请按照 NVIDIA 的文档 https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/index.html#id29 安装 **Desktop** 版本的驱动程序，而不是 **Compute-only**版本的。
+
+   * 使用 **osmesa** 进行渲染，将运行脚本中的 `MUJOCO_GL` 和 `PYOPENGL_PLATFORM` 环境变量更改为 "osmesa"。但是，这可能会导致滚动过程比 EGL 慢 10 倍，因为它使用 CPU 进行渲染。
+
+
+
+------
+
+任务迁移时出现 NCCL “cuda invalid argument”
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **现象：** P2P 任务传输失败，报错 ``NCCL cuda invalid argument``。
 
@@ -17,7 +54,8 @@
 
 ------
 
-**2. SGLang 加载参数时出现 NCCL “cuda invalid argument”**
+SGLang 加载参数时出现 NCCL “cuda invalid argument”
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **现象：** SGLang 在加载权重时报 ``NCCL cuda invalid argument``。
 
@@ -27,7 +65,8 @@
 
 ------
 
-**3. torch_memory_saver.cpp 中 CUDA CUresult Error（result=2）**
+torch_memory_saver.cpp 中 CUDA CUresult Error（result=2）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **现象：**
 ``CUresult error result=2 file=csrc/torch_memory_saver.cpp func=cu_mem_create line=103``
@@ -41,7 +80,8 @@
 
 ------
 
-**4. Gloo 超时 / “Global rank x is not part of group”**
+Gloo 超时 / “Global rank x is not part of group”
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **现象：**
 
@@ -58,7 +98,8 @@
 
 ------
 
-**5. 数值精度 / 推理后端**
+数值精度 / 推理后端
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **提示：** SGLang 默认使用 **flashinfer** 作为注意力实现。若需更高稳定性或兼容性，可尝试 **triton**：
 
@@ -69,7 +110,8 @@
 
 ------
 
-**6. 无法连接 GCS（ip:port）**
+无法连接 GCS（ip:port）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **现象：** Worker 节点无法连接到给定地址上的 Ray head（GCS）。
 

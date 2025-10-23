@@ -93,7 +93,12 @@ class RewardWorker(Worker):
             rollout_result.response_ids, skip_special_tokens=True
         )
 
-        scores = self.reward.get_reward(texts, rollout_result.answers)
+        kwargs = {}
+        if getattr(self.cfg.reward, "use_prompt", False):
+            kwargs["prompts"] = self.tokenizer.batch_decode(
+                rollout_result.prompt_ids, skip_special_tokens=True
+            )
+        scores = self.reward.get_reward(texts, rollout_result.answers, **kwargs)
         return (
             torch.as_tensor(scores, dtype=torch.float, device=torch.device("cpu"))
             .view(-1, 1)

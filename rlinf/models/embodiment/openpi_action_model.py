@@ -40,6 +40,7 @@ class OpenPi0Config(Pi0Config):
     noise_method: str = "flow_sde"  # flow_sde, flow_cps
     safe_get_logprob: bool = False
     joint_logprob: bool = False
+    double_layer: bool = False
     detach_critic_input: bool = False
     chunk_critic_input: bool = False
     add_value_head: bool = False
@@ -100,7 +101,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
                 activation="relu",
                 bias_last=True,
             )
-
+        self.use_vlm_value = getattr(self.config, "value_after_vlm", False) and getattr(
+            self.config, "add_value_head", False
+        )
         if self.config.noise_method == "reinflow":
             self.reinflow_explore_noise_net = ExploreNoiseNet(
                 in_dim=proj_width,
@@ -329,7 +332,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
         self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
 
-        prefix_output, past_key_values = self.paligemma_with_expert.forward(
+        (prefix_output, _), past_key_values = self.paligemma_with_expert.forward(
             attention_mask=prefix_att_2d_masks_4d,
             position_ids=prefix_position_ids,
             past_key_values=None,
@@ -345,7 +348,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         chains.append(x_t)
 
         # add value based on the vlm for pi05, expert for pi0
-        if self.config.value_after_vlm:
+        if self.use_vlm_value:
             values_vlm = self.get_value_from_vlm(prefix_output)
         if self.config.joint_logprob:
             initial_log_prob = self.get_logprob_norm(
@@ -419,7 +422,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         log_probs = torch.stack(log_probs, dim=1)[
             :, :, : self.config.action_chunk, : self.config.action_env_dim
         ]
-        if self.config.value_after_vlm:
+        if self.use_vlm_value:
             values = values_vlm[:, None]
         else:
             values = torch.stack(values, dim=1).mean(dim=-1, keepdim=True)
@@ -660,7 +663,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             )
             log_probs = self.get_logprob_norm(chains_next, x_t_mean, x_t_std)
             chains_log_probs.append(log_probs)
-            if self.config.value_after_vlm:
+            if self.use_vlm_value:
                 chains_values.append(self.get_value_from_vlm(prefix_output))
             else:
                 chains_values.append(value_t)

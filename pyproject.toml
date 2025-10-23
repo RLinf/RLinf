@@ -9,7 +9,7 @@ keywords = [
     "large-language-models",
 ]
 classifiers = [
-    #   2 - Pre-Alpha  
+    #   2 - Pre-Alpha
     #   3 - Alpha
     #   4 - Beta
     #   5 - Production/Stable
@@ -49,6 +49,8 @@ dependencies = [
     "gsutil",
     "ruff",
     "pre-commit",
+    "liger_kernel",
+    "uvloop==0.21.0",
 
     # Logging
     "swanlab",

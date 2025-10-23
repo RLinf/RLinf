@@ -93,12 +93,21 @@ Once you've identified the appropriate image for your setup, pull the Docker ima
 
 Then, start the container using the pulled image:
 
+.. warning::
+
+  1. Ensure the docker is started with `-e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics` to enable GPU support, especially the `graphics` capability for rendering in embodied experiments.
+
+  2. Do not override the `/root` and `/opt` directories in the container (with `-v` or `--volume` of `docker run`), as they contain important asset files and environments. If your platform requires mounting `/root`, run `link_assets` in the container after starting it to restore the asset links in the `/root` directory.
+
+  3. Avoid changing the `$HOME` environment variable (e.g., `docker run -e HOME=/new_home`), which should be `/root` by default. ManiSkill and other tools rely on this path to find the assets. If `$HOME` is changed before running scripts in the docker image, make sure to relink the assets to the new `$HOME` by executing `link_assets`.
+
 .. code-block:: bash
 
    docker run -it --gpus all \
       --shm-size 100g \
       --net=host \
       --name rlinf \
+      -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
       rlinf/rlinf:CHOSEN_IMAGE /bin/bash
 
 Inside the container, clone the RLinf repository:
@@ -119,6 +128,10 @@ To switch to the desired venv, use the built-in script `switch_env`:
    # source switch_env openvla-oft
    # source switch_env openpi
 
+.. note::
+
+  Both the `link_assets` and `switch_env` scripts are built-in utilities in the Docker image provided by us. You can find them in `/usr/local/bin`.
+
 .. tip::
 
    - For multi-node training, make sure to clone the repository in shared storage so that every node has access to it.
@@ -128,96 +141,34 @@ Installation Method 2: UV Custom Environment
 -------------------------------
 **If you have already used the Docker image, you can skip the following steps.**
 
-Installation is divided into two parts depending on the type of experiments you plan to run.
-
-First, for all experiments, follow the :ref:`Common Dependencies <common-dependencies>` section to install the shared dependencies.
-
-Next, install the specific dependencies based on your experiment type.
-
-* For reasoning experiments using **Megatron** and **SGLang/vLLM** backends, follow the :ref:`Megatron and SGLang/vLLM Dependencies <megatron-and-sglang-vllm-dependencies>` section to install all required packages.  
-
-* For embodied intelligence experiments (e.g., OpenVLA, OpenVLA-OFT and OpenPI), follow the :ref:`Embodied Dependencies <embodied-dependencies>` section to install their specific dependencies.
-
-.. _common-dependencies:
-
-Common Dependencies
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 We recommend using `uv <https://docs.astral.sh/uv/>`_ to install the required Python packages.  
-If you are using `conda <https://docs.conda.io/projects/conda/en/latest/user-guide/getting-started.html>`_, you can install ``uv`` via ``pip``.
+You can install ``uv`` via ``pip``.
 
 .. code-block:: shell
 
-   conda create -n rlinf python=3.11.10 -y
-   conda activate rlinf
    pip install --upgrade uv
 
-After installing ``uv``, create a virtual environment and install PyTorch along with the common dependencies:
+After installing `uv`, you can install the dependencies for the target experiments using the `install.sh` script under the `requirements/` folder.
+The script accepts one argument which specifies the target experiment, including `openvla`, `openvla-oft`, `openpi`, and `reason`.
+For example, to install the dependencies for the openvla experiment, you would run:
 
-.. code-block:: shell
+.. note:: 
 
-   uv venv
-   source .venv/bin/activate
-   UV_TORCH_BACKEND=auto uv sync
-
-.. _megatron-and-sglang-vllm-dependencies:
-
-Megatron and SGLang/vLLM Dependencies
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. note::
-  If you are running embodied experiments, there is no need to install these dependencies.
-  Please proceed directly to the :ref:`Embodied Dependencies <embodied-dependencies>` section.
-
-Run the following commands to install Megatron, SGLang or vLLM, and their dependencies:
-
-.. code-block:: shell
-
-   uv sync --extra sglang-vllm
-   mkdir -p /opt && git clone https://github.com/NVIDIA/Megatron-LM.git -b core_r0.13.0 /opt/Megatron-LM
-   APEX_CPP_EXT=1 APEX_CUDA_EXT=1 NVCC_APPEND_FLAGS="--threads 24" APEX_PARALLEL_BUILD=24 uv pip install -r requirements/megatron.txt --no-build-isolation
-
-Before using Megatron, ensure its path is added to the ``PYTHONPATH`` environment variable:
-
-.. code-block:: shell
-
-   export PYTHONPATH=/opt/Megatron-LM:$PYTHONPATH
-
-.. _embodied-dependencies:
-
-Embodied Dependencies
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-For embodied experiments, first install the necessary system dependencies (currently only supported on Debian/Ubuntu via ``apt``):
-
-.. code-block:: shell
-
-   uv sync --extra embodied
-   bash requirements/install_embodied_deps.sh # Must be run after the above command
-
-Then, depending on the experiment type, install the required packages for ``openvla``, ``openvla-oft`` and ``openpi``:
-
-.. code-block:: shell
-
-   # For OpenVLA experiments
-   UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla.txt --no-build-isolation
-
-   # For OpenVLA-oft experiment
-   UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla_oft.txt --no-build-isolation
-
-   # For openpi experiment
-   UV_TORCH_BACKEND=auto GIT_LFS_SKIP_SMUDGE=1 uv pip install -r requirements/openpi.txt
-   cp -r .venv/lib/python3.11/site-packages/openpi/models_pytorch/transformers_replace/* .venv/lib/python3.11/site-packages/transformers/
-   TOKENIZER_DIR=/root/.cache/openpi/big_vision/ && mkdir -p $TOKENIZER_DIR && gsutil -m cp -r gs://big_vision/paligemma_tokenizer.model $TOKENIZER_DIR
-
-Finally, Run the following to install the LIBERO dependency.
-
-.. code-block:: shell
-
-  mkdir -p /opt && git clone https://github.com/RLinf/LIBERO.git /opt/libero
-
-Before using LIBERO, make sure its path is added to the `PYTHONPATH` environment variables.
+  This script needs to be run from the root directory of the RLinf repository. Please ensure you are not running it from within the `requirements/` directory.
 
 .. code-block:: shell
   
-  export PYTHONPATH=/opt/libero:$PYTHONPATH
+  bash requirements/install.sh openvla
+
+This will create a virtual environment under the current path named `.venv`.
+To activate the virtual environment, you can use the following command:
+
+.. code-block:: shell
+  
+  source .venv/bin/activate
+
+To deactivate the virtual environment, simply run:
+
+.. code-block:: shell
+
+  deactivate

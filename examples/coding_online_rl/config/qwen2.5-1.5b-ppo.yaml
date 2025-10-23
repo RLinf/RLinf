@@ -9,6 +9,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
+    # online rl must use disaggregated placement.
     rollout: 0-3
     inference: 4-5
     actor: 6-7
@@ -28,16 +29,17 @@ runner:
   val_check_interval: 1
   save_interval: 10
 
-  seq_length: 2560
+  seq_length: 8192
 
   enable_dynamic_batch_size: False
-  max_tokens_per_mbs: 2560
+  max_tokens_per_mbs: 8192
 
   resume_dir: null
   experiment_name: online-ppo-1.5b-pipeline
   output_dir: /path/to/results
 
 algorithm:
+  # online rl use ppo.
   group_size: 1
 
   n_minibatches: 2
@@ -122,7 +124,7 @@ rollout:
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
-  detokenize: True            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
+  detokenize: True            # Whether to detokenize the output.
   padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
   eos: null                   # will be tokenizer.eos_token_id if null.
 
@@ -145,15 +147,16 @@ rollout:
 
   tensor_parallel_size: 1
   pipeline_parallel_size: 1
-  
+
   validate_weight: False # whether to send all weights at first for weight comparison.
   validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
   print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
 
-  max_running_requests: 64 # the maximum number of running requests in rollout engine.
+  max_running_requests: 64 # the maximum number of running requests in the rollout engine.
   cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
 
 data:
+  # not used, but reserved to pass config validate
   max_prompt_length: 1024
   rollout_batch_size: 16
   seed: 1234
@@ -177,7 +180,7 @@ actor:
   seed: 1234
 
   model:
-    precision: fp16
+    precision: bf16
     add_bias_linear: False
 
     tensor_model_parallel_size: 2
@@ -282,15 +285,14 @@ actor:
       # schedule_wait: it will be set at runtime
 
 reward:
+  # online rl get reward from user judge.
   use_reward_model: False
-  reward_type: fim_verify_call
-  reward_scale: 5.0
 
 critic:
   use_critic_model: False
 
 server:
-  # online serving and user reward track
+  # online serving and user reward tracking.
   online_router:
     host: 0.0.0.0
     port: 8081

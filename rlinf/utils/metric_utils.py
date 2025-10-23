@@ -77,7 +77,7 @@ def compute_rollout_metrics(data_buffer: Dict) -> Dict:
         }
         rollout_metrics.update(advantages_metrics)
 
-    if "returns" in data_buffer and data_buffer["returns"] is not None:
+    if data_buffer.get("returns", None) is not None:
         returns = data_buffer["returns"]
         mean_ret = torch.mean(returns).to(torch.cuda.current_device())
         torch.distributed.all_reduce(mean_ret, op=torch.distributed.ReduceOp.AVG)
