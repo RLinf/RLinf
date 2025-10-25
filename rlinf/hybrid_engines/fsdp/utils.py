@@ -156,6 +156,9 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_vla_model=False)
                 len(list(module.named_children())) == 0
                 and getattr(module, "weight", None) is not None
                 and module.weight.requires_grad
+                and (
+                    not hasattr(module, "_is_vlm") or getattr(module, "_is_vlm") is True
+                )
             )
 
         lambda_policy = functools.partial(
