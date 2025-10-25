@@ -53,7 +53,7 @@ class OpenPi0Config(Pi0Config):
     value_vlm_mode: str = "mean_token"  # last_token, mean_token, first_token
 
 
-class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
+class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
     """Pi0 model for reinforcement learning action prediction.
 
     This is a template class that defines the interfaces needed for RL training.
@@ -190,7 +190,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         outputs["actions"] = outputs["actions"][:, : self.config.action_chunk]
         return outputs
 
-    def forward(
+    def default_forward(
         self,
         data: dict[str, torch.Tensor],
         **kwargs,
@@ -246,12 +246,12 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             "entropy": None,
         }
 
-    def input_processor(self, env_processed_obs):
+    def preprocess_env_obs(self, raw_obs):
         to_process_obs = {
-            "observation/image": env_processed_obs["images"],
-            "observation/wrist_image": env_processed_obs["wrist_images"],
-            "observation/state": env_processed_obs["states"],
-            "prompt": env_processed_obs["task_descriptions"],
+            "observation/image": raw_obs["images"],
+            "observation/wrist_image": raw_obs["wrist_images"],
+            "observation/state": raw_obs["states"],
+            "prompt": raw_obs["task_descriptions"],
         }
         processed_obs = self.input_transform(to_process_obs)
         device = next(self.parameters()).device
@@ -270,13 +270,16 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                     processed_obs[key][sub_key] = sub_value.to(
                         device=device
                     ).contiguous()
-        return processed_obs
+        
+        processed_obs["images"] = raw_obs["images"]
+        processed_obs["wrist_images"] = raw_obs["wrist_images"]
+        processed_obs["states"] = raw_obs["states"]
+        return processed_obs 
 
     def predict_action_batch(
-        self, env_obs, mode: Literal["train", "eval"] = "train", compute_values=True
+        self, env_obs, mode: Literal["train", "eval"] = "train", compute_values=True, return_obs=True
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
-        processed_obs = self.input_processor(env_obs)
-        observation = _model.Observation.from_dict(processed_obs)
+        observation = _model.Observation.from_dict(env_obs)
         outputs = self.sample_actions(
             observation, mode=mode, compute_values=compute_values
         )
@@ -287,12 +290,15 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         forward_inputs = {
             "chains": outputs["chains"],
             "denoise_inds": outputs["denoise_inds"],
-            "observation/image": env_obs["images"],
-            "observation/wrist_image": env_obs["wrist_images"],
-            "observation/state": env_obs["states"],
-            "tokenized_prompt": processed_obs["tokenized_prompt"],
-            "tokenized_prompt_mask": processed_obs["tokenized_prompt_mask"],
         }
+        if return_obs:
+            forward_inputs.update({
+                "observation/image": env_obs["images"],
+                "observation/wrist_image": env_obs["wrist_images"],
+                "observation/state": env_obs["states"],
+                "tokenized_prompt": env_obs["tokenized_prompt"],
+                "tokenized_prompt_mask": env_obs["tokenized_prompt_mask"],
+            })
 
         result = {
             "prev_logprobs": outputs["prev_logprobs"],

@@ -93,18 +93,6 @@ class MLPPolicy(BasePolicy):
     def _preprocess_obs(self, env_obs):
         return env_obs["states"].to("cuda")
     
-    def forward(
-        self, forward_type, **kwargs
-    ):
-        if forward_type == "sac_forward":
-            return self.sac_forward(**kwargs)
-        elif forward_type == "sac_q_forward":
-            return self.get_q_values(**kwargs)
-        elif forward_type == "default_forward":
-            return self.default_forward(**kwargs)
-        else:
-            raise NotImplementedError
-
     def sac_forward(
         self, env_obs, **kwargs
     ):
@@ -167,6 +155,7 @@ class MLPPolicy(BasePolicy):
             self, env_obs,
             calulate_logprobs=True,
             calulate_values=True,
+            return_obs=True, 
             return_action_type="numpy_chunk", 
             **kwargs
         ):
@@ -211,10 +200,13 @@ class MLPPolicy(BasePolicy):
         else:
             chunk_values = torch.zeros_like(chunk_logprobs[..., :1])
 
+
         forward_inputs = {
-            "obs": obs,
             "action": action
         }
+        if return_obs:
+            forward_inputs["obs"] = obs
+        
         result = {
             "prev_logprobs": chunk_logprobs,
             "prev_values": chunk_values,

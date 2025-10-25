@@ -95,8 +95,8 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_vla_model=False)
     if config.get("disable", False):
         return None
 
-    from rlinf.models.embodiment.mlp_policy import MLPPolicy, MLPPolicy2
-    if isinstance(module, MLPPolicy) or isinstance(module, MLPPolicy2):
+    from rlinf.models.embodiment.mlp_policy import MLPPolicy
+    if isinstance(module, MLPPolicy):
         return get_small_model_fsdp_wrap_policy(module)
 
     # Get transformer layer classes to wrap
