@@ -75,10 +75,10 @@
 
    cluster:
       num_nodes: 2
-      component_placement:
-         env: 0-7
-         rollout: 8-15
-         actor: 0-15
+      component_placement: 0-7,8-15,0-15
+         # env: 0-7
+         # rollout: 8-15
+         # actor: 0-15
 
    rollout:
       pipeline_stage_num: 2
@@ -100,10 +100,10 @@
 
    cluster:
       num_nodes: 2
-      component_placement:
-         env: 0-3
-         rollout: 4-7
-         actor: 8-15
+      component_placement: 0-3,4-7,8-15
+         # env: 0-3
+         # rollout: 4-7
+         # actor: 8-15
 
 你还可以重新配置 Placement，实现 **完全分离**：env、rollout、actor 各用各的 GPU、互不干扰，  
 这样就不需要 offload 功能。
