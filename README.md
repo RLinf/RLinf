@@ -41,7 +41,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 ## Key Features
 
 
-**Embodied Intelligence**
+### Embodied Intelligence
 
 <table style="width: 100%; table-layout: auto; border-collapse: collapse;">
   <thead align="center" valign="bottom">
@@ -110,11 +110,11 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
   
 RLinf supports mainstream VLA models, mainstream CPU & GPU-based simulators via standardized Worker interfaces, and enables the first RL fine-tuning of the $\pi_0$ and $\pi_{0.5}$ model family with a flow-matching action expert, as shown in the above table.
 
-**Agentic RL**
+### Agentic RL
 
 Agentic RL includes both RL training for improving LLM reasoning ability, such as [Math Reasoning](https://rlinf.readthedocs.io/en/latest/rst_source/examples/reasoning.html), and RL training for Agents, for example, [RL training of coding agent](https://rlinf.readthedocs.io/en/latest/rst_source/examples/coding_online_rl.html). RLinf can also well support agentic RL. We believe embodied intelligence will also integrate the ability of agents in the future to complete complex tasks.
 
-**High flexibility, efficiency, and scalability**
+### High flexibility, efficiency, and scalability
 
 Besides the rich functionalities introduced above, RLinf has high flexibility to support diverse RL training workflows (e.g., simulator integrated embodied RL, PPO/RLHF), while hiding the complexity of distributed programming. Users can easily scale RL training to a large number of GPU nodes without modifying code, meeting the increasing demand of computation for RL training.
 
