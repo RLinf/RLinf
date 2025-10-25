@@ -83,10 +83,10 @@ Running the Script
 
    cluster:
       num_nodes: 2
-      component_placement:
-         env: 0-7
-         rollout: 8-15
-         actor: 0-15
+      component_placement: 0-7,8-15,0-15
+         # env: 0-7
+         # rollout: 8-15
+         # actor: 0-15
 
    rollout:
       pipeline_stage_num: 2
@@ -108,10 +108,10 @@ You can also reconfigure the placement to achieve complete sharing, where env, r
 
    cluster:
       num_nodes: 2
-      component_placement:
-         env: 0-3
-         rollout: 4-7
-         actor: 8-15
+      component_placement: 0-3,4-7,8-15
+         # env: 0-3
+         # rollout: 4-7
+         # actor: 8-15
 
 You can also reconfigure the placement to achieve complete separation, where env, rollout, and actor components each use their own GPUs without interference, eliminating the need for offload functionality.
 
