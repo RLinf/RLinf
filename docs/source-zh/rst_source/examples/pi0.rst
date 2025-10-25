@@ -128,10 +128,10 @@
 
    cluster:
       num_nodes: 1
-      component_placement:
-         env: 0-3
-         rollout: 4-7
-         actor: 0-7
+      component_placement: 0-3,4-7,0-7
+         # env: 0-3
+         # rollout: 4-7
+         # actor: 0-7
 
    rollout:
       pipeline_stage_num: 2
@@ -155,10 +155,10 @@ actor** 之间的流水线重叠，从而提升 rollout 效率。
 
    cluster:
       num_nodes: 1
-      component_placement:
-         env: 0-1
-         rollout: 2-5
-         actor: 6-7
+      component_placement: 0-1,2-5,6-7
+         # env: 0-1
+         # rollout: 2-5
+         # actor: 6-7
 
 你还可以重新配置 Placement，实现 **完全分离**\ ：env、rollout、actor
 各用各的 GPU、互不干扰， 这样就不需要 offload 功能。
