@@ -41,37 +41,97 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 ## Key Features
 
 
-**RLinf is unique with:**
-- Macro-to-Micro Flow: a new paradigm M2Flow, which executes macro-level logical flows through micro-level execution flows, decoupling logical workflow construction (programmable) from physical communication and scheduling (efficiency).
+**Embodied Intelligence**
 
-- Flexible Execution Modes
-
-  - Collocated mode: shares all GPUs across all workers.
-  - Disaggregated mode: enables fine-grained pipelining.
-  - Hybrid mode: a customizable combination of different placement modes, integrating both collocated and disaggregated modes.
-
-- Auto-scheduling Strategy: automatically selects the most suitable execution mode based on the training workload, without the need for manual resource allocation.
+<table style="width: 100%; table-layout: auto; border-collapse: collapse;">
+  <thead align="center" valign="bottom">
+    <tr>
+      <th style="min-width: 120px; text-align: left;">Simulators</th>
+      <th style="min-width: 120px;">Real-world Robotics</th>
+      <th style="min-width: 120px;">Models</th>
+      <th style="min-width: 120px;">Algorithms</th>
+    </tr>
+  </thead>
+  <tbody valign="top">
+    <tr>
+      <td style="text-align: left; padding-left: 8px;">
+        <ul style="margin-left: 0; padding-left: 16px;">
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/maniskill.html">ManiSkill</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/libero.html">LIBERO</a> ✅</li>
+          <li>RoboTwin</li>
+          <li>RoboVerse</li>
+          <li>BEHAVIOR</li>
+          <li>IsaacLab</li>
+          <li>Meta-World</li>
+          <li>More...</li>
+        </ul>
+      </td>
+      <td>
+        <ul style="margin-left: 0; padding-left: 16px;">
+          <li>Franka Arm</li>
+          <li>More...</li>
+        </ul>
+      </td>
+      <td>
+        <ul style="margin-left: 0; padding-left: 16px;">
+          <li><b>VLA</b></li>
+          <ul>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/pi0.html">π₀</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/pi0.html">π₀.₅</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/maniskill.html">OpenVLA</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/libero.html">OpenVLA-OFT</a> ✅</li>
+            <li>GR00T</li>
+          </ul>
+          <li><b>VLM</b></li>
+          <ul>
+            <li>Qwen2.5-VL</li>
+          </ul>
+        </ul>
+      </td>
+      <td>
+        <ul style="margin-left: 0; padding-left: 16px;">
+          <li><b>RL Algos</b></li>
+          <ul>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/grpo.html">GRPO</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/ppo.html">PPO</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/dapo.html">DAPO</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/reinforce.html">Reinforce++</a> ✅</li>
+            <li>SAC</li>
+          </ul>
+          <li><b>SFT</b></li>
+          <ul>
+            <li>LoRA SFT</li>
+          </ul>
+        </ul>
+      </td>
+    </tr>
+  </tbody>
+</table>
   
-- Embodied Agent Support
-  - Fast adaptation support for mainstream VLA models: [OpenVLA](https://github.com/openvla/openvla), [OpenVLA-OFT](https://github.com/moojink/openvla-oft), [π₀](https://github.com/Physical-Intelligence/openpi) and [π₀.₅](https://github.com/Physical-Intelligence/openpi).
-  - Support for mainstream CPU & GPU-based simulators via standardized RL interfaces: [ManiSkill3](https://github.com/haosulab/ManiSkill), [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO).
-  - Enabling the first RL fine-tuning of the $\pi_0$ and $\pi_{0.5}$ model family with a flow-matching action expert.
+RLinf supports mainstream VLA models, mainstream CPU & GPU-based simulators via standardized Worker interfaces, and enables the first RL fine-tuning of the $\pi_0$ and $\pi_{0.5}$ model family with a flow-matching action expert, as shown in the above table.
 
-**RLinf is fast with:**
+**Agentic RL**
 
-- Hybrid mode with fine-grained pipelining: achieves a **120%+** throughput improvement compared to other frameworks.
-- Automatic Online Scaling Strategy: dynamically scales training resources, with GPU switching completed within seconds, further improving efficiency by 20–40% while preserving the on-policy nature of RL algorithms.
+Agentic RL includes both RL training for improving LLM reasoning ability, such as [Math Reasoning](https://rlinf.readthedocs.io/en/latest/rst_source/examples/reasoning.html), and RL training for Agents, for example, [RL training of coding agent](https://rlinf.readthedocs.io/en/latest/rst_source/examples/coding_online_rl.html). RLinf can also well support agentic RL. We believe embodied intelligence will also integrate the ability of agents in the future to complete complex tasks.
 
-**RLinf is flexible and easy to use with:**
+**High flexibility, efficiency, and scalability**
 
-- Multiple Backend Integrations
+Besides the rich functionalities introduced above, RLinf has high flexibility to support diverse RL training workflows (e.g., simulator integrated embodied RL, PPO/RLHF), while hiding the complexity of distributed programming. Users can easily scale RL training to a large number of GPU nodes without modifying code, meeting the increasing demand of computation for RL training.
 
-  - FSDP + Hugging Face: rapid adaptation to new models and algorithms, ideal for beginners and fast prototyping.
-  - Megatron + SGLang: optimized for large-scale training, delivering maximum efficiency for expert users with demanding workloads.
+The high flexibility allow RLinf to explore more efficient scheduling and execution. The hybrid execution mode for embodied RL achieves a **100%+** throughput improvement compared to baseline solutions.
 
-- Adaptive communication via the asynchronous communication channel
+Multiple Backend Integrations
 
-- Built-in support for popular RL methods, including [PPO](https://arxiv.org/abs/1707.06347), [GRPO](https://arxiv.org/abs/2402.03300), [DAPO](https://arxiv.org/abs/2503.14476), [Reinforce++](https://arxiv.org/abs/2501.03262), and more.
+- Hugging Face + FSDP: rapid adaptation to new models and algorithms, ideal for beginners and fast prototyping.
+- Megatron + SGLang/vLLM: optimized for large-scale training, delivering maximum efficiency for expert users with demanding workloads.
+
+## Quick Start
+**Installation:** Users can refer to our [installation guide](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html) to install RLinf. We recommend users to use our provided docker image (i.e., [Installation Method 1](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html#installation-method-1-docker-image)), as the environment and dependencies of embodied RL is complex.
+
+**Run a simple example:** After setup the environment, users can run a simple example of embodied RL with ManiSkill3 simulator following [this document](https://rlinf.readthedocs.io/en/latest/rst_source/start/vla.html).
+
+For more tutorials of RLinf and application examples, checkout our [documentation](https://rlinf.readthedocs.io/en/latest/index.html) and [example gallery](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html).
+
 
 ## Main Results
 ### Embodied Intelligence
@@ -445,47 +505,6 @@ and exhibits greater stability.
 - [ ] Support for world model   
 - [ ] Support for real-world RL embodied intelligence
 
-
-## Getting Started 
-
-Complete documentation for RLinf can be found [**Here**](https://rlinf.readthedocs.io/en/latest/).
-
-**Quickstart**
-
-  - [Installation](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html)
-  - [Quickstart 1: PPO Training of VLAs on Maniskill3](https://rlinf.readthedocs.io/en/latest/rst_source/start/vla.html)
-  - [Quickstart 2: GRPO Training of LLMs on MATH](https://rlinf.readthedocs.io/en/latest/rst_source/start/llm.html)
-  - [Multi-node Training](https://rlinf.readthedocs.io/en/latest/rst_source/start/distribute.html)
-  - [Model Evaluation](https://rlinf.readthedocs.io/en/latest/rst_source/start/eval.html)
-
-**Key Design**
-  - [Unified User Interface Usage](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/user/index.html)
-  - [Flexible Execution Modes](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/mode/index.html)
-  - [Enable Automatic Scheduling](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/scheduler/index.html)
-  - [Elastic Communication](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/communication/index.html)
-
-**Example Gallery**
-
-  - [Embodied Intelligence Vision-Language-Action Model training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied.html)
-  - [Math Reasoning Model Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/reasoning.html)
-
-**Advanced Features**
-
-  - [5D Parallelism Configuration for Megatron-LM](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/advance/5D.html)
-  - [LoRA Integration for efficient fine-tuning](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/advance/lora.html)
-  - [Switch between different versions of SGLang](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/advance/version.html)
-  - [Checkpoint Resume and Recovery Support](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/advance/resume.html)
-
-**Extending The Framework:**
-
-  - [Adding new Environments](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/extend/new_env.html)
-  - [Adding new Models with FSDP+Huggingface backend](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/extend/new_model_fsdp.html)
-  - [Adding new Models with Megatron+SGLang backend](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/extend/new_model_megatron.html)
-
-**Blogs**
-
-  - [Comparison with VeRL](https://rlinf.readthedocs.io/en/latest/rst_source/blog/compare_with_verl.html)
-
 ## Build Status
 
 | Type             | Status |
@@ -495,7 +514,9 @@ Complete documentation for RLinf can be found [**Here**](https://rlinf.readthedo
 
 
 ## Contribution Guidelines
-We welcome contributions to RLinf. Please read [contribution guide](https://rlinf.readthedocs.io/en/latest/index.html#contribution-guidelines) before taking action.
+We welcome contributions to RLinf. Please read [contribution guide](https://rlinf.readthedocs.io/en/latest/index.html#contribution-guidelines) before taking action. Thank the following contributors and welcome more developers to join us on this open source project.
+
+<a href="https://github.com/RLinf/RLinf/graphs/contributors"><img src="https://contrib.rocks/image?repo=RLinf/RLinf&max=240&columns=18" /></a>
 
 ## Citation and Acknowledgement
 
