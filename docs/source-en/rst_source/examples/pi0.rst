@@ -150,10 +150,10 @@ Running Scripts
 
    cluster:
       num_nodes: 1
-      component_placement:
-         env: 0-3
-         rollout: 4-7
-         actor: 0-7
+      component_placement: 0-3,4-7,0-7
+         # env: 0-3
+         # rollout: 4-7
+         # actor: 0-7
 
    rollout:
       pipeline_stage_num: 2
@@ -179,10 +179,10 @@ where env, rollout, and actor components all share all GPUs.
 
    cluster:
       num_nodes: 1
-      component_placement:
-         env: 0-1
-         rollout: 2-5
-         actor: 6-7
+      component_placement: 0-1,2-5,6-7
+         # env: 0-1
+         # rollout: 2-5
+         # actor: 6-7
 
 You can also reconfigure the placement to achieve complete separation,
 where env, rollout, and actor components each use their own GPUs without
