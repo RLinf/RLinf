@@ -300,4 +300,4 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
 
 def tag_vlm_subtree(model, is_vlm: bool):
     for n, m in model.named_modules():
-        setattr(m, "_is_vlm", is_vlm)
+        setattr(m, "_to_lora", is_vlm)
