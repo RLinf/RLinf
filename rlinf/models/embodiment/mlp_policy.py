@@ -41,7 +41,7 @@ class MLPPolicy(BasePolicy):
 
         # default setting
         independent_std = True
-        activation = "relu" 
+        activation = "tanh" 
         action_scale = None 
         final_tanh = False
 
@@ -49,11 +49,10 @@ class MLPPolicy(BasePolicy):
         if add_value_head:
             self.value_head = ValueHead(
                 obs_dim, hidden_sizes=(256, 256, 256), 
-                activation="tanh"
+                activation=activation
             )
         if add_q_head:
             independent_std = False
-            activation = "tanh"
             action_scale = 1, -1
             final_tanh = True
             self.q_head = DoubleQHead(
@@ -67,14 +66,14 @@ class MLPPolicy(BasePolicy):
         act = get_act_func(activation)
 
         self.backbone = nn.Sequential(
-            nn.Linear(obs_dim, 256),
+            layer_init(nn.Linear(obs_dim, 256)),
             act(),
-            nn.Linear(256, 256),
+            layer_init(nn.Linear(256, 256)),
             act(),
-            nn.Linear(256, 256),
+            layer_init(nn.Linear(256, 256)),
             act(),   
         )
-        self.actor_mean = nn.Linear(256, action_dim)
+        self.actor_mean = layer_init(nn.Linear(256, action_dim))
 
         self.independent_std = independent_std
         if independent_std:

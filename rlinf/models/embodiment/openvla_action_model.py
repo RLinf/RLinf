@@ -57,7 +57,7 @@ from rlinf.models.embodiment.base_policy import BasePolicy
 
 class OpenVLAForBatchActionPrediction(OpenVLAForActionPrediction):
     # === Core Prismatic VLM `forward()` Logic ===
-    def core_forward(
+    def _forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -553,9 +553,6 @@ class OpenVLAForRLActionPrediction(BasePolicy, OpenVLAForBatchActionPrediction):
         compute_entropy: bool = False,
         compute_values: bool = False,
     ):
-        """
-        Actually it is not elegant to use ``core_forward`` here.
-        """
         if data is not None:
             data = self.preprocess_for_train(data)
             input_ids = data["input_ids"]
@@ -567,7 +564,7 @@ class OpenVLAForRLActionPrediction(BasePolicy, OpenVLAForBatchActionPrediction):
         if compute_values:
             output_hidden_states = True
 
-        outputs = self.core_forward(
+        outputs = self._forward(
             input_ids=input_ids,
             attention_mask=attention_mask,
             pixel_values=pixel_values,
@@ -658,7 +655,6 @@ class OpenVLAForRLActionPrediction(BasePolicy, OpenVLAForBatchActionPrediction):
         assert torch.all(attention_mask[:, 0] == 1)
         # last token is space ` `
         assert torch.all(input_ids[:, -1] == 29871)
-        assert torch.all(attention_mask[:, -1] == 1)
 
         generated_results: GenerateDecoderOnlyOutput = self.generate(
             input_ids,
