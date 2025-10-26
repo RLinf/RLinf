@@ -35,7 +35,7 @@ def init_real_next_obs(next_extracted_obs):
             if value is None:
                 continue
             assert isinstance(value, torch.Tensor), f"{key}, {type(value)}"
-            real_next_extracted_obs[key] = value
+            real_next_extracted_obs[key] = value.clone()
     else:
         raise NotImplementedError
     return real_next_extracted_obs
@@ -202,31 +202,15 @@ class MultiStepRolloutWorker(Worker):
 
             for i in range(self.stage_num):
                 env_output = await self.recv_env_output()
-
                 next_extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"])
-                real_next_extracted_obs = init_real_next_obs(next_extracted_obs)
-                
-                if env_output["dones"].any() and self.cfg.env.train.auto_reset:
-                    dones = env_output["dones"]
-                    final_obs = env_output["final_obs"]
-                    last_step_dones = dones[:, -1]
-                    with torch.no_grad():
-                        final_extracted_obs = self.hf_model.preprocess_env_obs(
-                            final_obs
-                        )
-                        real_next_extracted_obs = update_real_next_obs(
-                            real_next_extracted_obs, final_extracted_obs, last_step_dones
-                        )
-
-                if hasattr(self.hf_model, "q_head"):
-                    self.buffer_list[i].add_transition(extracted_obs[i], real_next_extracted_obs)
-
-                self.update_env_output(i, env_output, next_extracted_obs)
+                real_next_extracted_obs = self.update_env_output(i, env_output, next_extracted_obs)
                 actions, result = self.predict(next_extracted_obs)
                 if "prev_values" in result:
                     self.buffer_list[i].prev_values.append(
                         result["prev_values"].cpu().contiguous()
                     )
+                if hasattr(self.hf_model, "q_head"):
+                    self.buffer_list[i].add_transition(extracted_obs[i], real_next_extracted_obs)
 
         for i in range(self.stage_num):
             await self.send_rollout_batch(i)
@@ -241,7 +225,8 @@ class MultiStepRolloutWorker(Worker):
         for _ in range(self.cfg.algorithm.n_eval_chunk_steps):
             for _ in range(self.stage_num):
                 env_output = await self.recv_env_output()
-                actions, _ = self.predict(env_output["obs"], mode="eval")
+                next_extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"])
+                actions, _ = self.predict(next_extracted_obs, mode="eval")
                 await self.send_chunk_actions(actions)
 
         if self.cfg.rollout.get("enable_offload", False):

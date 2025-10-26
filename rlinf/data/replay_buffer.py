@@ -22,43 +22,40 @@ import torch
 
 class SACReplayBuffer:
     """
-    Replay buffer for SAC algorithm with support for embodied RL data.
-    Stores transitions and provides random sampling for off-policy learning.
+    Replay buffer for SAC algorithm using pre-allocated torch tensors.
+    Implements a circular buffer for efficient memory usage.
     """
 
     def __init__(
         self,
         capacity: int,
-        observation_keys: List[str] = None,
         device: str = "cpu",
         seed: Optional[int] = None
     ):
         """
-        Initialize replay buffer.        
+        Initialize replay buffer.
         Args:
             capacity: Maximum number of transitions to store
-            observation_keys: Keys for observation data (e.g., ['input_ids', 'pixel_values'])
-            device: Device to store tensors on
+            device: Device to output samples on (storage is always on CPU to save GPU memory)
             seed: Random seed for reproducibility
         """
         self.capacity = capacity
         self.device = device
-        self.observation_keys = observation_keys or [
-            'input_ids', 'pixel_values', 'attention_mask'
-        ]
-
-        # Initialize storage
-        # self.buffer = deque(maxlen=capacity)
-        self.buffer = {}
-        self.buffer_dict = {}
-
-        self.position = 0
-
+        
+        # Storage: Dictionary of pre-allocated tensors
+        # Will be initialized lazily on first insertion
+        self.buffer: Dict[str, torch.Tensor] = {}
+        
+        self.pos = 0    # Next insertion index
+        self.size = 0   # Current number of elements
+        
         # Set random seed
         if seed is not None:
-            random.seed(seed)
             np.random.seed(seed)
             self.random_generator = torch.Generator()
+            self.random_generator.manual_seed(seed)
+        else:
+            self.random_generator = None
 
     def add(self, transition: Dict[str, torch.Tensor]):
         """
@@ -88,75 +85,125 @@ class SACReplayBuffer:
 
         self.buffer.append(cpu_transition)
 
-    def add_rollout_batch(self, rollout_batch: Dict[str, torch.Tensor]):
-        # [n-chunk-steps, actor-bsz, ...]
-        for key, value in rollout_batch.items():
-            new_value = value.reshape(value.shape[0]*value.shape[1], *value.shape[2:]).cpu()
-            if key not in self.buffer:
-                self.buffer[key] = deque(maxlen=self.capacity)
-            self.buffer[key].extend([v for v in new_value])
-        
-        self.buffer_dict = dict()
+    def _initialize_storage(self, flattened_batch: Dict[str, torch.Tensor]):
+        for key, value in flattened_batch.items():
+            # Allocate fixed-size tensors on CPU
+            self.buffer[key] = torch.zeros(
+                (self.capacity, *value.shape[1:]), 
+                dtype=value.dtype, 
+                device='cpu'
+            )
 
-        for key, value in self.buffer.items():
-            self.buffer_dict[key] = torch.stack(list(self.buffer[key]))
-        print(f"{self.buffer_dict.keys()=}")
+    def add_rollout_batch(self, rollout_batch: Dict[str, torch.Tensor]):
+        """
+        Add a batch of transitions to the buffer.
+        Handles flattening [T, B, ...] -> [T*B, ...] and circular insertion.
+        """
+        # 1. Flatten the batch: [n-chunk-steps, actor-bsz, ...] -> [num_samples, ...]
+        flattened_batch = {}
+        num_to_add = None
+        
+        for key, value in rollout_batch.items():
+            if key in ["prev_values", "dones"]:
+                value = value[:-1]
+            # Ensure value is on CPU for storage
+            flat_val = value.reshape(-1, *value.shape[2:]).cpu()
+            flattened_batch[key] = flat_val
+            
+            if num_to_add is None:
+                num_to_add = flat_val.shape[0]
+            else:
+                assert num_to_add == flat_val.shape[0], \
+                    f"Inconsistent batch sizes for key {key}, {num_to_add=}, {flat_val.shape[0]=}"
+
+        assert num_to_add > 0
+
+        # 2. Lazy initialization of storage tensors on first call
+        if not self.buffer:
+            self._initialize_storage(flattened_batch)
+
+        # 3. Handle case where incoming batch is larger than the entire capacity
+        if num_to_add >= self.capacity:
+             # Just take the last 'capacity' elements
+             print(f"Warning: Adding batch size {num_to_add} >= capacity {self.capacity}. Overwriting entire buffer.")
+             for key, value in flattened_batch.items():
+                 self.buffer[key][:] = value[-self.capacity:]
+             self.pos = 0
+             self.size = self.capacity
+             return
+
+        # 4. Circular buffer insertion
+        start_idx = self.pos
+        end_idx = start_idx + num_to_add
+        
+        # Use mod operation (%) to get circulated index. 
+        # [0, 1, 2, ..., capacity-1, capacity, capacity+1, ...]
+        # -> [0, 1, 2, ..., capacity-1, 0, 1, ...]
+        indices = torch.arange(start_idx, end_idx) % self.capacity
+
+        # 5. Insert the batch
+        for key, value in flattened_batch.items():
+            if key not in self.buffer:
+                raise ValueError(f"Warning: Key '{key}' from rollout not in buffer storage. Skipping.")
+            self.buffer[key][indices] = value
+
+        # 5. 更新位置和大小
+        self.pos = end_idx % self.capacity
+        self.size = min(self.size + num_to_add, self.capacity)
 
     def sample(self, batch_size: int) -> Dict[str, torch.Tensor]:
         """
-        Sample a batch of transitions from the buffer.        
-        Args:
-            batch_size: Number of transitions to sample            
-        Returns:
-            Dictionary containing batched transitions
+        Sample a batch of transitions from the buffer.
         """
-        buffer_size = len(self.buffer["rewards"])
-        # Random sampling
+        if self.size == 0:
+             raise RuntimeError("Cannot sample from an empty buffer.")
+             
+        # Random sampling indices
         transition_ids = torch.randint(
-            low=0, high=buffer_size, size=(batch_size, ), 
+            low=0, high=self.size, size=(batch_size,),
             generator=self.random_generator
         )
-        batch = {}
-        for key in self.buffer_dict:
-            batch[key] = self.buffer_dict[key][transition_ids].to(self.device)
         
+        batch = {}
+        for key, tensor in self.buffer.items():
+            # Index into the storage tensor and move to target device (e.g., GPU)
+            batch[key] = tensor[transition_ids].to(self.device)
+            
         return batch
-
 
     def __len__(self) -> int:
         """Return current buffer size."""
-        return len(self.buffer["rewards"])
+        return self.size
 
     def is_ready(self, min_size: int) -> bool:
         """Check if buffer has enough samples for training."""
-        return len(self.buffer["rewards"]) >= min_size
+        return self.size >= min_size
 
     def clear(self):
-        """Clear the buffer."""
-        self.buffer = {}
-        self.buffer_dict = {}
-        self.position = 0
+        """Clear the buffer (reset pointers, keep memory allocated)."""
+        self.pos = 0
+        self.size = 0
+        # Option: zero out buffer if needed, but usually just resetting size is enough
+        # for key in self.buffer:
+        #     self.buffer[key].zero_()
 
     def get_stats(self) -> Dict[str, float]:
         """Get buffer statistics."""
-        if len(self.buffer["rewards"]) == 0:
-            return {"size": 0, "capacity": self.capacity, "utilization": 0.0}
-
-        # Calculate basic stats
         stats = {
-            "size": len(self.buffer["rewards"]),
+            "size": self.size,
             "capacity": self.capacity,
-            "utilization": len(self.buffer["rewards"]) / self.capacity
+            "utilization": self.size / self.capacity if self.capacity > 0 else 0.0
         }
 
-        # Calculate reward statistics if available
-        if "rewards" in self.buffer_dict:
-            rewards = self.buffer_dict["rewards"]
+        # Calculate reward statistics if available and buffer is not empty
+        if self.size > 0 and "rewards" in self.buffer:
+            # Only calculate stats on currently valid data
+            valid_rewards = self.buffer["rewards"][:self.size]
             stats.update({
-                "mean_reward": rewards.mean(),
-                "std_reward": rewards.std(),
-                "min_reward": rewards.min(),
-                "max_reward": rewards.max()
+                "mean_reward": valid_rewards.mean().item(),
+                "std_reward": valid_rewards.std().item(),
+                "min_reward": valid_rewards.min().item(),
+                "max_reward": valid_rewards.max().item()
             })
 
         return stats

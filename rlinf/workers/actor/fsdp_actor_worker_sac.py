@@ -20,7 +20,7 @@ import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
 # import rlinf.algorithms.advantages_sac  # noqa: F401
-from rlinf.algorithms.replay_buffer import SACReplayBuffer
+from rlinf.data.replay_buffer import SACReplayBuffer
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
@@ -173,7 +173,7 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
             
             data_q1_values, data_q2_values = self.model(
                 "sac_q_forward", 
-                raw_obs=curr_obs, actions=batch["action"] 
+                obs=curr_obs, actions=batch["action"] 
             )
 
             q1_loss = F.mse_loss(data_q1_values, target_q_values)
@@ -184,12 +184,13 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
             self.qf_optimizer.step()
 
             pi, log_pi = self.model(
-                "sac_forward", env_obs=curr_obs
+                "sac_forward", obs=curr_obs
             )
             log_pi = log_pi.sum(dim=-1, keepdim=True)
             qf1_pi, qf2_pi = self.model(
                 "sac_q_forward", 
-                raw_obs=curr_obs, actions=pi
+                obs=curr_obs, actions=pi, 
+                detach_encoder=True
             )
             min_qf_pi, _ = torch.min(
                 torch.cat((qf1_pi, qf2_pi), dim=1), 
@@ -206,7 +207,7 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
             if hasattr(self, 'log_alpha') and self.log_alpha is not None:
                 with torch.no_grad():
                     _, log_pi = self.model(
-                        "sac_forward", env_obs=curr_obs
+                        "sac_forward", obs=curr_obs
                     )
                 alpha_loss = (-self.log_alpha.exp() * (log_pi + self.target_entropy)).mean()
                 self.alpha_optimizer.zero_grad()

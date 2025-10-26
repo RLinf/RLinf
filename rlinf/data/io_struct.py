@@ -1019,6 +1019,8 @@ def put_tensor_cpu(data_dict):
     if data_dict is None:
         return None
 
+    if isinstance(data_dict, torch.Tensor):
+        return data_dict.cpu().contiguous()
     for key, value in data_dict.items():
         if isinstance(value, dict):
             data_dict[key] = put_tensor_cpu(value)
@@ -1071,8 +1073,8 @@ class EnvOutput:
         states = None
         if "images_and_states" in obs and "state" in obs["images_and_states"]:
             states = obs["images_and_states"]["state"]
-        if "state" in obs:
-            states = obs["state"]
+        if "states" in obs:
+            states = obs["states"]
 
         task_descriptions = (
             list(obs["task_descriptions"]) if "task_descriptions" in obs else None

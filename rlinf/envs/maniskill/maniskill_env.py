@@ -125,12 +125,26 @@ class ManiskillEnv(gym.Env):
         ).to(self.device)
 
     def _wrap_obs(self, raw_obs):
-        if self.env.obs_mode == "state":
-            wrapped_obs = {
-                "images": None,
-                "task_description": None,
-                "state": raw_obs
-            }
+        if getattr(self.cfg, "wrap_obs_mode", "vla") == "simple":
+            if self.env.obs_mode == "state":
+                wrapped_obs = {
+                    "images": None,
+                    "task_description": None,
+                    "states": raw_obs
+                }
+            elif self.env.obs_mode == "rgb":
+                sensor_data = raw_obs.pop("sensor_data")
+                raw_obs.pop("sensor_param")
+                state = common.flatten_state_dict(
+                    raw_obs, use_torch=True, device=self.device
+                )
+                wrapped_obs = {
+                    "images": sensor_data["base_camera"]["rgb"].float() / 255.0,
+                    "task_description": None,
+                    "states": state
+                }
+            else:
+                raise NotImplementedError
         else:
             wrapped_obs = self._extract_obs_image(raw_obs)
         return wrapped_obs

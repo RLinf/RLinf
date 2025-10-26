@@ -253,6 +253,16 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
             add_q_head=cfg.add_q_head
         )
 
+    elif cfg.model_name == "cnn":
+        from .embodiment.cnn_policy import CNNPolicy
+        model = CNNPolicy(
+            cfg.image_size, cfg.state_dim, cfg.action_dim, 
+            cfg.hidden_dim,
+            num_action_chunks=cfg.num_action_chunks,
+            add_value_head=cfg.add_value_head, 
+            add_q_head=cfg.add_q_head
+        )
+
     else:
         return None
     if torch.cuda.is_available():

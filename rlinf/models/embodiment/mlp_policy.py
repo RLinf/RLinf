@@ -17,13 +17,11 @@ import torch.nn as nn
 from torch.distributions.normal import Normal
 import numpy as np
 
-from .modules.utils import layer_init, get_act_func
+from .modules.utils import layer_init, get_act_func, LOG_STD_MAX, LOG_STD_MIN
 from .modules.value_head import ValueHead
 from .modules.q_head import DoubleQHead
 from .base_policy import BasePolicy
 
-LOG_STD_MAX = 2
-LOG_STD_MIN = -5
 
 # For PPO state-based PickCube
 class MLPPolicy(BasePolicy):
@@ -89,14 +87,14 @@ class MLPPolicy(BasePolicy):
         else:
             self.action_scale = None
         
-    def _preprocess_obs(self, env_obs):
-        return env_obs["states"].to("cuda")
+    def preprocess_env_obs(self, env_obs):
+        device = next(self.parameters()).device
+        return {"states": env_obs["states"].to(device)}
     
     def sac_forward(
-        self, env_obs, **kwargs
+        self, obs, **kwargs
     ):
-        obs = self._preprocess_obs(env_obs)
-        feat = self.backbone(obs)
+        feat = self.backbone(obs["states"])
         action_mean = self.actor_mean(feat)
         action_logstd = self.actor_logstd(feat)
         action_logstd = torch.tanh(action_logstd)
@@ -158,8 +156,7 @@ class MLPPolicy(BasePolicy):
             return_action_type="numpy_chunk", 
             **kwargs
         ):
-        obs = self._preprocess_obs(env_obs)
-        feat = self.backbone(obs)
+        feat = self.backbone(env_obs["states"])
         action_mean = self.actor_mean(feat)
 
         if self.independent_std:
@@ -195,7 +192,7 @@ class MLPPolicy(BasePolicy):
         
 
         if hasattr(self, "value_head") and calulate_values:
-            chunk_values = self.value_head(obs)
+            chunk_values = self.value_head(env_obs["states"])
         else:
             chunk_values = torch.zeros_like(chunk_logprobs[..., :1])
 
@@ -204,7 +201,7 @@ class MLPPolicy(BasePolicy):
             "action": action
         }
         if return_obs:
-            forward_inputs["obs"] = obs
+            forward_inputs["obs"] = env_obs["states"]
         
         result = {
             "prev_logprobs": chunk_logprobs,
@@ -213,9 +210,8 @@ class MLPPolicy(BasePolicy):
         }
         return chunk_actions, result
     
-    def get_q_values(self, raw_obs, actions):
-        obs = self._preprocess_obs(raw_obs)
-        return self.q_head(obs, actions)
+    def get_q_values(self, obs, actions, detach_encoder=False):
+        return self.q_head(obs["states"], actions)
 
 
 class SharedBackboneMLPPolicy(nn.Module):

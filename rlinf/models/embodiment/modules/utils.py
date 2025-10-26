@@ -16,6 +16,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+LOG_STD_MAX = 2
+LOG_STD_MIN = -5
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
@@ -32,3 +34,13 @@ def get_act_func(activation):
     else:
         raise ValueError(f"Unsupported activation: {activation}")
     return act
+
+def make_mlp(in_channels, mlp_channels, act_builder=nn.ReLU, last_act=True):
+    c_in = in_channels
+    module_list = []
+    for idx, c_out in enumerate(mlp_channels):
+        module_list.append(nn.Linear(c_in, c_out))
+        if last_act or idx < len(mlp_channels) - 1:
+            module_list.append(act_builder())
+        c_in = c_out
+    return nn.Sequential(*module_list)

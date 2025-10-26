@@ -134,11 +134,16 @@ class DoubleQHead(nn.Module):
     """
     Double Q-network for SAC to reduce overestimation bias.
     """
-    def __init__(self, hidden_size, action_dim, output_dim=1, use_separate_processing=True):
+    def __init__(
+            self, 
+            hidden_size, action_dim, 
+            output_dim=1, 
+            use_separate_processing=True, 
+        ):
         super().__init__()
         self.q1 = QHead(hidden_size, action_dim, output_dim, use_separate_processing)
         self.q2 = QHead(hidden_size, action_dim, output_dim, use_separate_processing)
-    
+        
     def forward(self, state_features, action_features):
         """
         Forward pass for both Q-networks.
