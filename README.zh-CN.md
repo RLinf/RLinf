@@ -33,7 +33,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 - [2025/10] 🔥 Pi0和Pi0.5的强化学习微调已经上线! 文档：[π₀和π₀.₅模型强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/pi0.html)
 - [2025/10] 🔥 RLinf 正式支持在线强化学习！文档：[coding_online_rl](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/coding_online_rl.html)，同时发布文章 [《首个开源的Agent在线强化学习框架RLinf-Online！让你的Agent今天比昨天更聪明》](https://mp.weixin.qq.com/s/jmohmDokuWLhQHFueSHZIQ)。
 - [2025/10] 🔥 RLinf算法技术报告 [《RLinf-VLA：一个统一且高效的VLA+RL训练框架》](https://arxiv.org/abs/2510.06710) 已正式发布。
-- [2025/09] 🔥 [示例库](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) 已更新，用户可以在其中找到多种可直接使用的示例！
+- [2025/09] 🔥 [示例库](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/index.html) 已更新，用户可以在其中找到多种可直接使用的示例！
 - [2025/09] 🔥 我们的论文 [《RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Micro Flow Transformation》](https://arxiv.org/abs/2509.15965)已正式发布。
 - [2025/09] 🔥 机器之心关于 RLinf 的报道[《首个为具身智能而生的大规模强化学习框架RLinf！清华、北京中关村学院、无问芯穹等重磅开源》](https://mp.weixin.qq.com/s/Xtv4gDu3lhDDGadLrzt6Aw)已经发布。
 - [2025/08] RLinf 已经开源，正式的 v0.1 版本即将发布。
@@ -41,38 +41,97 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 
 ## ✨ 核心特性
 
+### 具身智能
 
-**RLinf 的独特之处在于：**
-- 宏工作流到微执行流的映射机制（Macro-to-Micro Flow）：一种全新的 M2Flow 范式，通过微观层次的执行流来驱动宏观层次的逻辑流，实现逻辑工作流构建（可编程）与物理通信和调度（高效性）的解耦。
+<table style="width: 100%; table-layout: auto; border-collapse: collapse;">
+  <thead align="center" valign="bottom">
+    <tr>
+      <th style="min-width: 120px; text-align: left;">模拟器</th>
+      <th style="min-width: 120px;">真机</th>
+      <th style="min-width: 120px;">模型</th>
+      <th style="min-width: 120px;">算法</th>
+    </tr>
+  </thead>
+  <tbody valign="top">
+    <tr>
+      <td style="text-align: left; padding-left: 8px;">
+        <ul style="margin-left: 0; padding-left: 16px;">
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/maniskill.html">ManiSkill</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/libero.html">LIBERO</a> ✅</li>
+          <li>RoboTwin</li>
+          <li>RoboVerse</li>
+          <li>BEHAVIOR</li>
+          <li>IsaacLab</li>
+          <li>Meta-World</li>
+          <li>More...</li>
+        </ul>
+      </td>
+      <td>
+        <ul style="margin-left: 0; padding-left: 16px;">
+          <li>Franka Arm</li>
+          <li>More...</li>
+        </ul>
+      </td>
+      <td>
+        <ul style="margin-left: 0; padding-left: 16px;">
+          <li><b>VLA 模型</b></li>
+          <ul>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/pi0.html">π₀</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/pi0.html">π₀.₅</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/maniskill.html">OpenVLA</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/libero.html">OpenVLA-OFT</a> ✅</li>
+            <li>GR00T</li>
+          </ul>
+          <li><b>VLM 模型</b></li>
+          <ul>
+            <li>Qwen2.5-VL</li>
+          </ul>
+        </ul>
+      </td>
+      <td>
+        <ul style="margin-left: 0; padding-left: 16px;">
+          <li><b>RL 算法</b></li>
+          <ul>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/grpo.html">GRPO</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/ppo.html">PPO</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/dapo.html">DAPO</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/reinforce.html">Reinforce++</a> ✅</li>
+            <li>SAC</li>
+          </ul>
+          <li><b>SFT</b></li>
+          <ul>
+            <li>LoRA SFT</li>
+          </ul>
+        </ul>
+      </td>
+    </tr>
+  </tbody>
+</table>
 
-- 灵活的执行模式
+如上表所示，RLinf支持主流VLA模型，通过标准的Worker接口支持主流的基于CPU或者GPU的模拟器，首次实现对带有 flow-matching action expert 的 $\pi_{0}$ 和 $\pi_{0.5}$ 模型家族的RL微调。
 
-  - 共享式（Collocated Mode）：用户可以配置组件是否同时常驻于 GPU 内存，或通过卸载 / 重新加载机制交替使用 GPU。
-  - 分离式（Disaggregated Mode）：组件既可以顺序运行（可能导致 GPU 空闲），也可以以流水线方式执行，从而确保所有 GPU 都处于忙碌状态。
-  - 混合式（Hybrid Mode）：进一步扩展了灵活性，支持自定义组合不同的放置形式。典型案例是 Generator 和 GPU-based Simulator 执行分离式细粒度流水，二者与 Inference 和 Trainer 执行共享式。
+### 智能体强化学习
 
-- 自动调度策略： 根据训练任务自动选择最合适的执行模式，无需手动分配资源。
-  
-- 具身智能体支持
-  - 主流 VLA 模型的快速自适应支持: [OpenVLA](https://github.com/openvla/openvla), [OpenVLA-OFT](https://github.com/moojink/openvla-oft), [π₀](https://github.com/Physical-Intelligence/openpi) 和 [π₀.₅](https://github.com/Physical-Intelligence/openpi).
-  - 支持主流基于 CPU 与 GPU 的模拟器（通过标准化 RL 接口）： [ManiSkill3](https://github.com/haosulab/ManiSkill), [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO).
-  - 首次实现对带有 flow-matching action expert 的 $\pi_0$ 和 $\pi_{0.5}$ 模型家族的 RL 微调。
+智能体强化学习包括用于提升大语言模型推理能力的强化学习训练，例如[数学推理](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/reasoning.html)；也包括针对各类智能体的强化学习训练，例如[编程智能体的在线强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/coding_online_rl.html)。RLinf 框架能够很好地支持智能体强化学习。我们相信，未来的具身智能也必将融合智能体的能力，以完成更复杂的任务。
 
-**RLinf 的高效性体现在：**
+### High flexibility, efficiency, and scalability
 
-- 细粒度流水化的混合式模式： 相较于其他框架，实现了 120%+ 的吞吐量提升。
-- 秒级显卡自动扩缩： 可动态扩展训练资源，支持在数秒内完成 GPU 切换，在保持 RL 算法 on-policy 特性的同时，进一步提升 20–40% 的效率。
+除了上述丰富功能外，RLinf 还具有高度灵活性，可支持多种强化学习训练工作流（例如集成了模拟器的具身强化学习、PPO/RLHF），同时隐藏了分布式编程的复杂性。用户无需修改代码即可轻松将强化学习训练扩展至大量GPU节点，满足强化学习训练日益增长的计算需求。
 
-**RLinf 的灵活性与易用性体现在：**
+这种高灵活性使 RLinf 能够探索更高效的调度与执行模式。在具身强化学习中，混合执行模式相较于基线方案实现了100%以上的吞吐量提升。
 
-- 多后端集成
+多后端集成支持
 
-  - FSDP + Hugging Face： 快速适配新模型与新算法，非常适合初学者和快速原型开发。
-  - Megatron + SGLang： 针对大规模训练进行了优化，为专家用户提供最大化效率。
+- Hugging Face + FSDP, SGLang/vLLM + FSDP: 快速适配新模型与新算法，非常适合初学者和快速原型验证。
+- Megatron + SGLang/vLLM: 针对大规模训练进行了优化，为专家用户提供最大化效率。
 
-- 自适应通信： 通过异步通信通道实现高效交互。
+## 快速开始
+**安装步骤：** 请参考我们的[安装指南](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/installation.html)安装RLinf。鉴于具身强化学习的环境配置较为复杂，我们推荐直接使用我们提供的Docker镜像（即[安装方法一：Docker镜像](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/installation.html#installation-method-1-docker-image)）。
 
-- 内置支持主流 RL 方法： 包括 [PPO](https://arxiv.org/abs/1707.06347), [GRPO](https://arxiv.org/abs/2402.03300), [DAPO](https://arxiv.org/abs/2503.14476), [Reinforce++](https://arxiv.org/abs/2501.03262) 等。
+**运行简单示例：** 环境配置完成后，用户可以参照[该文档](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/vla.html)的内容，运行基于ManiSkill3模拟器的具身强化学习基础示例。
+
+用户可以查阅我们的[官方文档](https://rlinf.readthedocs.io/zh-cn/latest/index.html)与[示例库](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/index.html)，来了解更多RLinf的使用教程与应用实例。
+
 
 ## 主要成果
 ### 具身智能
@@ -452,46 +511,6 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 - [ ] 支持真实世界的具身智能强化学习
 
 
-## 快速开始 
-
-完整的 RLinf 文档请见[**这里**](https://rlinf.readthedocs.io/en/latest/).
-
-**快速上手**
-
-  - [安装指南](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html)
-  - [快速上手 1：在 ManiSkill3 上进行 VLA 的 PPO 训练](https://rlinf.readthedocs.io/en/latest/rst_source/start/vla.html)
-  - [快速上手 2：在 MATH 上进行 LLM 的 GRPO 训练](https://rlinf.readthedocs.io/en/latest/rst_source/start/llm.html)
-  - [多节点训练](https://rlinf.readthedocs.io/en/latest/rst_source/start/distribute.html)
-  - [模型评估](https://rlinf.readthedocs.io/en/latest/rst_source/start/eval.html)
-
-**关键设计**
-  - [统一用户接口使用](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/user/index.html)
-  - [灵活的执行模式](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/mode/index.html)
-  - [自动调度支持](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/scheduler/index.html)
-  - [弹性通信](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/communication/index.html)
-
-**示例库**
-
-  - [具身智能 VLA 模型训练](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied.html)
-  - [数学推理模型训练](https://rlinf.readthedocs.io/en/latest/rst_source/examples/reasoning.html)
-
-**高级特性**
-
-  - [Megatron-LM 的 5D 并行配置](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/advance/5D.html)
-  - [LoRA 集成以实现高效微调](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/advance/lora.html)
-  - [在不同版本的 SGLang 之间切换](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/advance/version.html)
-  - [检查点恢复与重启支持](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/advance/resume.html)
-
-**框架扩展**
-
-  - [添加新环境](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/extend/new_env.html)
-  - [基于 FSDP+Hugging Face 后端添加新模型](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/extend/new_model_fsdp.html)
-  - [基于 Megatron+SGLang 后端添加新模型](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/extend/new_model_megatron.html)
-
-**博客**
-
-  - [与 VeRL 的对比](https://rlinf.readthedocs.io/en/latest/rst_source/blog/compare_with_verl.html)
-
 ## 构建状态
 
 | Type             | Status |
@@ -501,7 +520,9 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 
 
 ## 贡献指南
-我们欢迎对 RLinf 的贡献。在参与之前，请先阅读 [贡献指南](https://rlinf.readthedocs.io/en/latest/index.html#contribution-guidelines)。
+我们欢迎对 RLinf 的贡献。在参与之前，请先阅读 [贡献指南](https://rlinf.readthedocs.io/zh-cn/latest/index.html#contribution-guidelines)。感谢以下贡献者，并诚邀更多开发者加入我们的开源项目，共建具身智能与强化学习系统。
+
+<a href="https://github.com/RLinf/RLinf/graphs/contributors"><img src="https://contrib.rocks/image?repo=RLinf/RLinf&max=240&columns=18" /></a>
 
 ## 引用与致谢
 
