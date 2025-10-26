@@ -108,7 +108,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
   </tbody>
 </table>
   
-RLinf supports mainstream VLA models, mainstream CPU & GPU-based simulators via standardized Worker interfaces, and enables the first RL fine-tuning of the $\pi_0$ and $\pi_{0.5}$ model family with a flow-matching action expert, as shown in the above table.
+RLinf supports mainstream VLA models, mainstream CPU & GPU-based simulators via standardized Worker interfaces, and enables the first RL fine-tuning of the $\pi_{0}$ and $\pi_{0.5}$ model family with a flow-matching action expert, as shown in the above table.
 
 ### Agentic RL
 
@@ -118,17 +118,17 @@ Agentic RL includes both RL training for improving LLM reasoning ability, such a
 
 Besides the rich functionalities introduced above, RLinf has high flexibility to support diverse RL training workflows (e.g., simulator integrated embodied RL, PPO/RLHF), while hiding the complexity of distributed programming. Users can easily scale RL training to a large number of GPU nodes without modifying code, meeting the increasing demand of computation for RL training.
 
-The high flexibility allow RLinf to explore more efficient scheduling and execution. The hybrid execution mode for embodied RL achieves a **100%+** throughput improvement compared to baseline solutions.
+The high flexibility allows RLinf to explore more efficient scheduling and execution. The hybrid execution mode for embodied RL achieves a **100%+** throughput improvement compared to baseline solutions.
 
 Multiple Backend Integrations
 
-- Hugging Face + FSDP: rapid adaptation to new models and algorithms, ideal for beginners and fast prototyping.
+- Hugging Face + FSDP, SGLang/vLLM + FSDP: rapid adaptation to new models and algorithms, ideal for beginners and fast prototyping.
 - Megatron + SGLang/vLLM: optimized for large-scale training, delivering maximum efficiency for expert users with demanding workloads.
 
 ## Quick Start
-**Installation:** Users can refer to our [installation guide](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html) to install RLinf. We recommend users to use our provided docker image (i.e., [Installation Method 1](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html#installation-method-1-docker-image)), as the environment and dependencies of embodied RL is complex.
+**Installation:** Users can refer to our [installation guide](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html) to install RLinf. We recommend users to use our provided docker image (i.e., [Installation Method 1](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html#installation-method-1-docker-image)), as the environment and dependencies of embodied RL are complex.
 
-**Run a simple example:** After setup the environment, users can run a simple example of embodied RL with ManiSkill3 simulator following [this document](https://rlinf.readthedocs.io/en/latest/rst_source/start/vla.html).
+**Run a simple example:** After setting up the environment, users can run a simple example of embodied RL with ManiSkill3 simulator following [this document](https://rlinf.readthedocs.io/en/latest/rst_source/start/vla.html).
 
 For more tutorials of RLinf and application examples, checkout our [documentation](https://rlinf.readthedocs.io/en/latest/index.html) and [example gallery](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html).
 
