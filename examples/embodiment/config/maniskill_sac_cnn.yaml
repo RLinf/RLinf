@@ -129,8 +129,8 @@ actor:
   checkpoint_load_path: ""
   checkpoint_save_path: "../results"
 
-  micro_batch_size: 1024  # Smaller batch size for SAC
-  global_batch_size: 1024   # Smaller global batch size
+  micro_batch_size: 512  # Smaller batch size for SAC
+  global_batch_size: 512   # Smaller global batch size
   seed: 1234
   enable_offload: False
 

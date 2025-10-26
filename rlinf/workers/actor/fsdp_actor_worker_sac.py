@@ -153,13 +153,15 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
 
             with torch.no_grad():
                 next_state_actions, next_results = self.model.predict_action_batch(
-                    next_obs, return_action_type="torch_flatten"
+                    next_obs, return_action_type="torch_flatten", return_shared_feature=True
                 )
                 next_state_log_pi = next_results["prev_logprobs"]
                 next_state_log_pi = next_state_log_pi.sum(dim=-1, keepdim=True)
+                
+                shared_feature = next_results["shared_feature"]
 
                 qf1_next_target, qf2_next_target = self.target_model.get_q_values(
-                    next_obs, next_state_actions
+                    next_obs, next_state_actions, shared_feature
                 )
                 min_qf_next_target, _ = torch.min(
                     torch.cat((qf1_next_target, qf2_next_target), dim=1), 
@@ -183,13 +185,14 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
             critic_loss.backward()
             self.qf_optimizer.step()
 
-            pi, log_pi = self.model(
+            pi, log_pi, shared_feature = self.model(
                 "sac_forward", obs=curr_obs
             )
             log_pi = log_pi.sum(dim=-1, keepdim=True)
             qf1_pi, qf2_pi = self.model(
                 "sac_q_forward", 
                 obs=curr_obs, actions=pi, 
+                shared_feature=shared_feature, 
                 detach_encoder=True
             )
             min_qf_pi, _ = torch.min(
@@ -206,7 +209,7 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
             # Update temperature parameter if using automatic entropy tuning
             if hasattr(self, 'log_alpha') and self.log_alpha is not None:
                 with torch.no_grad():
-                    _, log_pi = self.model(
+                    _, log_pi, _ = self.model(
                         "sac_forward", obs=curr_obs
                     )
                 alpha_loss = (-self.log_alpha.exp() * (log_pi + self.target_entropy)).mean()

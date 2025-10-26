@@ -48,7 +48,7 @@ class CNNPolicy(BasePolicy):
             action_scale = 1, -1
             final_tanh = True
             self.q_head = DoubleQHead(
-                hidden_size=256,
+                hidden_size=self.encoder.out_dim+self.state_dim,
                 action_dim=action_dim,
                 use_separate_processing=False
             )
@@ -125,7 +125,7 @@ class CNNPolicy(BasePolicy):
         chunk_logprobs = probs.log_prob(raw_action)
         chunk_logprobs = chunk_logprobs - torch.log(self.action_scale * (1 - action_normalized.pow(2)) + 1e-6)
 
-        return action, chunk_logprobs
+        return action, chunk_logprobs, visual_feature
 
     def predict_action_batch(
             self, env_obs, 
@@ -133,6 +133,7 @@ class CNNPolicy(BasePolicy):
             calulate_values=True,
             return_obs=True, 
             return_action_type="numpy_chunk", 
+            return_shared_feature=False, 
             **kwargs
         ):
         x, visual_feature = self.get_feature(env_obs)
@@ -182,10 +183,16 @@ class CNNPolicy(BasePolicy):
             "prev_values": chunk_values,
             "forward_inputs": forward_inputs,
         }
+        if return_shared_feature:
+            result["shared_feature"] = visual_feature
         return chunk_actions, result
     
-    def get_q_values(self, obs, actions, detach_encoder=False):
-        x, visual_feature = self.get_feature(obs, detach_encoder)
+    def get_q_values(self, obs, actions, shared_feature=None, detach_encoder=False):
+        if shared_feature is None:
+            shared_feature = self.encoder(obs["images"])
+        if detach_encoder:
+            shared_feature = shared_feature.detach()
+        x = torch.cat([shared_feature, obs["states"]], dim=1)
         return self.q_head(x, actions)
     
 

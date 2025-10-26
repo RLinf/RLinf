@@ -112,7 +112,7 @@ class MLPPolicy(BasePolicy):
         chunk_logprobs = probs.log_prob(raw_action)
         chunk_logprobs = chunk_logprobs - torch.log(self.action_scale * (1 - action_normalized.pow(2)) + 1e-6)
 
-        return action, chunk_logprobs
+        return action, chunk_logprobs, None
     
     def default_forward(
             self,
@@ -154,6 +154,7 @@ class MLPPolicy(BasePolicy):
             calulate_values=True,
             return_obs=True, 
             return_action_type="numpy_chunk", 
+            return_shared_feature=False, 
             **kwargs
         ):
         feat = self.backbone(env_obs["states"])
@@ -208,9 +209,11 @@ class MLPPolicy(BasePolicy):
             "prev_values": chunk_values,
             "forward_inputs": forward_inputs,
         }
+        if return_shared_feature:
+            result["shared_feature"] = None
         return chunk_actions, result
     
-    def get_q_values(self, obs, actions, detach_encoder=False):
+    def get_q_values(self, obs, actions, shared_feature=None, detach_encoder=False):
         return self.q_head(obs["states"], actions)
 
 

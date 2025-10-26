@@ -238,11 +238,7 @@ class FSDPModelManager:
                 mixed_precision=mixed_precision,
                 sync_module_states=True,
                 forward_prefetch=self._cfg.fsdp_config.forward_prefetch,
-                backward_prefetch=(
-                    BackwardPrefetch.BACKWARD_PRE
-                    if self._cfg.fsdp_config.backward_prefetch
-                    else None
-                ),
+                backward_prefetch=backward_prefetch,
                 limit_all_gathers=self._cfg.fsdp_config.limit_all_gathers,
                 use_orig_params=self._cfg.fsdp_config.use_orig_params,
             )
@@ -304,7 +300,7 @@ class FSDPModelManager:
                         else:
                             params_actor.append(param)
                 if len(params_critic) > 0:
-                    self.optimizer = optim.Adam(
+                    self.optimizer = torch.optim.Adam(
                         [
                             {
                                 "params": params_actor, 
@@ -314,7 +310,7 @@ class FSDPModelManager:
                             
                         ]
                     )
-                    self.qf_optimizer = optim.Adam(
+                    self.qf_optimizer = torch.optim.Adam(
                         [{
                             "params": params_critic,
                             "lr": self._cfg.optim.value_lr,
@@ -324,7 +320,7 @@ class FSDPModelManager:
                     )
 
     def optimizer_step(self):
-        grad_norm = self.model.clip_grad_norm_(max_norm=self.cfg.actor.optim.clip_grad)
+        grad_norm = self.model.clip_grad_norm_(max_norm=self._cfg.actor.optim.clip_grad)
         self.optimizer.step()
         self.optimizer.zero_grad()
         self.optimizer_steps += 1
