@@ -114,7 +114,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 
 智能体强化学习包括用于提升大语言模型推理能力的强化学习训练，例如[数学推理](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/reasoning.html)；也包括针对各类智能体的强化学习训练，例如[编程智能体的在线强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/coding_online_rl.html)。RLinf 框架能够很好地支持智能体强化学习。我们相信，未来的具身智能也必将融合智能体的能力，以完成更复杂的任务。
 
-### High flexibility, efficiency, and scalability
+### 高灵活性、高效性与高可扩展性
 
 除了上述丰富功能外，RLinf 还具有高度灵活性，可支持多种强化学习训练工作流（例如集成了模拟器的具身强化学习、PPO/RLHF），同时隐藏了分布式编程的复杂性。用户无需修改代码即可轻松将强化学习训练扩展至大量GPU节点，满足强化学习训练日益增长的计算需求。
 
