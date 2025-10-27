@@ -647,9 +647,8 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
             or cfg.algorithm.get("importance_sampling_fix", False)
         )
 
-        cfg.rollout.return_logprobs = (
-            cfg.rollout.return_logprobs
-            or cfg.algorithm.get("importance_sampling_fix", False)
+        cfg.rollout.return_logprobs = cfg.rollout.return_logprobs or cfg.algorithm.get(
+            "importance_sampling_fix", False
         )
 
         cfg.rollout = validate_rollout_cfg(cfg.rollout)
