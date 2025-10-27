@@ -85,10 +85,7 @@ class ReasoningRunner:
             self.cfg.algorithm.kl_beta > 0
             or self.cfg.algorithm.get("reinpp_kl_beta", 0) > 0
         )
-        self.recompute_logprobs = (
-            self.cfg.algorithm.recompute_logprobs
-            or self.cfg.algorithm.get("importance_sampling_fix", False)
-        )
+        self.recompute_logprobs = self.cfg.algorithm.recompute_logprobs
         self.consumed_samples = 0
         self.global_steps = 0
 

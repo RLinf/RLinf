@@ -63,6 +63,8 @@ REINFORCE++
 
    algorithm:
      adv_type:      "reinpp"       # use REINFORCE++
+     reinpp_kl_beta: 0.001         # KL penalty coefficient in REINFORCE++, distinct from the one used in loss computation
+     use_reinpp_baseline: False    # no baseline
      group_size:    1              # one response per prompt
      kl_beta:       0.0001
      normalize_advantages: False   # global norm already applied
@@ -75,7 +77,7 @@ REINFORCE++ baseline
 .. code-block:: yaml
 
    algorithm:
-     adv_type:      "reinpp_baseline"
+     adv_type:      "reinpp"
      group_size:    16             # multiple responses per prompt
      kl_beta:       0.0001
 

@@ -63,8 +63,9 @@ REINFORCE++
 
    algorithm:
      adv_type:      "reinpp"       # 使用 REINFORCE++
+     reinpp_kl_beta: 0.001         # REINFORCE++中的KL惩罚系数，与计算loss时使用的kl系数的区分
+     use_reinpp_baseline: False    # 不使用基线
      group_size:    1              # 每个 prompt 一个响应
-     kl_beta:       0.0001
      normalize_advantages: False   # 全局归一化已启用
 
    data:
@@ -75,7 +76,7 @@ REINFORCE++ 基线
 .. code-block:: yaml
 
    algorithm:
-     adv_type:      "reinpp_baseline"
+     adv_type:      "reinpp"
      group_size:    16             # 每个 prompt 多个响应
      kl_beta:       0.0001
 

@@ -641,6 +641,17 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
             f"runner.seq_length ({cfg.runner.seq_length}) must be greater than data.max_prompt_length ({cfg.data.max_prompt_length})"
         )
 
+        # add configs for importance sampling fix
+        cfg.algorithm.recompute_logprobs = (
+            cfg.algorithm.recompute_logprobs
+            or cfg.algorithm.get("importance_sampling_fix", False)
+        )
+
+        cfg.rollout.return_logprobs = (
+            cfg.rollout.return_logprobs
+            or cfg.algorithm.get("importance_sampling_fix", False)
+        )
+
         cfg.rollout = validate_rollout_cfg(cfg.rollout)
     return cfg
 
