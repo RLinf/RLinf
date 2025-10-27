@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import wraps
 from typing import Callable, Dict, Optional, Tuple
 
 import torch
@@ -32,9 +33,13 @@ ADV_REGISTRY: Dict[str, Callable] = {}
 def register_advantage(name: str):
     """Decorator to register advantage & returns function."""
 
-    def decorator(func: Callable):
-        ADV_REGISTRY[name.lower()] = func
-        return func
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            return fn(*args, **kwargs)
+
+        ADV_REGISTRY[name.lower()] = wrapper
+        return wrapper
 
     return decorator
 
@@ -53,8 +58,12 @@ LOSS_REGISTRY: Dict[str, Callable] = {}
 
 def register_policy_loss(name: str):
     def decorator(fn):
-        LOSS_REGISTRY[name] = fn
-        return fn
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            return fn(*args, **kwargs)
+
+        LOSS_REGISTRY[name.lower()] = wrapper
+        return wrapper
 
     return decorator
 
