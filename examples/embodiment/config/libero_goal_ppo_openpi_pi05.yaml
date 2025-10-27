@@ -126,10 +126,13 @@ actor:
     num_action_chunks: 5 # interface for the env
     action_dim: 7
     is_lora: False
+    lora_rank: 32
+    gradient_checkpointing: False
     use_wrist_image: True
     use_proprio: True
     num_steps: 5
     sharding_strategy: "no_shard"
+    add_value_head: True
     # openpi specific parameters
     openpi:
       noise_level: 0.5
@@ -137,8 +140,8 @@ actor:
       num_steps: ${actor.model.num_steps}
       train_expert_only: True
       action_env_dim: ${actor.model.action_dim}
-      noise_method: "flow_sde" 
-      add_value_head: True
+      noise_method: "flow_sde"
+      add_value_head: ${actor.model.add_value_head}
       pi05: True
       value_after_vlm: True
       value_vlm_mode: "mean_token"
@@ -150,6 +153,7 @@ actor:
     adam_beta2: 0.95
     adam_eps: 1.0e-05
     clip_grad: 1.0
+    critic_warmup_steps: 0
 
 reward:
   use_reward_model: False

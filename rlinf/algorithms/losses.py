@@ -32,6 +32,7 @@ def compute_ppo_actor_loss(
     loss_agg_func: Optional[Callable[..., torch.Tensor]] = masked_mean,
     max_episode_steps: Optional[int] = None,
     loss_mask_sum: Optional[torch.Tensor] = None,
+    critic_warmup: Optional[bool] = False,
     **kwargs,
 ) -> Tuple[torch.Tensor, Dict]:
     """
@@ -100,6 +101,9 @@ def compute_ppo_actor_loss(
     approx_kl = -approx_kl.sum() / loss_mask_count
 
     dual_cliped_ratio = torch.where(dual_clip_mask, ratio, 0)
+
+    if critic_warmup:
+        policy_loss = torch.tensor(0.0, device=policy_loss.device)
 
     # Compile metrics for logging
     metrics_data = {

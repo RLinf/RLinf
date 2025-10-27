@@ -15,7 +15,6 @@
 import os
 
 import torch
-import torch.optim as optim
 from omegaconf import DictConfig
 from torch.distributed.fsdp import (
     BackwardPrefetch,
@@ -45,6 +44,14 @@ class FSDPModelManager:
         self._cfg = cfg
         self.logger = get_logger()
         self.torch_dtype = torch_dtype_from_precision(self._cfg.model.precision)
+
+        self.optimizer_steps = 0
+        self.critic_warmup_steps = 0
+        if self._cfg.optim.get("critic_warmup_steps", None) and self._cfg.model.get(
+            "add_value_head", False
+        ):
+            self.critic_warmup_steps = self._cfg.optim.critic_warmup_steps
+        self.store_requires_grad_param_name = []
 
         if cfg.get("tokenizer", {}).get("tokenizer_model", None) is not None:
             self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
@@ -191,7 +198,6 @@ class FSDPModelManager:
             is_vla_model=is_vla_model,
         )
 
-        betas = (self._cfg.optim.adam_beta1, self._cfg.optim.adam_beta2)
         if self._cfg.fsdp_config.backward_prefetch is None:
             backward_prefetch = None
         elif self._cfg.fsdp_config.backward_prefetch == "pre":
@@ -216,36 +222,72 @@ class FSDPModelManager:
             use_orig_params=self._cfg.fsdp_config.use_orig_params,
         )
 
+        self.build_optimizer(enable_warmup=self.critic_warmup_steps > 0)
+
+    def build_optimizer(self, enable_warmup=False):
+        assert hasattr(self, "model")
+
+        betas = (self._cfg.optim.adam_beta1, self._cfg.optim.adam_beta2)
+
         params_actor = []
         params_critic = []
-        for name, param in self.model.named_parameters():
-            if param.requires_grad:
-                if "value_head" in name or "model.value_head" in name:
-                    params_critic.append(param)
-                else:
-                    params_actor.append(param)
+        if enable_warmup:
+            for name, param in self.model.named_parameters():
+                if param.requires_grad:
+                    self.store_requires_grad_param_name.append(name)
 
-        if len(params_critic) > 0:
-            self.optimizer = optim.AdamW(
-                [
-                    {"params": params_actor, "lr": self._cfg.optim.lr, "betas": betas},
-                    {
-                        "params": params_critic,
-                        "lr": self._cfg.optim.value_lr,
-                        "betas": betas,
-                    },
-                ]
-            )
+                    if "value_head" in name or "model.value_head" in name:
+                        params_critic.append(param)
+                        continue
+                    param.requires_grad = False
         else:
-            self.optimizer = optim.AdamW(
-                [
-                    {
-                        "params": params_actor,
-                        "lr": self._cfg.optim.lr,
-                        "betas": betas,
-                    },
-                ]
+            for name, param in self.model.named_parameters():
+                if (
+                    len(self.store_requires_grad_param_name) > 0
+                    and name in self.store_requires_grad_param_name
+                ):
+                    param.requires_grad = True
+
+                if param.requires_grad:
+                    if "value_head" in name or "model.value_head" in name:
+                        params_critic.append(param)
+                    else:
+                        params_actor.append(param)
+
+        param_groups = []
+        if len(params_actor) > 0:
+            param_groups.append(
+                {"params": params_actor, "lr": self._cfg.optim.lr, "betas": betas}
             )
+        if len(params_critic) > 0:
+            param_groups.append(
+                {
+                    "params": params_critic,
+                    "lr": self._cfg.optim.value_lr,
+                    "betas": betas,
+                }
+            )
+
+        self.optimizer = torch.optim.AdamW(param_groups)
+
+    def optimizer_step(self):
+        grad_norm = self.model.clip_grad_norm_(max_norm=self.cfg.actor.optim.clip_grad)
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+        self.optimizer_steps += 1
+
+        lrs = []  # [actor_lr, Optinal(critic_lr)]
+        if self.critic_warmup_steps > 0:
+            lrs.extend([0.0, self.optimizer.param_groups[0]["lr"]])
+            if self.optimizer_steps >= self.critic_warmup_steps:
+                self.build_optimizer(enable_warmup=False)
+                self.critic_warmup_steps = -1
+        else:
+            lrs.append(self.optimizer.param_groups[0]["lr"])
+            if len(self.optimizer.param_groups) > 1:
+                lrs.append(self.optimizer.param_groups[1]["lr"])
+
+        return grad_norm, lrs
 
     def get_model_state_dict(self):
         with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT):

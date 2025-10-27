@@ -148,6 +148,7 @@ actor:
     adam_beta2: 0.999
     adam_eps: 1.0e-05
     clip_grad: 10.0
+    critic_warmup_steps: 0
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"

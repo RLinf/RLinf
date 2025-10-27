@@ -861,11 +861,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         "loss_mask_sum": loss_mask_sum,
                         "max_episode_steps": self.cfg.env.train.max_episode_steps,
                         "task_type": self.cfg.runner.task_type,
+                        "critic_warmup": self.optimizer_steps
+                        < self.critic_warmup_steps,
                     }
                     loss, metrics_data = policy_loss(**kwargs)
 
                     entropy_loss = torch.tensor(0.0, device=torch.cuda.current_device())
-                    if self.cfg.algorithm.entropy_bonus > 0:
+                    if self.cfg.algorithm.entropy_bonus > 0 and not kwargs.critic_warmup:
                         entropy = output_dict["entropy"]
                         entropy = reshape_entropy(
                             entropy,
@@ -885,18 +887,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
                 torch.cuda.empty_cache()
 
-                grad_norm = self.model.clip_grad_norm_(
-                    max_norm=self.cfg.actor.optim.clip_grad
-                )
-                self.optimizer.step()
-
-                self.optimizer.zero_grad()
+                grad_norm, lrs = self.optimizer_step()
                 data = {
                     "actor/grad_norm": grad_norm.detach().item(),
-                    "actor/lr": self.optimizer.param_groups[0]["lr"],
+                    "actor/lr": lrs[0],
                 }
-                if self.cfg.algorithm.adv_type == "gae":
-                    data["critic/lr"] = self.optimizer.param_groups[1]["lr"]
+                if len(lrs) > 1:
+                    data["critic/lr"] = lrs[1]
                 append_to_dict(metrics, data)
 
         mean_metric_dict = {key: np.mean(value) for key, value in metrics.items()}

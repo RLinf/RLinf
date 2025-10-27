@@ -164,6 +164,7 @@ actor:
     adam_beta2: 0.95
     adam_eps: 1.0e-05
     clip_grad: 1.0
+    critic_warmup_steps: 5
 
   fsdp_config:                  # below are fsdp configs, for more details, see https://pytorch.org/docs/stable/fsdp.html and https://huggingface.co/docs/accelerate/package_reference/fsdp
     forward_prefetch: True       # if True, FSDP will explicitly prefetches the next upcoming all-gather while executing in the forward pass. only use with static graphs. Overlaps communication with computation to improve performance.

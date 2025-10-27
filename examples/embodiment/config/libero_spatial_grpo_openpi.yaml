@@ -126,6 +126,8 @@ actor:
     num_action_chunks: 5 # interface for the env
     action_dim: 7
     is_lora: False
+    lora_rank: 32
+    gradient_checkpointing: False
     use_wrist_image: True
     use_proprio: True
     num_steps: 4

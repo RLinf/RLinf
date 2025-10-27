@@ -192,6 +192,8 @@ interference, eliminating the need for offload functionality.
 
 **2. Model Key Parameter Configuration**
 
+**2.1 Model Parameters**
+
 .. code:: yaml
 
    openpi:
@@ -214,7 +216,17 @@ interference, eliminating the need for offload functionality.
 
 You can set ``pi05: True`` to enable π\ :sub:`0.5`\  mode, and set ``value_after_vlm`` to control the input path of state features: True to input to VLM part (π\ :sub:`0.5`\  default configuration), False to input to action expert (π\ :sub:`0`\  default configuration).
 
---------------
+**2.2 LoRA Settings**
+
+.. code:: yaml
+
+   model:
+     is_lora: True
+     lora_rank: 8
+     gradient_checkpointing: False
+
+If you want to use LoRA (Low-Rank Adaptation) to fine-tune the VLM part, please set ``is_lora: True`` and configure the ``lora_rank`` parameter. Note that gradient checkpointing is currently **not supported**, please keep ``gradient_checkpointing: False``.
+
 
 **3. Configuration Files**
 
