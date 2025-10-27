@@ -262,62 +262,34 @@ class FSDPModelManager:
                         continue
                     param.requires_grad = False
         else:
-            if not hasattr(self.model, "q_head"):
-                for name, param in self.model.named_parameters():
-                    if (
-                        len(self.store_requires_grad_param_name) > 0
-                        and name in self.store_requires_grad_param_name
-                    ):
-                        param.requires_grad = True
+            for name, param in self.model.named_parameters():
+                if (
+                    len(self.store_requires_grad_param_name) > 0
+                    and name in self.store_requires_grad_param_name
+                ):
+                    param.requires_grad = True
 
-                    if param.requires_grad:
-                        if "value_head" in name or "model.value_head" in name:
-                            params_critic.append(param)
-                        else:
-                            params_actor.append(param)
+                if param.requires_grad:
+                    if "value_head" in name or "model.value_head" in name:
+                        params_critic.append(param)
+                    else:
+                        params_actor.append(param)
 
-                param_groups = []
-                if len(params_actor) > 0:
-                    param_groups.append(
-                        {"params": params_actor, "lr": self._cfg.optim.lr, "betas": betas}
-                    )
-                if len(params_critic) > 0:
-                    param_groups.append(
-                        {
-                            "params": params_critic,
-                            "lr": self._cfg.optim.value_lr,
-                            "betas": betas,
-                        }
-                    )
+        param_groups = []
+        if len(params_actor) > 0:
+            param_groups.append(
+                {"params": params_actor, "lr": self._cfg.optim.lr, "betas": betas}
+            )
+        if len(params_critic) > 0:
+            param_groups.append(
+                {
+                    "params": params_critic,
+                    "lr": self._cfg.optim.value_lr,
+                    "betas": betas,
+                }
+            )
 
-                self.optimizer = torch.optim.AdamW(param_groups)
-            else:
-                for name, param in self.model.named_parameters():
-                    if param.requires_grad:
-                        if "q_head" in name:
-                            print(name)
-                            params_critic.append(param)
-                        else:
-                            params_actor.append(param)
-                if len(params_critic) > 0:
-                    self.optimizer = torch.optim.Adam(
-                        [
-                            {
-                                "params": params_actor, 
-                            "lr": self._cfg.optim.lr, 
-                            #  "betas": betas
-                            },
-                            
-                        ]
-                    )
-                    self.qf_optimizer = torch.optim.Adam(
-                        [{
-                            "params": params_critic,
-                            "lr": self._cfg.optim.value_lr,
-                            # "betas": betas,
-                        },
-                        ]
-                    )
+        self.optimizer = torch.optim.AdamW(param_groups)
 
     def optimizer_step(self):
         grad_norm = self.model.clip_grad_norm_(max_norm=self._cfg.actor.optim.clip_grad)

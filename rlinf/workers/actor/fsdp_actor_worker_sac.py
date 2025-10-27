@@ -49,17 +49,41 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
             torch.cuda.synchronize()
             gc.collect()
             torch.cuda.empty_cache()
-    
-    def setup_sac_components(self):
-        """Initialize SAC-specific components"""
-        # Initialize replay buffer
-        buffer_capacity = self.cfg.algorithm.get("replay_buffer_capacity", 100000)
-        self.replay_buffer = SACReplayBuffer(
-            capacity=buffer_capacity,
-            device=self.device,
-            seed=self.cfg.actor.get("seed", 1234)
+
+    def build_optimizer(self, enable_warmup=False):
+        betas = (self._cfg.optim.adam_beta1, self._cfg.optim.adam_beta2)
+        params_actor = []
+        params_critic = []
+        if enable_warmup:
+            raise NotImplementedError
+        else:
+            for name, param in self.model.named_parameters():
+                if param.requires_grad:
+                    if "q_head" in name:
+                        print(name)
+                        params_critic.append(param)
+                    else:
+                        params_actor.append(param)
+        assert len(params_critic) > 0
+        self.optimizer = torch.optim.Adam(
+            [
+                {
+                    "params": params_actor, 
+                    "lr": self._cfg.optim.lr, 
+                    "betas": betas
+                },
+                
+            ]
         )
-        
+        self.qf_optimizer = torch.optim.Adam(
+            [
+                {
+                    "params": params_critic,
+                    "lr": self._cfg.optim.value_lr,
+                    "betas": betas,
+                },
+            ]
+        )
         # Initialize temperature parameter for automatic entropy tuning
         if self.cfg.algorithm.get("auto_entropy_tuning", False):
             target_entropy = self.cfg.algorithm.get(
@@ -75,6 +99,18 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
             )
         else:
             self.alpha = self.cfg.algorithm.get("alpha", 0.2)
+    
+    def setup_sac_components(self):
+        """Initialize SAC-specific components"""
+        # Initialize replay buffer
+        buffer_capacity = self.cfg.algorithm.get("replay_buffer_capacity", 100000)
+        self.replay_buffer = SACReplayBuffer(
+            capacity=buffer_capacity,
+            device=self.device,
+            seed=self.cfg.actor.get("seed", 1234)
+        )
+        
+        
 
     def soft_update_target_model(self, tau: float = None):
         """Soft update target model parameters"""
