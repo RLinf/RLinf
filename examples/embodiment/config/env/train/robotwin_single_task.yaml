@@ -1,0 +1,58 @@
+simulator_type: robotwin
+auto_reset: ${algorithm.auto_reset}
+ignore_terminations: ${algorithm.ignore_terminations}
+use_rel_reward: True
+seed: 0
+num_group: ${algorithm.num_group_envs}
+group_size: ${algorithm.group_size}
+use_fixed_reset_state_ids: ${algorithm.use_fixed_reset_state_ids}
+max_episode_steps: 80
+only_eval: False
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+
+assets_path: "/mnt/public/guozhen/test_robotwin/RLinf_RoboTwin"
+num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
+
+task_config:
+  root_path: "/mnt/public/guozhen/test_robotwin/RLinf_RoboTwin"
+  task_name: place_shoe
+  render_freq: 0
+  episode_num: 500
+  use_seed: false
+  save_freq: 15
+  embodiment:
+  - aloha-agilex
+  language_num: 100
+  domain_randomization:
+    random_background: false
+    cluttered_table: false
+    clean_background_rate: 0
+    random_head_camera_dis: 0
+    random_table_height: 0
+    random_light: false
+    crazy_random_light_rate: 0
+  camera:
+    head_camera_type: D435
+    wrist_camera_type: D435
+    collect_head_camera: true
+    collect_wrist_camera: true
+  data_type:
+    rgb: true
+    third_view: false
+    depth: false
+    pointcloud: false
+    endpose: true
+    qpos: true
+    mesh_segmentation: false
+    actor_segmentation: false
+  pcd_down_sample_num: 1024
+  pcd_crop: true
+  save_path: ./data
+  clear_cache_freq: 1
+  collect_data: true
+  eval_video_log: true

@@ -131,7 +131,7 @@ class EnvWorker(Worker):
                         )
                     )
         elif self.cfg.env.train.simulator_type == "robotwin":
-            from rlinf.envs.robotwin.RoboTwin_env import RoboTwin
+            from rlinf.envs.robotwin.robotwin_env import RoboTwinEnv
 
             if not only_eval:
                 for stage_id in range(self.stage_num):
@@ -141,10 +141,9 @@ class EnvWorker(Worker):
                             rank=self._rank,
                             seed_offset=self._rank * self.stage_num + stage_id,
                             total_num_processes=self._world_size * self.stage_num,
-                            env_cls=RoboTwin,
+                            env_cls=RoboTwinEnv,
                             enable_offload=enable_offload,
                         )
-                        # RoboTwin(self.cfg.env.train, rank=self._rank, total_num_processes=self._world_size)
                     )
             if self.cfg.runner.val_check_interval > 0 or only_eval:
                 for stage_id in range(self.stage_num):
@@ -154,7 +153,7 @@ class EnvWorker(Worker):
                             rank=self._rank,
                             seed_offset=self._rank * self.stage_num + stage_id,
                             total_num_processes=self._world_size,
-                            env_cls=RoboTwin,
+                            env_cls=RoboTwinEnv,
                             enable_offload=enable_offload,
                         )
                     )
