@@ -100,7 +100,8 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
           </ul>
           <li><b>SFT</b></li>
           <ul>
-            <li>LoRA SFT</li>
+            <li>全量微调</li>
+            <li>LoRA微调</li>
           </ul>
         </ul>
       </td>
@@ -122,7 +123,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 
 多后端集成支持
 
-- Hugging Face + FSDP, SGLang/vLLM + FSDP: 快速适配新模型与新算法，非常适合初学者和快速原型验证。
+- FSDP + HuggingFace/SGLang/vLLM: 快速适配新模型与新算法，非常适合初学者和快速原型验证。
 - Megatron + SGLang/vLLM: 针对大规模训练进行了优化，为专家用户提供最大化效率。
 
 ## 快速开始

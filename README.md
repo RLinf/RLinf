@@ -100,6 +100,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
           </ul>
           <li><b>SFT</b></li>
           <ul>
+            <li>Full-parameter SFT</li>
             <li>LoRA SFT</li>
           </ul>
         </ul>
@@ -122,7 +123,7 @@ The high flexibility allows RLinf to explore more efficient scheduling and execu
 
 Multiple Backend Integrations
 
-- Hugging Face + FSDP, SGLang/vLLM + FSDP: rapid adaptation to new models and algorithms, ideal for beginners and fast prototyping.
+- FSDP + HuggingFace/SGLang/vLLM: rapid adaptation to new models and algorithms, ideal for beginners and fast prototyping.
 - Megatron + SGLang/vLLM: optimized for large-scale training, delivering maximum efficiency for expert users with demanding workloads.
 
 ## Quick Start
