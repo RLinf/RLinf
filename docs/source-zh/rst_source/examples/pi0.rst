@@ -165,6 +165,8 @@ actor** 之间的流水线重叠，从而提升 rollout 效率。
 
 **2. 模型关键参数配置**
 
+**2.1 模型参数**
+
 .. code:: yaml
 
    openpi:
@@ -183,6 +185,19 @@ actor** 之间的流水线重叠，从而提升 rollout 效率。
 你可以通过修改 ``noise_method`` 使用不同的加噪方式。我们提供\ `flow_sde <https://arxiv.org/abs/2505.05470>`__\ 和\ `reinflow <https://arxiv.org/abs/2505.22094>`__\ 两种方式。
 
 你可以通过设置 ``pi05: True`` 启用π\ :sub:`0.5`\模式，通过 ``value_after_vlm`` 参数控制state输入路径：当该参数为 True 时，state 特征输入至 VLM 模块（为 π\ :sub:`0.5`\ 的默认配置）；为 False 时，state 特征输入至 action expert 模块（为 π\ :sub:`0`\ 的默认配置）。
+
+**2.2 LoRA设置**
+
+.. code:: yaml
+
+   model:
+     is_lora: True
+     lora_rank: 8
+     gradient_checkpointing: False
+
+如果你想使用LoRA（Low-Rank Adaptation）对VLM部分进行参数高效微调，请设置 ``is_lora: True`` 并配置 ``lora_rank`` 参数。需要注意的是，当前\ **不支持**\ 启用梯度检查点，请保持该参数为 ``gradient_checkpointing: False``。
+
+
 
 **3. 配置文件**
 
