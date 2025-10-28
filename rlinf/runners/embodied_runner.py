@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import os
 
 from omegaconf.dictconfig import DictConfig
@@ -25,8 +24,6 @@ from rlinf.utils.runner_utils import check_progress
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
-
-logging.getLogger().setLevel(logging.INFO)
 
 
 class EmbodiedRunner:
