@@ -129,6 +129,8 @@ data:
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: prompt
+  answer_key: solutions
+  apply_chat_template: False  
   shuffle: True
   validation_shuffle: True
   seed: 1234

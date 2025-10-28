@@ -132,6 +132,8 @@ data:
   train_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
   val_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
   prompt_key: prompt
+  answer_key: solutions
+  apply_chat_template: False
 
 
 actor:

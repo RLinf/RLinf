@@ -33,6 +33,38 @@ class MathDataset(Dataset):
         config: DictConfig,
         tokenizer: AutoTokenizer,
     ):
+        """
+        Initialize the MathDataset.
+
+        This constructor loads the dataset from specified paths and applies optional filtering
+        based on prompt length constraints.
+
+        This method handles prompt formatting based on the `apply_chat_template` configuration:
+
+        **When apply_chat_template = False:**
+            - The prompt is used directly from the dataset without modification.
+            - Note: Ensure the prompt format is correct and check if the dataset already
+                contains tokenizer-specific special characters.
+            - Expected dataset format:
+                {
+                    "prompt_key": <str>,
+                    "answer_key": <str>,
+                }
+
+        **When apply_chat_template = True:**
+            - The raw dataset is processed using tokenizer.apply_chat_template() to format
+                the prompt according to the model's chat template.
+            - Expected dataset format:
+                {
+                    "prompt_key": [{"content": <str>, "role": <str>}, ...],
+                    "answer_key": <str>,
+                }
+            - After processing, the data is transformed to:
+                {
+                    "prompt_key": <str>,
+                    "answer_key": <str>,
+                }
+        """
         super().__init__()
         self.data_paths = data_paths
         if isinstance(self.data_paths, str):
@@ -41,6 +73,8 @@ class MathDataset(Dataset):
         self.max_prompt_length = config.data.max_prompt_length
         self.tokenizer = tokenizer
         self.prompt_key = config.data.prompt_key
+        self.answer_key = config.data.answer_key
+        self.apply_chat_template = config.data.apply_chat_template
 
         self.data = self._load_data()
         if config.data.get("filter_prompt_by_length", False):
@@ -50,7 +84,14 @@ class MathDataset(Dataset):
 
             for item in self.data:
                 try:
-                    _, L = self.encode(item[self.prompt_key])
+                    prompt = item[self.prompt_key]
+                    if self.apply_chat_template:
+                        prompt = self.tokenizer.apply_chat_template(
+                            prompt, tokenize=False, add_generation_prompt=True
+                        )
+                        # save the convert data
+                        item[self.prompt_key] = prompt
+                    _, L = self.encode(prompt)
                     if L <= self.max_prompt_length:
                         filtered.append(item)
                 except Exception:
@@ -109,8 +150,11 @@ class MathDataset(Dataset):
         """
 
         prompt = self.data[idx][self.prompt_key]
+        answer = self.data[idx][self.answer_key]
 
-        answer = self.data[idx]["solutions"]
+        # if answer is a string, convert it to a list
+        if isinstance(answer, str):
+            answer = [answer]
 
         prompt_tokens, prompt_length = self.encode(prompt)
         prompt_tokens_tensor = torch.as_tensor(prompt_tokens, dtype=torch.int64)
