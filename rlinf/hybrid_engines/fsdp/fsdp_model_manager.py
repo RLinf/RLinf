@@ -299,6 +299,21 @@ class FSDPModelManager:
             state_dict = FSDP.optim_state_dict(self.model, self.optimizer)
         return state_dict
 
+    def load_model_state_dict(self, state_dict):
+        with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT):
+            FSDP.load_state_dict(self.model, state_dict)
+
+        torch.distributed.barrier()
+
+    def load_optimizer_state_dict(self, state_dict):
+        with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT):
+            optim_state = FSDP.optim_state_dict_to_load(
+                self.model, self.optimizer, state_dict
+            )
+            self.optimizer.load_state_dict(optim_state)
+
+        torch.distributed.barrier()
+
     def offload_fsdp_grad(self):
         for _, param in self.model.named_parameters():
             if param.grad is not None:

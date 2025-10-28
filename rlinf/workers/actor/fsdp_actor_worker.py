@@ -561,6 +561,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
     def init_worker(self):
         self.setup_model_and_optimizer()
+
+        if self.cfg.runner.get("resume_dir", None) is not None:
+            actor_checkpoint_path = os.path.join(self.cfg.runner.resume_dir, "actor")
+            self.load_checkpoint(actor_checkpoint_path)
+
         if self.cfg.actor.get("enable_offload", False):
             self.offload_fsdp_param_and_grad()
             self.offload_fsdp_optimizer()
@@ -910,6 +915,19 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             torch.save(model_state, os.path.join(save_base_path, "model.pt"))
             torch.save(optim_state, os.path.join(save_base_path, "optim.pt"))
         torch.distributed.barrier()
+
+    def load_checkpoint(self, load_base_path):
+        torch.distributed.barrier()
+        model_path = os.path.join(load_base_path, "model.pt")
+        optim_path = os.path.join(load_base_path, "optim.pt")
+
+        model_state = torch.load(model_path, map_location="cpu")
+        optim_state = torch.load(optim_path, map_location="cpu")
+
+        torch.distributed.barrier()
+
+        self.load_model_state_dict(model_state)
+        self.load_optimizer_state_dict(optim_state)
 
     def set_global_step(self, global_step):
         if hasattr(self.model, "set_global_step"):

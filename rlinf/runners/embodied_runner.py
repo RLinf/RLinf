@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 
 from omegaconf.dictconfig import DictConfig
@@ -24,6 +25,8 @@ from rlinf.utils.runner_utils import check_progress
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+logging.getLogger().setLevel(logging.INFO)
 
 
 class EmbodiedRunner:
@@ -63,6 +66,9 @@ class EmbodiedRunner:
         self.actor.init_worker().wait()
         self.rollout.init_worker().wait()
         self.env.init_worker().wait()
+
+        if self.cfg.runner.get("resume_dir", None) is not None:
+            self.global_step = int(self.cfg.runner.resume_dir.split("global_step_")[-1])
 
     def update_rollout_weights(self):
         rollout_futures = self.rollout.sync_model_from_actor()
@@ -172,6 +178,7 @@ class EmbodiedRunner:
     def _save_checkpoint(self):
         base_output_dir = os.path.join(
             self.cfg.runner.logger.log_path,
+            self.cfg.runner.logger.experiment_name,
             f"checkpoints/global_step_{self.global_step}",
         )
         actor_save_path = os.path.join(base_output_dir, "actor")

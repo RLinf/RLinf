@@ -17,7 +17,7 @@ import importlib.util
 import logging
 import os
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Callable, Union
+from typing import TYPE_CHECKING, Callable, Optional, Union
 
 import torch
 import torch.nn.functional as F
@@ -225,7 +225,7 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
     return cfg
 
 
-def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
+def validate_fsdp_cfg(cfg: DictConfig, resume_dir: Optional[str] = None) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
     with open_dict(cfg):
         if "fsdp_config" not in cfg:
@@ -245,6 +245,9 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
         cfg.fsdp_config.use_liger_kernel = cfg.get("fsdp_config", {}).get(
             "use_liger_kernel", False
         )
+
+        if resume_dir is not None:
+            cfg.fsdp_config.use_orig_params = True
 
         assert cfg.fsdp_config.backward_prefetch in [
             None,
@@ -672,7 +675,7 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         cfg.actor = validate_megatron_cfg(cfg.actor)
         cfg.actor = validate_model_cfg_by_hf_config(cfg.actor, cfg.rollout.model_dir)
     elif cfg.actor.training_backend == "fsdp":
-        cfg.actor = validate_fsdp_cfg(cfg.actor)
+        cfg.actor = validate_fsdp_cfg(cfg.actor, cfg.runner.get("resume_dir", None))
 
     if cfg.critic.use_critic_model and cfg.critic.training_backend == "megatron":
         cfg.critic = validate_megatron_cfg(cfg.critic)
