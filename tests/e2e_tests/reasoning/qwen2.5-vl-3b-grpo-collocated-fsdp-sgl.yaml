@@ -128,6 +128,8 @@ data:
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: prompt
+  answer_key: solutions
+  apply_chat_template: False
   image_keys: ["image"] # some vlm datasets may have multiple image columns
   choice_key: "choices"
   answer_key: "answer"
