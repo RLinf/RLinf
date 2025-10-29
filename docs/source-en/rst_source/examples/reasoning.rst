@@ -30,41 +30,48 @@ An example training sample looks like:
       "solutions": ["\\boxed{x}"]
    }
 
-We also support importing other dataset types. Please note the required format below:
+.. note::
 
-**When apply_chat_template = False**
+  Ensure the dataset is structured as the above using the default configurations.
+  Otherwise, read below configuration guidelines carefully to adapt RLinf to your dataset.
 
-- The prompt is used directly from the dataset without any modification.
-- Note: Make sure the prompt format is correct and verify that the dataset already contain tokenizer-specific special characters.
-- Expected dataset format:
+We also support importing other dataset types.
+To support different dataset formats, you can adjust the configuration as needed.
 
-.. code-block:: json
+- **Prompt key and answer key configurations**
 
-    {
-      "prompt_key": "<str>",
-      "answer_key": "<str>",
-    }
+  The default configuration expects the dataset to have the `prompt` and `solutions` keys for retrieving the prompt and answer like in the Boba dataset.
 
-**When apply_chat_template = True**
+  However, different datasets may have different key names or structures. You can customize the configuration to match your dataset's format.
+  Change the `prompt_key` and `answer_key` in the configuration yaml file to point to the correct fields in your dataset.
 
-- The raw dataset is processed through tokenizer.apply_chat_template() to format the prompt according to the model's chat template.
-- Expected dataset format:
+  For example, if your dataset uses `prompt` and `label` as keys, you would set:
 
-.. code-block:: json
+  .. code-block:: yaml
 
-    {
-        "prompt_key": [{"content": "<str>", "role": "<str>"},],
-        "answer_key": "<str>",
-    }
+      prompt_key: "prompt"
+      answer_key: "label"
 
-- After processing, the dataset is transformed into:
+- **apply_chat_template configuration**
 
-.. code-block:: json
+  Some datasets may require the use of a chat template for the prompt.
+  If so, you will need to enable the `apply_chat_template` option in the configuration.
 
-    {
-        "prompt_key": "<str>",
-        "answer_key": "<str>",
-    }
+  .. code-block:: yaml
+
+      apply_chat_template: true
+
+  For example, if your dataset has a specific structure for chat messages, you need to enable this option to properly format the prompt. Such as:
+
+  .. code-block:: json
+
+      {
+          "prompt": [{"content": "<str>", "role": "<str>"},],
+          "label": "<str>",
+      }
+
+  When the option is enabled, the raw dataset is processed through `tokenizer.apply_chat_template()` to format the prompt according to the model's chat template.
+  After processing, the prompt will be converted into a string for input.
 
 Algorithm
 ---------

@@ -29,39 +29,47 @@ Math推理的强化学习训练
       "solutions": ["\\boxed{x}"]
    }
 
-我们也支持导入其他类型的数据集，但请注意当前数据集的读入格式如下：
+.. note::
 
-- **apply_chat_template 设置为 False 时**
-- 直接使用数据集中的 prompt 而不进行任何修改。
-- 注意：确保 prompt 格式是用户预期使用的格式，请仔细检查数据集是否已经包含 tokenizer-specific 特殊字符。
-- 期望的数据集格式：
+  请确认数据集格式是按照上述结构配置。
+  否则，请仔细阅读下方的配置指南，使用 RLinf 适配您的数据集。
 
-.. code-block:: json
+我们支持导入其他类型结构的数据集。
+如需导入不同的数据集并作出特殊处理，您可根据需求调整配置。
 
-   {
-      "prompt_key": "<str>",
-      "answer_key": "<str>",
-   }
+- **Prompt key 和 answer key 配置**
 
-- **apply_chat_template 设置为 True 时**
-- 使用 tokenizer 的 apply_chat_template() 方法处理数据集中的 prompt，根据模型的 tokenizer 格式化输入的 prompt。
-- 期望的数据集格式：
+  默认配置要求数据集使用 `prompt` 和 `solutions` 键分别用于获取提示词信息和答案信息。
 
-.. code-block:: json
+  但不同数据集可能使用不同的键名或结构，您可自定义配置以匹配数据集格式。
+  在配置 yaml 文件中修改 `prompt_key` 和 `answer_key` 的值，使其指向数据集中对应的字段即可。
 
-   {
-        "prompt_key": [{"content": "<str>", "role": "<str>"},],
-        "answer_key": "<str>",
-   }
+  比如说，如果您的数据集使用如下所示的 `prompt` 和 `label` 作为键名，您需要设置：
 
-- 处理后，数据集将被转换为：
+  .. code-block:: yaml
 
-.. code-block:: json
+      prompt_key: "prompt"
+      answer_key: "label"
 
-   {
-        "prompt_key": "<str>",
-        "answer_key": "<str>",
-   }
+- **apply_chat_template 配置**
+
+  部分数据集的提示词信息可能需要使用 tokenizer 中的 chat template 进行特殊处理。
+  若需此功能，需在配置中启用 `apply_chat_template` 选项。
+
+  .. code-block:: yaml
+
+      apply_chat_template: true
+
+  比如说，如果您的数据集使用如下所示的特定结构对话消息，则需启用该选项以正确格式化提示词信息：
+  .. code-block:: json
+
+      {
+          "prompt": [{"content": "<str>", "role": "<str>"},],
+          "label": "<str>",
+      }
+
+  启用该选项后，原始数据集将通过 `tokenizer.apply_chat_template()` 方法处理，按照使用模型的 tokenizer 中对话模板对提示词信息进行格式化。
+  处理完成后，提示词信息将转换为字符串格式，用于模型输入。
 
 算法
 ---------
