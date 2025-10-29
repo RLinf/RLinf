@@ -29,6 +29,40 @@ Math推理的强化学习训练
       "solutions": ["\\boxed{x}"]
    }
 
+我们也支持导入其他类型的数据集，但请注意当前数据集的读入格式如下：
+
+- **apply_chat_template 设置为 False 时**
+- 直接使用数据集中的 prompt 而不进行任何修改。
+- 注意：确保 prompt 格式是用户预期使用的格式，请仔细检查数据集是否已经包含 tokenizer-specific 特殊字符。
+- 期望的数据集格式：
+
+.. code-block:: json
+
+   {
+      "prompt_key": <str>,
+      "answer_key": <str>,
+   }
+
+- **apply_chat_template 设置为 True 时**
+- 使用 tokenizer 的 apply_chat_template() 方法处理数据集中的 prompt，根据模型的 tokenizer 格式化输入的 prompt。
+- 期望的数据集格式：
+
+.. code-block:: json
+
+   {
+      "prompt_key": [{"content": <str>, "role": <str>}, ...],
+      "answer_key": <str>,
+   }
+
+- 处理后，数据集将被转换为：
+
+.. code-block:: json
+
+   {
+      "prompt_key": <str>,
+      "answer_key": <str>,
+   }
+
 算法
 ---------
 

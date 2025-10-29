@@ -30,6 +30,42 @@ An example training sample looks like:
       "solutions": ["\\boxed{x}"]
    }
 
+We also support importing other dataset types. Please note the required format below:
+
+**When apply_chat_template = False**
+
+- The prompt is used directly from the dataset without any modification.
+- Note: Make sure the prompt format is correct and verify that the dataset already contain tokenizer-specific special characters.
+- Expected dataset format:
+
+.. code-block:: json
+
+    {
+      "prompt_key": <str>,
+      "answer_key": <str>,
+    }
+
+**When apply_chat_template = True**
+
+- The raw dataset is processed through tokenizer.apply_chat_template() to format the prompt according to the model's chat template.
+- Expected dataset format:
+
+.. code-block:: json
+
+    {
+        "prompt_key": [{"content": <str>, "role": <str>}, ...],
+        "answer_key": <str>,
+    }
+
+- After processing, the dataset is transformed into:
+
+.. code-block:: json
+
+    {
+        "prompt_key": <str>,
+        "answer_key": <str>,
+    }
+
 Algorithm
 ---------
 
