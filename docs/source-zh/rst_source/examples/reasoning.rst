@@ -39,8 +39,8 @@ Math推理的强化学习训练
 .. code-block:: json
 
    {
-      "prompt_key": <str>,
-      "answer_key": <str>,
+      "prompt_key": "<str>",
+      "answer_key": "<str>",
    }
 
 - **apply_chat_template 设置为 True 时**
@@ -50,8 +50,8 @@ Math推理的强化学习训练
 .. code-block:: json
 
    {
-      "prompt_key": [{"content": <str>, "role": <str>}, ...],
-      "answer_key": <str>,
+        "prompt_key": [{"content": "<str>", "role": "<str>"},],
+        "answer_key": "<str>",
    }
 
 - 处理后，数据集将被转换为：
@@ -59,8 +59,8 @@ Math推理的强化学习训练
 .. code-block:: json
 
    {
-      "prompt_key": <str>,
-      "answer_key": <str>,
+        "prompt_key": "<str>",
+        "answer_key": "<str>",
    }
 
 算法

@@ -41,8 +41,8 @@ We also support importing other dataset types. Please note the required format b
 .. code-block:: json
 
     {
-      "prompt_key": <str>,
-      "answer_key": <str>,
+      "prompt_key": "<str>",
+      "answer_key": "<str>",
     }
 
 **When apply_chat_template = True**
@@ -53,8 +53,8 @@ We also support importing other dataset types. Please note the required format b
 .. code-block:: json
 
     {
-        "prompt_key": [{"content": <str>, "role": <str>}, ...],
-        "answer_key": <str>,
+        "prompt_key": [{"content": "<str>", "role": "<str>"},],
+        "answer_key": "<str>",
     }
 
 - After processing, the dataset is transformed into:
@@ -62,8 +62,8 @@ We also support importing other dataset types. Please note the required format b
 .. code-block:: json
 
     {
-        "prompt_key": <str>,
-        "answer_key": <str>,
+        "prompt_key": "<str>",
+        "answer_key": "<str>",
     }
 
 Algorithm
