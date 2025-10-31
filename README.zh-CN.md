@@ -252,8 +252,8 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
     <th style="text-align:center;">Spatial</th>
     <th style="text-align:center;">Object</th>
     <th style="text-align:center;">Goal</th>
-    <th style="text-align:center;">LIBERO-10</th>
-    <th style="text-align:center;">LIBERO-90</th>
+    <th style="text-align:center;">Long</th>
+    <th style="text-align:center;">90</th>
     <th style="text-align:center;">Avg.</th>
   </tr>
   <tr>
