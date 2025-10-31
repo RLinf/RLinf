@@ -342,7 +342,7 @@ class MultiChannelProcessGroup:
             work = group.broadcast([tensor], opts)
             if async_op:
                 return work
-            else:
+            elif work is not None:
                 work.wait()
         except Exception as error:
             pg_name = dist._get_process_group_name(group)
