@@ -30,7 +30,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 
 ## What's NEW!
-- [2025/10] 🔥 RLinf supports reinforcement learning fine-tuning for Pi 0 and Pi0.5! Doc: [RL on π₀ and π₀.₅ Models](https://rlinf.readthedocs.io/en/latest/rst_source/examples/pi0.html) 
+- [2025/10] 🔥 RLinf supports reinforcement learning fine-tuning for Pi 0 and Pi0.5! Doc: [RL on π₀ and π₀.₅ Models](https://rlinf.readthedocs.io/en/latest/rst_source/examples/pi0.html). For more technical details, refer to the [RL fine-tuning for π₀ and π₀.₅ technical report](https://arxiv.org/abs/2510.25889).
 - [2025/10] 🔥 RLinf now officially supports online reinforcement learning! Doc: [coding_online_rl](https://rlinf.readthedocs.io/en/latest/rst_source/examples/coding_online_rl.html), Blog post: [The first open-source agent online RL framework RLinf-Online](https://mp.weixin.qq.com/s/jmohmDokuWLhQHFueSHZIQ).
 - [2025/10] 🔥 The RLinf Algorithm Technical Report [RLinf-VLA: A Unified and Efficient Framework for VLA+RL Training](https://arxiv.org/abs/2510.06710) is released.
 - [2025/09] 🔥 [Example Gallery](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) is updated, users can find various off-the-shelf examples!
@@ -288,26 +288,29 @@ and exhibits greater stability.
 </table>
 </div>
 
-#### &pi;<sub>0</sub> and &pi;<sub>0.5</sub>  Results
+#### &pi;<sub>0</sub> and &pi;<sub>0.5</sub> Results
 
 <div align="center">
 <table style="text-align:center; width:80%; margin:0 auto;">
   <tr>
-    <th colspan="7" style="text-align:center;"><strong>Evaluation results on the four LIBERO task groups</strong></th>
+    <th colspan="8" style="text-align:center;"><strong>Evaluation results on the four LIBERO task groups</strong></th>
   </tr>
-    <tr>
+  <tr>
     <th rowspan="2" colspan="2" style="text-align:center;">Model</th>
-    <th colspan="5" style="text-align:center;">LIBERO</th>
+    <th colspan="6" style="text-align:center;">LIBERO</th>
   </tr>
   <tr>
     <th style="text-align:center;">Spatial</th>
     <th style="text-align:center;">Object</th>
     <th style="text-align:center;">Goal</th>
-    <th style="text-align:center;">10</th>
+    <th style="text-align:center;">Long</th>
     <th style="text-align:center;">Avg.</th>
+    <th style="text-align:center;">&Delta; Avg.</th>
   </tr>
+
+  <!-- Full Dataset SFT (6 rows) -->
   <tr>
-    <td colspan="7" style="text-align:center; font-style:italic;"><strong>Full Dataset SFT</strong></td>
+    <td colspan="8" style="text-align:center; font-style:italic;"><strong>Full Dataset SFT</strong></td>
   </tr>
   <tr>
     <td colspan="2" style="text-align:center;">Octo</td>
@@ -316,6 +319,7 @@ and exhibits greater stability.
     <td style="text-align:center;">84.6%</td>
     <td style="text-align:center;">51.1%</td>
     <td style="text-align:center;">75.1%</td>
+    <td style="text-align:center;">—</td>
   </tr>
   <tr>
     <td colspan="2" style="text-align:center;">OpenVLA</td>
@@ -324,6 +328,7 @@ and exhibits greater stability.
     <td style="text-align:center;">79.2%</td>
     <td style="text-align:center;">53.7%</td>
     <td style="text-align:center;">76.5%</td>
+    <td style="text-align:center;">—</td>
   </tr>
   <tr>
     <td colspan="2" style="text-align:center;">&pi;<sub>fast</sub></td>
@@ -332,6 +337,7 @@ and exhibits greater stability.
     <td style="text-align:center;">88.6%</td>
     <td style="text-align:center;">60.2%</td>
     <td style="text-align:center;">85.5%</td>
+    <td style="text-align:center;">—</td>
   </tr>
   <tr>
     <td colspan="2" style="text-align:center;">OpenVLA-OFT</td>
@@ -340,62 +346,105 @@ and exhibits greater stability.
     <td style="text-align:center;">90.6%</td>
     <td style="text-align:center;">86.5%</td>
     <td style="text-align:center;">91.0%</td>
+    <td style="text-align:center;">—</td>
   </tr>
   <tr>
-    <td colspan="7" style="text-align:center;font-style:italic;"><strong>Few-shot Dataset SFT + RL</strong></td>
+    <td colspan="2" style="text-align:center;">&pi;<sub>0</sub></td>
+    <td style="text-align:center;">96.8%</td>
+    <td style="text-align:center;">98.8%</td>
+    <td style="text-align:center;">95.8%</td>
+    <td style="text-align:center;">85.2%</td>
+    <td style="text-align:center;">94.2%</td>
+    <td style="text-align:center;">—</td>
+  </tr>
+  <tr>
+    <td colspan="2" style="text-align:center;">&pi;<sub>0.5</sub></td>
+    <td style="text-align:center;">98.8%</td>
+    <td style="text-align:center;">98.2%</td>
+    <td style="text-align:center;">98.0%</td>
+    <td style="text-align:center;">92.4%</td>
+    <td style="text-align:center;">96.9%</td>
+    <td style="text-align:center;">—</td>
+  </tr>
+
+  <!-- Few-shot SFT + RL: pi_0 -->
+  <tr>
+    <td colspan="8" style="text-align:center; font-style:italic;"><strong>Few-shot Dataset SFT + RL</strong></td>
   </tr>
   <tr>
     <td rowspan="3" style="text-align:center;">&pi;<sub>0</sub></td>
-    <td style="text-align:center;"><a href="https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal"><img src="docs/source-en/_static/svg/modelscope-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;"></a><a href="https://huggingface.co/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">SFT</a></td>
+    <td style="text-align:center;">
+      <a href="https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal">
+        <img src="docs/source-en/_static/svg/modelscope-logo.svg" alt="ModelScope" width="16" height="16" style="vertical-align: middle;">
+      </a>
+      <a href="https://huggingface.co/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal">
+        <img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">SFT
+      </a>
+    </td>
     <td style="text-align:center;">65.3%</td>
     <td style="text-align:center;">64.4%</td>
     <td style="text-align:center;">49.8%</td>
     <td style="text-align:center;">51.2%</td>
     <td style="text-align:center;">57.6%</td>
+    <td style="text-align:center;">—</td>
   </tr>
   <tr>
-    <td style="text-align:center;">+ GRPO</td>
-    <td style="text-align:center;">97.8%</td>
-    <td style="text-align:center;">97.8%</td>
-    <td style="text-align:center;">83.2%</td>
-    <td style="text-align:center;">81.4%</td>
-    <td style="text-align:center;">90.0%</td>
-  </tr>
-  <tr>
-    <td style="text-align:center;">+ PPO</td>
+    <td style="text-align:center;">Flow-SDE</td>
     <td style="text-align:center;">98.4%</td>
     <td style="text-align:center;">99.4%</td>
     <td style="text-align:center;">96.2%</td>
     <td style="text-align:center;">90.2%</td>
-    <td style="text-align:center;">96.0%</td>
+    <td style="text-align:center;">96.1%</td>
+    <td style="text-align:center;">+38.5</td>
   </tr>
   <tr>
-    <td colspan="7" style="text-align:center;font-style:italic;"><strong>Few-shot Dataset SFT + RL</strong></td>
+    <td style="text-align:center;">Flow-Noise</td>
+    <td style="text-align:center;">99.0%</td>
+    <td style="text-align:center;">99.2%</td>
+    <td style="text-align:center;">98.2%</td>
+    <td style="text-align:center;">93.8%</td>
+    <td style="text-align:center;">97.6%</td>
+    <td style="text-align:center;"><b>+40.0</b></td>
+  </tr>
+
+  <!-- Few-shot SFT + RL: pi_0.5 -->
+  <tr>
+    <td colspan="8" style="text-align:center; font-style:italic;"><strong>Few-shot Dataset SFT + RL</strong></td>
   </tr>
   <tr>
     <td rowspan="3" style="text-align:center;">&pi;<sub>0.5</sub></td>
-    <td style="text-align:center;"><a href="https://www.modelscope.cn/models/RLinf/RLinf-Pi05-SFT"><img src="docs/source-en/_static/svg/modelscope-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;"></a><a href="https://huggingface.co/RLinf/RLinf-Pi05-SFT"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">SFT</a></td>
+    <td style="text-align:center;">
+      <a href="https://www.modelscope.cn/models/RLinf/RLinf-Pi05-SFT">
+        <img src="docs/source-en/_static/svg/modelscope-logo.svg" alt="ModelScope" width="16" height="16" style="vertical-align: middle;">
+      </a>
+      <a href="https://huggingface.co/RLinf/RLinf-Pi05-SFT">
+        <img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">SFT
+      </a>
+    </td>
     <td style="text-align:center;">84.6%</td>
     <td style="text-align:center;">95.4%</td>
     <td style="text-align:center;">84.6%</td>
-    <td style="text-align:center;">44.2%</td>
-    <td style="text-align:center;">77.2%</td>
+    <td style="text-align:center;">43.9%</td>
+    <td style="text-align:center;">77.1%</td>
+    <td style="text-align:center;">—</td>
   </tr>
   <tr>
-    <td style="text-align:center;">+ GRPO</td>
-    <td style="text-align:center;">97.4%</td>
-    <td style="text-align:center;">99.8%</td>
-    <td style="text-align:center;">91.2%</td>
-    <td style="text-align:center;">77.6%</td>
-    <td style="text-align:center;">91.5%</td>
-  </tr>
-  <tr>
-    <td style="text-align:center;">+ PPO</td>
+    <td style="text-align:center;">Flow-SDE</td>
     <td style="text-align:center;">99.6%</td>
     <td style="text-align:center;">100%</td>
-    <td style="text-align:center;">97.4%</td>
-    <td style="text-align:center;">90.6%</td>
-    <td style="text-align:center;">96.9%</td>
+    <td style="text-align:center;">98.8%</td>
+    <td style="text-align:center;">93.0%</td>
+    <td style="text-align:center;">97.9%</td>
+    <td style="text-align:center;">+20.8</td>
+  </tr>
+  <tr>
+    <td style="text-align:center;">Flow-Noise</td>
+    <td style="text-align:center;"><b>99.6%</b></td>
+    <td style="text-align:center;"><b>100%</b></td>
+    <td style="text-align:center;"><b>99.6%</b></td>
+    <td style="text-align:center;"><b>94.0%</b></td>
+    <td style="text-align:center;"><b>98.3%</b></td>
+    <td style="text-align:center;">+21.2</td>
   </tr>
 </table>
 </div>
@@ -561,6 +610,18 @@ If you use RL+VLA in RLinf, you can also cite our technical report and empirical
   archivePrefix={arXiv},
   primaryClass={cs.LG},
   url={https://arxiv.org/abs/2505.19789}, 
+}
+```
+
+```bibtex
+@misc{chen2025pitextttrlonlinerlfinetuning,
+      title={$\pi_\texttt{RL}$: Online RL Fine-tuning for Flow-based Vision-Language-Action Models}, 
+      author={Kang Chen and Zhihao Liu and Tonghe Zhang and Zhen Guo and Si Xu and Hao Lin and Hongzhi Zang and Quanlu Zhang and Zhaofei Yu and Guoliang Fan and Tiejun Huang and Yu Wang and Chao Yu},
+      year={2025},
+      eprint={2510.25889},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2510.25889}, 
 }
 ```
 
