@@ -21,6 +21,7 @@ from functools import partial, wraps
 
 import torch
 import torch.nn.functional as F
+from omegaconf import DictConfig
 
 
 def clear_memory(sync=True):
@@ -271,3 +272,10 @@ def output_redirector(func):
             sys.stderr = old_stderr
 
     return wrapper
+
+
+def is_vla_model(cfg: DictConfig) -> bool:
+    """Check if the model is a VLA model based on the configuration."""
+    model_type = cfg.model.get("model_name", "").lower()
+    vla_model_types = {"openvla", "openvla_oft"}
+    return model_type in vla_model_types

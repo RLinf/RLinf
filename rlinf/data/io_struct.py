@@ -62,37 +62,6 @@ class RolloutRequest:
     answers: List[str]
     multi_modal_inputs: List[Dict]
 
-    def repeat(self) -> "RolloutRequest":
-        """Repeat each input in the RolloutRequest a specified number of times.
-
-        Args:
-            times (int): The number of times to repeat each input.
-
-        Returns:
-            RolloutRequest: A new RolloutRequest with repeated inputs.
-        """
-        assert self.n > 0, "n must be greater than 0"
-
-        input_ids, answers, image_data, multi_modal_inputs = zip(
-            *[
-                (input_id, answer, image_data, multi_modal_inputs)
-                for input_id, answer, image_data, multi_modal_inputs in zip(
-                    self.input_ids,
-                    self.answers,
-                    self.image_data,
-                    self.multi_modal_inputs,
-                )
-                for _ in range(self.n)
-            ]
-        )
-        return RolloutRequest(
-            n=self.n,
-            input_ids=list(input_ids),
-            answers=list(answers),
-            image_data=list(image_data),
-            multi_modal_inputs=list(multi_modal_inputs),
-        )
-
     def split(self, num_splits: int) -> List["RolloutRequest"]:
         """Split the RolloutRequest into multiple smaller requests.
 

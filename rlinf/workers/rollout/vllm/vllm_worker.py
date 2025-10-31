@@ -326,7 +326,7 @@ class VLLMWorker(Worker):
         engine_args: EngineArgs = EngineArgs(
             model=self._cfg.rollout.model_dir,
             tensor_parallel_size=self._cfg.rollout.tensor_parallel_size,
-            dtype=torch_dtype_from_precision(self._cfg.actor.model.precision),
+            dtype=torch_dtype_from_precision(self._cfg.rollout.precision),
             gpu_memory_utilization=self._cfg.rollout.gpu_memory_utilization,
             enforce_eager=self._cfg.rollout.enforce_eager,
             enable_chunked_prefill=self._cfg.rollout.vllm.enable_chunked_prefill,

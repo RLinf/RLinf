@@ -118,8 +118,9 @@ class EmbodiedRunner:
                     self.metric_logger.log(data=eval_metrics, step=_step)
 
             with self.timer("step"):
-                with self.timer("rollout"):
+                with self.timer("sync_weights"):
                     self.update_rollout_weights()
+                with self.timer("generate_rollouts"):
                     env_metrics = self.generate_rollouts()
 
                 # compute advantages and returns.
@@ -148,6 +149,7 @@ class EmbodiedRunner:
 
             time_metrics = self.timer.consume_durations()
 
+            time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
             rollout_metrics = {
                 f"rollout/{k}": v for k, v in actor_rollout_metrics[0].items()
             }
@@ -179,8 +181,8 @@ class EmbodiedRunner:
             f"checkpoints/global_step_{self.global_step}",
         )
         actor_save_path = os.path.join(base_output_dir, "actor")
-        save_futures = self.actor.save_checkpoint(actor_save_path, self.global_step)
-        save_futures.wait()
+        os.makedirs(actor_save_path, exist_ok=True)
+        self.actor.save_checkpoint(actor_save_path, self.global_step).wait()
 
     def set_max_steps(self):
         self.num_steps_per_epoch = 1

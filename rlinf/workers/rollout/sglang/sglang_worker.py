@@ -139,7 +139,8 @@ class SGLangWorker(Worker):
                 self._cfg.rollout.max_running_requests,
             ),
             load_format="dummy" if not self._cfg.rollout.validate_weight else "auto",
-            dtype=torch_dtype_from_precision(self._cfg.actor.model.precision),
+            # disable_overlap_schedule=True,
+            dtype=torch_dtype_from_precision(self._cfg.rollout.precision),
             # sglang will only return text/output_ids when skip_tokenizer_init=False/True
             # text is not needed in RL training, so set to True can save time.
             skip_tokenizer_init=not self._cfg.rollout.detokenize,
