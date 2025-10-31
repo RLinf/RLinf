@@ -14,6 +14,7 @@
 
 import os
 from pathlib import Path
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -176,8 +177,7 @@ class PutOnPlateInScene25(BaseEnv):
         self.xyz_configs = xyz_configs
         self.quat_configs = quat_configs
 
-        print(f"xyz_configs: {xyz_configs.shape}")
-        print(f"quat_configs: {quat_configs.shape}")
+        print(f"xyz_configs: {xyz_configs.shape}\tquat_configs: {quat_configs.shape}")
 
     @property
     def _default_sim_config(self):
@@ -672,11 +672,6 @@ class PutOnPlateInScene25(BaseEnv):
         self.extra_stats["extra_pos_gripper"] = gripper_p
         self.extra_stats["extra_q_gripper"] = gripper_q
 
-        self.task_metric_states = {
-            "episode_stats": self.episode_stats,
-            "extra_stats": self.extra_stats,
-        }
-
         return dict(**self.episode_stats, success=success)
 
     def is_final_subtask(self):
@@ -749,8 +744,11 @@ class PutOnPlateInScene25(BaseEnv):
 
         return rgb_ret
 
-    def _get_obs_sensor_data(self, apply_texture_transforms=True):
-        sensor_obs = super()._get_obs_sensor_data(apply_texture_transforms)
+    def get_obs(self, info: Optional[dict] = None, unflattened=True):
+        assert unflattened
+        obs = super().get_obs(info)
+
+        # "greenscreen" process
         if (
             self.obs_mode_struct.visual.rgb
             and self.obs_mode_struct.visual.segmentation
@@ -758,23 +756,27 @@ class PutOnPlateInScene25(BaseEnv):
         ):
             # get the actor ids of objects to manipulate; note that objects here are not articulated
             camera_name = self.rgb_camera_name
-            assert "segmentation" in sensor_obs[camera_name].keys()
+            assert "segmentation" in obs["sensor_data"][camera_name].keys()
 
-            raw_rgb_device = sensor_obs[camera_name]["rgb"].device
-
-            overlay_img = self.overlay_images.to(raw_rgb_device)
-            overlay_texture = self.overlay_textures.to(raw_rgb_device)
-            overlay_mix = self.overlay_mix.to(raw_rgb_device)
+            overlay_img = self.overlay_images.to(
+                obs["sensor_data"][camera_name]["rgb"].device
+            )
+            overlay_texture = self.overlay_textures.to(
+                obs["sensor_data"][camera_name]["rgb"].device
+            )
+            overlay_mix = self.overlay_mix.to(
+                obs["sensor_data"][camera_name]["rgb"].device
+            )
 
             green_screened_rgb = self._green_sceen_rgb(
-                sensor_obs[camera_name]["rgb"],
-                sensor_obs[camera_name]["segmentation"],
+                obs["sensor_data"][camera_name]["rgb"],
+                obs["sensor_data"][camera_name]["segmentation"],
                 overlay_img,
                 overlay_texture,
                 overlay_mix,
             )
-            sensor_obs[camera_name]["rgb"] = green_screened_rgb
-        return sensor_obs
+            obs["sensor_data"][camera_name]["rgb"] = green_screened_rgb
+        return obs
 
     # widowx
     @property
@@ -806,7 +808,8 @@ class PutOnPlateInScene25(BaseEnv):
     asset_download_ids=["bridge_v2_real2sim"],
 )
 class PutOnPlateInScene25MainV3(PutOnPlateInScene25):
-    def __init__(self, obj_set, **kwargs):
+    def __init__(self, obj_set="train", **kwargs):
+        # Tonghe add default value "train" for obj_set to generate train set data for SFT.
         self.obj_set = obj_set
         self._prep_init()
 
@@ -822,11 +825,13 @@ class PutOnPlateInScene25MainV3(PutOnPlateInScene25):
         self.model_db_plate: dict[str, dict] = io_utils.load_json(
             CARROT_DATASET_DIR / "more_plate" / "model_db.json"
         )
-        only_plate_name = list(self.model_db_plate.keys())[0]
-        self.model_db_plate = {
-            k: v for k, v in self.model_db_plate.items() if k == only_plate_name
-        }
-        assert len(self.model_db_plate) == 1
+
+        # Tonghe comment this out to allow various plate types
+        # only_plate_name = list(self.model_db_plate.keys())[0]  # Whyonly use the first plate?
+        # self.model_db_plate = {
+        #     k: v for k, v in self.model_db_plate.items() if k == only_plate_name
+        # }
+        # assert len(self.model_db_plate) == 1
 
         # random configs
         self.carrot_names = list(self.model_db_carrot.keys())
@@ -871,6 +876,20 @@ class PutOnPlateInScene25MainV3(PutOnPlateInScene25):
 
     @property
     def basic_obj_infos(self):
+        """
+        lc: number of carrot types, maximum is 25.
+        lc_offset: offset of carrot types
+
+        lo: number of table types, maximum is 21.
+        lo_offset: offset of table types
+
+        lp: number of plate types, maximum is 17.
+        lp_offset: offset of plate types
+
+        l1: number of xyz configurations
+        l2: number of quat configurations
+
+        """
         if self.obj_set == "train":
             lc = 16
             lc_offset = 0
@@ -933,10 +952,6 @@ class PutOnPlateInScene25MainV3(PutOnPlateInScene25):
             self.episode_id[reset_env_ids] = episode_id
         else:
             raise ValueError(f"Invalid env_idx: {env_idx}")
-
-        self.task_reset_states = {
-            "episode_id": self.episode_id,
-        }
 
     def _initialize_episode_pre(self, env_idx: torch.Tensor, options: dict):
         lc, lc_offset, lo, lo_offset, lp, lp_offset, l1, l2 = self.basic_obj_infos

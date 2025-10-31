@@ -164,8 +164,7 @@ class PutOnPlateInScene25MultiPlate(PutOnPlateInScene25MainV3):
         self.xyz_configs = xyz_configs
         self.quat_configs = quat_configs
 
-        print(f"xyz_configs: {xyz_configs.shape}")
-        print(f"quat_configs: {quat_configs.shape}")
+        print(f"xyz_configs: {xyz_configs.shape}\tquat_configs: {quat_configs.shape}")
 
     @property
     def basic_obj_infos(self):
