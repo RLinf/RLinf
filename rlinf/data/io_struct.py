@@ -52,88 +52,15 @@ class RolloutRequest:
     input_ids: List of input token IDs for rollout
     n: Number of completions to generate for each input
     image_data: list of image data (bytes or URLs) for multimodal inputs
-    answers: Optional list of answers for the requests, if available
+    answers: Optional list of list of answers for the requests, if available
     multi_modal_inputs: list of multi-modal inputs for the requests
     """
 
     n: int
     input_ids: List[List[int]]
     image_data: Union[List[List[bytes]], List[List[str]]]
-    answers: List[str]
+    answers: List[List[Union[str, dict]]]
     multi_modal_inputs: List[Dict]
-
-    def repeat(self) -> "RolloutRequest":
-        """Repeat each input in the RolloutRequest a specified number of times.
-
-        Args:
-            times (int): The number of times to repeat each input.
-
-        Returns:
-            RolloutRequest: A new RolloutRequest with repeated inputs.
-        """
-        assert self.n > 0, "n must be greater than 0"
-
-        input_ids, answers, image_data, multi_modal_inputs = zip(
-            *[
-                (input_id, answer, image_data, multi_modal_inputs)
-                for input_id, answer, image_data, multi_modal_inputs in zip(
-                    self.input_ids,
-                    self.answers,
-                    self.image_data,
-                    self.multi_modal_inputs,
-                )
-                for _ in range(self.n)
-            ]
-        )
-        return RolloutRequest(
-            n=self.n,
-            input_ids=list(input_ids),
-            answers=list(answers),
-            image_data=list(image_data),
-            multi_modal_inputs=list(multi_modal_inputs),
-        )
-
-    def split(self, num_splits: int) -> List["RolloutRequest"]:
-        """Split the RolloutRequest into multiple smaller requests.
-
-        Args:
-            num_splits (int): The number of splits to create.
-
-        Returns:
-            List[RolloutRequest]: A list of smaller RolloutRequest instances.
-        """
-        assert num_splits > 0, "num_splits must be greater than 0"
-        assert len(self.input_ids) % num_splits == 0, (
-            f"Input IDs length {len(self.input_ids)} is not divisible by num_splits {num_splits}"
-        )
-
-        input_ids_split_list = split_list(self.input_ids, num_splits)
-        answers_split_list = split_list(self.answers, num_splits)
-        image_data_split_list = split_list(self.image_data, num_splits)
-        multi_modal_inputs_split_list = split_list(self.multi_modal_inputs, num_splits)
-
-        splitted_requests = []
-        for (
-            input_ids_batch,
-            answers_batch,
-            image_data_batch,
-            multi_modal_inputs_batch,
-        ) in zip(
-            input_ids_split_list,
-            answers_split_list,
-            image_data_split_list,
-            multi_modal_inputs_split_list,
-        ):
-            request = RolloutRequest(
-                n=self.n,
-                input_ids=input_ids_batch,
-                answers=answers_batch,
-                image_data=image_data_batch,
-                multi_modal_inputs=multi_modal_inputs_batch,
-            )
-            splitted_requests.append(request)
-
-        return splitted_requests
 
     def to_seq_group_infos(self) -> List["SeqGroupInfo"]:
         """Convert the RolloutRequest into a list of SeqGroupInfo objects.
@@ -145,12 +72,12 @@ class RolloutRequest:
             SeqGroupInfo(
                 id=uuid.uuid4().int,
                 input_ids=input_ids,
-                answer=answers,
+                answer=answer,
                 group_size=self.n,
                 image_data=image_data,
                 multi_modal_inputs=multi_modal_inputs,
             )
-            for input_ids, answers, image_data, multi_modal_inputs in zip(
+            for input_ids, answer, image_data, multi_modal_inputs in zip(
                 self.input_ids,
                 self.answers,
                 self.image_data,
@@ -176,7 +103,7 @@ class SeqGroupInfo:
     Attributes:
         id (int): Unique identifier for the sequence group.
         input_ids (List[int]): List of input IDs of the original sequence.
-        answer (List[str]): List of answers of the original sequence.(One sequence can have multiple equivalent answers)
+        answer (List[Union[str, dict]]): List of answers of the original sequence.(One sequence can have multiple equivalent answers)
         group_size (int): Number of sequences in the group.
         idx_completed (set[int]): Set of indices for sequences that have completed rollout and are ready for evaluation.
         idx_aborted (set[int]): Set of indices for sequences that have been aborted. These sequences need to be re-rolled out before they can be evaluated.
@@ -185,13 +112,13 @@ class SeqGroupInfo:
 
     id: int
     input_ids: List[int]
-    answer: List[str]
+    answer: List[Union[str, dict]]
     group_size: int
     idx_completed: set[int] = field(init=False, compare=False)
     idx_aborted: set[int] = field(init=False, compare=False)
     results: List[Optional[Dict]] = field(init=False, compare=False)
     image_data: Optional[List] = None
-    multi_modal_inputs: Optional[List] = None
+    multi_modal_inputs: Optional[Dict] = None
 
     def __post_init__(self):
         assert self.group_size > 0, "group_size must be greater than 0"
