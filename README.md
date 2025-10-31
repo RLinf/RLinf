@@ -254,7 +254,7 @@ and exhibits greater stability.
     <th style="text-align:center;">Spatial</th>
     <th style="text-align:center;">Object</th>
     <th style="text-align:center;">Goal</th>
-    <th style="text-align:center;">10</th>
+    <th style="text-align:center;">Long</th>
     <th style="text-align:center;">90</th>
     <th style="text-align:center;">Avg.</th>
   </tr>
