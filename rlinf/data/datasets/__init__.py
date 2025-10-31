@@ -37,6 +37,7 @@ from transformers import AutoTokenizer
 from rlinf.data.datasets.item import DatasetItem
 from rlinf.data.datasets.math import MathDataset
 from rlinf.data.datasets.vlm import VLMDatasetRegistry
+from rlinf.data.datasets.rstar2 import Rstar2Dataset
 
 
 def create_rl_dataset(
@@ -56,6 +57,8 @@ def create_rl_dataset(
 
     if config.data.type == "math":
         dataset_cls = MathDataset
+    elif config.data.type == "rstar2":
+        dataset_cls = Rstar2Dataset
     elif config.data.type == "vision_language":
         # Prefer new factory-based VLM datasets; fallback to legacy if requested
         dataset_name = getattr(config.data, "dataset_name", None)
@@ -137,6 +140,7 @@ def collate_fn(data_list: List["DatasetItem"]) -> Dict[str, Any]:
         "length": batch_length,  # [B]
         "answer": [it.answer for it in data_list],  # List[str]
         "idx": batch_idx,  # [B]
+        "raw_prompt": [it.raw_prompt for it in data_list],  # List[Optional[List[Dict[str, Any]]]]
         "solution": [it.solution for it in data_list],  # List[Optional[str]]
         "image_data": [
             it.image_data for it in data_list

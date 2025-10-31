@@ -67,16 +67,18 @@ class ToolAgentLoop(Worker):
         # 初始化AgentLoopBase的功能
         self.cfg = cfg
         self.component_placement = placement
-        self.loop = asyncio.get_event_loop()
+        self.loop = asyncio.get_running_loop()
         
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.rollout.model_dir)
-       
+        if self.cfg.rollout.get("custom_chat_template", None) is not None:
+            self.tokenizer.chat_template = cfg.rollout.custom_chat_template
         # Configuration
         self.max_user_turns = cfg.agentloop.get("max_user_turns", 5)
         self.max_assistant_turns = cfg.agentloop.get("max_assistant_turns", 5)
         self.max_parallel_calls = cfg.agentloop.get("max_parallel_calls", 3)
         self.max_tool_response_length = cfg.agentloop.get("max_tool_response_length", 500)
         self.tool_response_truncate_side = cfg.agentloop.get("tool_response_truncate_side", "right")
+        self.return_logprobs = cfg.agentloop.get("return_logprobs", False)
         
         # Initialize tool parser
         self.tool_parser = ToolParser.get_tool_parser("hermes", self.tokenizer)
@@ -86,6 +88,7 @@ class ToolAgentLoop(Worker):
         # 存储工具配置（可序列化）
         self.tool_config = None
         self._tools_initialized = False
+        self.tool_schemas = None
     
         # 持有 rollout（AsyncSGLangWorker 的 group 句柄）
         self.rollout = None
@@ -165,9 +168,9 @@ class ToolAgentLoop(Worker):
                 for group in request_groups:
                     # 为当前group创建任务（直接调用本地 ToolAgentLoop）
                     
-                    for raw_id, input_ids in enumerate(group.input_ids):
+                    for message in group.raw_prompts:
                         task = asyncio.create_task(
-                            self.run(input_ids)
+                            self.run(message)
                         )
                         rollout_tasks.append(task)
 
@@ -209,7 +212,7 @@ class ToolAgentLoop(Worker):
         
             # self.rollout.offload_engine().wait()
 
-    async def run(self, prompt_ids: list[int], **kwargs) -> AgentLoopOutput:
+    async def run(self, messages: List[Dict[str, Any]], **kwargs) -> AgentLoopOutput:
         """Run the tool agent loop with token ids as input, return ids.
 
         - 使用 rollout.agenerate 直接生成 response_ids（token ids）。
@@ -221,8 +224,17 @@ class ToolAgentLoop(Worker):
         response_mask = []
         response_logprobs = []
         user_turns, assistant_turns = 0, 0
-        
-        # Main conversation loop
+        # print(f"messages: {messages}")
+        prompt_ids = await self.loop.run_in_executor(
+            None,
+            lambda: self.tokenizer.apply_chat_template(
+                messages,
+                tools=self.tool_schemas,
+                add_generation_prompt=True,
+                tokenize=True,
+                **self.apply_chat_template_kwargs,
+            ),
+        )
         history_tool_calls = []
         while True:
             # Generate response from LLM
@@ -234,12 +246,14 @@ class ToolAgentLoop(Worker):
             if len(prompt_ids) > max_prompt_len:
                 prompt_ids = prompt_ids[-max_prompt_len:]
 
-            response_ids = await self._agenerate(prompt_ids)
+            response_ids, log_probs = await self._agenerate(prompt_ids)
             if len(response_ids) > max_resp_len:
                 response_ids = response_ids[:max_resp_len]
 
             prompt_ids += response_ids
             response_mask += [1] * len(response_ids)  # 1 for LLM generated tokens
+            if log_probs:
+                response_logprobs += log_probs
             # print(f"response_mask: {len(response_mask)}")
             assistant_turns += 1
             # Check termination conditions
@@ -252,10 +266,10 @@ class ToolAgentLoop(Worker):
             
             # Extract tool calls from response
             _, tool_calls = await self.tool_parser.extract_tool_calls(response_ids)
-            # print(f"tool_calls: {tool_calls}")
+            
             if not tool_calls:
                 break
-            
+            print(f"tool_calls: {tool_calls}")
             # Execute tools in parallel with history propagation
             tool_calls = tool_calls[: self.max_parallel_calls]
             total_tool_responses, filtered_tool_calls, pending_pos = [], [], []
@@ -303,6 +317,8 @@ class ToolAgentLoop(Worker):
             # Add tool response tokens
             prompt_ids += tool_response_ids
             response_mask += [0] * len(tool_response_ids)  # 0 for tool response tokens
+            if response_logprobs:
+                response_logprobs += [0.0] * len(tool_response_ids)
             user_turns += 1
         
         # Separate prompt and response
@@ -319,7 +335,7 @@ class ToolAgentLoop(Worker):
 
     async def _agenerate(self, prompt_ids: list[int]) -> list[int]:
         import random
-        instance_num = self.cfg.rollout.get("rollout_instance_num", 4)
+        instance_num = self.cfg.rollout.get("rollout_instance_num", 2)
         sglang_instance_id = random.randint(0, max(1, instance_num) - 1)
         generate_result = await self.rollout.execute_on(sglang_instance_id).agenerate(prompt_ids).async_wait()
         # print(generate_result)
@@ -331,11 +347,16 @@ class ToolAgentLoop(Worker):
             # 若仍是列表（嵌套），再取第一项
             if isinstance(res_obj, list):
                 res_obj = res_obj[0] if len(res_obj) > 0 else {}
-
+        logprobs = []
+        if self.return_logprobs:
+            logprobs = [
+                [item[0] for item in res["meta_info"]["output_token_logprobs"]]
+                for res in generate_result
+            ]
         # 现在应为 Dict
         if isinstance(res_obj, dict):
-            return res_obj.get("response_ids") or res_obj.get("output_ids", [])
-        return []
+            return (res_obj.get("response_ids") or res_obj.get("output_ids", [])), logprobs
+        return [], logprobs
 
     async def _call_tool(self, tool_call: FunctionCall, tools_kwargs: dict[str, Any] | None = None) -> str | dict:
         """Call a tool and return the response.
@@ -397,22 +418,11 @@ class ToolAgentLoop(Worker):
         try:
             logger.info(f"Initializing tools locally in worker with config: {self.tool_config}")
             
-            # 根据配置类型初始化工具
             if isinstance(self.tool_config, str):
                 # 如果是配置文件路径
-                from toolkits.rstar2.tools.tool_registry import load_tools_from_config
+                from toolkits.rstar2.tools.tool_registry import load_tools_from_config, get_tool_schemas_from_config
                 self.tools = await load_tools_from_config(self.tool_config)
-            elif isinstance(self.tool_config, dict):
-                # 如果是配置字典
-                from toolkits.rstar2.tools.shared_tool_manager import SharedToolManager
-                manager = SharedToolManager()
-                # 将dict转换为DictConfig（如果需要）
-                from omegaconf import DictConfig, OmegaConf
-                if not isinstance(self.tool_config, DictConfig):
-                    config_obj = OmegaConf.create(self.tool_config)
-                else:
-                    config_obj = self.tool_config
-                self.tools = await manager._create_tools_from_config_object(config_obj)
+                self.tool_schemas = get_tool_schemas_from_config(self.tool_config)
             else:
                 logger.error(f"Unsupported tool_config type: {type(self.tool_config)}")
                 self.tools = {}

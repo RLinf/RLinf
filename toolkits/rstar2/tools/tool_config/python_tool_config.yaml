@@ -6,7 +6,7 @@ tools:
       request_processor_batch_size: 24
       request_processor_batch_timeout_seconds: 30
       host_addr: "localhost"
-      host_port: "8088"
+      host_port: "8000"
     tool_schema:
       type: "function"
       function:

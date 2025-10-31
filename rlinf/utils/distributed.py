@@ -28,8 +28,6 @@ from torch.distributed import ProcessGroup
 from typing_extensions import Self
 
 from rlinf.utils.timers import NamedTimer
-
-
 def compute_rollout_metrics(
     rollout_batch,
     max_prompt_len,
@@ -45,88 +43,121 @@ def compute_rollout_metrics(
     response_lengths = rollout_batch["response_lengths"].clone().to(device=device)
     reward_scores = rollout_batch["rewards"].clone().to(device=device)
     is_end = rollout_batch["is_end"].clone().float().to(device=device)
-
-    prompt_lengths_list = [
-        torch.empty_like(prompt_lengths) for _ in range(dp_world_size)
-    ]
-    decode_lengths_list = [
-        torch.empty_like(response_lengths) for _ in range(dp_world_size)
-    ]
-    torch.distributed.all_gather(
+    
+    print(f"Rank[{torch.distributed.get_rank()}] before gather, local batch size: {prompt_lengths.size(0)}")
+    
+    # 只对需要返回完整张量的数据使用 all_gather_object
+    prompt_lengths_list = [None for _ in range(dp_world_size)]
+    decode_lengths_list = [None for _ in range(dp_world_size)]
+    
+    torch.distributed.all_gather_object(
         prompt_lengths_list,
-        prompt_lengths,
+        prompt_lengths.cpu(),
         group=dp_group,
     )
-    torch.distributed.all_gather(
+    print(f"Rank[{torch.distributed.get_rank()}] after all_gather_object prompt_lengths({len(prompt_lengths_list)})")
+    
+    torch.distributed.all_gather_object(
         decode_lengths_list,
-        response_lengths,
+        response_lengths.cpu(),
         group=dp_group,
     )
-
-    total_prompt_lengths = torch.cat(prompt_lengths_list, dim=0)
-    total_decode_lengths = torch.cat(decode_lengths_list, dim=0)
-
+    print(f"Rank[{torch.distributed.get_rank()}] after all_gather_object response_lengths({len(decode_lengths_list)})")
+    
+    # 拼接完整张量用于返回
+    # print(f"Rank[{torch.distributed.get_rank()}] before cat prompt_lengths and decode_lengths({prompt_lengths_list}, {decode_lengths_list})")
+    total_prompt_lengths = torch.cat([t.to(device) for t in prompt_lengths_list], dim=0)
+    total_decode_lengths = torch.cat([t.to(device) for t in decode_lengths_list], dim=0)
+    
+    print(f"Rank[{torch.distributed.get_rank()}] after cat prompt_lengths and decode_lengths({len(total_prompt_lengths)}, {len(total_decode_lengths)})")
+    
+    # 对于统计指标，计算本地的 sum 和 count，然后 all_reduce
+    local_stats = torch.tensor([
+        prompt_lengths.sum().float().item(),      # 0: prompt_sum
+        response_lengths.sum().float().item(),    # 1: response_sum
+        reward_scores.sum().float().item(),       # 2: reward_sum
+        is_end.sum().float().item(),              # 3: is_end_sum
+        float(prompt_lengths.size(0)),            # 4: count
+    ], dtype=torch.float32, device=device)
+    
     torch.distributed.all_reduce(
-        prompt_lengths,
-        torch.distributed.ReduceOp.AVG,
-        group=dp_group,
-    )
-    torch.distributed.all_reduce(
-        response_lengths,
-        torch.distributed.ReduceOp.AVG,
-        group=dp_group,
-    )
-    torch.distributed.all_reduce(
-        reward_scores,
-        torch.distributed.ReduceOp.AVG,
-        group=dp_group,
-    )
-    torch.distributed.all_reduce(
-        is_end,
-        torch.distributed.ReduceOp.AVG,
-        group=dp_group,
-    )
-
-    valid_adv = torch.masked_select(advantages, mask)
-    n_valid_token = mask.sum()
-    adv_sum = valid_adv.to(torch.float64).sum()
-    torch.distributed.all_reduce(
-        n_valid_token,
+        local_stats,
         op=torch.distributed.ReduceOp.SUM,
         group=dp_group,
     )
-    torch.distributed.all_reduce(
-        adv_sum,
-        op=torch.distributed.ReduceOp.SUM,
-        group=dp_group,
-    )
-    adv_mean = adv_sum / n_valid_token
-
-    adv_max = torch.max(valid_adv).detach().item()
-    adv_min = torch.min(valid_adv).detach().item()
-    reduce_tensor = torch.as_tensor(
-        [-adv_min, adv_max], device=torch.cuda.current_device(), dtype=torch.float32
-    )
-    torch.distributed.all_reduce(
-        reduce_tensor,
-        torch.distributed.ReduceOp.MAX,
-        group=dp_group,
-    )
-    adv_min, adv_max = reduce_tensor.tolist()
-
+    print(f"Rank[{torch.distributed.get_rank()}] after all_reduce local_stats")
+    
+    # 解包并计算平均值
+    prompt_sum, response_sum, reward_sum, is_end_sum, total_count = local_stats.tolist()
+    avg_prompt_length = prompt_sum / total_count
+    avg_response_length = response_sum / total_count
+    avg_reward_score = reward_sum / total_count
+    avg_is_end = is_end_sum / total_count
+    
+    # 处理 advantages
+    if advantages is not None:
+        valid_adv = torch.masked_select(advantages, mask.bool())
+        n_valid_token = mask.sum()
+        adv_sum = valid_adv.to(torch.float64).sum()
+        
+        # 对于 advantages，我们需要 sum、count、min、max
+        adv_stats = torch.tensor([
+            n_valid_token.float().item(),
+            adv_sum.item(),
+        ], dtype=torch.float64, device=device)
+        
+        torch.distributed.all_reduce(
+            adv_stats,
+            op=torch.distributed.ReduceOp.SUM,
+            group=dp_group,
+        )
+        print(f"Rank[{torch.distributed.get_rank()}] after all_reduce adv_stats")
+        
+        total_valid_tokens, total_adv_sum = adv_stats.tolist()
+        adv_mean = total_adv_sum / total_valid_tokens if total_valid_tokens > 0 else 0.0
+        
+        # 处理 min 和 max
+        if valid_adv.numel() > 0:
+            local_adv_max = torch.max(valid_adv).detach()
+            local_adv_min = torch.min(valid_adv).detach()
+        else:
+            local_adv_max = torch.tensor(float('-inf'), device=device, dtype=torch.float32)
+            local_adv_min = torch.tensor(float('inf'), device=device, dtype=torch.float32)
+        
+        print(f"Rank[{torch.distributed.get_rank()}] before all_reduce min/max ({local_adv_min.item()}, {local_adv_max.item()})")
+        
+        # 用 -min 和 max 一起做 MAX reduce
+        reduce_tensor = torch.tensor([-local_adv_min.item(), local_adv_max.item()], 
+                                     dtype=torch.float32, device=device)
+        
+        torch.distributed.all_reduce(
+            reduce_tensor,
+            torch.distributed.ReduceOp.MAX,
+            group=dp_group,
+        )
+        
+        print(f"Rank[{torch.distributed.get_rank()}] after all_reduce reduce_tensor")
+        
+        adv_min_val, adv_max_val = reduce_tensor.tolist()
+        print(f"Rank[{torch.distributed.get_rank()}] after tolist reduce_tensor({adv_min_val}, {adv_max_val})")
+    else:
+        adv_mean = 0.0
+        adv_max_val = 0.0
+        adv_min_val = 0.0
+    
     rollout_metrics = {
         "batch_size_per_dp": prompt_lengths.size(0),
-        "prompt_length": prompt_lengths.float().mean().item(),
-        "response_length": response_lengths.float().mean().item(),
-        "total_length": (response_lengths + prompt_lengths).float().mean().item(),
-        "reward_scores": reward_scores.mean().item(),
-        "fraction_of_samples_properly_ended": is_end.mean().item(),
-        "advantages_mean": adv_mean.detach().item(),
-        "advantages_max": adv_max,
-        "advantages_min": -adv_min,
+        "prompt_length": avg_prompt_length,
+        "response_length": avg_response_length,
+        "total_length": avg_prompt_length + avg_response_length,
+        "reward_scores": avg_reward_score,
+        "fraction_of_samples_properly_ended": avg_is_end,
+        "advantages_mean": adv_mean,
+        "advantages_max": adv_max_val,
+        "advantages_min": -adv_min_val,
     }
+    
     return rollout_metrics, total_prompt_lengths, total_decode_lengths
-
 
 class RolloutDataBalance(UserDict):
     def __init__(

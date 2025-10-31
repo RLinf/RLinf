@@ -390,7 +390,7 @@ def compute_score(model_output: str, ground_truth: str) -> bool:
 
     is_matched, extracted_model_output = match_answer(model_output)
     format_correctness = "Step 2:" in model_output and "\\box" in model_output
-
+    # print(f"extracted_model_output: {extracted_model_output}, ground_truth: {ground_truth}")
     # grade simple algebra questions. if succeeded, return; otherwise, proceed to more complex grading
     if grade_answer(extracted_model_output, ground_truth):
         return True, True, extracted_model_output

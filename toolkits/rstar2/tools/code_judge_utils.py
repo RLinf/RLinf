@@ -99,7 +99,7 @@ async def run_tool_calls_on_server_async(
     generate_tool_call_code: Callable = None,
     generate_tool_call_input: Callable = None,
     host_addr: str = "localhost",
-    host_port: str = "8088",
+    host_port: str = "8000",
 ):
     submissions = []
     for tool_call in tool_calls:

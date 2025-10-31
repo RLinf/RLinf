@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union, Any
 
 import torch
 from omegaconf import DictConfig
@@ -52,6 +52,7 @@ class RolloutRequest:
     image_data: list of image data (bytes or URLs) for multimodal inputs
     answers: Optional list of answers for the requests, if available
     multi_modal_inputs: list of multi-modal inputs for the requests
+    raw_prompts: list of raw prompts for the requests
     """
 
     n: int
@@ -59,6 +60,7 @@ class RolloutRequest:
     image_data: Union[List[List[bytes]], List[List[str]]]
     answers: List[str]
     multi_modal_inputs: List[Dict]
+    raw_prompts: List[Dict[str, Any]]
 
     def repeat(self) -> "RolloutRequest":
         """Repeat each input in the RolloutRequest a specified number of times.
@@ -71,14 +73,15 @@ class RolloutRequest:
         """
         assert self.n > 0, "n must be greater than 0"
 
-        input_ids, answers, image_data, multi_modal_inputs = zip(
+        input_ids, answers, image_data, multi_modal_inputs, raw_prompts = zip(
             *[
-                (input_id, answer, image_data, multi_modal_inputs)
-                for input_id, answer, image_data, multi_modal_inputs in zip(
+                (input_id, answer, image_data, multi_modal_inputs, raw_prompts)
+                for input_id, answer, image_data, multi_modal_inputs, raw_prompts in zip(
                     self.input_ids,
                     self.answers,
                     self.image_data,
                     self.multi_modal_inputs,
+                    self.raw_prompts,
                 )
                 for _ in range(self.n)
             ]
@@ -89,6 +92,7 @@ class RolloutRequest:
             answers=list(answers),
             image_data=list(image_data),
             multi_modal_inputs=list(multi_modal_inputs),
+            raw_prompts=list(raw_prompts),
         )
 
     def split(self, num_splits: int) -> List["RolloutRequest"]:
@@ -109,18 +113,21 @@ class RolloutRequest:
         answers_split_list = split_list(self.answers, num_splits)
         image_data_split_list = split_list(self.image_data, num_splits)
         multi_modal_inputs_split_list = split_list(self.multi_modal_inputs, num_splits)
-
+        raw_prompts_split_list = split_list(self.raw_prompts, num_splits)   
+        
         splitted_requests = []
         for (
             input_ids_batch,
             answers_batch,
             image_data_batch,
             multi_modal_inputs_batch,
+            raw_prompts_batch,
         ) in zip(
             input_ids_split_list,
             answers_split_list,
             image_data_split_list,
             multi_modal_inputs_split_list,
+            raw_prompts_split_list,
         ):
             request = RolloutRequest(
                 n=self.n,
@@ -128,6 +135,7 @@ class RolloutRequest:
                 answers=answers_batch,
                 image_data=image_data_batch,
                 multi_modal_inputs=multi_modal_inputs_batch,
+                raw_prompts=raw_prompts_batch,
             )
             splitted_requests.append(request)
 
@@ -136,23 +144,25 @@ class RolloutRequest:
     def repeat_and_split(
         self, rollout_batch_size: Optional[int] = None
     ) -> List["RolloutRequest"]:
-        input_ids, answers, image_data, multi_modal_inputs = zip(
+        input_ids, answers, image_data, multi_modal_inputs, raw_prompts = zip(
             *[
-                (input_id, answer, image_data, multi_modal_inputs)
-                for input_id, answer, image_data, multi_modal_inputs in zip(
+                (input_id, answer, image_data, multi_modal_inputs, raw_prompts)
+                for input_id, answer, image_data, multi_modal_inputs, raw_prompts in zip(
                     self.input_ids,
                     self.answers,
                     self.image_data,
                     self.multi_modal_inputs,
+                    self.raw_prompts,
                 )
                 for _ in range(self.n)
             ]
         )
-        input_ids, answers, image_data, multi_modal_inputs = (
+        input_ids, answers, image_data, multi_modal_inputs, raw_prompts = (
             list(input_ids),
             list(answers),
             list(image_data),
             list(multi_modal_inputs),
+            list(raw_prompts),
         )
 
         # Split input ids based on rollout_batch_size_per_gpu
@@ -169,17 +179,19 @@ class RolloutRequest:
         answers_split_list = split_list(answers, num_batches)
         image_data_split_list = split_list(image_data, num_batches)
         multi_modal_inputs_split_list = split_list(multi_modal_inputs, num_batches)
-
+        raw_prompts_split_list = split_list(raw_prompts, num_batches)
         for (
             input_ids_batch,
             answers_batch,
             image_data_batch,
             multi_modal_inputs_batch,
+            raw_prompts_batch,
         ) in zip(
             input_ids_split_list,
             answers_split_list,
             image_data_split_list,
             multi_modal_inputs_split_list,
+            raw_prompts_split_list,
         ):
             request = RolloutRequest(
                 n=self.n,
@@ -187,6 +199,7 @@ class RolloutRequest:
                 answers=answers_batch,
                 image_data=image_data_batch,
                 multi_modal_inputs=multi_modal_inputs_batch,
+                raw_prompts=raw_prompts_batch,
             )
             splitted_requests.append(request)
 
@@ -681,53 +694,57 @@ class RolloutResult:
                 shape ``[batch_size, training_seq_length - data_seq_length]``.
         """
 
-        # len = training_seq_length: input_ids, attention_mask, position_ids
-        #           [prompt_padding, prompt_ids,    response_ids, ... ,response_padding]
-        #           |<-- padding -->|<-- pmp len -->|<-- resp len --->|<-- padding --->|
-        #           |<---- cfg.data.seq_length ---->|
-        #           |<------------------ cfg.runner.seq_length --------------------->|
-
-        # len = training_seq_length - data_seq_length: advantage, prev_logprobs, ref_logprobs
-        # each row: [response_ids, ...,                , response_padding]
-        #           |<----- true response length ----->|<--- padding --->|
-        #           |<-- cfg.runner.seq_length - cfg.data.seq_length ->|
-
         max_response_len = training_seq_length - data_seq_length
 
-        prompt_lengths = torch.tensor(self.prompt_lengths)
-        response_lengths = torch.tensor(self.response_lengths)
-        is_end = torch.tensor(self.is_end, dtype=torch.bool)
+        # 检查是否为空 batch
+        batch_size = len(self.prompt_lengths)
+        is_empty_batch = (batch_size == 0)
+        
+        if is_empty_batch:
+            # 创建空但形状正确的张量
+            prompt_lengths = torch.empty(0, dtype=torch.long)
+            response_lengths = torch.empty(0, dtype=torch.long)
+            is_end = torch.empty(0, dtype=torch.bool)
+            response_mask = None
+            attention_mask = torch.empty(0, training_seq_length, dtype=torch.long)
+            position_ids = torch.empty(0, training_seq_length, dtype=torch.long)
+            prompt_ids = torch.empty(0, data_seq_length, dtype=torch.long)
+            response_ids = torch.empty(0, max_response_len, dtype=torch.long)
+        else:
+            prompt_lengths = torch.tensor(self.prompt_lengths)
+            response_lengths = torch.tensor(self.response_lengths)
+            is_end = torch.tensor(self.is_end, dtype=torch.bool)
 
-        if self.response_mask is not None:
-            response_mask = batch_pad_to_fixed_len(
-                [torch.as_tensor(ids, dtype=torch.long) for ids in self.response_mask],
+            if self.response_mask is not None:
+                response_mask = batch_pad_to_fixed_len(
+                    [torch.as_tensor(ids, dtype=torch.long) for ids in self.response_mask],
+                    max_batch_len=max_response_len,
+                    pad_token=0,
+                )
+            else:
+                response_mask = None
+
+            attention_mask, position_ids = self._get_attention_masks_and_position_ids(
+                prompt_lengths=prompt_lengths,
+                response_lengths=response_lengths,
+                response_mask=response_mask,
+                max_prompt_len=data_seq_length,
+                total_len=training_seq_length,
+            )
+
+            prompt_ids = batch_pad_to_fixed_len(
+                [torch.as_tensor(ids, dtype=torch.long) for ids in self.prompt_ids],
+                max_batch_len=data_seq_length,
+                pad_token=pad_token,
+                left_pad=True,
+            )
+
+            response_ids = batch_pad_to_fixed_len(
+                [torch.as_tensor(ids, dtype=torch.long) for ids in self.response_ids],
                 max_batch_len=max_response_len,
                 pad_token=pad_token,
             )
-        else:
-            response_mask = None
 
-
-        attention_mask, position_ids = self._get_attention_masks_and_position_ids(
-            prompt_lengths=prompt_lengths,
-            response_lengths=response_lengths,
-            response_mask=response_mask,
-            max_prompt_len=data_seq_length,
-            total_len=training_seq_length,
-        )
-
-        prompt_ids = batch_pad_to_fixed_len(
-            [torch.as_tensor(ids, dtype=torch.long) for ids in self.prompt_ids],
-            max_batch_len=data_seq_length,
-            pad_token=pad_token,
-            left_pad=True,
-        )
-
-        response_ids = batch_pad_to_fixed_len(
-            [torch.as_tensor(ids, dtype=torch.long) for ids in self.response_ids],
-            max_batch_len=max_response_len,
-            pad_token=pad_token,
-        )
         input_ids = torch.cat(
             [prompt_ids, response_ids], dim=1
         )  # [B, training_seq_length]
@@ -741,46 +758,59 @@ class RolloutResult:
             "response_lengths": response_lengths.cuda(),
         }
 
-        if (
-            self.multi_modal_inputs is not None
-            and self.multi_modal_inputs[0] is not None
-        ):
-            batch["multi_modal_inputs"] = self.multi_modal_inputs
+        # 处理可选字段 - 空 batch 时跳过
+        if not is_empty_batch:
+            if (
+                self.multi_modal_inputs is not None
+                and self.multi_modal_inputs[0] is not None
+            ):
+                batch["multi_modal_inputs"] = self.multi_modal_inputs
 
-        if self.advantages is not None:
-            if isinstance(self.advantages, torch.Tensor):
-                batch["advantages"] = self.advantages.cuda()
-            else:
-                response_attention_mask = attention_mask[
-                    :, -max_response_len:
-                ]  # [B, max_response_len]
-                advantages = torch.tensor(self.advantages, dtype=torch.float32).reshape(
-                    -1, 1
-                )  # [B, 1]
-                advantages = response_attention_mask.float().cuda() * advantages.cuda()
-                batch["advantages"] = advantages.cuda()
+            if self.advantages is not None:
+                if isinstance(self.advantages, torch.Tensor):
+                    batch["advantages"] = self.advantages.cuda()
+                else:
+                    response_attention_mask = attention_mask[
+                        :, -max_response_len:
+                    ]  # [B, max_response_len]
+                    advantages = torch.tensor(self.advantages, dtype=torch.float32).reshape(
+                        -1, 1
+                    )  # [B, 1]
+                    advantages = response_attention_mask.float().cuda() * advantages.cuda()
+                    batch["advantages"] = advantages.cuda()
 
-        if self.prev_logprobs is not None:
-            batch["prev_logprobs"] = self.prev_logprobs.cuda()
+            if self.prev_logprobs is not None:
+                batch["prev_logprobs"] = self.prev_logprobs.cuda()
 
-        if self.ref_logprobs is not None:
-            batch["ref_logprobs"] = self.ref_logprobs.cuda()
+            if self.ref_logprobs is not None:
+                batch["ref_logprobs"] = self.ref_logprobs.cuda()
 
-        if self.rewards is not None:
-            batch["rewards"] = self.rewards.cuda()
+            if self.rewards is not None:
+                batch["rewards"] = self.rewards.cuda()
 
-        if self.rollout_logprobs is not None:
-            logprobs = batch_pad_to_fixed_len(
-                [
-                    torch.as_tensor(logprobs, dtype=torch.float)
-                    for logprobs in self.rollout_logprobs
-                ],
-                max_batch_len=max_response_len,
-                pad_token=pad_token,
-            )
-            batch["prev_logprobs"] = logprobs.cuda()
+            if self.rollout_logprobs is not None:
+                logprobs = batch_pad_to_fixed_len(
+                    [
+                        torch.as_tensor(logprobs, dtype=torch.float)
+                        for logprobs in self.rollout_logprobs
+                    ],
+                    max_batch_len=max_response_len,
+                    pad_token=pad_token,
+                )
+                batch["prev_logprobs"] = logprobs.cuda()
+        else:
+            # 为空 batch 添加空的可选字段（如果后续代码需要）
+            if self.advantages is not None:
+                batch["advantages"] = torch.empty(0, max_response_len, dtype=torch.float32).cuda()
+            if self.prev_logprobs is not None:
+                batch["prev_logprobs"] = torch.empty(0, max_response_len, dtype=torch.float32).cuda()
+            if self.ref_logprobs is not None:
+                batch["ref_logprobs"] = torch.empty(0, max_response_len, dtype=torch.float32).cuda()
+            if self.rewards is not None:
+                batch["rewards"] = torch.empty(0, dtype=torch.float32).cuda()
 
         return batch
+
 
     @staticmethod
     def merge_batches(

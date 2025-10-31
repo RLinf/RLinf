@@ -108,7 +108,7 @@ class HermesToolParser(ToolParser):
     async def extract_tool_calls(self, responses_ids: list[int]) -> tuple[str, list[FunctionCall]]:
         loop = asyncio.get_running_loop()
         text = await loop.run_in_executor(None, self.tokenizer.decode, responses_ids)
-        # print(f"text: {text}")
+        
         if self.tool_call_start_token not in text or self.tool_call_end_token not in text:
             return text, []
 
@@ -120,7 +120,10 @@ class HermesToolParser(ToolParser):
                 name, arguments = function_call["name"], function_call["arguments"]
                 function_calls.append(FunctionCall(name=name, arguments=json.dumps(arguments, ensure_ascii=False)))
             except Exception as e:
+                # print(f"match: {match}")
+                # print(f"text: {text}")
                 logger.error(f"Failed to decode tool call: {e}")
+                # assert(False)
                 function_calls.append(ToolResponse(text=f"Failed to decode tool call: {e}"))
                 
         # remaining text exclude tool call tokens

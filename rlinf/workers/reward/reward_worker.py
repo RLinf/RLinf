@@ -84,8 +84,11 @@ class RewardWorker(Worker):
                         rollout_result.rewards = self._compute_rule_based_rewards(
                             rollout_result
                         )
+                        # 设置新选项
+                        torch.set_printoptions(threshold=float('inf'), linewidth=200)
 
-            output_channel.put(rollout_result)
+                        print(rollout_result.rewards)
+                output_channel.put(rollout_result)
 
         assert recv_batch_size == self.total_batch_size_per_dp, (
             f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"

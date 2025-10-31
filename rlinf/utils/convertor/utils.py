@@ -100,7 +100,6 @@ class TransformFunc:
         target_tp = config.reshard_tp_size
         split_size = linear_fc1.shape[0] // (tp_size // target_tp)
         linear_fc1_slice = torch.split(linear_fc1, split_size, dim=0)
-
         gate_proj_shards = []
         up_proj_shards = []
         for weight in linear_fc1_slice:

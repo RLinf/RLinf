@@ -181,7 +181,8 @@ class MegatronCoreWeightReshard:
             model_state_dict = self.config.tp_reshard_fn(
                 model_state_dict, self.merge_factor, tp_sub_group
             )
-
+        #model_state_dict to cpu
+        # model_state_dict = {k: v.cpu() for k, v in model_state_dict.items()}
         if self.config.convert_fn is not None:
             model_state_dict = self.config.convert_fn(model_state_dict)
 

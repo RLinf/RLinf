@@ -38,6 +38,7 @@ class DatasetItem:
     A single item in processed dataset.
 
     Attributes:
+        raw_prompt (Optional[List[Dict[str, Any]]]): Optional original prompt before tokenization.
         prompt (torch.Tensor): Tokenized prompt input_ids tensor.
         length (int): Length of the prompt input_ids.
         answer (str | dict): The answer associated with the prompt.
@@ -52,6 +53,7 @@ class DatasetItem:
     length: int
     answer: str | dict
     idx: int
+    raw_prompt: Optional[List[Dict[str, Any]]] = None
     solution: Optional[str] = None
     image_data: Optional[List[Union[bytes, str]]] = None
     prompt_text: Optional[str] = None

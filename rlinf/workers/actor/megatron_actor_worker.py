@@ -617,13 +617,14 @@ class MegatronActor(MegatronModelManager, Worker):
             train_metrics = self.run_forward_backward_iterator(batch)
         else:
             train_metrics = self.run_forward_backward(batch, forward_only=False)
+        print("after training_step")
         increment = (
             get_num_microbatches()
             * self.cfg.actor.micro_batch_size
             * parallel_state.get_data_parallel_world_size()
         )
         success, grad_norm, num_zeros_in_grad, lr = self.optimizer_step(increment)
-
+        print("after optimizer_step")
         # Training metrics
         train_metrics["grad_norm"] = (
             grad_norm if grad_norm is not None else float("nan")
@@ -710,7 +711,9 @@ class MegatronActor(MegatronModelManager, Worker):
         )
         
         batch = RolloutResult.merge_batches(batches)
-        if recv_batch_size == 0:
+        num_sequence = len(batch['input_ids'])
+        print(f"Rank[{torch.distributed.get_rank()}] num_sequence: {len(batch['input_ids'])}")
+        if recv_batch_size == 0 :
             with self.worker_timer():
                 return {
                     "batch_size_per_dp": 0,
@@ -758,13 +761,13 @@ class MegatronActor(MegatronModelManager, Worker):
             for global_batch in global_batches:
                 training_metrics = self.training_step(global_batch)
                 training_metrics_list.append(training_metrics)
-
+        print("after training_step_non_pipeline")
         # Gather weights if overlap_param_gather before the next weight sync
         self._gather_weights_among_dp()
-
+        print("after gather_weights_among_dp")
         # Rollout metrics
         rollout_metrics = self._compute_rollout_metrics(batch)
-
+        print("after compute_rollout_metrics")
         return rollout_metrics, training_metrics_list
 
     def run_training_pipeline(self, input_channel: Channel):
@@ -806,7 +809,7 @@ class MegatronActor(MegatronModelManager, Worker):
             training_metrics = self.training_step(train_batch_iterator)
             train_batch_iterator.check_finished_global_batch()
             training_metrics_list.append(training_metrics)
-
+        
         # Gather weights if overlap_param_gather before the next weight sync
         self._gather_weights_among_dp()
 
@@ -1086,8 +1089,6 @@ class MegatronActor(MegatronModelManager, Worker):
             if rr.rewards is not None:
                 rr.rewards = rr.rewards if isinstance(rr.rewards, torch.Tensor) else torch.tensor(rr.rewards)
                 rr.rewards = _apply_mask_to_tensor(rr.rewards, idx_mask)
-            if rr.advantages is not None:
-                rr.advantages = _apply_mask_to_tensor(rr.advantages, idx_mask)
             if rr.prev_logprobs is not None:
                 rr.prev_logprobs = _apply_mask_to_tensor(rr.prev_logprobs, idx_mask)
             if rr.ref_logprobs is not None:
@@ -1194,28 +1195,28 @@ class MegatronActor(MegatronModelManager, Worker):
                 batch,
                 self.cfg.data.max_prompt_length,
                 self.response_len,
-                self._world_size,
+                parallel_state.get_data_parallel_world_size(),
                 dp_group=parallel_state.get_data_parallel_group(),
             )
         )
+        if torch.distributed.get_rank() == 0:
+            rollout_metrics = cpu_dict(rollout_metrics)
 
-        rollout_metrics = cpu_dict(rollout_metrics)
+            if self.cfg.actor.get("calculate_flops", False):
+                rollout_tflops = self.flops_calculator.flops_generate(
+                    total_prompt_lengths, total_decode_lengths
+                )
+                rollout_tflops = rollout_tflops.float().sum().item() / 1e12
+                inference_tflops = self.flops_calculator.flops_inference(
+                    total_prompt_lengths + total_decode_lengths
+                )
+                inference_tflops = inference_tflops.float().sum().item() / 1e12
 
-        if self.cfg.actor.get("calculate_flops", False):
-            rollout_tflops = self.flops_calculator.flops_generate(
-                total_prompt_lengths, total_decode_lengths
-            )
-            rollout_tflops = rollout_tflops.float().sum().item() / 1e12
-            inference_tflops = self.flops_calculator.flops_inference(
-                total_prompt_lengths + total_decode_lengths
-            )
-            inference_tflops = inference_tflops.float().sum().item() / 1e12
-
-            rollout_metrics.update(
-                {
-                    "rollout_tflops": rollout_tflops,
-                    "inference_tflops": inference_tflops,
-                    "training_tflops": inference_tflops * 3,  # factor
-                }
-            )
+                rollout_metrics.update(
+                    {
+                        "rollout_tflops": rollout_tflops,
+                        "inference_tflops": inference_tflops,
+                        "training_tflops": inference_tflops * 3,  # factor
+                    }
+                )
         return rollout_metrics

@@ -37,5 +37,5 @@ class Rstar2Reward:
             List[float]: A list of reward scores, one for each response.
         """
 
-        rewards =  [compute_score(str(t), str(a)) for t, a in zip(response, response, strict=False)]
+        rewards =  [compute_score(str(t), str(a[0])) for t, a in zip(response, reference, strict=False)]
         return [float(reward) * self.scale for reward in rewards]
