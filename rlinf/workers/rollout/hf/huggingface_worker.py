@@ -23,7 +23,35 @@ from rlinf.models import get_model, get_vla_model_config_and_processor
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.algorithms.utils import expand_to_target_dim
 
+def init_real_next_obs(next_extracted_obs):
+    # Copy the next-extracted-obs
+    if isinstance(next_extracted_obs, torch.Tensor):
+        real_next_extracted_obs = next_extracted_obs.clone()
+    elif isinstance(next_extracted_obs, dict):
+        real_next_extracted_obs = dict()
+        for key, value in next_extracted_obs.items():
+            if value is None:
+                continue
+            assert isinstance(value, torch.Tensor), f"{key}, {type(value)}"
+            real_next_extracted_obs[key] = value.clone()
+    else:
+        raise NotImplementedError
+    return real_next_extracted_obs
+
+def update_real_next_obs(real_next_extracted_obs, final_extracted_obs, last_step_dones):
+    # Update the next-extracted-obs according to the final doness
+    if isinstance(real_next_extracted_obs, torch.Tensor):
+        dones_mask = expand_to_target_dim(last_step_dones, final_extracted_obs[key].shape)
+        dones_mask = dones_mask.expand_as(final_extracted_obs[key])
+        real_next_extracted_obs[dones_mask] = final_extracted_obs[dones_mask]
+    elif isinstance(real_next_extracted_obs, dict):
+        for key in real_next_extracted_obs.keys():
+            dones_mask = expand_to_target_dim(last_step_dones, final_extracted_obs[key].shape)
+            dones_mask = dones_mask.expand_as(final_extracted_obs[key])
+            real_next_extracted_obs[key][dones_mask] = final_extracted_obs[key][dones_mask]
+    return real_next_extracted_obs
 
 class MultiStepRolloutWorker(Worker):
     def __init__(self, cfg: DictConfig):
@@ -90,8 +118,9 @@ class MultiStepRolloutWorker(Worker):
             else self._eval_sampling_params
         )
         kwargs["do_sample"] = do_sample
+        kwargs["return_obs"] = not hasattr(self.hf_model, "q_head")
 
-        if self.cfg.actor.model.model_name in ["openpi"]:
+        if self.cfg.actor.model.model_name in ["openpi", "mlp"]:
             kwargs = {"mode": mode}
 
         with torch.no_grad():
@@ -102,35 +131,45 @@ class MultiStepRolloutWorker(Worker):
 
         return actions, result
 
-    def update_env_output(self, i, env_output):
+    def update_env_output(self, i, env_output, next_extracted_obs):
+        real_next_extracted_obs = init_real_next_obs(next_extracted_obs)
+
         # first step for env_batch
         if env_output["rewards"] is None:
             self.buffer_list[i].dones.append(env_output["dones"].contiguous().cpu())
-            return
+            return real_next_extracted_obs
 
+        
         self.buffer_list[i].rewards.append(env_output["rewards"].cpu().contiguous())
         self.buffer_list[i].dones.append(env_output["dones"].bool().cpu().contiguous())
 
         # Note: currently this is not correct for chunk-size>1 with partial reset
         if env_output["dones"].any() and self.cfg.env.train.auto_reset:
-            if hasattr(self.hf_model, "value_head"):
+            if hasattr(self.hf_model, "value_head") or hasattr(self.hf_model, "q_head"):
                 dones = env_output["dones"]
-
                 final_obs = env_output["final_obs"]
+                last_step_dones = dones[:, -1]  # [bsz, ]
+
                 with torch.no_grad():
-                    actions, result = self.predict(final_obs)
+                    final_extracted_obs = self.hf_model.preprocess_env_obs(
+                        final_obs
+                    )
+                    real_next_extracted_obs = update_real_next_obs(
+                        real_next_extracted_obs, final_extracted_obs, last_step_dones
+                    )
+                    
+                    actions, result = self.predict(final_extracted_obs)
                     if "prev_values" in result:
                         _final_values = result["prev_values"]
                     else:
                         _final_values = torch.zeros_like(actions[:, 0])
                 final_values = torch.zeros_like(_final_values[:, 0])  # [bsz, ]
-                last_step_dones = dones[:, -1]  # [bsz, ]
-
                 final_values[last_step_dones] = _final_values[:, 0][last_step_dones]
 
                 self.buffer_list[i].rewards[-1][:, -1] += (
                     self.cfg.algorithm.gamma * final_values.cpu()
                 )
+        return real_next_extracted_obs
 
     async def generate(self):
         if self.cfg.rollout.get("enable_offload", False):
@@ -142,24 +181,36 @@ class MultiStepRolloutWorker(Worker):
             desc="Generating Rollout Epochs",
             disable=(self._rank != 0),
         ):
-            for _ in range(self.cfg.algorithm.n_chunk_steps):
+            extracted_obs = [None for i in range(self.stage_num)]
+            for chunk_step in range(self.cfg.algorithm.n_chunk_steps):
                 for i in range(self.stage_num):
                     env_output = await self.recv_env_output()
-                    self.update_env_output(i, env_output)
-                    actions, result = self.predict(env_output["obs"])
+
+                    next_extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"]) # 但这里没有 final obs
+                    real_next_extracted_obs = self.update_env_output(i, env_output, next_extracted_obs) # 这里处理了 final obs
+
+                    actions, result = self.predict(next_extracted_obs) # results 里面才包含这一步 obs 的格式
 
                     self.buffer_list[i].append_result(result)
+
+                    if extracted_obs[i] is not None and hasattr(self.hf_model, "q_head"):
+                        self.buffer_list[i].add_transition(extracted_obs[i], real_next_extracted_obs)
+                    
+                    extracted_obs[i] = real_next_extracted_obs
 
                     await self.send_chunk_actions(actions)
 
             for i in range(self.stage_num):
                 env_output = await self.recv_env_output()
-                self.update_env_output(i, env_output)
-                actions, result = self.predict(env_output["obs"])
+                next_extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"])
+                real_next_extracted_obs = self.update_env_output(i, env_output, next_extracted_obs)
+                actions, result = self.predict(next_extracted_obs)
                 if "prev_values" in result:
                     self.buffer_list[i].prev_values.append(
                         result["prev_values"].cpu().contiguous()
                     )
+                if hasattr(self.hf_model, "q_head"):
+                    self.buffer_list[i].add_transition(extracted_obs[i], real_next_extracted_obs)
 
         for i in range(self.stage_num):
             await self.send_rollout_batch(i)
@@ -174,7 +225,8 @@ class MultiStepRolloutWorker(Worker):
         for _ in range(self.cfg.algorithm.n_eval_chunk_steps):
             for _ in range(self.stage_num):
                 env_output = await self.recv_env_output()
-                actions, _ = self.predict(env_output["obs"], mode="eval")
+                next_extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"])
+                actions, _ = self.predict(next_extracted_obs, mode="eval")
                 await self.send_chunk_actions(actions)
 
         if self.cfg.rollout.get("enable_offload", False):
@@ -191,6 +243,7 @@ class MultiStepRolloutWorker(Worker):
     def sync_model_from_actor(self):
         param_state_dict = self.recv(self._actor_group_name, src_rank=self._rank)
         self.hf_model.load_state_dict(param_state_dict)
+        
         del param_state_dict
         gc.collect()
         torch.cuda.empty_cache()

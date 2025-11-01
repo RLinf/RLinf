@@ -53,11 +53,11 @@ from rlinf.models.embodiment.model_utils import (
     compute_logprobs_from_logits,
 )
 from rlinf.models.embodiment.modules.value_head import ValueHead
-
+from rlinf.models.embodiment.base_policy import BasePolicy
 
 class OpenVLAForBatchActionPrediction(OpenVLAForActionPrediction):
     # === Core Prismatic VLM `forward()` Logic ===
-    def forward(
+    def _forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -470,7 +470,7 @@ class VLALogitsProcessor(LogitsProcessor):
         return scores_processed
 
 
-class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
+class OpenVLAForRLActionPrediction(BasePolicy, OpenVLAForBatchActionPrediction):
     def __init__(
         self,
         config,
@@ -504,7 +504,38 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         self.logits_processors = LogitsProcessorList()
         self.logits_processors.append(VLALogitsProcessor(self.config.n_action_bins))
 
-    def forward(
+
+    def preprocess_env_obs(self, raw_obs):
+        task_descriptions = [
+            f"In: What action should the robot take to {t.lower()}?\nOut: "
+            for t in raw_obs["task_descriptions"]
+        ]
+        image_tensor = raw_obs["images"]
+        if image_tensor.ndim == 4:
+            image_tensor = image_tensor.unsqueeze(1)
+        assert image_tensor.ndim == 5
+
+        max_length = self.max_prompt_length
+        device = next(self.parameters()).device
+        precision = next(self.parameters()).dtype
+        processed_obs = self.input_processor(
+            text=task_descriptions,
+            images=image_tensor,
+            padding="max_length",
+            max_length=max_length,
+        )
+
+        processed_obs_dict = dict()
+        processed_obs_dict["input_ids"] = processed_obs["input_ids"].to(device=device, dtype=torch.long)
+        processed_obs_dict["attention_mask"] = processed_obs["attention_mask"].to(
+            device=device, dtype=torch.bool
+        )
+        processed_obs_dict["pixel_values"] = processed_obs["pixel_values"].to(
+            device=device, dtype=precision
+        )
+        return processed_obs_dict
+
+    def default_forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -533,7 +564,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         if compute_values:
             output_hidden_states = True
 
-        outputs = super().forward(
+        outputs = self._forward(
             input_ids=input_ids,
             attention_mask=attention_mask,
             pixel_values=pixel_values,
@@ -597,56 +628,33 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
     @torch.no_grad()
     def predict_action_batch(
         self,
-        input_ids=None,
-        attention_mask=None,
-        pixel_values=None,
         env_obs=None,
         calulate_logprobs=True,
         calulate_values=True,
+        return_obs=True, 
         **kwargs,
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
         do_sample = kwargs.pop("do_sample")
 
-        if env_obs is not None:
-            task_descriptions = [
-                f"In: What action should the robot take to {t.lower()}?\nOut: "
-                for t in env_obs["task_descriptions"]
-            ]
-            image_tensor = env_obs["images"]
-            if image_tensor.ndim == 4:
-                image_tensor = image_tensor.unsqueeze(1)
-            assert image_tensor.ndim == 5
+        input_ids = env_obs["input_ids"]
+        attention_mask = env_obs["attention_mask"]
+        pixel_values = env_obs["pixel_values"]
 
-            max_length = self.max_prompt_length
-            device = next(self.parameters()).device
-            precision = next(self.parameters()).dtype
-            processed_obs = self.input_processor(
-                text=task_descriptions,
-                images=image_tensor,
-                padding="max_length",
-                max_length=max_length,
-            )
 
-            input_ids = processed_obs["input_ids"].to(device=device, dtype=torch.long)
-            attention_mask = processed_obs["attention_mask"].to(
-                device=device, dtype=torch.bool
-            )
-            pixel_values = processed_obs["pixel_values"].to(
-                device=device, dtype=precision
-            )
-
-        forward_inputs = {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "pixel_values": pixel_values,
-        }
+        if return_obs:
+            forward_inputs = {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "pixel_values": pixel_values,
+            }
+        else:
+            forward_inputs = {}
 
         # assert first token is 1
         assert torch.all(input_ids[:, 0] == 1)
         assert torch.all(attention_mask[:, 0] == 1)
         # last token is space ` `
         assert torch.all(input_ids[:, -1] == 29871)
-        assert torch.all(attention_mask[:, -1] == 1)
 
         generated_results: GenerateDecoderOnlyOutput = self.generate(
             input_ids,

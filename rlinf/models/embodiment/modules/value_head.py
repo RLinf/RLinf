@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import torch.nn as nn
-
+from .utils import get_act_func
 
 class ValueHead(nn.Module):
     def __init__(
@@ -29,12 +29,7 @@ class ValueHead(nn.Module):
         layers = []
         in_dim = input_dim
 
-        if activation.lower() == "relu":
-            act = nn.ReLU
-        elif activation.lower() == "gelu":
-            act = nn.GELU
-        else:
-            raise ValueError(f"Unsupported activation: {activation}")
+        act = get_act_func(activation)
 
         for h in hidden_sizes:
             layers.append(nn.Linear(in_dim, h))
@@ -48,6 +43,9 @@ class ValueHead(nn.Module):
         self._init_weights(activation.lower())
 
     def _init_weights(self, nonlinearity="relu"):
+        if nonlinearity == "gelu":
+            return
+        
         for m in self.mlp:
             if isinstance(m, nn.Linear):
                 if m is self.mlp[-1]:

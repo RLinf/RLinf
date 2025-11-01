@@ -161,14 +161,18 @@ class FSDPModelManager:
         except Exception as e:
             self.logger.warning(f"[FSDP] Liger kernels not applied: {e}")
 
-    def setup_model_and_optimizer(self):
+    def setup_model_and_optimizer(self, initialize_target=False):
         """Setup model and optimizer."""
         module = self.model_provider_func()
+        if initialize_target:
+            target_module = self.model_provider_func()
 
         # Enable gradient checkpointing if configured
         if self._cfg.model.get("gradient_checkpointing", False):
             self.logger.info("[FSDP] Enabling gradient checkpointing")
             module.gradient_checkpointing_enable()
+            if initialize_target:
+                target_module.gradient_checkpointing_enable()
         else:
             self.logger.info("[FSDP] Gradient checkpointing is disabled")
 
@@ -222,13 +226,30 @@ class FSDPModelManager:
             use_orig_params=self._cfg.fsdp_config.use_orig_params,
         )
 
+        if initialize_target:
+            target_module.requires_grad_(False)
+            
+            self.target_model = FSDP(
+                target_module,
+                param_init_fn=init_fn,
+                auto_wrap_policy=auto_wrap_policy,
+                device_id=int(os.environ["LOCAL_RANK"]),
+                sharding_strategy=sharding_strategy,  # zero3
+                mixed_precision=mixed_precision,
+                sync_module_states=True,
+                forward_prefetch=self._cfg.fsdp_config.forward_prefetch,
+                backward_prefetch=backward_prefetch,
+                limit_all_gathers=self._cfg.fsdp_config.limit_all_gathers,
+                use_orig_params=self._cfg.fsdp_config.use_orig_params,
+            )
+            self.target_model_initialized = True
+
         self.build_optimizer(enable_warmup=self.critic_warmup_steps > 0)
 
     def build_optimizer(self, enable_warmup=False):
         assert hasattr(self, "model")
 
         betas = (self._cfg.optim.adam_beta1, self._cfg.optim.adam_beta2)
-
         params_actor = []
         params_critic = []
         if enable_warmup:
@@ -271,7 +292,7 @@ class FSDPModelManager:
         self.optimizer = torch.optim.AdamW(param_groups)
 
     def optimizer_step(self):
-        grad_norm = self.model.clip_grad_norm_(max_norm=self.cfg.actor.optim.clip_grad)
+        grad_norm = self.model.clip_grad_norm_(max_norm=self._cfg.optim.clip_grad)
         self.optimizer.step()
         self.optimizer.zero_grad()
         self.optimizer_steps += 1
@@ -292,6 +313,11 @@ class FSDPModelManager:
     def get_model_state_dict(self):
         with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT):
             state_dict = self.model.state_dict()
+        return state_dict
+    
+    def get_target_model_state_dict(self):
+        with FSDP.state_dict_type(self.target_model, StateDictType.FULL_STATE_DICT):
+            state_dict = self.target_model.state_dict()
         return state_dict
 
     def get_optimizer_state_dict(self):
