@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 from torch.distributions.normal import Normal
 
-from .modules.nature_cnn import NatureCNN, PlainConv
+from .modules.nature_cnn import NatureCNN, PlainConv, ResNetEncoder
 from .modules.utils import layer_init, make_mlp, LOG_STD_MAX, LOG_STD_MIN
 from .modules.value_head import ValueHead
 from .modules.q_head import DoubleQHead
@@ -31,15 +31,21 @@ class CNNPolicy(BasePolicy):
             add_value_head, add_q_head,
         ):
         super().__init__()
+        self.backbone = "resnet" # ["plain_conv", ]
         self.image_size = image_size # [c, h, w]
         self.action_dim = action_dim
         self.state_dim = state_dim
         self.num_action_chunks = num_action_chunks
         self.in_channels = image_size[0]
 
-        self.encoder = PlainConv(
-            in_channels=self.in_channels, out_dim=256, image_size=image_size
-        ) # assume image is 64x64
+
+        if self.backbone == "plane_conv":
+            self.encoder = PlainConv(
+                in_channels=self.in_channels, out_dim=256, image_size=image_size
+            ) # assume image is 64x64
+        elif self.backbone == "resnet":
+            sample_x = torch.randn(1, *image_size)
+            self.encoder = ResNetEncoder(sample_x, out_dim=256)
         self.mlp = make_mlp(self.encoder.out_dim+state_dim, [512, 256], last_act=True)
         self.actor_mean = nn.Linear(256, action_dim)
 
