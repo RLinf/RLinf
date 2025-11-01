@@ -292,7 +292,7 @@ class FSDPModelManager:
         self.optimizer = torch.optim.AdamW(param_groups)
 
     def optimizer_step(self):
-        grad_norm = self.model.clip_grad_norm_(max_norm=self._cfg.actor.optim.clip_grad)
+        grad_norm = self.model.clip_grad_norm_(max_norm=self._cfg.optim.clip_grad)
         self.optimizer.step()
         self.optimizer.zero_grad()
         self.optimizer_steps += 1
