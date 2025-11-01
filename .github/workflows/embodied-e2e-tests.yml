@@ -76,3 +76,17 @@ jobs:
           export REPO_PATH=$(pwd)
           source switch_env openpi
           bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi05
+
+  embodied-behavior-ppo-openvlaoft-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: BEHAVIOR-OpenVLA-OFT test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
+          export ISAAC_PATH=/workspace/dataset/isaac-sim
+          source switch_env behavior-openvla-oft
+          bash tests/e2e_tests/embodied/run.sh behavior_ppo_openvlaoft

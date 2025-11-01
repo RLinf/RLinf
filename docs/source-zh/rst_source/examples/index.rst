@@ -69,11 +69,12 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/waiting_icon.jpg"
+       <img src="https://github.com/RLinf/misc/raw/main/pic/behavior.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[开发中]基于世界模型的强化学习</b><br>
-         集成UnifoLM-WMA-0世界模型的强化学习训练
+          <b>基于Behavior的强化学习</b>
+         </a><br>
+         支持Behavior+OpenVLA+PPO/GRPO训练
        </p>
      </div>
    </div>
@@ -191,6 +192,7 @@ RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训
 
    maniskill
    libero
+   behavior
    pi0
    reasoning
    coding_online_rl

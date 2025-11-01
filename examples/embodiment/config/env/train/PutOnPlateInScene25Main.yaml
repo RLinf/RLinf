@@ -6,8 +6,9 @@ seed: 0
 num_group: ${algorithm.num_group_envs}
 group_size: ${algorithm.group_size}
 use_fixed_reset_state_ids: ${algorithm.use_fixed_reset_state_ids}
-only_eval: False
 max_episode_steps: 80
+num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
+only_eval: False
 
 video_cfg:
   save_video: False

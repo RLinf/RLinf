@@ -92,7 +92,6 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
         input_embeddings = input_embeddings * (~all_actions_mask.unsqueeze(-1))
 
         # vision
-        pixel_values = pixel_values.reshape(-1, *pixel_values.shape[2:])
         projected_patch_embeddings = self._process_vision_features(
             pixel_values, None, use_film=False
         )
@@ -213,16 +212,24 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
                 f"In: What action should the robot take to {t.lower()}?\nOut: "
                 for t in env_obs["task_descriptions"]
             ]
-            image_tensor = env_obs["images"]
-            if image_tensor.ndim == 4:
-                image_tensor = image_tensor.unsqueeze(1)
-            assert image_tensor.ndim == 5
+
+            all_images = [env_obs["images"]]
+            if self.vision_backbone.get_num_images_in_input() > 1:
+                wrist_imgs = env_obs["wrist_images"]  # [B, N_IMG, C, H, W]
+                all_images.extend(
+                    [wrist_imgs[:, i] for i in range(wrist_imgs.shape[1])]
+                )
 
             max_length = self.max_prompt_length
             device = next(self.parameters()).device
             precision = next(self.parameters()).dtype
-            images = {"images": image_tensor}
-            processed_obs = self.input_processor(
+
+            primary_image = all_images.pop(0)
+            if primary_image.ndim == 4:
+                primary_image = primary_image.unsqueeze(1)
+            assert primary_image.ndim == 5
+            images = {"images": primary_image}
+            inputs = self.input_processor(
                 text=task_descriptions,
                 images=images,
                 proprio_states=env_obs["states"],
@@ -230,13 +237,35 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
                 max_length=max_length,
             )
 
-            input_ids = processed_obs["input_ids"].to(device=device, dtype=torch.long)
-            attention_mask = processed_obs["attention_mask"].to(
+            if all_images:
+                all_wrist_inputs = [
+                    self.input_processor(
+                        text=task_descriptions,
+                        images={"images": wrist_image.unsqueeze(1)},
+                        proprio_states=env_obs["states"],
+                        padding="max_length",
+                        max_length=max_length,
+                    )
+                    for wrist_image in all_images
+                ]
+
+                # Concatenate all images
+                primary_pixel_values = inputs["pixel_values"]
+                all_wrist_pixel_values = [
+                    wrist_inputs["pixel_values"] for wrist_inputs in all_wrist_inputs
+                ]
+                inputs["pixel_values"] = torch.cat(
+                    [primary_pixel_values] + all_wrist_pixel_values, dim=1
+                )
+
+            input_ids = inputs["input_ids"].to(device=device, dtype=torch.long)
+            attention_mask = inputs["attention_mask"].to(
                 device=device, dtype=torch.bool
             )
-            pixel_values = processed_obs["pixel_values"].to(
-                device=device, dtype=precision
-            )
+            pixel_values = inputs["pixel_values"].to(device=device, dtype=precision)
+
+            B, N, C, H, W = pixel_values.shape
+            pixel_values = pixel_values.reshape(B, N * C, H, W)
 
         forward_inputs = {
             "input_ids": input_ids,

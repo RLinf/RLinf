@@ -14,7 +14,7 @@
 
 import uuid
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -160,7 +160,7 @@ class RolloutRequest:
         ]
 
 
-class FinishReasonEnum(StrEnum):
+class FinishReasonEnum(str, Enum):
     ABORT = "abort"
     STOP = "stop"
     LENGTH = "length"
@@ -1116,6 +1116,9 @@ class EnvOutput:
             image_tensor = obs["images"]
         elif self.simulator_type == "robotwin":
             image_tensor = obs["images"]
+        elif self.simulator_type == "behavior":
+            image_tensor = obs["images"]
+            wrist_image_tensor = obs["wrist_images"]
         else:
             raise NotImplementedError
 

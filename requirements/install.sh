@@ -3,8 +3,26 @@
 TARGET="${1:-"openvla"}"
 EMBODIED_TARGET=("openvla" "openvla-oft" "openpi")
 
+# Get the remaining args
+while [ "$#" -gt 0 ]; do
+    case "$2" in
+        --enable-behavior)
+            ENABLE_BEHAVIOR="true"
+            shift
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+PYTHON_VERSION="3.11.10"
+if [ "$ENABLE_BEHAVIOR" = "true" ]; then
+    PYTHON_VERSION="3.10"
+fi
+
 # Common dependencies
-uv venv
+uv venv --python=$PYTHON_VERSION
 source .venv/bin/activate
 UV_TORCH_BACKEND=auto uv sync
 
@@ -20,6 +38,14 @@ if [ "$TARGET" = "openvla" ]; then
     UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla.txt --no-build-isolation
 elif [ "$TARGET" = "openvla-oft" ]; then
     UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla-oft.txt --no-build-isolation
+    if [ "$ENABLE_BEHAVIOR" = "true" ]; then
+        git clone -b RLinf/v3.7.1 --depth 1 https://github.com/RLinf/BEHAVIOR-1K.git /opt/BEHAVIOR-1K
+        cd /opt/BEHAVIOR-1K && ./setup.sh --omnigibson --bddl --joylo --confirm-no-conda --accept-nvidia-eula && cd -
+        uv pip uninstall flash-attn
+        uv pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+        uv pip install ml_dtypes==0.5.3 protobuf==3.20.3
+        cd && uv pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 && cd -
+    fi
 elif [ "$TARGET" = "openpi" ]; then
     UV_TORCH_BACKEND=auto GIT_LFS_SKIP_SMUDGE=1 uv pip install -r requirements/openpi.txt
     cp -r .venv/lib/python3.11/site-packages/openpi/models_pytorch/transformers_replace/* .venv/lib/python3.11/site-packages/transformers/
