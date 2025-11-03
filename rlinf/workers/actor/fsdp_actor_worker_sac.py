@@ -36,6 +36,7 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         self.replay_buffer = None
         self.target_model = None
         self.base_alpha = None
+        self.demo_buffer = None
         self.alpha_optimizer = None
         self.update_step = 0
 
@@ -156,6 +157,10 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         await super().recv_rollout_batch()
         self.replay_buffer.add_rollout_batch(self.rollout_batch)
 
+    async def recv_demo_data(self):
+        demo_data = await self.demo_data_channel.get(async_op=True).async_wait()
+        self.demo_buffer = SACReplayBuffer.create_from_buffer(demo_data, seed=self.cfg.actor.seed)
+
     def compute_advantages_and_returns(self):
         """
         SAC doesn't compute advantages/returns like PPO.
@@ -189,7 +194,14 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         
         for update_idx in range(num_updates):
             # Sample batch from replay buffer
-            batch = self.replay_buffer.sample(batch_size)
+
+            if self.demo_buffer is not None:
+                if update_idx % 2 == 0:
+                    batch = self.replay_buffer.sample(batch_size)
+                else:
+                    batch = self.demo_buffer.sample(batch_size)
+            else:
+                batch = self.replay_buffer.sample(batch_size)
             
             # Move batch to device
             for k, v in batch.items():
@@ -246,7 +258,7 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                 obs=curr_obs, actions=batch["action"] 
             ) # [num-q, bsz, 1]
 
-            critic_loss = F.mse_loss(all_data_q_values, target_q_values[None]) * all_data_q_values.shape[0]
+            critic_loss = F.mse_loss(all_data_q_values, target_q_values) * all_data_q_values.shape[0]
             self.qf_optimizer.zero_grad()
             critic_loss.backward()
             self.qf_optimizer.step()

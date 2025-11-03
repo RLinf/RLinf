@@ -16,7 +16,9 @@ import os
 
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
+from typing import Optional
 
+from rlinf.scheduler import Channel
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics
@@ -24,6 +26,7 @@ from rlinf.utils.runner_utils import check_progress
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+from rlinf.data.replay_buffer import SACReplayBuffer
 
 
 class EmbodiedRunner:
@@ -33,6 +36,7 @@ class EmbodiedRunner:
         actor: EmbodiedFSDPActor,
         rollout: MultiStepRolloutWorker,
         env: EnvWorker,
+        demo_buffer: Optional[SACReplayBuffer]=None, 
         critic=None,
         reward=None,
         run_timer=None,
@@ -43,6 +47,8 @@ class EmbodiedRunner:
         self.env = env
         self.critic = critic
         self.reward = reward
+        self.demo_buffer = demo_buffer
+        self.demo_data_channel = Channel.create("DemoData")
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -91,6 +97,15 @@ class EmbodiedRunner:
         eval_metrics = compute_evaluate_metrics(eval_metrics_list)
         return eval_metrics
 
+    def send_demo_buffer(self):
+        if self.demo_buffer is not None:
+            sub_demo_buffer_ls = self.demo_buffer.split_to_dict(self.actor._world_size)
+        
+            for sub_demo_buffer in sub_demo_buffer_ls:
+                self.demo_data_channel.put(sub_demo_buffer, async_op=True)
+            actor_futures = self.actor.recv_demo_data()
+            actor_futures.wait()
+
     def run(self):
         start_step = self.global_step
         global_pbar = tqdm(
@@ -99,6 +114,7 @@ class EmbodiedRunner:
             desc="Global Step",
             ncols=800,
         )
+        self.send_demo_buffer()
         for _step in range(start_step, self.max_steps):
             # set global step
             self.actor.set_global_step(self.global_step)

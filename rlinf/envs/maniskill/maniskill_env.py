@@ -138,8 +138,12 @@ class ManiskillEnv(gym.Env):
                 state = common.flatten_state_dict(
                     raw_obs, use_torch=True, device=self.device
                 )
+
+                images = dict()
+                for camera_name in sensor_data.keys():
+                    images[camera_name] = sensor_data[camera_name]["rgb"].float() / 255.0
                 wrapped_obs = {
-                    "images": sensor_data["base_camera"]["rgb"].float() / 255.0,
+                    "images": images,
                     "task_description": None,
                     "states": state
                 }

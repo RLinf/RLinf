@@ -556,6 +556,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.stage_num = cfg.rollout.pipeline_stage_num
 
         self.channel = self.connect_channel(cfg.actor.channel.name)
+        self.demo_data_channel = self.connect_channel("DemoData")
 
     def init_worker(self):
         self.setup_model_and_optimizer()
@@ -589,6 +590,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             del state_dict
             gc.collect()
             torch.cuda.empty_cache()
+
+    async def recv_demo_data(self):
+        raise NotImplementedError
 
     async def recv_rollout_batch(self):
         send_num = self._component_placement.get_world_size("rollout") * self.stage_num

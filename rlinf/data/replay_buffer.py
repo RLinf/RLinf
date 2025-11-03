@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import random
-from collections import deque
+
+import os
+import pickle as pkl
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -50,6 +51,7 @@ class SACReplayBuffer:
         self.size = 0   # Current number of elements
         
         # Set random seed
+        self.seed = seed
         if seed is not None:
             np.random.seed(seed)
             self.random_generator = torch.Generator()
@@ -57,42 +59,64 @@ class SACReplayBuffer:
         else:
             self.random_generator = None
 
-    def add(self, transition: Dict[str, torch.Tensor]):
-        """
-        Add a transition to the buffer.        
-        Args:
-            transition: Dictionary containing:
-                - observations: Dict with observation keys
-                - actions: Action tensor
-                - rewards: Reward tensor
-                - next_observations: Dict with next observation keys
-                - dones: Done flags
-                - action_tokens: Action tokens for embodied RL
-                - logprobs: Log probabilities (optional)
-        """
-        # Move tensors to CPU for storage efficiency
-        cpu_transition = {}
-        for key, value in transition.items():
-            if isinstance(value, torch.Tensor):
-                cpu_transition[key] = value.detach().cpu()
-            elif isinstance(value, dict):
-                cpu_transition[key] = {
-                    k: v.detach().cpu() if isinstance(v, torch.Tensor) else v
-                    for k, v in value.items()
-                }
-            else:
-                cpu_transition[key] = value
+    @classmethod
+    def create_from_demo(cls, demo_path, seed=None):
+        if not os.path.exists(demo_path):
+            raise FileNotFoundError(f"File {demo_path} not found")
 
-        self.buffer.append(cpu_transition)
+        if demo_path.endswith(".pkl"):
+            with open(demo_path, "rb") as f:
+                data_ls = pkl.load(f)
+        elif demo_path.endswith(".pt"):
+            data_ls = torch.load(demo_path)
 
-    def _initialize_storage(self, flattened_batch: Dict[str, torch.Tensor]):
+        # TODO: Possibly need to convert from jax to torch. 
+        instance = cls(
+            capacity=len(data_ls),
+            seed=seed 
+        )
+        for data in data_ls:
+            if isinstance(data, np.ndarray):
+                data = torch.from_numpy(data)
+            instance.add(data)
+        return instance
+    
+    @classmethod
+    def create_from_buffer(cls, buffer, seed):
+        for key in buffer.keys():
+            capacity = buffer[key].shape[0]
+            break
+        instance = cls(capacity=capacity, seed=seed)
+        instance.buffer = dict()
+        for key, value in buffer.items():
+            instance.buffer[key] = value.clone()
+        instance.size = instance.capacity
+        return instance
+
+    def _initialize_storage(self, flattened_batch: Dict[str, torch.Tensor], with_batch_dim=True):
         for key, value in flattened_batch.items():
+            if with_batch_dim:
+                tgt_shape = (self.capacity, *value.shape[1:])
+            else:
+                tgt_shape = (self.capacity, *value.shape)
             # Allocate fixed-size tensors on CPU
             self.buffer[key] = torch.zeros(
-                (self.capacity, *value.shape[1:]), 
+                tgt_shape, 
                 dtype=value.dtype, 
                 device='cpu'
             )
+
+    def add(self, data):
+        if not self.buffer:
+            self._initialize_storage(data, with_batch_dim=False)
+        
+        for key, value in data.items():
+            if key not in self.buffer:
+                raise ValueError(f"Warning: Key '{key}' from rollout not in buffer storage. Skipping.")
+            self.buffer[key][self.pos] = value
+        
+        self.pos = (self.pos + 1) % self.capacity
+        self.size = min(self.size + 1, self.capacity)
 
     def add_rollout_batch(self, rollout_batch: Dict[str, torch.Tensor]):
         """
@@ -147,7 +171,7 @@ class SACReplayBuffer:
                 raise ValueError(f"Warning: Key '{key}' from rollout not in buffer storage. Skipping.")
             self.buffer[key][indices] = value
 
-        # 5. 更新位置和大小
+        # 5. Update position and size
         self.pos = end_idx % self.capacity
         self.size = min(self.size + num_to_add, self.capacity)
 
@@ -207,6 +231,24 @@ class SACReplayBuffer:
             })
 
         return stats
+    
+    def split_to_dict(self, num_splits, is_sequential=False):
+        assert self.capacity % num_splits == 0
+        each_split_size = self.capacity // num_splits
+
+        all_ids = torch.arange(self.size).to(self.device)
+        if not is_sequential:
+            all_ids = torch.randperm(self.size, generator=self.random_generator).to(self.device)
+
+        res_ls = []
+        for split_id in range(num_splits):
+            buffer = dict()
+            select_idx = all_ids[split_id*each_split_size:(split_id+1)*each_split_size]
+            for key in self.buffer:
+                buffer[key] = self.buffer[key][select_idx].clone()
+            res_ls.append(buffer)
+        return res_ls        
+
 
 
 class PrioritizedSACReplayBuffer(SACReplayBuffer):

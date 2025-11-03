@@ -26,10 +26,11 @@ from .base_policy import BasePolicy
 class CNNPolicy(BasePolicy):
     def __init__(
             self,
-            image_size, state_dim, action_dim, 
+            # observation space and action space info
+            image_keys, image_size, state_dim, action_dim, 
             hidden_dim, num_action_chunks, 
             add_value_head, add_q_head,
-            backbone
+            backbone, 
         ):
         super().__init__()
         self.backbone = backbone # ["plain_conv", ]
@@ -38,16 +39,23 @@ class CNNPolicy(BasePolicy):
         self.state_dim = state_dim
         self.num_action_chunks = num_action_chunks
         self.in_channels = image_size[0]
+        self.image_keys = image_keys
 
         self.state_latent_dim = 64
 
+        self.encoders = nn.ModuleDict()
+        encoder_out_dim = 0
         if self.backbone == "plane_conv":
-            self.encoder = PlainConv(
-                in_channels=self.in_channels, out_dim=256, image_size=image_size
-            ) # assume image is 64x64
+            for key in image_keys:
+                self.encoders[key] = PlainConv(
+                    in_channels=self.in_channels, out_dim=256, image_size=image_size
+                ) # assume image is 64x64
+                encoder_out_dim += self.encoders[key].out_dim
         elif self.backbone == "resnet":
             sample_x = torch.randn(1, *image_size)
-            self.encoder = ResNetEncoder(sample_x, out_dim=256)
+            for key in image_keys:
+                self.encoders[key] = ResNetEncoder(sample_x, out_dim=256)
+                encoder_out_dim += self.encoders[key].out_dim
         else:
             raise NotImplementedError
         self.state_proj = make_mlp(
@@ -58,10 +66,9 @@ class CNNPolicy(BasePolicy):
         )
         
         # self.mlp = make_mlp(self.encoder.out_dim+self.state_dim, [512, 256], last_act=True)
-        # self.actor_mean = nn.Linear(256, self.action_dim) 
-        
+        # self.actor_mean = nn.Linear(256, self.action_dim)
         self.mix_proj = make_mlp(
-            in_channels=self.encoder.out_dim+self.state_latent_dim, 
+            in_channels=encoder_out_dim+self.state_latent_dim, 
             mlp_channels=[256, 256],  
             act_builder=nn.Tanh, 
             use_layer_norm=True
@@ -75,7 +82,7 @@ class CNNPolicy(BasePolicy):
             final_tanh = True
             self.q_head = MultiQHead(
                 # hidden_size=self.encoder.out_dim+self.state_dim,
-                hidden_size=self.encoder.out_dim+self.state_latent_dim,
+                hidden_size=encoder_out_dim+self.state_latent_dim,
                 hidden_dims=[256, 256, 256], 
                 num_q_heads=2, 
                 action_dim=action_dim,
@@ -102,23 +109,32 @@ class CNNPolicy(BasePolicy):
         device = next(self.parameters()).device
         processed_env_obs = {}
         for key, value in env_obs.items():
+            if key == "images":
+                continue
             if value is not None:
                 if isinstance(value, torch.Tensor):
                     processed_env_obs[key] = value.clone().to(device)
                 else:
                     processed_env_obs[key] = value
-        processed_env_obs["images"] = processed_env_obs["images"].permute(0, 3, 1, 2)
+        for key, value in env_obs["images"].items():
+            processed_env_obs[f"images/{key}"] = value.clone().to(device).permute(0, 3, 1, 2)
         return processed_env_obs
     
     def get_feature_0(self, obs, detach_encoder=False):
-        visual_feature = self.encoder(obs["images"])
+        visual_features = []
+        for key in self.image_keys:
+            visual_features.append(self.encoders[key](obs[f"images/{key}"]))
+        visual_feature = torch.cat(visual_features, dim=-1)
         if detach_encoder:
             visual_feature = visual_feature.detach()
         x = torch.cat([visual_feature, obs["states"]], dim=1)
         return self.mlp(x), visual_feature
     
     def get_feature(self, obs, detach_encoder=False):
-        visual_feature = self.encoder(obs["images"])
+        visual_features = []
+        for key in self.image_keys:
+            visual_features.append(self.encoders[key](obs[f"images/{key}"]))
+        visual_feature = torch.cat(visual_features, dim=-1)
         if detach_encoder:
             visual_feature = visual_feature.detach()
         state_embed = self.state_proj(obs["states"])
