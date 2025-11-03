@@ -171,18 +171,18 @@ class SpatialLearnedEmbeddings(nn.Module):
         self.num_features = num_features
 
         self.kernel = nn.Parameter(
-            torch.randn(height, width, channel, num_features)
+            torch.randn(channel, height, width, num_features)
         ) # TODO: In SeRL, this is lecun_normal initialization
 
     def forward(self, features):
         """
-        features: (B, H, W, C)
+        features: (B, C, H, W)
         """
 
-        # expand to (B, H, W, C, F)
+        # expand to (B, C, H, W, F)
         weighted = features.unsqueeze(-1) * self.kernel.unsqueeze(0)
         # sum over H,W  -> (B, C, F)
-        summed = weighted.sum(dim=(1, 2))
+        summed = weighted.sum(dim=(2, 3))
         # reshape -> (B, C*F)
         out = summed.reshape(features.shape[0], -1)
 

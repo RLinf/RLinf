@@ -41,6 +41,7 @@ algorithm:
   use_fixed_reset_state_ids: False
   require_values: False  # SAC doesn't use value function for advantages
   normalize_advantages: False  # SAC doesn't use advantages
+  obs_mode: state
   kl_penalty: kl
   group_size: 1
 

@@ -20,7 +20,7 @@ from torch.distributions.normal import Normal
 from .modules.nature_cnn import NatureCNN, PlainConv, ResNetEncoder
 from .modules.utils import layer_init, make_mlp, LOG_STD_MAX, LOG_STD_MIN
 from .modules.value_head import ValueHead
-from .modules.q_head import DoubleQHead
+from .modules.q_head import MultiQHead
 from .base_policy import BasePolicy
 
 class CNNPolicy(BasePolicy):
@@ -29,15 +29,17 @@ class CNNPolicy(BasePolicy):
             image_size, state_dim, action_dim, 
             hidden_dim, num_action_chunks, 
             add_value_head, add_q_head,
+            backbone
         ):
         super().__init__()
-        self.backbone = "resnet" # ["plain_conv", ]
+        self.backbone = backbone # ["plain_conv", ]
         self.image_size = image_size # [c, h, w]
         self.action_dim = action_dim
         self.state_dim = state_dim
         self.num_action_chunks = num_action_chunks
         self.in_channels = image_size[0]
 
+        self.state_latent_dim = 64
 
         if self.backbone == "plane_conv":
             self.encoder = PlainConv(
@@ -46,15 +48,36 @@ class CNNPolicy(BasePolicy):
         elif self.backbone == "resnet":
             sample_x = torch.randn(1, *image_size)
             self.encoder = ResNetEncoder(sample_x, out_dim=256)
-        self.mlp = make_mlp(self.encoder.out_dim+state_dim, [512, 256], last_act=True)
-        self.actor_mean = nn.Linear(256, action_dim)
+        else:
+            raise NotImplementedError
+        self.state_proj = make_mlp(
+            in_channels=self.state_dim,
+            mlp_channels=[self.state_latent_dim, ], 
+            act_builder=nn.Tanh, 
+            use_layer_norm=True
+        )
+        
+        # self.mlp = make_mlp(self.encoder.out_dim+self.state_dim, [512, 256], last_act=True)
+        # self.actor_mean = nn.Linear(256, self.action_dim) 
+        
+        self.mix_proj = make_mlp(
+            in_channels=self.encoder.out_dim+self.state_latent_dim, 
+            mlp_channels=[256, 256],  
+            act_builder=nn.Tanh, 
+            use_layer_norm=True
+        )
+
+        self.actor_mean = nn.Linear(256, self.action_dim) 
 
         if add_q_head:
             independent_std = False
             action_scale = 1, -1
             final_tanh = True
-            self.q_head = DoubleQHead(
-                hidden_size=self.encoder.out_dim+self.state_dim,
+            self.q_head = MultiQHead(
+                # hidden_size=self.encoder.out_dim+self.state_dim,
+                hidden_size=self.encoder.out_dim+self.state_latent_dim,
+                hidden_dims=[256, 256, 256], 
+                num_q_heads=2, 
                 action_dim=action_dim,
                 use_separate_processing=False
             )
@@ -87,12 +110,20 @@ class CNNPolicy(BasePolicy):
         processed_env_obs["images"] = processed_env_obs["images"].permute(0, 3, 1, 2)
         return processed_env_obs
     
-    def get_feature(self, obs, detach_encoder=False):
+    def get_feature_0(self, obs, detach_encoder=False):
         visual_feature = self.encoder(obs["images"])
         if detach_encoder:
             visual_feature = visual_feature.detach()
         x = torch.cat([visual_feature, obs["states"]], dim=1)
         return self.mlp(x), visual_feature
+    
+    def get_feature(self, obs, detach_encoder=False):
+        visual_feature = self.encoder(obs["images"])
+        if detach_encoder:
+            visual_feature = visual_feature.detach()
+        state_embed = self.state_proj(obs["states"])
+        x = torch.cat([visual_feature, state_embed], dim=1)
+        return x, visual_feature
 
     def default_forward(
             self, 
@@ -109,7 +140,7 @@ class CNNPolicy(BasePolicy):
         log_std = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (log_std + 1)  # From SpinUp / Denis Yarats
         return mean, log_std, visual_feature
     
-    def sac_forward(
+    def sac_forward_0(
         self, obs, **kwargs
     ):
         
@@ -132,8 +163,33 @@ class CNNPolicy(BasePolicy):
         chunk_logprobs = chunk_logprobs - torch.log(self.action_scale * (1 - action_normalized.pow(2)) + 1e-6)
 
         return action, chunk_logprobs, visual_feature
+    
+    def sac_forward(
+        self, obs, **kwargs
+    ):
+        
+        full_feature, visual_feature = self.get_feature(obs)
+        mix_feature = self.mix_proj(full_feature)
+        action_mean = self.actor_mean(mix_feature)
+        action_logstd = self.actor_logstd(mix_feature)
+        action_logstd = torch.tanh(action_logstd)
+        action_logstd = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (action_logstd + 1)
 
-    def predict_action_batch(
+        action_std = torch.exp(action_logstd)
+        probs = Normal(action_mean, action_std)
+        raw_action = probs.rsample()
+        
+
+        # for sac
+        action_normalized = torch.tanh(raw_action)
+        action = action_normalized * self.action_scale + self.action_bias
+        
+        chunk_logprobs = probs.log_prob(raw_action)
+        chunk_logprobs = chunk_logprobs - torch.log(self.action_scale * (1 - action_normalized.pow(2)) + 1e-6)
+
+        return action, chunk_logprobs, full_feature
+
+    def predict_action_batch_0(
             self, env_obs, 
             calulate_logprobs=True,
             calulate_values=True,
@@ -193,13 +249,82 @@ class CNNPolicy(BasePolicy):
             result["shared_feature"] = visual_feature
         return chunk_actions, result
     
-    def get_q_values(self, obs, actions, shared_feature=None, detach_encoder=False):
+    def predict_action_batch(
+            self, env_obs, 
+            calulate_logprobs=True,
+            calulate_values=True,
+            return_obs=True, 
+            return_action_type="numpy_chunk", 
+            return_shared_feature=False, 
+            **kwargs
+        ):
+        full_feature, visual_feature = self.get_feature(env_obs)
+        mix_feature = self.mix_proj(full_feature)
+        action_mean = self.actor_mean(mix_feature)
+        if self.independent_std:
+            action_logstd = self.actor_logstd.expand_as(action_mean)
+        else:
+            action_logstd = self.actor_logstd(mix_feature)
+
+        if self.final_tanh:
+            action_logstd = torch.tanh(action_logstd)
+            action_logstd = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (action_logstd + 1)  # From SpinUp / Denis Yarats
+
+        action_std = action_logstd.exp()
+        probs = torch.distributions.Normal(action_mean, action_std)
+        raw_action = probs.rsample()  # for reparameterization trick (mean + std * N(0,1))
+        chunk_logprobs = probs.log_prob(raw_action)
+        if self.action_scale is not None:
+            action_normalized = torch.tanh(raw_action)
+            action = action_normalized * self.action_scale + self.action_bias
+
+            chunk_logprobs = chunk_logprobs - torch.log(self.action_scale * (1 - action_normalized.pow(2)) + 1e-6)
+        else:
+            action = raw_action
+
+        if return_action_type == "numpy_chunk":
+            chunk_actions = action.reshape(-1, self.num_action_chunks, self.action_dim)
+            chunk_actions = chunk_actions.cpu().numpy()
+        elif return_action_type == "torch_flatten":
+            chunk_actions = action.clone()
+        else:
+            raise NotImplementedError
+        
+        if hasattr(self, "value_head") and calulate_values:
+            raise NotImplementedError
+            chunk_values = self.value_head(env_obs)
+        else:
+            chunk_values = torch.zeros_like(chunk_logprobs[..., :1])
+        forward_inputs = {
+            "action": action
+        }
+        if return_obs:
+            forward_inputs["obs"] = env_obs
+        
+        result = {
+            "prev_logprobs": chunk_logprobs,
+            "prev_values": chunk_values,
+            "forward_inputs": forward_inputs,
+        }
+        if return_shared_feature:
+            result["shared_feature"] = full_feature
+        return chunk_actions, result
+    
+    def get_q_values_0(self, obs, actions, shared_feature=None, detach_encoder=False):
         if shared_feature is None:
             shared_feature = self.encoder(obs["images"])
         if detach_encoder:
             shared_feature = shared_feature.detach()
         x = torch.cat([shared_feature, obs["states"]], dim=1)
         return self.q_head(x, actions)
+
+    
+    def get_q_values(self, obs, actions, shared_feature=None, detach_encoder=False):
+        if shared_feature is None:
+            shared_feature, visual_feature = self.get_feature(obs)
+        if detach_encoder:
+            shared_feature = shared_feature.detach()
+        return self.q_head(shared_feature, actions)
     
 
 class Agent(nn.Module):

@@ -35,7 +35,7 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         # SAC-specific initialization
         self.replay_buffer = None
         self.target_model = None
-        self.log_alpha = None
+        self.base_alpha = None
         self.alpha_optimizer = None
         self.update_step = 0
 
@@ -91,26 +91,51 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                 -self.cfg.actor.model.action_dim  # Heuristic: -|A|
             )
             self.target_entropy = target_entropy
-            self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
-            self.alpha = self.log_alpha.exp().item()
+
+            self.alpha_type = "exp" # "exp"
+            # self.alpha_type = "softplus"
+            if self.alpha_type == "exp":
+                self.base_alpha = torch.zeros(1, requires_grad=True, device=self.device)
+            elif self.alpha_type == "softplus":
+                self.base_alpha = torch.nn.Parameter(
+                    np.log(np.exp(1)-1) * torch.ones(1, device=self.device), requires_grad=True
+                )
+            else:
+                raise NotImplementedError
             self.alpha_optimizer = torch.optim.Adam(
-                [self.log_alpha], 
+                [self.base_alpha], 
                 lr=self.cfg.algorithm.get("alpha_lr", 3e-4)
             )
-        else:
-            self.alpha = self.cfg.algorithm.get("alpha", 0.2)
     
+    def compute_alpha(self):
+        if self.cfg.algorithm.get("auto_entropy_tuning", False):
+            if self.alpha_type == "exp":
+                alpha = self.base_alpha.exp()
+            elif self.alpha_type == "softplus":
+                alpha = torch.nn.functional.softplus(self.base_alpha)
+        else:
+            alpha = self.cfg.algorithm.get("alpha", 0.2)
+        return alpha
+
+    @property
+    def alpha(self):
+        return self.compute_alpha().item()
+
     def setup_sac_components(self):
         """Initialize SAC-specific components"""
         # Initialize replay buffer
         buffer_capacity = self.cfg.algorithm.get("replay_buffer_capacity", 100000)
+        seed = self.cfg.actor.get("seed", 1234)
         self.replay_buffer = SACReplayBuffer(
             capacity=buffer_capacity,
             device=self.device,
-            seed=self.cfg.actor.get("seed", 1234)
+            seed=seed
         )
-        
-        
+
+        self.critic_actor_ratio = self.cfg.algorithm.get("critic_actor_ratio", 1)
+        self.critic_subsample_size = self.cfg.algorithm.get("critic_subsample_size", -1)
+        self.critic_sample_generator = torch.Generator()
+        self.critic_sample_generator.manual_seed(seed)
 
     def soft_update_target_model(self, tau: float = None):
         """Soft update target model parameters"""
@@ -196,64 +221,72 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                 
                 shared_feature = next_results["shared_feature"]
 
-                qf1_next_target, qf2_next_target = self.target_model.get_q_values(
+                all_qf_next_target = self.target_model.get_q_values(
                     next_obs, next_state_actions, shared_feature
                 )
+                if self.critic_subsample_size > 0:
+                    sample_idx = torch.randint(
+                        0, all_qf_next_target.shape[0], self.critic_subsample_size, 
+                        generator=self.critic_sample_generator, device=self.device
+                    )
+                    all_qf_next_target = all_qf_next_target[sample_idx]
+                    
                 min_qf_next_target, _ = torch.min(
-                    torch.cat((qf1_next_target, qf2_next_target), dim=1), 
+                    all_qf_next_target, 
                     dim=1, keepdim=True
                 )
 
-                gamma = 0.8
-                min_qf_next_target = min_qf_next_target - self.alpha * next_state_log_pi
-                target_q_values = batch["rewards"] + gamma * min_qf_next_target
+                if self.cfg.algorithm.get("backup_entropy", True):
+                    min_qf_next_target = min_qf_next_target - self.alpha * next_state_log_pi
+                target_q_values = batch["rewards"] + self.cfg.algorithm.gamma * min_qf_next_target # [bsz, 1]
 
             
-            data_q1_values, data_q2_values = self.model(
+            all_data_q_values = self.model(
                 "sac_q_forward", 
                 obs=curr_obs, actions=batch["action"] 
-            )
+            ) # [num-q, bsz, 1]
 
-            q1_loss = F.mse_loss(data_q1_values, target_q_values)
-            q2_loss = F.mse_loss(data_q2_values, target_q_values)
-            critic_loss = q1_loss + q2_loss
+            critic_loss = F.mse_loss(all_data_q_values, target_q_values[None]) * all_data_q_values.shape[0]
             self.qf_optimizer.zero_grad()
             critic_loss.backward()
             self.qf_optimizer.step()
 
-            pi, log_pi, shared_feature = self.model(
-                "sac_forward", obs=curr_obs
-            )
-            log_pi = log_pi.sum(dim=-1, keepdim=True)
-            qf1_pi, qf2_pi = self.model(
-                "sac_q_forward", 
-                obs=curr_obs, actions=pi, 
-                shared_feature=shared_feature, 
-                detach_encoder=True
-            )
-            min_qf_pi, _ = torch.min(
-                torch.cat((qf1_pi, qf2_pi), dim=1), 
-                dim=1, keepdim=True
-            )
-            actor_loss = ((self.alpha*log_pi) - min_qf_pi).mean()
-            
-            # Backward pass and optimization
-            self.optimizer.zero_grad()
-            actor_loss.backward()
-            self.optimizer.step()
-            
-            # Update temperature parameter if using automatic entropy tuning
-            if hasattr(self, 'log_alpha') and self.log_alpha is not None:
-                with torch.no_grad():
-                    _, log_pi, _ = self.model(
-                        "sac_forward", obs=curr_obs
-                    )
-                alpha_loss = (-self.log_alpha.exp() * (log_pi + self.target_entropy)).mean()
-                self.alpha_optimizer.zero_grad()
-                alpha_loss.backward()
-                torch.distributed.all_reduce(self.log_alpha.grad, op=torch.distributed.ReduceOp.AVG)
-                self.alpha_optimizer.step()
-                self.alpha = self.log_alpha.exp().item()
+            if update_idx % self.critic_actor_ratio == 0:
+                pi, log_pi, shared_feature = self.model(
+                    "sac_forward", obs=curr_obs
+                )
+                log_pi = log_pi.sum(dim=-1, keepdim=True)
+                all_qf_pi = self.model(
+                    "sac_q_forward", 
+                    obs=curr_obs, actions=pi, 
+                    shared_feature=shared_feature, 
+                    detach_encoder=True
+                )
+                # mean_qf_pi = torch.mean(all_qf_pi, dim=1, keepdim=True)
+                # actor_loss = ((self.alpha*log_pi) - mean_qf_pi).mean()
+
+                min_qf_pi = torch.mean(all_qf_pi, dim=1, keepdim=True)
+                actor_loss = ((self.alpha*log_pi) - min_qf_pi).mean()
+                
+                # Backward pass and optimization
+                self.optimizer.zero_grad()
+                actor_loss.backward()
+                self.optimizer.step()
+                
+                # Update temperature parameter if using automatic entropy tuning
+                if hasattr(self, 'base_alpha') and self.base_alpha is not None:
+                    with torch.no_grad():
+                        _, log_pi, _ = self.model(
+                            "sac_forward", obs=curr_obs
+                        )
+                        log_pi = log_pi.sum(dim=-1, keepdim=True)
+
+                    alpha_loss = (-self.compute_alpha() * (log_pi.mean() + self.target_entropy))
+
+                    self.alpha_optimizer.zero_grad()
+                    alpha_loss.backward()
+                    torch.distributed.all_reduce(self.base_alpha.grad, op=torch.distributed.ReduceOp.AVG)
+                    self.alpha_optimizer.step()
             
             # # Soft update target network
             if self.target_model_initialized and self.update_step % self.cfg.algorithm.get("target_update_freq", 1) == 0:
@@ -269,10 +302,7 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                 "critic/lr": self.qf_optimizer.param_groups[0]["lr"], 
                 "sac/actor_loss": actor_loss.detach().item(), 
                 "sac/critic_loss": critic_loss.detach().item(), 
-                "sac/qf1_loss": q1_loss.detach().item(), 
-                "sac/qf2_loss": q2_loss.detach().item(), 
-                "sac/qf1_values": data_q1_values.mean().detach().item(), 
-                "sac/qf2_values": data_q2_values.mean().detach().item(), 
+                "sac/qf_values": all_data_q_values.mean().detach().item(), 
                 "sac/current_q": min_qf_pi.mean().detach().item(), 
                 "replay_buffer/size": len(self.replay_buffer),
                 "replay_buffer/utilization": len(self.replay_buffer) / self.replay_buffer.capacity

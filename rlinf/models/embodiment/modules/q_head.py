@@ -14,7 +14,7 @@
 
 import torch
 import torch.nn as nn
-
+from .utils import make_mlp
 
 class QHead(nn.Module):
     """
@@ -26,47 +26,21 @@ class QHead(nn.Module):
         - Action pathway: projects from action_dim to 256
         - Fusion: concatenate [256, 256] -> 512 -> 256 -> 128 -> 1
     """
-    def __init__(self, hidden_size, action_dim, output_dim=1, use_separate_processing=True):
+    def __init__(self, hidden_size, action_dim, hidden_dims, output_dim=1, use_separate_processing=True):
         super().__init__()
         self.hidden_size = hidden_size
         self.action_dim = action_dim
         self.use_separate_processing = use_separate_processing
         
         if use_separate_processing:
-            # Separate processing pathways for state and action
-            # State pathway: compress high-dimensional state
-            self.state_proj = nn.Sequential(
-                nn.Linear(hidden_size, 512),
-                nn.GELU(),
-                nn.Linear(512, 256),
-                nn.GELU()
-            )
-            
-            # Action pathway: expand low-dimensional action
-            self.action_proj = nn.Sequential(
-                nn.Linear(action_dim, 128),
-                nn.GELU(),
-                nn.Linear(128, 256),
-                nn.GELU()
-            )
-            
-            # Fusion layers: combine processed state and action
-            self.fusion_l1 = nn.Linear(256 + 256, 512)
-            self.fusion_act1 = nn.GELU()
-            self.fusion_l2 = nn.Linear(512, 256)
-            self.fusion_act2 = nn.GELU()
-            self.fusion_l3 = nn.Linear(256, 128)
-            self.fusion_act3 = nn.GELU()
-            self.fusion_l4 = nn.Linear(128, output_dim, bias=False)
+            raise NotImplementedError
         else:
-            # Original simple concatenation approach
-            self.head_l1 = nn.Linear(hidden_size + action_dim, 256)
-            self.head_act1 = nn.ReLU()
-            self.head_l2 = nn.Linear(256, 256)
-            self.head_act2 = nn.ReLU()
-            self.head_l3 = nn.Linear(256, 256)
-            self.head_act3 = nn.ReLU()
-            self.head_l4 = nn.Linear(256, output_dim)
+            self.net = make_mlp(
+                in_channels=hidden_size+action_dim, 
+                mlp_channels=hidden_dims+[output_dim, ], 
+                act_builder=nn.ReLU, 
+                last_act=False
+            )
 
         # self._init_weights()
 
@@ -107,43 +81,37 @@ class QHead(nn.Module):
             torch.Tensor: Q-values [batch_size, output_dim]
         """
         if self.use_separate_processing:
-            # Process state and action separately
-            state_embed = self.state_proj(state_features)  # [B, 256]
-            action_embed = self.action_proj(action_features)  # [B, 256]
-            
-            # Concatenate processed features (now balanced: 256 + 256)
-            x = torch.cat([state_embed, action_embed], dim=-1)  # [B, 512]
-            
-            # Fusion network
-            x = self.fusion_act1(self.fusion_l1(x))
-            x = self.fusion_act2(self.fusion_l2(x))
-            x = self.fusion_act3(self.fusion_l3(x))
-            q_values = self.fusion_l4(x)
+            raise NotImplementedError
         else:
             # Original simple concatenation
             x = torch.cat([state_features, action_features], dim=-1)
-            x = self.head_act1(self.head_l1(x))
-            x = self.head_act2(self.head_l2(x))
-            x = self.head_act3(self.head_l3(x))
-            q_values = self.head_l4(x)
+            q_values = self.net(x)
         
         return q_values
 
 
-class DoubleQHead(nn.Module):
+class MultiQHead(nn.Module):
     """
     Double Q-network for SAC to reduce overestimation bias.
     """
     def __init__(
             self, 
             hidden_size, action_dim, 
+            hidden_dims, 
+            num_q_heads=2, 
             output_dim=1, 
             use_separate_processing=True, 
         ):
         super().__init__()
-        self.q1 = QHead(hidden_size, action_dim, output_dim, use_separate_processing)
-        self.q2 = QHead(hidden_size, action_dim, output_dim, use_separate_processing)
-        
+
+        self.num_q_heads = num_q_heads
+        qs = []
+        for q_id in range(self.num_q_heads):
+            qs.append(
+                QHead(hidden_size, action_dim, hidden_dims, output_dim, use_separate_processing)
+            )
+        self.qs = nn.ModuleList(qs)
+
     def forward(self, state_features, action_features):
         """
         Forward pass for both Q-networks.
@@ -151,14 +119,12 @@ class DoubleQHead(nn.Module):
         Returns:
             Tuple[torch.Tensor, torch.Tensor]: Q1 and Q2 values
         """
-        q1_values = self.q1(state_features, action_features)
-        q2_values = self.q2(state_features, action_features)
-        return q1_values, q2_values
+        q_vs = []
+        for qf in self.qs: 
+            q_vs.append(qf(state_features, action_features))
+        return torch.cat(q_vs, dim=-1)
     
-    def q1_forward(self, state_features, action_features):
+    def q_id_forward(self, q_id, state_features, action_features):
         """Forward pass for Q1 network only"""
-        return self.q1(state_features, action_features)
+        return self.qs[q_id](state_features, action_features)
     
-    def q2_forward(self, state_features, action_features):
-        """Forward pass for Q2 network only"""
-        return self.q2(state_features, action_features)

@@ -260,7 +260,8 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
             cfg.hidden_dim,
             num_action_chunks=cfg.num_action_chunks,
             add_value_head=cfg.add_value_head, 
-            add_q_head=cfg.add_q_head
+            add_q_head=cfg.add_q_head, 
+            backbone=cfg.backbone
         )
 
     else:

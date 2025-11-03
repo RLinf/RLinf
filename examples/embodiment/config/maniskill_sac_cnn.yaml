@@ -1,6 +1,6 @@
 defaults:
-  - env/train: PushCube
-  - env/eval: PushCube
+  - env/train: PickCube
+  - env/eval: PickCube
   - override hydra/job_logging: stdout
 
 hydra:
@@ -41,6 +41,7 @@ algorithm:
   use_fixed_reset_state_ids: False
   require_values: False  # SAC doesn't use value function for advantages
   normalize_advantages: False  # SAC doesn't use advantages
+  obs_mode: rgb
   kl_penalty: kl
   group_size: 1
 
@@ -67,18 +68,21 @@ algorithm:
   gumbel_temperature: 1.0   # Temperature for Gumbel-Softmax sampling
   
   # SAC hyperparameters
-  gamma: 0.8
-  tau: 0.01  # Soft update coefficient for target networks
+  gamma: 0.8 # 0.96
+  tau: 0.005  # Soft update coefficient for target networks
   alpha: 0.2  # Temperature parameter (if not using auto-tuning)
   auto_entropy_tuning: True  # Enable automatic entropy tuning
   initial_alpha: 0.2  # Initial temperature value
   target_entropy: -4  # Target entropy (-action_dim)
   alpha_lr: 3.0e-4  # Learning rate for temperature parameter
+
+  critic_actor_ratio: 1
+  backup_entropy: True
   
   # Replay buffer settings
   replay_buffer_capacity: 300000
-  min_buffer_size: 0  # Minimum buffer size before training starts
-  num_updates_per_step: 32  # Number of gradient updates per training step
+  min_buffer_size: 200  # Minimum buffer size before training starts
+  num_updates_per_step: 64  # Number of gradient updates per training step
   target_update_freq: 1  # Frequency of target network updates
 
   # params for rollout
@@ -138,7 +142,7 @@ actor:
     model_name: "cnn"
     policy_setup: "panda-ee"
     image_size: [3, 64, 64]
-    state_dim: 25
+    state_dim: 29
     action_dim: 4
     num_action_chunks: 1
     hidden_dim: 256
@@ -146,6 +150,7 @@ actor:
     precision: "32"
     add_value_head: False
     add_q_head: True
+    backbone: resnet # ["resnet", "plane_conv"]
     
     is_lora: False
     lora_rank: 32

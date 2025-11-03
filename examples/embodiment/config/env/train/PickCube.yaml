@@ -19,7 +19,7 @@ video_cfg:
 init_params:
   id: "PickCube-v1"
   num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
-  obs_mode: "state"
+  obs_mode: ${algorithm.obs_mode}
   control_mode: None
   sim_backend: "gpu"
   sim_config:
@@ -28,4 +28,6 @@ init_params:
   max_episode_steps: ${env.train.max_episode_steps}
   sensor_configs:
     shader_pack: "default"
+    width: 64
+    height: 64
   render_mode: all

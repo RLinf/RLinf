@@ -60,6 +60,13 @@ def get_init_weight_context_manager(use_meta_tensor=True):
 
 
 def get_small_model_fsdp_wrap_policy(module):
+    policies = []
+    from torch.distributed.fsdp.wrap import _or_policy
+    from rlinf.models.embodiment.modules.nature_cnn import ResNet10
+    resnet_policy = functools.partial(
+        _module_wrap_policy, module_classes={ResNet10}
+    )
+    policies.append(resnet_policy)
 
     if hasattr(module, "value_head"):
         from rlinf.models.embodiment.modules.value_head import ValueHead
@@ -67,14 +74,15 @@ def get_small_model_fsdp_wrap_policy(module):
         value_head_policy = functools.partial(
             _module_wrap_policy, module_classes={ValueHead}
         )
-        return value_head_policy
+        policies.append(value_head_policy)
     if hasattr(module, "q_head"):
-        from rlinf.models.embodiment.modules.q_head import DoubleQHead
+        from rlinf.models.embodiment.modules.q_head import MultiQHead
         q_head_policy = functools.partial(
-            _module_wrap_policy, module_classes={DoubleQHead}
+            _module_wrap_policy, module_classes={MultiQHead}
         )
-        return q_head_policy
-    raise NotImplementedError
+        policies.append(q_head_policy)
+
+    return functools.partial(_or_policy, policies=policies)
 
 
 def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_vla_model=False):

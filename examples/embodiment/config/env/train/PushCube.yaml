@@ -19,7 +19,7 @@ video_cfg:
 init_params:
   id: "PushCube-v1"
   num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
-  obs_mode: "rgb"
+  obs_mode: ${algorithm.obs_mode}
   control_mode: None
   sim_backend: "gpu"
   sim_config:

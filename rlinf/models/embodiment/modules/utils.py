@@ -35,12 +35,13 @@ def get_act_func(activation):
         raise ValueError(f"Unsupported activation: {activation}")
     return act
 
-def make_mlp(in_channels, mlp_channels, act_builder=nn.ReLU, last_act=True):
+def make_mlp(in_channels, mlp_channels, act_builder=nn.ReLU, last_act=True, use_layer_norm=False):
     c_in = in_channels
     module_list = []
     for idx, c_out in enumerate(mlp_channels):
         module_list.append(nn.Linear(c_in, c_out))
         if last_act or idx < len(mlp_channels) - 1:
+            module_list.append(nn.LayerNorm(c_out))
             module_list.append(act_builder())
         c_in = c_out
     return nn.Sequential(*module_list)
