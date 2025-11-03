@@ -478,6 +478,13 @@ actor
       trust_remote_code: True
       padding_side: 'right'
 
+    fsdp_config:
+      forward_prefetch: False
+      limit_all_gathers: False
+      backward_prefetch: null
+      use_orig_params: False
+      use_liger_kernel: False
+
     megatron:
       ddp_bucket_size: null
       distributed_backend: nccl # 支持 'nccl' 与 'gloo'
@@ -627,6 +634,17 @@ actor
 
 ``actor.megatron.ckpt.pipeline_model_parallel_size``：转换后 checkpoint 的流水线并行度（PP）。
 
+**FSDP 集成：**
+
+``actor.fsdp_config.forward_prefetch``: 是否在前向传播时预取下一个 all-gather 操作。开启时会增加显存占用，建议当显存足够时可以开启以重叠通信与计算，从而提升性能。
+
+``actor.fsdp_config.limit_all_gathers``: 是否限制并发 all-gather 操作的数量，建议当CPU或内存成为瓶颈时开启。
+
+``actor.fsdp_config.backward_prefetch``: 后向传播时的预取策略（null/'pre'/'post'）， 如果为 'pre'，则在计算梯度时预取下一个 all-gather 操作，这样重叠更激进，吞吐更高；如果为 'post'，则在当前梯度计算完成后预取下一个 all-gather 操作，相较于 'pre' 更保守一些。
+
+``actor.fsdp_config.use_orig_params``: 是否使用模块的原始参数，让模块暴露原始参数（nn.Module.named_parameters），而非 FSDP 的扁平参数。可以提高兼容性，但是会引入额外的通信开销降低性能。
+
+``actor.fsdp_config.use_liger_kernel``: 是否使用 liger_kernel（目前仅支持部分模型，包括：qwen2.5，qwen2.5-vl），开启则可以降低显存占用并提升训练速度。
 
 
 reward

@@ -1,5 +1,5 @@
 Math推理的强化学习训练
-================================
+===================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

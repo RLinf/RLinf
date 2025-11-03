@@ -500,6 +500,13 @@ actor
       trust_remote_code: True
       padding_side: 'right'
 
+    fsdp_config:
+      forward_prefetch: False
+      limit_all_gathers: False
+      backward_prefetch: null
+      use_orig_params: False
+      use_liger_kernel: False
+
     megatron:
       ddp_bucket_size: null
       distributed_backend: nccl # Support 'nccl' and 'gloo'
@@ -679,6 +686,17 @@ actor
 
 ``actor.megatron.ckpt.pipeline_model_parallel_size``: PP degree for converted checkpoints.
 
+**FSDP Integration:**
+
+``actor.fsdp_config.forward_prefetch``: Whether to prefetch the next all-gather operation during forward propagation. Enabling this will increase memory usage; it is recommended to enable it when sufficient memory is available to overlap communication and computation, thereby improving performance.
+
+``actor.fsdp_config.limit_all_gathers``: Whether to limit the number of concurrent all-gather operations. It is recommended to enable this when CPU or memory is a bottleneck.
+
+``actor.fsdp_config.backward_prefetch``: Prefetch strategy during backward propagation (null/'pre'/'post'). If 'pre', the next all-gather operation is prefetched when calculating gradients, resulting in more aggressive overlap and higher throughput; if 'post', the next all-gather operation is prefetched after the current gradient calculation is completed, which is more conservative than 'pre'.
+
+``actor.fsdp_config.use_orig_params``: Whether to use the module's raw parameters, exposing the module's raw parameters (nn.Module.named_parameters) instead of the flattened parameters of FSDP. This improves compatibility but introduces additional communication overhead, reducing performance.
+
+``actor.fsdp_config.use_liger_kernel``: Whether to use liger_kernel (currently only supported for some models, including qwen2.5 and qwen2.5-vl). Enabling this can reduce memory usage and improve training speed.
 
 reward
 ~~~~~~~~~~~~~~~

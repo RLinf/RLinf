@@ -18,7 +18,6 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, overload
 
-import ray
 import ray.actor
 import torch.distributed as dist
 from torch.futures import Future

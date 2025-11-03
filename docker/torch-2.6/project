@@ -2,7 +2,7 @@
 name = "RLinf"
 version = "0.1.0"
 readme = {file = "README.md", content-type = "text/markdown"}
-requires-python = "==3.11.10"
+requires-python = ">=3.10,<=3.11.14"
 keywords = [
     "reinforcement-learning",
     "embodied-intelligence",
@@ -50,7 +50,7 @@ dependencies = [
     "ruff",
     "pre-commit",
     "liger_kernel",
-    "uvloop==0.21.0",
+    "pip",
 
     # Logging
     "swanlab",
@@ -62,9 +62,10 @@ sglang-vllm = [
     "transformers==4.51.1",
     "sglang[all]==0.4.6.post5",
     "vllm==0.8.5",
+    # uvloop is not compatible with simulators, put it here
+    "uvloop==0.21.0",
 ]
 embodied = [
-    "prismatic",
     "transformers==4.40.1",
     "draccus",
     "rich",
@@ -81,6 +82,7 @@ embodied = [
     "easydict",
     "cloudpickle",
     "gym",
+    "av",
 ]
 
 [tool.uv]
@@ -95,17 +97,19 @@ override-dependencies = [
     "torch==2.6.0",
     "torchvision==0.21.0",
     "torchaudio==2.6.0",
-    "xgrammar==0.1.19"
+    "xgrammar==0.1.19",
+    "uvloop==0.21.0",
+    "tensorflow-addons==0.23.0",
 ]
 
 [tool.ruff]
 line-length = 88
 indent-width = 4
-target-version = "py38"
+target-version = "py311"
 
 [tool.ruff.lint]
 isort = {known-first-party = ["rlinf"]}
-select = ["C", "E", "F", "I", "W", "CPY001", "RUF013", "UP006", "PERF102", "PLC1802", "PLC0208", "D", "RUF002"]
+select = ["C", "E", "F", "I", "W", "CPY001", "RUF013", "PERF102", "PLC1802", "PLC0208", "D", "RUF002"]
 ignore = [
     "C901", # "complex-structure"
     "E501", # "line-too-long"

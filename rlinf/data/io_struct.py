@@ -14,7 +14,7 @@
 
 import uuid
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -52,88 +52,15 @@ class RolloutRequest:
     input_ids: List of input token IDs for rollout
     n: Number of completions to generate for each input
     image_data: list of image data (bytes or URLs) for multimodal inputs
-    answers: Optional list of answers for the requests, if available
+    answers: List of answers for the requests, where each answer can be either a list of strings (for typical tasks) or a dict (for VQA tasks), if available.
     multi_modal_inputs: list of multi-modal inputs for the requests
     """
 
     n: int
     input_ids: List[List[int]]
     image_data: Union[List[List[bytes]], List[List[str]]]
-    answers: List[str]
-    multi_modal_inputs: List[Dict]
-
-    def repeat(self) -> "RolloutRequest":
-        """Repeat each input in the RolloutRequest a specified number of times.
-
-        Args:
-            times (int): The number of times to repeat each input.
-
-        Returns:
-            RolloutRequest: A new RolloutRequest with repeated inputs.
-        """
-        assert self.n > 0, "n must be greater than 0"
-
-        input_ids, answers, image_data, multi_modal_inputs = zip(
-            *[
-                (input_id, answer, image_data, multi_modal_inputs)
-                for input_id, answer, image_data, multi_modal_inputs in zip(
-                    self.input_ids,
-                    self.answers,
-                    self.image_data,
-                    self.multi_modal_inputs,
-                )
-                for _ in range(self.n)
-            ]
-        )
-        return RolloutRequest(
-            n=self.n,
-            input_ids=list(input_ids),
-            answers=list(answers),
-            image_data=list(image_data),
-            multi_modal_inputs=list(multi_modal_inputs),
-        )
-
-    def split(self, num_splits: int) -> List["RolloutRequest"]:
-        """Split the RolloutRequest into multiple smaller requests.
-
-        Args:
-            num_splits (int): The number of splits to create.
-
-        Returns:
-            List[RolloutRequest]: A list of smaller RolloutRequest instances.
-        """
-        assert num_splits > 0, "num_splits must be greater than 0"
-        assert len(self.input_ids) % num_splits == 0, (
-            f"Input IDs length {len(self.input_ids)} is not divisible by num_splits {num_splits}"
-        )
-
-        input_ids_split_list = split_list(self.input_ids, num_splits)
-        answers_split_list = split_list(self.answers, num_splits)
-        image_data_split_list = split_list(self.image_data, num_splits)
-        multi_modal_inputs_split_list = split_list(self.multi_modal_inputs, num_splits)
-
-        splitted_requests = []
-        for (
-            input_ids_batch,
-            answers_batch,
-            image_data_batch,
-            multi_modal_inputs_batch,
-        ) in zip(
-            input_ids_split_list,
-            answers_split_list,
-            image_data_split_list,
-            multi_modal_inputs_split_list,
-        ):
-            request = RolloutRequest(
-                n=self.n,
-                input_ids=input_ids_batch,
-                answers=answers_batch,
-                image_data=image_data_batch,
-                multi_modal_inputs=multi_modal_inputs_batch,
-            )
-            splitted_requests.append(request)
-
-        return splitted_requests
+    answers: List[Union[List[str], Dict]]
+    multi_modal_inputs: List[Optional[Dict]]
 
     def to_seq_group_infos(self) -> List["SeqGroupInfo"]:
         """Convert the RolloutRequest into a list of SeqGroupInfo objects.
@@ -145,12 +72,12 @@ class RolloutRequest:
             SeqGroupInfo(
                 id=uuid.uuid4().int,
                 input_ids=input_ids,
-                answer=answers,
+                answer=answer,
                 group_size=self.n,
                 image_data=image_data,
                 multi_modal_inputs=multi_modal_inputs,
             )
-            for input_ids, answers, image_data, multi_modal_inputs in zip(
+            for input_ids, answer, image_data, multi_modal_inputs in zip(
                 self.input_ids,
                 self.answers,
                 self.image_data,
@@ -160,7 +87,7 @@ class RolloutRequest:
         ]
 
 
-class FinishReasonEnum(StrEnum):
+class FinishReasonEnum(str, Enum):
     ABORT = "abort"
     STOP = "stop"
     LENGTH = "length"
@@ -176,7 +103,7 @@ class SeqGroupInfo:
     Attributes:
         id (int): Unique identifier for the sequence group.
         input_ids (List[int]): List of input IDs of the original sequence.
-        answer (List[str]): List of answers of the original sequence.(One sequence can have multiple equivalent answers)
+        answer (Union[List[str], Dict]): List of answers of the original sequence.(One sequence can have multiple equivalent answers), or a dict in case of vqa task.
         group_size (int): Number of sequences in the group.
         idx_completed (set[int]): Set of indices for sequences that have completed rollout and are ready for evaluation.
         idx_aborted (set[int]): Set of indices for sequences that have been aborted. These sequences need to be re-rolled out before they can be evaluated.
@@ -185,13 +112,13 @@ class SeqGroupInfo:
 
     id: int
     input_ids: List[int]
-    answer: List[str]
+    answer: Union[List[str], Dict]
     group_size: int
     idx_completed: set[int] = field(init=False, compare=False)
     idx_aborted: set[int] = field(init=False, compare=False)
     results: List[Optional[Dict]] = field(init=False, compare=False)
     image_data: Optional[List] = None
-    multi_modal_inputs: Optional[List] = None
+    multi_modal_inputs: Optional[Dict] = None
 
     def __post_init__(self):
         assert self.group_size > 0, "group_size must be greater than 0"
@@ -346,10 +273,24 @@ class RolloutResult:
     def from_vllm_results(
         group_size: int,
         results: List["VllmRequestOutput"],
-        answers: Optional[List[str]] = None,
+        answers: Optional[Union[List[str], Dict]] = None,
         multi_modal_inputs: Optional[List[Dict]] = None,
         return_logprobs: bool = False,
     ) -> "RolloutResult":
+        """
+        Create a RolloutResult from the given vLLM results.
+
+        Args:
+            group_size (int): The group size used during rollout.
+            results (list[VllmRequestOutput]): The rollout results from vLLM.
+            answers (Optional[Union[list[str], dict]]): The answers corresponding to the inputs, notably, if task type is vqa, answers is a dict.
+            multi_modal_inputs (Optional[list[Dict]]): The multi-modal inputs corresponding to the inputs.
+            return_logprobs (bool): Whether to return log probabilities.
+
+        Returns:
+            RolloutResult: The constructed RolloutResult object.
+        """
+
         def get_logprobs(
             response_ids: List[int], output: "CompletionOutput"
         ) -> List[float]:
@@ -370,6 +311,10 @@ class RolloutResult:
                 mm_inputs.extend([mm_input] * group_size)
         else:
             mm_inputs = None
+
+        # for VQA task, answers is a dict
+        if isinstance(answers, dict):
+            answers = [answers]
 
         prompt_lengths = []
         prompt_ids = []
@@ -1116,6 +1061,9 @@ class EnvOutput:
             image_tensor = obs["images"]
         elif self.simulator_type == "robotwin":
             image_tensor = obs["images"]
+        elif self.simulator_type == "behavior":
+            image_tensor = obs["images"]
+            wrist_image_tensor = obs["wrist_images"]
         else:
             raise NotImplementedError
 

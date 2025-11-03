@@ -16,7 +16,7 @@ import re
 from typing import List
 
 
-def qa_accuracy_reward(completions, answers) -> List[float]:
+def qa_accuracy_reward(completions: List[str], answers: List[dict]) -> List[float]:
     """
     Reward function that evaluates question-answering accuracy for VQA tasks.
 
