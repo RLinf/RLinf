@@ -28,13 +28,12 @@ from rlinf.envs.libero.utils import (
     get_benchmark_overridden,
     get_libero_image,
     get_libero_wrist_image,
-    list_of_dict_to_dict_of_list,
     put_info_on_image,
     quat2axisangle,
     save_rollout_video,
     tile_images,
-    to_tensor,
 )
+from rlinf.envs.utils import to_tensor, list_of_dict_to_dict_of_list
 from rlinf.envs.libero.venv import ReconfigureSubprocEnv
 
 

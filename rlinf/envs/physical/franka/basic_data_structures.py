@@ -1,0 +1,35 @@
+import numpy as np
+from dataclasses import dataclass, field, asdict
+
+
+@dataclass
+class FrankaRobotState:
+    # https://docs.ros.org/en/kinetic/api/libfranka/html/structfranka_1_1RobotState.html
+    arm_position: np.ndarray = field(
+        default_factory=lambda: np.zeros(7)
+    )  # FrankaState.O_T_EE
+    arm_velocity: np.ndarray = field(default_factory=lambda: np.zeros(6))
+    arm_joint_position: np.ndarray = field(
+        default_factory=lambda: np.zeros(7)
+    )  # FrankaState.q
+    arm_joint_velocity: np.ndarray = field(
+        default_factory=lambda: np.zeros(7)
+    )  # FrankaState.dq
+    arm_force: np.ndarray = field(
+        default_factory=lambda: np.zeros(3)
+    )  # FrankaState.K_F_ext_hat_K[0:3]
+    arm_torque: np.ndarray = field(
+        default_factory=lambda: np.zeros(3)
+    )  # FrankaState.K_F_ext_hat_K[3:6]
+    arm_jacobian: np.ndarray = field(
+        default_factory=lambda: np.zeros((6, 7))
+    )  # ZeroJacobian.zero_jacobian
+
+    gripper_position: int = 0  # Sum(JointState.position)
+    gripper_open: bool = False
+
+    def to_dict(self):
+        """Convert the dataclass to a serializable dictionary."""
+        return asdict(self)
+
+    

@@ -153,6 +153,34 @@ class EnvWorker(Worker):
                             enable_offload=enable_offload,
                         )
                     )
+        elif self.cfg.env.train.simulator_type == "real":
+            from rlinf.envs.physical.physical_env import PhysicalEnv
+
+            if not only_eval:
+                for stage_id in range(self.stage_num):
+                    self.simulator_list.append(
+                        EnvManager(
+                            self.cfg.env.train,
+                            rank=self._rank,
+                            seed_offset=self._rank * self.stage_num + stage_id,
+                            total_num_processes=self._world_size * self.stage_num,
+                            env_cls=PhysicalEnv,
+                            enable_offload=enable_offload,
+                        )
+                        # RoboTwin(self.cfg.env.train, rank=self._rank, total_num_processes=self._world_size)
+                    )
+            if self.cfg.runner.val_check_interval > 0 or only_eval:
+                for stage_id in range(self.stage_num):
+                    self.eval_simulator_list.append(
+                        EnvManager(
+                            self.cfg.env.eval,
+                            rank=self._rank,
+                            seed_offset=self._rank * self.stage_num + stage_id,
+                            total_num_processes=self._world_size,
+                            env_cls=PhysicalEnv,
+                            enable_offload=enable_offload,
+                        )
+                    )
         else:
             raise NotImplementedError(
                 f"Simulator type {self.cfg.env.train.simulator_type} not implemented"

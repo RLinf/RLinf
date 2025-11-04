@@ -28,7 +28,8 @@ from rlinf.scheduler import Cluster, NodePlacementStrategy, Worker
 from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import euler_2_quat, quat_2_euler
 
-from .franka_controller import FrankaController, FrankaRobotState
+from .basic_data_structures import FrankaRobotState
+
 
 
 @dataclass
@@ -41,6 +42,8 @@ class FrankaRobotConfig:
         ]
     )
     step_frequency: float = 10.0  # Max number of steps per second
+
+    # TODO: rename it to pose
     # Positions are stored in eular angles (xyz for position, rzryrx for orientation)
     # It will be converted to quaternions internally
     target_position: np.ndarray = field(default_factory=lambda: np.zeros(6))
@@ -75,15 +78,21 @@ class FrankaEnv(gym.Env):
             robot_ip (str): The IP address of the robot arm.
             gripper_ip (str): The IP address of the gripper.
         """
+
+        self.is_dummy = True
+
         self._logger = get_logger()
         self._config = config
         self._franka_state = FrankaRobotState()
-        self._franka_state.arm_position = np.concatenate(
-            [
-                self._config.reset_position[:3],
-                euler_2_quat(self._config.reset_position[3:]),
-            ]
-        )
+        if not self.is_dummy:
+            self._franka_state.arm_position = np.concatenate(
+                [
+                    self._config.reset_position[:3],
+                    euler_2_quat(self._config.reset_position[3:]),
+                ]
+            )
+        else:
+            self._franka_state.arm_position = np.zeros(7, )
         self._num_steps = 0
 
         # Launch Franka controller on the same node as the env
@@ -91,6 +100,15 @@ class FrankaEnv(gym.Env):
         cluster = Cluster()
         self._node_id = Worker.current_worker._node_id
         placement = NodePlacementStrategy(node_ids=[self._node_id])
+        
+
+        # Init action and observation spaces
+        self._init_action_obs_spaces()
+        
+        if self.is_dummy:
+            return
+
+        from .franka_controller import FrankaController
         self._controller = FrankaController.create_group(self._config.robot_ip).launch(
             cluster=cluster, placement_strategy=placement
         )
@@ -102,9 +120,6 @@ class FrankaEnv(gym.Env):
                 self._logger.warning(
                     f"Waited {time.time() - start_time} seconds for Franka robot to be ready."
                 )
-
-        # Init action and observation spaces
-        self._init_action_obs_spaces()
 
         # Init cameras
         if self._config.cameras is not None:
@@ -122,7 +137,7 @@ class FrankaEnv(gym.Env):
         [x_delta, y_delta, z_delta, rx_delta, ry_delta, rz_delta, gripper_action]
         """
         start_time = time.time()
-        action = np.clip(action, self._action_space.low, self._action_space.high)
+        action = np.clip(action, self.action_space.low, self.action_space.high)
         xyz_delta = action[:3]
 
         self.next_position = self._franka_state.arm_position.copy()
@@ -130,26 +145,37 @@ class FrankaEnv(gym.Env):
             self.next_position[:3] + xyz_delta * self._config.action_scale[0]
         )
 
-        self.next_position[3:] = (
-            Rotation.from_euler("xyz", action[3:6] * self._config.action_scale[1])
-            * Rotation.from_quat(self._franka_state.arm_position[3:])
-        ).as_quat()
+        if not self.is_dummy:
+            self.next_position[3:] = (
+                Rotation.from_euler("xyz", action[3:6] * self._config.action_scale[1])
+                * Rotation.from_quat(self._franka_state.arm_position[3:])
+            ).as_quat()
+        
+            gripper_action = action[6] * self._config.action_scale[2]
 
-        gripper_action = action[6] * self._config.action_scale[2]
-
-        is_gripper_action_effective = self._gripper_action(gripper_action)
-        self._move_action(self._clip_position_to_safety_box(self.next_position))
+            is_gripper_action_effective = self._gripper_action(gripper_action)
+            self._move_action(self._clip_position_to_safety_box(self.next_position))
+        else:
+            is_gripper_action_effective = True
 
         self._num_steps += 1
         step_time = time.time() - start_time
         time.sleep(max(0, (1.0 / self._config.step_frequency) - step_time))
 
-        self._franka_state = self._controller.get_state().wait()[0]
+        if not self.is_dummy:
+            self._franka_state = self._controller.get_state().wait()[0]
+        else:
+            self._franka_state = self._franka_state
         observation = self._get_observation()
         reward = self._calc_step_reward(observation, is_gripper_action_effective)
-        done = self._num_steps >= self._config.max_num_steps or reward == 1
-        return observation, reward, done, False, {}
+        terminated = float(reward == 1)
+        truncated = self._num_steps >= self._config.max_num_steps
+        return observation, reward, terminated, truncated, {}
 
+    @property
+    def num_steps(self):
+        return self._num_steps
+    
     def _calc_step_reward(
         self,
         observation: Dict[str, np.ndarray | FrankaRobotState],
@@ -161,26 +187,34 @@ class FrankaEnv(gym.Env):
             observation (Dict[str, np.ndarray]): The current observation from the environment.
             is_gripper_action_effective (bool): Whether the gripper action was effective (i.e., the gripper state changed).
         """
-        # Convert orientation to euler angles
-        franka_state: FrankaRobotState = observation["state"]
-        euler_angles = np.abs(quat_2_euler(franka_state.arm_position[3:]))
-        position = np.hstack([franka_state.arm_position[:3], euler_angles])
-        target_delta = np.abs(position - self._config.target_position)
-        if np.all(target_delta <= self._config.reward_threshold):
-            reward = 1
+        if not self.is_dummy:
+            # Convert orientation to euler angles
+            franka_state: FrankaRobotState = observation["state"]
+            euler_angles = np.abs(quat_2_euler(franka_state.arm_position[3:]))
+            position = np.hstack([franka_state.arm_position[:3], euler_angles])
+            target_delta = np.abs(position - self._config.target_position)
+            if np.all(target_delta <= self._config.reward_threshold):
+                reward = 1
+            else:
+                self._logger.debug(
+                    f"Does not meet reward criteria. Target delta: {target_delta}, Reward threshold: {self._config.reward_threshold}"
+                )
+                reward = 0
+
+            if self._config.enable_gripper_penalty and is_gripper_action_effective:
+                reward -= self._config.gripper_penalty
+
+            return reward
         else:
-            self._logger.debug(
-                f"Does not meet reward criteria. Target delta: {target_delta}, Reward threshold: {self._config.reward_threshold}"
-            )
-            reward = 0
-
-        if self._config.enable_gripper_penalty and is_gripper_action_effective:
-            reward -= self._config.gripper_penalty
-
-        return reward
+            return 0
 
     def reset(self, *, seed=None, options=None):
-        return super().reset(seed=seed, options=options)
+        if not self.is_dummy:
+            self._franka_state = self._controller.get_state().wait()[0]
+        else:
+            self._franka_state = self._franka_state
+        observation = self._get_observation()
+        return observation, {}
 
     def _init_action_obs_spaces(self):
         """Initialize action and observation spaces, including arm safety box."""
@@ -194,11 +228,11 @@ class FrankaEnv(gym.Env):
             high=self._config.position_limit_max[3:],
             dtype=np.float64,
         )
-        self._action_space = gym.spaces.Box(
+        self.action_space = gym.spaces.Box(
             np.ones((7,), dtype=np.float32) * -1,
             np.ones((7,), dtype=np.float32),
         )
-        self._obs_space = gym.spaces.Dict(
+        self.observation_space = gym.spaces.Dict(
             {
                 "state": gym.spaces.Dict(
                     {
@@ -227,7 +261,8 @@ class FrankaEnv(gym.Env):
     def _open_cameras(self, camera_info: List[CameraInfo]):
         for info in camera_info:
             camera = Camera(info)
-            camera.open()
+            if not self.is_dummy:
+                camera.open()
             self._cameras.append(camera)
 
     def _close_cameras(self):
@@ -261,7 +296,7 @@ class FrankaEnv(gym.Env):
         for camera in self._cameras:
             try:
                 frame = camera.get_frame()
-                reshape_size = self._obs_space["frames"][
+                reshape_size = self.observation_space["frames"][
                     camera._camera_info.name
                 ].shape[:2][::-1]
                 cropped_frame = self._crop_frame(frame, reshape_size)
@@ -331,13 +366,26 @@ class FrankaEnv(gym.Env):
             raise NotImplementedError("Non-binary gripper action not implemented.")
 
     def _move_action(self, position: np.ndarray):
-        self._clear_error()
-        self._controller.move_arm(position.astype(np.float32)).wait()
+        if not self.is_dummy:
+            self._clear_error()
+            self._controller.move_arm(position.astype(np.float32)).wait()
+        else:
+            print(f"Executing dummy action towards {position=}.")
 
     def _get_observation(self) -> Dict:
-        frames = self._get_camera_frames()
-        observation = {
-            "state": self._franka_state,
-            "frames": frames,
-        }
-        return copy.deepcopy(observation)
+        if not self.is_dummy:
+            frames = self._get_camera_frames()
+            state = {
+                "arm_position": self._franka_state.arm_position, 
+                "arm_velocity": self._franka_state.arm_velocity, 
+                "gripper_position": self._franka_state.gripper_position, 
+                "arm_force": self._franka_state.arm_force, 
+                "arm_torque": self._franka_state.arm_torque
+            }
+            observation = {
+                "state": state,
+                "frames": frames,
+            }
+            return copy.deepcopy(observation)
+        else:
+            return self.observation_space.sample()

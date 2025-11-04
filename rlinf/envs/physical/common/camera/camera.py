@@ -19,7 +19,6 @@ from dataclasses import dataclass
 from typing import Tuple
 
 import numpy as np
-import pyrealsense2 as rs  # Intel RealSense cross-platform open-source API
 
 
 @dataclass
@@ -39,7 +38,8 @@ class Camera:
     def __init__(
         self,
         camera_info: CameraInfo,
-    ):
+    ):  
+        import pyrealsense2 as rs  # Intel RealSense cross-platform open-source API
         self._camera_info = camera_info
         self._device_info = {
             device.get_info(rs.camera_info.serial_number): device

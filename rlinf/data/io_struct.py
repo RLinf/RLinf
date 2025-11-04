@@ -1067,6 +1067,8 @@ class EnvOutput:
             image_tensor = obs["images"]
         elif self.simulator_type == "robotwin":
             image_tensor = obs["images"]
+        elif self.simulator_type == "real":
+            image_tensor = obs["images"]
         else:
             raise NotImplementedError
 
