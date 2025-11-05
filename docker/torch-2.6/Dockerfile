@@ -2,6 +2,7 @@ ARG BUILD_TARGET=reason
 
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-reason
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-behavior
 # Franka depends on ros-noetic, which is not available on Ubuntu 22.04
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu20.04 AS base-image-franka
 
