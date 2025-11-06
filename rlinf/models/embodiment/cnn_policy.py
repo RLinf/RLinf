@@ -31,6 +31,7 @@ class CNNPolicy(BasePolicy):
             hidden_dim, num_action_chunks, 
             add_value_head, add_q_head,
             backbone, 
+            independent_std=True, final_tanh=False, action_scale=None
         ):
         super().__init__()
         self.backbone = backbone # ["plain_conv", ]
@@ -76,6 +77,13 @@ class CNNPolicy(BasePolicy):
 
         self.actor_mean = nn.Linear(256, self.action_dim) 
 
+        assert add_value_head + add_q_head <= 1
+        if add_value_head:
+            self.value_head = ValueHead(
+                input_dim=256, 
+                hidden_sizes=(256, 256, 256), 
+                activation="relu"
+            )
         if add_q_head:
             independent_std = False
             action_scale = 1, -1
@@ -144,17 +152,44 @@ class CNNPolicy(BasePolicy):
     def default_forward(
             self, 
             data, 
-            detach_encoder=False
+            compute_logprobs=True, 
+            compute_entropy=True, 
+            compute_values=True, 
+            sample_action=False, 
+            **kwargs
         ):
-        raise NotImplementedError
-        obs = data["obs"]
+        obs = dict()
+        for key, value in data.items():
+            if key.startswith("obs/"):
+                obs[key[len("obs/"):]] = value
+
         action = data["action"]
-        x, visual_feature = self.get_feature(obs, detach_encoder)
-        mean = self.fc_mean(x)
-        log_std = self.fc_logstd(x)
-        log_std = torch.tanh(log_std)
-        log_std = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (log_std + 1)  # From SpinUp / Denis Yarats
-        return mean, log_std, visual_feature
+
+        full_feature, visual_feature = self.get_feature(obs)
+        mix_feature = self.mix_proj(full_feature)
+        action_mean = self.actor_mean(mix_feature)
+        if self.independent_std:
+            action_logstd = self.actor_logstd.expand_as(action_mean)
+        else:
+            action_logstd = self.actor_logstd(mix_feature)
+        
+        action_std = torch.exp(action_logstd)
+        probs = Normal(action_mean, action_std)
+        
+        output_dict = {}
+        if compute_logprobs:
+            logprobs = probs.log_prob(action)
+            output_dict.update(logprobs=logprobs)
+        if compute_entropy:
+            entropy = probs.entropy()
+            output_dict.update(entropy=entropy)
+        if compute_values:
+            if getattr(self, "value_head", None):
+                values = self.value_head(mix_feature)
+                output_dict.update(values=values)
+            else:
+                raise NotImplementedError
+        return output_dict
     
     def sac_forward_0(
         self, obs, **kwargs
@@ -254,7 +289,8 @@ class CNNPolicy(BasePolicy):
             "action": action
         }
         if return_obs:
-            forward_inputs["obs"] = env_obs
+            for key, value in env_obs.items():
+                forward_inputs[f"obs/{key}"] = value
         
         result = {
             "prev_logprobs": chunk_logprobs,
@@ -307,15 +343,15 @@ class CNNPolicy(BasePolicy):
             raise NotImplementedError
         
         if hasattr(self, "value_head") and calulate_values:
-            raise NotImplementedError
-            chunk_values = self.value_head(env_obs)
+            chunk_values = self.value_head(mix_feature)
         else:
             chunk_values = torch.zeros_like(chunk_logprobs[..., :1])
         forward_inputs = {
             "action": action
         }
         if return_obs:
-            forward_inputs["obs"] = env_obs
+            for key, value in env_obs.items():
+                forward_inputs[f"obs/{key}"] = value
         
         result = {
             "prev_logprobs": chunk_logprobs,

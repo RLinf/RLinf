@@ -131,7 +131,10 @@ class MLPPolicy(BasePolicy):
         feat = self.backbone(obs)
         action_mean = self.actor_mean(feat)
 
-        action_logstd = self.actor_logstd.expand_as(action_mean)
+        if self.independent_std:
+            action_logstd = self.actor_logstd.expand_as(action_mean)
+        else:
+            action_logstd = self.actor_logstd(feat)
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
 
