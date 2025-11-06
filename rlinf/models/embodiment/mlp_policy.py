@@ -19,7 +19,7 @@ import numpy as np
 
 from .modules.utils import layer_init, get_act_func, LOG_STD_MAX, LOG_STD_MIN
 from .modules.value_head import ValueHead
-from .modules.q_head import DoubleQHead
+from .modules.q_head import MultiQHead
 from .base_policy import BasePolicy
 
 
@@ -53,8 +53,10 @@ class MLPPolicy(BasePolicy):
             independent_std = False
             action_scale = 1, -1
             final_tanh = True
-            self.q_head = DoubleQHead(
+            self.q_head = MultiQHead(
                 hidden_size=obs_dim,
+                hidden_dims=[256, 256, 256], 
+                num_q_heads=2, 
                 action_dim=action_dim,
                 use_separate_processing=False
             )
