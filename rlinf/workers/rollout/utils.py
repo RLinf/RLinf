@@ -19,7 +19,6 @@ import time
 import typing
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
 
 from omegaconf import DictConfig
 
@@ -49,7 +48,7 @@ def sharp_cover(header_text: str, prelen: int = 30, color="\033[32m"):
         print("#" * prelen + f" {color}>>> {header_text}{COLOR_END} " + "#" * prelen)
 
 
-def print_vllm_outputs(outputs: List["RequestOutput"]):
+def print_vllm_outputs(outputs: list["RequestOutput"]):
     for output in outputs:
         prompt = output.prompt
         generated_text = output.outputs[0].text
@@ -62,13 +61,13 @@ def print_vllm_outputs(outputs: List["RequestOutput"]):
         )
 
 
-def print_multi_outputs(resps_all: List[List["RequestOutput"]]):
+def print_multi_outputs(resps_all: list[list["RequestOutput"]]):
     for i, resps in enumerate(resps_all):
         with sharp_cover(f"vllm dp {i}"):
             print_vllm_outputs(resps)
 
 
-def print_sglang_outputs(prompts, outputs: List[Dict], tokenizer):
+def print_sglang_outputs(prompts, outputs: list[dict], tokenizer):
     output_ids = [output["output_ids"] for output in outputs]
     output_texts = tokenizer.batch_decode(output_ids)
     for p, t, ids in zip(prompts, output_texts, output_ids):
@@ -80,7 +79,7 @@ def print_sglang_outputs(prompts, outputs: List[Dict], tokenizer):
         )
 
 
-def print_multi_sglang_outputs(prompts, outputs: List[List[Dict]], tokenizer):
+def print_multi_sglang_outputs(prompts, outputs: list[list[dict]], tokenizer):
     for i, resps in enumerate(outputs):
         with sharp_cover(f"sglang dp {i}"):
             print_sglang_outputs(prompts, resps, tokenizer)
@@ -91,7 +90,7 @@ class RankMapper:
     def get_actor_rank_to_rollout_rank_map(
         cls,
         placement: ModelParallelComponentPlacement,
-    ) -> Dict[int, List[Tuple[int, int]]]:
+    ) -> dict[int, list[tuple[int, int]]]:
         return cls._get_rank_mapper(
             placement.placement_mode
         ).get_actor_rank_to_rollout_rank_map(
@@ -105,7 +104,7 @@ class RankMapper:
     @classmethod
     def get_rollout_rank_to_actor_rank_map(
         cls, placement: ModelParallelComponentPlacement
-    ) -> Dict[Tuple[int, int], int]:
+    ) -> dict[tuple[int, int], int]:
         return cls._get_rank_mapper(
             placement.placement_mode
         ).get_rollout_rank_to_actor_rank_map(
@@ -140,7 +139,7 @@ class CollocateRankMapper(RankMapper):
         actor_world_size: int,
         rollout_tp_size: int,
         rollout_world_size: int,
-    ) -> Dict[int, Tuple[int, int]]:
+    ) -> dict[int, tuple[int, int]]:
         """
         Get the global mapping from actor 1D rank to rollout 2D rank as dict.
         """
@@ -226,7 +225,7 @@ class DisaggRankMapper(RankMapper):
         actor_world_size: int,
         rollout_tp_size: int,
         rollout_world_size: int,
-    ) -> Dict[int, List[Tuple[int, int]]]:
+    ) -> dict[int, list[tuple[int, int]]]:
         """
         Only ranks in dp=0 actor dp group will send weights to rollout LLM.
         """
@@ -269,7 +268,7 @@ class DisaggRankMapper(RankMapper):
         actor_world_size: int,
         rollout_tp_size: int,
         rollout_world_size: int,
-    ) -> Dict[Tuple[int, int], int]:
+    ) -> dict[tuple[int, int], int]:
         rank_map = cls.get_actor_rank_to_rollout_rank_map(
             actor_tp_size,
             actor_pp_size,
@@ -288,7 +287,7 @@ class DisaggRankMapper(RankMapper):
         actor_rank: int,
         actor_tp_size: int,
         rollout_tp_size: int,
-    ) -> Tuple[int, int]:
+    ) -> tuple[int, int]:
         assert actor_tp_size % rollout_tp_size == 0, (
             "actor_tp_size must be a multiple of rollout_tp_size"
         )
@@ -339,11 +338,11 @@ def get_rollout_backend_worker(
 
 class RunningStatusManager:
     def __init__(self):
-        self._running_seq_group: Dict[SeqGroupInfo, asyncio.Task] = {}
-        self._aborted_seq_group: List[SeqGroupInfo] = []
+        self._running_seq_group: dict[SeqGroupInfo, asyncio.Task] = {}
+        self._aborted_seq_group: list[SeqGroupInfo] = []
         # SeqGroupInfo that have been completed and sent to actor/inference
         # only retained for debugging
-        self._done_seq_group: List[SeqGroupInfo] = []
+        self._done_seq_group: list[SeqGroupInfo] = []
 
         # asyncio Events
         # set by scheduler coroutine to prevent rollout coroutine from exiting before potential migrations
@@ -486,7 +485,7 @@ class MetaInfoStatsCollector:
             with open(self.output_file, "w") as f:
                 f.write("")  # Create empty file
 
-    def collect_batch_stats(self, outputs: List[Dict], batch_id: int) -> None:
+    def collect_batch_stats(self, outputs: list[dict], batch_id: int) -> None:
         """Collect statistics from a batch of SGLang outputs
 
         Args:

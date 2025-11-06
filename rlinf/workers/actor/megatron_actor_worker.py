@@ -14,7 +14,7 @@
 
 import copy
 from functools import partial
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Optional
 
 import torch
 import torch.distributed
@@ -316,7 +316,7 @@ class MegatronActor(MegatronModelManager, Worker):
 
     def get_batch(
         self, channel: Channel
-    ) -> Tuple[Dict[str, torch.Tensor], RolloutResult]:
+    ) -> tuple[dict[str, torch.Tensor], RolloutResult]:
         if channel.is_local:
             # Local channel, every process will put its own data locally
             # No need to broadcast
@@ -505,7 +505,7 @@ class MegatronActor(MegatronModelManager, Worker):
 
         return forward_output_and_loss_func
 
-    def _get_num_microbatches(self, batch: Dict[str, torch.Tensor], forward_only: bool):
+    def _get_num_microbatches(self, batch: dict[str, torch.Tensor], forward_only: bool):
         batch_size = get_batch_size(batch)
         forward_micro_batch_size = (
             self.logprob_forward_micro_batch_size
@@ -519,7 +519,7 @@ class MegatronActor(MegatronModelManager, Worker):
         )
         return num_microbatches
 
-    def run_forward_backward(self, batch: Dict[str, torch.Tensor], forward_only=True):
+    def run_forward_backward(self, batch: dict[str, torch.Tensor], forward_only=True):
         """Run the forward and backward pass on the model.
 
         Args:
@@ -614,7 +614,7 @@ class MegatronActor(MegatronModelManager, Worker):
         return outputs
 
     def _process_fwd_bwd_outputs(
-        self, forward_outputs: Dict[str, torch.Tensor], forward_only: bool
+        self, forward_outputs: dict[str, torch.Tensor], forward_only: bool
     ):
         if forward_only:
             outputs = torch.cat(forward_outputs) if len(forward_outputs) > 0 else None
@@ -643,7 +643,7 @@ class MegatronActor(MegatronModelManager, Worker):
         return outputs
 
     # Training
-    def training_step(self, batch: Dict[str, torch.Tensor] | BatchResizingIterator):
+    def training_step(self, batch: dict[str, torch.Tensor] | BatchResizingIterator):
         """Run a single training step on the model.
 
         Args:
@@ -681,7 +681,7 @@ class MegatronActor(MegatronModelManager, Worker):
         set_train(self)
         self.calc_num_microbatches()
 
-    def _setup_valid_token_scale(self, batch: Optional[Dict[str, torch.Tensor]] = None):
+    def _setup_valid_token_scale(self, batch: Optional[dict[str, torch.Tensor]] = None):
         if batch is None:
             self.global_valid_token = (
                 self.average_response_len
@@ -697,7 +697,7 @@ class MegatronActor(MegatronModelManager, Worker):
             self.global_valid_token = global_valid_token
             return batch
 
-    def _dp_load_balance(self, batch: Dict[str, torch.Tensor]):
+    def _dp_load_balance(self, batch: dict[str, torch.Tensor]):
         batch_size = batch["input_ids"].shape[0]
         assert batch_size == self.total_batch_size_per_dp, (
             f"DP Load balance is only available when a single batch contains all data, e.g., in collocated mode. But got {batch_size=} and {self.total_batch_size_per_dp=}."
@@ -816,7 +816,7 @@ class MegatronActor(MegatronModelManager, Worker):
         # Advantage normalization
         if self.cfg.algorithm.normalize_advantages:
 
-            def normalize_advantages(batch: Dict[str, torch.Tensor]):
+            def normalize_advantages(batch: dict[str, torch.Tensor]):
                 mask = batch["attention_mask"][:, -self.response_len :]
                 batch["advantages"] = masked_normalization(batch["advantages"], mask)
                 return batch
@@ -1186,7 +1186,7 @@ class MegatronActor(MegatronModelManager, Worker):
         self.scheduler_offload_sync()
 
     # Advantages and returns
-    def compute_advantages_and_returns(self, batch: Dict[str, torch.Tensor]):
+    def compute_advantages_and_returns(self, batch: dict[str, torch.Tensor]):
         """Compute the advantages and returns.
 
         Args:

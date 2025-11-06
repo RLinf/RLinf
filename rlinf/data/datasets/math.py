@@ -15,7 +15,7 @@
 import json
 import logging
 import os
-from typing import Any, List, Tuple, Union
+from typing import Any, Union
 
 import torch
 from omegaconf import DictConfig
@@ -29,7 +29,7 @@ from rlinf.data.datasets.utils import batch_pad_to_fixed_len
 class MathDataset(Dataset):
     def __init__(
         self,
-        data_paths: Union[str, List[str]],
+        data_paths: Union[str, list[str]],
         config: DictConfig,
         tokenizer: AutoTokenizer,
     ):
@@ -109,7 +109,7 @@ class MathDataset(Dataset):
                     f"(kept {len(self.data)} / {total})."
                 )
 
-    def _load_data(self) -> List[Any]:
+    def _load_data(self) -> list[Any]:
         """
         Load and merge data from multiple files(json or jsonl).
         """
@@ -137,7 +137,7 @@ class MathDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
-    def encode(self, text: str) -> Tuple[List[int], int]:
+    def encode(self, text: str) -> tuple[list[int], int]:
         """
         Use tokenizer to encode the text and return the token ids and length.
         """

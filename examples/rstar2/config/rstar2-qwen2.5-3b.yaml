@@ -14,7 +14,6 @@ cluster:
     inference: 2
     actor: 3
     reward: 0-1
-  agentloop_placement_num: 2
 
 runner:
   task_type: reasoning

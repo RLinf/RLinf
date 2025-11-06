@@ -1,10 +1,11 @@
 #!/bin/bash
 
 # Embodied dependencies
-apt-get update -y
-apt-get install -y --no-install-recommends \
+sudo apt-get update -y
+sudo apt-get install -y --no-install-recommends \
     wget \
     unzip \
+    curl \
     libibverbs-dev \
     mesa-utils \
     libosmesa6-dev \

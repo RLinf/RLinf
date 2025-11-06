@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional
+from typing import Optional
 
 import fastapi
 from sglang.srt.managers.tokenizer_manager import TokenizerManager as _TokenizerManager
@@ -80,7 +80,7 @@ class TokenizerManager(_TokenizerManager):
         self.auto_create_handle_loop()
         if isinstance(obj, str):
             obj = TaskMethodInput(method_name=obj)
-        res: List[TaskMethodOutput] = await self.run_task_method_communicator(obj)
+        res: list[TaskMethodOutput] = await self.run_task_method_communicator(obj)
         return res[0].result
 
     async def sync_hf_weight(

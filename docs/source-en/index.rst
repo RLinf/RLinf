@@ -1,3 +1,6 @@
+RLinf Documentation
+===================
+
 .. image:: _static/svg/logo_white.svg
    :width: 500px
    :align: center

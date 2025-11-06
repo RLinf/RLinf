@@ -15,7 +15,7 @@
 import warnings
 from multiprocessing import Pipe, connection
 from multiprocessing.context import Process
-from typing import Any, Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, Optional, Union
 
 import gym
 import numpy as np
@@ -30,8 +30,8 @@ from libero.libero.envs.venv import (
     _setup_buf,
 )
 
-gym_old_venv_step_type = Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
-gym_new_venv_step_type = Tuple[
+gym_old_venv_step_type = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+gym_new_venv_step_type = tuple[
     np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
 ]
 warnings.simplefilter("once", DeprecationWarning)
@@ -155,7 +155,7 @@ class ReconfigureSubprocEnvWorker(SubprocEnvWorker):
 
 
 class ReconfigureSubprocEnv(SubprocVectorEnv):
-    def __init__(self, env_fns: List[Callable[[], gym.Env]], **kwargs: Any) -> None:
+    def __init__(self, env_fns: list[Callable[[], gym.Env]], **kwargs: Any) -> None:
         def worker_fn(fn: Callable[[], gym.Env]) -> ReconfigureSubprocEnvWorker:
             return ReconfigureSubprocEnvWorker(fn, share_memory=False)
 

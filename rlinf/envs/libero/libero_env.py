@@ -14,7 +14,7 @@
 
 import copy
 import os
-from typing import List, Optional, Union
+from typing import Optional, Union
 
 import gym
 import numpy as np
@@ -28,14 +28,16 @@ from rlinf.envs.libero.utils import (
     get_benchmark_overridden,
     get_libero_image,
     get_libero_wrist_image,
-    list_of_dict_to_dict_of_list,
     put_info_on_image,
     quat2axisangle,
     save_rollout_video,
     tile_images,
-    to_tensor,
 )
 from rlinf.envs.libero.venv import ReconfigureSubprocEnv
+from rlinf.envs.utils import (
+    list_of_dict_to_dict_of_list,
+    to_tensor,
+)
 
 
 class LiberoEnv(gym.Env):
@@ -299,7 +301,7 @@ class LiberoEnv(gym.Env):
 
     def reset(
         self,
-        env_idx: Optional[Union[int, List[int], np.ndarray]] = None,
+        env_idx: Optional[Union[int, list[int], np.ndarray]] = None,
         reset_state_ids=None,
         options: Optional[dict] = {},
     ):

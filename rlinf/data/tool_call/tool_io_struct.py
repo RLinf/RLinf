@@ -14,7 +14,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Literal, Optional
 
 
 class MCPRequestType(Enum):
@@ -47,12 +47,12 @@ class MCPRequest:
     request_id: str
     request_type: MCPRequestType
     tool_name: Optional[str] = None
-    tool_arguments: Optional[Dict[str, Any]] = None
+    tool_arguments: Optional[dict[str, Any]] = None
     resource_uri: Optional[str] = None
     prompt_name: Optional[str] = None
-    prompt_arguments: Optional[Dict[str, Any]] = None
+    prompt_arguments: Optional[dict[str, Any]] = None
     timeout: int = 30
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -67,7 +67,7 @@ class MCPResponse:
     result: Optional[Any] = None
     error_message: Optional[str] = None
     execution_time: float = 0.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

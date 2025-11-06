@@ -15,7 +15,7 @@
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, Final, List, Optional
+from typing import Any, Final, Optional
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -25,10 +25,10 @@ DEFAULT_REWARD: Final[float] = 0.4
 
 
 def fim_llm_as_judge_verify_call(
-    responses: List[str],
-    references: List[str],
-    prompts: List[str],
-) -> List:
+    responses: list[str],
+    references: list[str],
+    prompts: list[str],
+) -> list:
     assert len(responses) == len(references) == len(prompts), (
         len(responses),
         len(references),
@@ -37,7 +37,7 @@ def fim_llm_as_judge_verify_call(
 
     # Deduplicate keys
     unique_keys = []
-    key_to_indices: Dict[str, List[int]] = {}
+    key_to_indices: dict[str, list[int]] = {}
     for i, (rp, rs, rf) in enumerate(zip(prompts, responses, references)):
         key = json.dumps([rp, rs, rf], ensure_ascii=False, sort_keys=True)
         unique_keys.append(key)
@@ -51,8 +51,8 @@ def fim_llm_as_judge_verify_call(
             rp, rs, rf = prompts[0], responses[0], references[0]
         unique_requests.append((rp, rs, rf))
 
-    results: List[Optional[Dict[str, Any]]] = [None] * len(responses)
-    rewards: List[float] = []
+    results: list[Optional[dict[str, Any]]] = [None] * len(responses)
+    rewards: list[float] = []
     success_cnt = 0
     fail_cnt = 0
 
@@ -157,7 +157,7 @@ def send_reward_request(
     reference: str,
     session: Optional[requests.Session] = None,
     timeout: int = 60,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     url = os.getenv(
         "LLMASJUDGE_API_URL", "https://cloud.infini-ai.com/maas/v1/chat/completions"
     )
@@ -224,7 +224,7 @@ def send_reward_request(
         }
 
 
-def process_single_request(args: tuple) -> Dict[str, Any]:
+def process_single_request(args: tuple) -> dict[str, Any]:
     raw_prompt, response, reference = args
     reward_response = send_reward_request(raw_prompt, response, reference)
     return reward_response

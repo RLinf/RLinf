@@ -22,7 +22,6 @@ import gc
 import os
 import shutil
 from collections import OrderedDict
-from typing import List, Tuple
 
 import torch
 
@@ -54,7 +53,7 @@ def get_megatron_iteration(convert_config: ConvertorConfig) -> int:
 
 def get_hetero_pp_rank(
     convert_config: ConvertorConfig, num_layers: int, layer_idx: int
-) -> Tuple[int, int, int]:
+) -> tuple[int, int, int]:
     if convert_config.schedular == "1f1b":
         if convert_config.pp_stages is not None:
             pp_stages = convert_config.pp_stages
@@ -259,9 +258,9 @@ def merge_checkpoint_dict(full_checkpoints, to_cpu=False):
 
 def convert_layer_load(
     convert_config: ConvertorConfig,
-    layer_info: Tuple[str, int, int, int],
+    layer_info: tuple[str, int, int, int],
     pp_rank: int,
-    full_checkpoint: List,
+    full_checkpoint: list,
 ):
     pp_saver = CKPTSaver(pp_rank, full_checkpoint)
     model_key_vpp, layer, local_layer, local_num_layer = layer_info

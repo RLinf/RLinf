@@ -15,7 +15,6 @@
 import bisect
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Dict, List
 
 
 @dataclass
@@ -31,7 +30,7 @@ class ComponentParallelState:
         )
         self.valid_dp_sizes = []
 
-    def set_valid_dp_sizes(self, valid_dp_sizes: List[int]):
+    def set_valid_dp_sizes(self, valid_dp_sizes: list[int]):
         self.valid_dp_sizes = valid_dp_sizes
 
     def allocation(self, available_gpus: int) -> int:
@@ -75,7 +74,7 @@ class ComponentParallelState:
         self.data_parallel_size += incremental_dp_size
         return idle_gpus
 
-    def to_dict(self) -> Dict[str, int]:
+    def to_dict(self) -> dict[str, int]:
         return {
             "world_size": self.world_size,
             "tensor_model_parallel_size": self.tensor_model_parallel_size,
@@ -98,7 +97,7 @@ class ComponentParallelState:
 
 
 class AllocationStates:
-    def __init__(self, components_config: Dict[str, Dict[str, int]]):
+    def __init__(self, components_config: dict[str, dict[str, int]]):
         self.states = {}
         for component_name, component_config in components_config.items():
             self.states[component_name] = ComponentParallelState(
@@ -132,10 +131,10 @@ class ResourcePlanner:
 
     def __init__(
         self,
-        components_config: Dict[str, Dict[str, int]],
+        components_config: dict[str, dict[str, int]],
         total_gpus: int,
-        valid_actor_dp_sizes: List[int],
-        valid_inference_dp_sizes: List[int],
+        valid_actor_dp_sizes: list[int],
+        valid_inference_dp_sizes: list[int],
     ):
         self.components_config = components_config
         self.initial_allocation = AllocationStates(components_config)
@@ -154,15 +153,15 @@ class ResourcePlanner:
             self.valid_components.append(component)
         assert len(self.valid_components) in [1, 2, 3]
 
-    def generate_all_states(self) -> List[AllocationStates]:
+    def generate_all_states(self) -> list[AllocationStates]:
         """Generate all possible resource allocation states during training progression."""
 
         self.all_states = []
 
         def trace_recursive(
             current_allocation: AllocationStates,
-            components: List[str],
-        ) -> List[AllocationStates]:
+            components: list[str],
+        ) -> list[AllocationStates]:
             if not components:
                 self.all_states.append(current_allocation)
                 return
@@ -181,7 +180,7 @@ class ResourcePlanner:
         self,
         init_allocation: AllocationStates,
         component: str,
-    ) -> List[AllocationStates]:
+    ) -> list[AllocationStates]:
         avaliable_gpus = self.total_gpus - init_allocation.used_gpus()
         if (
             avaliable_gpus
@@ -209,7 +208,7 @@ class ResourcePlanner:
 
         return states
 
-    def generate_static_states(self) -> List[AllocationStates]:
+    def generate_static_states(self) -> list[AllocationStates]:
         if not hasattr(self, "all_states"):
             self.generate_all_states()
 
@@ -229,11 +228,11 @@ class ResourcePlanner:
 
 def get_valid_dp_sizes(
     total_gpus: int,
-    parallel_config: Dict[str, int],
+    parallel_config: dict[str, int],
     group_size: int,
     rollout_batch_size: int,
     n_minibatches: int,
-) -> List[int]:
+) -> list[int]:
     """This function is used to get the valid data parallel sizes for the Actor and Inference based on the constraints of batch and group size.
 
     Args:
@@ -267,13 +266,13 @@ def get_valid_dp_sizes(
 
 
 def resource_allocate(
-    components_config: Dict[str, Dict[str, int]],
+    components_config: dict[str, dict[str, int]],
     total_gpus: int,
     group_size: int,
     rollout_batch_size: int,
     n_minibatches: int,
     inference_instance_max_num: int = 2,
-) -> List[AllocationStates]:
+) -> list[AllocationStates]:
     """Based on the configuration, derive all possible GPU resource allocations for the components.
 
     Args:
@@ -298,11 +297,11 @@ def resource_allocate(
         )
 
     # Generate valid DP sizes for Inference and Actor
-    valid_inference_dp_sizes: List[int] = []
-    valid_actor_dp_sizes: List[int] = []
+    valid_inference_dp_sizes: list[int] = []
+    valid_actor_dp_sizes: list[int] = []
 
     if components_config.get("actor", None) is not None:
-        valid_actor_dp_sizes: List[int] = get_valid_dp_sizes(
+        valid_actor_dp_sizes: list[int] = get_valid_dp_sizes(
             total_gpus,
             components_config["actor"],
             group_size,
@@ -310,7 +309,7 @@ def resource_allocate(
             n_minibatches,
         )
     if components_config.get("inference", None) is not None:
-        valid_inference_dp_sizes: List[int] = get_valid_dp_sizes(
+        valid_inference_dp_sizes: list[int] = get_valid_dp_sizes(
             total_gpus,
             components_config["inference"],
             group_size,

@@ -14,7 +14,7 @@
 
 import logging
 from datetime import timedelta
-from typing import List, Optional
+from typing import Optional
 
 import torch
 import torch.distributed as dist
@@ -75,16 +75,16 @@ class MultiChannelProcessGroup:
             Accelerator.get_ccl_backend(accel_type) if not self._no_accel_ccl else None
         )
 
-        self._send_accel_ccl_process_groups: List[dist.ProcessGroup] = [
+        self._send_accel_ccl_process_groups: list[dist.ProcessGroup] = [
             None for _ in range(num_channels)
         ]
-        self._recv_accel_ccl_process_groups: List[dist.ProcessGroup] = [
+        self._recv_accel_ccl_process_groups: list[dist.ProcessGroup] = [
             None for _ in range(num_channels)
         ]
-        self._send_gloo_process_groups: List[dist.ProcessGroup] = [
+        self._send_gloo_process_groups: list[dist.ProcessGroup] = [
             None for _ in range(num_channels)
         ]
-        self._recv_gloo_process_groups: List[dist.ProcessGroup] = [
+        self._recv_gloo_process_groups: list[dist.ProcessGroup] = [
             None for _ in range(num_channels)
         ]
 

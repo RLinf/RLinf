@@ -14,7 +14,7 @@
 
 from collections import UserDict
 from contextlib import contextmanager
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Union
+from typing import Any, Callable, Optional, Sequence, Union
 
 import numpy as np
 import torch
@@ -31,7 +31,7 @@ from rlinf.utils.timers import NamedTimer
 
 
 def compute_rollout_metrics(
-    rollout_batch: Dict[str, torch.Tensor],
+    rollout_batch: dict[str, torch.Tensor],
     max_prompt_len: int,
     response_len: int,
     data_parallel_group: Optional[ProcessGroup] = None,
@@ -47,8 +47,8 @@ def compute_rollout_metrics(
 
     dp_world_size = torch.distributed.get_world_size(data_parallel_group)
 
-    prompt_lengths_list: List[List[int]] = [None for _ in range(dp_world_size)]
-    decode_lengths_list: List[List[int]] = [None for _ in range(dp_world_size)]
+    prompt_lengths_list: list[list[int]] = [None for _ in range(dp_world_size)]
+    decode_lengths_list: list[list[int]] = [None for _ in range(dp_world_size)]
     torch.distributed.all_gather_object(
         prompt_lengths_list,
         prompt_lengths.tolist(),
@@ -118,8 +118,8 @@ def compute_rollout_metrics(
 class RolloutDataBalance(UserDict):
     def __init__(
         self,
-        dictionary_data: Optional[Dict[str, torch.Tensor]] = None,
-        ordered_keys_hint: Optional[List[str]] = None,
+        dictionary_data: Optional[dict[str, torch.Tensor]] = None,
+        ordered_keys_hint: Optional[list[str]] = None,
     ):
         super().__init__(dictionary_data if dictionary_data is not None else {})
 
@@ -156,7 +156,7 @@ class RolloutDataBalance(UserDict):
     @classmethod
     def from_rollout_batches(
         cls: Self,
-        rollout_batches: Dict[str, torch.Tensor],
+        rollout_batches: dict[str, torch.Tensor],
         dp_world_size: int,
         dp_rank: int,
         dp_group: Optional[ProcessGroup],
@@ -197,8 +197,8 @@ class RolloutDataBalance(UserDict):
         max_samples_rank = max(all_num_samples) if global_total_samples > 0 else 0
 
         # 4. Gather global token counts for all samples
-        global_token_counts_list: List[int] = []
-        all_ranks_local_token_counts_list: List[List[int]] = [
+        global_token_counts_list: list[int] = []
+        all_ranks_local_token_counts_list: list[list[int]] = [
             [] for _ in range(dp_world_size)
         ]
 
@@ -227,8 +227,8 @@ class RolloutDataBalance(UserDict):
                     all_ranks_local_token_counts_list[i_rank] = rank_tokens
 
         # 5. Calculate global sample indices assigned to current rank
-        my_assigned_global_indices: List[int] = []
-        all_ranks_assigned_tokens_after_balance: List[int] = [
+        my_assigned_global_indices: list[int] = []
+        all_ranks_assigned_tokens_after_balance: list[int] = [
             0
         ] * dp_world_size  # For rank 0 to print summary
 
@@ -261,7 +261,7 @@ class RolloutDataBalance(UserDict):
 
         # 6. Get superset of all keys that appear on all DP ranks and sort them
         local_keys = set(rollout_batches.keys())
-        all_keys_sets: List[Optional[Set[str]]] = [None] * dp_world_size
+        all_keys_sets: list[Optional[set[str]]] = [None] * dp_world_size
         if dp_group and dp_world_size > 1:
             torch.distributed.all_gather_object(
                 all_keys_sets, local_keys, group=dp_group
@@ -278,7 +278,7 @@ class RolloutDataBalance(UserDict):
             for k, v in rollout_batches.items()
             if k in final_ordered_keys and isinstance(v, torch.Tensor)
         }
-        all_payloads_cpu: List[Optional[Dict[str, torch.Tensor]]] = [
+        all_payloads_cpu: list[Optional[dict[str, torch.Tensor]]] = [
             None
         ] * dp_world_size
         if dp_group and dp_world_size > 1:
@@ -289,8 +289,8 @@ class RolloutDataBalance(UserDict):
             all_payloads_cpu = [payload_cpu]
 
         # 8. Rebuild global batch on CPU and record template specifications
-        global_batch_cpu: Dict[str, torch.Tensor] = {}
-        template_specs: Dict[str, Dict[str, Any]] = {}
+        global_batch_cpu: dict[str, torch.Tensor] = {}
+        template_specs: dict[str, dict[str, Any]] = {}
         if global_total_samples > 0:
             for key in final_ordered_keys:
                 tensors_for_key = []
@@ -326,10 +326,10 @@ class RolloutDataBalance(UserDict):
                         pass
 
         # 9. Select data for current rank
-        final_rank_data: Dict[str, torch.Tensor] = {}
+        final_rank_data: dict[str, torch.Tensor] = {}
 
         def _create_empty_tensor_for_key(
-            k: str, specs: Dict[str, Dict[str, Any]], dev: torch.device
+            k: str, specs: dict[str, dict[str, Any]], dev: torch.device
         ) -> torch.Tensor:
             spec = specs.get(k)
             if spec:
@@ -977,7 +977,7 @@ class ScopedTimer:
         self._timer = NamedTimer(*args, **kwargs)
         self._duration_log = {}
 
-    def consume_durations(self) -> Dict[str, float]:
+    def consume_durations(self) -> dict[str, float]:
         durations = self._duration_log
         self._duration_log = {}
         self._timer.reset()

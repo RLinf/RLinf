@@ -14,7 +14,7 @@
 
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Dict, List
+from typing import TYPE_CHECKING
 
 from omegaconf import DictConfig
 
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from rlinf.scheduler.dynamic_scheduler.manager import ComponentManager
 
 
-def get_valid_dp_sizes(cfg, total_gpus, model_parallel_size_with_cp) -> List[int]:
+def get_valid_dp_sizes(cfg, total_gpus, model_parallel_size_with_cp) -> list[int]:
     """This function is used to get the valid data parallel sizes for the Actor based on the constraints of batch and group size.
 
     Returns:
@@ -94,7 +94,7 @@ class RolloutScheduleInfo:
     """Rollout schedule info."""
 
     instance_id: int = -1
-    data: List["SeqGroupInfo"] = None
+    data: list["SeqGroupInfo"] = None
     report: RolloutReport = None
     action: RolloutAction = RolloutAction.Default
 
@@ -106,20 +106,20 @@ class _DynamicSchedulerState:
         self,
         cfg: DictConfig,
         total_gpus: int,
-        component_managers: Dict[str, "ComponentManager"],
+        component_managers: dict[str, "ComponentManager"],
     ):
         """Initialize the dynamic scheduler state."""
         self.total_gpus = total_gpus
         self.available_gpu_num = 0
         self.component_managers = component_managers
 
-        self.components_instance_num: Dict[str, int] = {}
-        self.components_model_parallel_size: Dict[str, int] = {}
+        self.components_instance_num: dict[str, int] = {}
+        self.components_model_parallel_size: dict[str, int] = {}
         for component, manager in self.component_managers.items():
             self.components_instance_num[component] = manager.current_instance_num
             self.components_model_parallel_size[component] = manager.model_parallel_size
 
-        self.actor_valid_dp_sizes: List[int] = get_valid_dp_sizes(
+        self.actor_valid_dp_sizes: list[int] = get_valid_dp_sizes(
             cfg, total_gpus, self.components_model_parallel_size["actor"]
         )
 
@@ -148,7 +148,7 @@ DynamicSchedulerState = None
 
 
 def set_global_scheduer_state(
-    cfg: DictConfig, total_gpus: int, component_managers: Dict[str, "ComponentManager"]
+    cfg: DictConfig, total_gpus: int, component_managers: dict[str, "ComponentManager"]
 ):
     """Set DynamicSchedulerState."""
     global DynamicSchedulerState

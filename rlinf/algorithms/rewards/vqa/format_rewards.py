@@ -13,10 +13,9 @@
 # limitations under the License.
 
 import re
-from typing import List
 
 
-def think_format_reward(completions, answers) -> List[float]:
+def think_format_reward(completions, answers) -> list[float]:
     """
     Think format reward function compatible with GRPO training.
 
@@ -39,7 +38,7 @@ def think_format_reward(completions, answers) -> List[float]:
     return rewards
 
 
-def answer_format_reward(completions, answers) -> List[float]:
+def answer_format_reward(completions, answers) -> list[float]:
     """
     Reward function that checks for proper answer formatting.
 

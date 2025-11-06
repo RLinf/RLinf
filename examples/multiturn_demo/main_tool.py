@@ -18,8 +18,8 @@ import hydra
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
-from multiturn_demo.agent_loop.tool_agent_loop import ToolAgentLoopWorker
-from multiturn_demo.tools.fake_tool_worker import FakeToolWorker
+from rlinf.agents.multiturn_demo.fake_tool_worker import FakeToolWorker
+from rlinf.agents.multiturn_demo.tool_agent_loop import ToolAgentLoopWorker
 from rlinf.config import validate_cfg
 from rlinf.data.datasets import create_rl_dataset
 from rlinf.data.tokenizers import hf_tokenizer
@@ -46,19 +46,6 @@ def main(cfg) -> None:
     cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
     component_placement = ModelParallelComponentPlacement(cfg, cluster)
 
-    # AgentLoop group. TODO: fix worker size limit
-    assert cfg.cluster.agentloop_placement_num == component_placement.rollout_dp_size, (
-        "agentloop worker num now should be equal to rollout dp size"
-    )
-    agentloop_placement_strategy = NodePlacementStrategy(
-        [0] * cfg.cluster.agentloop_placement_num
-    )
-    agentloop_group = ToolAgentLoopWorker.create_group(cfg, component_placement).launch(
-        cluster,
-        name=cfg.agentloop.group_name,
-        placement_strategy=agentloop_placement_strategy,
-    )
-
     # Generator group
     rollout_worker_cls = get_rollout_backend_worker(cfg, component_placement)
     rollout_placement_strategy = component_placement.get_strategy("rollout")
@@ -66,6 +53,23 @@ def main(cfg) -> None:
         cluster,
         name=cfg.rollout.group_name,
         placement_strategy=rollout_placement_strategy,
+    )
+
+    # AgentLoop group.
+    agentloop_placement_strategy = NodePlacementStrategy(
+        [
+            placement.node_id
+            for placement in rollout_placement_strategy.get_placement(cluster)
+        ]
+    )
+    assert (
+        len(agentloop_placement_strategy._node_ids)
+        == component_placement.rollout_dp_size
+    ), "agentloop worker num now should be equal to rollout dp size"
+    agentloop_group = ToolAgentLoopWorker.create_group(cfg, component_placement).launch(
+        cluster,
+        name=cfg.agentloop.group_name,
+        placement_strategy=agentloop_placement_strategy,
     )
 
     # Inference group

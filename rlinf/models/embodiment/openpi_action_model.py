@@ -15,7 +15,7 @@
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Tuple
+from typing import Any, Literal
 
 import jax
 import numpy as np
@@ -45,7 +45,7 @@ class OpenPi0Config(Pi0Config):
     chunk_critic_input: bool = False
     add_value_head: bool = False
     noise_anneal: bool = False
-    noise_params: List = field(
+    noise_params: list = field(
         default_factory=lambda: [0.7, 0.3, 400]
     )  # noise_start, noise_end, noise_anneal_steps
     ignore_last: bool = False
@@ -194,7 +194,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         self,
         data: dict[str, torch.Tensor],
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         compute_values = kwargs.get("compute_values", False)
 
         chains = data["chains"]
@@ -274,7 +274,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
 
     def predict_action_batch(
         self, env_obs, mode: Literal["train", "eval"] = "train", compute_values=True
-    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+    ) -> tuple[np.ndarray, dict[str, Any]]:
         processed_obs = self.input_processor(env_obs)
         observation = _model.Observation.from_dict(processed_obs)
         outputs = self.sample_actions(

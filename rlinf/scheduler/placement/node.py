@@ -13,8 +13,6 @@
 # limitations under the License.
 
 
-from typing import Dict, List
-
 from ..cluster import Cluster
 from .placement import Placement, PlacementStrategy
 
@@ -54,7 +52,7 @@ class NodePlacementStrategy(PlacementStrategy):
 
     """
 
-    def __init__(self, node_ids: List[int]):
+    def __init__(self, node_ids: list[int]):
         """Initialize the NodePlacementStrategy.
 
         .. note::
@@ -77,7 +75,7 @@ class NodePlacementStrategy(PlacementStrategy):
         self,
         cluster: Cluster,
         isolate_accelerator: bool = True,
-    ) -> List[Placement]:
+    ) -> list[Placement]:
         """Generate a list of placements based on the node placement strategy.
 
         Args:
@@ -88,7 +86,7 @@ class NodePlacementStrategy(PlacementStrategy):
             List[Placement]: A list of Placement objects representing the placements of processes on accelerators.
 
         """
-        placements: List[Placement] = []
+        placements: list[Placement] = []
         for rank, node_id in enumerate(self._node_ids):
             assert node_id < cluster.num_nodes, (
                 f"Node ID {node_id} exceeds number of available nodes {cluster.num_nodes}"
@@ -115,7 +113,7 @@ class NodePlacementStrategy(PlacementStrategy):
         local_rank = 0
         local_world_size = 0
         current_node_id = placements[0].node_id
-        node_local_world_size: Dict[int, int] = {}
+        node_local_world_size: dict[int, int] = {}
         for placement in placements:
             if placement.node_id != current_node_id:
                 assert placement.node_id > current_node_id, (

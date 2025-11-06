@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, List
 
 from ..cluster import Cluster
 from .placement import Placement, PlacementStrategy
@@ -139,7 +138,7 @@ class PackedPlacementStrategy(PlacementStrategy):
         self,
         cluster: Cluster,
         isolate_accelerator: bool = True,
-    ) -> List[Placement]:
+    ) -> list[Placement]:
         """Generate a list of placements based on the packed strategy.
 
         Args:
@@ -151,9 +150,9 @@ class PackedPlacementStrategy(PlacementStrategy):
 
         """
         rank = 0
-        placements: List[Placement] = []
+        placements: list[Placement] = []
         start_node = cluster.get_node_id_from_accel_id(self._start_accel_id)
-        accel_usage_map: Dict[int, bool] = dict.fromkeys(
+        accel_usage_map: dict[int, bool] = dict.fromkeys(
             range(self._start_accel_id, self._end_accel_id + 1), False
         )
 

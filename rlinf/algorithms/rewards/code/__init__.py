@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List
-
 from omegaconf import DictConfig
 
 from toolkits.code_verifier.verify import (
@@ -27,9 +25,9 @@ class CodeRewardOffline:
 
     def get_reward(
         self,
-        response: List[str],
-        reference: List[List[str]],
-        prompts: List[str],
-    ) -> List[float]:
+        response: list[str],
+        reference: list[list[str]],
+        prompts: list[str],
+    ) -> list[float]:
         rewards = fim_llm_as_judge_verify_call(response, reference, prompts)
         return [float(reward) * self.scale for reward in rewards]

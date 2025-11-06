@@ -16,7 +16,7 @@ import signal
 import sys
 import threading
 import weakref
-from typing import Dict, List, Optional
+from typing import Optional
 
 import psutil
 from omegaconf import DictConfig
@@ -174,7 +174,7 @@ class VLLMWorkerProc(WorkerProc):
         self.rank = rank  # global rank in 2D parallel (tp,pp)
 
         wrapper = WorkerWrapperBase(vllm_config=vllm_config, rpc_rank=rank)
-        all_kwargs: List[Dict] = [
+        all_kwargs: list[dict] = [
             {} for _ in range(vllm_config.parallel_config.world_size)
         ]
         all_kwargs[rank] = {

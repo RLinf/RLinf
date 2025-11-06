@@ -17,7 +17,7 @@
 #
 # Expected `transformers==4.40.1` and `tokenizers==0.19.1`
 
-from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
+from typing import Any, ClassVar, Optional, Union
 
 import numpy as np
 import torch
@@ -64,13 +64,13 @@ class OpenVLAForBatchActionPrediction(OpenVLAForActionPrediction):
         pixel_values: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        past_key_values: Optional[list[torch.FloatTensor]] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         output_projector_features: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, PrismaticCausalLMOutputWithPast]:
+    ) -> Union[tuple, PrismaticCausalLMOutputWithPast]:
         """Run a forward pass through the VLM, returning a PrismaticCausalLMOutputWithPast instance."""
         output_attentions = (
             output_attentions
@@ -297,12 +297,12 @@ class OpenVLAForBatchActionPrediction(OpenVLAForActionPrediction):
     def prepare_inputs_for_generation(
         self,
         input_ids: Optional[torch.Tensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        past_key_values: Optional[list[torch.FloatTensor]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         pixel_values: Optional[torch.FloatTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         **kwargs: str,
-    ) -> Dict[str, torch.Tensor]:
+    ) -> dict[str, torch.Tensor]:
         """Borrowed from `LlamaForCausalLM` and simplified for batch size = 1; mirrors original PrismaticVLM logic."""
         # Handle `past_key_values` (cache) =>> assume `input_ids` just has unprocessed tokens
         if past_key_values is not None:
@@ -379,14 +379,14 @@ class PrismaticImageProcessor(PrismaticImageProcessorOrginal):
 
 
 class PrismaticProcessor(PrismaticProcessorOriginal):
-    attributes: ClassVar[List[str]] = ["image_processor", "tokenizer"]
+    attributes: ClassVar[list[str]] = ["image_processor", "tokenizer"]
     image_processor_class: str = "AutoImageProcessor"
     tokenizer_class: str = "AutoTokenizer"
 
     def __call__(
         self,
         text: Union[
-            TextInput, PreTokenizedInput, List[TextInput], List[PreTokenizedInput]
+            TextInput, PreTokenizedInput, list[TextInput], list[PreTokenizedInput]
         ],
         images: torch.Tensor,
         proprio_states: torch.Tensor,
@@ -511,7 +511,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         pixel_values: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        past_key_values: Optional[list[torch.FloatTensor]] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -604,7 +604,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         calulate_logprobs=True,
         calulate_values=True,
         **kwargs,
-    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+    ) -> tuple[np.ndarray, dict[str, Any]]:
         do_sample = kwargs.pop("do_sample")
 
         if env_obs is not None:
@@ -741,7 +741,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         return chunk_actions, result
 
     def _check_unnorm_key(
-        self, norm_stats: Dict[str, Dict[str, Any]], unnorm_key: Optional[str]
+        self, norm_stats: dict[str, dict[str, Any]], unnorm_key: Optional[str]
     ) -> str:
         if unnorm_key is None:
             assert len(norm_stats) == 1, (
@@ -757,7 +757,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         )
         return unnorm_key
 
-    def _get_action_stats(self) -> Dict[str, Any]:
+    def _get_action_stats(self) -> dict[str, Any]:
         """Get all the logged statistics for the given dataset."""
         unnorm_key = self._check_unnorm_key(self.norm_stats, self.unnorm_key)
         return self.norm_stats[unnorm_key]["action"]

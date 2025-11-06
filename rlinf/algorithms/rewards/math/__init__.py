@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List
-
 from omegaconf import DictConfig
 
 from toolkits.math_verifier.verify import math_verify_call
@@ -24,8 +22,8 @@ class MathReward:
         self.scale = config.get("reward_scale", 1.0)
 
     def get_reward(
-        self, response: List[str], reference: List[List[str]]
-    ) -> List[float]:
+        self, response: list[str], reference: list[list[str]]
+    ) -> list[float]:
         """
         Calculates reward scores for a list of responses compared to corresponding lists of reference answers.
         For each response, the function checks if it matches any of the provided references using the `process_results` function.

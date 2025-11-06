@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import torch
 from omegaconf import DictConfig
@@ -28,7 +28,7 @@ from rlinf.data.datasets.rstar2 import Rstar2Dataset
 
 def create_rl_dataset(
     config: DictConfig, tokenizer: AutoTokenizer
-) -> Tuple[Dataset, Dataset]:
+) -> tuple[Dataset, Dataset]:
     """Create rl datasets.
 
     Arguments:
@@ -88,7 +88,7 @@ def create_rl_dataset(
     return train_dataset, val_dataset
 
 
-def collate_fn(data_list: List["DatasetItem"]) -> Dict[str, Any]:
+def collate_fn(data_list: list["DatasetItem"]) -> dict[str, Any]:
     """
     Collate function for batching dataset items.
     """
@@ -121,7 +121,7 @@ def collate_fn(data_list: List["DatasetItem"]) -> Dict[str, Any]:
 
     batch_idx = torch.tensor([int(it.idx) for it in data_list], dtype=torch.long)
 
-    batch: Dict[str, Any] = {
+    batch: dict[str, Any] = {
         "prompt": batch_prompt,  # [B, L]
         "length": batch_length,  # [B]
         "answer": [it.answer for it in data_list],  # List[str]

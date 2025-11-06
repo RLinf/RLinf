@@ -21,7 +21,7 @@ import tempfile
 import threading
 import time
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 # MCP imports
 from mcp import ClientSession, StdioServerParameters
@@ -276,7 +276,7 @@ class FileSystemMCPSession:
         except Exception as e:
             self.logger.error(f"Error cleaning up MCP session {self.session_id}: {e}")
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get session statistics."""
         return {
             "session_id": self.session_id,
@@ -297,7 +297,7 @@ class MCPFilesystemClientWorker(ToolWorker):
         self.is_running = False
 
         # MCP session management
-        self.sessions: Dict[str, FileSystemMCPSession] = {}
+        self.sessions: dict[str, FileSystemMCPSession] = {}
         self._session_lock = None
 
         # Get mount directory from config
@@ -397,7 +397,7 @@ class MCPFilesystemClientWorker(ToolWorker):
                     async_op=True
                 ).async_wait()
                 self.logger.info(
-                    "MCPFilesystemClientWorker._process_requests: got request: {request}"
+                    f"MCPFilesystemClientWorker._process_requests: got request: {request}"
                 )
                 request_type = request.request_type
                 if request_type == "session_start":
@@ -546,7 +546,7 @@ class MCPFilesystemClientWorker(ToolWorker):
 
         return self
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get worker statistics."""
         session_stats = []
         for session in self.sessions.values():

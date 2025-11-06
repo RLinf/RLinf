@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional, Union
 
 import torch
 
@@ -39,7 +39,7 @@ class DatasetItem:
     answer: str | dict
     idx: int
     solution: Optional[str] = None
-    image_data: Optional[List[Union[bytes, str]]] = None
+    image_data: Optional[list[Union[bytes, str]]] = None
     prompt_text: Optional[str] = None
-    meta: Optional[Dict[str, Any]] = None
-    multi_modal_inputs: Optional[Dict[str, Any]] = None
+    meta: Optional[dict[str, Any]] = None
+    multi_modal_inputs: Optional[dict[str, Any]] = None

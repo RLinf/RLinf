@@ -14,7 +14,6 @@ cluster:
     inference: 4-5
     actor: 6-7
     reward: 0-3
-  agentloop_placement_num: 4
 
 runner:
   task_type: reasoning
@@ -95,13 +94,12 @@ inference:
 
 agentloop:
   group_name: "AgentLoopGroup"
-  max_user_turns: 3
-  max_assistant_turns: 3
-  max_parallel_calls: 2
-  max_tool_response_length: 500
-  tool_response_truncate_side: "right"
-  response_length: 2048
+  max_turns: 5
   print_outputs: True # whether to print the outputs (token ids, texts, tool calls, etc.) of agent loop worker.
+  # demo specific parameters. not used in this demo. you can add your own parameters here.
+  max_parallel_calls: 2
+  continue_at_tool_failure: True
+  max_tool_response_length: 500
 
 rollout:
   group_name: "RolloutGroup"

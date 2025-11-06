@@ -49,6 +49,12 @@ class MCPAgentLoopWorker(AgentLoopWorker):
         placement: ModelParallelComponentPlacement,
     ):
         super().__init__(cfg, placement)
+        self.max_prompt_len = int(self.cfg.data.max_prompt_length)
+        max_total_len = int(self.cfg.actor.model.encoder_seq_length)
+        self.max_resp_len = max(1, max_total_len - self.max_prompt_len)
+
+        # 5 is a magic number in this demo.
+        self.max_turns = self.cfg.agentloop.get("max_turns", 5)
 
     def generate_context_create(self) -> dict[str, Any]:
         return GenerateContext()
@@ -145,29 +151,29 @@ class MCPAgentLoopWorker(AgentLoopWorker):
         return response_text, return_function_calls
 
     async def run_one_query(self, prompt_ids: list[int]) -> AgentLoopOutput:
-        orig_prompt_ids = copy.deepcopy(prompt_ids)
         generate_context: GenerateContext = self.generate_context_create()
+        prompt_ids = prompt_ids[: self.max_prompt_len]
+        orig_prompt_ids = copy.deepcopy(prompt_ids)
         trace_prints = []
         response_mask = []
         try:
-            # 5 is a magic number in this demo.
-            for _ in range(5):
+            for _ in range(self.max_turns):
                 # Generate response from LLM
-                max_prompt_len = int(self.cfg.data.get("max_prompt_length", 1024))
-                max_total_len = int(self.cfg.actor.model.encoder_seq_length)
-                max_resp_len = max(1, max_total_len - max_prompt_len)
-
-                if len(prompt_ids) > max_prompt_len:
-                    prompt_ids = prompt_ids[-max_prompt_len:]
-
                 generate_result = await self.generate(prompt_ids)
                 response_ids = generate_result["output_ids"]
+                max_resp_len = self.max_resp_len - (
+                    len(prompt_ids) - len(orig_prompt_ids)
+                )
                 if len(response_ids) > max_resp_len:
                     response_ids = response_ids[:max_resp_len]
                 response_text = self.tokenizer.decode(response_ids)
-
                 prompt_ids += response_ids
                 response_mask += [1] * len(response_ids)  # 1 for LLM generated tokens
+                if self.print_outputs:
+                    # add anything you want to print
+                    trace_prints.append({"generate": response_text})
+                if len(response_ids) == max_resp_len:
+                    break
 
                 # Extract tool calls from response
                 _, tool_requests = await self.extract_tool_calls(response_text)
@@ -185,28 +191,29 @@ class MCPAgentLoopWorker(AgentLoopWorker):
                     tool_messages.append(message)
 
                 # Tokenize tool responses
-                tool_response_ids = self.tokenizer.apply_chat_template(
-                    tool_messages,
-                    add_generation_prompt=True,
-                    tokenize=True,
+                tool_response_ids = self.get_tool_response_ids(tool_messages)
+                max_tool_resp_len = self.max_resp_len - (
+                    len(prompt_ids) - len(orig_prompt_ids)
                 )
+                if len(tool_response_ids) > max_tool_resp_len:
+                    break
+
                 prompt_ids += tool_response_ids
                 response_mask += [0] * len(
                     tool_response_ids
                 )  # 0 for tool response tokens
                 if self.print_outputs:
                     # add anything you want to print
-                    trace_prints.append(
-                        {"generate": response_text, "tool_resp": tool_messages}
-                    )
+                    trace_prints[-1]["tool_resp"] = tool_messages
 
             # Separate prompt and response
-            response_ids = prompt_ids[-len(orig_prompt_ids) :]
+            response_ids = prompt_ids[len(orig_prompt_ids) :]
 
             return AgentLoopOutput(
                 prompt_ids=orig_prompt_ids,
                 prompt_text=self.tokenizer.decode(orig_prompt_ids),
                 response_ids=response_ids,
+                response_text=self.tokenizer.decode(response_ids),
                 response_mask=response_mask,
                 trace_prints=trace_prints,
             )

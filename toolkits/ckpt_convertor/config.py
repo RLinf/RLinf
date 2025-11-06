@@ -15,7 +15,7 @@
 
 import os
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Optional
 
 import torch
 import yaml
@@ -57,11 +57,11 @@ class ConvertorConfig:
     ep_size: int = 1
     pp_size: int = 1
     schedular: str = "1f1b"
-    pp_stages: Optional[List[int]] = None
+    pp_stages: Optional[list[int]] = None
 
     # from runtime parameters
     use_gpu_num: int = 0
-    use_gpu_index: Optional[List[int]] = None
+    use_gpu_index: Optional[list[int]] = None
 
     # precision
     linear_trans: str = "auto"

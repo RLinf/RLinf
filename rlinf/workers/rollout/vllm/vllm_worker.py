@@ -16,7 +16,7 @@ import asyncio
 import io
 import os
 from functools import partial
-from typing import AsyncGenerator, List, Optional, Union
+from typing import AsyncGenerator, Optional, Union
 
 import requests
 from omegaconf import DictConfig
@@ -31,7 +31,7 @@ from vllm.utils import Counter
 from vllm.v1.engine.async_llm import AsyncLLM as AsyncLLMEngine
 
 from rlinf.config import torch_dtype_from_precision
-from rlinf.data.io_struct import RolloutRequest, RolloutResult
+from rlinf.data.io_struct import RolloutRequest, RolloutResult, SeqGroupInfo
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.placement import ComponentPlacement
 from rlinf.workers.rollout.utils import print_vllm_outputs
@@ -50,15 +50,6 @@ class VLLMWorker(Worker):
         self._sampling_params = self._get_sampling_params_from_config()
         self._tokenizer = AutoTokenizer.from_pretrained(self._cfg.rollout.model_dir)
         self._vllm_engine = None
-
-        if self._cfg.algorithm.rollout_batch_size_per_gpu is None:
-            self._rollout_batch_size = None
-        else:
-            self._rollout_batch_size = (
-                self._cfg.algorithm.rollout_batch_size_per_gpu
-                * self._cfg.rollout.tensor_parallel_size
-                * self._cfg.rollout.pipeline_parallel_size
-            )
 
         self._validate_sampling_params = SamplingParams(temperature=0, max_tokens=32)
         self._validate_prompts = [
@@ -117,8 +108,8 @@ class VLLMWorker(Worker):
         return sampling_params
 
     def _process_image_data(
-        self, image_data: Optional[List[Union[bytes, str]]]
-    ) -> Optional[List[Image]]:
+        self, image_data: Optional[list[Union[bytes, str]]]
+    ) -> Optional[list[Image]]:
         """
         Process the batch image data which can be bytes or image paths.
 
@@ -193,37 +184,15 @@ class VLLMWorker(Worker):
         assert output is not None, "Async generator returned no output."
         return output
 
-    def _pre_process_rollout_request(
-        self,
-        request: RolloutRequest,
-    ) -> List[List[RolloutRequest]]:
-        if self._rollout_batch_size is not None:
-            # NOTE:
-            # it's different from sglang, here a request's sample count
-            # instead of sample count x group_size  should be divisible by rollout_batch_size
-            assert len(request.input_ids) % self._rollout_batch_size == 0, (
-                f"rollout_batch_size {self._rollout_batch_size} must divide the total number of requests {len(request.input_ids)}"
-            )
-            num_batch = len(request.input_ids) // self._rollout_batch_size
-        else:
-            num_batch = 1
-
-        split_requests = request.split(num_batch)
-        if self._placement.is_disaggregated:
-            num_prompts_per_request = len(split_requests[0].input_ids)
-            return [r.split(num_prompts_per_request) for r in split_requests]
-        else:
-            return [r.split(1) for r in split_requests]
-
     async def generate(
         self,
-        input_ids: Union[List[List[int]], List[int]],
+        input_ids: Union[list[list[int]], list[int]],
         sampling_params: SamplingParams,
-        prompt_texts: Optional[Union[List[str], str]] = None,
+        prompt_texts: Optional[Union[list[str], str]] = None,
         image_data: Optional[
-            Union[List[List[Union[bytes, str]]], List[Union[bytes, str]]]
+            Union[list[list[Union[bytes, str]]], list[Union[bytes, str]]]
         ] = None,
-    ) -> List[RequestOutput]:
+    ) -> list[RequestOutput]:
         """
         Do Generate Task using the vllm async engine.
 
@@ -241,7 +210,7 @@ class VLLMWorker(Worker):
             List[RequestOutput]: A list of RequestOutput from vllm engine.
         """
 
-        def check_input_ids() -> List[List[int]]:
+        def check_input_ids() -> list[list[int]]:
             assert isinstance(input_ids, list), (
                 "input_ids should be a list or list of list of int."
             )
@@ -251,7 +220,7 @@ class VLLMWorker(Worker):
             else:
                 return input_ids
 
-        def check_prompt_text() -> Optional[List[str]]:
+        def check_prompt_text() -> Optional[list[str]]:
             if prompt_texts is None:
                 return None
             assert isinstance(prompt_texts, list) or isinstance(prompt_texts, str), (
@@ -263,7 +232,7 @@ class VLLMWorker(Worker):
                 assert len(prompt_texts) > 0, "prompt_text should not be empty."
                 return prompt_texts
 
-        def check_image_data() -> Optional[List[List[Image.Image]]]:
+        def check_image_data() -> Optional[list[list[Image.Image]]]:
             if image_data is None or not any(image_data):
                 return None
             assert isinstance(image_data, list), "image_data should be a list."
@@ -276,8 +245,8 @@ class VLLMWorker(Worker):
         prompt_texts = check_prompt_text()
         image_list = check_image_data()
 
-        inputs: List[PromptType] = []
-        outputs: List[RequestOutput] = []
+        inputs: list[PromptType] = []
+        outputs: list[RequestOutput] = []
         if prompt_texts is not None:
             for i, prompt_text in enumerate(prompt_texts):
                 if image_list is not None:
@@ -326,7 +295,7 @@ class VLLMWorker(Worker):
         engine_args: EngineArgs = EngineArgs(
             model=self._cfg.rollout.model_dir,
             tensor_parallel_size=self._cfg.rollout.tensor_parallel_size,
-            dtype=torch_dtype_from_precision(self._cfg.actor.model.precision),
+            dtype=torch_dtype_from_precision(self._cfg.rollout.precision),
             gpu_memory_utilization=self._cfg.rollout.gpu_memory_utilization,
             enforce_eager=self._cfg.rollout.enforce_eager,
             enable_chunked_prefill=self._cfg.rollout.vllm.enable_chunked_prefill,
@@ -396,26 +365,26 @@ class VLLMWorker(Worker):
             await self.offload_model_weights()
 
     async def rollout_and_return(
-        self, request: RolloutRequest, output_channel: Channel
-    ):
+        self, seq_info: SeqGroupInfo, output_channel: Channel
+    ) -> None:
         """
-        Helper function to rollout for a single RolloutRequest and build RolloutResult then
+        Helper function to rollout for a single SeqGroupInfo and build RolloutResult then
         put it to output channel.
 
         Args:
-            request: The RolloutRequest to process.
+            seq_info: The SeqGroupInfo to process.
             output_channel: The output channel to send results to.
         """
-        vllm_results: List[RequestOutput] = await self.generate(
-            input_ids=request.input_ids,
-            image_data=request.image_data,
+        vllm_results: list[RequestOutput] = await self.generate(
+            input_ids=seq_info.input_ids,
+            image_data=seq_info.image_data,
             sampling_params=self._sampling_params,
         )
         rollout_result: RolloutResult = RolloutResult.from_vllm_results(
             group_size=self._cfg.algorithm.group_size,
             results=vllm_results,
-            answers=request.answers,
-            multi_modal_inputs=request.multi_modal_inputs,
+            answers=seq_info.answer,
+            multi_modal_inputs=[seq_info.multi_modal_inputs],
             return_logprobs=self._return_logprobs,
         )
         if self._cfg.rollout.print_outputs:
@@ -435,18 +404,16 @@ class VLLMWorker(Worker):
         rollout_request: RolloutRequest = await input_channel.get(
             async_op=True
         ).async_wait()
-        with self.device_lock:
-            batched_requests = self._pre_process_rollout_request(rollout_request)
-            with self.worker_timer():
-                for requests in batched_requests:
-                    rollout_tasks: List[asyncio.Task] = []
-                    for request in requests:
-                        rollout_tasks.append(
-                            asyncio.create_task(
-                                self.rollout_and_return(
-                                    request=request, output_channel=output_channel
-                                )
-                            )
-                        )
-                    await asyncio.gather(*rollout_tasks)
-                await self._stop()
+        seq_infos = rollout_request.to_seq_group_infos()
+
+        with self.device_lock, self.worker_timer():
+            rollout_tasks = [
+                asyncio.create_task(
+                    self.rollout_and_return(
+                        seq_info=seq_info, output_channel=output_channel
+                    )
+                )
+                for seq_info in seq_infos
+            ]
+            await asyncio.gather(*rollout_tasks)
+            await self._stop()

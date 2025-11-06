@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from sglang.srt.managers.schedule_batch import Req
 
@@ -25,15 +25,15 @@ class AbortGenerationInput:
 
 @dataclass
 class AbortGenerationOutput:
-    waiting_reqs: List[Req]
-    running_reqs: List[Req]
+    waiting_reqs: list[Req]
+    running_reqs: list[Req]
 
 
 @dataclass
 class TaskMethodInput:
     method_name: str
-    args: List[Any] = field(default_factory=list)
-    kwargs: Dict[str, Any] = field(default_factory=dict)
+    args: list[Any] = field(default_factory=list)
+    kwargs: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

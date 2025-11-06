@@ -20,6 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       file_filter: ${{ steps.filter.outputs.file_filter }}
+      install_filter: ${{ steps.filter.outputs.install_filter }}
+      docker_filter: ${{ steps.filter.outputs.docker_filter }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -46,6 +48,29 @@ jobs:
               - 'tests/**'
               - '.github/workflows/*tests.yml'
               - '*.yaml'
+            install_filter:
+              - 'pyproject.toml'
+              - 'requirements/*.sh'
+              - 'requirements/*.txt'
+              - '.github/workflows/install.yml'
+            docker_filter:
+              - 'docker/torch*/**'
+              - '.github/workflows/docker-build.yml'
+
+
+  # =============================================== install tests ====================================================
+
+  install-tests:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.install_filter == 'true'
+    uses: ./.github/workflows/install.yml
+
+  # =============================================== docker tests ====================================================
+
+  docker-tests:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.docker_filter == 'true'
+    uses: ./.github/workflows/docker-build.yml
 
   # =============================================== unit tests ====================================================
 
@@ -80,6 +105,8 @@ jobs:
   ci-test-finish:
     needs: [
       check-changes,
+      install-tests,
+      docker-tests,
       unit-tests,
       agent-reason-e2e-tests,
       embodied-e2e-tests,

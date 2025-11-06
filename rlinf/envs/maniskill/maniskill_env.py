@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import os
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Optional, Union
 
 import gymnasium as gym
 import numpy as np
@@ -190,7 +190,7 @@ class ManiskillEnv(gym.Env):
     def reset(
         self,
         *,
-        seed: Optional[Union[int, List[int]]] = None,
+        seed: Optional[Union[int, list[int]]] = None,
         options: Optional[dict] = {},
     ):
         raw_obs, infos = self.env.reset(seed=seed, options=options)
@@ -203,8 +203,8 @@ class ManiskillEnv(gym.Env):
         return extracted_obs, infos
 
     def step(
-        self, actions: Union[Array, Dict] = None, auto_reset=True
-    ) -> Tuple[Array, Array, Array, Array, Dict]:
+        self, actions: Union[Array, dict] = None, auto_reset=True
+    ) -> tuple[Array, Array, Array, Array, dict]:
         if actions is None:
             assert self._is_start, "Actions must be provided after the first reset."
         if self.is_start:

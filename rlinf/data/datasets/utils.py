@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List
 
 import torch
 
 
 def batch_pad_to_fixed_len(
-    batch: List[torch.Tensor],
+    batch: list[torch.Tensor],
     max_batch_len: int,
     pad_token: int,
     left_pad: bool = False,

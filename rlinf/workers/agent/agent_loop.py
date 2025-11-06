@@ -13,6 +13,10 @@
 # limitations under the License.
 
 import asyncio
+<<<<<<< HEAD
+=======
+import copy
+>>>>>>> origin/main
 from dataclasses import dataclass, field
 from typing import Any, Optional
 from uuid import uuid4
@@ -88,10 +92,24 @@ class AgentLoopWorker(Worker):
         self.tool_name_map = tool_name_map
         self.tool_worker_output_channel = tool_worker_output_channel
 
+<<<<<<< HEAD
     async def generate(self, prompt_ids: list[int]):
         channel_key = uuid4().hex
         await self.generate_input_channel.put(
             {"channel_key": channel_key, "prompt_ids": prompt_ids}, async_op=True
+=======
+    async def generate(
+        self, prompt_ids: list[int], sampling_params: Optional[dict] = None
+    ):
+        channel_key = uuid4().hex
+        await self.generate_input_channel.put(
+            {
+                "channel_key": channel_key,
+                "prompt_ids": prompt_ids,
+                "sampling_params": sampling_params,
+            },
+            async_op=True,
+>>>>>>> origin/main
         ).async_wait()
         result = await self.generate_output_channel.get(
             channel_key, async_op=True
@@ -110,6 +128,24 @@ class AgentLoopWorker(Worker):
             print_texts.append(f"{green('Trace print')}    : {trace_print!r}")
         print(*print_texts, sep="\n")
 
+<<<<<<< HEAD
+=======
+    def get_tool_response_ids(self, tool_messages: list[dict]):
+        """
+        To append correct tool response ids.
+        For some agents use custom chat template and special tokens, you should use custom method to override it.
+        """
+        wo_messages = [{"role": "user", "content": "hi"}]
+        wi_messages = [*wo_messages, *tool_messages]
+        wo_ids = self.tokenizer.apply_chat_template(
+            wo_messages, add_generation_prompt=False, tokenize=True
+        )
+        wi_ids = self.tokenizer.apply_chat_template(
+            wi_messages, add_generation_prompt=True, tokenize=True
+        )
+        return wi_ids[len(wo_ids) :]
+
+>>>>>>> origin/main
     async def run_agentloop_rollout_group(
         self,
         input_ids: list[int],
@@ -123,7 +159,11 @@ class AgentLoopWorker(Worker):
         rollout_tasks = []
         # grpo group_size
         for _ in range(group_size):
+<<<<<<< HEAD
             task = asyncio.create_task(self.run_one_query(input_ids))
+=======
+            task = asyncio.create_task(self.run_one_query(copy.deepcopy(input_ids)))
+>>>>>>> origin/main
             rollout_tasks.append(task)
 
         task_results = await asyncio.gather(*rollout_tasks)
@@ -170,10 +210,28 @@ class AgentLoopWorker(Worker):
         max_total_len = int(self.cfg.actor.model.encoder_seq_length)
         max_resp_len = max(1, max_total_len - max_prompt_len)
 
+<<<<<<< HEAD
         prompt_ids = [r.prompt_ids[:max_prompt_len] for r in task_results]
         response_ids = [r.response_ids[:max_resp_len] for r in task_results]
         prompt_lengths = [len(p) for p in prompt_ids]
         response_lengths = [len(o) for o in response_ids]
+=======
+        prompt_ids = [r.prompt_ids for r in task_results]
+        prompt_texts = [r.prompt_text for r in task_results]
+        response_ids = [r.response_ids for r in task_results]
+        response_texts = [r.response_text for r in task_results]
+        prompt_lengths = [len(p) for p in prompt_ids]
+        response_lengths = [len(o) for o in response_ids]
+
+        # prompt_lengths and response_lengths should be clipped to max_prompt_len and max_resp_len to avoid mask/position size mismatch
+        assert max(prompt_lengths) <= max_prompt_len, (
+            "prompt_lengths should be clipped to max_prompt_len"
+        )
+        assert max(response_lengths) <= max_resp_len, (
+            "response_lengths should be clipped to max_resp_len"
+        )
+
+>>>>>>> origin/main
         response_mask = [r.response_mask[:max_resp_len] for r in task_results]
         is_end = [True for _ in task_results]
         answers = [answers] * len(task_results)
@@ -182,8 +240,15 @@ class AgentLoopWorker(Worker):
             group_size=len(task_results),
             prompt_lengths=prompt_lengths,
             prompt_ids=prompt_ids,
+<<<<<<< HEAD
             response_lengths=response_lengths,
             response_ids=response_ids,
+=======
+            prompt_texts=prompt_texts,
+            response_lengths=response_lengths,
+            response_ids=response_ids,
+            response_texts=response_texts,
+>>>>>>> origin/main
             is_end=is_end,
             answers=answers,
             response_mask=response_mask,

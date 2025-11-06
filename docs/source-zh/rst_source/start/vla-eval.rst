@@ -140,6 +140,37 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
 ``num_envs``                并行评估环境数量（例如 500）
 ==========================  =============================================
 
+**可能遇到的问题**
+
+在最新的RLinf代码中进行训练并rollout不会出现报错，但是如果使用早期RLinf训练得到的中间模型（GRPO算法）并在新版本RLinf框架代码中运行，可能会遇到调用的模型包含多余keys（以 ``value_head.`` 开头的keys）的情况，例如：
+
+.. code-block:: console
+
+   RuntimeError: Error(s) in loading state_dict for OpenVLAOFTForRLActionPrediction:
+	Unexpected key(s) in state_dict: "value_head.head_l1.weight", "value_head.head_l1.bias", "value_head.head_l2.weight", "value_head.head_l2.bias", "value_head.head_l3.weight".
+
+此时，可以修改： ``rlinf/models/__init__.py`` 文件最末端的代码（ ``get_model`` 函数里）。将：
+
+.. code-block:: python
+
+   if hasattr(cfg, "ckpt_path") and cfg.ckpt_path is not None:
+        model_dict = torch.load(cfg.ckpt_path)
+        model.load_state_dict(model_dict)
+    return model
+
+修改为：
+
+.. code-block:: python
+
+   if hasattr(cfg, "ckpt_path") and cfg.ckpt_path is not None:
+        model_dict = torch.load(cfg.ckpt_path)
+        filtered_dict = {k: v for k, v in model_dict.items() if not k.startswith('value_head')}
+        model.load_state_dict(filtered_dict, strict=False)
+    return model
+
+修改后可以正常运行命令。
+
+
 评估结果
 --------
 

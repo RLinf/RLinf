@@ -18,7 +18,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures import (
     TimeoutError as FuturesTimeoutError,
 )
-from typing import List, Union
+from typing import Union
 
 import regex
 from latex2sympy2 import latex2sympy
@@ -385,11 +385,11 @@ def verify_math_solution(answer: str, solution: str):
 
 
 def math_verify_call(
-    responses: List[str],
-    references: List[List[str]],
+    responses: list[str],
+    references: list[list[str]],
     timeout: int = 10,
     check_xml_format=False,
-) -> List[bool]:
+) -> list[bool]:
     assert len(responses) == len(references), (
         len(responses),
         len(references),
@@ -403,7 +403,7 @@ def math_verify_call(
             jobs.append(job)
         all_jobs.append(jobs)
 
-    is_correct_list: List[bool] = []
+    is_correct_list: list[bool] = []
     has_timeout = False
     for jobs in all_jobs:
         is_correct = False

@@ -16,13 +16,13 @@ import importlib
 import inspect
 import sys
 import types
-from typing import Callable, List
+from typing import Callable
 
 
 class _Patcher:
     def __init__(self):
         self._mappings_dict: dict[str, str] = {}
-        self._wrappers_dict: dict[str, List[Callable]] = {}
+        self._wrappers_dict: dict[str, list[Callable]] = {}
 
     def clear(self):
         self._mappings_dict = {}

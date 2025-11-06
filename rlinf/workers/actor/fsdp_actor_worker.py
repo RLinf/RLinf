@@ -12,10 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import gc
 import os
-from contextlib import nullcontext
-from typing import Dict, Tuple
 
 import numpy as np
 import torch
@@ -50,6 +47,7 @@ from rlinf.utils.placement import (
     ModelParallelComponentPlacement,
 )
 from rlinf.utils.utils import (
+    clear_memory,
     compute_logprobs_from_logits,
     cpu_weight_swap,
     masked_mean,
@@ -64,7 +62,7 @@ from rlinf.workers.rollout.utils import RankMapper
 class FSDPActor(FSDPModelManager, Worker):
     def __init__(self, cfg: DictConfig, placement: ModelParallelComponentPlacement):
         Worker.__init__(self)
-        super().__init__(cfg.actor)
+        super().__init__(cfg.actor, self._world_size, self._rank)
 
         self.cfg = cfg
 
@@ -116,8 +114,8 @@ class FSDPActor(FSDPModelManager, Worker):
             self.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model)
 
         if self.cfg.actor.get("enable_offload", False):
-            self.offload_fsdp_param_and_grad()
-            self.offload_fsdp_optimizer()
+            self.offload_param_and_grad()
+            self.offload_optimizer()
         self._setup_rollout_weight_dst_ranks()
 
     def _setup_rollout_weight_dst_ranks(self) -> None:
@@ -136,10 +134,10 @@ class FSDPActor(FSDPModelManager, Worker):
 
     def sync_model_to_rollout(self) -> None:
         if self.cfg.actor.get("enable_offload", False):
-            self.offload_fsdp_optimizer()
+            self.offload_optimizer()
 
         if next(self.model.parameters()).is_cpu:
-            self.load_fsdp_param_and_grad(self.device)
+            self.load_param_and_grad(self.device, True)
         self.rollout_state_dict = self.get_model_state_dict()
 
         has_visual = any("visual." in k for k in self.rollout_state_dict.keys())
@@ -165,7 +163,7 @@ class FSDPActor(FSDPModelManager, Worker):
             )
 
         if self.cfg.actor.get("enable_offload", False):
-            self.offload_fsdp_param_and_grad()
+            self.offload_param_and_grad()
 
     def compute_logprobs(self) -> None:
         self.model.eval()
@@ -173,7 +171,7 @@ class FSDPActor(FSDPModelManager, Worker):
 
     def get_batch(
         self, channel: Channel
-    ) -> Tuple[Dict[str, torch.Tensor], RolloutResult]:
+    ) -> tuple[dict[str, torch.Tensor], RolloutResult]:
         result: RolloutResult = channel.get()
 
         batch = result.to_actor_batch(
@@ -197,11 +195,11 @@ class FSDPActor(FSDPModelManager, Worker):
         # Otherwise, it may lead to OOM
         with self.device_lock:
             if self.cfg.actor.get("enable_offload", False):
-                self.load_fsdp_param_and_grad(self.device)
-                self.load_fsdp_optimizer(self.device)
+                self.load_param_and_grad(self.device)
+                self.load_optimizer(self.device)
 
     @torch.no_grad()
-    def inference_step(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def inference_step(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
         self.model.eval()
         input_ids = batch["input_ids"]
         attention_mask = batch["attention_mask"]
@@ -291,7 +289,7 @@ class FSDPActor(FSDPModelManager, Worker):
             f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
         )
 
-    def run_training(self, input_channel: Channel) -> Tuple[Dict, list]:
+    def run_training(self, input_channel: Channel) -> tuple[dict, list]:
         # Get all batches for this DP
         batches = []
         recv_batch_size = 0
@@ -346,10 +344,9 @@ class FSDPActor(FSDPModelManager, Worker):
                 self.optimizer.zero_grad()
                 metrics = {}
                 for idx, m_batch in enumerate(train_micro_batches):
-                    backward_ctx = (
-                        self.model.no_sync()
-                        if idx < self.gradient_accumulation - 1
-                        else nullcontext()
+                    backward_ctx = self.before_micro_batch(
+                        self.model,
+                        is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
                     )
                     for k, v in m_batch.items():
                         m_batch[k] = v.cuda() if isinstance(v, torch.Tensor) else v
@@ -375,13 +372,14 @@ class FSDPActor(FSDPModelManager, Worker):
                         ref_logprobs = m_batch["ref_logprobs"]
 
                     loss_mask = m_batch["attention_mask"][:, -self.response_len :]
-                    output = self.model(
-                        input_ids=input_ids,
-                        attention_mask=attention_mask,
-                        position_ids=position_ids,
-                        **multi_modal_inputs,
-                        use_cache=False,
-                    )
+                    with self.amp_context:
+                        output = self.model(
+                            input_ids=input_ids,
+                            attention_mask=attention_mask,
+                            position_ids=position_ids,
+                            **multi_modal_inputs,
+                            use_cache=False,
+                        )
 
                     logits = output.logits
 
@@ -450,7 +448,7 @@ class FSDPActor(FSDPModelManager, Worker):
                     # scale loss for gradient accumulation and backprop
                     loss = loss / self.gradient_accumulation
                     with backward_ctx:
-                        loss.backward()
+                        self.grad_scaler.scale(loss).backward()
 
                     mbs_metrics_data.update(
                         {
@@ -461,17 +459,8 @@ class FSDPActor(FSDPModelManager, Worker):
                     )
 
                     append_to_dict(metrics, mbs_metrics_data)
-                # apply gradient clipping and optimizer step at the end of a global batch
-                grad_norm = self.model.clip_grad_norm_(
-                    max_norm=self.cfg.actor.optim.clip_grad
-                )
-                if not torch.isfinite(grad_norm).all():
-                    self.log_warning(
-                        "grad norm is not finite, skip this optimizer step."
-                    )
-                else:
-                    self.optimizer.step()
-                self.optimizer.zero_grad()
+
+                grad_norm, lr_list = self.optimizer_step()
 
                 # aggregate metrics across micro-batches
                 mean_metric_dict = {
@@ -481,16 +470,13 @@ class FSDPActor(FSDPModelManager, Worker):
                 mean_metric_dict = all_reduce_dict(
                     mean_metric_dict, op=torch.distributed.ReduceOp.AVG
                 )
-                # add optimizer stats
-                if torch.is_tensor(grad_norm):
-                    mean_metric_dict["actor/grad_norm"] = float(
-                        grad_norm.detach().item()
-                    )
-                else:
-                    mean_metric_dict["actor/grad_norm"] = float(grad_norm)
-                lr = self.optimizer.param_groups[0]["lr"]
-                mean_metric_dict["actor/lr"] = torch.as_tensor(lr).float().cpu()
+
+                mean_metric_dict["actor/grad_norm"] = float(grad_norm)
+                mean_metric_dict["actor/lr"] = lr_list[0]
                 training_metrics_list.append(mean_metric_dict)
+
+        # put lr scheduler step here
+        self.lr_scheduler.step()
 
         # Rollout metrics
         rollout_metrics, _, _ = compute_math_rollout_metrics(
@@ -499,18 +485,8 @@ class FSDPActor(FSDPModelManager, Worker):
 
         return rollout_metrics, training_metrics_list
 
-    def save_checkpoint(self, save_base_path: str, step: int) -> None:
-        torch.distributed.barrier()
-        model_state = self.get_model_state_dict()
-        optim_state = self.get_optimizer_state_dict()
-        if self._rank == 0:
-            os.makedirs(save_base_path, exist_ok=True)
-            torch.save(model_state, os.path.join(save_base_path, "model.pt"))
-            torch.save(optim_state, os.path.join(save_base_path, "optim.pt"))
-        torch.distributed.barrier()
-
     # Advantages and returns
-    def compute_advantages_and_returns(self, batch: Dict[str, torch.Tensor]):
+    def compute_advantages_and_returns(self, batch: dict[str, torch.Tensor]):
         """Compute the advantages and returns.
 
         Args:
@@ -545,16 +521,14 @@ class FSDPActor(FSDPModelManager, Worker):
 class EmbodiedFSDPActor(FSDPModelManager, Worker):
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
-        super().__init__(cfg.actor)
+        super().__init__(cfg.actor, self._world_size, self._rank)
 
         self.cfg = cfg
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
         self.device = torch.cuda.current_device()
-        world_size = self._world_size
         self.device_mesh = init_device_mesh(
-            "cuda", mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
+            "cuda", mesh_shape=(self._world_size,), mesh_dim_names=["fsdp"]
         )
-
         self._env_group_name = cfg.env.group_name
         self._rollout_group_name = cfg.rollout.group_name
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
@@ -580,11 +554,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self.load_checkpoint(actor_checkpoint_path)
 
         if self.cfg.actor.get("enable_offload", False):
-            self.offload_fsdp_param_and_grad()
-            self.offload_fsdp_optimizer()
-            torch.cuda.synchronize()
-            gc.collect()
-            torch.cuda.empty_cache()
+            self.offload_param_and_grad()
+            self.offload_optimizer()
 
     def model_provider_func(self):
         model = get_model(self.cfg.actor.checkpoint_load_path, self.cfg.actor.model)
@@ -593,24 +564,26 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         return super().model_provider_func()
 
     def sync_model_to_rollout(self):
+        if self.cfg.actor.get("enable_offload", False):
+            self.offload_optimizer()
+
         if next(self.model.parameters()).is_cpu:
-            self.load_fsdp_param_and_grad(self.device)
-            self.load_fsdp_optimizer(self.device)
+            if self.cfg.actor.get("enable_offload", False):
+                self.load_param_and_grad(self.device)
 
         state_dict = self.get_model_state_dict()
         if self._weight_dst_rank_in_rollout is not None:
             self.send(
                 state_dict, self._rollout_group_name, self._weight_dst_rank_in_rollout
             )
-        if self.cfg.actor.get("enable_offload", False):
-            self.offload_fsdp_param_and_grad()
-            self.offload_fsdp_optimizer()
-            torch.cuda.synchronize()
-            del state_dict
-            gc.collect()
-            torch.cuda.empty_cache()
 
-    async def recv_rollout_batch(self):
+        if self.cfg.actor.get("enable_offload", False):
+            self.offload_param_and_grad()
+
+    async def recv_rollout_batch(self) -> None:
+        """
+        Receive rollout batch from rollout workers.
+        """
         send_num = self._component_placement.get_world_size("rollout") * self.stage_num
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(send_num, recv_num)
@@ -632,7 +605,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
 
-    def _process_received_rollout_batch(self, rollout_batch):
+    def _process_received_rollout_batch(
+        self, rollout_batch: dict[str, torch.Tensor]
+    ) -> dict[str, torch.Tensor]:
         """
         original shape: [rollout_epoch x n_chunk_steps, bsz, num_action_chunks, ...]
         target shape: [n_chunk_steps, rollout_epoch x bsz, num_action_chunks, ...]
@@ -760,11 +735,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
     def run_training(self):
         if self.cfg.actor.get("enable_offload", False):
-            self.load_fsdp_param_and_grad(self.device)
-            self.load_fsdp_optimizer(self.device)
+            self.load_param_and_grad(self.device)
+            self.load_optimizer(self.device)
 
         self.model.train()
-        self.optimizer.zero_grad()
         rollout_size = (
             self.rollout_batch["prev_logprobs"].shape[0]
             * self.rollout_batch["prev_logprobs"].shape[1]
@@ -827,10 +801,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 )
 
                 self.optimizer.zero_grad()
-                for data in train_micro_batch:
+                for idx, data in enumerate(train_micro_batch):
                     for k, v in data.items():
                         data[k] = v.to(f"cuda:{int(os.environ['LOCAL_RANK'])}")
-
+                    backward_ctx = self.before_micro_batch(
+                        self.model,
+                        is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
+                    )
                     advantages = data["advantages"]
                     prev_logprobs = data["prev_logprobs"]
                     returns = data.get("returns", None)
@@ -848,13 +825,14 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         True if self.cfg.algorithm.adv_type == "gae" else False
                     )
 
-                    output_dict = self.model(
-                        data=data,
-                        compute_logprobs=True,
-                        compute_entropy=self.cfg.algorithm.entropy_bonus > 0,
-                        compute_values=compute_values,
-                        use_cache=False,
-                    )
+                    with self.amp_context:
+                        output_dict = self.model(
+                            data=data,
+                            compute_logprobs=True,
+                            compute_entropy=self.cfg.algorithm.entropy_bonus > 0,
+                            compute_values=compute_values,
+                            use_cache=False,
+                        )
 
                     if self.cfg.actor.model.model_name in ["openpi"]:
                         prev_logprobs = output_dict["prev_logprobs"]
@@ -900,56 +878,32 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     metrics_data["entropy_loss"] = entropy_loss.detach().item()
 
                     loss /= self.gradient_accumulation
-                    loss.backward()
+                    with backward_ctx:
+                        self.grad_scaler.scale(loss).backward()
 
                     metrics_data["loss"] = loss.detach().item()
                     append_to_dict(metrics, metrics_data)
 
                 torch.cuda.empty_cache()
 
-                grad_norm, lrs = self.optimizer_step()
+                grad_norm, lr_list = self.optimizer_step()
                 data = {
-                    "actor/grad_norm": grad_norm.detach().item(),
-                    "actor/lr": lrs[0],
+                    "actor/grad_norm": grad_norm,
+                    "actor/lr": lr_list[0],
                 }
-                if len(lrs) > 1:
-                    data["critic/lr"] = lrs[1]
+                if len(lr_list) > 1:
+                    data["critic/lr"] = lr_list[1]
                 append_to_dict(metrics, data)
-
+        # put LR scheduler step here
+        self.lr_scheduler.step()
+        self.optimizer.zero_grad()
+        clear_memory()
         mean_metric_dict = {key: np.mean(value) for key, value in metrics.items()}
         mean_metric_dict = all_reduce_dict(
             mean_metric_dict, op=torch.distributed.ReduceOp.AVG
         )
 
-        self.optimizer.zero_grad()
-        torch.cuda.synchronize()
-        torch.distributed.barrier()
-        torch.cuda.empty_cache()
-
         return mean_metric_dict
-
-    def save_checkpoint(self, save_base_path, step):
-        torch.distributed.barrier()
-        model_state = self.get_model_state_dict()
-        optim_state = self.get_optimizer_state_dict()
-        if self._rank == 0:
-            os.makedirs(save_base_path, exist_ok=True)
-            torch.save(model_state, os.path.join(save_base_path, "model.pt"))
-            torch.save(optim_state, os.path.join(save_base_path, "optim.pt"))
-        torch.distributed.barrier()
-
-    def load_checkpoint(self, load_base_path):
-        torch.distributed.barrier()
-        model_path = os.path.join(load_base_path, "model.pt")
-        optim_path = os.path.join(load_base_path, "optim.pt")
-
-        model_state = torch.load(model_path, map_location="cpu")
-        optim_state = torch.load(optim_path, map_location="cpu")
-
-        torch.distributed.barrier()
-
-        self.load_model_state_dict(model_state)
-        self.load_optimizer_state_dict(optim_state)
 
     def set_global_step(self, global_step):
         if hasattr(self.model, "set_global_step"):

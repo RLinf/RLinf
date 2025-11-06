@@ -20,7 +20,7 @@ import time
 from contextlib import nullcontext
 from pickle import Pickler, Unpickler
 from queue import Empty, Queue
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 import torch.distributed as dist
@@ -130,7 +130,7 @@ class CollectiveGroup:
         group_info: Optional[CollectiveGroupInfo],
         collective: "Collective",
         group_name: str,
-        worker_addresses: List[WorkerAddress],
+        worker_addresses: list[WorkerAddress],
         cur_worker_address: WorkerAddress,
     ):
         """Initialize the CollectiveGroup.
@@ -171,7 +171,7 @@ class CollectiveGroup:
 
     def send(
         self,
-        object: torch.Tensor | List[torch.Tensor] | Dict[str, torch.Tensor] | Any,
+        object: torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any,
         async_op: bool = False,
     ) -> Optional[AsyncWork]:
         """Implement the Worker's send method.
@@ -217,7 +217,7 @@ class CollectiveGroup:
 
     def _atomic_send(
         self,
-        object: torch.Tensor | List[torch.Tensor] | Dict[str, torch.Tensor] | Any,
+        object: torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any,
         comm_id: int,
         device_type: str,
         object_type: str,
@@ -248,7 +248,7 @@ class CollectiveGroup:
 
     def recv(
         self, async_op: bool = False
-    ) -> AsyncWork | torch.Tensor | List[torch.Tensor] | Dict[str, torch.Tensor] | Any:
+    ) -> AsyncWork | torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any:
         """Implement Worker's recv method.
 
         Similar as the send method above, it ensures the correct ordering of multiple communications of two recv calls.
@@ -276,7 +276,7 @@ class CollectiveGroup:
 
     def _atomic_recv(
         self, comm_id: int
-    ) -> AsyncWork | torch.Tensor | List[torch.Tensor] | Dict[str, torch.Tensor] | Any:
+    ) -> AsyncWork | torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any:
         """Atomic recv implementation."""
         # First recv object type
         self._init_p2p_process_group()
@@ -435,7 +435,7 @@ class CollectiveGroup:
             master_worker_address = self._worker_addresses[0]
             if self._cur_worker_address == master_worker_address:
                 # Create the group if I'm the master worker
-                workers: List[WorkerInfo] = []
+                workers: list[WorkerInfo] = []
                 for address in self._worker_addresses:
                     worker_info = self._collective._get_worker_info_safe(address)
                     workers.append(worker_info)
@@ -525,7 +525,7 @@ class CollectiveGroup:
                 # Avoid using the same master port for the next group
                 self._coll_manager.reset_master_port_info(self._group_info.group_name)
 
-    def _get_object_device_type(self, object: torch.Tensor | Any) -> Tuple[str, int]:
+    def _get_object_device_type(self, object: torch.Tensor | Any) -> tuple[str, int]:
         """Check the device type of the object. We also handle List of tensors, tuple of tensors, and Dict of tensors (all values must be tensors)."""
         device_type = CollectiveGroup.CPU
         object_type = CollectiveGroup.OBJECT
@@ -536,7 +536,7 @@ class CollectiveGroup:
                 else CollectiveGroup.CPU
             )
             object_type = CollectiveGroup.TENSOR
-        elif (isinstance(object, List) or isinstance(object, Tuple)) and all(
+        elif (isinstance(object, list) or isinstance(object, tuple)) and all(
             isinstance(item, torch.Tensor) for item in object
         ):
             device_type = (
@@ -549,7 +549,7 @@ class CollectiveGroup:
                     "All tensors in the list or tuple must be on the same device"
                 )
             object_type = CollectiveGroup.TENSOR_LIST
-        elif isinstance(object, Dict) and all(
+        elif isinstance(object, dict) and all(
             isinstance(item, torch.Tensor) for item in object.values()
         ):
             device_type = (
@@ -783,7 +783,7 @@ class CollectiveGroup:
 
     def _send_cuda_tensor_list_via_ipc(
         self,
-        tensors: List[torch.Tensor],
+        tensors: list[torch.Tensor],
         comm_id: int,
         async_op: bool = False,
     ) -> Optional[AsyncWork]:
@@ -812,7 +812,7 @@ class CollectiveGroup:
         if async_op:
             return work
 
-    def _recv_cuda_tensor_list_via_ipc(self, comm_id: int) -> List[torch.Tensor]:
+    def _recv_cuda_tensor_list_via_ipc(self, comm_id: int) -> list[torch.Tensor]:
         self._logger.debug(
             f"Receiving tensors via IPC in worker {self._cur_worker_address.get_name()}"
         )
@@ -845,7 +845,7 @@ class CollectiveGroup:
 
     def _send_cuda_tensor_list_to_uncertain_peer(
         self,
-        tensors: List[torch.Tensor],
+        tensors: list[torch.Tensor],
         comm_id: int,
         async_op: bool = False,
     ):
@@ -971,7 +971,7 @@ class CollectiveGroup:
 
     def _send_tensor_list(
         self,
-        tensors: List[torch.Tensor],
+        tensors: list[torch.Tensor],
         device_type: str,
         comm_id: int,
         async_op: bool = False,
@@ -1040,7 +1040,7 @@ class CollectiveGroup:
         if async_op:
             return work
 
-    def _recv_tensor_list(self, comm_id: int) -> List[torch.Tensor]:
+    def _recv_tensor_list(self, comm_id: int) -> list[torch.Tensor]:
         """Receive a list of tensors from the specified source address in the collective group.
 
             NOTE: Do not mix CPU and GPU tensors in the same list.
@@ -1106,7 +1106,7 @@ class CollectiveGroup:
 
     def _send_tensor_dict(
         self,
-        tensor_dict: Dict[str, torch.Tensor],
+        tensor_dict: dict[str, torch.Tensor],
         device_type: str,
         comm_id: int,
         async_op: bool = False,
@@ -1151,7 +1151,7 @@ class CollectiveGroup:
         if async_op:
             return value_work
 
-    def _recv_tensor_dict(self, comm_id: int) -> Dict[str, torch.Tensor]:
+    def _recv_tensor_dict(self, comm_id: int) -> dict[str, torch.Tensor]:
         """Receive a dictionary of tensors from the specified source address in the collective group.
 
         Args:

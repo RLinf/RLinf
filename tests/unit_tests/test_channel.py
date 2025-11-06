@@ -403,13 +403,13 @@ class TestChannel:
     def test_stress(self, worker_groups, channel):
         """Tests the channel under heavy load."""
         producer: ProducerWorker = worker_groups[0]
-        num_items = 100
+        num_items = 1000
 
         data = producer.stress(channel, num_items).wait()[0]
         assert data == list(range(num_items))
 
-        # data = producer.stress_multiple_queues(channel, num_items).wait()[0]
-        # assert data == list(range(num_items))
+        data = producer.stress_multiple_queues(channel, num_items).wait()[0]
+        assert data == list(range(num_items))
 
     def _assert_equal(self, received: Any, expected: Any):
         """Helper to compare various data types."""

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from functools import wraps
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Optional
 
 import torch
 
@@ -27,7 +27,7 @@ from rlinf.algorithms.utils import (
     preprocess_reasoning_advantages_inputs,
 )
 
-ADV_REGISTRY: Dict[str, Callable] = {}
+ADV_REGISTRY: dict[str, Callable] = {}
 
 
 def register_advantage(name: str):
@@ -53,7 +53,7 @@ def get_adv_and_returns(name: str) -> Callable:
     return ADV_REGISTRY[name.lower()]
 
 
-LOSS_REGISTRY: Dict[str, Callable] = {}
+LOSS_REGISTRY: dict[str, Callable] = {}
 
 
 def register_policy_loss(name: str):
@@ -74,7 +74,7 @@ def get_policy_loss(name: str):
     return LOSS_REGISTRY[name]
 
 
-def policy_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
+def policy_loss(**kwargs) -> tuple[torch.Tensor, dict]:
     """
     Unified actor loss entry.
     """
@@ -92,7 +92,7 @@ def policy_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
     return loss, metrics_data
 
 
-def calculate_adv_and_returns(**kwargs) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+def calculate_adv_and_returns(**kwargs) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
     """
     Unified entry for advantage + return computation.
     Accepts variable keyword arguments, preprocesses them, then dispatches

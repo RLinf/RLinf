@@ -15,7 +15,7 @@
 import gc
 import itertools
 import logging
-from typing import Iterator, List, Optional
+from typing import Iterator, Optional
 
 import torch
 from omegaconf import DictConfig
@@ -233,7 +233,7 @@ class MegatronModelManager:
 
     def make_data_iterator_list(
         self, data_iterator: Iterator, padding: bool = False, vpp_size: int = 1
-    ) -> List[Iterator]:
+    ) -> list[Iterator]:
         """
         Convert the data iterator into the format expected by Megatron.
         With interleaved pipeline parallelism, Megatron expects a

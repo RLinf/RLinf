@@ -16,7 +16,7 @@
 
 import math
 import os
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Optional, Union
 
 import imageio
 import libero.libero.benchmark as benchmark
@@ -26,41 +26,8 @@ from libero.libero.benchmark import Benchmark
 from PIL import Image, ImageDraw, ImageFont
 
 
-def to_tensor(
-    array: Union[Dict, torch.Tensor, np.ndarray, List, Any], device: str = "cpu"
-) -> Union[Dict, torch.Tensor]:
-    """
-    Copied from ManiSkill!
-    Maps any given sequence to a torch tensor on the CPU/GPU. If physx gpu is not enabled then we use CPU, otherwise GPU, unless specified
-    by the device argument
-
-    Args:
-        array: The data to map to a tensor
-        device: The device to put the tensor on. By default this is None and to_tensor will put the device on the GPU if physx is enabled
-            and CPU otherwise
-
-    """
-    if isinstance(array, (dict)):
-        return {k: to_tensor(v, device=device) for k, v in array.items()}
-    elif isinstance(array, torch.Tensor):
-        ret = array.to(device)
-    elif isinstance(array, np.ndarray):
-        if array.dtype == np.uint16:
-            array = array.astype(np.int32)
-        elif array.dtype == np.uint32:
-            array = array.astype(np.int64)
-        ret = torch.tensor(array).to(device)
-    else:
-        if isinstance(array, list) and isinstance(array[0], np.ndarray):
-            array = np.array(array)
-        ret = torch.tensor(array, device=device)
-    if ret.dtype == torch.float64:
-        ret = ret.to(torch.float32)
-    return ret
-
-
 def tile_images(
-    images: List[Union[np.ndarray, torch.Tensor]], nrows: int = 1
+    images: list[Union[np.ndarray, torch.Tensor]], nrows: int = 1
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Copied from maniskill https://github.com/haosulab/ManiSkill
@@ -76,7 +43,7 @@ def tile_images(
     if nrows == 1:
         images = sorted(images, key=lambda x: x.shape[0 + batched], reverse=True)
 
-    columns: List[List[Union[np.ndarray, torch.Tensor]]] = []
+    columns: list[list[Union[np.ndarray, torch.Tensor]]] = []
     if batched:
         max_h = images[0].shape[1] * nrows
         cur_h = 0
@@ -127,7 +94,7 @@ def tile_images(
 
 
 def put_text_on_image(
-    image: np.ndarray, lines: List[str], max_width: int = 200
+    image: np.ndarray, lines: list[str], max_width: int = 200
 ) -> np.ndarray:
     """
     Put text lines on an image with automatic line wrapping.
@@ -172,8 +139,8 @@ def put_text_on_image(
 
 def put_info_on_image(
     image: np.ndarray,
-    info: Dict[str, float],
-    extras: Optional[List[str]] = None,
+    info: dict[str, float],
+    extras: Optional[list[str]] = None,
     overlay: bool = True,
 ) -> np.ndarray:
     """
@@ -194,30 +161,7 @@ def put_info_on_image(
     return put_text_on_image(image, lines)
 
 
-def list_of_dict_to_dict_of_list(
-    list_of_dict: List[Dict[str, Any]],
-) -> Dict[str, List[Any]]:
-    """
-    Convert a list of dictionaries to a dictionary of lists.
-
-    Args:
-        list_of_dict: List of dictionaries with same keys
-
-    Returns:
-        Dictionary where each key maps to a list of values
-    """
-    if len(list_of_dict) == 0:
-        return {}
-    keys = list_of_dict[0].keys()
-    output = {key: [] for key in keys}
-    for data in list_of_dict:
-        for key, item in data.items():
-            assert key in output
-            output[key].append(item)
-    return output
-
-
-def get_libero_image(obs: Dict[str, np.ndarray]) -> np.ndarray:
+def get_libero_image(obs: dict[str, np.ndarray]) -> np.ndarray:
     """
     Extracts image from observations and preprocesses it.
 
@@ -233,7 +177,7 @@ def get_libero_image(obs: Dict[str, np.ndarray]) -> np.ndarray:
 
 
 def get_libero_wrist_image(
-    obs: Dict[str, np.ndarray], resize_size: Union[int, Tuple[int, int]] = 224
+    obs: dict[str, np.ndarray], resize_size: Union[int, tuple[int, int]] = 224
 ) -> np.ndarray:
     """
     Extracts wrist camera image from observations and preprocesses it.
@@ -278,7 +222,7 @@ def quat2axisangle(quat: np.ndarray) -> np.ndarray:
 
 
 def save_rollout_video(
-    rollout_images: List[np.ndarray], output_dir: str, video_name: str, fps: int = 30
+    rollout_images: list[np.ndarray], output_dir: str, video_name: str, fps: int = 30
 ) -> None:
     """
     Saves an MP4 replay of an episode.
@@ -318,7 +262,7 @@ def get_benchmark_overridden(benchmark_name) -> Benchmark:
         return libreo_cls
 
     # Build aggregated task map once, preserving order and de-duplicating by task name
-    aggregated_task_map: Dict[str, benchmark.Task] = {}
+    aggregated_task_map: dict[str, benchmark.Task] = {}
     for suite_name in getattr(benchmark, "libero_suites", []):
         suite_map = benchmark.task_maps.get(suite_name, {})
         for task_name, task in suite_map.items():

@@ -14,7 +14,7 @@
 
 import logging
 from enum import Enum, auto
-from typing import Dict, List, overload
+from typing import overload
 
 from omegaconf import DictConfig
 
@@ -45,8 +45,8 @@ class ComponentPlacement:
         self._config = config
         self._placement_config: DictConfig = config.cluster.component_placement
         self._cluster_num_gpus = cluster.num_accelerators_in_cluster
-        self._components: List[str] = []
-        self._component_gpu_map: Dict[str, List[int]] = {}
+        self._components: list[str] = []
+        self._component_gpu_map: dict[str, list[int]] = {}
 
         # Each line of component placement config looks like:
         # actor,inference: 0-4, which means both the actor and inference groups occupy GPU 0 to 4
@@ -61,12 +61,12 @@ class ComponentPlacement:
                 self._components.append(component)
                 self._component_gpu_map[component] = components_gpus
 
-            self._placements: Dict[str, PlacementStrategy] = {}
+            self._placements: dict[str, PlacementStrategy] = {}
             self._placement_mode: PlacementMode = None
 
     def _parse_gpu_ids(
-        self, components_gpus: str, component_names: List[str]
-    ) -> List[int]:
+        self, components_gpus: str, component_names: list[str]
+    ) -> list[int]:
         """Parse a string of GPU IDs into a list of integers.
 
         Args:
@@ -76,7 +76,7 @@ class ComponentPlacement:
         Returns:
             List[int]: A list of GPU IDs as integers.
         """
-        gpu_ids: List[int] = []
+        gpu_ids: list[int] = []
         if components_gpus == "all":
             gpu_ids = list(range(0, self._cluster_num_gpus))
         else:

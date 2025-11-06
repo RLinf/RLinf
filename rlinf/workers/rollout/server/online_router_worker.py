@@ -18,7 +18,7 @@ import json
 import random
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import uvicorn
 from fastapi import FastAPI
@@ -41,7 +41,7 @@ class CompleteRequest(BaseModel):
     top_p: Optional[float] = 0.9
     top_k: Optional[int] = 50
     repetition_penalty: Optional[float] = 1.0
-    stop: Optional[List[str]] = None
+    stop: Optional[list[str]] = None
     stream: Optional[bool] = False
 
 
@@ -49,7 +49,7 @@ class CompleteResponse(BaseModel):
     """Complete response model."""
 
     id: str
-    choices: List[Dict[str, Any]]
+    choices: list[dict[str, Any]]
     model: str
     created: int
     object: str = "text_completion"
@@ -74,17 +74,17 @@ class OnlineRouterWorker(Worker):
         # Sync weight state management
         self._sync_model_lock = asyncio.Lock()
         self._sync_model_in_progress = False
-        self._pending_requests: List[asyncio.Future] = []
+        self._pending_requests: list[asyncio.Future] = []
 
         # Request synchronization state
         self._sync_in_progress = False
         self._old_requests_complete = asyncio.Event()
         self._new_requests_blocked = asyncio.Event()
         self._new_requests_blocked.set()  # Initially allow new requests
-        self._blocked_requests: List[asyncio.Future] = []
+        self._blocked_requests: list[asyncio.Future] = []
 
         # Request tracking
-        self._active_requests: Dict[str, asyncio.Future] = {}
+        self._active_requests: dict[str, asyncio.Future] = {}
 
         # Setup FastAPI routes
         self._setup_routes()

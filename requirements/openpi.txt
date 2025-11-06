@@ -1,2 +1,2 @@
 
-openpi @ git+https://github.com/Physical-Intelligence/openpi
+openpi @ git+https://github.com/RLinf/openpi

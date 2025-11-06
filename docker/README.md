@@ -1,6 +1,6 @@
 ## Building Docker Images
 
-RLinf provides a unified Dockerfile for both the math reasoning and embodied images, and can switch between the two images using the `BUILD_TARGET` build argument, which can be `reason` or `embodied`.
+RLinf provides a unified Dockerfile for both the math reasoning and embodied images, and can switch between the two images using the `BUILD_TARGET` build argument, which can be `reason`, `embodied` or `embodied-behavior`.
 To build the Docker image, run the following command in the `docker/torch-x.x` directory, replacing `x.x` with the desired PyTorch version (e.g., `2.6` or `2.7`):
 
 ```shell

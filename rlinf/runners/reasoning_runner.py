@@ -15,7 +15,7 @@
 import logging
 import os
 import typing
-from typing import Dict, Optional, Union
+from typing import Optional, Union
 
 import pandas as pd
 import torch
@@ -278,7 +278,7 @@ class ReasoningRunner:
     def epoch(self):
         return self.global_steps // self.num_steps_per_epoch
 
-    def _put_batch(self, batch: Dict[str, torch.Tensor]):
+    def _put_batch(self, batch: dict[str, torch.Tensor]):
         prompt_ids = batch["prompt"].tolist()
         lengths = batch["length"].tolist()
         answers = batch["answer"]

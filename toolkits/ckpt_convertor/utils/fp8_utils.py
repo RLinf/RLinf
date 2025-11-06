@@ -14,7 +14,7 @@
 
 # use a fp8Tensor class to package fp8 operations
 
-from typing import List, Literal, Tuple, Union
+from typing import Literal, Union
 
 import torch
 
@@ -26,7 +26,7 @@ def ceil_div(x: int, y: int) -> int:
 inductor_optimizer = torch._dynamo.optimize("inductor")
 
 
-def per_block_cast_to_fp8_cpu(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+def per_block_cast_to_fp8_cpu(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     assert x.dim() == 2
     m, n = x.shape
     x_padded = torch.zeros(
@@ -66,7 +66,7 @@ per_block_cast_to_bf16_gpu = inductor_optimizer(per_block_cast_to_bf16_cpu)
 
 def per_block_cast_to_fp8(
     x: torch.Tensor, device: torch.device = None
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     if device is None:
         device = x.device
     if torch.device(device).type == "cpu":
@@ -101,7 +101,7 @@ class fp8Tensor:
 
     @staticmethod
     def group(
-        tensors: List["fp8Tensor"], fc1orfc2: Literal["fc1", "fc2"]
+        tensors: list["fp8Tensor"], fc1orfc2: Literal["fc1", "fc2"]
     ) -> "fp8Tensor":
         # TODO:
         raise NotImplementedError()

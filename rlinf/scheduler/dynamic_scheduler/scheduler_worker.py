@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, List
 
 from omegaconf import DictConfig
 
@@ -35,7 +34,7 @@ class SchedulerWorker(Worker):
         self,
         config: DictConfig,
         component_placement: ComponentPlacement,
-        workflow: List[str] = ["rollout", "inference", "actor"],
+        workflow: list[str] = ["rollout", "inference", "actor"],
     ):
         """Initialize the SchedulerWorker."""
         super().__init__()
@@ -70,7 +69,7 @@ class SchedulerWorker(Worker):
             "_logger": self._logger,
             "channel_factory": self.create_channel,
         }
-        self.component_managers: Dict[str, ComponentManager] = {}
+        self.component_managers: dict[str, ComponentManager] = {}
         for component in self.components:
             if component == "reward":
                 continue

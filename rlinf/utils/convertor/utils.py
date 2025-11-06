@@ -14,7 +14,7 @@
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Optional
 
 import torch
 
@@ -29,12 +29,14 @@ class TransformType(Enum):
 class TransformFunc:
     @staticmethod
     def _split_gqa_tensor(
-        tensor: torch.Tensor, new_statedict: dict, weight_names: List[str], config
+        tensor: torch.Tensor, new_statedict: dict, weight_names: list[str], config
     ) -> None:
         hidden_size = config.model_config.hidden_size
         num_attention_heads = config.model_config.num_attention_heads
         num_query_groups = config.model_config.num_query_groups or num_attention_heads
-        head_dim = hidden_size // num_attention_heads
+        head_dim = config.model_config.kv_channels
+        if head_dim is None:
+            head_dim = hidden_size // num_attention_heads
 
         target_tp = config.reshard_tp_size
         assert num_query_groups % target_tp == 0, (
@@ -90,7 +92,7 @@ class TransformFunc:
 
     @staticmethod
     def split_fc1(
-        linear_fc1: torch.Tensor, new_statedict: dict, weight_names: List[str], config
+        linear_fc1: torch.Tensor, new_statedict: dict, weight_names: list[str], config
     ) -> None:
         assert weight_names is not None and len(weight_names) == 2, (
             f"split_fc1 transform expects two weight names, got {weight_names}"
@@ -118,7 +120,7 @@ class TransformFunc:
 
     @staticmethod
     def split_none(
-        tensor: torch.Tensor, new_statedict: dict, weight_names: List[str]
+        tensor: torch.Tensor, new_statedict: dict, weight_names: list[str]
     ) -> None:
         assert weight_names is not None and len(weight_names) == 1, (
             f"split_none transform expects one weight name, got {weight_names}"
@@ -130,7 +132,7 @@ class TransformFunc:
 class ConvertorRule:
     pattern: re.Pattern
     transform: TransformType
-    targets: List[str]
+    targets: list[str]
     post: Optional[Callable] = None
 
 
@@ -140,7 +142,7 @@ class BaseConvertor:
         self.strict = strict
         self.rules = self.build_rules()
 
-    def map_name(self, name: str) -> Optional[Tuple[TransformType, List[str]]]:
+    def map_name(self, name: str) -> Optional[tuple[TransformType, list[str]]]:
         def _get_targets_from_match(templates: list[str], m: re.Match) -> list[str]:
             gd = m.groupdict()
             out = []
@@ -162,7 +164,7 @@ class BaseConvertor:
             return r.transform, full_names
         return None
 
-    def convert(self, state_dict: Dict) -> Dict:
+    def convert(self, state_dict: dict) -> dict:
         converted = {}
         for k, v in state_dict.items():
             mapped = self.map_name(k)
@@ -181,7 +183,7 @@ class BaseConvertor:
                 raise ValueError(f"Unknown transform type {transform}")
         return converted
 
-    def build_rules(self) -> List[ConvertorRule]:
+    def build_rules(self) -> list[ConvertorRule]:
         """
         Should be implemented in subclass to build the conversion rules.
         """
@@ -189,7 +191,7 @@ class BaseConvertor:
 
 
 class Qwen2_5Convertor(BaseConvertor):
-    def build_rules(self) -> List[ConvertorRule]:
+    def build_rules(self) -> list[ConvertorRule]:
         LID = r"(?P<i>\d+)"
         WB = r"(?P<wb>weight|bias)"
 
@@ -267,7 +269,7 @@ class Qwen2_5Convertor(BaseConvertor):
 
 
 class Qwen2_5VLConvertor(BaseConvertor):
-    def _build_vision_rules(self) -> List[ConvertorRule]:
+    def _build_vision_rules(self) -> list[ConvertorRule]:
         B = r"(?P<i>\d+)"
         WB = r"(?P<wb>weight|bias)"
         HF_V_PREFIX = "model.visual"
@@ -338,7 +340,7 @@ class Qwen2_5VLConvertor(BaseConvertor):
         ]
         return vision_rules
 
-    def _build_llm_rules(self) -> List[ConvertorRule]:
+    def _build_llm_rules(self) -> list[ConvertorRule]:
         B = r"(?P<i>\d+)"
         WB = r"(?P<wb>weight|bias)"
         HF_LLM_PREFIX = "model.language_model"
@@ -418,7 +420,7 @@ class Qwen2_5VLConvertor(BaseConvertor):
         ]
         return llm_rules
 
-    def _build_projector_rules(self) -> List[ConvertorRule]:
+    def _build_projector_rules(self) -> list[ConvertorRule]:
         HF_PROJECTOR_PREFIX = "model.visual.merger"
         MG_PROJECTOR_PREFIX = "vision_model.protection.encoder"
         WB = r"(?P<wb>weight|bias)"
@@ -439,7 +441,7 @@ class Qwen2_5VLConvertor(BaseConvertor):
         ]
         return projector_rules
 
-    def build_rules(self) -> List[ConvertorRule]:
+    def build_rules(self) -> list[ConvertorRule]:
         rules = []
         rules.extend(self._build_vision_rules())
         rules.extend(self._build_llm_rules())

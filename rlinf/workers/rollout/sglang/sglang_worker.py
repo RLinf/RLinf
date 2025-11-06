@@ -15,7 +15,11 @@
 import asyncio
 import copy
 import dataclasses
+<<<<<<< HEAD
 from typing import Any, Dict, List, Optional
+=======
+from typing import Any, Optional
+>>>>>>> origin/main
 
 from omegaconf import DictConfig
 from sglang.srt.managers.io_struct import ReleaseMemoryOccupationReqInput
@@ -93,7 +97,7 @@ class SGLangWorker(Worker):
         self.async_meta_stats_collector = MetaInfoStatsCollector(async_stats_file)
         self.async_batch_counter = 0
 
-    def _collect_stats(self, engine_results: List[Dict]):
+    def _collect_stats(self, engine_results: list[dict]):
         self.async_meta_stats_collector.collect_batch_stats(
             engine_results, self.async_batch_counter
         )
@@ -139,7 +143,8 @@ class SGLangWorker(Worker):
                 self._cfg.rollout.max_running_requests,
             ),
             load_format="dummy" if not self._cfg.rollout.validate_weight else "auto",
-            dtype=torch_dtype_from_precision(self._cfg.actor.model.precision),
+            # disable_overlap_schedule=True,
+            dtype=torch_dtype_from_precision(self._cfg.rollout.precision),
             # sglang will only return text/output_ids when skip_tokenizer_init=False/True
             # text is not needed in RL training, so set to True can save time.
             skip_tokenizer_init=not self._cfg.rollout.detokenize,
@@ -190,11 +195,11 @@ class SGLangWorker(Worker):
 
     async def async_generate(
         self,
-        prompt: List[str] | str | None = None,
-        sampling_params: List[Dict] | Dict | None = None,
-        input_ids: List[List[int]] | List[int] | None = None,
-        image_data: List | None = None,
-        return_logprob: List[bool] | bool | None = False,
+        prompt: list[str] | str | None = None,
+        sampling_params: list[dict] | dict | None = None,
+        input_ids: list[list[int]] | list[int] | None = None,
+        image_data: list | None = None,
+        return_logprob: list[bool] | bool | None = False,
         request_info: Any | None = None,
     ):
         """
@@ -287,13 +292,13 @@ class SGLangWorker(Worker):
             # Have aborted sequences (e.g., migrated from other engines)
             # Continue generation for the aborted group
             idx_aborted = seq_group_info.idx_aborted.copy()
-            seq_idx_list: List[int] = []
+            seq_idx_list: list[int] = []
             seq_group_info.idx_aborted.clear()
-            input_batch: List[List[int]] = []
-            sampling_params_list: List[Dict] = []
-            image_data_list: List = []
+            input_batch: list[list[int]] = []
+            sampling_params_list: list[dict] = []
+            image_data_list: list = []
             for idx in idx_aborted:
-                generated_ids: List[int] = seq_group_info.results[idx]["output_ids"]
+                generated_ids: list[int] = seq_group_info.results[idx]["output_ids"]
                 if len(generated_ids) >= self._sampling_params["max_new_tokens"]:
                     # avoid genererating for sequences that have already meet their max_new_tokens
                     self.log_warning(
@@ -364,7 +369,7 @@ class SGLangWorker(Worker):
             all_rollout_results = []
             while pending := self.status_manager.get_running_tasks():
                 done, pending = await asyncio.wait(pending, return_when=async_wait_type)
-                returned_seq_groups: List[SeqGroupInfo] = [
+                returned_seq_groups: list[SeqGroupInfo] = [
                     task.result() for task in done
                 ]
                 for group in returned_seq_groups:
@@ -400,6 +405,7 @@ class SGLangWorker(Worker):
                 if self._use_auto_scheduler:
                     await self._scheduler.report_offloaded()
 
+<<<<<<< HEAD
     async def agenerate(self, prompt_ids: List[int], stop: Optional[List[str]] = None):
         sampling_params = self._sampling_params
         if stop is not None:
@@ -409,6 +415,24 @@ class SGLangWorker(Worker):
         result = await self._engine.async_generate(
             input_ids=prompt_ids,
             sampling_params=sampling_params,
+=======
+    async def generate_and_send(
+        self,
+        output_channel: Channel,
+        channel_key: str,
+        prompt_ids: list[int],
+        sampling_params: Optional[dict] = None,
+    ):
+        final_sampling_params = self._sampling_params
+        if sampling_params is not None and len(sampling_params) > 0:
+            final_sampling_params = copy.deepcopy(self._sampling_params)
+            for key, value in sampling_params.items():
+                final_sampling_params[key] = value
+
+        result = await self._engine.async_generate(
+            input_ids=prompt_ids,
+            sampling_params=final_sampling_params,
+>>>>>>> origin/main
             return_logprob=self._return_logprobs,
         )
         result_dict = {
@@ -419,6 +443,7 @@ class SGLangWorker(Worker):
             result_dict["logprobs"] = [
                 item[0] for item in result["meta_info"]["output_token_logprobs"]
             ]
+<<<<<<< HEAD
 
         return result_dict
 
@@ -434,5 +459,20 @@ class SGLangWorker(Worker):
             asyncio.create_task(
                 generate_and_send(
                     rollout_request["channel_key"], rollout_request["prompt_ids"]
+=======
+        await output_channel.put(
+            result_dict, key=channel_key, async_op=True
+        ).async_wait()
+
+    async def rollout_serverless(self, input_channel: Channel, output_channel: Channel):
+        while True:
+            rollout_request = await input_channel.get(async_op=True).async_wait()
+            asyncio.create_task(
+                self.generate_and_send(
+                    output_channel=output_channel,
+                    channel_key=rollout_request["channel_key"],
+                    prompt_ids=rollout_request["prompt_ids"],
+                    sampling_params=rollout_request.get("sampling_params", None),
+>>>>>>> origin/main
                 )
             )

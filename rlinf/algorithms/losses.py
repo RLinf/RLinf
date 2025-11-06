@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Optional
 
 import torch
 
@@ -34,7 +34,7 @@ def compute_ppo_actor_loss(
     loss_mask_sum: Optional[torch.Tensor] = None,
     critic_warmup: Optional[bool] = False,
     **kwargs,
-) -> Tuple[torch.Tensor, Dict]:
+) -> tuple[torch.Tensor, dict]:
     """
     Compute PPO actor loss function.
 
@@ -127,7 +127,7 @@ def compute_ppo_critic_loss(
     max_episode_steps: Optional[int] = None,
     loss_mask_sum: Optional[torch.Tensor] = None,
     **kwargs,
-) -> Tuple[torch.Tensor, Dict]:
+) -> tuple[torch.Tensor, dict]:
     """
     Compute PPO critic loss function.
 
@@ -177,7 +177,7 @@ def compute_ppo_critic_loss(
 
 
 @register_policy_loss("actor_critic")
-def compute_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
+def compute_ppo_actor_critic_loss(**kwargs) -> tuple[torch.Tensor, dict]:
     """
     Compute PPO actor loss function.
 
@@ -208,7 +208,7 @@ def compute_ppo_actor_critic_loss(**kwargs) -> Tuple[torch.Tensor, Dict]:
 
 
 @register_policy_loss("actor")
-def compute_grpo_actor_loss_fn(**kwargs) -> Tuple[torch.Tensor, Dict]:
+def compute_grpo_actor_loss_fn(**kwargs) -> tuple[torch.Tensor, dict]:
     """
     Compute actor loss for Group Relative Policy Optimization (GRPO).
 
