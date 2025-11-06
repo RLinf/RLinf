@@ -59,6 +59,9 @@ class NodeInfo:
     num_accelerators: int
     """Number of accelerators available on the node."""
 
+    has_robot: bool
+    """Whether the node has robot"""
+
     num_cpus: int
     """Number of CPUs available on the node."""
 
@@ -171,12 +174,16 @@ class Cluster:
             accelerator_type, num_accelerators = (
                 Accelerator.get_node_accelerator_type_and_num(node)
             )
+            has_robot = False
+            if node["Resources"].get("robot", 0) > 0:
+                has_robot = True
             self._nodes.append(
                 NodeInfo(
                     node_rank=0,
                     ray_id=node["NodeID"],
                     node_ip=node["NodeManagerAddress"],
                     accelerator_type=accelerator_type,
+                    has_robot=has_robot, 
                     num_accelerators=num_accelerators,
                     num_cpus=int(node["Resources"].get("CPU", 0)),
                 )
