@@ -31,6 +31,16 @@ from rlinf.utils.utils import euler_2_quat, quat_2_euler
 from .basic_data_structures import FrankaRobotState
 
 
+TARGET_POSE = np.array(
+        [
+            0.5906439143742067,
+            0.07771711953459341,
+            0.0937835826958042,
+            3.1099675,
+            0.0146619,
+            -0.0078615,
+        ]
+    )
 
 @dataclass
 class FrankaRobotConfig:
@@ -54,9 +64,9 @@ class FrankaRobotConfig:
     action_scale: np.ndarray = field(
         default_factory=lambda: np.ones(3)
     )  # [xyz move scale, orientation scale, gripper scale]
-    enable_random_reset: bool = False
-    random_xy_range: float = 0.0
-    random_rz_range: float = 0.0
+    enable_random_reset: bool = True
+    random_xy_range: float = 0.05
+    random_rz_range: float = np.pi / 6
     # Robot parameters
     # Same as the position arrays: first 3 are position limits, last 3 are orientation limits
     position_limit_min: np.ndarray = field(default_factory=lambda: np.zeros(6))
@@ -64,8 +74,73 @@ class FrankaRobotConfig:
     compliance_param: Dict[str, float] = field(default_factory=dict)
     precision_param: Dict[str, float] = field(default_factory=dict)
     binary_gripper_threshold: float = 0.5
-    enable_gripper_penalty: bool = True
+    enable_gripper_penalty: bool = False
     gripper_penalty: float = 0.1
+
+    def __post_init__(self):
+        self.compliance_param = {
+            "translational_stiffness": 2000,
+            "translational_damping": 89,
+            "rotational_stiffness": 150,
+            "rotational_damping": 7,
+            "translational_Ki": 0,
+            "translational_clip_x": 0.003,
+            "translational_clip_y": 0.003,
+            "translational_clip_z": 0.01,
+            "translational_clip_neg_x": 0.003,
+            "translational_clip_neg_y": 0.003,
+            "translational_clip_neg_z": 0.01,
+            "rotational_clip_x": 0.02,
+            "rotational_clip_y": 0.02,
+            "rotational_clip_z": 0.02,
+            "rotational_clip_neg_x": 0.02,
+            "rotational_clip_neg_y": 0.02,
+            "rotational_clip_neg_z": 0.02,
+            "rotational_Ki": 0,
+        }
+        self.precision_param = {
+            "translational_stiffness": 3000,
+            "translational_damping": 89,
+            "rotational_stiffness": 300,
+            "rotational_damping": 9,
+            "translational_Ki": 0.1,
+            "translational_clip_x": 0.01,
+            "translational_clip_y": 0.01,
+            "translational_clip_z": 0.01,
+            "translational_clip_neg_x": 0.01,
+            "translational_clip_neg_y": 0.01,
+            "translational_clip_neg_z": 0.01,
+            "rotational_clip_x": 0.05,
+            "rotational_clip_y": 0.05,
+            "rotational_clip_z": 0.05,
+            "rotational_clip_neg_x": 0.05,
+            "rotational_clip_neg_y": 0.05,
+            "rotational_clip_neg_z": 0.05,
+            "rotational_Ki": 0.1,
+        }
+        self.reset_position = TARGET_POSE + np.array([0.0, 0.0, 0.1, 0.0, 0.0, 0.0])
+        self.reward_threshold = np.array([0.01, 0.01, 0.01, 0.2, 0.2, 0.2])
+        self.action_scale = np.array([0.02, 0.1, 1])
+        self.position_limit_min = np.array(
+            [
+                TARGET_POSE[0] - self.random_xy_range,
+                TARGET_POSE[1] - self.random_xy_range,
+                TARGET_POSE[2],
+                TARGET_POSE[3] - 0.01,
+                TARGET_POSE[4] - 0.01,
+                TARGET_POSE[5] - self.random_rz_range,
+            ]
+        )
+        self.position_limit_max = np.array(
+            [
+                TARGET_POSE[0] + self.random_xy_range,
+                TARGET_POSE[1] + self.random_xy_range,
+                TARGET_POSE[2],
+                TARGET_POSE[3] + 0.01,
+                TARGET_POSE[4] + 0.01,
+                TARGET_POSE[5] + self.random_rz_range,
+            ]
+        )
 
 
 class FrankaEnv(gym.Env):
