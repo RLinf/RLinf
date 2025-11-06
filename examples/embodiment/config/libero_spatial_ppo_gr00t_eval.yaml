@@ -1,6 +1,6 @@
 defaults:
-  - env/train: PutCarrotOnPlateInScene
-  - env/eval: PutCarrotOnPlateInScene
+  - env/train: libero_spatial
+  - env/eval: libero_spatial
   - override hydra/job_logging: stdout
 
 hydra:
@@ -43,9 +43,9 @@ algorithm:
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
-  n_chunk_steps: 10
-  n_eval_chunk_steps: 80
-  num_group_envs: 8
+  n_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}
+  n_eval_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}
+  num_group_envs: 2
   rollout_epoch: 1
   reward_type: chunk_level
   logprob_type: chunk_level
@@ -61,6 +61,9 @@ algorithm:
   clip_ratio_c: 3.0
   value_clip: 0.2
   huber_delta: 10.0
+  max_episode_steps: 240
+  reward_coef: 1.0
+  use_ordered_reset_state_ids: False
 
   gamma: 0.99
   gae_lambda: 0.95
@@ -121,11 +124,12 @@ actor:
     is_lora: false
     model_name: "gr00t"
     action_dim: 7
-    num_action_chunks: 16
+    num_action_chunks: 5
     denoising_steps: 4
     policy_setup: "widowx_bridge"
-    obs_converter_type: "maniskill"
-    embodiment_tag: "gr1"
+    obs_converter_type: "libero"
+    embodiment_tag: "new_embodiment"
+    use_wrist_image: True
     rl_head_config:
       joint_logprob: False
       noise_method: "flow_sde"
@@ -136,7 +140,7 @@ actor:
       noise_level: 0.5
       add_value_head: True
       chunk_critic_input: False
-      detach_critic_input: False
+      detach_critic_input: True
       valid_action_dim: 7
       disable_dropout: False
 
