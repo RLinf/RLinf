@@ -810,7 +810,7 @@ class RolloutResult:
             response_mask = batch_pad_to_fixed_len(
                 [torch.as_tensor(ids, dtype=torch.long) for ids in self.response_mask],
                 max_batch_len=max_response_len,
-                pad_token=pad_token,
+                pad_token=0,
             )
         else:
             response_mask = None

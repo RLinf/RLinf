@@ -23,6 +23,7 @@ from transformers import AutoTokenizer
 from rlinf.data.datasets.item import DatasetItem
 from rlinf.data.datasets.math import MathDataset
 from rlinf.data.datasets.vlm import VLMDatasetRegistry
+from rlinf.data.datasets.rstar2 import Rstar2Dataset
 
 
 def create_rl_dataset(
@@ -42,6 +43,8 @@ def create_rl_dataset(
 
     if config.data.type == "math":
         dataset_cls = MathDataset
+    elif config.data.type == "rstar2":
+        dataset_cls = Rstar2Dataset
     elif config.data.type == "vision_language":
         # Prefer new factory-based VLM datasets; fallback to legacy if requested
         dataset_name = getattr(config.data, "dataset_name", None)
