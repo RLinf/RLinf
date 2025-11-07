@@ -16,7 +16,8 @@ import copy
 import queue
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from itertools import cycle
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import gymnasium as gym
@@ -58,6 +59,7 @@ class FrankaRobotConfig:
     # It will be converted to quaternions internally
     target_position: np.ndarray = field(default_factory=lambda: np.zeros(6))
     reset_position: np.ndarray = field(default_factory=lambda: np.zeros(6))
+    joint_reset_pose: np.ndarray = field(default_factory=lambda: np.zeros(7))
     # Algorithm parameters
     max_num_steps: int = 100
     reward_threshold: np.ndarray = field(default_factory=lambda: np.zeros(6))
@@ -76,6 +78,8 @@ class FrankaRobotConfig:
     binary_gripper_threshold: float = 0.5
     enable_gripper_penalty: bool = False
     gripper_penalty: float = 0.1
+    save_video_path: Optional[str] = None
+    joint_reset_cycle: int = 200  # Number of resets before resetting joints
 
     def __post_init__(self):
         self.compliance_param = {
@@ -169,6 +173,8 @@ class FrankaEnv(gym.Env):
         else:
             self._franka_state.arm_position = np.zeros(7, )
         self._num_steps = 0
+        self._joint_reset_cycle = cycle(range(self._config.joint_reset_cycle))
+        self._recorded_frames = []
 
         # Launch Franka controller on the same node as the env
         # TODO: Support launching on different nodes
@@ -284,11 +290,45 @@ class FrankaEnv(gym.Env):
             return 0
 
     def reset(self, *, seed=None, options=None):
-        if not self.is_dummy:
-            self._franka_state = self._controller.get_state().wait()[0]
+        if self.is_dummy:
+            observation = self._get_observation()
+            return observation, {}
+        self._controller.reconfigure_compliance_params(
+            self._config.compliance_param
+        ).wait()
+        if self._config.save_video_path is not None:
+            self._save_video()
+
+        # Reset joint
+        joint_reset_cycle = next(self._joint_reset_cycle)
+        if joint_reset_cycle == 0:
+            self._logger.info(
+                f"Number of resets reached {self._num_resets}, resetting joints to initial position."
+            )
+            self._controller.reset_joint(self._config.joint_reset_pose).wait()
+            time.sleep(0.5)
+
+        # Reset arm
+        if self._config.enable_random_reset:
+            reset_pose = self._config.reset_position.copy()
+            reset_pose[:2] += np.random.uniform(
+                -self._config.random_xy_range, self._config.random_xy_range, (2,)
+            )
+            euler_random = self._config.target_position[3:].copy()
+            euler_random[-1] += np.random.uniform(
+                -self._config.random_rz_range, self._config.random_rz_range
+            )
+            reset_pose[3:] = euler_2_quat(euler_random)
+            self._interpolate_move(reset_pose)
         else:
-            self._franka_state = self._franka_state
+            reset_pose = self._config.reset_position.copy()
+            self._interpolate_move(reset_pose)
+
+        self._clear_error()
+        self._num_steps = 0
+        self._franka_state = self._controller.get_state().wait()[0]
         observation = self._get_observation()
+
         return observation, {}
 
     def _init_action_obs_spaces(self):
@@ -357,7 +397,7 @@ class FrankaEnv(gym.Env):
             start_y : start_y + crop_size, start_x : start_x + crop_size
         ]
         resized_frame = cv2.resize(cropped_frame, reshape_size)
-        return resized_frame
+        return cropped_frame, resized_frame
 
     def _get_camera_frames(self) -> Dict[str, np.ndarray]:
         """Get frames from all cameras."""
@@ -368,16 +408,25 @@ class FrankaEnv(gym.Env):
                 "wrist_2": np.zeros((128, 128, 3), dtype=np.uint8),
             }
         frames = {}
+        display_frames = {}
         for camera in self._cameras:
             try:
                 frame = camera.get_frame()
                 reshape_size = self.observation_space["frames"][
                     camera._camera_info.name
                 ].shape[:2][::-1]
-                cropped_frame = self._crop_frame(frame, reshape_size)
-                frames[camera._camera_info.name] = cropped_frame[
+                cropped_frame, resized_frame = self._crop_and_resize_frame(
+                    frame, reshape_size
+                )
+                frames[camera._camera_info.name] = resized_frame[
                     ..., ::-1
                 ]  # Convert RGB to BGR
+                display_frames[camera._camera_info.name] = (
+                    resized_frame  # Original RGB for display
+                )
+                display_frames[f"{camera._camera_info.name}_full"] = (
+                    cropped_frame  # Non-resized version
+                )
             except queue.Empty:
                 self._logger.warning(
                     f"Camera {camera._camera_info.name} is not producing frames. Wait 5 seconds and try again."
@@ -386,7 +435,35 @@ class FrankaEnv(gym.Env):
                 camera.close()
                 self._open_cameras(self._config.cameras)
                 return self._get_camera_frames()
+
+        self._recorded_frames.append(
+            np.concatenate(
+                [
+                    display_frames[f"{camera._camera_info.name}_full"]
+                    for camera in self._cameras
+                ],
+                axis=0,
+            )
+        )
         return frames
+
+    def _save_video(self):
+        try:
+            if len(self._recorded_frames) > 0:
+                writer = cv2.VideoWriter(
+                    self._config.save_video_path,
+                    cv2.VideoWriter_fourcc(*"mp4v"),
+                    self._config.step_frequency,
+                    self._recorded_frames[0].shape[:2][::-1],
+                )
+                for frame in self._recorded_frames:
+                    writer.write(frame)
+                writer.release()
+                self._recorded_frames.clear()
+        except Exception as e:
+            self._logger.error(f"Failed to save video with error: {e}")
+
+    # Robot actions
 
     def _clip_position_to_safety_box(self, position: np.ndarray) -> np.ndarray:
         """Clip the position array to be within the safety box."""
@@ -439,6 +516,15 @@ class FrankaEnv(gym.Env):
                 return False
         else:
             raise NotImplementedError("Non-binary gripper action not implemented.")
+
+    def _interpolate_move(self, pose: np.ndarray, timeout: float = 1.5):
+        num_steps = timeout * self._config.step_frequency
+        self._franka_state: FrankaRobotState = self._controller.get_state().wait()[0]
+        path = np.linspace(self._franka_state.arm_position, pose, int(num_steps))
+
+        for pose in path:
+            self._move_action(pose.astype(np.float32))
+            time.sleep(1.0 / self._config.step_frequency)
 
     def _move_action(self, position: np.ndarray):
         if not self.is_dummy:
