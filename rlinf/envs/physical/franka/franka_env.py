@@ -300,11 +300,26 @@ class FrankaEnv(gym.Env):
             self._save_video()
 
         # Reset joint
+        joint_reset = False
         joint_reset_cycle = next(self._joint_reset_cycle)
         if joint_reset_cycle == 0:
             self._logger.info(
                 f"Number of resets reached {self._num_resets}, resetting joints to initial position."
             )
+            joint_reset = True
+            
+
+        self.go_to_rest(joint_reset)
+
+        self._clear_error()
+        self._num_steps = 0
+        self._franka_state = self._controller.get_state().wait()[0]
+        observation = self._get_observation()
+
+        return observation, {}
+
+    def go_to_rest(self, joint_reset=False):
+        if joint_reset:
             self._controller.reset_joint(self._config.joint_reset_pose).wait()
             time.sleep(0.5)
 
@@ -323,14 +338,7 @@ class FrankaEnv(gym.Env):
         else:
             reset_pose = self._config.reset_position.copy()
             self._interpolate_move(reset_pose)
-
-        self._clear_error()
-        self._num_steps = 0
-        self._franka_state = self._controller.get_state().wait()[0]
-        observation = self._get_observation()
-
-        return observation, {}
-
+        
     def _init_action_obs_spaces(self):
         """Initialize action and observation spaces, including arm safety box."""
         self._xyz_safe_space = gym.spaces.Box(

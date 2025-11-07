@@ -3,7 +3,7 @@ from ..franka_env import FrankaEnv
 import gymnasium as gym
 import copy
 from gym.envs.registration import register
-
+import time
 
 class PegInsertionEnv(FrankaEnv):
     def _init_action_obs_spaces(self):
@@ -46,6 +46,23 @@ class PegInsertionEnv(FrankaEnv):
                 ),
             }
         )
+
+    def go_to_rest(self, joint_reset=False):
+        """
+        Move to the rest position defined in base class.
+        Add a small z offset before going to rest to avoid collision with object.
+        """
+        self._gripper_action(-1)
+        self._move_action(self._franka_state.arm_position)
+        time.sleep(0.5)
+
+        # Move up to clear the slot
+        reset_pose = copy.deepcopy(self._franka_state.arm_position)
+        reset_pose[2] += 0.10
+        self._interpolate_move(reset_pose, timeout=1)
+
+        # execute the go_to_rest method from the parent class
+        super().go_to_rest(joint_reset)
 
     def step(self, action):
         """
