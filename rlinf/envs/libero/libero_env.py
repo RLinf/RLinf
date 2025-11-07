@@ -321,9 +321,9 @@ class LiberoEnv(gym.Env):
                 zero_actions, env_idx
             )
         if self.current_raw_obs is None:
-            self.current_raw_obs = raw_obs
-        else:
-            self.current_raw_obs[env_idx] = raw_obs
+            self.current_raw_obs = [None] * self.num_envs
+        for i, idx in enumerate(env_idx):
+            self.current_raw_obs[idx] = raw_obs[i]
 
         obs = self._wrap_obs(self.current_raw_obs)
         self._reset_metrics(env_idx)
