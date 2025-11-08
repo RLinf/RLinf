@@ -41,7 +41,18 @@ def main(cfg) -> None:
         cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
     )
     # Create env worker group
-    env_placement = component_placement.get_strategy("env")
+    if cfg.cluster.get("enable_robot", False):
+        from rlinf.scheduler import NodePlacementStrategy
+
+        robot_node = -1
+        for node in cluster._nodes:
+            if node.has_robot:
+                robot_node = node.node_rank
+                break
+        assert robot_node != -1, "No robot node found in the cluster!"
+        env_placement = NodePlacementStrategy(node_ids=[robot_node])
+    else:
+        env_placement = component_placement.get_strategy("env")
     env_group = EnvWorker.create_group(cfg).launch(
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
