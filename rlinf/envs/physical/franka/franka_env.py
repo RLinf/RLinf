@@ -57,9 +57,9 @@ class FrankaRobotConfig:
     # TODO: rename it to pose
     # Positions are stored in eular angles (xyz for position, rzryrx for orientation)
     # It will be converted to quaternions internally
-    target_position: np.ndarray = field(default_factory=lambda: np.zeros(6))
-    reset_position: np.ndarray = field(default_factory=lambda: np.zeros(6))
-    joint_reset_pose: np.ndarray = field(default_factory=lambda: np.zeros(7))
+    target_ee_pose: np.ndarray = field(default_factory=lambda: np.zeros(6))
+    reset_ee_pose: np.ndarray = field(default_factory=lambda: np.zeros(6))
+    joint_reset_qpos: np.ndarray = field(default_factory=lambda: np.zeros(7))
     # Algorithm parameters
     max_num_steps: int = 100
     reward_threshold: np.ndarray = field(default_factory=lambda: np.zeros(6))
@@ -71,8 +71,8 @@ class FrankaRobotConfig:
     random_rz_range: float = np.pi / 6
     # Robot parameters
     # Same as the position arrays: first 3 are position limits, last 3 are orientation limits
-    position_limit_min: np.ndarray = field(default_factory=lambda: np.zeros(6))
-    position_limit_max: np.ndarray = field(default_factory=lambda: np.zeros(6))
+    ee_pose_limit_min: np.ndarray = field(default_factory=lambda: np.zeros(6))
+    ee_pose_limit_max: np.ndarray = field(default_factory=lambda: np.zeros(6))
     compliance_param: Dict[str, float] = field(default_factory=dict)
     precision_param: Dict[str, float] = field(default_factory=dict)
     binary_gripper_threshold: float = 0.5
@@ -122,10 +122,10 @@ class FrankaRobotConfig:
             "rotational_clip_neg_z": 0.05,
             "rotational_Ki": 0.1,
         }
-        self.reset_position = TARGET_POSE + np.array([0.0, 0.0, 0.1, 0.0, 0.0, 0.0])
+        self.reset_ee_pose = TARGET_POSE + np.array([0.0, 0.0, 0.1, 0.0, 0.0, 0.0])
         self.reward_threshold = np.array([0.01, 0.01, 0.01, 0.2, 0.2, 0.2])
         self.action_scale = np.array([0.02, 0.1, 1])
-        self.position_limit_min = np.array(
+        self.ee_pose_limit_min = np.array(
             [
                 TARGET_POSE[0] - self.random_xy_range,
                 TARGET_POSE[1] - self.random_xy_range,
@@ -135,7 +135,7 @@ class FrankaRobotConfig:
                 TARGET_POSE[5] - self.random_rz_range,
             ]
         )
-        self.position_limit_max = np.array(
+        self.ee_pose_limit_max = np.array(
             [
                 TARGET_POSE[0] + self.random_xy_range,
                 TARGET_POSE[1] + self.random_xy_range,
@@ -166,8 +166,8 @@ class FrankaEnv(gym.Env):
         if not self.is_dummy:
             self._franka_state.arm_position = np.concatenate(
                 [
-                    self._config.reset_position[:3],
-                    euler_2_quat(self._config.reset_position[3:]),
+                    self._config.reset_ee_pose[:3],
+                    euler_2_quat(self._config.reset_ee_pose[3:]),
                 ]
             )
         else:
@@ -273,7 +273,7 @@ class FrankaEnv(gym.Env):
             franka_state: FrankaRobotState = observation["state"]
             euler_angles = np.abs(quat_2_euler(franka_state.arm_position[3:]))
             position = np.hstack([franka_state.arm_position[:3], euler_angles])
-            target_delta = np.abs(position - self._config.target_position)
+            target_delta = np.abs(position - self._config.target_ee_pose)
             if np.all(target_delta <= self._config.reward_threshold):
                 reward = 1
             else:
@@ -320,35 +320,35 @@ class FrankaEnv(gym.Env):
 
     def go_to_rest(self, joint_reset=False):
         if joint_reset:
-            self._controller.reset_joint(self._config.joint_reset_pose).wait()
+            self._controller.reset_joint(self._config.joint_reset_qpos).wait()
             time.sleep(0.5)
 
         # Reset arm
         if self._config.enable_random_reset:
-            reset_pose = self._config.reset_position.copy()
+            reset_pose = self._config.reset_ee_pose.copy()
             reset_pose[:2] += np.random.uniform(
                 -self._config.random_xy_range, self._config.random_xy_range, (2,)
             )
-            euler_random = self._config.target_position[3:].copy()
+            euler_random = self._config.target_ee_pose[3:].copy()
             euler_random[-1] += np.random.uniform(
                 -self._config.random_rz_range, self._config.random_rz_range
             )
             reset_pose[3:] = euler_2_quat(euler_random)
             self._interpolate_move(reset_pose)
         else:
-            reset_pose = self._config.reset_position.copy()
+            reset_pose = self._config.reset_ee_pose.copy()
             self._interpolate_move(reset_pose)
         
     def _init_action_obs_spaces(self):
         """Initialize action and observation spaces, including arm safety box."""
         self._xyz_safe_space = gym.spaces.Box(
-            low=self._config.position_limit_min[:3],
-            high=self._config.position_limit_max[:3],
+            low=self._config.ee_pose_limit_min[:3],
+            high=self._config.ee_pose_limit_max[:3],
             dtype=np.float64,
         )
         self._rpy_safe_space = gym.spaces.Box(
-            low=self._config.position_limit_min[3:],
-            high=self._config.position_limit_max[3:],
+            low=self._config.ee_pose_limit_min[3:],
+            high=self._config.ee_pose_limit_max[3:],
             dtype=np.float64,
         )
         self.action_space = gym.spaces.Box(
