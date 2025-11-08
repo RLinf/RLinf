@@ -82,6 +82,7 @@ class FrankaRobotConfig:
     joint_reset_cycle: int = 200  # Number of resets before resetting joints
 
     def __post_init__(self):
+        self.joint_reset_qpos = np.array([0, 0, 0, -1.9, -0, 2, 0])
         self.compliance_param = {
             "translational_stiffness": 2000,
             "translational_damping": 89,
@@ -164,14 +165,14 @@ class FrankaEnv(gym.Env):
         self._config = config
         self._franka_state = FrankaRobotState()
         if not self.is_dummy:
-            self._franka_state.arm_position = np.concatenate(
+            self._franka_state.tcp_pose = np.concatenate(
                 [
                     self._config.reset_ee_pose[:3],
                     euler_2_quat(self._config.reset_ee_pose[3:]),
                 ]
             )
         else:
-            self._franka_state.arm_position = np.zeros(7, )
+            self._franka_state.tcp_pose = np.zeros(7, )
         self._num_steps = 0
         self._joint_reset_cycle = cycle(range(self._config.joint_reset_cycle))
         self._recorded_frames = []
@@ -221,7 +222,7 @@ class FrankaEnv(gym.Env):
         action = np.clip(action, self.action_space.low, self.action_space.high)
         xyz_delta = action[:3]
 
-        self.next_position = self._franka_state.arm_position.copy()
+        self.next_position = self._franka_state.tcp_pose.copy()
         self.next_position[:3] = (
             self.next_position[:3] + xyz_delta * self._config.action_scale[0]
         )
@@ -229,7 +230,7 @@ class FrankaEnv(gym.Env):
         if not self.is_dummy:
             self.next_position[3:] = (
                 Rotation.from_euler("xyz", action[3:6] * self._config.action_scale[1])
-                * Rotation.from_quat(self._franka_state.arm_position[3:])
+                * Rotation.from_quat(self._franka_state.tcp_pose[3:])
             ).as_quat()
         
             gripper_action = action[6] * self._config.action_scale[2]
@@ -271,8 +272,8 @@ class FrankaEnv(gym.Env):
         if not self.is_dummy:
             # Convert orientation to euler angles
             franka_state: FrankaRobotState = observation["state"]
-            euler_angles = np.abs(quat_2_euler(franka_state.arm_position[3:]))
-            position = np.hstack([franka_state.arm_position[:3], euler_angles])
+            euler_angles = np.abs(quat_2_euler(franka_state.tcp_pose[3:]))
+            position = np.hstack([franka_state.tcp_pose[:3], euler_angles])
             target_delta = np.abs(position - self._config.target_ee_pose)
             if np.all(target_delta <= self._config.reward_threshold):
                 reward = 1
@@ -359,13 +360,13 @@ class FrankaEnv(gym.Env):
             {
                 "state": gym.spaces.Dict(
                     {
-                        "arm_position": gym.spaces.Box(
+                        "tcp_pose": gym.spaces.Box(
                             -np.inf, np.inf, shape=(7,)
                         ),  # xyz + quat
-                        "arm_velocity": gym.spaces.Box(-np.inf, np.inf, shape=(6,)),
+                        "tcp_vel": gym.spaces.Box(-np.inf, np.inf, shape=(6,)),
                         "gripper_position": gym.spaces.Box(-1, 1, shape=(1,)),
-                        "arm_force": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
-                        "arm_torque": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
+                        "tcp_force": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
+                        "tcp_torque": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
                     }
                 ),
                 "frames": gym.spaces.Dict(
@@ -528,7 +529,7 @@ class FrankaEnv(gym.Env):
     def _interpolate_move(self, pose: np.ndarray, timeout: float = 1.5):
         num_steps = timeout * self._config.step_frequency
         self._franka_state: FrankaRobotState = self._controller.get_state().wait()[0]
-        path = np.linspace(self._franka_state.arm_position, pose, int(num_steps))
+        path = np.linspace(self._franka_state.tcp_pose, pose, int(num_steps))
 
         for pose in path:
             self._move_action(pose.astype(np.float32))
@@ -545,11 +546,11 @@ class FrankaEnv(gym.Env):
         if not self.is_dummy:
             frames = self._get_camera_frames()
             state = {
-                "arm_position": self._franka_state.arm_position, 
-                "arm_velocity": self._franka_state.arm_velocity, 
+                "tcp_pose": self._franka_state.tcp_pose, 
+                "tcp_vel": self._franka_state.tcp_vel, 
                 "gripper_position": self._franka_state.gripper_position, 
-                "arm_force": self._franka_state.arm_force, 
-                "arm_torque": self._franka_state.arm_torque
+                "tcp_force": self._franka_state.tcp_force, 
+                "tcp_torque": self._franka_state.tcp_torque
             }
             observation = {
                 "state": state,

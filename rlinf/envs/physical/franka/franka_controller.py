@@ -124,18 +124,18 @@ class FrankaController(Worker):
         """
         tmatrix = np.array(list(msg.O_T_EE)).reshape(4, 4).T
         r = R.from_matrix(tmatrix[:3, :3])
-        self._state.arm_position = np.concatenate([tmatrix[:3, -1], r.as_quat()])
+        self._state.tcp_pose = np.concatenate([tmatrix[:3, -1], r.as_quat()])
 
         self._state.arm_joint_velocity = np.array(list(msg.dq)).reshape((7,))
         self._state.arm_joint_position = np.array(list(msg.q)).reshape((7,))
-        self._state.arm_force = np.array(list(msg.K_F_ext_hat_K)[:3])
-        self._state.arm_torque = np.array(list(msg.K_F_ext_hat_K)[3:])
+        self._state.tcp_force = np.array(list(msg.K_F_ext_hat_K)[:3])
+        self._state.tcp_torque = np.array(list(msg.K_F_ext_hat_K)[3:])
         try:
-            self._state.arm_velocity = (
+            self._state.tcp_vel = (
                 self._state.arm_jacobian @ self._state.arm_joint_velocity
             )
         except Exception as e:
-            self._state.arm_velocity = np.zeros(6)
+            self._state.tcp_vel = np.zeros(6)
             self._logger.warning(
                 f"Jacobian not set, end-effector velocity temporarily not available with error {e}"
             )

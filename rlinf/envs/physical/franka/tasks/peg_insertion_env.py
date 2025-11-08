@@ -27,12 +27,12 @@ class PegInsertionEnv(FrankaEnv):
             {
                 "state": gym.spaces.Dict(
                     {
-                        "arm_position": gym.spaces.Box(
+                        "tcp_pose": gym.spaces.Box(
                             -np.inf, np.inf, shape=(7,)
                         ),  # xyz + quat
-                        "arm_velocity": gym.spaces.Box(-np.inf, np.inf, shape=(6,)),
-                        "arm_force": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
-                        "arm_torque": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
+                        "tcp_vel": gym.spaces.Box(-np.inf, np.inf, shape=(6,)),
+                        "tcp_force": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
+                        "tcp_torque": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
                     }
                 ),
                 "frames": gym.spaces.Dict(
@@ -54,11 +54,11 @@ class PegInsertionEnv(FrankaEnv):
         Add a small z offset before going to rest to avoid collision with object.
         """
         self._gripper_action(-1)
-        self._move_action(self._franka_state.arm_position)
+        self._move_action(self._franka_state.tcp_pose)
         time.sleep(0.5)
 
         # Move up to clear the slot
-        reset_pose = copy.deepcopy(self._franka_state.arm_position)
+        reset_pose = copy.deepcopy(self._franka_state.tcp_pose)
         reset_pose[1] -= 0.10
         self._interpolate_move(reset_pose, timeout=1)
 
@@ -76,7 +76,8 @@ class PegInsertionEnv(FrankaEnv):
             # euler_random[-1] += np.random.uniform(
             #     -self._config.random_rz_range, self._config.random_rz_range
             # )
-            # reset_pose[3:] = euler_2_quat(euler_random)
+            
+            reset_pose[3:] = euler_2_quat(self._config.target_ee_pose[3:].copy())
             self._interpolate_move(reset_pose)
         else:
             reset_pose = self._config.reset_ee_pose.copy()
@@ -95,10 +96,10 @@ class PegInsertionEnv(FrankaEnv):
         if not self.is_dummy:
             frames = self._get_camera_frames()
             state = {
-                "arm_position": self._franka_state.arm_position, 
-                "arm_velocity": self._franka_state.arm_velocity, 
-                "arm_force": self._franka_state.arm_force, 
-                "arm_torque": self._franka_state.arm_torque
+                "tcp_pose": self._franka_state.tcp_pose, 
+                "tcp_vel": self._franka_state.tcp_vel, 
+                "tcp_force": self._franka_state.tcp_force, 
+                "tcp_torque": self._franka_state.tcp_torque
             }
             observation = {
                 "state": state,
