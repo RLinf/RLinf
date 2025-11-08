@@ -4,6 +4,7 @@ import gymnasium as gym
 import copy
 from gym.envs.registration import register
 import time
+from rlinf.utils.utils import euler_2_quat
 
 class PegInsertionEnv(FrankaEnv):
     def _init_action_obs_spaces(self):
@@ -58,11 +59,28 @@ class PegInsertionEnv(FrankaEnv):
 
         # Move up to clear the slot
         reset_pose = copy.deepcopy(self._franka_state.arm_position)
-        reset_pose[2] += 0.10
+        reset_pose[1] -= 0.10
         self._interpolate_move(reset_pose, timeout=1)
 
-        # execute the go_to_rest method from the parent class
-        super().go_to_rest(joint_reset)
+        if joint_reset:
+            self._controller.reset_joint(self._config.joint_reset_pose).wait()
+            time.sleep(0.5)
+
+        # Reset arm
+        if self._config.enable_random_reset:
+            reset_pose = self._config.reset_position.copy()
+            reset_pose[[0, 2]] += np.random.uniform(
+                -self._config.random_xy_range, self._config.random_xy_range, (2,)
+            )
+            # euler_random = self._config.target_position[3:].copy()
+            # euler_random[-1] += np.random.uniform(
+            #     -self._config.random_rz_range, self._config.random_rz_range
+            # )
+            # reset_pose[3:] = euler_2_quat(euler_random)
+            self._interpolate_move(reset_pose)
+        else:
+            reset_pose = self._config.reset_position.copy()
+            self._interpolate_move(reset_pose)
 
     def step(self, action):
         """
