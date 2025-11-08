@@ -177,7 +177,7 @@ class MLPPolicy(BasePolicy):
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
 
-        raw_action = probs.rsample()
+        raw_action = probs.sample()
         chunk_logprobs = probs.log_prob(raw_action)
 
         if self.action_scale is not None:

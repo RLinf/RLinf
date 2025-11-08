@@ -20,6 +20,14 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 
+def concat_batch(data1, data2):
+    batch = dict()
+    for key, value in data1.items():
+        if isinstance(value, torch.Tensor):
+            batch[key] = torch.cat([data1[key], data2[key]], dim=0)
+        elif isinstance(value, dict):
+            batch[key] = concat_batch(data1[key], data2[key])
+    return batch
 
 class SACReplayBuffer:
     """

@@ -40,6 +40,7 @@ data:
   path: "torch_peg_insert_20_demos_2025-10-23_18-21-43.pkl" # for example
 
 algorithm:
+  random_predict_steps: 0
   auto_reset: True
   ignore_terminations: True
   use_fixed_reset_state_ids: False
@@ -49,8 +50,8 @@ algorithm:
   kl_penalty: kl
   group_size: 1
 
-  n_chunk_steps: 32
-  n_eval_chunk_steps: 50
+  n_chunk_steps: 30
+  n_eval_chunk_steps: 100
   # training rollout mbs
   num_group_envs: 1
   rollout_epoch: 1
@@ -72,7 +73,7 @@ algorithm:
   gumbel_temperature: 1.0   # Temperature for Gumbel-Softmax sampling
   
   # SAC hyperparameters
-  gamma: 0.8 # 0.96
+  gamma: 0.96
   tau: 0.005  # Soft update coefficient for target networks
   alpha: 0.2  # Temperature parameter (if not using auto-tuning)
   auto_entropy_tuning: True  # Enable automatic entropy tuning
@@ -86,7 +87,7 @@ algorithm:
   # Replay buffer settings
   replay_buffer_capacity: 300000
   min_buffer_size: 200  # Minimum buffer size before training starts
-  num_updates_per_step: 64  # Number of gradient updates per training step
+  num_updates_per_step: 30  # Number of gradient updates per training step
   target_update_freq: 1  # Frequency of target network updates
 
   # params for rollout
@@ -137,8 +138,8 @@ actor:
   checkpoint_load_path: ""
   checkpoint_save_path: "../results"
 
-  micro_batch_size: 512  # Smaller batch size for SAC
-  global_batch_size: 512   # Smaller global batch size
+  micro_batch_size: 256  # Smaller batch size for SAC
+  global_batch_size: 256   # Smaller global batch size
   seed: 1234
   enable_offload: False
 

@@ -18,7 +18,7 @@ import torch.nn as nn
 from torch.distributions.normal import Normal
 
 from .modules.nature_cnn import NatureCNN, PlainConv, ResNetEncoder
-from .modules.utils import layer_init, make_mlp, LOG_STD_MAX, LOG_STD_MIN
+from .modules.utils import layer_init, make_mlp
 from .modules.value_head import ValueHead
 from .modules.q_head import MultiQHead
 from .base_policy import BasePolicy
@@ -31,7 +31,8 @@ class CNNPolicy(BasePolicy):
             hidden_dim, num_action_chunks, 
             add_value_head, add_q_head,
             backbone, 
-            independent_std=True, final_tanh=False, action_scale=None
+            independent_std=True, final_tanh=False, action_scale=None,
+            std_range=None
         ):
         super().__init__()
         self.backbone = backbone # ["plain_conv", ]
@@ -88,6 +89,7 @@ class CNNPolicy(BasePolicy):
             independent_std = False
             action_scale = 1, -1
             final_tanh = True
+            std_range = (1e-5, 5)
             self.q_head = MultiQHead(
                 # hidden_size=self.encoder.out_dim+self.state_dim,
                 hidden_size=encoder_out_dim+self.state_latent_dim,
@@ -99,6 +101,7 @@ class CNNPolicy(BasePolicy):
         
         self.independent_std = independent_std
         self.final_tanh = final_tanh
+        self.std_range = std_range
 
         if independent_std:
             self.actor_logstd = nn.Parameter(torch.ones(1, action_dim) * -0.5)
@@ -199,9 +202,12 @@ class CNNPolicy(BasePolicy):
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd(x)
         action_logstd = torch.tanh(action_logstd)
-        action_logstd = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (action_logstd + 1)
+        # action_logstd = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (action_logstd + 1)
 
         action_std = torch.exp(action_logstd)
+        if self.std_range is not None:
+            action_std = torch.clamp(action_std, self.std_range[0], self.std_range[1])
+
         probs = Normal(action_mean, action_std)
         raw_action = probs.rsample()
         
@@ -224,9 +230,12 @@ class CNNPolicy(BasePolicy):
         action_mean = self.actor_mean(mix_feature)
         action_logstd = self.actor_logstd(mix_feature)
         action_logstd = torch.tanh(action_logstd)
-        action_logstd = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (action_logstd + 1)
+        # action_logstd = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (action_logstd + 1)
 
         action_std = torch.exp(action_logstd)
+        if self.std_range is not None:
+            action_std = torch.clamp(action_std, self.std_range[0], self.std_range[1])
+
         probs = Normal(action_mean, action_std)
         raw_action = probs.rsample()
         
@@ -258,9 +267,12 @@ class CNNPolicy(BasePolicy):
 
         if self.final_tanh:
             action_logstd = torch.tanh(action_logstd)
-            action_logstd = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (action_logstd + 1)  # From SpinUp / Denis Yarats
+            # action_logstd = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (action_logstd + 1)  # From SpinUp / Denis Yarats
 
         action_std = action_logstd.exp()
+        if self.std_range is not None:
+            action_std = torch.clamp(action_std, self.std_range[0], self.std_range[1])
+
         probs = torch.distributions.Normal(action_mean, action_std)
         raw_action = probs.rsample()  # for reparameterization trick (mean + std * N(0,1))
         chunk_logprobs = probs.log_prob(raw_action)
@@ -320,11 +332,14 @@ class CNNPolicy(BasePolicy):
 
         if self.final_tanh:
             action_logstd = torch.tanh(action_logstd)
-            action_logstd = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (action_logstd + 1)  # From SpinUp / Denis Yarats
+            # action_logstd = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (action_logstd + 1)  # From SpinUp / Denis Yarats
 
         action_std = action_logstd.exp()
+        if self.std_range is not None:
+            action_std = torch.clamp(action_std, self.std_range[0], self.std_range[1])
+
         probs = torch.distributions.Normal(action_mean, action_std)
-        raw_action = probs.rsample()  # for reparameterization trick (mean + std * N(0,1))
+        raw_action = probs.sample()  # for reparameterization trick (mean + std * N(0,1))
         chunk_logprobs = probs.log_prob(raw_action)
         if self.action_scale is not None:
             action_normalized = torch.tanh(raw_action)

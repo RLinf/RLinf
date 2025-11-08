@@ -14,6 +14,7 @@
 
 import gc
 
+import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
@@ -67,6 +68,9 @@ class MultiStepRolloutWorker(Worker):
         self._replay_buffer_name = cfg.actor.channel.queue_name
         self.stage_num = cfg.rollout.pipeline_stage_num
 
+        self.random_predict_steps = cfg.algorithm.get("random_predict_steps", -1)
+        self.all_cumulated_steps = np.zeros(self.stage_num, dtype=int)
+
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
         self.channel = self.connect_channel(cfg.rollout.channel.name)
 
@@ -111,7 +115,7 @@ class MultiStepRolloutWorker(Worker):
             "max_new_tokens": self._length_params["max_new_token"],
         }
 
-    def predict(self, env_obs, do_sample=True, mode="train"):
+    def predict(self, env_obs, do_sample=True, mode="train", predict=True):
         kwargs = (
             self._train_sampling_params
             if mode == "train"
@@ -128,6 +132,8 @@ class MultiStepRolloutWorker(Worker):
                 env_obs=env_obs,
                 **kwargs,
             )
+        if not predict:
+            actions = (np.random.rand(*actions.shape) - 0.5) * 2
 
         return actions, result
 
@@ -189,7 +195,13 @@ class MultiStepRolloutWorker(Worker):
                     next_extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"]) # 但这里没有 final obs
                     real_next_extracted_obs = self.update_env_output(i, env_output, next_extracted_obs) # 这里处理了 final obs
 
-                    actions, result = self.predict(next_extracted_obs) # results 里面才包含这一步 obs 的格式
+                    predict = False \
+                         if self.random_predict_steps > 0 \
+                            and self.all_cumulated_steps[i] < self.random_predict_steps \
+                         else True
+                    actions, result = self.predict(next_extracted_obs, predict=predict) # results 里面才包含这一步 obs 的格式
+                    self.all_cumulated_steps[i] += actions.shape[0]
+
 
                     self.buffer_list[i].append_result(result)
 

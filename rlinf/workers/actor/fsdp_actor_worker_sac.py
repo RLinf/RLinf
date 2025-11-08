@@ -20,7 +20,7 @@ import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
 # import rlinf.algorithms.advantages_sac  # noqa: F401
-from rlinf.data.replay_buffer import SACReplayBuffer
+from rlinf.data.replay_buffer import SACReplayBuffer, concat_batch
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
@@ -94,12 +94,12 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
             self.target_entropy = target_entropy
 
             self.alpha_type = "exp" # "exp"
-            # self.alpha_type = "softplus"
+            self.alpha_type = "softplus"
             if self.alpha_type == "exp":
                 self.base_alpha = torch.zeros(1, requires_grad=True, device=self.device)
             elif self.alpha_type == "softplus":
                 self.base_alpha = torch.nn.Parameter(
-                    np.log(np.exp(1)-1) * torch.ones(1, device=self.device), requires_grad=True
+                    np.log(np.exp(0.01)-1) * torch.ones(1, device=self.device), requires_grad=True
                 )
             else:
                 raise NotImplementedError
@@ -196,10 +196,9 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
             # Sample batch from replay buffer
 
             if self.demo_buffer is not None:
-                if update_idx % 2 == 0:
-                    batch = self.replay_buffer.sample(batch_size)
-                else:
-                    batch = self.demo_buffer.sample(batch_size)
+                replay_batch = self.replay_buffer.sample(batch_size // 2)
+                demo_batch = self.replay_buffer.sample(batch_size // 2)
+                batch = concat_batch(replay_batch, demo_batch)
             else:
                 batch = self.replay_buffer.sample(batch_size)
             
@@ -258,7 +257,10 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                 obs=curr_obs, actions=batch["action"] 
             ) # [num-q, bsz, 1]
 
-            critic_loss = F.mse_loss(all_data_q_values, target_q_values) * all_data_q_values.shape[0]
+            critic_loss = F.mse_loss(
+                all_data_q_values, 
+                target_q_values.expand_as(all_data_q_values)
+            )
             self.qf_optimizer.zero_grad()
             critic_loss.backward()
             self.qf_optimizer.step()
