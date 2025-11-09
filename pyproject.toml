@@ -76,7 +76,6 @@ embodied = [
     "mani_skill @ git+https://github.com/haosulab/ManiSkill.git",
     "tensordict",
     "libero @ git+https://github.com/RLinf/LIBERO.git",
-    "metaworld",
     "imageio[ffmpeg]",
     "robosuite==1.4.1",
     "bddl",
