@@ -59,7 +59,7 @@ Algorithm
 
 
 Dependency Installation
---------------
+-----------------------
 
 If you are using the Docker image, please pull the latest image via `docker pull` to get the required dependencies.
 
@@ -67,7 +67,7 @@ If you have set up the environment manually, please run `uv pip install metaworl
 
 
 Model Download
----------------
+--------------
 
 Before starting training, you need to download the corresponding pretrained model:
 
@@ -87,7 +87,7 @@ Alternatively, you can also download the model from ModelScope at https://www.mo
 After downloading, make sure to correctly specify the model path in the configuration yaml file.
 
 Running the Script
----------------
+------------------
 
 **1. Key Cluster Configuration**
 
@@ -131,14 +131,14 @@ You can also reconfigure the layout to achieve full separation,
 where env, rollout, and actor components each use their own GPUs with no
 interference, eliminating the need for offloading functionality.
 
---------------
+
 
 **2. Configuration Files**
 
 - π\ :sub:`0`\ + PPO:
   ``examples/embodiment/config/metaworld_50_ppo_openpi.yaml``
 
---------------
+
 
 **3. Launch Commands**
 
@@ -166,7 +166,6 @@ Visualization and Results
    # Launch TensorBoard
    tensorboard --logdir ./logs --port 6006
 
---------------
 
 **2. Key Monitoring Metrics**
 
@@ -189,8 +188,6 @@ Visualization and Results
    -  ``env/episode_len``: Mean episode length
    -  ``env/success_once``: Task success rate
 
---------------
-
 **3. Video Generation**
 
 .. code:: yaml
@@ -199,8 +196,6 @@ Visualization and Results
      save_video: True
      info_on_video: True
      video_base_dir: ${runner.logger.log_path}/video/train
-
---------------
 
 **4. WandB Integration**
 
@@ -211,6 +206,6 @@ Visualization and Results
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_behavior"
+       experiment_name: "test_metaworld"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 

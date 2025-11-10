@@ -1,5 +1,5 @@
 基于MetaWorld模拟器的强化学习训练
-============================
+==============================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -37,7 +37,7 @@
 - **Rewards**：基于任务完成的稀疏奖励
 
 算法
----------
+-----------
 
 **核心算法组件**
 
@@ -59,7 +59,7 @@
 
 
 依赖安装
---------------
+-----------
 
 如果您使用的是 Docker 镜像，请通过 `docker pull` 拉取最新镜像以获取所需的依赖项。
 
@@ -67,7 +67,7 @@
 
 
 模型下载
----------------
+-----------
 
 在开始训练之前，您需要下载相应的预训练模型：
 
@@ -87,7 +87,7 @@
 下载后，请确保在配置 yaml 文件中正确指定模型路径。
 
 运行脚本
----------------
+-----------
 
 **1. 关键集群配置**
 
@@ -131,14 +131,11 @@ env 和 rollout 之间的管道重叠，以及与 actor 的共享。
 其中 env、rollout 和 actor 组件各自使用自己的 GPU，无
 干扰，消除了卸载功能的需要。
 
---------------
 
 **2. 配置文件**
 
 - π\ :sub:`0`\ + PPO:
   ``examples/embodiment/config/metaworld_50_ppo_openpi.yaml``
-
---------------
 
 **3. 启动命令**
 
@@ -166,8 +163,6 @@ env 和 rollout 之间的管道重叠，以及与 actor 的共享。
    # 启动 TensorBoard
    tensorboard --logdir ./logs --port 6006
 
---------------
-
 **2. 关键监控指标**
 
 -  **训练指标**
@@ -189,8 +184,6 @@ env 和 rollout 之间的管道重叠，以及与 actor 的共享。
    -  ``env/episode_len``: 平均回合长度
    -  ``env/success_once``: 任务成功率
 
---------------
-
 **3. 视频生成**
 
 .. code:: yaml
@@ -199,8 +192,6 @@ env 和 rollout 之间的管道重叠，以及与 actor 的共享。
      save_video: True
      info_on_video: True
      video_base_dir: ${runner.logger.log_path}/video/train
-
---------------
 
 **4. WandB 集成**
 
@@ -211,6 +202,6 @@ env 和 rollout 之间的管道重叠，以及与 actor 的共享。
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_behavior"
+       experiment_name: "test_metaworld"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
