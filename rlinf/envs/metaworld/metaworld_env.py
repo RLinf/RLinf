@@ -59,6 +59,7 @@ class MetaWorldEnv(gym.Env):
 
         self.num_tasks = 50
         self.task_num_trials = 10
+        self.RESET_STEP = 15
         self._compute_total_num_group_envs()
         self.reset_state_ids_all = self.get_reset_state_ids_all()
         self.update_reset_state_ids()
@@ -302,11 +303,11 @@ class MetaWorldEnv(gym.Env):
         self._reconfigure(reset_state_ids, env_idx)
 
         if self.use_async_vector_env:
-            for _ in range(15):
+            for _ in range(self.RESET_STEP):
                 zero_action = np.zeros((self.num_envs, 4))
                 raw_obs, _reward, _, _, _ = self.env.step(zero_action)
         else:
-            for _ in range(15):
+            for _ in range(self.RESET_STEP):
                 zero_action = np.zeros((len(env_idx), 4))
                 self.env.step(zero_action, id=env_idx)
             all_actions = np.zeros((self.num_envs, 4))
