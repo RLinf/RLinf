@@ -47,7 +47,7 @@ Environment
 
 -  **Images**: Main-view and wrist-view RGB tensors, each of shape
    ``[batch_size, 3, 224, 224]``
--  **States**: Joint angles and gripper states
+-  **States**: End-effector position, orientation, and gripper state
 -  **Task Descriptions**: Natural-language instructions
 -  **Rewards**: Sparse success/failure rewards
 

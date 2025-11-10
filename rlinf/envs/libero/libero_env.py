@@ -76,6 +76,7 @@ class LiberoEnv(gym.Env):
         self.video_cfg = cfg.video_cfg
         self.video_cnt = 0
         self.render_images = []
+        self.current_raw_obs = None
 
     def _init_env(self):
         env_fns = self.get_env_fns()
@@ -313,17 +314,19 @@ class LiberoEnv(gym.Env):
             reset_state_ids = self._get_random_reset_state_ids(num_reset_states)
 
         self._reconfigure(reset_state_ids, env_idx)
-
         for _ in range(15):
-            zero_actions = np.zeros((self.num_envs, 7))
+            zero_actions = np.zeros((len(env_idx), 7))
             zero_actions[:, -1] = -1
-            raw_obs, _reward, terminations, info_lists = self.env.step(zero_actions)
+            raw_obs, _reward, terminations, info_lists = self.env.step(
+                zero_actions, env_idx
+            )
+        if self.current_raw_obs is None:
+            self.current_raw_obs = [None] * self.num_envs
+        for i, idx in enumerate(env_idx):
+            self.current_raw_obs[idx] = raw_obs[i]
 
-        obs = self._wrap_obs(raw_obs)
-        if env_idx is not None:
-            self._reset_metrics(env_idx)
-        else:
-            self._reset_metrics()
+        obs = self._wrap_obs(self.current_raw_obs)
+        self._reset_metrics(env_idx)
         infos = {}
         return obs, infos
 
@@ -347,6 +350,7 @@ class LiberoEnv(gym.Env):
 
         self._elapsed_steps += 1
         raw_obs, _reward, terminations, info_lists = self.env.step(actions)
+        self.current_raw_obs = raw_obs
         infos = list_of_dict_to_dict_of_list(info_lists)
         truncations = self.elapsed_steps >= self.cfg.max_episode_steps
         obs = self._wrap_obs(raw_obs)
