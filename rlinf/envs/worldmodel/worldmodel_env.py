@@ -140,7 +140,7 @@ class WorldModelEnv(gym.Env):
 
     # TODO：实现计算reward的逻辑，底层需要调用模型（分类、回归相似性）
     def _calc_step_reward(self, info):
-        pass
+        return torch.zeros(self.num_envs, dtype=torch.float32).to(self.device)
 
     def reset(
         self,
@@ -178,11 +178,19 @@ class WorldModelEnv(gym.Env):
             # TODO：实现渲染相关逻辑
             # if self.video_cfg.save_video:
             #     self.add_new_frames(infos=infos)
-            return extracted_obs, None, terminations, truncations, infos
+            return (
+                extracted_obs,
+                torch.zeros(self.num_envs, dtype=torch.float32).to(self.device),
+                terminations,
+                truncations,
+                infos,
+            )
 
-        raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
+        extracted_obs, _reward, terminations, truncations, infos = self.env.step(
+            actions
+        )
 
-        # step_reward = self._calc_step_reward(infos)
+        step_reward = self._calc_step_reward(infos)
 
         # TODO：实现渲染相关逻辑
         # if self.video_cfg.save_video:
@@ -276,7 +284,8 @@ class WorldModelEnv(gym.Env):
             action = self.env.action_space.sample()
             obs, rew, terminations, truncations, infos = self.step(action)
             print(
-                f"Step {step}: obs={obs.keys()}, rew={rew.mean()}, terminations={terminations.float().mean()}, truncations={truncations.float().mean()}"
+                f"Step {step}: obs={obs.keys()}, rew={rew.mean()}, \
+                terminations={terminations.float().mean()}, truncations={truncations.float().mean()}"
             )
 
     # def add_new_frames(self, infos, rewards=None):
