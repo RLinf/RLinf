@@ -189,15 +189,13 @@ class WorldModelBackend(WMBackendBase):
         Returns:
             The inferred reward for the next step.
         """
-        return torch.rand(
-                self.batch_size, dtype=torch.float32, device=self.device
-        )
+        return torch.rand(self.batch_size, dtype=torch.float32, device=self.device)
 
     def _calc_terminated(self) -> torch.Tensor:
         """(Initial implementation) Calculates the terminated flag."""
-        return torch.rand(
-                self.batch_size, dtype=torch.float32, device=self.device
-        ) > 0.5
+        return (
+            torch.rand(self.batch_size, dtype=torch.float32, device=self.device) > 0.5
+        )
 
     def reset(
         self, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None
@@ -253,16 +251,12 @@ class WorldModelBackend(WMBackendBase):
         for i in range(self.batch_size):
             self.episodes_current_frames[i].append(new_obs_list[i])
         reward = self._infer_next_reward(new_obs_list)
-        
+
         terminated = self._calc_terminated()
-        truncated =(
-            torch.zeros(
-                self.batch_size, dtype=torch.bool, device=self.device
-            )
+        truncated = (
+            torch.zeros(self.batch_size, dtype=torch.bool, device=self.device)
             if self.current_step <= self.max_episode_steps
-            else torch.ones(
-                self.batch_size, dtype=torch.bool, device=self.device
-            )
+            else torch.ones(self.batch_size, dtype=torch.bool, device=self.device)
         )
 
         return self._get_latest_obs_from_deques(), reward, terminated, truncated, {}
