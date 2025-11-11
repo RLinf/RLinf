@@ -133,14 +133,31 @@ class WorldModelEnv(gym.Env):
             self.fail_once = self.fail_once | infos["fail"]
             episode_info["fail_once"] = self.fail_once.clone()
         episode_info["return"] = self.returns.clone()
-        episode_info["episode_len"] = self.elapsed_steps.clone()
-        episode_info["reward"] = episode_info["return"] / episode_info["episode_len"]
         infos["episode"] = episode_info
         return infos
 
-    # TODO：实现计算reward的逻辑，底层需要调用模型（分类、回归相似性）
-    def _calc_step_reward(self, info):
-        return torch.zeros(self.num_envs, dtype=torch.float32).to(self.device)
+    def _calc_step_reward(self, terminations):
+        """
+        (Initial implementation) Calculates the reward for the current step.
+
+        This function computes the reward based on the `terminations` tensor and
+        optionally returns a relative reward (the difference from the previous step)
+        or an absolute reward.
+
+        Args:
+            terminations: A tensor indicating whether the episode has terminated.
+
+        Returns:
+            The calculated reward.
+        """
+        reward = self.cfg.reward_coef * terminations
+        reward_diff = reward - self.prev_step_reward
+        self.prev_step_reward = reward
+
+        if self.use_rel_reward:
+            return reward_diff
+        else:
+            return reward
 
     def reset(
         self,
@@ -190,7 +207,7 @@ class WorldModelEnv(gym.Env):
             actions
         )
 
-        step_reward = self._calc_step_reward(infos)
+        step_reward = self._calc_step_reward(terminations)
 
         # TODO：实现渲染相关逻辑
         # if self.video_cfg.save_video:
@@ -276,11 +293,11 @@ class WorldModelEnv(gym.Env):
         return extracted_obs, infos
 
     def run(self):
-        obs, info = self.reset()
+        obs, _ = self.reset()
         self.reset(
             options={"env_idx": torch.arange(0, self.num_envs - 4, device=self.device)}
         )
-        for step in range(100):
+        for step in range(10):
             action = self.env.action_space.sample()
             obs, rew, terminations, truncations, infos = self.step(action)
             print(

@@ -144,19 +144,60 @@ class WorldModelBackend(WMBackendBase):
         """Loads the reward model."""
         pass
 
-    def _generate_next_frame(self, action: Any) -> Any:
+    def _infer_next_frame(self, action: Any) -> Any:
         """
-        Generates the next frame based on the given action.
+        (Initial implementation) Generates the next frame based on the given action.
+
+        This is a preliminary implementation for pipeline testing purposes. It generates a
+        new observation by creating a random tensor with the same shape as the previous
+        one.
+
         Args:
             action: The action to take.
+
         Returns:
             The generated next frame.
         """
-        pass
+        latest_obs_list = [d[-1] for d in self.episodes_current_frames]
+        new_obs_list = []
+        for i in range(self.batch_size):
+            new_obs = {}
+            latest_obs = latest_obs_list[i]
+            for camera_name in self.camera_names:
+                image_tensor = latest_obs[f"{camera_name}"]
+                new_obs[f"{camera_name}"] = torch.rand_like(image_tensor)
 
-    def _calc_step_reward(self):
-        """Calculates the reward for the current step."""
-        pass
+            state_tensor = latest_obs["observation.state"]
+            new_obs["observation.state"] = torch.rand_like(state_tensor)
+
+            new_obs["task"] = latest_obs["task"]
+            new_obs_list.append(new_obs)
+
+        return new_obs_list
+
+    def _infer_next_reward(self, new_obs_list: list[dict[str, Any]]) -> torch.Tensor:
+        """
+        (Initial implementation) Infers the reward for the next step based on the new
+        observation.
+
+        This is a preliminary implementation for pipeline testing purposes. It returns a
+        random reward.
+
+        Args:
+            new_obs_list: The list of new observations.
+
+        Returns:
+            The inferred reward for the next step.
+        """
+        return torch.rand(
+                self.batch_size, dtype=torch.float32, device=self.device
+        )
+
+    def _calc_terminated(self) -> torch.Tensor:
+        """(Initial implementation) Calculates the terminated flag."""
+        return torch.rand(
+                self.batch_size, dtype=torch.float32, device=self.device
+        ) > 0.5
 
     def reset(
         self, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None
@@ -208,13 +249,23 @@ class WorldModelBackend(WMBackendBase):
         """
         self.current_step += 1
 
-        new_obs_list = self._generate_next_frame(action)
+        new_obs_list = self._infer_next_frame(action)
         for i in range(self.batch_size):
             self.episodes_current_frames[i].append(new_obs_list[i])
+        reward = self._infer_next_reward(new_obs_list)
+        
+        terminated = self._calc_terminated()
+        truncated =(
+            torch.zeros(
+                self.batch_size, dtype=torch.bool, device=self.device
+            )
+            if self.current_step <= self.max_episode_steps
+            else torch.ones(
+                self.batch_size, dtype=torch.bool, device=self.device
+            )
+        )
 
-        info = {}
-
-        return self._get_latest_obs_from_deques(), None, None, None, info
+        return self._get_latest_obs_from_deques(), reward, terminated, truncated, {}
 
     def render(self) -> Any:
         # TODO: Implement rendering logic
