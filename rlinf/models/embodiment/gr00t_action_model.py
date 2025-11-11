@@ -17,7 +17,7 @@ import logging
 import random
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 import numpy as np
 import torch
@@ -156,7 +156,7 @@ class ExploreNoiseNet(nn.Module):
         self,
         in_dim: int,
         out_dim: int,
-        hidden_dims: List[int],
+        hidden_dims: list[int],
         activation_type: str,
         noise_logvar_range: list,  # [min_std, max_std]
         noise_scheduler_type: str,
@@ -300,7 +300,7 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
     def __init__(
         self,
         config: FlowmatchingActionHeadConfig,
-        rl_head_config: Dict[str, Any],
+        rl_head_config: dict[str, Any],
         output_action_chunks: int,
     ):
         super().__init__(config)
@@ -451,7 +451,6 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
                     )[:-1]
                 )
                 sigma_i = sigmas[idx][:, None, None].expand_as(x_t)
-                # https://zhuanlan.zhihu.com/p/1961533469726335106
                 x0_weight = (
                     torch.ones_like(t_input)
                     - (t_input + delta)
@@ -667,10 +666,10 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5):
     def __init__(
         self,
         config: GR00T_N1_5_Config,
-        rl_head_config: Dict[str, Any],
+        rl_head_config: dict[str, Any],
         local_model_path: str,
         embodiment_tag: Union[str, EmbodimentTag],
-        modality_config: Dict[str, ModalityConfig],
+        modality_config: dict[str, ModalityConfig],
         modality_transform: ComposedModalityTransform,
         compute_dtype: torch.dtype = torch.bfloat16,
         denoising_steps: Optional[int] = None,
@@ -710,7 +709,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5):
         self._modality_transform.eval()
         super().eval()
 
-    def _check_state_is_batched(self, obs: Dict[str, Any]) -> bool:
+    def _check_state_is_batched(self, obs: dict[str, Any]) -> bool:
         for k, v in obs.items():
             if "state" in k and len(v.shape) < 3:  # (B, Time, Dim)
                 return False
@@ -723,7 +722,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5):
         compute_entropy: bool = False,
         compute_values: bool = True,
         use_cache: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         normalized_input = {
             "state": data["state"],
             "state_mask": data["state_mask"],
@@ -773,8 +772,8 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5):
         value_t = value_t.mean(dim=-1, keepdim=False)
 
         return {
-            "logprobs": log_probs,
-            "prev_logprobs": prev_logprobs,
+            "logprobs": log_probs.float(),
+            "prev_logprobs": prev_logprobs.float(),
             "values": value_t,
             "entropy": None,
         }
@@ -836,7 +835,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5):
 
         return raw_action, result
 
-    def apply_transforms(self, obs: Dict[str, Any]) -> Dict[str, Any]:
+    def apply_transforms(self, obs: dict[str, Any]) -> dict[str, Any]:
         """
         Apply transforms to the observation.
 
@@ -849,7 +848,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5):
         # Ensure correct dimensions before applying transforms
         return self._modality_transform(obs)
 
-    def unapply_transforms(self, action: Dict[str, Any]) -> Dict[str, Any]:
+    def unapply_transforms(self, action: dict[str, Any]) -> dict[str, Any]:
         """
         Unapply transforms to the action.
 
@@ -861,7 +860,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5):
         """
         return self._modality_transform.unapply(action)
 
-    def _get_rl_action(self, normalized_input: Dict[str, Any]) -> torch.Tensor:
+    def _get_rl_action(self, normalized_input: dict[str, Any]) -> torch.Tensor:
         # We expand get_action() and replace action head inference with RL inference.
         backbone_inputs, action_inputs = self.prepare_input(normalized_input)
         # Because the behavior of backbones remains the same for training and inference, we can use `forward` for backbones.
@@ -895,11 +894,12 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5):
         return actions, result
 
     def _get_action_from_normalized_input(
-        self, normalized_input: Dict[str, Any]
+        self, normalized_input: dict[str, Any]
     ) -> torch.Tensor:
         # Set up autocast context if needed
-        with torch.inference_mode(), torch.autocast(
-            device_type="cuda", dtype=self.compute_dtype
+        with (
+            torch.inference_mode(),
+            torch.autocast(device_type="cuda", dtype=self.compute_dtype),
         ):
             model_pred = self.get_action(normalized_input)
 
@@ -908,7 +908,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5):
 
     def _get_unnormalized_action(
         self, normalized_action: torch.Tensor
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         return self.unapply_transforms({"action": normalized_action.cpu()})
 
     def _load_metadata(self, exp_cfg_dir: Path):
@@ -956,7 +956,7 @@ def cut_and_resize_images(
 
 
 # Helper functions
-def unsqueeze_dict_values(data: Dict[str, Any]) -> Dict[str, Any]:
+def unsqueeze_dict_values(data: dict[str, Any]) -> dict[str, Any]:
     """
     Unsqueeze the values of a dictionary.
     This converts the data to be batched of size 1.
@@ -974,7 +974,7 @@ def unsqueeze_dict_values(data: Dict[str, Any]) -> Dict[str, Any]:
     return unsqueezed_data
 
 
-def squeeze_dict_values(data: Dict[str, Any]) -> Dict[str, Any]:
+def squeeze_dict_values(data: dict[str, Any]) -> dict[str, Any]:
     """
     Squeeze the values of a dictionary. This removes the batch dimension.
     """
