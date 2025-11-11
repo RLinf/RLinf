@@ -196,8 +196,13 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
                 actor_train_config = get_openpi_config("pi05_metaworld")
             else:
                 actor_train_config = get_openpi_config("pi0_metaworld")
+        elif cfg.openpi.simulator_type == "behavior":
+            if getattr(cfg.openpi, "pi05", False):
+                actor_train_config = get_openpi_config("pi05_behavior")
+            else:
+                actor_train_config = get_openpi_config("pi0_behavior")
         else:
-            raise ValueError(f"Invalid simulator type: {simulator_type}")
+            raise ValueError(f"Invalid simulator type: {cfg.openpi.simulator_type}")
         actor_model_config = actor_train_config.model
         actor_model_config = OpenPi0Config(**actor_model_config.__dict__)
         override_config_kwargs = cfg.openpi
