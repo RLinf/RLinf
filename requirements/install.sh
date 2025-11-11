@@ -275,6 +275,14 @@ install_openvla_oft_model() {
 
 install_openpi_model() {
     case "$ENV_NAME" in
+        behavior)
+            PYTHON_VERSION="3.10"
+            create_and_sync_venv
+            install_common_embodied_deps
+            UV_TORCH_BACKEND=auto GIT_LFS_SKIP_SMUDGE=1 uv pip install -r $SCRIPT_DIR/embodied/models/openpi.txt
+            install_prebuilt_flash_attn
+            install_behavior_env
+            ;;
         maniskill_libero)
             create_and_sync_venv
             install_common_embodied_deps

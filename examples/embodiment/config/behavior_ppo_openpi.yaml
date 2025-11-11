@@ -1,7 +1,8 @@
 defaults:
   - env/behavior_r1pro@env.train
   - env/behavior_r1pro@env.eval
-  - model/openvla_oft@actor.model
+  - model/pi0@actor.model
+  - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
 hydra:
@@ -14,23 +15,22 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor, env: all
-    rollout: all
+    actor: 0-0
+    env,rollout: 1-1
 
 runner:
   task_type: embodied
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "behavior_openvlaoft_eval"
+    experiment_name: "behavior_ppo_openpi"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
   max_steps: -1
 
-  only_eval: True
+  only_eval: False
   eval_policy_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
-
   val_check_interval: -1
   save_interval: 40
   seq_length: 4096
@@ -43,7 +43,7 @@ algorithm:
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
   rollout_epoch: 8
-  eval_rollout_epoch: 2 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
+  eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
 
   reward_type: chunk_level
   logprob_type: token_level
@@ -83,12 +83,16 @@ algorithm:
 env:
   group_name: "EnvGroup"
   enable_offload: False
-  
+
   # Override the default values in env/behavior_r1pro
+  train:
+    total_num_envs: 1
+    max_episode_steps: 20 # max episode steps for truncation
+    max_steps_per_rollout_epoch: 20
   eval:
-    total_num_envs: 2
-    max_episode_steps: 2000 # max episode steps for truncation
-    max_steps_per_rollout_epoch: 2000
+    total_num_envs: 1
+    max_episode_steps: 20 # max episode steps for truncation
+    max_steps_per_rollout_epoch: 20
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
@@ -100,42 +104,48 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
+    model_path: "/path/to/model/RLinf-Pi0-SFT"
     precision: ${actor.model.precision}
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 2
-  global_batch_size: 160
+  global_batch_size: 16
   seed: 1234
   enable_offload: True
 
-  # Override the default values in model/openvla_oft
+  # Override the default values in model/openpi
   model:
-    model_path: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
-    model_type: "openvla_oft"
-    value_type: ${algorithm.reward_type}
-    action_dim: 23
-    unnorm_key: behavior_turn_on_radio
-    num_images_in_input: 3
+    model_path: "/path/to/model/RLinf-Pi0-SFT"
     add_value_head: True
-  
+    num_images_in_input: 3
+    openpi:
+      config_name: "pi0_behavior"
+      detach_critic_input: True
+      joint_logprob: False
+      noise_level: 0.5
+      action_env_dim: ${actor.model.action_dim}
+      noise_method: "flow_sde"
+
   optim:
     lr: 1.0e-4
     value_lr: 3.0e-3
     adam_beta1: 0.9
     adam_beta2: 0.999
     adam_eps: 1.0e-05
-    weight_decay: 0.01
     clip_grad: 10.0
+    weight_decay: 0.01
+    critic_warmup_steps: 0
 
-  tokenizer:
-    tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
-    use_fast: False
-    trust_remote_code: True
-    padding_side: "right"
+  # Override the default values in training_backend/fsdp
+  fsdp_config:
+    strategy: "fsdp"
+    gradient_checkpointing: True
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
 
 reward:
   use_reward_model: False
