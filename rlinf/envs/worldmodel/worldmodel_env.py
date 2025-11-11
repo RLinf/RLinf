@@ -12,26 +12,55 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+import os
 from typing import Optional, Union
 
 import gym
+import numpy as np
 import torch
+from mani_skill.utils import common
 from mani_skill.utils.common import torch_clone_dict
 from mani_skill.utils.structs.types import Array
+from mani_skill.utils.visualization.misc import (
+    images_to_video,
+    put_info_on_image,
+    tile_images,
+)
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.envs.worldmodel.backend import WorldModelBackend
 from rlinf.envs.worldmodel.dataset import LeRobotDatasetWrapper
 
-# 默认都是gpu模式，需要加载模型
-
 
 class WorldModelEnv(gym.Env):
+    """A Gym environment that wraps a world model.
+
+    This environment is designed for interacting with a learned world model that
+    simulates the dynamics of a real environment. It handles the interaction
+    with the world model, manages environment resets, and calculates rewards.
+
+    Args:
+        cfg: The configuration object for the environment.
+        seed_offset (int): An offset to be added to the base seed.
+        total_num_processes (int): The total number of parallel processes.
+        record_metrics (bool, optional): Whether to record metrics. Defaults to True.
+    """
+
     def __init__(self, cfg, seed_offset: int, total_num_processes, record_metrics=True):
+        """Initializes the WorldModelEnv.
+
+        Args:
+            cfg: The configuration object for the environment.
+            seed_offset (int): An offset added to the base seed to create different
+                environment instances with different seeds.
+            total_num_processes (int): The total number of parallel processes,
+                which can be used for distributed training.
+            record_metrics (bool, optional): Whether to record and log metrics
+                like success rates and returns. Defaults to True.
+        """
         self.cfg = cfg
 
-        # 基础配置信息加载
+        # Load basic configuration information
         self.seed = cfg.seed + seed_offset
         self.total_num_processes = total_num_processes
         self.num_envs = cfg.num_envs
@@ -45,6 +74,7 @@ class WorldModelEnv(gym.Env):
         dataset_cfg = OmegaConf.to_container(cfg.dataset_cfg, resolve=True)
         self.task_dataset = LeRobotDatasetWrapper(**dataset_cfg)
         self.total_num_group_envs = len(self.task_dataset)
+        self.camera_names = self.task_dataset.camera_names
 
         self.device = "cuda"
         env_cfg = OmegaConf.to_container(cfg.backend_cfg, resolve=True)
@@ -54,15 +84,13 @@ class WorldModelEnv(gym.Env):
         self._init_reset_state_ids()
         self._init_metrics()
         self.record_metrics = record_metrics
-
         self.prev_step_reward = torch.zeros(self.num_envs, dtype=torch.float32).to(
             self.device
         )
 
-        # 录制结果
         self.video_cfg = cfg.video_cfg
         self.video_cnt = 0
-        self.render_images = []
+        self.render_images = {camera_name: [] for camera_name in self.camera_names}
 
     @property
     def is_start(self):
@@ -192,9 +220,8 @@ class WorldModelEnv(gym.Env):
             truncations = torch.zeros(
                 self.num_envs, dtype=torch.bool, device=self.device
             )
-            # TODO：实现渲染相关逻辑
-            # if self.video_cfg.save_video:
-            #     self.add_new_frames(infos=infos)
+            if self.video_cfg.save_video:
+                self.add_new_frames(extracted_obs, infos)
             return (
                 extracted_obs,
                 torch.zeros(self.num_envs, dtype=torch.float32).to(self.device),
@@ -209,9 +236,8 @@ class WorldModelEnv(gym.Env):
 
         step_reward = self._calc_step_reward(terminations)
 
-        # TODO：实现渲染相关逻辑
-        # if self.video_cfg.save_video:
-        #     self.add_new_frames(infos=infos, rewards=step_reward)
+        if self.video_cfg.save_video:
+            self.add_new_frames(extracted_obs, infos)
 
         infos = self._record_metrics(step_reward, infos)
         if isinstance(terminations, bool):
@@ -304,7 +330,39 @@ class WorldModelEnv(gym.Env):
                 f"Step {step}: obs={obs.keys()}, rew={rew.mean()}, \
                 terminations={terminations.float().mean()}, truncations={truncations.float().mean()}"
             )
+        self.flush_video()
 
-    # def add_new_frames(self, infos, rewards=None):
-    #     image = self.render(infos, rewards)
-    #     self.render_images.append(image)
+    def add_new_frames(self, extracted_obs, infos):
+        infos = common.to_numpy(infos)
+        images = {camera_name: [] for camera_name in self.camera_names}
+        for env_id in range(self.num_envs):
+            for camera_name in self.camera_names:
+                image = extracted_obs["images_and_states"][camera_name][
+                    env_id, :
+                ].permute(1, 2, 0)
+                image = common.to_numpy(image)
+                image = (image * 255).astype(np.uint8)
+                if self.video_cfg.info_on_video:
+                    info_item = {
+                        k: v if np.size(v) == 1 else v[env_id] for k, v in infos.items()
+                    }
+                    image = put_info_on_image(image, info_item)
+                images[camera_name].append(image)
+        for camera_name in self.camera_names:
+            full_image = tile_images(
+                images[camera_name], nrows=int(np.sqrt(self.num_envs))
+            )
+            self.render_images[camera_name].append(full_image)
+
+    def flush_video(self, video_sub_dir: Optional[str] = None):
+        output_dir = os.path.join(self.video_cfg.video_base_dir, f"seed_{self.seed}")
+        if video_sub_dir is not None:
+            output_dir = os.path.join(output_dir, f"{video_sub_dir}")
+        for camera_name in self.camera_names:
+            images_to_video(
+                self.render_images[camera_name],
+                output_dir=output_dir,
+                video_name=f"{self.video_cnt}_{camera_name}",
+            )
+        self.video_cnt += 1
+        self.render_images = {camera_name: [] for camera_name in self.camera_names}

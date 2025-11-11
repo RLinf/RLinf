@@ -80,11 +80,6 @@ class WMBackendBase(gym.Env, ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
-    def render(self) -> Any:
-        """Renders the environment."""
-        raise NotImplementedError
-
 
 class WorldModelBackend(WMBackendBase):
     """
@@ -259,8 +254,6 @@ class WorldModelBackend(WMBackendBase):
             else torch.ones(self.batch_size, dtype=torch.bool, device=self.device)
         )
 
-        return self._get_latest_obs_from_deques(), reward, terminated, truncated, {}
+        info = {"raw_reward": reward, "raw_terminated": terminated}
 
-    def render(self) -> Any:
-        # TODO: Implement rendering logic
-        pass
+        return self._get_latest_obs_from_deques(), reward, terminated, truncated, info
