@@ -68,7 +68,7 @@ class MLPPolicy(nn.Module):
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
 
-        ret_dict = dict()
+        ret_dict = {}
         if compute_logprobs:
             logprobs = probs.log_prob(action)
             ret_dict["logprobs"] = logprobs
