@@ -96,7 +96,7 @@ rollout:
     queue_size: 0
   mode: "colocate"
   backend: "huggingface"
-  model_dir: "/mnt/public/guozhen/models/openvlaoft_sft_turn_on_radio/"
+  model_dir: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
   enable_offload: True
   pipeline_stage_num: 1
 
@@ -107,7 +107,7 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: "/mnt/public/guozhen/models/openvlaoft_sft_turn_on_radio/"
+  checkpoint_load_path: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
   checkpoint_save_path: "../results"
   micro_batch_size: 2
   global_batch_size: 160
@@ -151,7 +151,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/mnt/public/guozhen/models/openvlaoft_sft_turn_on_radio/"
+    tokenizer_model: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
     use_fast: False
     trust_remote_code: True
     padding_side: "right"

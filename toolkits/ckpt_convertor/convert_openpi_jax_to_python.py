@@ -1,4 +1,23 @@
-#!/usr/bin/env python3
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# convert hf model to middle_file
+# middle_file:
+#   params not in decoder: io.safetensors
+#   params in decoder layer x: x.safetensors
+#   use megatron name and style (fuse glu fc1)
+
 """
 Load a JAX model and print all parameter keys, with optional conversion to PyTorch.
 
@@ -7,23 +26,10 @@ This script loads a JAX model checkpoint using orbax and can either:
 2. Convert the JAX model to PyTorch format using our PI0Pytorch model
 
 Usage:
-    # Just inspect keys:
-    python examples/convert_jax_model_to_pytorch.py --checkpoint_dir /path/to/checkpoint --inspect_only
-    python examples/convert_jax_model_to_pytorch.py --checkpoint_dir /path/to/checkpoint --inspect_only
-
-    # Convert to PyTorch:
-    python examples/convert_jax_model_to_pytorch.py --checkpoint_dir /path/to/checkpoint --output_path /path/to/output
-    python examples/convert_jax_model_to_pytorch.py --checkpoint_dir /path/to/checkpoint --output_path /path/to/output
-
-Example:
-    # pi0_droid
-    python examples/convert_jax_model_to_pytorch.py --checkpoint_dir /home/$USER/.cache/openpi/openpi-assets/checkpoints/pi0_droid --output_path /home/$USER/.cache/openpi/openpi-assets/checkpoints/pi0_droid_pytorch
-
-    # pi0_aloha_sim
-    python examples/convert_jax_model_to_pytorch.py --checkpoint_dir /home/$USER/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim --output_path /home/$USER/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim_pytorch
-
-    # pi05_droid
-    python examples/convert_jax_model_to_pytorch.py --checkpoint_dir /home/$USER/.cache/openpi/openpi-assets/checkpoints/pi05_droid --output_path /home/$USER/.cache/openpi/openpi-assets/checkpoints/pi05_droid_pytorch
+python toolkits/ckpt_convertor/convert_openpi_jax_to_python.py
+    --checkpoint_dir /path/to/jax/checkpoint
+    --output_path /path/to/pytorch/checkpoint
+    --config_name pi0_aloha_pen_uncap
 """
 
 import json
@@ -32,19 +38,18 @@ import pathlib
 import shutil
 from typing import Literal
 
-from flax.nnx import traversals
 import numpy as np
-import orbax.checkpoint as ocp
-import safetensors
-import torch
-import tyro
-
 import openpi.models.gemma
 import openpi.models.model
 import openpi.models.pi0_config
 import openpi.models_pytorch.pi0_pytorch
-from openpi.training import utils
 import openpi.training.config as _config
+import orbax.checkpoint as ocp
+import safetensors
+import torch
+import tyro
+from flax.nnx import traversals
+from openpi.training import utils
 
 
 def slice_paligemma_state_dict(state_dict, config):
@@ -63,18 +68,36 @@ def slice_paligemma_state_dict(state_dict, config):
     # positional embeddings
     jax_key = f"img/pos_embedding{suffix}"
     pytorch_key = "paligemma_with_expert.paligemma.model.vision_tower.vision_model.embeddings.position_embedding.weight"
-    state_dict[pytorch_key] = state_dict.pop(jax_key).reshape(-1, config.vision_config.hidden_size)
+    state_dict[pytorch_key] = state_dict.pop(jax_key).reshape(
+        -1, config.vision_config.hidden_size
+    )
 
     # extract vision layers to be sliced at index 0. There are 27 layers in the base model.
-    encoderblock_layernorm0_scale = state_dict.pop(f"img/Transformer/encoderblock/LayerNorm_0/scale{suffix}")
-    encoderblock_layernorm0_bias = state_dict.pop(f"img/Transformer/encoderblock/LayerNorm_0/bias{suffix}")
-    encoderblock_layernorm1_scale = state_dict.pop(f"img/Transformer/encoderblock/LayerNorm_1/scale{suffix}")
-    encoderblock_layernorm1_bias = state_dict.pop(f"img/Transformer/encoderblock/LayerNorm_1/bias{suffix}")
+    encoderblock_layernorm0_scale = state_dict.pop(
+        f"img/Transformer/encoderblock/LayerNorm_0/scale{suffix}"
+    )
+    encoderblock_layernorm0_bias = state_dict.pop(
+        f"img/Transformer/encoderblock/LayerNorm_0/bias{suffix}"
+    )
+    encoderblock_layernorm1_scale = state_dict.pop(
+        f"img/Transformer/encoderblock/LayerNorm_1/scale{suffix}"
+    )
+    encoderblock_layernorm1_bias = state_dict.pop(
+        f"img/Transformer/encoderblock/LayerNorm_1/bias{suffix}"
+    )
 
-    encoderblock_mlp_dense0_kernel = state_dict.pop(f"img/Transformer/encoderblock/MlpBlock_0/Dense_0/kernel{suffix}")
-    encoderblock_mlp_dense0_bias = state_dict.pop(f"img/Transformer/encoderblock/MlpBlock_0/Dense_0/bias{suffix}")
-    encoderblock_mlp_dense1_kernel = state_dict.pop(f"img/Transformer/encoderblock/MlpBlock_0/Dense_1/kernel{suffix}")
-    encoderblock_mlp_dense1_bias = state_dict.pop(f"img/Transformer/encoderblock/MlpBlock_0/Dense_1/bias{suffix}")
+    encoderblock_mlp_dense0_kernel = state_dict.pop(
+        f"img/Transformer/encoderblock/MlpBlock_0/Dense_0/kernel{suffix}"
+    )
+    encoderblock_mlp_dense0_bias = state_dict.pop(
+        f"img/Transformer/encoderblock/MlpBlock_0/Dense_0/bias{suffix}"
+    )
+    encoderblock_mlp_dense1_kernel = state_dict.pop(
+        f"img/Transformer/encoderblock/MlpBlock_0/Dense_1/kernel{suffix}"
+    )
+    encoderblock_mlp_dense1_bias = state_dict.pop(
+        f"img/Transformer/encoderblock/MlpBlock_0/Dense_1/bias{suffix}"
+    )
 
     encoderblock_attention_0_key_kernel = state_dict.pop(
         f"img/Transformer/encoderblock/MultiHeadDotProductAttention_0/key/kernel{suffix}"
@@ -128,28 +151,60 @@ def slice_paligemma_state_dict(state_dict, config):
         ] = encoderblock_mlp_dense1_bias[i]
         state_dict[
             f"paligemma_with_expert.paligemma.model.vision_tower.vision_model.encoder.layers.{i}.self_attn.k_proj.weight"
-        ] = encoderblock_attention_0_key_kernel[i].reshape(-1, config.vision_config.hidden_size).transpose()
+        ] = (
+            encoderblock_attention_0_key_kernel[i]
+            .reshape(-1, config.vision_config.hidden_size)
+            .transpose()
+        )
         state_dict[
             f"paligemma_with_expert.paligemma.model.vision_tower.vision_model.encoder.layers.{i}.self_attn.k_proj.bias"
-        ] = encoderblock_attention_0_key_bias[i].reshape(-1, config.vision_config.hidden_size).reshape(-1)
+        ] = (
+            encoderblock_attention_0_key_bias[i]
+            .reshape(-1, config.vision_config.hidden_size)
+            .reshape(-1)
+        )
         state_dict[
             f"paligemma_with_expert.paligemma.model.vision_tower.vision_model.encoder.layers.{i}.self_attn.v_proj.weight"
-        ] = encoderblock_attention_0_value_kernel[i].reshape(-1, config.vision_config.hidden_size).transpose()
+        ] = (
+            encoderblock_attention_0_value_kernel[i]
+            .reshape(-1, config.vision_config.hidden_size)
+            .transpose()
+        )
         state_dict[
             f"paligemma_with_expert.paligemma.model.vision_tower.vision_model.encoder.layers.{i}.self_attn.v_proj.bias"
-        ] = encoderblock_attention_0_value_bias[i].reshape(-1, config.vision_config.hidden_size).reshape(-1)
+        ] = (
+            encoderblock_attention_0_value_bias[i]
+            .reshape(-1, config.vision_config.hidden_size)
+            .reshape(-1)
+        )
         state_dict[
             f"paligemma_with_expert.paligemma.model.vision_tower.vision_model.encoder.layers.{i}.self_attn.q_proj.weight"
-        ] = encoderblock_attention_0_query_kernel[i].reshape(-1, config.vision_config.hidden_size).transpose()
+        ] = (
+            encoderblock_attention_0_query_kernel[i]
+            .reshape(-1, config.vision_config.hidden_size)
+            .transpose()
+        )
         state_dict[
             f"paligemma_with_expert.paligemma.model.vision_tower.vision_model.encoder.layers.{i}.self_attn.q_proj.bias"
-        ] = encoderblock_attention_0_query_bias[i].reshape(-1, config.vision_config.hidden_size).reshape(-1)
+        ] = (
+            encoderblock_attention_0_query_bias[i]
+            .reshape(-1, config.vision_config.hidden_size)
+            .reshape(-1)
+        )
         state_dict[
             f"paligemma_with_expert.paligemma.model.vision_tower.vision_model.encoder.layers.{i}.self_attn.out_proj.weight"
-        ] = encoderblock_attention_0_out_kernel[i].reshape(-1, config.vision_config.hidden_size).transpose()
+        ] = (
+            encoderblock_attention_0_out_kernel[i]
+            .reshape(-1, config.vision_config.hidden_size)
+            .transpose()
+        )
         state_dict[
             f"paligemma_with_expert.paligemma.model.vision_tower.vision_model.encoder.layers.{i}.self_attn.out_proj.bias"
-        ] = encoderblock_attention_0_out_bias[i].reshape(-1, config.vision_config.hidden_size).reshape(-1)
+        ] = (
+            encoderblock_attention_0_out_bias[i]
+            .reshape(-1, config.vision_config.hidden_size)
+            .reshape(-1)
+        )
 
     jax_key = f"img/Transformer/encoder_norm/scale{suffix}"
     pytorch_key = "paligemma_with_expert.paligemma.model.vision_tower.vision_model.post_layernorm.weight"
@@ -161,20 +216,28 @@ def slice_paligemma_state_dict(state_dict, config):
 
     # multimodal projector
     jax_key = f"img/head/kernel{suffix}"
-    pytorch_key = "paligemma_with_expert.paligemma.model.multi_modal_projector.linear.weight"
+    pytorch_key = (
+        "paligemma_with_expert.paligemma.model.multi_modal_projector.linear.weight"
+    )
     state_dict[pytorch_key] = state_dict.pop(jax_key).transpose()
 
     jax_key = f"img/head/bias{suffix}"
-    pytorch_key = "paligemma_with_expert.paligemma.model.multi_modal_projector.linear.bias"
+    pytorch_key = (
+        "paligemma_with_expert.paligemma.model.multi_modal_projector.linear.bias"
+    )
     state_dict[pytorch_key] = state_dict.pop(jax_key)
 
     # text decoder (gemma)
     jax_key = f"llm/embedder/input_embedding{suffix}"
-    pytorch_key = "paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+    pytorch_key = (
+        "paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+    )
     state_dict[pytorch_key] = state_dict.pop(jax_key)
 
     # pop the einsum attention + mlp representations
-    llm_attention_attn_vec_einsum = state_dict.pop(f"llm/layers/attn/attn_vec_einsum/w{suffix}")
+    llm_attention_attn_vec_einsum = state_dict.pop(
+        f"llm/layers/attn/attn_vec_einsum/w{suffix}"
+    )
     llm_attention_kv_einsum = state_dict.pop(f"llm/layers/attn/kv_einsum/w{suffix}")
     llm_attention_q_einsum = state_dict.pop(f"llm/layers/attn/q_einsum/w{suffix}")
 
@@ -182,54 +245,58 @@ def slice_paligemma_state_dict(state_dict, config):
     llm_mlp_linear = state_dict.pop(f"llm/layers/mlp/linear{suffix}")
 
     llm_input_layernorm = state_dict.pop(f"llm/layers/pre_attention_norm/scale{suffix}")
-    llm_post_attention_layernorm = state_dict.pop(f"llm/layers/pre_ffw_norm/scale{suffix}")
+    llm_post_attention_layernorm = state_dict.pop(
+        f"llm/layers/pre_ffw_norm/scale{suffix}"
+    )
 
     for i in range(config.text_config.num_hidden_layers):
         q_proj_weight_reshaped = (
             llm_attention_q_einsum[i]
             .transpose(0, 2, 1)
             .reshape(
-                config.text_config.num_attention_heads * config.text_config.head_dim, config.text_config.hidden_size
+                config.text_config.num_attention_heads * config.text_config.head_dim,
+                config.text_config.hidden_size,
             )
         )
-        state_dict[f"paligemma_with_expert.paligemma.model.language_model.layers.{i}.self_attn.q_proj.weight"] = (
-            q_proj_weight_reshaped
-        )
+        state_dict[
+            f"paligemma_with_expert.paligemma.model.language_model.layers.{i}.self_attn.q_proj.weight"
+        ] = q_proj_weight_reshaped
 
         k_proj_weight_reshaped = llm_attention_kv_einsum[i, 0, 0].transpose()
-        state_dict[f"paligemma_with_expert.paligemma.model.language_model.layers.{i}.self_attn.k_proj.weight"] = (
-            k_proj_weight_reshaped
-        )
+        state_dict[
+            f"paligemma_with_expert.paligemma.model.language_model.layers.{i}.self_attn.k_proj.weight"
+        ] = k_proj_weight_reshaped
         v_proj_weight_reshaped = llm_attention_kv_einsum[i, 1, 0].transpose()
-        state_dict[f"paligemma_with_expert.paligemma.model.language_model.layers.{i}.self_attn.v_proj.weight"] = (
-            v_proj_weight_reshaped
-        )
+        state_dict[
+            f"paligemma_with_expert.paligemma.model.language_model.layers.{i}.self_attn.v_proj.weight"
+        ] = v_proj_weight_reshaped
 
         o_proj_weight_reshaped = (
             llm_attention_attn_vec_einsum[i]
             .transpose(2, 0, 1)
             .reshape(
-                config.text_config.num_attention_heads * config.text_config.head_dim, config.text_config.hidden_size
+                config.text_config.num_attention_heads * config.text_config.head_dim,
+                config.text_config.hidden_size,
             )
         )
-        state_dict[f"paligemma_with_expert.paligemma.model.language_model.layers.{i}.self_attn.o_proj.weight"] = (
-            o_proj_weight_reshaped
-        )
+        state_dict[
+            f"paligemma_with_expert.paligemma.model.language_model.layers.{i}.self_attn.o_proj.weight"
+        ] = o_proj_weight_reshaped
 
         gate_proj_weight = llm_mlp_gating_einsum[i, 0]
-        state_dict[f"paligemma_with_expert.paligemma.model.language_model.layers.{i}.mlp.gate_proj.weight"] = (
-            gate_proj_weight.transpose()
-        )
+        state_dict[
+            f"paligemma_with_expert.paligemma.model.language_model.layers.{i}.mlp.gate_proj.weight"
+        ] = gate_proj_weight.transpose()
         up_proj_weight = llm_mlp_gating_einsum[i, 1]
-        state_dict[f"paligemma_with_expert.paligemma.model.language_model.layers.{i}.mlp.up_proj.weight"] = (
-            up_proj_weight.transpose()
-        )
-        state_dict[f"paligemma_with_expert.paligemma.model.language_model.layers.{i}.mlp.down_proj.weight"] = (
-            llm_mlp_linear[i].transpose()
-        )
-        state_dict[f"paligemma_with_expert.paligemma.model.language_model.layers.{i}.input_layernorm.weight"] = (
-            llm_input_layernorm[i]
-        )
+        state_dict[
+            f"paligemma_with_expert.paligemma.model.language_model.layers.{i}.mlp.up_proj.weight"
+        ] = up_proj_weight.transpose()
+        state_dict[
+            f"paligemma_with_expert.paligemma.model.language_model.layers.{i}.mlp.down_proj.weight"
+        ] = llm_mlp_linear[i].transpose()
+        state_dict[
+            f"paligemma_with_expert.paligemma.model.language_model.layers.{i}.input_layernorm.weight"
+        ] = llm_input_layernorm[i]
         state_dict[
             f"paligemma_with_expert.paligemma.model.language_model.layers.{i}.post_attention_layernorm.weight"
         ] = llm_post_attention_layernorm[i]
@@ -280,20 +347,36 @@ def slice_gemma_state_dict(state_dict, config, *, num_expert, checkpoint_dir, pi
     if not hasattr(config, "num_attention_heads"):
         config.num_attention_heads = config.num_heads
 
-    suffix = "/value" if f"llm/layers/attn/attn_vec_einsum_{num_expert}/w/value" in state_dict else ""
+    suffix = (
+        "/value"
+        if f"llm/layers/attn/attn_vec_einsum_{num_expert}/w/value" in state_dict
+        else ""
+    )
 
-    llm_attention_attn_vec_einsum = state_dict.pop(f"llm/layers/attn/attn_vec_einsum_{num_expert}/w{suffix}")
-    llm_attention_kv_einsum = state_dict.pop(f"llm/layers/attn/kv_einsum_{num_expert}/w{suffix}")
-    llm_attention_q_einsum = state_dict.pop(f"llm/layers/attn/q_einsum_{num_expert}/w{suffix}")
+    llm_attention_attn_vec_einsum = state_dict.pop(
+        f"llm/layers/attn/attn_vec_einsum_{num_expert}/w{suffix}"
+    )
+    llm_attention_kv_einsum = state_dict.pop(
+        f"llm/layers/attn/kv_einsum_{num_expert}/w{suffix}"
+    )
+    llm_attention_q_einsum = state_dict.pop(
+        f"llm/layers/attn/q_einsum_{num_expert}/w{suffix}"
+    )
 
-    llm_mlp_gating_einsum = state_dict.pop(f"llm/layers/mlp_{num_expert}/gating_einsum{suffix}")
+    llm_mlp_gating_einsum = state_dict.pop(
+        f"llm/layers/mlp_{num_expert}/gating_einsum{suffix}"
+    )
     llm_mlp_linear = state_dict.pop(f"llm/layers/mlp_{num_expert}/linear{suffix}")
 
     # Check if we have Dense layers (for pi05/adaptive normalization) or scale layers (for regular pi0)
     if "pi05" in checkpoint_dir:
         # Pi05 with adaptive normalization
-        llm_input_layernorm_bias = state_dict.pop(f"llm/layers/pre_attention_norm_{num_expert}/Dense_0/bias{suffix}")
-        llm_post_attention_layernorm_bias = state_dict.pop(f"llm/layers/pre_ffw_norm_{num_expert}/Dense_0/bias{suffix}")
+        llm_input_layernorm_bias = state_dict.pop(
+            f"llm/layers/pre_attention_norm_{num_expert}/Dense_0/bias{suffix}"
+        )
+        llm_post_attention_layernorm_bias = state_dict.pop(
+            f"llm/layers/pre_ffw_norm_{num_expert}/Dense_0/bias{suffix}"
+        )
         llm_input_layernorm_kernel = state_dict.pop(
             f"llm/layers/pre_attention_norm_{num_expert}/Dense_0/kernel{suffix}"
         )
@@ -302,8 +385,12 @@ def slice_gemma_state_dict(state_dict, config, *, num_expert, checkpoint_dir, pi
         )
     else:
         # Regular pi0 with standard RMSNorm
-        llm_input_layernorm = state_dict.pop(f"llm/layers/pre_attention_norm_{num_expert}/scale{suffix}")
-        llm_post_attention_layernorm = state_dict.pop(f"llm/layers/pre_ffw_norm_{num_expert}/scale{suffix}")
+        llm_input_layernorm = state_dict.pop(
+            f"llm/layers/pre_attention_norm_{num_expert}/scale{suffix}"
+        )
+        llm_post_attention_layernorm = state_dict.pop(
+            f"llm/layers/pre_ffw_norm_{num_expert}/scale{suffix}"
+        )
 
     for i in range(config.num_hidden_layers):
         q_proj_weight_reshaped = (
@@ -311,74 +398,82 @@ def slice_gemma_state_dict(state_dict, config, *, num_expert, checkpoint_dir, pi
             .transpose(0, 2, 1)
             .reshape(config.num_attention_heads * config.head_dim, config.hidden_size)
         )
-        state_dict[f"paligemma_with_expert.gemma_expert.model.layers.{i}.self_attn.q_proj.weight"] = (
-            q_proj_weight_reshaped
-        )
+        state_dict[
+            f"paligemma_with_expert.gemma_expert.model.layers.{i}.self_attn.q_proj.weight"
+        ] = q_proj_weight_reshaped
 
         k_proj_weight_reshaped = llm_attention_kv_einsum[i, 0, 0].transpose()
-        state_dict[f"paligemma_with_expert.gemma_expert.model.layers.{i}.self_attn.k_proj.weight"] = (
-            k_proj_weight_reshaped
-        )
+        state_dict[
+            f"paligemma_with_expert.gemma_expert.model.layers.{i}.self_attn.k_proj.weight"
+        ] = k_proj_weight_reshaped
         v_proj_weight_reshaped = llm_attention_kv_einsum[i, 1, 0].transpose()
-        state_dict[f"paligemma_with_expert.gemma_expert.model.layers.{i}.self_attn.v_proj.weight"] = (
-            v_proj_weight_reshaped
-        )
+        state_dict[
+            f"paligemma_with_expert.gemma_expert.model.layers.{i}.self_attn.v_proj.weight"
+        ] = v_proj_weight_reshaped
 
         o_proj_weight_reshaped = (
             llm_attention_attn_vec_einsum[i]
             .reshape(config.num_attention_heads * config.head_dim, config.hidden_size)
             .transpose(1, 0)
         )
-        state_dict[f"paligemma_with_expert.gemma_expert.model.layers.{i}.self_attn.o_proj.weight"] = (
-            o_proj_weight_reshaped
-        )
+        state_dict[
+            f"paligemma_with_expert.gemma_expert.model.layers.{i}.self_attn.o_proj.weight"
+        ] = o_proj_weight_reshaped
 
         gate_proj_weight = llm_mlp_gating_einsum[i, 0]
-        state_dict[f"paligemma_with_expert.gemma_expert.model.layers.{i}.mlp.gate_proj.weight"] = (
-            gate_proj_weight.transpose()
-        )
+        state_dict[
+            f"paligemma_with_expert.gemma_expert.model.layers.{i}.mlp.gate_proj.weight"
+        ] = gate_proj_weight.transpose()
         up_proj_weight = llm_mlp_gating_einsum[i, 1]
-        state_dict[f"paligemma_with_expert.gemma_expert.model.layers.{i}.mlp.up_proj.weight"] = (
-            up_proj_weight.transpose()
-        )
-        state_dict[f"paligemma_with_expert.gemma_expert.model.layers.{i}.mlp.down_proj.weight"] = llm_mlp_linear[
-            i
-        ].transpose()
+        state_dict[
+            f"paligemma_with_expert.gemma_expert.model.layers.{i}.mlp.up_proj.weight"
+        ] = up_proj_weight.transpose()
+        state_dict[
+            f"paligemma_with_expert.gemma_expert.model.layers.{i}.mlp.down_proj.weight"
+        ] = llm_mlp_linear[i].transpose()
 
         if "pi05" in checkpoint_dir:
             # Pi05 with adaptive normalization - use Dense layer parameters directly
-            state_dict[f"paligemma_with_expert.gemma_expert.model.layers.{i}.input_layernorm.dense.bias"] = (
-                llm_input_layernorm_bias[i]
-            )
-            state_dict[f"paligemma_with_expert.gemma_expert.model.layers.{i}.post_attention_layernorm.dense.bias"] = (
-                llm_post_attention_layernorm_bias[i]
-            )
-            state_dict[f"paligemma_with_expert.gemma_expert.model.layers.{i}.input_layernorm.dense.weight"] = (
-                llm_input_layernorm_kernel[i].transpose()
-            )
-            state_dict[f"paligemma_with_expert.gemma_expert.model.layers.{i}.post_attention_layernorm.dense.weight"] = (
-                llm_post_attention_layernorm_kernel[i].transpose()
-            )
+            state_dict[
+                f"paligemma_with_expert.gemma_expert.model.layers.{i}.input_layernorm.dense.bias"
+            ] = llm_input_layernorm_bias[i]
+            state_dict[
+                f"paligemma_with_expert.gemma_expert.model.layers.{i}.post_attention_layernorm.dense.bias"
+            ] = llm_post_attention_layernorm_bias[i]
+            state_dict[
+                f"paligemma_with_expert.gemma_expert.model.layers.{i}.input_layernorm.dense.weight"
+            ] = llm_input_layernorm_kernel[i].transpose()
+            state_dict[
+                f"paligemma_with_expert.gemma_expert.model.layers.{i}.post_attention_layernorm.dense.weight"
+            ] = llm_post_attention_layernorm_kernel[i].transpose()
         else:
             # Regular pi0 with standard RMSNorm
-            state_dict[f"paligemma_with_expert.gemma_expert.model.layers.{i}.input_layernorm.weight"] = (
-                llm_input_layernorm[i]
-            )
-            state_dict[f"paligemma_with_expert.gemma_expert.model.layers.{i}.post_attention_layernorm.weight"] = (
-                llm_post_attention_layernorm[i]
-            )
+            state_dict[
+                f"paligemma_with_expert.gemma_expert.model.layers.{i}.input_layernorm.weight"
+            ] = llm_input_layernorm[i]
+            state_dict[
+                f"paligemma_with_expert.gemma_expert.model.layers.{i}.post_attention_layernorm.weight"
+            ] = llm_post_attention_layernorm[i]
 
     # Handle final norm layer
     if "pi05" in checkpoint_dir:
         # Pi05 with adaptive normalization - use Dense layer parameters directly
-        final_norm_bias = state_dict.pop(f"llm/final_norm_{num_expert}/Dense_0/bias{suffix}")
-        final_norm_kernel = state_dict.pop(f"llm/final_norm_{num_expert}/Dense_0/kernel{suffix}")
-        state_dict["paligemma_with_expert.gemma_expert.model.norm.dense.bias"] = final_norm_bias
-        state_dict["paligemma_with_expert.gemma_expert.model.norm.dense.weight"] = final_norm_kernel.transpose()
+        final_norm_bias = state_dict.pop(
+            f"llm/final_norm_{num_expert}/Dense_0/bias{suffix}"
+        )
+        final_norm_kernel = state_dict.pop(
+            f"llm/final_norm_{num_expert}/Dense_0/kernel{suffix}"
+        )
+        state_dict["paligemma_with_expert.gemma_expert.model.norm.dense.bias"] = (
+            final_norm_bias
+        )
+        state_dict["paligemma_with_expert.gemma_expert.model.norm.dense.weight"] = (
+            final_norm_kernel.transpose()
+        )
     else:
         # Regular pi0 with standard RMSNorm
-        state_dict["paligemma_with_expert.gemma_expert.model.norm.weight"] = state_dict.pop(
-            f"llm/final_norm_{num_expert}/scale{suffix}"
+        state_dict["paligemma_with_expert.gemma_expert.model.norm.weight"] = (
+            state_dict.pop(f"llm/final_norm_{num_expert}/scale{suffix}")
         )
 
         # state_dict["paligemma_with_expert.gemma_expert.lm_head.weight"] = embedding_vector # weights are tied.
@@ -393,7 +488,9 @@ def slice_gemma_state_dict(state_dict, config, *, num_expert, checkpoint_dir, pi
     return final_state_dict
 
 
-def slice_initial_orbax_checkpoint(checkpoint_dir: str, restore_precision: str | None = None):
+def slice_initial_orbax_checkpoint(
+    checkpoint_dir: str, restore_precision: str | None = None
+):
     """Load and process params by restoring via JAX model loader first.
     This respects dtype conversions that occur during model restore.
     """
@@ -402,7 +499,10 @@ def slice_initial_orbax_checkpoint(checkpoint_dir: str, restore_precision: str |
         f"{checkpoint_dir}/params/", restore_type=np.ndarray, dtype=restore_precision
     )
 
-    return {"paligemma_params": traversals.flatten_mapping(params["PaliGemma"], sep="/"), "projection_params": params}
+    return {
+        "paligemma_params": traversals.flatten_mapping(params["PaliGemma"], sep="/"),
+        "projection_params": params,
+    }
 
 
 def load_jax_model_and_print_keys(checkpoint_dir: str):
@@ -412,7 +512,11 @@ def load_jax_model_and_print_keys(checkpoint_dir: str):
     Args:
         checkpoint_dir: Path to the checkpoint directory
     """
-    checkpoint_dir = os.path.abspath(checkpoint_dir) if not checkpoint_dir.startswith("gs://") else checkpoint_dir
+    checkpoint_dir = (
+        os.path.abspath(checkpoint_dir)
+        if not checkpoint_dir.startswith("gs://")
+        else checkpoint_dir
+    )
     # Initialize checkpointer
     checkpointer = ocp.PyTreeCheckpointer()
     metadata = checkpointer.metadata(f"{checkpoint_dir}/params")
@@ -420,7 +524,10 @@ def load_jax_model_and_print_keys(checkpoint_dir: str):
 
 
 def convert_pi0_checkpoint(
-    checkpoint_dir: str, precision: str, output_path: str, model_config: openpi.models.pi0_config.Pi0Config
+    checkpoint_dir: str,
+    precision: str,
+    output_path: str,
+    model_config: openpi.models.pi0_config.Pi0Config,
 ):
     """
     Convert PI0 JAX checkpoint to PyTorch format.
@@ -435,7 +542,9 @@ def convert_pi0_checkpoint(
     print(f"Model config: {model_config}")
 
     # Break down orbax ckpts by restoring via JAX to respect dtype
-    initial_params = slice_initial_orbax_checkpoint(checkpoint_dir=checkpoint_dir, restore_precision="float32")
+    initial_params = slice_initial_orbax_checkpoint(
+        checkpoint_dir=checkpoint_dir, restore_precision="float32"
+    )
 
     # Process projection params
     if model_config.pi05:
@@ -503,11 +612,17 @@ def convert_pi0_checkpoint(
     action_expert_config = openpi.models.gemma.get_config("gemma_300m")
 
     # Process PaliGemma weights
-    paligemma_params, expert_params = slice_paligemma_state_dict(initial_params["paligemma_params"], paligemma_config)
+    paligemma_params, expert_params = slice_paligemma_state_dict(
+        initial_params["paligemma_params"], paligemma_config
+    )
 
     # Process Gemma weights from expert_params
     gemma_params = slice_gemma_state_dict(
-        expert_params, action_expert_config, num_expert=1, checkpoint_dir=checkpoint_dir, pi05=model_config.pi05
+        expert_params,
+        action_expert_config,
+        num_expert=1,
+        checkpoint_dir=checkpoint_dir,
+        pi05=model_config.pi05,
     )
 
     # Instantiate model
@@ -530,7 +645,9 @@ def convert_pi0_checkpoint(
     os.makedirs(output_path, exist_ok=True)
 
     # Save model weights as SafeTensors using save_model to handle tied weights
-    safetensors.torch.save_model(pi0_model, os.path.join(output_path, "model.safetensors"))
+    safetensors.torch.save_model(
+        pi0_model, os.path.join(output_path, "model.safetensors")
+    )
 
     # Copy assets folder if it exists
     assets_source = pathlib.Path(checkpoint_dir).parent / "assets"
@@ -578,7 +695,9 @@ def main(
         load_jax_model_and_print_keys(checkpoint_dir)
     else:
         if not output_path:
-            print("Error: --output_path is required for conversion. Use --inspect_only to only view keys.")
+            print(
+                "Error: --output_path is required for conversion. Use --inspect_only to only view keys."
+            )
             return
         convert_pi0_checkpoint(checkpoint_dir, precision, output_path, model_config)
 

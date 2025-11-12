@@ -253,7 +253,10 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             "observation/state": env_processed_obs["states"],
             "prompt": env_processed_obs["task_descriptions"],
         }
-        if self.config.simulator_type == "libero" or self.config.simulator_type == "behavior":
+        if (
+            self.config.simulator_type == "libero"
+            or self.config.simulator_type == "behavior"
+        ):
             to_process_obs["observation/wrist_image"] = env_processed_obs[
                 "wrist_images"
             ]
@@ -584,27 +587,36 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         # so we need to extend attention_mask to match the actual key_states length
         if past_key_values is not None:
             # Get the cached sequence length from past_key_values
-            if hasattr(past_key_values, 'get_seq_length'):
+            if hasattr(past_key_values, "get_seq_length"):
                 cached_seq_len = past_key_values.get_seq_length()
-            elif isinstance(past_key_values, (list, tuple)) and len(past_key_values) > 0:
+            elif (
+                isinstance(past_key_values, (list, tuple)) and len(past_key_values) > 0
+            ):
                 # past_key_values is a list of tuples (key, value) for each layer
-                if isinstance(past_key_values[0], (list, tuple)) and len(past_key_values[0]) >= 2:
-                    cached_seq_len = past_key_values[0][0].shape[-2] if past_key_values[0][0] is not None else 0
+                if (
+                    isinstance(past_key_values[0], (list, tuple))
+                    and len(past_key_values[0]) >= 2
+                ):
+                    cached_seq_len = (
+                        past_key_values[0][0].shape[-2]
+                        if past_key_values[0][0] is not None
+                        else 0
+                    )
                 else:
                     cached_seq_len = 0
             else:
                 cached_seq_len = 0
-            
+
             # Current sequence length (prefix + suffix)
             current_seq_len = full_att_2d_masks.shape[-1]
             total_seq_len = cached_seq_len + current_seq_len
-            
+
             # Extend attention_mask to match total sequence length
             if full_att_2d_masks_4d.shape[-1] < total_seq_len:
                 # Get the shape of the 4D mask
                 mask_shape = list(full_att_2d_masks_4d.shape)
                 mask_shape[-1] = total_seq_len
-                
+
                 # Create extended mask: pad with large negative values (masked) for cached positions
                 extended_mask = torch.full(
                     mask_shape,
@@ -612,7 +624,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
                     dtype=full_att_2d_masks_4d.dtype,
                     device=full_att_2d_masks_4d.device,
                 )
-                
+
                 # Copy the original mask to the end (for new tokens)
                 extended_mask[..., -current_seq_len:] = full_att_2d_masks_4d
                 full_att_2d_masks_4d = extended_mask

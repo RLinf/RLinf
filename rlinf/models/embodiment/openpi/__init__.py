@@ -22,14 +22,14 @@ from openpi.training.config import (
     TrainConfig,
 )
 
+from rlinf.models.embodiment.openpi.dataconfig.behavior_dataconfig import (
+    LeRobotBehaviorDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.libero_dataconfig import (
     LeRobotLiberoDataConfig,
 )
 from rlinf.models.embodiment.openpi.dataconfig.metaworld_dataconfig import (
     LeRobotMetaworldDataConfig,
-)
-from rlinf.models.embodiment.openpi.dataconfig.behavior_dataconfig import (
-    LeRobotBehaviorDataConfig,
 )
 
 _CONFIGS = [

@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import json
-from math import inf
 import os
 
 import cv2
