@@ -1082,6 +1082,8 @@ class EnvOutput:
                 )
         elif self.simulator_type == "maniskill":
             image_tensor = obs["images"]
+        elif self.simulator_type == "rlbench":
+            image_tensor = obs["images"]
         elif self.simulator_type == "robotwin":
             image_tensor = obs["images"]
         elif self.simulator_type == "behavior":

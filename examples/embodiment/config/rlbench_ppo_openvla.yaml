@@ -13,9 +13,9 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor: 0-7
-    env: 0-3
-    rollout: 4-7
+    actor: 0-1
+    env: 2
+    rollout: 3
 
 runner:
   task_type: embodied
@@ -43,7 +43,7 @@ algorithm:
   group_size: 1
   n_chunk_steps: 160
   n_eval_chunk_steps: 80
-  num_group_envs: 128
+  num_group_envs: 16
   rollout_epoch: 1
   reward_type: action_level
   logprob_type: action_level
@@ -95,10 +95,10 @@ rollout:
     queue_size: 0
   mode: "colocate"
   backend: "huggingface"
-  model_dir: "/path/to/model/rl4vla/openvla-7b-rlvla-warmup/"
+  model_dir: "/mnt/public/xyq/openvla-7b"
   precision: ${actor.model.precision}
-  enable_offload: True
-  pipeline_stage_num: 2
+  enable_offload: False
+  pipeline_stage_num: 1
 
 actor:
   group_name: "ActorGroup"
@@ -107,12 +107,12 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: "/path/to/model/rl4vla/openvla-7b-rlvla-warmup/"
+  checkpoint_load_path: "/mnt/public/xyq/openvla-7b"
   checkpoint_save_path: "../results"
   micro_batch_size: 40
   global_batch_size: 640
   seed: 1234
-  enable_offload: True
+  enable_offload: False
 
   model:
     model_name: "openvla"
@@ -152,7 +152,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/rl4vla/openvla-7b-rlvla-warmup/"
+    tokenizer_model: "/mnt/public/xyq/openvla-7b"
     use_fast: False
     trust_remote_code: True
     padding_side: "right"

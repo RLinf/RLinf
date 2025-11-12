@@ -95,6 +95,8 @@ def prepare_actions(
         chunk_actions = raw_chunk_actions
     elif simulator_type == "behavior":
         chunk_actions = raw_chunk_actions
+    elif simulator_type == "rlbench":
+        chunk_actions = raw_chunk_actions
     else:
         raise NotImplementedError
 

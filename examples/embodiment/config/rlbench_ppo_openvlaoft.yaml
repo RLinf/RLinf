@@ -96,7 +96,7 @@ rollout:
     queue_size: 0
   mode: "colocate"
   backend: "huggingface"
-  model_dir: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
+  model_dir: "/mnt/public/xyq/Openvla-oft-SFT-libero10-traj1"
   precision: ${actor.model.precision}
   enable_offload: False
   pipeline_stage_num: 1
@@ -108,7 +108,7 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
+  checkpoint_load_path: "/mnt/public/xyq/Openvla-oft-SFT-libero10-traj1"
   checkpoint_save_path: "../results"
   micro_batch_size: 2
   global_batch_size: 20
@@ -151,7 +151,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
+    tokenizer_model: "/mnt/public/xyq/Openvla-oft-SFT-libero10-traj1"
     use_fast: False
     trust_remote_code: True
     padding_side: "right"

@@ -2,12 +2,16 @@
 import os
 import time
 import copy
+import random
 import numpy as np
 from typing import List, Optional, Union, Tuple
 import multiprocessing as mp
 import imageio
 import gym
+import torch
 from scipy.spatial.transform import Rotation as R
+from rlinf.envs.utils import to_tensor
+from rlinf.envs.libero.utils import tile_images
 
 # rlbench imports
 from rlbench.environment import Environment
@@ -95,6 +99,15 @@ def worker_process(child_conn: mp.connection.Connection,
                 child_conn.send((obs.front_rgb.copy().astype(np.uint8), float(reward), bool(terminate)))
                 current_obs = obs
 
+            elif cmd == "get_description":
+                # Get a random description from task._task_descriptions
+                if hasattr(task, '_task_descriptions') and task._task_descriptions:
+                    description = random.choice(task._task_descriptions)
+                else:
+                    # Fallback if _task_descriptions is not available
+                    description = ""
+                child_conn.send(description)
+
             elif cmd == "close":
                 try:
                     env.shutdown()
@@ -146,26 +159,46 @@ class RLBenchEnv(gym.Env):
         self.image_size = tuple(cfg.image_size) if isinstance(cfg.image_size, list) else cfg.image_size
         self.max_episode_steps = cfg.max_episode_steps
         self.auto_reset = cfg.auto_reset
-        self.save_video = getattr(cfg, "save_video", True)
+        self.video_cfg = cfg.video_cfg
+
+        if getattr(cfg, "save_video", False) and not self.video_cfg.save_video:
+            self.video_cfg.save_video = True
         self.video_base_dir = cfg.video_base_dir
         self.task_names = cfg.task_names if hasattr(cfg, "task_names") else ["ReachTarget"]
+        
+        # # Action limits for relative mode (delta actions)
+        # # Position delta: limit to [-0.1, 0.1] meters (10cm) to avoid IK failures
+        # # Rotation delta: limit to [-0.3, 0.3] radians (~17 degrees)
+        # # Gripper: limit to [0, 1] for binary control
+        # self.action_pos_limit = getattr(cfg, "action_pos_limit", 0.01)  # meters
+        # self.action_rot_limit = getattr(cfg, "action_rot_limit", 0.01)  # radians
+        # self.action_gripper_min = getattr(cfg, "action_gripper_min", 0.0)
+        # self.action_gripper_max = getattr(cfg, "action_gripper_max", 1.0)
         
         os.makedirs(self.video_base_dir, exist_ok=True)
 
         # pipes/workers
         self.parent_conns = []
         self.workers = []
+        # Store task names for each env for debugging
+        self.env_task_names = []
         for i in range(self.num_envs):
             parent_conn, child_conn = mp.Pipe()
             task_name = self.task_names[i % len(self.task_names)]
+            self.env_task_names.append(task_name)
+            # Use different seeds for each env to ensure different initializations
+            env_seed = self.seed + i
             p = mp.Process(
                 target=worker_process,
-                args=(child_conn, task_name, self.seed + i, self.headless, self.image_size),
+                args=(child_conn, task_name, env_seed, self.headless, self.image_size),
                 daemon=True,
             )
             p.start()
             self.parent_conns.append(parent_conn)
             self.workers.append(p)
+        
+        # Debug: print task assignment
+        print(f"[RLBenchEnv] Task assignment: {self.env_task_names}")
 
         # metrics
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
@@ -218,7 +251,7 @@ class RLBenchEnv(gym.Env):
             self.returns[i] = 0.0
             self._elapsed_steps[i] = 0
             self.current_obs_images[i] = obs_img
-            if self.save_video:
+            if self.video_cfg.save_video:
                 self.render_images[i] = [obs_img.copy()]
 
         if len(obs_list) == 1:
@@ -226,26 +259,81 @@ class RLBenchEnv(gym.Env):
         else:
             return np.stack(obs_list, axis=0)
 
+    def get_description(self, target_length: Optional[int] = None):
+        """
+        Get task descriptions for all environments.
+        Args:
+            target_length: If provided, repeat descriptions to match this length.
+                          If None, returns descriptions for num_envs.
+        Returns a list of descriptions, one for each environment (or repeated to target_length).
+        """
+        # Send get_description command to all workers
+        for i in range(self.num_envs):
+            self.parent_conns[i].send(("get_description", None))
+        
+        # Receive descriptions from all workers
+        descriptions = []
+        for i in range(self.num_envs):
+            ret = self.parent_conns[i].recv()
+            # Check for worker error
+            if isinstance(ret, tuple) and len(ret) == 2 and isinstance(ret[0], str) and ret[0] == "worker_error":
+                raise RuntimeError(f"Worker {i} error: {ret[1]}")
+            descriptions.append(ret)
+        
+        # If target_length is specified and different from num_envs, repeat descriptions
+        if target_length is not None and target_length != len(descriptions):
+            if target_length > len(descriptions):
+                # Repeat descriptions to match target_length
+                repeat_times = target_length // len(descriptions)
+                remainder = target_length % len(descriptions)
+                descriptions = descriptions * repeat_times + descriptions[:remainder]
+            else:
+                # Truncate if target_length is smaller (shouldn't happen normally)
+                descriptions = descriptions[:target_length]
+        
+        return descriptions
     # -------------------------
     # Step (single-step for all envs)
     # -------------------------
-    def step(self, actions: np.ndarray, auto_reset: Optional[bool] = None):
+    def step(self, actions: Optional[np.ndarray] = None, auto_reset: Optional[bool] = None):
         """
         actions: array-like [num_envs, action_dim], dtype float
-        Returns: obs_images (np array [num_envs,H,W,3]), rewards (np array), terminations (bool array), infos (dict)
+        Returns: 
+            obs_dict: dict with keys "images" (torch.Tensor [num_envs,H,W,3]) and "task_descriptions" (list[str])
+            rewards: torch.Tensor [num_envs], dtype float32
+            terminations: torch.Tensor [num_envs], dtype bool
+            truncations: torch.Tensor [num_envs], dtype bool
+            infos: dict (contains episode metrics)
         """
+        if actions is None:
+            actions = np.zeros((self.num_envs, 7))
         if self._is_start:
             obs = self.reset()
             self._is_start = False
             terminations = np.zeros(self.num_envs, dtype=bool)
             truncations = np.zeros(self.num_envs, dtype=bool)
             infos = self._make_episode_info({})
-            return obs, np.zeros(self.num_envs, dtype=np.float32), terminations, truncations, infos
+            obs_dict = {
+                "images": torch.tensor(obs).permute(0, 3, 1, 2),
+                "task_descriptions": self.get_description(target_length=self.num_envs),
+            }
+            rewards_tensor = torch.zeros(self.num_envs, dtype=torch.float32)
+            terminations_tensor = torch.tensor(terminations, dtype=torch.bool)
+            truncations_tensor = torch.tensor(truncations, dtype=torch.bool)
+            return obs_dict, rewards_tensor, terminations_tensor, truncations_tensor, infos
 
         if isinstance(actions, np.ndarray) is False:
             actions = np.array(actions)
 
         assert actions.shape[0] == self.num_envs, "actions must have shape [num_envs, action_dim]"
+
+        # # Clip actions to reasonable limits to avoid IK failures
+        # # Position delta (first 3 dims): limit to [-action_pos_limit, action_pos_limit] meters
+        # actions[:, :3] = np.clip(actions[:, :3], -self.action_pos_limit, self.action_pos_limit)
+        # # Rotation delta (next 3 dims, Euler angles): limit to [-action_rot_limit, action_rot_limit] radians
+        # actions[:, 3:6] = np.clip(actions[:, 3:6], -self.action_rot_limit, self.action_rot_limit)
+        # # Gripper (last dim): limit to [action_gripper_min, action_gripper_max]
+        # actions[:, 6:] = np.clip(actions[:, 6:], self.action_gripper_min, self.action_gripper_max)
 
         # convert rotations in actions to quaternions
         quaternions = R.from_euler('xyz', actions[:, 3:6]).as_quat()
@@ -273,7 +361,7 @@ class RLBenchEnv(gym.Env):
                 self.success_once[i] = True
 
             # video frame append
-            if self.save_video:
+            if self.video_cfg.save_video:
                 self.render_images[i].append(img.copy())
 
             # update current obs
@@ -295,8 +383,17 @@ class RLBenchEnv(gym.Env):
             obs = obs_after_reset
             infos = infos_after
 
+        # Convert to torch tensors and build obs dict
+        obs_dict = {
+            "images": torch.tensor(obs).permute(0, 3, 1, 2),
+            "task_descriptions": self.get_description(target_length=self.num_envs),
+        }
+        rewards_tensor = torch.tensor(rewards, dtype=torch.float32)
+        terminations_tensor = torch.tensor(terminations, dtype=torch.bool)
+        truncations_tensor = torch.tensor(truncations, dtype=torch.bool)
+
         # return in Libero style: obs, reward, terminations, truncations, infos
-        return obs, rewards, terminations, truncations, infos
+        return obs_dict, rewards_tensor, terminations_tensor, truncations_tensor, infos
 
     # -------------------------
     # chunk_step (process chunk_actions on main process by repeated step calls)
@@ -305,10 +402,10 @@ class RLBenchEnv(gym.Env):
         """
         chunk_actions: [num_envs, chunk_steps, action_dim]
         returns:
-            final_obs: last observation after chunk (np array [num_envs,...])
-            chunk_rewards: np.array [num_envs, chunk_steps]
-            chunk_terminations: np.bool array [num_envs, chunk_steps]
-            chunk_truncations: np.bool array [num_envs, chunk_steps]
+            final_obs: last observation after chunk (dict with "images" and "task_descriptions")
+            chunk_rewards: torch.Tensor [num_envs, chunk_steps], dtype float32
+            chunk_terminations: torch.Tensor [num_envs, chunk_steps], dtype bool
+            chunk_truncations: torch.Tensor [num_envs, chunk_steps], dtype bool
             infos: dict (contains episode metrics possibly updated)
         """
         n_envs = self.num_envs
@@ -330,9 +427,9 @@ class RLBenchEnv(gym.Env):
             final_obs = obs
 
         # stack into arrays [num_envs, chunk_steps]
-        chunk_rewards = np.stack(chunk_rewards_list, axis=1)
-        chunk_terms = np.stack(chunk_term_list, axis=1)
-        chunk_truncs = np.stack(chunk_trunc_list, axis=1)
+        chunk_rewards = torch.stack(chunk_rewards_list, dim=1)
+        chunk_terms = torch.stack(chunk_term_list, axis=1)
+        chunk_truncs = torch.stack(chunk_trunc_list, axis=1)
 
         # Determine past dones across chunk
         past_terminations = chunk_terms.any(axis=1)
@@ -341,33 +438,54 @@ class RLBenchEnv(gym.Env):
 
         if past_dones.any() and self.auto_reset:
             # emulate Libero behavior: do auto reset for envs that had done at any step in chunk
+            # final_obs is already a dict from step(), pass it directly
             final_obs, infos = self._handle_auto_reset(past_dones, final_obs, infos)
+        else:
+            # Ensure infos is always valid, even if no done occurred
+            if infos is None or "episode" not in infos:
+                infos = self._make_episode_info({})
 
         # Build chunk termination/truncation indicators in Libero style:
         # If auto_reset or ignore_terminations -> zeros except last step indicates if any termination occurred in chunk.
         # Here we mimic Libero: only set last step True when any happened (for termination/truncation)
-        chunk_terminations = np.zeros_like(chunk_terms)
-        chunk_truncations = np.zeros_like(chunk_truncs)
-        chunk_terminations[:, -1] = past_terminations
-        chunk_truncations[:, -1] = past_truncations
+        chunk_terms[:, -1] = past_terminations
+        chunk_truncs[:, -1] = past_truncations
 
-        return final_obs, chunk_rewards, chunk_terminations, chunk_truncations, infos
+        return final_obs, chunk_rewards, chunk_terms, chunk_truncs, infos
 
     # -------------------------
     # Auto reset handler - similar behavior as Libero
     # -------------------------
-    def _handle_auto_reset(self, dones: np.ndarray, _final_obs: np.ndarray, infos: dict):
+    def _handle_auto_reset(self, dones: np.ndarray, _final_obs: dict, infos: dict):
         """
         dones: boolean array length num_envs indicating which envs ended
-        _final_obs: last observations (possibly before reset)
+        _final_obs: last observations (dict with "images" and "task_descriptions") before reset
         Returns: (obs_after_reset, infos) - and infos will include 'final_observation','final_info' etc.
         """
+        # Deep copy final_obs dict to preserve it
         final_obs = copy.deepcopy(_final_obs)
         env_idx = np.arange(0, self.num_envs)[dones]
-        final_info = {}  # could copy more detailed info per env if available
+        # Copy episode info from infos to final_info (similar to MetaWorld, Behavior)
+        # This ensures final_info["episode"] exists for env_worker.py
+        final_info = {}
+        if "episode" in infos:
+            # Deep copy episode info to preserve metrics before reset
+            final_info["episode"] = {}
+            for key, value in infos["episode"].items():
+                if isinstance(value, torch.Tensor):
+                    final_info["episode"][key] = value.clone()
+                elif isinstance(value, np.ndarray):
+                    final_info["episode"][key] = value.copy()
+                else:
+                    final_info["episode"][key] = copy.deepcopy(value)
 
         # reset those envs
-        obs_after = self.reset(env_idx=env_idx)
+        obs_after_np = self.reset(env_idx=env_idx)
+        # Convert to dict format with torch tensor
+        obs_after = {
+            "images": torch.tensor(obs_after_np).permute(0, 3, 1, 2),
+            "task_descriptions": self.get_description(target_length=self.num_envs),
+        }
         # assemble infos similar to Libero:
         infos_out = {}
         infos_out["final_observation"] = final_obs
@@ -392,7 +510,8 @@ class RLBenchEnv(gym.Env):
         nonzero_mask = episode_info["episode_len"] > 0
         avg_reward[nonzero_mask] = episode_info["return"][nonzero_mask] / episode_info["episode_len"][nonzero_mask]
         episode_info["reward"] = avg_reward
-        infos = {"episode": episode_info}
+        # Convert to torch.Tensor to match other environments (Libero, MetaWorld)
+        infos = {"episode": to_tensor(episode_info)}
         infos.update(extra_info)
         return infos
 
@@ -404,23 +523,61 @@ class RLBenchEnv(gym.Env):
         for i, img in enumerate(imgs):
             if img is None:
                 continue
-            if self.save_video:
+            if self.video_cfg.save_video:
                 self.render_images[i].append(img.copy())
 
     def flush_video(self, video_sub_dir: Optional[str] = None):
-        """Save stored frames for each env to ./video_base_dir/seed_X/video_sub_dir/env_i.mp4"""
+        """Save stored frames: combine all envs into one tiled video"""
+        # Check if video saving is enabled (use self.video_cfg.save_video)
+        if not self.video_cfg.save_video:
+            # If video saving is disabled, just clear the buffer
+            self.render_images = [[] for _ in range(self.num_envs)]
+            return
+        
+        # Find the maximum number of frames across all envs
+        max_frames = max(len(frames) for frames in self.render_images) if self.render_images else 0
+        if max_frames == 0:
+            # No frames to save
+            self.render_images = [[] for _ in range(self.num_envs)]
+            return
+        
+        # Combine frames from all envs into tiled images
+        tiled_frames = []
+        for frame_idx in range(max_frames):
+            # Collect one frame from each env (use last frame if env has fewer frames)
+            env_frames = []
+            for env_idx in range(self.num_envs):
+                frames = self.render_images[env_idx]
+                if frame_idx < len(frames):
+                    env_frames.append(frames[frame_idx])
+                elif len(frames) > 0:
+                    # Use last frame if this env has fewer frames
+                    env_frames.append(frames[-1])
+                else:
+                    # If env has no frames, create a black image
+                    # Use the size from the first available frame
+                    if len(env_frames) > 0:
+                        h, w = env_frames[0].shape[:2]
+                        env_frames.append(np.zeros((h, w, 3), dtype=np.uint8))
+            
+            # Tile all env frames into one image
+            if len(env_frames) > 0:
+                # Calculate nrows for a roughly square grid
+                nrows = int(np.sqrt(self.num_envs))
+                tiled_frame = tile_images(env_frames, nrows=nrows)
+                tiled_frames.append(tiled_frame)
+        
+        # Save the combined video
         seed_dir = os.path.join(self.video_base_dir, f"seed_{self.seed}")
         out_dir = seed_dir if video_sub_dir is None else os.path.join(seed_dir, video_sub_dir)
         os.makedirs(out_dir, exist_ok=True)
-        for i, frames in enumerate(self.render_images):
-            if len(frames) == 0:
-                continue
-            path = os.path.join(out_dir, f"env_{i}.mp4")
-            with imageio.get_writer(path, fps=20) as writer:
-                for f in frames:
-                    # ensure uint8 HWC
-                    writer.append_data(np.asarray(f))
-            print(f"[RLBenchEnv] Saved video: {path}")
+        path = os.path.join(out_dir, f"combined_{self.video_cnt}.mp4")
+        with imageio.get_writer(path, fps=20) as writer:
+            for frame in tiled_frames:
+                # ensure uint8 HWC
+                writer.append_data(np.asarray(frame))
+        print(f"[RLBenchEnv] Saved combined video: {path} (tiled {self.num_envs} envs)")
+        
         # reset frames buffer
         self.render_images = [[] for _ in range(self.num_envs)]
         self.video_cnt += 1

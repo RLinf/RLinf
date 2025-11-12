@@ -3,10 +3,8 @@ task_names: ["ReachTarget", "CloseBox", "CloseMicrowave", "PlugChargerInPowerSup
 
 auto_reset: ${algorithm.auto_reset}
 ignore_terminations: ${algorithm.ignore_terminations}
-max_episode_steps: ${algorithm.max_episode_steps}
 
 use_rel_reward: False
-reward_coef: ${algorithm.reward_coef}
 only_eval: False
 
 seed: 0
@@ -23,3 +21,9 @@ video_base_dir: ${runner.logger.log_path}/video/train
 init_params:
   robot_setup: "panda"  # Options: "panda", "franka", etc.
 
+max_episode_steps: 50
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
