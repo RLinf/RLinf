@@ -13,7 +13,9 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: all
+    env: 0
+    rollout: 1,2
+    actor: 0-3
 
 runner:
   task_type: embodied
@@ -38,11 +40,11 @@ algorithm:
   use_fixed_reset_state_ids: True
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
-  group_size: 8  # NOTE: group_size * num_group_envs * rollout_epoch = global buffer size
+  group_size: 2  # NOTE: group_size * num_group_envs * rollout_epoch = global buffer size
   n_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}
   n_eval_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}
-  num_group_envs: 8  # NOTE: num_group_envs should be a multiple of the world_size
-  rollout_epoch: 16
+  num_group_envs: 2  # NOTE: num_group_envs should be a multiple of the world_size
+  rollout_epoch: 2
   reward_type: action_level  # action_level or chunk_level
   logprob_type: token_level
   entropy_type: token_level
@@ -100,10 +102,10 @@ rollout:
     queue_size: 0
   mode: "colocate"
   generation_backend: "huggingface"
-  model_dir: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
+  model_dir: "/mnt/mnt/public/mjwei/download_models/Haozhan72/Openvla-oft-SFT-libero10-traj1/"
   precision: ${actor.model.precision}
   enable_offload: False
-  pipeline_stage_num: 1
+  pipeline_stage_num: 2
 
 actor:
   group_name: "ActorGroup"
@@ -112,7 +114,7 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
+  checkpoint_load_path: "/mnt/mnt/public/mjwei/download_models/Haozhan72/Openvla-oft-SFT-libero10-traj1/"
   checkpoint_save_path: "../results"
   micro_batch_size: 32
   global_batch_size: 16384
@@ -154,7 +156,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
+    tokenizer_model: "/mnt/mnt/public/mjwei/download_models/Haozhan72/Openvla-oft-SFT-libero10-traj1/"
     use_fast: False
     trust_remote_code: True
     padding_side: "right"

@@ -19,10 +19,9 @@ import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import validate_cfg
-from rlinf.runners.embodied_runner import EmbodiedRunner
+from rlinf.runners.embodied_runner_profile import EmbodiedRunnerProfile
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
@@ -39,11 +38,6 @@ def main(cfg) -> None:
     cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
     component_placement = HybridComponentPlacement(cfg, cluster)
 
-    # Create actor worker group
-    actor_placement = component_placement.get_strategy("actor")
-    actor_group = EmbodiedFSDPActor.create_group(cfg).launch(
-        cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
-    )
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
     rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
@@ -55,9 +49,8 @@ def main(cfg) -> None:
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 
-    runner = EmbodiedRunner(
+    runner = EmbodiedRunnerProfile(
         cfg=cfg,
-        actor=actor_group,
         rollout=rollout_group,
         env=env_group,
     )

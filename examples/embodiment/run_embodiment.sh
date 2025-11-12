@@ -26,7 +26,7 @@ export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 
 
 if [ -z "$1" ]; then
-    CONFIG_NAME="maniskill_ppo_openvlaoft"
+    CONFIG_NAME="libero_10_grpo_openvlaoft"
 else
     CONFIG_NAME=$1
 fi
