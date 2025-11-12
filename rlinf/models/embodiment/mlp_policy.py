@@ -68,13 +68,17 @@ class MLPPolicy(nn.Module):
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
 
+        ret_dict = dict()
         if compute_logprobs:
             logprobs = probs.log_prob(action)
+            ret_dict["logprobs"] = logprobs
         if compute_entropy:
             entropy = probs.entropy()
+            ret_dict["entropy"] = entropy
         if compute_values:
             values = self.value_head(obs)
-        return {"logprobs": logprobs, "values": values, "entropy": entropy}
+            ret_dict["values"] = values
+        return ret_dict
 
     def predict_action_batch(
         self, env_obs, calulate_logprobs=True, calulate_values=True, **kwargs
