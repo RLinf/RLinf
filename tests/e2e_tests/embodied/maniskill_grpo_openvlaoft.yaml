@@ -127,7 +127,6 @@ actor:
     add_qkv_bias: True
     vocab_size: 32000
     hidden_size: 4096
-    policy_setup: "widowx_bridge"
     add_value_head: False
     image_size: [224, 224]
     is_lora: True
