@@ -144,7 +144,7 @@ This model is designed specifically for libero spatial task types.
 
 .. code:: bash
 
-   # Download the Spatial-Object-Goal model (choose either method)
+   # Download the libero spatial few-shot SFT model (choose either method)
    # Method 1: Using git clone
    git lfs install
    git clone https://huggingface.co/RLinf/Gr00t_Libero_Spatial_Fewshot_SFT
@@ -185,12 +185,12 @@ Embodiment Tag is a enum determining which DataConfig to use during training. Th
 ---------------
 
 After the fine-tuning,  GR00T-N1.5 generates a ``experiment_cfg/metadata.json`` file concluding all the modality config and statistics of fine-tuning dataset.
-This file is necessary for the inference and RL post-training of GR00T-N1.5. For more details refering to ``getting_started/4_deeper_understanding.md`` of GR00T-N1.5 official repository.
+This file is necessary for the inference and RL post-training of GR00T-N1.5. For more details refering to `getting_started/4_deeper_understanding.md <https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/4_deeper_understanding.md>`__ in GR00T-N1.5 official repository.
 
 **2. Finetuning Guide**
 
 Based on above designs, users should fine-tune GR00T-N1.5 before deploying it in new environments except LIBERO.
-The fine-tuning guide can be found in ``getting_started/2_finetuning.ipynb`` of GR00T-N1.5 official repository.
+The fine-tuning guide can be found in `getting_started/2_finetuning.ipynb <https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/2_finetuning.ipynb>`__ in GR00T-N1.5 official repository.
 
 ---------------
 
