@@ -28,7 +28,7 @@ export HYDRA_FULL_ERROR=1
 
 
 if [ -z "$1" ]; then
-    CONFIG_NAME="maniskill_ppo_openvlaoft"
+    CONFIG_NAME="libero_10_grpo_openvlaoft_eval"
 else
     CONFIG_NAME=$1
 fi

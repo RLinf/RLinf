@@ -13,7 +13,8 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: all
+    env: 0,1
+    rollout: 2,3
 
 runner:
   task_type: embodied
@@ -38,11 +39,11 @@ algorithm:
   use_fixed_reset_state_ids: True
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
-  group_size: 8
+  group_size: 2
   n_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}
-  n_eval_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}
-  num_group_envs: 8
-  rollout_epoch: 8
+  n_eval_chunk_steps: ${int_div:${env.eval.max_episode_steps}, ${actor.model.num_action_chunks}}
+  num_group_envs: 4
+  rollout_epoch: 2
   reward_type: action_level  # action_level or chunk_level
   logprob_type: token_level
   entropy_type: token_level
@@ -62,7 +63,7 @@ algorithm:
   gae_lambda: 0.95
 
   reward_coef: 5.0
-  max_episode_steps: 512
+  max_episode_steps: 128
   use_ordered_reset_state_ids: True
 
   sampling_params:
@@ -100,7 +101,7 @@ rollout:
     queue_size: 0
   mode: "colocate"
   generation_backend: "huggingface"
-  model_dir: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
+  model_dir: "/mnt/mnt/public/mjwei/download_models/Haozhan72/Openvla-oft-SFT-libero10-traj1/"
   precision: ${actor.model.precision}
   enable_offload: False
   pipeline_stage_num: 1
@@ -112,7 +113,7 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
+  checkpoint_load_path: "/mnt/mnt/public/mjwei/download_models/Haozhan72/Openvla-oft-SFT-libero10-traj1/"
   checkpoint_save_path: "../results"
   micro_batch_size: 32
   global_batch_size: 8192
@@ -155,7 +156,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
+    tokenizer_model: "/mnt/mnt/public/mjwei/download_models/Haozhan72/Openvla-oft-SFT-libero10-traj1/"
     use_fast: False
     trust_remote_code: True
     padding_side: "right"
