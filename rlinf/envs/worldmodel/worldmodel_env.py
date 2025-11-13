@@ -70,6 +70,7 @@ class WorldModelEnv(gym.Env):
         self.auto_reset = cfg.auto_reset
         self.use_rel_reward = cfg.use_rel_reward
         self.ignore_terminations = cfg.ignore_terminations
+        self.gen_num_image_each_step = cfg.gen_num_image_each_step
 
         dataset_cfg = OmegaConf.to_container(cfg.dataset_cfg, resolve=True)
         self.task_dataset = LeRobotDatasetWrapper(**dataset_cfg)
@@ -259,12 +260,22 @@ class WorldModelEnv(gym.Env):
 
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
-        chunk_size = chunk_actions.shape[1]
+
+        chunk_step = chunk_actions.shape[1]
+        assert chunk_step % self.gen_num_image_each_step == 0, (
+            "chunk_step must be divisible by gen_num_image_each_step"
+        )
+        chunk_size = chunk_step // self.gen_num_image_each_step
         chunk_rewards = []
         raw_chunk_terminations = []
         raw_chunk_truncations = []
         for i in range(chunk_size):
-            actions = chunk_actions[:, i]
+            actions = chunk_actions[
+                :,
+                i * self.gen_num_image_each_step : (i + 1)
+                * self.gen_num_image_each_step,
+                :,
+            ]
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
                 actions, auto_reset=False
             )
