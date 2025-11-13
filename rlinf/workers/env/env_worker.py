@@ -82,7 +82,7 @@ class EnvWorker(Worker):
                             self.cfg.env.train,
                             rank=self._rank,
                             seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size,
+                            total_num_processes=self._world_size * self.stage_num,
                             env_cls=ManiskillEnv,
                             enable_offload=enable_offload,
                         )
@@ -94,7 +94,7 @@ class EnvWorker(Worker):
                             self.cfg.env.eval,
                             rank=self._rank,
                             seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size,
+                            total_num_processes=self._world_size * self.stage_num,
                             env_cls=ManiskillEnv,
                             enable_offload=enable_offload,
                         )
@@ -149,7 +149,7 @@ class EnvWorker(Worker):
                             self.cfg.env.eval,
                             rank=self._rank,
                             seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size,
+                            total_num_processes=self._world_size * self.stage_num,
                             env_cls=RoboTwin,
                             enable_offload=enable_offload,
                         )
