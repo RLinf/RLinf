@@ -221,19 +221,18 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                 if "transitions/next_obs/" in key
             }
 
-            loss_kwargs = {}
-
             with torch.no_grad():
-                next_state_actions, next_results = self.model.predict_action_batch(
-                    next_obs, return_action_type="torch_flatten", return_shared_feature=True
+
+                next_state_actions, next_state_log_pi, shared_feature = self.model(
+                    "sac_forward", 
+                    obs=next_obs, 
                 )
-                next_state_log_pi = next_results["prev_logprobs"]
                 next_state_log_pi = next_state_log_pi.sum(dim=-1, keepdim=True)
                 
-                shared_feature = next_results["shared_feature"]
-
-                all_qf_next_target = self.target_model.get_q_values(
-                    next_obs, next_state_actions, shared_feature
+                all_qf_next_target = self.target_model(
+                    "sac_q_forward", 
+                    obs=next_obs, actions=next_state_actions, 
+                    shared_feature=shared_feature, 
                 )
                 if self.critic_subsample_size > 0:
                     sample_idx = torch.randint(
