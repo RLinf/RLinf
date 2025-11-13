@@ -457,6 +457,7 @@ class RolloutResult:
         merged_result = RolloutResult(
             num_sequence=sum(res.num_sequence for res in rollout_results),
             group_size=rollout_results[0].group_size,
+            response_mask=[],
             prompt_lengths=[],
             prompt_ids=[],
             response_lengths=[],
@@ -493,6 +494,10 @@ class RolloutResult:
             merged_result.response_lengths.extend(res.response_lengths)
             merged_result.response_ids.extend(res.response_ids)
             merged_result.is_end.extend(res.is_end)
+            if res.response_mask is not None:
+                merged_result.response_mask = merge_list(
+                    merged_result.response_mask, res.response_mask
+                )
             if res.answers is not None:
                 merged_result.answers = merge_list(merged_result.answers, res.answers)
             if res.advantages is not None:
@@ -753,7 +758,29 @@ class RolloutResult:
         #           |<-- cfg.runner.seq_length - cfg.data.seq_length ->|
 
         max_response_len = training_seq_length - data_seq_length
-
+        
+        if self.rewards is not None and self.rewards.numel() == 0:
+            batch = {
+                "input_ids": torch.zeros(0, dtype=torch.long).cuda(),
+                "attention_mask": torch.zeros(0, dtype=torch.bool).cuda(),
+                "is_end": torch.zeros(0, dtype=torch.bool).cuda(),
+                "position_ids": torch.zeros(0, dtype=torch.long).cuda(),
+                "prompt_lengths": torch.zeros(0, dtype=torch.long).cuda(),
+                "response_lengths": torch.zeros(0, dtype=torch.long).cuda(),
+            }
+            if self.advantages is not None:
+                batch["advantages"] = torch.zeros(0, dtype=torch.float32).cuda()
+            if self.prev_logprobs is not None:
+                batch["prev_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
+            if self.ref_logprobs is not None:
+                batch["ref_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
+            if self.recompute_prev_logprobs is not None:
+                batch["recompute_prev_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
+            if self.rewards is not None:
+                batch["rewards"] = torch.zeros(0, dtype=torch.float32).cuda()
+            if self.rollout_logprobs is not None:
+                batch["prev_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
+            return batch
         prompt_lengths = torch.tensor(self.prompt_lengths)
         response_lengths = torch.tensor(self.response_lengths)
         is_end = torch.tensor(self.is_end, dtype=torch.bool)
@@ -840,21 +867,22 @@ class RolloutResult:
         batches: list[dict[str, torch.Tensor]],
     ) -> dict[str, torch.Tensor]:
         """Merge two batches into one."""
+        non_empty_batches = [batch for batch in batches if batch]
         merged_batch = {}
-        if len(batches) == 0:
-            return merged_batch
-        if len(batches) == 1:
-            return batches[0]
+        if len(non_empty_batches) == 0:
+            return batches[0] if len(batches) > 0 else {}
+        if len(non_empty_batches) == 1:
+            return non_empty_batches[0]
 
-        for key in batches[0].keys():
-            if torch.is_tensor(batches[0][key]):
-                merged_batch[key] = torch.cat([batch[key] for batch in batches], dim=0)
-            elif isinstance(batches[0][key], list):
+        for key in non_empty_batches[0].keys():
+            if torch.is_tensor(non_empty_batches[0][key]):
+                merged_batch[key] = torch.cat([batch[key] for batch in non_empty_batches], dim=0)
+            elif isinstance(non_empty_batches[0][key], list):
                 merged_batch[key] = []
-                for batch in batches:
+                for batch in non_empty_batches:
                     merged_batch[key].extend(batch[key])
             else:
-                raise ValueError(f"Unsupported batch key type: {type(batches[0][key])}")
+                raise ValueError(f"Unsupported batch key type: {type(non_empty_batches[0][key])}")
         return merged_batch
 
 

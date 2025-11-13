@@ -23,6 +23,16 @@ explict_model:
     te_ln_linear_qkv: True
     te_ln_linear_mlp_fc1: True
     te_ln_add_extra_state: True
+  qwen_2.5_3b:
+    num_layers: 36
+    tie_word_embeddings: true
+    model_type: qwen_2
+    num_attention_heads: 16
+    num_query_groups: 2
+    head_dim: 128
+    te_ln_linear_qkv: True
+    te_ln_linear_mlp_fc1: True
+    te_ln_add_extra_state: True
   qwen_2.5_32b:
     model_type: qwen_2
     num_attention_heads: 40

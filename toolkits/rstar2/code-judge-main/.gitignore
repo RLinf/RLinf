@@ -1,0 +1,6 @@
+.vscode/
+**/*.pyc
+**/__pycache__/
+error_cases/
+redisdb/
+.coverage
