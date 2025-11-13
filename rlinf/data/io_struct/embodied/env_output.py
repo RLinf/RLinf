@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 import torch
-from rlinf.data.io_struct.utils import put_tensor_cpu
+from rlinf.data.io_struct.utils import put_tensor_device
 
 @dataclass(kw_only=True)
 class EnvOutput:
@@ -13,9 +13,9 @@ class EnvOutput:
     rewards: Optional[torch.Tensor] = None  # [B]
 
     def __post_init__(self):
-        self.obs = put_tensor_cpu(self.obs)
+        self.obs = put_tensor_device(self.obs, "cpu")
         self.final_obs = (
-            put_tensor_cpu(self.final_obs) if self.final_obs is not None else None
+            put_tensor_device(self.final_obs, "cpu") if self.final_obs is not None else None
         )
         self.dones = self.dones.cpu().contiguous() if self.dones is not None else None
         self.rewards = (

@@ -29,6 +29,13 @@ from rlinf.algorithms.utils import (
     kl_penalty,
 )
 from rlinf.data.io_struct import RolloutResult
+from rlinf.data.io_struct.utils import (
+    cat_list_of_dict_tensor, 
+    split_dict_to_chunk, 
+    process_nested_dict_for_adv, 
+    process_nested_dict_for_train, 
+    put_tensor_device
+)
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
 )
@@ -609,10 +616,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             )
 
         # shape [num_chunk, bsz, chunk_size], cat dim 1
-        for key in recv_list[0].keys():
-            self.rollout_batch[key] = torch.cat(
-                [recv_list[i][key] for i in range(split_num)], dim=1
-            )
+        self.rollout_batch = cat_list_of_dict_tensor(recv_list, dim=1)
 
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
 
@@ -622,15 +626,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         target shape: [n_chunk_steps, rollout_epoch x bsz, num_action_chunks, ...]
         """
         rollout_epoch = self.cfg.algorithm.rollout_epoch
-        for key, value in rollout_batch.items():
-            new_value = value.reshape(
-                rollout_epoch, -1, *value.shape[1:]
-            )  # [rollout_epoch, n_chunk_step, bsz, ...]
-            new_value = new_value.transpose(
-                0, 1
-            )  # [n_chunk_step, rollout_epoch, bsz, ...]
-            new_value = new_value.reshape(new_value.shape[0], -1, *new_value.shape[3:])
-            rollout_batch[key] = new_value
+        rollout_batch = process_nested_dict_for_adv(rollout_batch, rollout_epoch)
 
         if (
             not self.cfg.env.train.auto_reset
@@ -758,15 +754,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         shuffle_id = torch.randperm(rollout_size, generator=g)
 
         with torch.no_grad():
-            for key, value in self.rollout_batch.items():
-                if key in ["dones", "prev_values"]:
-                    value = value[:-1]
-                if "env_info" in key:
-                    continue
-                if value is None:
-                    continue
-                value = value.reshape(rollout_size, *value.shape[2:])
-                self.rollout_batch[key] = value[shuffle_id]
+            self.rollout_batch = process_nested_dict_for_train(
+                self.rollout_batch, shuffle_id
+            )
 
         assert (
             self.cfg.actor.global_batch_size
@@ -790,11 +780,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         metrics = {}
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
         for _ in range(update_epoch):
-            rollout_dataloader_iter = get_iterator_k_split(
+            rollout_global_batch_list = split_dict_to_chunk(
                 self.rollout_batch,
                 rollout_size // batch_size_per_rank,
             )
-            for train_global_batch in rollout_dataloader_iter:
+            for train_global_batch in rollout_global_batch_list:
                 # split batch into micro_batches
                 train_global_batch_size = train_global_batch["prev_logprobs"].shape[0]
                 assert (
@@ -805,16 +795,14 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 assert train_global_batch_size % self.cfg.actor.micro_batch_size == 0, (
                     f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size}"
                 )
-                train_micro_batch = get_iterator_k_split(
+                train_micro_batch_list = split_dict_to_chunk(
                     train_global_batch,
                     train_global_batch_size // self.cfg.actor.micro_batch_size,
                 )
 
                 self.optimizer.zero_grad()
-                for data in train_micro_batch:
-                    for k, v in data.items():
-                        data[k] = v.to(f"cuda:{int(os.environ['LOCAL_RANK'])}")
-
+                for data in train_micro_batch_list:
+                    data = put_tensor_device(data, f"cuda:{int(os.environ['LOCAL_RANK'])}")
                     advantages = data["advantages"]
                     prev_logprobs = data["prev_logprobs"]
                     returns = data.get("returns", None)

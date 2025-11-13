@@ -2,7 +2,11 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple
 
 import torch
-from rlinf.data.io_struct.utils import put_tensor_cpu
+from rlinf.data.io_struct.utils import (
+    put_tensor_device, 
+    stack_list_of_dict_tensor, 
+    split_dict_to_chunk
+)
 
 
 @dataclass(kw_only=True)
@@ -38,15 +42,12 @@ class EmbodiedRolloutResult:
             else []
         )
 
-        self.transitions = (
-            [
-                (put_tensor_cpu(obs), put_tensor_cpu(next_obs)) 
-                for obs, next_obs in self.transitions
-            ] if self.transitions is not None else []
-        )
+        self.transitions = [
+            put_tensor_device(t, "cpu") for t in self.transitions
+        ] if self.transitions is not None else []
 
         self.forward_inputs = [
-            put_tensor_cpu(forward_inputs) for forward_inputs in self.forward_inputs
+            put_tensor_device(forward_inputs, "cpu") for forward_inputs in self.forward_inputs
         ]
 
     def append_result(self, result: Dict[str, Any]):
@@ -63,11 +64,14 @@ class EmbodiedRolloutResult:
             result["rewards"].cpu().contiguous()
         ) if "rewards" in result else []
 
-        self.forward_inputs.append(put_tensor_cpu(result["forward_inputs"]))
+        self.forward_inputs.append(put_tensor_device(result["forward_inputs"], "cpu"))
 
     def add_transition(self, obs, next_obs):
         self.transitions.append(
-            (put_tensor_cpu(obs), put_tensor_cpu(next_obs))
+            {
+                "obs": put_tensor_device(obs, "cpu"), 
+                "next_obs": put_tensor_device(next_obs, "cpu")
+            }
         )
 
     def to_dict(self):
@@ -93,50 +97,15 @@ class EmbodiedRolloutResult:
             else None
         )
 
-        merged_forward_inputs = {}
-        
-        for obs, next_obs in self.transitions:
-            # only consider the case that obs is dict
-            for orig_key in obs.keys():
-                obs_key = f"transitions/obs/{orig_key}"
-                if obs_key in merged_forward_inputs:
-                    merged_forward_inputs[obs_key].append(obs[orig_key])
-                else:
-                    merged_forward_inputs[obs_key] = [obs[orig_key]]
-                
-                next_obs_key = f"transitions/next_obs/{orig_key}"
-                if next_obs_key in merged_forward_inputs:
-                    merged_forward_inputs[next_obs_key].append(next_obs[orig_key])
-                else:
-                    merged_forward_inputs[next_obs_key] = [next_obs[orig_key]]
-                
-
-        for data in self.forward_inputs:
-            for k, v in data.items():
-                if k in merged_forward_inputs:
-                    merged_forward_inputs[k].append(v)
-                else:
-                    merged_forward_inputs[k] = [v]
- 
+        merged_forward_inputs = stack_list_of_dict_tensor(self.forward_inputs)
         for k in merged_forward_inputs.keys():
             assert k not in ["dones", "rewards", "prev_logprobs", "prev_values"]
-            rollout_result_dict[k] = (
-                torch.stack(merged_forward_inputs[k], dim=0).cpu().contiguous()
-            )
+            rollout_result_dict[k] = merged_forward_inputs[k]
+
+        transition_dict = stack_list_of_dict_tensor(self.transitions)
+        rollout_result_dict["transitions"] = transition_dict
 
         return rollout_result_dict
 
     def to_splited_dict(self, split_size) -> List[Dict[str, Any]]:
-        rollout_result_list = []
-        for i in range(split_size):
-            rollout_result_list.append(self.to_dict())
-
-            for key, value in rollout_result_list[i].items():
-                if isinstance(value, torch.Tensor):
-                    rollout_result_list[i][key] = torch.chunk(value, split_size, dim=1)[
-                        i
-                    ].contiguous()
-                else:
-                    raise ValueError(f"Unsupported type: {type(value)}")
-
-        return rollout_result_list
+        return split_dict_to_chunk(self.to_dict(), split_size, dim=1)

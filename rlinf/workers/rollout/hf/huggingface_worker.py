@@ -24,39 +24,9 @@ from rlinf.models import get_model, get_vla_model_config_and_processor
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.algorithms.utils import expand_to_target_dim
-
-def init_real_next_obs(next_extracted_obs):
-    # Copy the next-extracted-obs
-    if isinstance(next_extracted_obs, torch.Tensor):
-        real_next_extracted_obs = next_extracted_obs.clone()
-    elif isinstance(next_extracted_obs, dict):
-        real_next_extracted_obs = dict()
-        for key, value in next_extracted_obs.items():
-            if value is None:
-                continue
-
-            # NOTE: this is only a temporal solution for pi...
-            if key == "prompt":
-                continue
-            assert isinstance(value, torch.Tensor), f"{key}, {type(value)}"
-            real_next_extracted_obs[key] = value.clone()
-    else:
-        raise NotImplementedError
-    return real_next_extracted_obs
-
-def update_real_next_obs(real_next_extracted_obs, final_extracted_obs, last_step_dones):
-    # Update the next-extracted-obs according to the final doness
-    if isinstance(real_next_extracted_obs, torch.Tensor):
-        dones_mask = expand_to_target_dim(last_step_dones, final_extracted_obs[key].shape)
-        dones_mask = dones_mask.expand_as(final_extracted_obs[key])
-        real_next_extracted_obs[dones_mask] = final_extracted_obs[dones_mask]
-    elif isinstance(real_next_extracted_obs, dict):
-        for key in real_next_extracted_obs.keys():
-            dones_mask = expand_to_target_dim(last_step_dones, final_extracted_obs[key].shape)
-            dones_mask = dones_mask.expand_as(final_extracted_obs[key])
-            real_next_extracted_obs[key][dones_mask] = final_extracted_obs[key][dones_mask]
-    return real_next_extracted_obs
+from rlinf.workers.rollout.hf.utils import (
+    init_real_next_obs, update_real_next_obs
+)
 
 class MultiStepRolloutWorker(Worker):
     def __init__(self, cfg: DictConfig):

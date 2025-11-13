@@ -200,8 +200,7 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
         chains = data["chains"]
         denoise_inds = data["denoise_inds"]
         # input transform
-        observation = self.input_transform(data)
-        observation = _model.Observation.from_dict(observation)
+        observation = _model.Observation.from_dict(data)
         images, img_masks, lang_tokens, lang_masks, state = (
             self._preprocess_observation(observation, train=False)
         )
@@ -253,9 +252,6 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
             "observation/state": raw_obs["states"],
             "prompt": raw_obs["task_descriptions"],
         }
-        return to_process_obs
-
-    def _preprocess_before_predict(self, to_process_obs):
         processed_obs = self.input_transform(to_process_obs)
         device = next(self.parameters()).device
         for key, value in processed_obs.items():
@@ -278,8 +274,7 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
     def predict_action_batch(
         self, env_obs, mode: Literal["train", "eval"] = "train", compute_values=True, return_obs=True
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
-        processed_env_obs = self._preprocess_before_predict(env_obs)
-        observation = _model.Observation.from_dict(processed_env_obs)
+        observation = _model.Observation.from_dict(env_obs)
         outputs = self.sample_actions(
             observation, mode=mode, compute_values=compute_values
         )
@@ -292,13 +287,7 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
             "denoise_inds": outputs["denoise_inds"],
         }
         if return_obs:
-            forward_inputs.update({
-                "observation/image": env_obs["observation/image"],
-                "observation/wrist_image": env_obs["observation/wrist_image"],
-                "observation/state": env_obs["observation/state"],
-                "tokenized_prompt": processed_env_obs["tokenized_prompt"],
-                "tokenized_prompt_mask": processed_env_obs["tokenized_prompt_mask"],
-            })
+            forward_inputs.update(env_obs)
 
         result = {
             "prev_logprobs": outputs["prev_logprobs"],
