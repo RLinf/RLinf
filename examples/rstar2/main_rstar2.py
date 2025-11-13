@@ -18,8 +18,8 @@ import hydra
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
-from rstar2.agent_loop.rstar2_agent_loop import Rstar2AgentLoopWorker
-from rstar2.tools.http_tool_worker import HttpToolWorker
+from rlinf.agents.rstar2.rstar2_agent_loop import Rstar2AgentLoopWorker
+from rlinf.agents.rstar2.http_tool_worker import HttpToolWorker
 from rlinf.config import validate_cfg
 from rlinf.data.datasets import create_rl_dataset
 from rlinf.data.tokenizers import hf_tokenizer

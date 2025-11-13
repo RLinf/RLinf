@@ -30,7 +30,7 @@ from rlinf.data.tool_call.tool_io_struct import ToolChannelRequest, ToolChannelR
 from rlinf.scheduler import Channel
 from rlinf.workers.agent.tool_worker import ToolWorker
 
-from multiturn_demo.tools.http_code_judge_tool import (
+from rlinf.agents.rstar2.http_code_judge_tool import (
     ToolBase,
     JupyterTool,
     LeanTool,

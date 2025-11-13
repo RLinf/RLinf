@@ -63,16 +63,22 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
         super().__init__(cfg, placement)
         if self.cfg.rollout.get("custom_chat_template", None) is not None:
             self.tokenizer.chat_template = cfg.rollout.custom_chat_template
+        
+        self.max_prompt_len = int(self.cfg.data.max_prompt_length)
+        max_total_len = int(self.cfg.actor.model.encoder_seq_length)
+        self.max_resp_len = max(1, max_total_len - self.max_prompt_len)
+        
+        self.return_logprobs = cfg.rollout.get("return_logprobs", False)
         self.max_user_turns = cfg.agentloop.get("max_user_turns", 5)
         self.max_assistant_turns = cfg.agentloop.get("max_assistant_turns", 5)
         self.max_parallel_calls = cfg.agentloop.get("max_parallel_calls", 3)
         self.max_tool_response_length = cfg.agentloop.get("max_tool_response_length", 500)
         self.tool_response_truncate_side = cfg.agentloop.get("tool_response_truncate_side", "right")
-        self.return_logprobs = cfg.agentloop.get("return_logprobs", False)
         self.apply_chat_template_kwargs = cfg.data.get("apply_chat_template_kwargs", {})
         self.system_prompt = self.tokenizer.apply_chat_template(
             [{}], add_generation_prompt=False, tokenize=True, **self.apply_chat_template_kwargs
         )
+        
         
     def generate_context_create(self) -> dict[str, Any]:
         return GenerateContext()
@@ -150,6 +156,15 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
                 result_text = json.dumps(response.result)
             else:
                 result_text = str(response.result)
+                
+            if result_text and len(result_text) > self.max_tool_response_length:
+                if self.tool_response_truncate_side == "left":
+                    result_text = result_text[: self.max_tool_response_length] + "...(truncated)"
+                elif self.tool_response_truncate_side == "right":
+                    result_text = "(truncated)..." + result_text[-self.max_tool_response_length :]
+                else:
+                    length = self.max_tool_response_length // 2
+                    result_text = result_text[:length] + "...(truncated)..." + result_text[-length:]
             return ToolResponse(text=result_text)
 
     async def extract_tool_call(self, text: str) -> tuple[str, list[FunctionCall | ToolChannelResponse]]:
@@ -205,23 +220,29 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
         # 5 is a magic number in this demo.
         while True:
             # Generate response from LLM
-            max_prompt_len = int(self.cfg.data.get("max_prompt_length", 1024))
-            max_total_len = int(self.cfg.actor.model.encoder_seq_length)
-            max_resp_len = max(1, max_total_len - max_prompt_len)
+            
+            max_resp_len = self.max_resp_len - (len(prompt_ids) - len(orig_prompt_ids))
 
-            if len(prompt_ids) > max_prompt_len:
-                prompt_ids = prompt_ids[-max_prompt_len:]
-
-            generate_result = await self.generate(prompt_ids)
+            generate_result = await self.generate(prompt_ids, sampling_params={"max_new_tokens": max_resp_len})
             response_ids = generate_result["output_ids"]
+            if self.return_logprobs:
+                generate_logprobs = generate_result["logprobs"]
             if len(response_ids) > max_resp_len:
                 response_ids = response_ids[:max_resp_len]
+                if self.return_logprobs:
+                    generate_logprobs = generate_logprobs[:max_resp_len]
+            
             response_text = self.tokenizer.decode(response_ids)
 
             prompt_ids += response_ids
             response_mask += [1] * len(response_ids)  # 1 for LLM generated tokens
+            if self.return_logprobs:
+                response_logprobs += generate_logprobs
             assistant_turns += 1
-            if len(response_mask) >= self.cfg.rollout.get("response_length", 1024):
+            if self.print_outputs:
+                # add anything you want to print
+                trace_prints.append({"generate": response_text})
+            if len(response_ids) == max_resp_len:
                 break
             if self.max_assistant_turns and assistant_turns >= self.max_assistant_turns:
                 break
@@ -264,24 +285,32 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
                 **self.apply_chat_template_kwargs,
             )
             tool_response_ids = tool_response_ids[len(self.system_prompt):]
-            if len(response_mask) + len(tool_response_ids) >= self.cfg.rollout.get("response_length", 1024):
+            max_tool_resp_len = self.max_resp_len - (
+                len(prompt_ids) - len(orig_prompt_ids)
+            )
+            if len(tool_response_ids) > max_tool_resp_len:
                 break
             prompt_ids += tool_response_ids
             response_mask += [0] * len(tool_response_ids)  # 0 for tool response tokens
+            if self.return_logprobs:
+                response_logprobs += [0.0] * len(tool_response_ids)
             if self.print_outputs:
                 # add anything you want to print
                 trace_prints.append(
                     {"generate": response_text, "tool_resp": tool_messages}
                 )
+
             user_turns += 1
 
         # Separate prompt and response
-        response_ids = prompt_ids[-len(orig_prompt_ids) :]
+        response_ids = prompt_ids[len(orig_prompt_ids) :]
 
         return AgentLoopOutput(
             prompt_ids=orig_prompt_ids,
             prompt_text=self.tokenizer.decode(orig_prompt_ids),
             response_ids=response_ids,
+            response_text=self.tokenizer.decode(response_ids),
             response_mask=response_mask,
+            response_logprobs=response_logprobs,
             trace_prints=trace_prints,
         )

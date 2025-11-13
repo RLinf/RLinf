@@ -9,11 +9,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    # actor,rollout,reward: all
-    rollout: 0-1
-    inference: 2
-    actor: 3
-    reward: 0-1
+    actor,rollout,reward: all
 
 runner:
   task_type: reasoning
@@ -31,12 +27,22 @@ runner:
 
   seq_length: 10240
 
-  enable_dynamic_batch_size: False
-  max_tokens_per_mbs: 2048
+  enable_dynamic_batch_size: True
+  max_tokens_per_mbs: 10240
 
   resume_dir: null
   experiment_name: rstar2-grpo-3b
-  output_dir: ../output_1106
+  output_dir: ../output_1111
+
+down_sampling:
+  do_down_sampling: true
+  down_sampling_config:
+    reject_equal_reward: true
+    roc_error_ratio: true
+    roc_answer_format: true
+    min_zero_reward_trace_num: 2
+    min_non_zero_reward_trace_num: 2
+    down_sample_to_n: 8
 
 algorithm:
   group_size: 16
@@ -53,7 +59,7 @@ algorithm:
   # val rollout mbs
   val_rollout_batch_size_per_gpu: 4 # ${.rollout_batch_size_per_gpu}
 
-  recompute_logprobs: True
+  recompute_logprobs: False
   shuffle_rollout: False
 
   # GRPO loss params
@@ -88,7 +94,7 @@ inference:
   group_name: "InferenceGroup"
   load_from_actor: True
   model:
-    tensor_model_parallel_size: 1
+    tensor_model_parallel_size: 2
     pipeline_model_parallel_size: 1
     sequence_parallel: False
 
@@ -104,10 +110,11 @@ agentloop:
 rollout:
   group_name: "RolloutGroup"
 
-  gpu_memory_utilization: 0.55
+  gpu_memory_utilization: 0.4
 
-  model_dir: /mnt/mnt/public/wangxiangyuan/hf_ckpt/Qwen/Qwen2.5-3B-Instruct/
+  model_dir: /mnt/mnt/public/zhuchunyang_rl/hf_models/Qwen2.5-1.5B-Instruct
   model_arch: qwen2.5
+  precision: ${actor.model.precision}
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
@@ -135,7 +142,7 @@ rollout:
 
   return_logprobs: ${not:${algorithm.recompute_logprobs}}
 
-  tensor_parallel_size: 1
+  tensor_parallel_size: 2
   pipeline_parallel_size: 1
   
   validate_weight: False # whether to send all weights at first for weight comparison.
@@ -180,7 +187,7 @@ actor:
   offload_optimizer: True
   offload_weight: True
   offload_grad: True
-  enable_dp_load_balance: False
+  enable_dp_load_balance: True
 
   calculate_flops: False
 
@@ -190,17 +197,17 @@ actor:
     precision: fp16
     add_bias_linear: False
 
-    tensor_model_parallel_size: 1
+    tensor_model_parallel_size: 2
     pipeline_model_parallel_size: 1
 
     activation: swiglu
-    sequence_parallel: False
+    sequence_parallel: True
     # recompute_method: block
     # recompute_granularity: selective
 
-    recompute_method: block
-    recompute_granularity: full
-    recompute_num_layers: 20
+    # recompute_method: block
+    # recompute_granularity: full
+    # recompute_num_layers: 20
 
     seq_length: ${runner.seq_length}
     encoder_seq_length: ${runner.seq_length}
@@ -235,6 +242,8 @@ actor:
     overlap_param_gather: False
     optimizer_enable_pin: false
     overlap_param_gather_with_optimizer_step: False
+    optimizer_cpu_offload: True
+    use_precision_aware_optimizer: True
     clip_grad: 0.8
     loss_scale: 65536
 
@@ -265,7 +274,7 @@ actor:
     use_profiler: False # if true, will enable torch profiler when training, pay attention it has influence on performance
 
     ckpt_convertor: # config for ckpt convertor
-      model: qwen_2.5_3b
+      model: qwen_2.5_1.5b
       model_type: null # will be set by hf model's config if null
       hf_model_path: ${rollout.model_dir} # path to the hf model
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
