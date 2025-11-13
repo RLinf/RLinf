@@ -53,18 +53,28 @@ class WMBackendBase(gym.Env, ABC):
 
         self.batch_size = self.cfg["batch_size"]
         self.num_prompt_frames = self.cfg["num_prompt_frames"]
+        self.gen_num_image_each_step = self.cfg["gen_num_image_each_step"]
 
     @abstractmethod
     def reset(
         self, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None
     ) -> tuple[Any, dict[str, Any]]:
         """
-        Resets the environment to its initial state.
+        Resets the environment to its initial state for all batch elements.
+
+        This method handles both full batch resets and selective environment resets.
+        It initializes episode data, loads start items from the dataset, and prepares
+        the initial observation state. The method supports both random episode selection
+        and specific episode IDs through options.
+
         Args:
-            seed: The random seed for the environment.
-            options: Additional options for resetting the environment.
+            seed: The random seed for deterministic episode selection.
+            options: Additional options for resetting the environment, including:
+                - episode_id: Specific episode IDs to load for each batch element
+                - env_idx: Specific environment indices to reset (partial reset)
+
         Returns:
-            A tuple containing the initial observation and a dictionary of info.
+            A tuple containing the initial observations and an empty info dictionary.
         """
         raise NotImplementedError
 
@@ -91,40 +101,79 @@ class WorldModelBackend(WMBackendBase):
         super().__init__(cfg, dataset, device)
 
         self.model = self._load_model()
-        self.episodes_current_frames: list[deque] = [
-            deque(maxlen=self.num_prompt_frames) for _ in range(self.batch_size)
+        self._init_episodes_structure()
+
+    def _init_episodes_structure(self):
+        """
+        Initializes the episodes structure.
+        episodes_history: pay attention that conditional frames and generated frames have different data structures.
+        """
+
+        self.episodes = [None] * self.batch_size
+        self.episodes_latest_frames: deque = deque(
+            [
+                [{} for _ in range(self.batch_size)]
+                for _ in range(self.gen_num_image_each_step)
+            ],
+            maxlen=self.gen_num_image_each_step,
+        )
+        self.episodes_history = [
+            deque(maxlen=self.num_prompt_frames + self.max_episode_steps)
+            for _ in range(self.batch_size)
         ]
 
     def _get_latest_obs_from_deques(self) -> dict[str, Any]:
         """
-        Retrieves the latest observation from the deques.
+        Retrieves the latest observations from the episode deques for all batch environments.
+
+        This method processes the latest frames from the episodes_latest_frames deque,
+        organizing camera images and state information into a structured format suitable
+        for model inference. It handles multi-camera setups and maintains task descriptions.
+
         Returns:
-            A dictionary containing the latest observations and task descriptions.
+            A list of dictionaries, each containing:
+                - images_and_states: Dictionary with camera images and state tensors
+                - task_descriptions: List of task descriptions for each batch element
         """
-        latest_obs_list = [d[-1] for d in self.episodes_current_frames]
 
-        images_and_states = {}
-        for camera_name in self.camera_names:
-            images_and_states[f"{camera_name}"] = torch.stack(
-                [obs[f"{camera_name}"] for obs in latest_obs_list], axis=0
+        return_obs = []
+        for episodes_latest_frame in self.episodes_latest_frames:
+            if not episodes_latest_frame:
+                continue
+            for obs in episodes_latest_frame:
+                assert obs, "episode_latest_frame cannot empty"
+
+            images_and_states = {}
+            for camera_name in self.camera_names:
+                images_and_states[f"{camera_name}"] = torch.stack(
+                    [obs[f"{camera_name}"] for obs in episodes_latest_frame], dim=0
+                )
+            images_and_states["state"] = torch.stack(
+                [obs["observation.state"] for obs in episodes_latest_frame], dim=0
             )
-        images_and_states["state"] = torch.stack(
-            [obs["observation.state"] for obs in latest_obs_list], axis=0
-        )
 
-        task_descriptions = [obs["task"] for obs in latest_obs_list]
+            task_descriptions = [obs["task"] for obs in episodes_latest_frame]
 
-        return {
-            "images_and_states": images_and_states,
-            "task_descriptions": task_descriptions,
-        }
+            obs = {
+                "images_and_states": images_and_states,
+                "task_descriptions": task_descriptions,
+            }
+            return_obs.append(obs)
+
+        return return_obs
 
     def _init_reset_state_ids(self, seed: int):
         """
-        Initializes the reset state IDs.
+        Initializes the reset state IDs for batch environment initialization.
+
+        This method creates a random number generator and generates random episode IDs
+        from the dataset for resetting the environments. It ensures deterministic
+        behavior when a seed is provided.
+
         Args:
-            seed: The random seed.
+            seed: The random seed for deterministic episode selection.
         """
+
         self._generator = torch.Generator()
         self._generator.manual_seed(seed)
         self._reset_state_ids = torch.randint(
@@ -139,55 +188,83 @@ class WorldModelBackend(WMBackendBase):
         """Loads the reward model."""
         pass
 
-    def _infer_next_frame(self, action: Any) -> Any:
+    def _infer_next_frames(self, actions: torch.Tensor) -> Any:
         """
-        (Initial implementation) Generates the next frame based on the given action.
+        (Initial implementation) Generates the next frames based on the given actions for all batch environments.
 
-        This is a preliminary implementation for pipeline testing purposes. It generates a
-        new observation by creating a random tensor with the same shape as the previous
-        one.
+        This is a preliminary implementation for pipeline testing purposes. It generates
+        random observations with the same structure as the latest observations, including
+        camera images and state information for each batch element.
 
         Args:
-            action: The action to take.
+            actions: The actions to take for each batch element.
 
         Returns:
-            The generated next frame.
+            A list of new observation lists, each containing dictionaries with camera
+            images, state tensors, and task descriptions for all batch elements.
         """
-        latest_obs_list = [d[-1] for d in self.episodes_current_frames]
-        new_obs_list = []
-        for i in range(self.batch_size):
-            new_obs = {}
-            latest_obs = latest_obs_list[i]
-            for camera_name in self.camera_names:
-                image_tensor = latest_obs[f"{camera_name}"]
-                new_obs[f"{camera_name}"] = torch.rand_like(image_tensor)
 
-            state_tensor = latest_obs["observation.state"]
-            new_obs["observation.state"] = torch.rand_like(state_tensor)
+        latest_obs_list = self.episodes_latest_frames[-1]
+        return_obs_list = []
 
-            new_obs["task"] = latest_obs["task"]
-            new_obs_list.append(new_obs)
+        for _ in range(self.gen_num_image_each_step):
+            new_obs_list = []
+            for i in range(self.batch_size):
+                new_obs = {}
+                latest_obs = latest_obs_list[i]
+                for camera_name in self.camera_names:
+                    new_obs[f"{camera_name}"] = torch.rand_like(
+                        latest_obs[f"{camera_name}"]
+                    )
 
-        return new_obs_list
+                state_tensor = latest_obs["observation.state"]
+                new_obs["observation.state"] = torch.rand_like(state_tensor)
 
-    def _infer_next_reward(self, new_obs_list: list[dict[str, Any]]) -> torch.Tensor:
+                new_obs["task"] = latest_obs["task"]
+                new_obs_list.append(new_obs)
+            return_obs_list.append(new_obs_list)
+
+        return return_obs_list
+
+    def _infer_next_rewards(
+        self, new_obs_list: list[dict[str, Any]], info: dict[str, Any]
+    ) -> torch.Tensor:
         """
-        (Initial implementation) Infers the reward for the next step based on the new
-        observation.
+        (Initial implementation) Infers the rewards for the next step based on the new observations.
 
-        This is a preliminary implementation for pipeline testing purposes. It returns a
-        random reward.
+        This is a preliminary implementation for pipeline testing purposes. It generates
+        random reward values for each batch element independently.
 
         Args:
-            new_obs_list: The list of new observations.
+            new_obs_list: The list of new observations for each batch element.
+            info: Additional information dictionary (currently unused).
 
         Returns:
-            The inferred reward for the next step.
+            A tensor containing the inferred rewards for all batch elements.
         """
         return torch.rand(self.batch_size, dtype=torch.float32, device=self.device)
 
-    def _calc_terminated(self) -> torch.Tensor:
-        """(Initial implementation) Calculates the terminated flag."""
+    def _calc_terminated(
+        self,
+        new_obs_list: list[dict[str, Any]],
+        reward_list: torch.Tensor,
+        info: dict[str, Any],
+    ) -> torch.Tensor:
+        """
+        (Initial implementation) Calculates the terminated flags for all batch environments.
+
+        This is a preliminary implementation for pipeline testing purposes. It generates
+        random boolean values to determine if episodes should terminate for each batch
+        element independently.
+
+        Args:
+            new_obs_list: The list of new observations for each batch element.
+            reward_list: The tensor of rewards for each batch element.
+            info: Additional information dictionary (currently unused).
+
+        Returns:
+            A boolean tensor indicating whether each batch element's episode is terminated.
+        """
         return (
             torch.rand(self.batch_size, dtype=torch.float32, device=self.device) > 0.5
         )
@@ -203,8 +280,21 @@ class WorldModelBackend(WMBackendBase):
         Returns:
             A tuple containing the initial observation and a dictionary of info.
         """
+
+        def _padding_or_truncate_start_items(start_items: list[dict[str, Any]]):
+            """Padding or truncate the start_items to the gen_num_image_each_step."""
+            if len(start_items) < self.gen_num_image_each_step:
+                start_items = start_items + [start_items[-1]] * (
+                    self.gen_num_image_each_step - len(start_items)
+                )
+            elif len(start_items) > self.gen_num_image_each_step:
+                start_items = start_items[-self.gen_num_image_each_step :]
+            return start_items
+
         if seed is None:
             seed = 0
+
+        options = options or {}
 
         if "episode_id" not in options:
             self._init_reset_state_ids(seed)
@@ -214,46 +304,96 @@ class WorldModelBackend(WMBackendBase):
             episode_ids = options["episode_id"][: len(env_idx)]
             for i, episode_id in zip(env_idx, episode_ids):
                 self.episodes[i] = self.dataset[int(episode_id)]
-                self.episodes_current_frames[i].clear()
+                for j in range(self.gen_num_image_each_step):
+                    self.episodes_latest_frames[j][i] = {}
+                self.episodes_history[i].clear()
+
+                start_items = _padding_or_truncate_start_items(
+                    self.episodes[i]["start_items"]
+                )
+                for j, frame in enumerate(start_items):
+                    self.episodes_latest_frames[j][i] = frame
                 for frame in self.episodes[i]["start_items"]:
-                    self.episodes_current_frames[i].append(frame)
+                    self.episodes_history[i].append(frame)
 
             return self._get_latest_obs_from_deques(), {}
 
+        self._init_episodes_structure()
+
         episode_ids = options["episode_id"]
         self.episodes = [self.dataset[int(episode_id)] for episode_id in episode_ids]
+        assert len(self.episodes) == self.batch_size
 
         for i, episode in enumerate(self.episodes):
-            self.episodes_current_frames[i].clear()
-            for frame in episode["start_items"]:
-                self.episodes_current_frames[i].append(frame)
+            start_items = _padding_or_truncate_start_items(episode["start_items"])
+            for j, frame in enumerate(start_items):
+                self.episodes_latest_frames[j][i] = frame
+            for frame in self.episodes[i]["start_items"]:
+                self.episodes_history[i].append(frame)
 
         self.current_step = 0
         return self._get_latest_obs_from_deques(), {}
 
-    def step(self, action: Any) -> tuple[Any, float, bool, bool, dict[str, Any]]:
+    def step(
+        self, actions: torch.Tensor
+    ) -> tuple[Any, float, bool, bool, dict[str, Any]]:
         """
-        Takes a step in the environment.
+        Takes a step in the environment for all batch elements.
+
+        This method generates the next observations, calculates rewards, determines
+        termination conditions, and updates the episode history for each batch element.
+        It handles multiple frames per step and maintains proper episode tracking.
+
         Args:
-            action: The action to take.
+            actions: The actions to take for each batch element.
+
         Returns:
-            A tuple containing the next observation, reward, terminated flag,
-            truncated flag, and a dictionary of info.
+            A tuple containing:
+                - Latest observations from the updated deques
+                - Stacked reward tensor for all generated frames
+                - Stacked termination flags for all generated frames
+                - Stacked truncation flags for all generated frames
+                - List of info dictionaries for each generated frame
         """
-        self.current_step += 1
 
-        new_obs_list = self._infer_next_frame(action)
-        for i in range(self.batch_size):
-            self.episodes_current_frames[i].append(new_obs_list[i])
-        reward = self._infer_next_reward(new_obs_list)
+        new_obs_list = self._infer_next_frames(actions)
 
-        terminated = self._calc_terminated()
-        truncated = (
-            torch.zeros(self.batch_size, dtype=torch.bool, device=self.device)
-            if self.current_step <= self.max_episode_steps
-            else torch.ones(self.batch_size, dtype=torch.bool, device=self.device)
+        reward_list, terminated_list, truncated_list, info_list = [], [], [], []
+
+        for i in range(self.gen_num_image_each_step):
+            self.episodes_latest_frames.append(new_obs_list[i])
+            info = {}
+            reward_list.append(self._infer_next_rewards(new_obs_list[i], info))
+            terminated_list.append(
+                self._calc_terminated(new_obs_list[i], reward_list[i], info)
+            )
+            truncated_list.append(
+                torch.zeros(self.batch_size, dtype=torch.bool, device=self.device)
+                if self.current_step <= self.max_episode_steps
+                else torch.ones(self.batch_size, dtype=torch.bool, device=self.device)
+            )
+            info_list.append(info)
+
+            for j in range(self.batch_size):
+                step_data = {
+                    "observation": new_obs_list[i][j],
+                    "action": actions[j],
+                    "reward": reward_list[i][j].item(),
+                    "terminated": terminated_list[i][j].item(),
+                    "truncated": truncated_list[i][j].item(),
+                }
+                self.episodes_history[j].append(step_data)
+
+            self.current_step += 1
+
+        reward = torch.stack(reward_list, dim=0)
+        terminated = torch.stack(terminated_list, dim=0)
+        truncated = torch.stack(truncated_list, dim=0)
+
+        return (
+            self._get_latest_obs_from_deques(),
+            reward,
+            terminated,
+            truncated,
+            info_list,
         )
-
-        info = {"raw_reward": reward, "raw_terminated": terminated}
-
-        return self._get_latest_obs_from_deques(), reward, terminated, truncated, info
