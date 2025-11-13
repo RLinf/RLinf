@@ -58,7 +58,7 @@ class MLPPolicy(BasePolicy):
                 hidden_dims=[256, 256, 256], 
                 num_q_heads=2, 
                 action_dim=action_dim,
-                use_separate_processing=False
+                use_mix_embedding_input=False
             )
 
         self.final_tanh = final_tanh

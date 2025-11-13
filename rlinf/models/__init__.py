@@ -165,6 +165,7 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
             num_action_chunks=cfg.num_action_chunks,
             trust_remote_code=True,
             add_value_head=cfg.add_value_head,
+            add_q_head=cfg.add_q_head
         )
 
         # oft add
@@ -310,6 +311,10 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
 
         if hasattr(model, "value_head"):
             for param in model.value_head.parameters():
+                param.requires_grad = True
+        
+        if hasattr(model, "q_head"):
+            for param in model.q_head.parameters():
                 param.requires_grad = True
 
     if hasattr(cfg, "ckpt_path") and cfg.ckpt_path is not None:

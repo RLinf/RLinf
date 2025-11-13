@@ -26,13 +26,13 @@ class QHead(nn.Module):
         - Action pathway: projects from action_dim to 256
         - Fusion: concatenate [256, 256] -> 512 -> 256 -> 128 -> 1
     """
-    def __init__(self, hidden_size, action_dim, hidden_dims, output_dim=1, use_separate_processing=True):
+    def __init__(self, hidden_size, action_dim, hidden_dims, output_dim=1, use_mix_embedding_input=True):
         super().__init__()
         self.hidden_size = hidden_size
         self.action_dim = action_dim
-        self.use_separate_processing = use_separate_processing
+        self.use_mix_embedding_input = use_mix_embedding_input
         
-        if use_separate_processing:
+        if use_mix_embedding_input:
             raise NotImplementedError
         else:
             self.net = make_mlp(
@@ -46,7 +46,7 @@ class QHead(nn.Module):
 
     def _init_weights(self):
         """Initialize weights using Xavier/Kaiming initialization"""
-        if self.use_separate_processing:
+        if self.use_mix_embedding_input:
             # Initialize state and action projection layers
             for module in [self.state_proj, self.action_proj]:
                 for layer in module:
@@ -80,7 +80,7 @@ class QHead(nn.Module):
         Returns:
             torch.Tensor: Q-values [batch_size, output_dim]
         """
-        if self.use_separate_processing:
+        if self.use_mix_embedding_input:
             raise NotImplementedError
         else:
             # Original simple concatenation
@@ -100,7 +100,7 @@ class MultiQHead(nn.Module):
             hidden_dims, 
             num_q_heads=2, 
             output_dim=1, 
-            use_separate_processing=True, 
+            use_mix_embedding_input=True, 
         ):
         super().__init__()
 
@@ -108,7 +108,7 @@ class MultiQHead(nn.Module):
         qs = []
         for q_id in range(self.num_q_heads):
             qs.append(
-                QHead(hidden_size, action_dim, hidden_dims, output_dim, use_separate_processing)
+                QHead(hidden_size, action_dim, hidden_dims, output_dim, use_mix_embedding_input)
             )
         self.qs = nn.ModuleList(qs)
 

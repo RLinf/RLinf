@@ -137,7 +137,7 @@ actor:
 
   model:
     model_name: "mlp"
-    policy_setup: "panda-ee"
+    policy_setup: "panda-ee-dpos"
     obs_dim: 42
     action_dim: 4
     num_action_chunks: 1

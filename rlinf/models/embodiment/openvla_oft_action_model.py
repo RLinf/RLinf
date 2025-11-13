@@ -35,11 +35,13 @@ from rlinf.models.embodiment.model_utils import (
     compute_logprobs_from_logits,
 )
 from rlinf.models.embodiment.modules.value_head import ValueHead
+from rlinf.models.embodiment.modules.q_head import MultiQHead
 from rlinf.models.embodiment.base_policy import BasePolicy
 
 class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction):
     def __init__(
-        self, config: OpenVLAOFTConfig, action_dim, num_action_chunks, add_value_head
+        self, config: OpenVLAOFTConfig, action_dim, num_action_chunks, 
+        add_value_head, add_q_head
     ) -> None:
         super().__init__(config)
 
@@ -67,6 +69,19 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
                 output_dim=output_dim,
                 activation="gelu",
                 bias_last=False,
+            )
+        
+        if add_q_head:
+            self.hidden_size = self.config.hidden_size
+            output_dim = (
+                1 if self.config.value_type == "chunk_level" else self.num_action_chunks
+            )
+            self.q_head = MultiQHead(
+                hidden_size=self.hidden_size,
+                action_dim=self.action_dim * self.num_action_chunks, 
+                hidden_dims=[256, 256, 256], 
+                num_q_heads=2, 
+                use_mix_embedding_input=False
             )
 
     def _build_embedding(self, input_ids, attention_mask, pixel_values):
@@ -422,6 +437,184 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
         self.max_prompt_length = cfg.runner.max_prompt_length
 
         self.input_processor = input_processor
+
+    def sac_forward(
+            self, 
+            obs,
+            attention_mask: torch.Tensor = None,
+            pixel_values: torch.FloatTensor = None,
+            output_hidden_states: bool = False,
+            **kwargs
+        ):
+
+        input_ids = obs["input_ids"]
+        attention_mask = obs["attention_mask"]
+        pixel_values = obs["pixel_values"]
+
+        # assert first token is 1
+        assert torch.all(input_ids[:, 0] == 1)
+        assert torch.all(attention_mask[:, 0] == 1)
+        # last token is space ` `
+        assert torch.all(input_ids[:, -1] == 29871)
+        assert torch.all(attention_mask[:, -1] == 1)
+
+        n_prompt_tokens = input_ids.shape[-1] - 1
+        # Calculate number of patches (including proprio token and/or diffusion timestep embedding if present)
+        n_patches = (
+            self.vision_backbone.get_num_patches()
+            * self.vision_backbone.get_num_images_in_input()
+        )
+
+        # llm inputs
+        input_ids, attention_mask = self._prepare_input_for_action_prediction(
+            input_ids, attention_mask
+        )
+        assert torch.all(input_ids[:, -1] == STOP_INDEX)  # [B, L + act + 1, D]
+        assert torch.all(
+            attention_mask[:, -1 - self.action_dim * self.num_action_chunks :] == 1
+        )  # [B, L + act + 1]
+
+        # multimodal
+        mm_embeddings, mm_attention_mask = self._build_embedding(
+            input_ids, attention_mask, pixel_values
+        )
+        multimodal_position_ids = mm_attention_mask.cumsum(dim=1) - 1
+
+        # Forward pass through language model
+        outputs = self.language_model(
+            input_ids=None,
+            attention_mask=mm_attention_mask,
+            position_ids=multimodal_position_ids,
+            past_key_values=None,
+            inputs_embeds=mm_embeddings,
+            labels=None,
+            use_cache=None,
+            output_attentions=False,
+            output_hidden_states=True,
+            return_dict=True,
+        )
+
+        # Extract hidden states for action tokens
+        last_hidden_states = outputs.hidden_states[-1]  # (B, seq_len, D)
+        assert last_hidden_states.shape[1] == mm_embeddings.shape[1]
+
+        logits_tensor = outputs.logits[
+            :,
+            n_patches + n_prompt_tokens : n_patches
+            + n_prompt_tokens
+            + self.action_dim * self.num_action_chunks,
+            :,
+        ]  # [B, act, vocab_size + 64]
+
+        last_hidden_states = last_hidden_states[
+            :, -self.action_dim * self.num_action_chunks - 1 : -1
+        ]
+
+        logits_tensor[..., : self.vocab_size - self.config.n_action_bins] = -torch.inf
+        logits_tensor[..., self.vocab_size :] = -torch.inf
+
+        processed_logits_tensor = logits_tensor / kwargs["temperature"]
+        top_k = min(kwargs["top_k"], processed_logits_tensor.size(-1))  # Safety check
+        if top_k > 0:
+            logits_warper = TopKLogitsWarper(
+                top_k
+            )  # since here is logprob instead of logits, we use 0 instead of -inf
+            processed_logits_tensor = logits_warper(None, processed_logits_tensor)
+
+
+        idxs = F.gumbel_softmax(
+            processed_logits_tensor, dim=-1
+        )# [B, act, ]
+
+        # assert torch.all(idxs >= 0) and torch.all(idxs < self.config.n_action_bins)
+        # generated_ids = idxs + (self.vocab_size - self.config.n_action_bins)
+        assert torch.all(
+            idxs >= self.vocab_size - self.config.n_action_bins
+        ) and torch.all(idxs < self.vocab_size)
+
+        chunk_action_tokens = idxs.reshape(-1, self.action_dim)
+        
+        action_logits = processed_logits_tensor.permute(
+            0, 2, 1
+        )  # [B, vocab-size, action-dim]
+        action_logits[:, : self.vocab_size - self.config.n_action_bins] = -torch.inf
+        action_logits[:, self.vocab_size :] = -torch.inf
+
+        chunk_logprobs = compute_logprobs_from_logits(logits=action_logits, target=idxs)
+
+        chunk_action_tokens = idxs.reshape(-1, self.num_action_chunks, self.action_dim)
+        return chunk_action_tokens, chunk_logprobs, last_hidden_states[:, 0]
+
+    def get_feature(self, obs, detach_encoder=False):
+        input_ids = obs["input_ids"]
+        attention_mask = obs["attention_mask"]
+        pixel_values = obs["pixel_values"]
+
+        action_tokens = obs["action_tokens"]
+
+        assert torch.all(input_ids[:, 0] == 1)
+        assert torch.all(attention_mask[:, 0] == 1)
+        # last token is space ` `
+        assert torch.all(input_ids[:, -1] == 29871)
+        assert torch.all(attention_mask[:, -1] == 1)
+
+        attention_mask = attention_mask.to(torch.long)
+        # llm inputs
+        input_ids, attention_mask = self._prepare_input_for_action_prediction(
+            input_ids, attention_mask
+        )
+        assert torch.all(input_ids[:, -1] == STOP_INDEX)  # [B, L + act + 1, D]
+        assert torch.all(
+            input_ids[:, -self.action_dim * self.num_action_chunks - 2] == 29871
+        )
+        assert torch.all(
+            attention_mask[:, -2 - self.action_dim * self.num_action_chunks :] == 1
+        )  # [B, L + act + 1]
+
+        # multimodal
+        mm_embeddings, mm_attention_mask = self._build_embedding(
+            input_ids, attention_mask, pixel_values
+        )
+        multimodal_position_ids = mm_attention_mask.cumsum(dim=1) - 1
+
+        # Forward pass through language model
+        outputs = self.language_model(
+            input_ids=None,
+            attention_mask=mm_attention_mask,
+            position_ids=multimodal_position_ids,
+            past_key_values=None,
+            inputs_embeds=mm_embeddings,
+            labels=None,
+            use_cache=None,
+            output_attentions=False,
+            output_hidden_states=True,
+            return_dict=True,
+        )
+
+        last_hidden_state = outputs.hidden_states[-1]
+        hidden_features = last_hidden_state[
+            :, -self.action_dim * self.num_action_chunks - 1
+        ]  # [batch_size, hidden_dim]
+        return hidden_features
+    
+    def get_q_values(self, obs, actions, shared_feature=None, detach_encoder=False):
+        """
+        actions should be token. 
+        """
+        if shared_feature is None:
+            shared_feature = self.get_feature(obs, detach_encoder=detach_encoder)
+        
+        # actions to some continuous value. just for q-values, no physically meaning
+        float_actions = ((
+            (actions - (self.vocab_size - self.config.n_action_bins)) / self.config.n_action_bins
+        ) - 0.5) * 2
+
+
+        if detach_encoder:
+            shared_feature = shared_feature.detach()
+        return self.q_head(state_features=shared_feature, action_features=float_actions)
+    
+
 
     def default_forward(
         self,

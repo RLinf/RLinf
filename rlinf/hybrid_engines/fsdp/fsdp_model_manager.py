@@ -201,6 +201,13 @@ class FSDPModelManager:
             is_lora=self._cfg.model.is_lora,
             is_vla_model=is_vla_model,
         )
+        if initialize_target:
+            target_auto_wrap_policy = get_fsdp_wrap_policy(
+                module=target_module,
+                config=None,
+                is_lora=self._cfg.model.is_lora,
+                is_vla_model=is_vla_model,
+            )
 
         if self._cfg.fsdp_config.backward_prefetch is None:
             backward_prefetch = None
@@ -227,12 +234,10 @@ class FSDPModelManager:
         )
 
         if initialize_target:
-            target_module.requires_grad_(False)
-            
             self.target_model = FSDP(
                 target_module,
                 param_init_fn=init_fn,
-                auto_wrap_policy=auto_wrap_policy,
+                auto_wrap_policy=target_auto_wrap_policy,
                 device_id=int(os.environ["LOCAL_RANK"]),
                 sharding_strategy=sharding_strategy,  # zero3
                 mixed_precision=mixed_precision,
@@ -242,6 +247,7 @@ class FSDPModelManager:
                 limit_all_gathers=self._cfg.fsdp_config.limit_all_gathers,
                 use_orig_params=self._cfg.fsdp_config.use_orig_params,
             )
+            self.target_model.requires_grad_(False)
             self.target_model_initialized = True
 
         self.build_optimizer(enable_warmup=self.critic_warmup_steps > 0)

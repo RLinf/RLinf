@@ -144,7 +144,7 @@ actor:
 
   model:
     model_name: "cnn"
-    policy_setup: "panda-ee"
+    policy_setup: "panda-ee-dpos"
     image_keys: ["base_camera", ]
     image_size: [3, 128, 128]
     state_dim: 29

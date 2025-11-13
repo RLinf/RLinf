@@ -45,7 +45,7 @@ algorithm:
   group_size: 1
   n_chunk_steps: 100
   n_eval_chunk_steps: 50
-  num_group_envs: 256
+  num_group_envs: 1024
   rollout_epoch: 1
   reward_type: action_level
   logprob_type: action_level
@@ -117,7 +117,7 @@ actor:
 
   model:
     model_name: "cnn"
-    policy_setup: "panda-ee"
+    policy_setup: "panda-ee-dpos"
     image_keys: ["base_camera", ]
     image_size: [3, 64, 64]
     state_dim: 29
