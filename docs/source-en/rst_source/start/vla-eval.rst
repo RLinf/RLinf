@@ -207,7 +207,7 @@ Environments
    * - Environment
      - Brief Description
    * - ``ManiSkill3``
-     - A high-fidelity MuJoCo-based simulator covering diverse
+     - A high-fidelity SAPIEN-based simulator covering diverse
        manipulation skills (grasp, place, push).  Evaluation focuses on
        **Put-on-Plate** tasks with multiple OOD texture/object splits.
    * - ``LIBERO``
