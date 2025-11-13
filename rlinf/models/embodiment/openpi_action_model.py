@@ -253,6 +253,9 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
             "observation/state": raw_obs["states"],
             "prompt": raw_obs["task_descriptions"],
         }
+        return to_process_obs
+
+    def _preprocess_before_predict(self, to_process_obs):
         processed_obs = self.input_transform(to_process_obs)
         device = next(self.parameters()).device
         for key, value in processed_obs.items():
@@ -270,16 +273,13 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
                     processed_obs[key][sub_key] = sub_value.to(
                         device=device
                     ).contiguous()
-        
-        processed_obs["images"] = raw_obs["images"]
-        processed_obs["wrist_images"] = raw_obs["wrist_images"]
-        processed_obs["states"] = raw_obs["states"]
         return processed_obs 
 
     def predict_action_batch(
         self, env_obs, mode: Literal["train", "eval"] = "train", compute_values=True, return_obs=True
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
-        observation = _model.Observation.from_dict(env_obs)
+        processed_env_obs = self._preprocess_before_predict(env_obs)
+        observation = _model.Observation.from_dict(processed_env_obs)
         outputs = self.sample_actions(
             observation, mode=mode, compute_values=compute_values
         )
@@ -293,11 +293,11 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
         }
         if return_obs:
             forward_inputs.update({
-                "observation/image": env_obs["images"],
-                "observation/wrist_image": env_obs["wrist_images"],
-                "observation/state": env_obs["states"],
-                "tokenized_prompt": env_obs["tokenized_prompt"],
-                "tokenized_prompt_mask": env_obs["tokenized_prompt_mask"],
+                "observation/image": env_obs["observation/image"],
+                "observation/wrist_image": env_obs["observation/wrist_image"],
+                "observation/state": env_obs["observation/state"],
+                "tokenized_prompt": processed_env_obs["tokenized_prompt"],
+                "tokenized_prompt_mask": processed_env_obs["tokenized_prompt_mask"],
             })
 
         result = {

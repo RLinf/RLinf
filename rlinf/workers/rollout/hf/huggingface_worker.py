@@ -35,6 +35,10 @@ def init_real_next_obs(next_extracted_obs):
         for key, value in next_extracted_obs.items():
             if value is None:
                 continue
+
+            # NOTE: this is only a temporal solution for pi...
+            if key == "prompt":
+                continue
             assert isinstance(value, torch.Tensor), f"{key}, {type(value)}"
             real_next_extracted_obs[key] = value.clone()
     else:
@@ -192,14 +196,14 @@ class MultiStepRolloutWorker(Worker):
                 for i in range(self.stage_num):
                     env_output = await self.recv_env_output()
 
-                    next_extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"]) # 但这里没有 final obs
-                    real_next_extracted_obs = self.update_env_output(i, env_output, next_extracted_obs) # 这里处理了 final obs
+                    next_extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"])
+                    real_next_extracted_obs = self.update_env_output(i, env_output, next_extracted_obs)
 
                     predict = False \
                          if self.random_predict_steps > 0 \
                             and self.all_cumulated_steps[i] < self.random_predict_steps \
                          else True
-                    actions, result = self.predict(next_extracted_obs, predict=predict) # results 里面才包含这一步 obs 的格式
+                    actions, result = self.predict(next_extracted_obs, predict=predict)
                     self.all_cumulated_steps[i] += actions.shape[0]
 
 
