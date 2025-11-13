@@ -386,14 +386,10 @@ class WorldModelBackend(WMBackendBase):
 
             self.current_step += 1
 
-        reward = torch.stack(reward_list, dim=0)
-        terminated = torch.stack(terminated_list, dim=0)
-        truncated = torch.stack(truncated_list, dim=0)
-
         return (
             self._get_latest_obs_from_deques(),
-            reward,
-            terminated,
-            truncated,
+            reward_list,
+            terminated_list,
+            truncated_list,
             info_list,
         )

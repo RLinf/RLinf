@@ -4,7 +4,7 @@ task_suite_name: unitreerobotics/G1_Dex1_MountCameraRedGripper_Dataset
 
 seed: 0
 auto_reset: False
-ignore_terminations: False
+ignore_terminations: True
 max_episode_steps: 512
 use_fixed_reset_state_ids: True
 
@@ -14,7 +14,7 @@ num_envs: ${multiply:${group_size}, ${num_group}}
 use_rel_reward: True
 reward_coef: 5.0
 only_eval: False
-gen_num_image_each_step: 1
+gen_num_image_each_step: 2
 
 video_cfg:
   save_video: True
@@ -36,3 +36,4 @@ backend_cfg:
   batch_size: ${num_envs}
   num_prompt_frames: 4
   max_episode_steps: ${max_episode_steps}
+  gen_num_image_each_step: ${gen_num_image_each_step}
