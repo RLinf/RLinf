@@ -89,9 +89,9 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
           <ul>
             <li>Qwen2.5-VL</li>
           </ul>
-          <li><b>Small Model</b></li>
+          <li><b>Custom Models</b></li>
           <ul>
-            <li>MLP</li>
+            <li>MLP-Policy</li>
           </ul>
         </ul>
       </td>
