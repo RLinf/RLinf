@@ -116,7 +116,7 @@ actor:
   enable_offload: False
 
   model:
-    model_name: "mlp-policy"
+    model_name: "mlp_policy"
     policy_setup: "panda-qpos"
     obs_dim: 42
     action_dim: 8

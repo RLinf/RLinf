@@ -253,7 +253,7 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
             ],
         )
 
-    elif cfg.model_name == "mlp-policy":
+    elif cfg.model_name == "mlp_policy":
         from .embodiment.mlp_policy import MLPPolicy
 
         model = MLPPolicy(
