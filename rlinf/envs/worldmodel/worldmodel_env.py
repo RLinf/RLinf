@@ -341,7 +341,9 @@ class WorldModelEnv(gym.Env):
         _auto_reset = auto_reset and self.auto_reset
 
         if dones.any() and _auto_reset:
-            new_obs, infos[-1] = self._handle_auto_reset(dones, new_obs[-1], infos[-1])
+            new_obs[-1], infos[-1] = self._handle_auto_reset(
+                dones, new_obs[-1], infos[-1]
+            )
 
         if self.video_cfg.save_video:
             self.add_new_frames(new_obs, infos)
