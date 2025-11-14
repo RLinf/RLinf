@@ -128,7 +128,7 @@ GR00T-N1.5直接将环境提供的自然语言任务描述作为语言模型的�
 
    # 方法1：使用git clone
    git lfs install
-   git clone https://huggingface.co/RLinf/Gr00t_Libero_Spatial_Fewshot_SFT
+   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatials
 
    # 方法2：使用huggingface-hub
    pip install huggingface-hub

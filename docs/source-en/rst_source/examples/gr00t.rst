@@ -147,7 +147,7 @@ This model is designed specifically for libero spatial task types.
    # Download the libero spatial few-shot SFT model (choose either method)
    # Method 1: Using git clone
    git lfs install
-   git clone https://huggingface.co/RLinf/Gr00t_Libero_Spatial_Fewshot_SFT
+   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
