@@ -90,7 +90,7 @@ class ManiskillWidowXDataConfig(BaseDataConfig):
         return ComposedModalityTransform(transforms=transforms)
 
 
-class LiberoDataConfig(BaseDataConfig):
+class LiberoFrankaDataConfig(BaseDataConfig):
     video_keys = [
         "video.image",
         "video.wrist_image",

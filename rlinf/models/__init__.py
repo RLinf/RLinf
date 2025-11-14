@@ -274,17 +274,30 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
 
         from pathlib import Path
 
+        from rlinf.utils.patcher import Patcher
+
+        Patcher.clear()
+        Patcher.add_patch(
+            "gr00t.data.embodiment_tags.EmbodimentTag",
+            "rlinf.models.embodiment.gr00t.embodiment_tags.EmbodimentTag",
+        )
+        Patcher.add_patch(
+            "gr00t.data.embodiment_tags.EMBODIMENT_TAG_MAPPING",
+            "rlinf.models.embodiment.gr00t.embodiment_tags.EMBODIMENT_TAG_MAPPING",
+        )
+        Patcher.apply()
+
         from gr00t.experiment.data_config import load_data_config
 
         from rlinf.models.embodiment.gr00t.utils import replace_dropout_with_identity
 
         from .embodiment.gr00t_action_model import GR00T_N1_5_ForRLActionPrediction
 
-        if cfg.embodiment_tag == "new_embodiment":
+        if cfg.embodiment_tag == "libero_franka":
             data_config = load_data_config(
-                "rlinf.models.embodiment.gr00t.modality_config:LiberoDataConfig"
+                "rlinf.models.embodiment.gr00t.modality_config:LiberoFrankaDataConfig"
             )
-        elif cfg.embodiment_tag == "gr1":
+        elif cfg.embodiment_tag == "maniskill_widowx":
             data_config = load_data_config(
                 "rlinf.models.embodiment.gr00t.modality_config:ManiskillWidowXDataConfig"
             )

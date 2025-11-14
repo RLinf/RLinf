@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import hashlib
-from typing import Union
+from typing import Any, Union
 
 import numpy as np
 import torch
@@ -91,3 +91,37 @@ def replace_dropout_with_identity(model):
                 parent_module = model
                 child_name = name
             setattr(parent_module, child_name, nn.Identity())
+
+
+# Helper functions
+def unsqueeze_dict_values(data: dict[str, Any]) -> dict[str, Any]:
+    """
+    Unsqueeze the values of a dictionary.
+    This converts the data to be batched of size 1.
+    """
+    unsqueezed_data = {}
+    for k, v in data.items():
+        if isinstance(v, np.ndarray):
+            unsqueezed_data[k] = np.expand_dims(v, axis=0)
+        elif isinstance(v, list):
+            unsqueezed_data[k] = np.expand_dims(np.array(v), axis=0)  # Fixed
+        elif isinstance(v, torch.Tensor):
+            unsqueezed_data[k] = v.unsqueeze(0)
+        else:
+            unsqueezed_data[k] = v
+    return unsqueezed_data
+
+
+def squeeze_dict_values(data: dict[str, Any]) -> dict[str, Any]:
+    """
+    Squeeze the values of a dictionary. This removes the batch dimension.
+    """
+    squeezed_data = {}
+    for k, v in data.items():
+        if isinstance(v, np.ndarray):
+            squeezed_data[k] = np.squeeze(v, axis=0)  # Fixed: only remove batch dim
+        elif isinstance(v, torch.Tensor):
+            squeezed_data[k] = v.squeeze(0)  # Fixed: only remove batch dim
+        else:
+            squeezed_data[k] = v
+    return squeezed_data

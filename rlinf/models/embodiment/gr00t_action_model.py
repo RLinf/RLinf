@@ -13,16 +13,12 @@
 # limitations under the License.
 
 import json
-import logging
 import random
-from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Literal, Optional, Union
 
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from gr00t.data.dataset import ModalityConfig
 from gr00t.data.embodiment_tags import EmbodimentTag
 from gr00t.data.schema import DatasetMetadata
@@ -35,265 +31,16 @@ from gr00t.model.gr00t_n1 import GR00T_N1_5, GR00T_N1_5_Config
 from torch.distributions import Normal
 from transformers.feature_extraction_utils import BatchFeature
 
-from rlinf.models.embodiment.modules.value_head import ValueHead
-
-logger = logging.getLogger(__name__)
-
-
-def convert_libero_obs_to_gr00t_format(env_obs):
-    """
-    Convert the observation to the format expected by the GR00T model.
-    The data format is determined by the modality_config and meta/info.json following LeRobot format.
-    Considering that we don't have a unified data inferface, we use direct logic here.
-    """
-    groot_obs = {}
-
-    # [B, C, H, W] -> [B, T(1), C, H, W] -> [B, T, H, W, C]
-    groot_obs["video.image"] = (
-        env_obs["images"].unsqueeze(1).numpy().transpose(0, 1, 3, 4, 2)
-    )
-    groot_obs["video.wrist_image"] = (
-        env_obs["wrist_images"].unsqueeze(1).numpy().transpose(0, 1, 3, 4, 2)
-    )
-    # [B, 8] -> [B, T(1), 8]
-    groot_obs["state.x"] = env_obs["states"].unsqueeze(1)[:, :, 0:1].numpy()
-    groot_obs["state.y"] = env_obs["states"].unsqueeze(1)[:, :, 1:2].numpy()
-    groot_obs["state.z"] = env_obs["states"].unsqueeze(1)[:, :, 2:3].numpy()
-    groot_obs["state.roll"] = env_obs["states"].unsqueeze(1)[:, :, 3:4].numpy()
-    groot_obs["state.pitch"] = env_obs["states"].unsqueeze(1)[:, :, 4:5].numpy()
-    groot_obs["state.yaw"] = env_obs["states"].unsqueeze(1)[:, :, 5:6].numpy()
-    groot_obs["state.gripper"] = env_obs["states"].unsqueeze(1)[:, :, 6:].numpy()
-    groot_obs["annotation.human.action.task_description"] = env_obs["task_descriptions"]
-
-    return groot_obs
-
-
-def convert_maniskill_obs_to_gr00t_format(env_obs):
-    """
-    Convert the observation to the format expected by the GR00T model.
-    The data format is determined by the modality_config and meta/info.json following LeRobot format.
-    Considering that we don't have a unified data inferface, we use direct logic here.
-    """
-    groot_obs = {}
-    # video
-    # TODO(lx): If we have a dataset on maniskill, resize can be avoided.
-    # But now we have to resize images to libero data version.
-    env_obs["images"] = cut_and_resize_images(
-        env_obs["images"], env_obs["images"].shape[-2], 256
-    )
-    # [B, C, H, W] -> [B, T(1), C, H, W] -> [B, T, H, W, C]
-    images = env_obs["images"].unsqueeze(1).numpy()
-    groot_obs["video.ego_view"] = np.transpose(images, (0, 1, 3, 4, 2))
-    # state
-    if "state" in env_obs:
-        raise NotImplementedError("State from simulation are not unified yet.")
-    else:
-        # gr00t pad the state to input dimension
-        # create state of [B, T, C]
-        groot_obs["state.left_arm"] = np.zeros((env_obs["images"].shape[0], 1, 7))
-    # annotation
-    groot_obs["annotation.human.action.task_description"] = env_obs["task_descriptions"]
-    return groot_obs
-
-
-def convert_to_libero_action(
-    action_chunk: dict[str, np.array], chunk_size: int = 1
-) -> np.ndarray:
-    """Convert GR00T action chunk to Libero format.
-
-    Args:
-        action_chunk: Dictionary of action components from GR00T policy
-        idx: Index of action to extract from chunk (default: 0 for first action)
-
-    Returns:
-        7-dim numpy array: [dx, dy, dz, droll, dpitch, dyaw, gripper]
-    """
-    action_components = [
-        action_chunk["action.x"][:, :chunk_size],
-        action_chunk["action.y"][:, :chunk_size],
-        action_chunk["action.z"][:, :chunk_size],
-        action_chunk["action.roll"][:, :chunk_size],
-        action_chunk["action.pitch"][:, :chunk_size],
-        action_chunk["action.yaw"][:, :chunk_size],
-        action_chunk["action.gripper"][:, :chunk_size],
-    ]
-    action_array = np.concatenate(action_components, axis=-1)
-    action_array = normalize_gripper_action(action_array, binarize=True)
-    assert action_array.shape[-1] == 7, (
-        f"Expected 7-dim action, got {action_array.shape[-1]}"
-    )
-    return action_array
-
-
-def convert_to_maniskill_action(
-    action_chunk: dict[str, np.array], chunk_size: int = 16
-) -> np.ndarray:
-    """Convert GR00T action chunk to Maniskill format."""
-    # Accord to gr1 definition, action.left_arm happens to be 7 dims, matching the demand of maniskill.
-
-    return action_chunk["action.left_arm"][:, :chunk_size]
-
-
-# TODO: we need a unified embodiement data.
-OBS_CONVERSION = {
-    "maniskill": convert_maniskill_obs_to_gr00t_format,
-    "libero": convert_libero_obs_to_gr00t_format,
-}
-
-ACTION_CONVERSION = {
-    "libero": convert_to_libero_action,
-    "maniskill": convert_to_maniskill_action,
-}
-
-
-# TODO(lx): It's copied from openpi. Current env doesn't contain openpi. Add openpi and remove definition here.
-class ExploreNoiseNet(nn.Module):
-    """
-    Neural network to generate learnable exploration noise, conditioned on time embeddings and or state embeddings.
-    """
-
-    def __init__(
-        self,
-        in_dim: int,
-        out_dim: int,
-        hidden_dims: list[int],
-        activation_type: str,
-        noise_logvar_range: list,  # [min_std, max_std]
-        noise_scheduler_type: str,
-    ):
-        super().__init__()
-        self.mlp_logvar = MLP(
-            [in_dim] + hidden_dims + [out_dim],
-            activation_type=activation_type,
-            out_activation_type="Identity",
-        )
-        self.noise_scheduler_type = noise_scheduler_type
-        self.set_noise_range(noise_logvar_range)
-
-    def set_noise_range(self, noise_logvar_range: list):
-        self.noise_logvar_range = noise_logvar_range
-        noise_logvar_min = self.noise_logvar_range[0]
-        noise_logvar_max = self.noise_logvar_range[1]
-        self.register_buffer(
-            "logvar_min",
-            torch.log(
-                torch.tensor(noise_logvar_min**2, dtype=torch.bfloat16)
-            ).unsqueeze(0),
-        )
-        self.register_buffer(
-            "logvar_max",
-            torch.log(
-                torch.tensor(noise_logvar_max**2, dtype=torch.bfloat16)
-            ).unsqueeze(0),
-        )
-
-    def forward(self, noise_feature: torch.Tensor):
-        if "const" in self.noise_scheduler_type:  # const or const_schedule_itr
-            # pick the lowest noise level when we use constant noise schedulers.
-            noise_std = torch.exp(0.5 * self.logvar_min)
-        else:
-            # use learnable noise level.
-            noise_logvar = self.mlp_logvar(noise_feature)
-            noise_std = self.post_process(noise_logvar)
-        return noise_std
-
-    def post_process(self, noise_logvar):
-        """
-        input:
-            torch.Tensor([B, Ta , Da])
-        output:
-            torch.Tensor([B, Ta, Da])
-        """
-        noise_logvar = torch.tanh(noise_logvar)
-        noise_logvar = (
-            self.logvar_min
-            + (self.logvar_max - self.logvar_min) * (noise_logvar + 1) / 2.0
-        )
-        noise_std = torch.exp(0.5 * noise_logvar)
-        return noise_std
-
-
-activation_dict = nn.ModuleDict(
-    {
-        "relu": nn.ReLU(),
-        "elu": nn.ELU(),
-        "gelu": nn.GELU(),
-        "tanh": nn.Tanh(),
-        "mish": nn.Mish(),
-        "identity": nn.Identity(),
-        "softplus": nn.Softplus(),
-        "silu": nn.SiLU(),
-    }
+from rlinf.models.embodiment.gr00t.simulation_io import (
+    ACTION_CONVERSION,
+    OBS_CONVERSION,
 )
-
-
-class MLP(nn.Module):
-    def __init__(
-        self,
-        dim_list,
-        append_dim=0,
-        append_layers=None,
-        activation_type="tanh",
-        out_activation_type="identity",
-        use_layernorm=False,
-        use_layernorm_final=False,
-        dropout=0,
-        use_drop_final=False,
-        out_bias_init=None,
-        verbose=False,
-    ):
-        super(MLP, self).__init__()
-
-        # Ensure append_layers is always a list to avoid TypeError
-        self.append_layers = append_layers if append_layers is not None else []
-
-        # Construct module list
-        self.moduleList = nn.ModuleList()
-        num_layer = len(dim_list) - 1
-        for idx in range(num_layer):
-            i_dim = dim_list[idx]
-            o_dim = dim_list[idx + 1]
-            if append_dim > 0 and idx in self.append_layers:
-                i_dim += append_dim
-            linear_layer = nn.Linear(i_dim, o_dim)
-
-            # Add module components
-            layers = [("linear_1", linear_layer)]
-            if use_layernorm and (idx < num_layer - 1 or use_layernorm_final):
-                layers.append(("norm_1", nn.LayerNorm(o_dim)))  # type: ignore
-            if dropout > 0 and (idx < num_layer - 1 or use_drop_final):
-                layers.append(("dropout_1", nn.Dropout(dropout)))  # type: ignore
-
-            # Add activation function
-            act = (
-                activation_dict[activation_type.lower()]
-                if idx != num_layer - 1
-                else activation_dict[out_activation_type.lower()]
-            )
-            layers.append(("act_1", act))  # type: ignore
-
-            # Re-construct module
-            module = nn.Sequential(OrderedDict(layers))
-            self.moduleList.append(module)
-        if verbose:
-            logging.info(self.moduleList)
-
-        # Initialize the bias of the final linear layer if specified
-        if out_bias_init is not None:
-            final_linear = self.moduleList[-1][
-                0
-            ]  # Linear layer is first in the last Sequential # type: ignore
-            nn.init.constant_(final_linear.bias, out_bias_init)
-            logger.info(
-                f"Initialized the bias of the final linear layer to {out_bias_init}"
-            )
-
-    def forward(self, x, append=None):
-        for layer_ind, m in enumerate(self.moduleList):
-            if append is not None and layer_ind in self.append_layers:
-                x = torch.cat((x, append), dim=-1)
-            x = m(x)
-        return x
+from rlinf.models.embodiment.gr00t.utils import (
+    squeeze_dict_values,
+    unsqueeze_dict_values,
+)
+from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
+from rlinf.models.embodiment.modules.value_head import ValueHead
 
 
 class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
@@ -809,7 +556,6 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5):
             if normalized_input[key].dtype == torch.float32:
                 normalized_input[key] = normalized_input[key].to(torch.bfloat16)
 
-        # TODO(lx): this pad is potentially wrong, fix it.
         normalized_input["eagle_input_ids"] = torch.nn.functional.pad(
             normalized_input["eagle_input_ids"],
             pad=(0, 570 - normalized_input["eagle_input_ids"].shape[-1]),
@@ -930,75 +676,3 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5):
 
         self._modality_transform.set_metadata(metadata)
         self.metadata = metadata
-
-
-#######################################################################################################
-def cut_and_resize_images(
-    images: torch.Tensor, crop_size: int, target_size: int = 256
-) -> torch.Tensor:
-    """
-    Cut and resize the images to the crop size.
-    """
-    original_width = images.shape[-1]  # 640
-    start = (original_width - crop_size) // 2  # (640-480)/2 = 80
-    end = start + crop_size  # 80 + 480 = 560
-
-    # Crop: keep batch, channels, full height; crop width to [start:end]
-    cropped_tensor = images[:, :, :, start:end]  # Shape: (2, 3, 480, 480)
-    # Step 2: Resize the cropped 480x480 tensor to 256x256
-    resized_tensor = F.interpolate(
-        cropped_tensor,
-        size=(target_size, target_size),
-        mode="bilinear",  # Or 'bicubic' for smoother results
-        align_corners=False,
-    )
-    return resized_tensor
-
-
-# Helper functions
-def unsqueeze_dict_values(data: dict[str, Any]) -> dict[str, Any]:
-    """
-    Unsqueeze the values of a dictionary.
-    This converts the data to be batched of size 1.
-    """
-    unsqueezed_data = {}
-    for k, v in data.items():
-        if isinstance(v, np.ndarray):
-            unsqueezed_data[k] = np.expand_dims(v, axis=0)
-        elif isinstance(v, list):
-            unsqueezed_data[k] = np.expand_dims(np.array(v), axis=0)  # Fixed
-        elif isinstance(v, torch.Tensor):
-            unsqueezed_data[k] = v.unsqueeze(0)
-        else:
-            unsqueezed_data[k] = v
-    return unsqueezed_data
-
-
-def squeeze_dict_values(data: dict[str, Any]) -> dict[str, Any]:
-    """
-    Squeeze the values of a dictionary. This removes the batch dimension.
-    """
-    squeezed_data = {}
-    for k, v in data.items():
-        if isinstance(v, np.ndarray):
-            squeezed_data[k] = np.squeeze(v, axis=0)  # Fixed: only remove batch dim
-        elif isinstance(v, torch.Tensor):
-            squeezed_data[k] = v.squeeze(0)  # Fixed: only remove batch dim
-        else:
-            squeezed_data[k] = v
-    return squeezed_data
-
-
-def normalize_gripper_action(action, binarize=True):
-    """
-    Changes gripper action (last dimension of action vector) from [0,1] to [+1,-1].
-
-    Normalization formula: y = 1 - 2 * (x - orig_low) / (orig_high - orig_low)
-    """
-    orig_low, orig_high = 0.0, 1.0
-    action[..., -1] = 1 - 2 * (action[..., -1] - orig_low) / (orig_high - orig_low)
-
-    if binarize:
-        action[..., -1] = np.sign(action[..., -1])
-
-    return action

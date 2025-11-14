@@ -130,7 +130,7 @@ actor:
     denoising_steps: 4
     policy_setup: "widowx_bridge"
     obs_converter_type: "libero"
-    embodiment_tag: "new_embodiment"
+    embodiment_tag: "libero_franka"
     use_wrist_image: True
     rl_head_config:
       joint_logprob: False
