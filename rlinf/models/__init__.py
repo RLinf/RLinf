@@ -264,14 +264,6 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
             add_value_head=cfg.add_value_head,
         )
     elif cfg.model_name == "gr00t":
-        from gr00t.experiment.data_config import load_data_config
-
-        data_config = load_data_config(
-            "rlinf.models.embodiment.gr00t.modality_config:ManiskillWidowXDataConfig"
-        )
-        modality_config = data_config.modality_config()
-        modality_transform = data_config.transform()
-
         from pathlib import Path
 
         from rlinf.utils.patcher import Patcher
