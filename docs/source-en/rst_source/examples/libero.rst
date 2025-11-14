@@ -1,4 +1,4 @@
-RL with LIBERO Simulator
+RL with LIBERO Benchmark
 ========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg

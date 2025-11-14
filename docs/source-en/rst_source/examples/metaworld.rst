@@ -1,4 +1,4 @@
-RL with MetaWorld Simulator
+RL with MetaWorld Benchmark
 ===========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg

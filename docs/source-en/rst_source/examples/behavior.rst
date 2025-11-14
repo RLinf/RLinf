@@ -1,4 +1,4 @@
-RL with Behavior Simulator
+RL with Behavior Benchmark
 ==========================
 
 This example provides a complete guide to fine-tuning the 
