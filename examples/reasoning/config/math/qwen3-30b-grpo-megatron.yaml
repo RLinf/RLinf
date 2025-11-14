@@ -7,13 +7,9 @@ hydra:
   output_subdir: null
 
 cluster:
-  num_nodes: 1
+  num_nodes: 16
   component_placement:
-    # actor,rollout,reward: all
-    rollout: 0-3
-    inference: 4-5
-    actor: 6-7
-    reward: 0-3
+    actor,rollout,reward: all
 
 runner:
   task_type: reasoning
@@ -29,17 +25,17 @@ runner:
   val_check_interval: 1
   save_interval: 50
 
-  seq_length: 2048
+  seq_length: 28672
 
   enable_dynamic_batch_size: False
-  max_tokens_per_mbs: 2048
+  max_tokens_per_mbs: 28672
 
   resume_dir: null
-  experiment_name: multiturn_demo-grpo-1.5b
-  output_dir: /path/to/logs
+  experiment_name: grpo-moe-30b
+  output_dir: ../results
 
 algorithm:
-  group_size: 4
+  group_size: 16
 
   n_minibatches: 4
   training_batch_size_per_gpu: 1 # micro batch size
@@ -69,7 +65,7 @@ algorithm:
   clip_ratio_high: null # if null or not set, will use ratio_clip_eps
 
   adv_type: grpo
-  normalize_advantages: False
+  normalize_advantages: True
   early_stop_imp_ratio: 5.0
   use_valid_token_scale: False
 
@@ -83,31 +79,13 @@ algorithm:
     max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
     min_new_tokens: 1
 
-inference:
-  model_arch: ${rollout.model_arch}
-  group_name: "InferenceGroup"
-  load_from_actor: True
-  model:
-    tensor_model_parallel_size: 1
-    pipeline_model_parallel_size: 1
-    sequence_parallel: False
-
-agentloop:
-  group_name: "AgentLoopGroup"
-  max_turns: 5
-  print_outputs: True # whether to print the outputs (token ids, texts, tool calls, etc.) of agent loop worker.
-  # demo specific parameters. not used in this demo. you can add your own parameters here.
-  max_parallel_calls: 2
-  continue_at_tool_failure: True
-  max_tool_response_length: 500
-
 rollout:
   group_name: "RolloutGroup"
 
-  gpu_memory_utilization: 0.55
+  gpu_memory_utilization: 0.3
 
-  model_dir: /path/to/model/Qwen2.5-1.5B-Instruct
-  model_arch: qwen2.5
+  model_dir: /path/to/model/Qwen3-30B-A3B-Base/
+  model_arch: qwen3_moe
   precision: ${actor.model.precision}              # precision for rollout model, support [fp16, bf16, fp32]
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
@@ -115,7 +93,7 @@ rollout:
   detokenize: False            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
   padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
   eos: null                   # will be tokenizer.eos_token_id if null.
-
+    
   rollout_backend: sglang     # here choose which backend to rollout,support [sglang, vllm] 
 
   sglang:
@@ -134,7 +112,7 @@ rollout:
 
   return_logprobs: ${not:${algorithm.recompute_logprobs}}
 
-  tensor_parallel_size: 1
+  tensor_parallel_size: 4
   pipeline_parallel_size: 1
   
   validate_weight: False # whether to send all weights at first for weight comparison.
@@ -146,9 +124,10 @@ rollout:
 
 data:
   type: math
+  dataset_name: boba
   max_prompt_length: 1024
   filter_prompt_by_length: True
-  rollout_batch_size: 4
+  rollout_batch_size: 512
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: prompt
@@ -157,12 +136,8 @@ data:
   shuffle: True
   validation_shuffle: True
   seed: 1234
-  train_data_paths: ["/path/to/train.jsonl"]
-  val_data_paths: ["/path/to/val.jsonl"]
-
-# Tools configuration for AgentLoop
-tools:
-  mcp_file_system: null
+  train_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
+  val_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
 
 actor:
   group_name: "ActorGroup"
@@ -175,6 +150,7 @@ actor:
   offload_optimizer: True
   offload_weight: True
   offload_grad: True
+
   enable_dp_load_balance: False
 
   calculate_flops: False
@@ -185,17 +161,20 @@ actor:
     precision: fp16
     add_bias_linear: False
 
-    tensor_model_parallel_size: 1
-    pipeline_model_parallel_size: 1
+    tensor_model_parallel_size: 4
+    pipeline_model_parallel_size: 4
+    expert_model_parallel_size: 4
+    expert_tensor_parallel_size: 1
+    moe_grouped_gemm: te # grouped_gemm type, avail in [null, te]. null means do not use grouped_gemm
 
     activation: swiglu
-    sequence_parallel: False
+    sequence_parallel: True
     # recompute_method: block
     # recompute_granularity: selective
 
-    recompute_method: block
+    recompute_method: uniform
     recompute_granularity: full
-    recompute_num_layers: 20
+    recompute_num_layers: 1
 
     seq_length: ${runner.seq_length}
     encoder_seq_length: ${runner.seq_length}
@@ -207,43 +186,50 @@ actor:
     apply_rope_fusion: True
     bias_dropout_fusion: False
     persist_layer_norm: False
-    bias_activation_fusion: False
+    bias_activation_fusion: True
     attention_softmax_in_fp32: True
     batch_p2p_comm: False
     variable_seq_lengths: True
-    gradient_accumulation_fusion: False
+    gradient_accumulation_fusion: True
     moe_token_dispatcher_type: alltoall
     use_cpu_initialization: False
+
+    # MoE related
+    moe_router_load_balancing_type: "aux_loss"
+    init_method_std: 0.008
+    moe_router_topk: 2
+    moe_router_pre_softmax: False
+    moe_aux_loss_coeff: 0.0
 
   optim:
     optimizer: adam
     bf16: False
     fp16: True
-    lr: 2e-05
+    lr: 2.0e-06
     adam_beta1: 0.9
     adam_beta2: 0.95
-    adam_eps: 1.0e-05
+    adam_eps: 1.0e-15
     min_lr: 2.0e-6
-    weight_decay: 0.05
+    weight_decay: 0.01
     use_distributed_optimizer: True
-    overlap_grad_reduce: False
-    overlap_param_gather: False
-    optimizer_enable_pin: False
+    overlap_grad_reduce: True
+    overlap_param_gather: True
+    optimizer_enable_pin: false
     overlap_param_gather_with_optimizer_step: False
-    clip_grad: 0.8
-    loss_scale: 65536
+    clip_grad: 1.0
+    loss_scale: 100000.0
 
   lr_sched:
     lr_warmup_fraction: 0.01
     lr_warmup_init: 0.0
     lr_warmup_iters: 0
-    max_lr: 2.0e-5
-    min_lr: 0.0
+    max_lr: 2.0e-6
+    min_lr: 2.0e-6
     lr_decay_style: constant
     lr_decay_iters: 10
 
   tokenizer:
-    tokenizer_model: ${rollout.model_dir}
+    tokenizer_model: /path/to/model/Qwen3-30B-A3B-Base/
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'
@@ -260,8 +246,8 @@ actor:
     use_profiler: False # if true, will enable torch profiler when training, pay attention it has influence on performance
 
     ckpt_convertor: # config for ckpt convertor
-      model: qwen_2.5_1.5b
-      model_type: null # will be set by hf model's config if null
+      model: Qwen3-30B-A3B
+      model_type: moe # will be set by hf model's config if null
       hf_model_path: ${rollout.model_dir} # path to the hf model
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
       use_gpu_num : 0
@@ -269,6 +255,13 @@ actor:
       process_num: 16 # number of processes to use for checkpointing
       tensor_model_parallel_size: ${actor.model.tensor_model_parallel_size}
       pipeline_model_parallel_size: ${actor.model.pipeline_model_parallel_size}
+      expert_model_parallel_size: ${actor.model.expert_model_parallel_size}
+      expert_tensor_parallel_size: ${actor.model.expert_tensor_parallel_size}
+      grouped_gemm: ${actor.model.moe_grouped_gemm}
+      te_ln_linear_qkv: True
+      te_ln_linear_mlp_fc1: True
+      # avail in [None, 'none', 'tensor_pickle_none', 'tensor_0_dim'], and only 'tensor_pickle_none' can be used if transformer engine version  in [2.3, 2.5]
+      te_ln_add_extra_state: 'tensor_pickle_none'
 
     profiler: # profile megatron when inference and traning
       output_dir: ${runner.output_dir}/${runner.experiment_name}/profiler
@@ -288,7 +281,7 @@ actor:
 
 reward:
   group_name: "RewardGroup"
-  use_reward_model: False
+  use_reward_model: false
   reward_type: 'math'
   reward_scale: 5.0
 
@@ -299,4 +292,4 @@ reward:
     padding_side: ${actor.tokenizer.padding_side}
 
 critic:
-  use_critic_model: False
+  use_critic_model: false

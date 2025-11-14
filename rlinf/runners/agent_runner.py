@@ -137,119 +137,123 @@ class AgentRunner(ReasoningRunner):
         )
         for tool_worker in self.tool_workers:
             tool_worker.start_server()
-        for _ in epoch_iter:
-            for batch in self.train_dataloader:
-                with self.timer("step"):
-                    with self.timer("prepare_data"):
-                        self._put_batch(batch)
+        try:
+            for _ in epoch_iter:
+                for batch in self.train_dataloader:
+                    with self.timer("step"):
+                        with self.timer("prepare_data"):
+                            self._put_batch(batch)
 
-                    with self.timer("sync_weights"):
-                        self._sync_weights()
+                        with self.timer("sync_weights"):
+                            self._sync_weights()
 
-                    # Rollout
-                    rollout_handle: Handle = self.agent_loop.run_agentloop_rollout(
-                        input_channel=self.dataloader_channel,
-                        output_channel=self.rollout_channel,
-                    )
-
-                    # Rewards
-                    reward_handle: Handle = self.reward.compute_rewards(
-                        input_channel=self.rollout_channel,
-                        output_channel=self.reward_channel,
-                    )
-
-                    if self.recompute_logprobs:
-                        # Inference prev/ref logprobs
-                        infer_handle: Handle = self.inference.run_inference(
-                            input_channel=self.reward_channel,
-                            output_channel=self.inference_channel,
-                            compute_ref_logprobs=self.compute_ref_logprobs,
+                        # Rollout
+                        rollout_handle: Handle = self.agent_loop.run_agentloop_rollout(
+                            input_channel=self.dataloader_channel,
+                            output_channel=self.rollout_channel,
                         )
-                        inference_channel = self.inference_channel
-                    else:
-                        infer_handle = None
-                        inference_channel = self.reward_channel
 
-                    # Actor training, Advantages and returns
-                    actor_handle: Handle = self.actor.run_training(
-                        input_channel=inference_channel,
-                    )
-
-                    metrics = actor_handle.wait()
-                    actor_rollout_metrics = metrics[0][0]
-                    actor_training_metrics = metrics[0][1]
-                    self.global_steps += 1
-
-                    run_time_exceeded = self.run_timer.is_finished()
-                    _, save_model, is_train_end = check_progress(
-                        self.global_steps,
-                        self.max_steps,
-                        self.cfg.runner.val_check_interval,
-                        self.cfg.runner.save_interval,
-                        1.0,
-                        run_time_exceeded=run_time_exceeded,
-                    )
-
-                    if save_model:
-                        self._save_checkpoint()
-
-                    if is_train_end:
-                        logging.info(
-                            f"Step limit given by max_steps={self.max_steps} reached. Stopping run"
+                        # Rewards
+                        reward_handle: Handle = self.reward.compute_rewards(
+                            input_channel=self.rollout_channel,
+                            output_channel=self.reward_channel,
                         )
-                        return
 
-                    if run_time_exceeded:
-                        logging.info(
-                            f"Time limit given by run_timer={self.run_timer} reached. Stopping run"
+                        if self.recompute_logprobs:
+                            # Inference prev/ref logprobs
+                            infer_handle: Handle = self.inference.run_inference(
+                                input_channel=self.reward_channel,
+                                output_channel=self.inference_channel,
+                                compute_ref_logprobs=self.compute_ref_logprobs,
+                            )
+                            inference_channel = self.inference_channel
+                        else:
+                            infer_handle = None
+                            inference_channel = self.reward_channel
+
+                        # Actor training, Advantages and returns
+                        actor_handle: Handle = self.actor.run_training(
+                            input_channel=inference_channel,
                         )
-                        return
 
-                time_metrics = self.timer.consume_durations()
-                time_metrics["training"] = actor_handle.consume_duration()
-                time_metrics["rollout"] = rollout_handle.consume_duration()
-                time_metrics["reward"] = reward_handle.consume_duration()
-                if infer_handle is not None:
-                    # Inference time should be the min time across ranks, because different DP receive the rollout results differently
-                    # But at the begin of the pp schedule, there is a timer barrier
-                    # This makes all DP end at the same time, while they start at differnt times, and thus only the min time is correct
-                    time_metrics["inference"] = infer_handle.consume_duration(
-                        reduction_type="min"
-                    )
+                        metrics = actor_handle.wait()
+                        actor_rollout_metrics = metrics[0][0]
+                        actor_training_metrics = metrics[0][1]
+                        self.global_steps += 1
 
-                logging_steps = (
-                    self.global_steps - 1
-                ) * self.cfg.algorithm.n_minibatches
-                # add prefix to the metrics
-                log_time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
-                rollout_metrics = {
-                    f"rollout/{k}": v for k, v in actor_rollout_metrics.items()
-                }
+                        run_time_exceeded = self.run_timer.is_finished()
+                        _, save_model, is_train_end = check_progress(
+                            self.global_steps,
+                            self.max_steps,
+                            self.cfg.runner.val_check_interval,
+                            self.cfg.runner.save_interval,
+                            1.0,
+                            run_time_exceeded=run_time_exceeded,
+                        )
 
-                self.metric_logger.log(log_time_metrics, logging_steps)
-                self.metric_logger.log(rollout_metrics, logging_steps)
-                for i in range(self.cfg.algorithm.n_minibatches):
-                    training_metrics = {
-                        f"train/{k}": v for k, v in actor_training_metrics[i].items()
+                        if save_model:
+                            self._save_checkpoint()
+
+                        if is_train_end:
+                            logging.info(
+                                f"Step limit given by max_steps={self.max_steps} reached. Stopping run"
+                            )
+                            return
+
+                        if run_time_exceeded:
+                            logging.info(
+                                f"Time limit given by run_timer={self.run_timer} reached. Stopping run"
+                            )
+                            return
+
+                    time_metrics = self.timer.consume_durations()
+                    time_metrics["training"] = actor_handle.consume_duration()
+                    time_metrics["rollout"] = rollout_handle.consume_duration()
+                    time_metrics["reward"] = reward_handle.consume_duration()
+                    if infer_handle is not None:
+                        # Inference time should be the min time across ranks, because different DP receive the rollout results differently
+                        # But at the begin of the pp schedule, there is a timer barrier
+                        # This makes all DP end at the same time, while they start at differnt times, and thus only the min time is correct
+                        time_metrics["inference"] = infer_handle.consume_duration(
+                            reduction_type="min"
+                        )
+
+                    logging_steps = (
+                        self.global_steps - 1
+                    ) * self.cfg.algorithm.n_minibatches
+                    # add prefix to the metrics
+                    log_time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
+                    rollout_metrics = {
+                        f"rollout/{k}": v for k, v in actor_rollout_metrics.items()
                     }
-                    self.metric_logger.log(training_metrics, logging_steps + i)
 
-                logging_metrics = {f"{k}_time": v for k, v in time_metrics.items()}
+                    self.metric_logger.log(log_time_metrics, logging_steps)
+                    self.metric_logger.log(rollout_metrics, logging_steps)
+                    for i in range(self.cfg.algorithm.n_minibatches):
+                        training_metrics = {
+                            f"train/{k}": v
+                            for k, v in actor_training_metrics[i].items()
+                        }
+                        self.metric_logger.log(training_metrics, logging_steps + i)
 
-                if self.cfg.actor.get("calculate_flops", False):
-                    flops_metrics = self._compute_flops_metrics(
-                        time_metrics, actor_rollout_metrics
-                    )
-                    flops_metrics = {f"flops/{k}": v for k, v in flops_metrics.items()}
-                    self.metric_logger.log(flops_metrics, logging_steps)
-                    logging_metrics.update(flops_metrics)
+                    logging_metrics = {f"{k}_time": v for k, v in time_metrics.items()}
 
-                logging_metrics.update(actor_rollout_metrics)
-                logging_metrics.update(actor_training_metrics[-1])
+                    if self.cfg.actor.get("calculate_flops", False):
+                        flops_metrics = self._compute_flops_metrics(
+                            time_metrics, actor_rollout_metrics
+                        )
+                        flops_metrics = {
+                            f"flops/{k}": v for k, v in flops_metrics.items()
+                        }
+                        self.metric_logger.log(flops_metrics, logging_steps)
+                        logging_metrics.update(flops_metrics)
 
-                global_pbar.set_postfix(logging_metrics)
-                global_pbar.update(1)
+                    logging_metrics.update(actor_rollout_metrics)
+                    logging_metrics.update(actor_training_metrics[-1])
 
-        for tool_worker in self.tool_workers:
-            tool_worker.stop_server()
-        self.metric_logger.finish()
+                    global_pbar.set_postfix(logging_metrics)
+                    global_pbar.update(1)
+        finally:
+            for tool_worker in self.tool_workers:
+                tool_worker.stop_server()
+            self.metric_logger.finish()

@@ -312,6 +312,7 @@ def _initialize_distributed(cfg: DictConfig):
                 cfg.model.pipeline_model_parallel_split_rank,
                 context_parallel_size=cfg.model.context_parallel_size,
                 expert_model_parallel_size=cfg.model.expert_model_parallel_size,
+                expert_tensor_parallel_size=cfg.model.expert_tensor_parallel_size,
                 distributed_timeout_minutes=cfg.megatron.distributed_timeout_minutes,
                 nccl_communicator_config_path=cfg.megatron.nccl_communicator_config_path,
                 order="tp-cp-ep-dp-pp"

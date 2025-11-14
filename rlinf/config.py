@@ -35,7 +35,14 @@ if TYPE_CHECKING:
 
 logging.getLogger().setLevel(logging.INFO)
 
-SUPPORTED_MODEL_ARCHS = ["qwen2.5", "qwen2.5_vl", "openvla", "openvla_oft", "openpi"]
+SUPPORTED_MODEL_ARCHS = [
+    "qwen2.5",
+    "qwen2.5_vl",
+    "openvla",
+    "openvla_oft",
+    "qwen3_moe",
+    "openpi",
+]
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
 SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl"]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
@@ -199,6 +206,14 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
     else:
         qkv_bias = getattr(hf_config, "attention_bias", False)
 
+    if (
+        "Qwen3ForCausalLM" in hf_config.architectures
+        or "Qwen3MoeForCausalLM" in hf_config.architectures
+    ):
+        qk_layernorm = True
+    else:
+        qk_layernorm = getattr(cfg.model, "qk_layernorm", False)
+
     with open_dict(cfg):
         rs = getattr(hf_config, "rope_scaling", None)
         if isinstance(rs, dict):
@@ -224,10 +239,22 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         cfg.model.attention_dropout = hf_config.attention_dropout
         cfg.model.hidden_dropout = getattr(hf_config, "hidden_dropout", 0.0)
         cfg.model.add_qkv_bias = qkv_bias
+        cfg.model.qk_layernorm = qk_layernorm
         cfg.model.layernorm_epsilon = hf_config.rms_norm_eps
-        head_dim = getattr(hf_config, "head_dim", None)
-        if head_dim is not None:
-            cfg.model.kv_channels = head_dim
+        cfg.model.head_dim = getattr(
+            hf_config,
+            "head_dim",
+            cfg.model.hidden_size // cfg.model.num_attention_heads,
+        )
+        if cfg.model.head_dim is not None:
+            cfg.model.kv_channels = cfg.model.head_dim
+
+        # MoE model
+        cfg.model.num_moe_experts = getattr(hf_config, "num_experts", None)
+        cfg.model.moe_ffn_hidden_size = getattr(
+            hf_config, "moe_intermediate_size", None
+        )
+        cfg.model.moe_router_topk = getattr(hf_config, "num_experts_per_tok", 2)
 
     return cfg
 
@@ -486,11 +513,26 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
         cfg.model.pipeline_model_parallel_split_rank = cfg.model.get(
             "pipeline_model_parallel_split_rank", None
         )
-        cfg.model.context_parallel_size = cfg.model.context_parallel_size = (
-            cfg.model.get("context_parallel_size", 1)
+        cfg.model.context_parallel_size = cfg.model.get("context_parallel_size", 1)
+
+        cfg.model.expert_model_parallel_size = cfg.model.get(
+            "expert_model_parallel_size", 1
         )
-        cfg.model.expert_model_parallel_size = cfg.model.expert_model_parallel_size = (
-            cfg.model.get("expert_model_parallel_size", 1)
+
+        cfg.model.expert_tensor_parallel_size = cfg.model.get(
+            "expert_tensor_parallel_size", 1
+        )
+
+        cfg.model.moe_grouped_gemm = cfg.model.get("moe_grouped_gemm", None)
+        assert cfg.model.moe_grouped_gemm in [None, "te"], (
+            f"grouped_gemm type only avail in [null, te]. get value ({cfg.model.moe_grouped_gemm})"
+        )
+
+        assert (
+            cfg.model.expert_tensor_parallel_size
+            <= cfg.model.tensor_model_parallel_size
+        ), (
+            f"expert_tensor_parallel_size ({cfg.model.expert_tensor_parallel_size}) must be less than or equal to tensor_model_parallel_size ({cfg.model.tensor_model_parallel_size})"
         )
 
         cfg.model.position_embedding_type = cfg.model.get(
@@ -1001,8 +1043,14 @@ def build_transformer_config(cfg) -> "TransformerConfig":
         "rotary_interleaved": rotary_interleaved,
         "deallocate_pipeline_outputs": False,
         "tp_only_amax_red": tp_only_amax_red,
+        "qk_layernorm": cfg.get("qk_layernorm", False),
+        "kv_channels": cfg.get("head_dim", None),
         # MoE related
         "num_moe_experts": cfg.get("num_moe_experts", None),
+        "moe_ffn_hidden_size": cfg.get("moe_ffn_hidden_size", None),
+        # now the sequential mlp should ffn hidden size == moe_ffn_hidden_size
+        "ffn_hidden_size": cfg.get("moe_ffn_hidden_size", None)
+        or cfg.get("ffn_hidden_size", None),
         "moe_router_load_balancing_type": cfg.get(
             "moe_router_load_balancing_type", "aux_loss"
         ),

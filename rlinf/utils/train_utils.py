@@ -62,7 +62,10 @@ def set_sync_funcs(megatron_model_manager, forward_only):
         module.config.param_sync_func = param_sync_func
 
         module.config.finalize_model_grads_func = finalize_model_grads
-        module.config.grad_scale_func = megatron_model_manager.optimizer.scale_loss
+        if not forward_only:
+            module.config.grad_scale_func = megatron_model_manager.optimizer.scale_loss
+        else:
+            module.config.grad_scale_func = None
 
 
 def set_train(megatron_model_manager):

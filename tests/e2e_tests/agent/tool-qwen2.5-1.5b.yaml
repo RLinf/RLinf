@@ -9,11 +9,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    # actor,rollout,reward: all
-    rollout: 0-3
-    inference: 4-5
-    actor: 6-7
-    reward: 0-3
+    actor,rollout,reward: all
 
 runner:
   task_type: reasoning
@@ -23,20 +19,20 @@ runner:
     experiment_name: ${runner.experiment_name}
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 5
-  max_steps: -1
+  max_epochs: 1
+  max_steps: 3
 
   val_check_interval: 1
-  save_interval: 50
+  save_interval: -1
 
-  seq_length: 2048
+  seq_length: 2560
 
   enable_dynamic_batch_size: False
-  max_tokens_per_mbs: 2048
+  max_tokens_per_mbs: 2560
 
   resume_dir: null
   experiment_name: multiturn_demo-grpo-1.5b
-  output_dir: /path/to/logs
+  output_dir: ../results
 
 algorithm:
   group_size: 4
@@ -94,7 +90,7 @@ inference:
 
 agentloop:
   group_name: "AgentLoopGroup"
-  max_turns: 5
+  max_turns: 3
   print_outputs: True # whether to print the outputs (token ids, texts, tool calls, etc.) of agent loop worker.
   # demo specific parameters. not used in this demo. you can add your own parameters here.
   max_parallel_calls: 2
@@ -106,9 +102,9 @@ rollout:
 
   gpu_memory_utilization: 0.55
 
-  model_dir: /path/to/model/Qwen2.5-1.5B-Instruct
+  model_dir: /workspace/dataset/Qwen2.5-1.5B-Instruct
   model_arch: qwen2.5
-  precision: ${actor.model.precision}              # precision for rollout model, support [fp16, bf16, fp32]
+  precision: ${actor.model.precision}   # precision for rollout model, support [fp16, bf16, fp32]
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
@@ -138,6 +134,7 @@ rollout:
   pipeline_parallel_size: 1
   
   validate_weight: False # whether to send all weights at first for weight comparison.
+  validate_weight_first_sync: True # validate the weight norm between load model and first sync.
   validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
   print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
 
@@ -148,7 +145,7 @@ data:
   type: math
   max_prompt_length: 1024
   filter_prompt_by_length: True
-  rollout_batch_size: 4
+  rollout_batch_size: 8
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: prompt
@@ -157,8 +154,8 @@ data:
   shuffle: True
   validation_shuffle: True
   seed: 1234
-  train_data_paths: ["/path/to/train.jsonl"]
-  val_data_paths: ["/path/to/val.jsonl"]
+  train_data_paths: ["/workspace/dataset/rstar2/train-qwen3-100.jsonl"]
+  val_data_paths: ["/workspace/dataset/rstar2/train-qwen3-100.jsonl"]
 
 # Tools configuration for AgentLoop
 tools:
@@ -182,7 +179,7 @@ actor:
   seed: 1234
 
   model:
-    precision: fp16
+    precision: bf16
     add_bias_linear: False
 
     tensor_model_parallel_size: 1
@@ -217,8 +214,8 @@ actor:
 
   optim:
     optimizer: adam
-    bf16: False
-    fp16: True
+    bf16: True
+    fp16: False
     lr: 2e-05
     adam_beta1: 0.9
     adam_beta2: 0.95
@@ -237,7 +234,7 @@ actor:
     lr_warmup_fraction: 0.01
     lr_warmup_init: 0.0
     lr_warmup_iters: 0
-    max_lr: 2.0e-5
+    max_lr: 2.0e-6
     min_lr: 0.0
     lr_decay_style: constant
     lr_decay_iters: 10
