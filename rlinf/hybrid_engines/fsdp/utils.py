@@ -85,16 +85,6 @@ def get_init_weight_context_manager(use_meta_tensor=True):
     return init_context
 
 
-def get_small_model_fsdp_wrap_policy(module):
-    if hasattr(module, "value_head"):
-        from rlinf.models.embodiment.modules.value_head import ValueHead
-
-        value_head_policy = functools.partial(
-            _module_wrap_policy, module_classes={ValueHead}
-        )
-    return value_head_policy
-
-
 def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_vla_model=False):
     """
     FSDP wrap policy that handles both standard transformer models and VLA models.
@@ -112,11 +102,6 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_vla_model=False)
 
     if config.get("disable", False):
         return None
-
-    from rlinf.models.embodiment.mlp_policy import MLPPolicy
-
-    if isinstance(module, MLPPolicy):
-        return get_small_model_fsdp_wrap_policy(module)
 
     # Get transformer layer classes to wrap
     if hasattr(module, "language_model"):

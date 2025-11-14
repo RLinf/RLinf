@@ -42,7 +42,7 @@ SUPPORTED_MODEL_ARCHS = [
     "openvla_oft",
     "qwen3_moe",
     "openpi",
-    "mlp",
+    "mlp-policy",
 ]
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
 SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl"]

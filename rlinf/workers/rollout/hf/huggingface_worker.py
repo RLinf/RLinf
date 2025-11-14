@@ -100,7 +100,7 @@ class MultiStepRolloutWorker(Worker):
         )
         kwargs["do_sample"] = do_sample
 
-        if self.cfg.actor.model.model_name in ["openpi", "mlp"]:
+        if self.cfg.actor.model.model_name in ["openpi", "mlp-policy"]:
             kwargs = {"mode": mode}
 
         with torch.no_grad():
