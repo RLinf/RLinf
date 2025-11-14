@@ -143,16 +143,27 @@ actor:
       action_env_dim: ${actor.model.action_dim}
       noise_method: "flow_sde"
       add_value_head: ${actor.model.add_value_head}
-      detach_critic_input: True
+      pi05: True
+      value_after_vlm: True
+      value_vlm_mode: "mean_token"
 
   optim:
-    lr: 1.0e-5
+    lr: 5.0e-6
     value_lr: 1.0e-4
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-05
     clip_grad: 1.0
     critic_warmup_steps: 0
+    total_training_steps: ${runner.max_epochs}
+    lr_warmup_steps: -1
+    warmup_style: cosine
+    min_lr_ratio: 0.1
+    num_cycles: 0.5
+
+    
+    
+
 
   fsdp_config:                  # below are fsdp configs, for more details, see https://pytorch.org/docs/stable/fsdp.html and https://huggingface.co/docs/accelerate/package_reference/fsdp
 

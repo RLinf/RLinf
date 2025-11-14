@@ -1,6 +1,6 @@
 defaults:
-  - env/train: metaworld_50
-  - env/eval: metaworld_50
+  - env/train: metaworld_45_ind
+  - env/eval: metaworld_45_ood
   - override hydra/job_logging: stdout
 
 hydra:
@@ -23,11 +23,11 @@ runner:
     experiment_name: "test_openpi"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 1000
+  max_epochs: 500
   max_steps: -1
 
-  val_check_interval: -1
-  save_interval: 50
+  val_check_interval: 5
+  save_interval: 500
   seq_length: 4096
   max_prompt_length: 50
 
@@ -38,11 +38,11 @@ algorithm:
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
-  max_episode_steps: 100
+  max_episode_steps: 160
   use_ordered_reset_state_ids: False
   reward_coef: 1.0
-  n_chunk_steps: 20
-  n_eval_chunk_steps: 20
+  n_chunk_steps: 32
+  n_eval_chunk_steps: 32
   num_group_envs: 64
   rollout_epoch: 8
   reward_type: chunk_level
