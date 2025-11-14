@@ -253,6 +253,17 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
             ],
         )
 
+    elif cfg.model_name == "mlp_policy":
+        from .embodiment.mlp_policy import MLPPolicy
+
+        model = MLPPolicy(
+            cfg.obs_dim,
+            cfg.action_dim,
+            cfg.hidden_dim,
+            num_action_chunks=cfg.num_action_chunks,
+            add_value_head=cfg.add_value_head,
+        )
+
     else:
         return None
     if torch.cuda.is_available():
