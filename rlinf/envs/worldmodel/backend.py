@@ -213,8 +213,12 @@ class WorldModelBackend(WMBackendBase):
                 new_obs = {}
                 latest_obs = latest_obs_list[i]
                 for camera_name in self.camera_names:
-                    new_obs[f"{camera_name}"] = torch.rand_like(
-                        latest_obs[f"{camera_name}"]
+                    new_obs[f"{camera_name}"] = torch.randint(
+                        0,
+                        256,
+                        latest_obs[f"{camera_name}"].shape,
+                        dtype=torch.uint8,
+                        device=latest_obs[f"{camera_name}"].device,
                     )
 
                 state_tensor = latest_obs["observation.state"]

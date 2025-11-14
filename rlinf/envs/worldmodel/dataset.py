@@ -116,6 +116,16 @@ class LeRobotDatasetWrapper(torch.utils.data.Dataset):
             image_transforms = transforms.Compose(
                 [
                     transforms.Resize((camera_heights, camera_widths)),
+                    transforms.Lambda(
+                        lambda img: (img * 255).byte()
+                        if img.dtype == torch.float32
+                        else img
+                    ),
+                    transforms.Lambda(
+                        lambda img: img.permute(1, 2, 0)
+                        if len(img.shape) == 3 and img.shape[0] in [1, 3, 4]
+                        else img
+                    ),
                 ]
             )
         self._lerobot_dataset = LeRobotDataset(
