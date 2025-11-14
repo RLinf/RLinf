@@ -87,6 +87,26 @@ def process_nested_dict_for_train(nested_dict, shuffle_id):
         elif isinstance(value, Dict):
             ret_dict[key] = process_nested_dict_for_train(value, shuffle_id)
     return ret_dict
+
+def process_nested_dict_for_replay_buffer(nested_dict):
+    ret_dict = dict()
+    num_data = None
+    for key, value in nested_dict.items():
+        if key in ["dones", "prev_values"]:
+            value = value[:-1]
+        if value is None:
+            ret_dict[key] = None
+        if isinstance(value, torch.Tensor):
+            ret_dict[key] = value.reshape(-1, *value.shape[2:]).cpu()
+            if num_data is not None:
+                assert num_data == ret_dict[key].shape[0]
+            num_data = ret_dict[key].shape[0]
+            print(f"{key=}, {num_data=}")
+        elif isinstance(value, Dict):
+            ret_dict[key], num_data = process_nested_dict_for_replay_buffer(value)
+    if len(ret_dict) > 0:
+        assert num_data is not None
+    return ret_dict, num_data
         
 def split_dict_to_chunk(data: Dict, split_size, dim=0):
     splited_list = [{} for _ in range(split_size)]

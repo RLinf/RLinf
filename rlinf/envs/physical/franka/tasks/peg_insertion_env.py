@@ -2,7 +2,6 @@ import numpy as np
 from ..franka_env import FrankaEnv
 import gymnasium as gym
 import copy
-from gym.envs.registration import register
 import time
 from rlinf.utils.utils import euler_2_quat
 

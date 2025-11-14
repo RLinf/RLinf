@@ -4,7 +4,7 @@ import gymnasium as gym
 import copy
 from gymnasium.vector.sync_vector_env import SyncVectorEnv
 from .franka.franka_env import FrankaEnv, FrankaRobotConfig
-from .franka.tasks.peg_insertion_env import PegInsertionEnv
+import rlinf.envs.physical.franka.tasks
 from rlinf.envs.utils import to_tensor, list_of_dict_to_dict_of_list
 
 class PhysicalEnv(gym.Env):
@@ -38,7 +38,7 @@ class PhysicalEnv(gym.Env):
         env_fns = []
         for _ in range(self.num_envs):
             def env_fn():
-                env = PegInsertionEnv(config=self.env_cfg)
+                env = gym.make(id=self.cfg.init_params.id, config=self.env_cfg)
                 return env
             env_fns.append(env_fn)
         

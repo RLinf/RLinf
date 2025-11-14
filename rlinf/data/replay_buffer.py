@@ -19,6 +19,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
+from rlinf.data.io_struct.utils import process_nested_dict_for_replay_buffer
 
 def concat_batch(data1, data2):
     batch = dict()
@@ -28,6 +29,58 @@ def concat_batch(data1, data2):
         elif isinstance(value, dict):
             batch[key] = concat_batch(data1[key], data2[key])
     return batch
+
+def get_zero_nested_dict(flattened_batch, capacity, with_batch_dim=True):
+    buffer = dict()
+    for key, value in flattened_batch.items():
+        if isinstance(value, torch.Tensor):
+            if with_batch_dim:
+                tgt_shape = (capacity, *value.shape[1:])
+            else:
+                tgt_shape = (capacity, *value.shape)
+            buffer[key] = torch.zeros(
+                tgt_shape, 
+                dtype=value.dtype, 
+                device='cpu'
+            )
+        elif isinstance(value, Dict):
+            buffer[key] = get_zero_nested_dict(value, capacity, with_batch_dim)
+        else:
+            raise NotImplementedError
+    return buffer
+
+def truncate_nested_dict_by_capacity(nested_dict, capacity):
+    ret_dict = dict()
+    for key, val in nested_dict.items():
+        if isinstance(val, torch.Tensor):
+            ret_dict[key] = val[-capacity:]
+        elif isinstance(val, Dict):
+            ret_dict[key] = truncate_nested_dict_by_capacity(nested_dict, capacity)
+        else:
+            raise NotImplementedError
+    return ret_dict
+
+def sample_nested_batch(nested_dict, sample_ids):
+    sample_dict = dict()
+    for key, value in nested_dict.items():
+        if isinstance(value, torch.Tensor):
+            sample_dict[key] = value[sample_ids]
+        elif isinstance(value, Dict):
+            sample_dict[key] = sample_nested_batch(value, sample_ids)
+        else:
+            raise NotImplementedError
+    return sample_dict
+
+def insert_nested_batch(nested_dict, tgt_dict, insert_ids):
+    for key, value in nested_dict.items():
+        if isinstance(value, torch.Tensor):
+            tgt_dict[key][insert_ids] = value
+        elif isinstance(value, Dict):
+            tgt_dict[key] = insert_nested_batch(value, tgt_dict[key], insert_ids)
+        else:
+            raise NotImplementedError
+    return tgt_dict
+
 
 class SACReplayBuffer:
     """
@@ -102,17 +155,7 @@ class SACReplayBuffer:
         return instance
 
     def _initialize_storage(self, flattened_batch: Dict[str, torch.Tensor], with_batch_dim=True):
-        for key, value in flattened_batch.items():
-            if with_batch_dim:
-                tgt_shape = (self.capacity, *value.shape[1:])
-            else:
-                tgt_shape = (self.capacity, *value.shape)
-            # Allocate fixed-size tensors on CPU
-            self.buffer[key] = torch.zeros(
-                tgt_shape, 
-                dtype=value.dtype, 
-                device='cpu'
-            )
+        self.buffer = get_zero_nested_dict(flattened_batch, self.capacity, with_batch_dim)
 
     def add(self, data):
         if not self.buffer:
@@ -132,22 +175,9 @@ class SACReplayBuffer:
         Handles flattening [T, B, ...] -> [T*B, ...] and circular insertion.
         """
         # 1. Flatten the batch: [n-chunk-steps, actor-bsz, ...] -> [num_samples, ...]
-        flattened_batch = {}
-        num_to_add = None
-        
-        for key, value in rollout_batch.items():
-            if key in ["prev_values", "dones"]:
-                value = value[:-1]
-            # Ensure value is on CPU for storage
-            flat_val = value.reshape(-1, *value.shape[2:]).cpu()
-            flattened_batch[key] = flat_val
-            
-            if num_to_add is None:
-                num_to_add = flat_val.shape[0]
-            else:
-                assert num_to_add == flat_val.shape[0], \
-                    f"Inconsistent batch sizes for key {key}, {num_to_add=}, {flat_val.shape[0]=}"
 
+        flattened_batch, num_to_add = process_nested_dict_for_replay_buffer(rollout_batch)
+        assert num_to_add == flattened_batch["prev_values"].shape[0]
         assert num_to_add > 0
 
         # 2. Lazy initialization of storage tensors on first call
@@ -156,13 +186,13 @@ class SACReplayBuffer:
 
         # 3. Handle case where incoming batch is larger than the entire capacity
         if num_to_add >= self.capacity:
-             # Just take the last 'capacity' elements
-             print(f"Warning: Adding batch size {num_to_add} >= capacity {self.capacity}. Overwriting entire buffer.")
-             for key, value in flattened_batch.items():
-                 self.buffer[key][:] = value[-self.capacity:]
-             self.pos = 0
-             self.size = self.capacity
-             return
+            # Just take the last 'capacity' elements
+            print(f"Warning: Adding batch size {num_to_add} >= capacity {self.capacity}. Overwriting entire buffer.")
+
+            self.buffer = truncate_nested_dict_by_capacity(flattened_batch)
+            self.pos = 0
+            self.size = self.capacity
+            return
 
         # 4. Circular buffer insertion
         start_idx = self.pos
@@ -174,10 +204,7 @@ class SACReplayBuffer:
         indices = torch.arange(start_idx, end_idx) % self.capacity
 
         # 5. Insert the batch
-        for key, value in flattened_batch.items():
-            if key not in self.buffer:
-                raise ValueError(f"Warning: Key '{key}' from rollout not in buffer storage. Skipping.")
-            self.buffer[key][indices] = value
+        insert_nested_batch(flattened_batch, self.buffer, indices)
 
         # 5. Update position and size
         self.pos = end_idx % self.capacity
@@ -196,11 +223,7 @@ class SACReplayBuffer:
             generator=self.random_generator
         )
         
-        batch = {}
-        for key, tensor in self.buffer.items():
-            # Index into the storage tensor and move to target device (e.g., GPU)
-            batch[key] = tensor[transition_ids].to(self.device)
-            
+        batch = sample_nested_batch(self.buffer, transition_ids)
         return batch
 
     def __len__(self) -> int:
