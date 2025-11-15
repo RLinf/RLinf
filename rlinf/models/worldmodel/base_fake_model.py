@@ -21,10 +21,9 @@ import torch
 from gymnasium import spaces
 
 
-class WorldModelBackend:
+class BaseFakeModelInference:
     """
-    World model backend implementation.
-    This class implements the world model backend interface using a fake model,
+    This class implements the world model inference using a fake model,
     the purpose is to define the interaction logic with the env interface.
     """
 

@@ -28,8 +28,8 @@ from mani_skill.utils.visualization.misc import (
 )
 from omegaconf.omegaconf import OmegaConf
 
-from rlinf.envs.worldmodel.backend import WorldModelBackend
 from rlinf.envs.worldmodel.dataset import LeRobotDatasetWrapper
+from rlinf.models.worldmodel.base_fake_model import BaseFakeModelInference
 
 
 class WorldModelEnv(gym.Env):
@@ -99,7 +99,7 @@ class WorldModelEnv(gym.Env):
 
         self.device = "cuda"
         env_cfg = OmegaConf.to_container(cfg.backend_cfg, resolve=True)
-        self.env = WorldModelBackend(env_cfg, self.task_dataset, self.device)
+        self.env = BaseFakeModelInference(env_cfg, self.task_dataset, self.device)
 
         self._is_start = True
         self._init_reset_state_ids()
