@@ -13,22 +13,19 @@
 # limitations under the License.
 
 
-from abc import ABC, abstractmethod
 from collections import deque
 from typing import Any, Optional
 
-import gymnasium as gym
 import numpy as np
 import torch
 from gymnasium import spaces
 
 
-class WMBackendBase(gym.Env, ABC):
+class WorldModelBackend:
     """
-    Abstract base class for a world model backend.
-    This class defines the interface for a world model, which is responsible for
-    simulating the environment and generating observations. Subclasses must
-    implement the abstract methods defined here.
+    World model backend implementation.
+    This class implements the world model backend interface using a fake model,
+    the purpose is to define the interaction logic with the env interface.
     """
 
     def __init__(self, cfg: dict[str, Any], dataset: Any, device: Any):
@@ -39,6 +36,7 @@ class WMBackendBase(gym.Env, ABC):
             dataset: The dataset used by the world model.
             device: The device to run the model on.
         """
+
         self.cfg = cfg
         self.dataset = dataset
         self.device = device
@@ -54,51 +52,6 @@ class WMBackendBase(gym.Env, ABC):
         self.batch_size = self.cfg["batch_size"]
         self.num_prompt_frames = self.cfg["num_prompt_frames"]
         self.gen_num_image_each_step = self.cfg["gen_num_image_each_step"]
-
-    @abstractmethod
-    def reset(
-        self, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None
-    ) -> tuple[Any, dict[str, Any]]:
-        """
-        Resets the environment to its initial state for all batch elements.
-
-        This method handles both full batch resets and selective environment resets.
-        It initializes episode data, loads start items from the dataset, and prepares
-        the initial observation state. The method supports both random episode selection
-        and specific episode IDs through options.
-
-        Args:
-            seed: The random seed for deterministic episode selection.
-            options: Additional options for resetting the environment, including:
-                - episode_id: Specific episode IDs to load for each batch element
-                - env_idx: Specific environment indices to reset (partial reset)
-
-        Returns:
-            A tuple containing the initial observations and an empty info dictionary.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def step(self, action: Any) -> tuple[Any, float, bool, bool, dict[str, Any]]:
-        """
-        Takes a step in the environment.
-        Args:
-            action: The action to take.
-        Returns:
-            A tuple containing the next observation, reward, terminated flag,
-            truncated flag, and a dictionary of info.
-        """
-        raise NotImplementedError
-
-
-class WorldModelBackend(WMBackendBase):
-    """
-    World model backend implementation.
-    This class implements the world model backend interface using a specific model.
-    """
-
-    def __init__(self, cfg: dict[str, Any], dataset: Any, device: Any):
-        super().__init__(cfg, dataset, device)
 
         self.model = self._load_model()
         self._init_episodes_structure()
