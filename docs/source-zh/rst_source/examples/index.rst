@@ -71,18 +71,29 @@
        </p>
      </div>
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RoboTwin-Platform/RoboTwin/main/assets/files/50_tasks.gif" 
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" 
-            data-target="animated-image.originalImage">
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/gr00t.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[开发中]基于RoboTwin的强化学习</b><br>
-         RoboTwin+OpenVLA-OFT+PPO达到SOTA训练效果
+         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/gr00t.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>GR00T-N1.5模型强化学习训练</b>
+         </a><br>
+         支持不同具身结构的双系统模型强化学习训练
        </p>
      </div>
    </div>
 
    <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+        <img src="https://raw.githubusercontent.com/RoboTwin-Platform/RoboTwin/main/assets/files/50_tasks.gif" 
+              style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" 
+              data-target="animated-image.originalImage">
+        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+          <b>[开发中]基于RoboTwin的强化学习</b><br>
+          RoboTwin+OpenVLA-OFT+PPO达到SOTA训练效果
+        </p>
+      </div>
+
       <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/calvin.png" 
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" 
@@ -102,6 +113,7 @@
        </p>
      </div>
    </div>
+
 
 
 推理场景
@@ -221,3 +233,4 @@ RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训
    pi0
    reasoning
    coding_online_rl
+   gr00t

@@ -43,6 +43,7 @@ SUPPORTED_MODEL_ARCHS = [
     "qwen3_moe",
     "openpi",
     "mlp_policy",
+    "gr00t",
 ]
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
 SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl"]

@@ -834,6 +834,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                             use_cache=False,
                         )
 
+                    if self.cfg.actor.model.model_name in ["gr00t"]:
+                        prev_logprobs = output_dict["prev_logprobs"]
+
                     kwargs = {
                         "loss_type": self.cfg.algorithm.loss_type,
                         "logprob_type": self.cfg.algorithm.logprob_type,

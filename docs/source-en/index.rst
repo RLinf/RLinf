@@ -39,7 +39,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 - Embodied Agent Support
 
-  - Fast adaptation support for mainstream VLA models: `OpenVLA`_, `OpenVLA-OFT`_, `π₀`_
+  - Fast adaptation support for mainstream VLA models: `OpenVLA`_, `OpenVLA-OFT`_, `π₀`_, `GR00T-N1.5`_
   - Support for mainstream CPU & GPU-based simulators via standardized RL interfaces: `ManiSkill3`_, `LIBERO`_
   - Enabling the first RL fine-tuning of the π₀ model family with a flow-matching action expert.
 
@@ -77,6 +77,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 .. _Megatron-LM: https://github.com/NVIDIA/Megatron-LM
 .. _SGLang: https://github.com/sgl-project/sglang
 .. _vLLM: https://github.com/vllm-project/vllm
+.. _GR00T-N1.5: https://github.com/NVIDIA/Isaac-GR00T.git
 
 
 

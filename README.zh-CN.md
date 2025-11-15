@@ -83,7 +83,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/pi0.html">π₀.₅</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/maniskill.html">OpenVLA</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/libero.html">OpenVLA-OFT</a> ✅</li>
-            <li>GR00T</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/gr00t.html">GR00T</a> ✅</li>
           </ul>
           <li><b>VLM 模型</b></li>
           <ul>
@@ -558,7 +558,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 
 - [ ] 支持多智能体训练
 - [ ] 支持更多具身模拟器的集成 (如 [RoboCasa](https://github.com/robocasa/robocasa), [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis), [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin))  
-- [ ] 支持更多VLA模型，比如 [GR00T](https://github.com/NVIDIA/Isaac-GR00T), [WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow)
+- [ ] 支持更多VLA模型，比如[WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow)
 - [ ] 支持世界模型（World Model）
 
 - [ ] 支持真实世界的具身智能强化学习
