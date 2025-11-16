@@ -46,4 +46,4 @@ elif version.parse(torch.__version__) >= version.parse("2.4.0"):
         FullyShardedDataParallel as FSDP,  # noqa: F401
     )
 else:
-    raise ImportError(f"Unsupport torch version: {version.parse(torch.__version__)}")
+    raise ImportError(f"Unsupported torch version: {version.parse(torch.__version__)}")
