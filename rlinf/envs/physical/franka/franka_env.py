@@ -30,7 +30,7 @@ from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import euler_2_quat, quat_2_euler
 
 from .basic_data_structures import FrankaRobotState
-
+from .utils import quat_slerp
 
 TARGET_POSE = np.array(
         [
@@ -529,10 +529,10 @@ class FrankaEnv(gym.Env):
     def _interpolate_move(self, pose: np.ndarray, timeout: float = 1.5):
         num_steps = timeout * self._config.step_frequency
         self._franka_state: FrankaRobotState = self._controller.get_state().wait()[0]
-        pos_path = np.linspace(self._franka_state.tcp_pose[:3], pose[:3], int(num_steps))
-        quat_path = quat_slerp(self._franka_state.tcp_pose[3:], pose[3:], int(num_steps))
+        pos_path = np.linspace(self._franka_state.tcp_pose[:3], pose[:3], int(num_steps)+1)
+        quat_path = quat_slerp(self._franka_state.tcp_pose[3:], pose[3:], int(num_steps)+1)
 
-        for pos, quat in zip(pos_path, quat_path):
+        for pos, quat in zip(pos_path[1:], quat_path[1:]):
             self._move_action(np.concatenate([pos, quat]).astype(np.float32))
             time.sleep(1.0 / self._config.step_frequency)
 
