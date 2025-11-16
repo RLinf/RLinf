@@ -529,10 +529,11 @@ class FrankaEnv(gym.Env):
     def _interpolate_move(self, pose: np.ndarray, timeout: float = 1.5):
         num_steps = timeout * self._config.step_frequency
         self._franka_state: FrankaRobotState = self._controller.get_state().wait()[0]
-        path = np.linspace(self._franka_state.tcp_pose, pose, int(num_steps))
+        pos_path = np.linspace(self._franka_state.tcp_pose[:3], pose[:3], int(num_steps))
+        quat_path = quat_slerp(self._franka_state.tcp_pose[3:], pose[3:], int(num_steps))
 
-        for pose in path:
-            self._move_action(pose.astype(np.float32))
+        for pos, quat in zip(pos_path, quat_path):
+            self._move_action(np.concatenate([pos, quat]).astype(np.float32))
             time.sleep(1.0 / self._config.step_frequency)
 
     def _move_action(self, position: np.ndarray):
