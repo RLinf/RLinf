@@ -6,6 +6,10 @@ import time
 from rlinf.utils.utils import euler_2_quat
 
 class PegInsertionEnv(FrankaEnv):
+    @property
+    def task_description(self):
+        return "peg and insertion"
+
     def _init_action_obs_spaces(self):
         """Initialize action and observation spaces, including arm safety box."""
         self._xyz_safe_space = gym.spaces.Box(
@@ -39,9 +43,9 @@ class PegInsertionEnv(FrankaEnv):
                         "wrist_1": gym.spaces.Box(
                             0, 255, shape=(128, 128, 3), dtype=np.uint8
                         ),
-                        "wrist_2": gym.spaces.Box(
-                            0, 255, shape=(128, 128, 3), dtype=np.uint8
-                        ),
+                        # "wrist_2": gym.spaces.Box(
+                        #     0, 255, shape=(128, 128, 3), dtype=np.uint8
+                        # ),
                     }
                 ),
             }

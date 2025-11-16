@@ -30,6 +30,9 @@ def convert_data():
     for traj in tqdm(trajs):
         torch_traj = dict()
 
+        torch_traj["transitions"] = {
+            "obs": {}, "next_obs": {}
+        }
         # observations
         for key, value in traj["observations"].items():
             tgt_key = obs_key_map[key]
@@ -44,7 +47,7 @@ def convert_data():
                     tgt_value_0[:7] = tgt_value
                     tgt_value = tgt_value_0
 
-            torch_traj[f"transitions/obs/{tgt_key}"] = tgt_value
+            torch_traj["transitions"]["obs"][tgt_key] = tgt_value
 
         # next observations
         for key, value in traj["next_observations"].items():
@@ -59,7 +62,7 @@ def convert_data():
                     tgt_value_0 = torch.zeros(29)
                     tgt_value_0[:7] = tgt_value
                     tgt_value = tgt_value_0
-            torch_traj[f"transitions/next_obs/{tgt_key}"] = tgt_value
+            torch_traj["transitions"]["next_obs"][tgt_key] = tgt_value
         
         torch_traj["action"] = torch.from_numpy(traj["actions"].flatten())
         
@@ -72,8 +75,6 @@ def convert_data():
             else:
                 torch_traj[key] = torch.tensor([value, ])
 
-        for key, value in torch_traj.items():
-            print(key, value.shape)
         torch_trajs.append(torch_traj)
         
 

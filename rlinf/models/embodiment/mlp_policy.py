@@ -73,7 +73,7 @@ class MLPPolicy(BasePolicy):
             layer_init(nn.Linear(256, 256)),
             act(),   
         )
-        self.actor_mean = layer_init(nn.Linear(256, action_dim))
+        self.actor_mean = layer_init(nn.Linear(256, action_dim), std=0.01 * np.sqrt(2))
 
         self.independent_std = independent_std
         if independent_std:

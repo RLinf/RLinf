@@ -43,6 +43,7 @@ class PhysicalEnv(gym.Env):
             env_fns.append(env_fn)
         
         self.env = SyncVectorEnv(env_fns)
+        self.task_descriptions = list(self.env.call("task_description"))
     
     @property
     def total_num_group_envs(self):
@@ -122,8 +123,12 @@ class PhysicalEnv(gym.Env):
         # Process images
         obs["images"] = dict()
         for camera_name in raw_obs["frames"]:
-            obs["images"][camera_name] = raw_obs["frames"][camera_name].astype(float) / 255.0
-        return to_tensor(obs)
+            image_numpy: np.ndarray = raw_obs["frames"][camera_name] # [B, H, W, C]
+            obs["images"][camera_name] = np.moveaxis(image_numpy, 3, 1) # [B, C, H, W]
+
+        obs = to_tensor(obs)
+        obs["task_descriptions"] = self.task_descriptions
+        return obs
     
     def step(self, actions=None, auto_reset=True):
         if actions is None:

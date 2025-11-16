@@ -197,7 +197,7 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
 
             if self.demo_buffer is not None:
                 replay_batch = self.replay_buffer.sample(batch_size // 2)
-                demo_batch = self.replay_buffer.sample(batch_size // 2)
+                demo_batch = self.demo_buffer.sample(batch_size // 2)
                 batch = concat_batch(replay_batch, demo_batch)
             else:
                 batch = self.replay_buffer.sample(batch_size)
@@ -212,15 +212,8 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                         for sub_k, sub_v in v.items()
                     }
             
-            curr_obs = {
-                key[len("transitions/obs/"):]: value for key, value in batch.items()
-                if "transitions/obs/" in key
-            }
-            next_obs = {
-                key[len("transitions/next_obs/"):]: value for key, value in batch.items()
-                if "transitions/next_obs/" in key
-            }
-
+            curr_obs = batch["transitions"]["obs"]
+            next_obs = batch["transitions"]["next_obs"]
             with torch.no_grad():
 
                 next_state_actions, next_state_log_pi, shared_feature = self.model(

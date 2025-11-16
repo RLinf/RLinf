@@ -112,11 +112,13 @@ class MultiStepRolloutWorker(Worker):
         return actions, result
 
     def update_env_output(self, i, env_output, next_extracted_obs):
-        real_next_extracted_obs = init_real_next_obs(next_extracted_obs)
-
+        real_next_extracted_obs  = None
+        
         # first step for env_batch
         if env_output["rewards"] is None:
             self.buffer_list[i].dones.append(env_output["dones"].contiguous().cpu())
+            if hasattr(self.hf_model, "q_head"):
+                real_next_extracted_obs = init_real_next_obs(next_extracted_obs)
             return real_next_extracted_obs
 
         
@@ -134,9 +136,8 @@ class MultiStepRolloutWorker(Worker):
                     final_extracted_obs = self.hf_model.preprocess_env_obs(
                         final_obs
                     )
-                    real_next_extracted_obs = update_real_next_obs(
-                        real_next_extracted_obs, final_extracted_obs, last_step_dones
-                    )
+                    if hasattr(self.hf_model, "q_head"):
+                        real_next_extracted_obs = init_real_next_obs(final_extracted_obs)
                     
                     actions, result = self.predict(final_extracted_obs)
                     if "prev_values" in result:
@@ -149,6 +150,9 @@ class MultiStepRolloutWorker(Worker):
                 self.buffer_list[i].rewards[-1][:, -1] += (
                     self.cfg.algorithm.gamma * final_values.cpu()
                 )
+
+        if real_next_extracted_obs is None and hasattr(self.hf_model, "q_head"):
+            real_next_extracted_obs = init_real_next_obs(next_extracted_obs)
         return real_next_extracted_obs
 
     async def generate(self):
@@ -182,7 +186,7 @@ class MultiStepRolloutWorker(Worker):
                     if extracted_obs[i] is not None and hasattr(self.hf_model, "q_head"):
                         self.buffer_list[i].add_transition(extracted_obs[i], real_next_extracted_obs)
                     
-                    extracted_obs[i] = real_next_extracted_obs
+                    extracted_obs[i] = next_extracted_obs
 
                     await self.send_chunk_actions(actions)
 

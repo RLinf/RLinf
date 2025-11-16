@@ -186,10 +186,17 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
         )
 
         # config
-        if getattr(cfg.openpi, "pi05", False):
-            actor_train_config = _config.get_config("pi05_libero")
+        simulator_type = getattr(cfg.openpi, "simulator_type", "libero")
+        if simulator_type == "libero":
+            if getattr(cfg.openpi, "pi05", False):
+                actor_train_config = _config.get_config("pi05_libero")
+            else:
+                actor_train_config = _config.get_config("pi0_libero")
+        elif simulator_type == "real":
+            from rlinf.models.embodiment.openpi import get_openpi_config
+            actor_train_config = get_openpi_config("pi0_real")
         else:
-            actor_train_config = _config.get_config("pi0_libero")
+            raise NotImplementedError
         actor_model_config = actor_train_config.model
         actor_model_config = OpenPi0Config(**actor_model_config.__dict__)
         override_config_kwargs = cfg.openpi

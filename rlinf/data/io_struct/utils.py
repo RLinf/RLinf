@@ -6,7 +6,7 @@ def put_tensor_device(data_dict, device):
         return None
 
     if isinstance(data_dict, torch.Tensor):
-        return data_dict.cpu().contiguous()
+        return data_dict.value.to(device=device).contiguous()
     for key, value in data_dict.items():
         if isinstance(value, dict):
             data_dict[key] = put_tensor_device(value, device)
@@ -101,7 +101,6 @@ def process_nested_dict_for_replay_buffer(nested_dict):
             if num_data is not None:
                 assert num_data == ret_dict[key].shape[0]
             num_data = ret_dict[key].shape[0]
-            print(f"{key=}, {num_data=}")
         elif isinstance(value, Dict):
             ret_dict[key], num_data = process_nested_dict_for_replay_buffer(value)
     if len(ret_dict) > 0:
@@ -113,6 +112,8 @@ def split_dict_to_chunk(data: Dict, split_size, dim=0):
     for key, value in data.items():
         if isinstance(value, torch.Tensor):
             split_vs = torch.chunk(value, split_size, dim=dim)
+        elif value is None:
+            split_vs = [None for _ in range(split_size)]
         elif isinstance(value, Dict):
             split_vs = split_dict_to_chunk(value, split_size, dim)
         else:

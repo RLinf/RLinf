@@ -16,3 +16,4 @@ logs/*
 .venv
 uv.lock
 rlinf/envs/maniskill/assets
+.pkl

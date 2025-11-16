@@ -16,6 +16,7 @@ import gc
 import os
 from contextlib import nullcontext
 from typing import Dict, Tuple
+import itertools
 
 import numpy as np
 import torch
@@ -780,9 +781,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         metrics = {}
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
         for _ in range(update_epoch):
-            rollout_global_batch_list = split_dict_to_chunk(
-                self.rollout_batch,
-                rollout_size // batch_size_per_rank,
+            rollout_global_batch_list = itertools.chain(
+                split_dict_to_chunk(
+                    self.rollout_batch,
+                    rollout_size // batch_size_per_rank,
+                )
             )
             for train_global_batch in rollout_global_batch_list:
                 # split batch into micro_batches
@@ -795,9 +798,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 assert train_global_batch_size % self.cfg.actor.micro_batch_size == 0, (
                     f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size}"
                 )
-                train_micro_batch_list = split_dict_to_chunk(
-                    train_global_batch,
-                    train_global_batch_size // self.cfg.actor.micro_batch_size,
+                train_micro_batch_list = itertools.chain(
+                    split_dict_to_chunk(
+                        train_global_batch,
+                        train_global_batch_size // self.cfg.actor.micro_batch_size,
+                    )
                 )
 
                 self.optimizer.zero_grad()

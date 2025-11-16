@@ -19,7 +19,9 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
-from rlinf.data.io_struct.utils import process_nested_dict_for_replay_buffer
+from rlinf.data.io_struct.utils import (
+    process_nested_dict_for_replay_buffer, 
+)
 
 def concat_batch(data1, data2):
     batch = dict()
@@ -80,6 +82,43 @@ def insert_nested_batch(nested_dict, tgt_dict, insert_ids):
         else:
             raise NotImplementedError
     return tgt_dict
+
+
+def insert_nested_dict(nested_dict, tgt_dict, insert_id):
+    for key, value in nested_dict.items():
+        if isinstance(value, torch.Tensor):
+            tgt_dict[key][insert_id] = value
+        elif isinstance(value, Dict):
+            tgt_dict[key] = insert_nested_dict(value, tgt_dict[key], insert_id)
+        else:
+            raise NotImplementedError
+    return tgt_dict
+
+def shuffle_and_split_dict_to_chunk(data: Dict, split_size, indice_ids):
+    splited_list = [{} for _ in range(split_size)]
+    for key, value in data.items():
+        if isinstance(value, torch.Tensor):
+            split_vs = torch.chunk(value[indice_ids], split_size)
+        elif isinstance(value, Dict):
+            split_vs = shuffle_and_split_dict_to_chunk(value, split_size, indice_ids)
+        else:
+            raise ValueError(f"{key=}, {type(value)} is not supported.")
+        for split_id in range(split_size):
+            splited_list[split_id][key] = split_vs[split_id]
+    return splited_list
+
+def clone_dict_and_get_size(nested_dict):
+    ret_dict = dict()
+    size = None
+    for key, value in nested_dict.items():
+        if isinstance(value, torch.Tensor):
+            ret_dict[key] = value.clone()
+            size = value.shape[0]
+        elif isinstance(value, Dict):
+            ret_dict[key], size = clone_dict_and_get_size(value)
+        else:
+            raise NotImplementedError
+    return ret_dict, size
 
 
 class SACReplayBuffer:
@@ -144,14 +183,10 @@ class SACReplayBuffer:
     
     @classmethod
     def create_from_buffer(cls, buffer, seed):
-        for key in buffer.keys():
-            capacity = buffer[key].shape[0]
-            break
-        instance = cls(capacity=capacity, seed=seed)
-        instance.buffer = dict()
-        for key, value in buffer.items():
-            instance.buffer[key] = value.clone()
-        instance.size = instance.capacity
+        instance = cls(capacity=None, seed=seed)
+        instance.buffer, size = clone_dict_and_get_size(buffer)
+        instance.size = size
+        instance.capacity = size
         return instance
 
     def _initialize_storage(self, flattened_batch: Dict[str, torch.Tensor], with_batch_dim=True):
@@ -161,10 +196,7 @@ class SACReplayBuffer:
         if not self.buffer:
             self._initialize_storage(data, with_batch_dim=False)
         
-        for key, value in data.items():
-            if key not in self.buffer:
-                raise ValueError(f"Warning: Key '{key}' from rollout not in buffer storage. Skipping.")
-            self.buffer[key][self.pos] = value
+        insert_nested_batch(data, self.buffer, self.pos)
         
         self.pos = (self.pos + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
@@ -176,9 +208,11 @@ class SACReplayBuffer:
         """
         # 1. Flatten the batch: [n-chunk-steps, actor-bsz, ...] -> [num_samples, ...]
 
+        rollout_batch.pop("prev_logprobs")
+        rollout_batch.pop("prev_values")
         flattened_batch, num_to_add = process_nested_dict_for_replay_buffer(rollout_batch)
-        assert num_to_add == flattened_batch["prev_values"].shape[0]
         assert num_to_add > 0
+        
 
         # 2. Lazy initialization of storage tensors on first call
         if not self.buffer:
@@ -265,19 +299,12 @@ class SACReplayBuffer:
     
     def split_to_dict(self, num_splits, is_sequential=False):
         assert self.capacity % num_splits == 0
-        each_split_size = self.capacity // num_splits
 
         all_ids = torch.arange(self.size).to(self.device)
         if not is_sequential:
             all_ids = torch.randperm(self.size, generator=self.random_generator).to(self.device)
-
-        res_ls = []
-        for split_id in range(num_splits):
-            buffer = dict()
-            select_idx = all_ids[split_id*each_split_size:(split_id+1)*each_split_size]
-            for key in self.buffer:
-                buffer[key] = self.buffer[key][select_idx].clone()
-            res_ls.append(buffer)
+        
+        res_ls = shuffle_and_split_dict_to_chunk(self.buffer, split_size=num_splits, indice_ids=all_ids)
         return res_ls        
 
 

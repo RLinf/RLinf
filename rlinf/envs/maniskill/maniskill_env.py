@@ -141,7 +141,8 @@ class ManiskillEnv(gym.Env):
 
                 images = dict()
                 for camera_name in sensor_data.keys():
-                    images[camera_name] = sensor_data[camera_name]["rgb"].float() / 255.0
+                    image_tensor = sensor_data[camera_name]["rgb"] # [B, H, W, C]
+                    images[camera_name] = image_tensor.permute(0, 3, 1, 2) # [B, C, H, W]
                 wrapped_obs = {
                     "images": images,
                     "task_description": None,

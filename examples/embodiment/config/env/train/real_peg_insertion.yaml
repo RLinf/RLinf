@@ -3,7 +3,6 @@ auto_reset: ${algorithm.auto_reset}
 ignore_terminations: ${algorithm.ignore_terminations}
 use_rel_reward: True
 reward_mode: raw
-wrap_obs_mode: simple
 seed: 0
 num_group: ${algorithm.num_group_envs}
 group_size: ${algorithm.group_size}
@@ -18,9 +17,8 @@ video_cfg:
   video_base_dir: ${runner.logger.log_path}/video/train
 
 init_params:
-  id: "PickCube-v1"
+  id: "PegInsertionEnv-v1"
   num_envs: ${env.train.num_envs}
-  obs_mode: ${algorithm.obs_mode}
   control_mode: None
   sim_backend: "gpu"
   sim_config:

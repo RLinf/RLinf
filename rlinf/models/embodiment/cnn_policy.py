@@ -119,16 +119,9 @@ class CNNPolicy(BasePolicy):
     def preprocess_env_obs(self, env_obs):
         device = next(self.parameters()).device
         processed_env_obs = {}
-        for key, value in env_obs.items():
-            if key == "images":
-                continue
-            if value is not None:
-                if isinstance(value, torch.Tensor):
-                    processed_env_obs[key] = value.clone().to(device)
-                else:
-                    processed_env_obs[key] = value
+        processed_env_obs["states"] = env_obs["states"].clone().to(device)
         for key, value in env_obs["images"].items():
-            processed_env_obs[f"images/{key}"] = value.clone().to(device).permute(0, 3, 1, 2)
+            processed_env_obs[f"images/{key}"] = value.clone().to(device).float() / 255.0
         return processed_env_obs
     
     def get_feature_0(self, obs, detach_encoder=False):
