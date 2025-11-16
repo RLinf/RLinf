@@ -16,6 +16,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.distributions.normal import Normal
+from dataclasses import dataclass, field
+from typing import List, Dict, Any, Tuple
+import warnings
 
 from .modules.nature_cnn import NatureCNN, PlainConv, ResNetEncoder
 from .modules.utils import layer_init, make_mlp
@@ -23,46 +26,69 @@ from .modules.value_head import ValueHead
 from .modules.q_head import MultiQHead
 from .base_policy import BasePolicy
 
+@dataclass
+class CNNConfig:
+    image_size: List[int] = field(default_factory=list)
+    image_keys: List[str] = field(default_factory=str)
+    action_dim: int = 4
+    state_dim: int = 29
+    num_action_chunks: int = 1
+    backbone: str = "resnet"
+    extra_config: Dict[str, Any] = field(default_factory=dict)
+    add_value_head: bool = False
+    add_q_head: bool = False
+
+    state_latent_dim: int = 64
+    independent_std: bool = True
+    action_scale = None
+    final_tanh = False
+    std_range = None
+
+    def update_from_dict(self, config_dict):
+        for key, value in config_dict.items():
+            if hasattr(self, key):
+                self.__setattr__(key, value)
+            else:
+                warnings.warn(f"CNNConfig does not contain the key {key=}")
+        self._update_info()
+
+    def _update_info(self):
+        if self.add_q_head:
+            self.independent_std = False
+            self.action_scale = -1, 1
+            self.final_tanh = True
+            self.std_range = (1e-5, 5)
+
+
+
 class CNNPolicy(BasePolicy):
     def __init__(
-            self,
-            # observation space and action space info
-            image_keys, image_size, state_dim, action_dim, 
-            hidden_dim, num_action_chunks, 
-            add_value_head, add_q_head,
-            backbone, 
-            independent_std=True, final_tanh=False, action_scale=None,
-            std_range=None
+            self, cfg: CNNConfig
         ):
         super().__init__()
-        self.backbone = backbone # ["plain_conv", ]
-        self.image_size = image_size # [c, h, w]
-        self.action_dim = action_dim
-        self.state_dim = state_dim
-        self.num_action_chunks = num_action_chunks
-        self.in_channels = image_size[0]
-        self.image_keys = image_keys
-
-        self.state_latent_dim = 64
+        self.cfg = cfg
+        self.in_channels = self.cfg.image_size[0]
 
         self.encoders = nn.ModuleDict()
         encoder_out_dim = 0
-        if self.backbone == "plane_conv":
-            for key in image_keys:
+        if self.cfg.backbone == "plane_conv":
+            for key in self.cfg.image_keys:
                 self.encoders[key] = PlainConv(
-                    in_channels=self.in_channels, out_dim=256, image_size=image_size
+                    in_channels=self.in_channels, out_dim=256, image_size=self.cfg.image_size
                 ) # assume image is 64x64
                 encoder_out_dim += self.encoders[key].out_dim
-        elif self.backbone == "resnet":
-            sample_x = torch.randn(1, *image_size)
-            for key in image_keys:
-                self.encoders[key] = ResNetEncoder(sample_x, out_dim=256)
+        elif self.cfg.backbone == "resnet":
+            sample_x = torch.randn(1, *self.cfg.image_size)
+            for key in self.cfg.image_keys:
+                self.encoders[key] = ResNetEncoder(
+                    sample_x, out_dim=256, model_cfg=self.cfg.extra_config
+                )
                 encoder_out_dim += self.encoders[key].out_dim
         else:
             raise NotImplementedError
         self.state_proj = make_mlp(
-            in_channels=self.state_dim,
-            mlp_channels=[self.state_latent_dim, ], 
+            in_channels=self.cfg.state_dim,
+            mlp_channels=[self.cfg.state_latent_dim, ], 
             act_builder=nn.Tanh, 
             use_layer_norm=True
         )
@@ -70,46 +96,38 @@ class CNNPolicy(BasePolicy):
         # self.mlp = make_mlp(self.encoder.out_dim+self.state_dim, [512, 256], last_act=True)
         # self.actor_mean = nn.Linear(256, self.action_dim)
         self.mix_proj = make_mlp(
-            in_channels=encoder_out_dim+self.state_latent_dim, 
+            in_channels=encoder_out_dim+self.cfg.state_latent_dim, 
             mlp_channels=[256, 256],  
             act_builder=nn.Tanh, 
             use_layer_norm=True
         )
 
-        self.actor_mean = nn.Linear(256, self.action_dim) 
+        self.actor_mean = nn.Linear(256, self.cfg.action_dim) 
 
-        assert add_value_head + add_q_head <= 1
-        if add_value_head:
+        assert self.cfg.add_value_head + self.cfg.add_q_head <= 1
+        if self.cfg.add_value_head:
             self.value_head = ValueHead(
                 input_dim=256, 
                 hidden_sizes=(256, 256, 256), 
                 activation="relu"
             )
-        if add_q_head:
-            independent_std = False
-            action_scale = 1, -1
-            final_tanh = True
-            std_range = (1e-5, 5)
+        if self.cfg.add_q_head:
             self.q_head = MultiQHead(
                 # hidden_size=self.encoder.out_dim+self.state_dim,
-                hidden_size=encoder_out_dim+self.state_latent_dim,
+                hidden_size=encoder_out_dim+self.cfg.state_latent_dim,
                 hidden_dims=[256, 256, 256], 
                 num_q_heads=2, 
-                action_dim=action_dim,
+                action_dim=self.cfg.action_dim,
                 use_mix_embedding_input=False
             )
-        
-        self.independent_std = independent_std
-        self.final_tanh = final_tanh
-        self.std_range = std_range
 
-        if independent_std:
-            self.actor_logstd = nn.Parameter(torch.ones(1, action_dim) * -0.5)
+        if self.cfg.independent_std:
+            self.actor_logstd = nn.Parameter(torch.ones(1, self.cfg.action_dim) * -0.5)
         else:
-            self.actor_logstd = nn.Linear(256, action_dim)
+            self.actor_logstd = nn.Linear(256, self.cfg.action_dim)
 
-        if action_scale is not None:
-            h, l = action_scale
+        if self.cfg.action_scale is not None:
+            l, h = self.cfg.action_scale
             self.register_buffer("action_scale", torch.tensor((h - l) / 2.0, dtype=torch.float32))
             self.register_buffer("action_bias", torch.tensor((h + l) / 2.0, dtype=torch.float32))
         else:
@@ -126,7 +144,7 @@ class CNNPolicy(BasePolicy):
     
     def get_feature_0(self, obs, detach_encoder=False):
         visual_features = []
-        for key in self.image_keys:
+        for key in self.cfg.image_keys:
             visual_features.append(self.encoders[key](obs[f"images/{key}"]))
         visual_feature = torch.cat(visual_features, dim=-1)
         if detach_encoder:
@@ -136,7 +154,7 @@ class CNNPolicy(BasePolicy):
     
     def get_feature(self, obs, detach_encoder=False):
         visual_features = []
-        for key in self.image_keys:
+        for key in self.cfg.image_keys:
             visual_features.append(self.encoders[key](obs[f"images/{key}"]))
         visual_feature = torch.cat(visual_features, dim=-1)
         if detach_encoder:
@@ -164,7 +182,7 @@ class CNNPolicy(BasePolicy):
         full_feature, visual_feature = self.get_feature(obs)
         mix_feature = self.mix_proj(full_feature)
         action_mean = self.actor_mean(mix_feature)
-        if self.independent_std:
+        if self.cfg.independent_std:
             action_logstd = self.actor_logstd.expand_as(action_mean)
         else:
             action_logstd = self.actor_logstd(mix_feature)
@@ -198,8 +216,8 @@ class CNNPolicy(BasePolicy):
         # action_logstd = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (action_logstd + 1)
 
         action_std = torch.exp(action_logstd)
-        if self.std_range is not None:
-            action_std = torch.clamp(action_std, self.std_range[0], self.std_range[1])
+        if self.cfg.std_range is not None:
+            action_std = torch.clamp(action_std, self.cfg.std_range[0], self.cfg.std_range[1])
 
         probs = Normal(action_mean, action_std)
         raw_action = probs.rsample()
@@ -226,8 +244,8 @@ class CNNPolicy(BasePolicy):
         # action_logstd = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (action_logstd + 1)
 
         action_std = torch.exp(action_logstd)
-        if self.std_range is not None:
-            action_std = torch.clamp(action_std, self.std_range[0], self.std_range[1])
+        if self.cfg.std_range is not None:
+            action_std = torch.clamp(action_std, self.cfg.std_range[0], self.cfg.std_range[1])
 
         probs = Normal(action_mean, action_std)
         raw_action = probs.rsample()
@@ -318,18 +336,18 @@ class CNNPolicy(BasePolicy):
         full_feature, visual_feature = self.get_feature(env_obs)
         mix_feature = self.mix_proj(full_feature)
         action_mean = self.actor_mean(mix_feature)
-        if self.independent_std:
+        if self.cfg.independent_std:
             action_logstd = self.actor_logstd.expand_as(action_mean)
         else:
             action_logstd = self.actor_logstd(mix_feature)
 
-        if self.final_tanh:
+        if self.cfg.final_tanh:
             action_logstd = torch.tanh(action_logstd)
             # action_logstd = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (action_logstd + 1)  # From SpinUp / Denis Yarats
 
         action_std = action_logstd.exp()
-        if self.std_range is not None:
-            action_std = torch.clamp(action_std, self.std_range[0], self.std_range[1])
+        if self.cfg.std_range is not None:
+            action_std = torch.clamp(action_std, self.cfg.std_range[0], self.cfg.std_range[1])
 
         probs = torch.distributions.Normal(action_mean, action_std)
         raw_action = probs.sample()  # for reparameterization trick (mean + std * N(0,1))
@@ -343,7 +361,7 @@ class CNNPolicy(BasePolicy):
             action = raw_action
 
         if return_action_type == "numpy_chunk":
-            chunk_actions = action.reshape(-1, self.num_action_chunks, self.action_dim)
+            chunk_actions = action.reshape(-1, self.cfg.num_action_chunks, self.cfg.action_dim)
             chunk_actions = chunk_actions.cpu().numpy()
         elif return_action_type == "torch_flatten":
             chunk_actions = action.clone()
@@ -385,6 +403,11 @@ class CNNPolicy(BasePolicy):
         if detach_encoder:
             shared_feature = shared_feature.detach()
         return self.q_head(shared_feature, actions)
+    
+        mix_feature = self.mix_proj(shared_feature)
+        if detach_encoder:
+            mix_feature = mix_feature.detach()
+        return self.q_head(mix_feature, actions)
     
 
 class Agent(nn.Module):

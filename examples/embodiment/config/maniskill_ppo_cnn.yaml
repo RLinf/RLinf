@@ -137,8 +137,10 @@ actor:
     sharding_strategy: no_shard
     vh_mode: "q_network"
     q_network_separate_processing: True
-  
 
+  extra_config:
+      pretrained_ckpt_path: "./resnet10_pretrained.pt"
+  
   optim:
     lr: 3.0e-4
     value_lr: 3.0e-4

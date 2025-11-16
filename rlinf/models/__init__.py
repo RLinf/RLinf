@@ -16,7 +16,7 @@ import json
 import os
 
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from transformers import (
     AutoConfig,
     AutoImageProcessor,
@@ -262,16 +262,10 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
         )
 
     elif cfg.model_name == "cnn":
-        from .embodiment.cnn_policy import CNNPolicy
-        model = CNNPolicy(
-            cfg.image_keys, cfg.image_size, cfg.state_dim, cfg.action_dim, 
-            cfg.hidden_dim,
-            num_action_chunks=cfg.num_action_chunks,
-            add_value_head=cfg.add_value_head, 
-            add_q_head=cfg.add_q_head, 
-            backbone=cfg.backbone
-        )
-
+        from .embodiment.cnn_policy import CNNPolicy, CNNConfig
+        model_config = CNNConfig()
+        model_config.update_from_dict(OmegaConf.to_container(cfg, resolve=True))
+        model = CNNPolicy(model_config)
     else:
         return None
     if torch.cuda.is_available():

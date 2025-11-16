@@ -189,10 +189,11 @@ class SpatialLearnedEmbeddings(nn.Module):
         return out
 
 class ResNetEncoder(nn.Module):
-    def __init__(self, sample_x, out_dim=256):
+    def __init__(self, sample_x, out_dim=256, model_cfg=None):
         super().__init__()
 
         self.out_dim = out_dim
+        self.model_cfg = model_cfg
         
         self.num_spatial_blocks = 8
         self.pooling_method = "spatial_learned_embeddings"
@@ -223,8 +224,7 @@ class ResNetEncoder(nn.Module):
         )
 
     def _load_pretrained_weights(self):
-        pretrained_ckpt = "./resnet10_pretrained.pt"
-        model_dict = torch.load(pretrained_ckpt)
+        model_dict = torch.load(self.model_cfg["pretrained_ckpt_path"])
         self.resnet_backbone.load_state_dict(model_dict)
 
     def _freeze_backbone_weights(self):
