@@ -1,2 +1,3 @@
 
 openpi @ git+https://github.com/RLinf/openpi
+metaworld==3.0.0

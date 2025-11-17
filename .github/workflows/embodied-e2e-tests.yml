@@ -90,3 +90,15 @@ jobs:
           export ISAAC_PATH=/workspace/dataset/isaac-sim
           source switch_env behavior-openvla-oft
           bash tests/e2e_tests/embodied/run.sh behavior_ppo_openvlaoft
+
+  embodied-metaworld-50-ppo-openpi-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: OPENPI test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env openpi
+          bash tests/e2e_tests/embodied/run.sh metaworld_50_ppo_openpi

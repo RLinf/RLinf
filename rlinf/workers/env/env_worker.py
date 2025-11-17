@@ -82,7 +82,7 @@ class EnvWorker(Worker):
                             self.cfg.env.train,
                             rank=self._rank,
                             seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size,
+                            total_num_processes=self._world_size * self.stage_num,
                             env_cls=ManiskillEnv,
                             enable_offload=enable_offload,
                         )
@@ -94,7 +94,7 @@ class EnvWorker(Worker):
                             self.cfg.env.eval,
                             rank=self._rank,
                             seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size,
+                            total_num_processes=self._world_size * self.stage_num,
                             env_cls=ManiskillEnv,
                             enable_offload=enable_offload,
                         )
@@ -149,8 +149,35 @@ class EnvWorker(Worker):
                             self.cfg.env.eval,
                             rank=self._rank,
                             seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size,
+                            total_num_processes=self._world_size * self.stage_num,
                             env_cls=RoboTwin,
+                            enable_offload=enable_offload,
+                        )
+                    )
+        elif self.cfg.env.train.simulator_type == "metaworld":
+            from rlinf.envs.metaworld.metaworld_env import MetaWorldEnv
+
+            if not only_eval:
+                for stage_id in range(self.stage_num):
+                    self.simulator_list.append(
+                        EnvManager(
+                            self.cfg.env.train,
+                            rank=self._rank,
+                            seed_offset=self._rank * self.stage_num + stage_id,
+                            total_num_processes=self._world_size * self.stage_num,
+                            env_cls=MetaWorldEnv,
+                            enable_offload=enable_offload,
+                        )
+                    )
+            if self.cfg.runner.val_check_interval > 0 or only_eval:
+                for stage_id in range(self.stage_num):
+                    self.eval_simulator_list.append(
+                        EnvManager(
+                            self.cfg.env.eval,
+                            rank=self._rank,
+                            seed_offset=self._rank * self.stage_num + stage_id,
+                            total_num_processes=self._world_size * self.stage_num,
+                            env_cls=MetaWorldEnv,
                             enable_offload=enable_offload,
                         )
                     )
@@ -218,6 +245,7 @@ class EnvWorker(Worker):
             model_name=self.cfg.actor.model.model_name,
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
             action_dim=self.cfg.actor.model.action_dim,
+            policy=self.cfg.actor.model.get("policy_setup", None),
         )
         env_info = {}
 
@@ -265,6 +293,7 @@ class EnvWorker(Worker):
             model_name=self.cfg.actor.model.model_name,
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
             action_dim=self.cfg.actor.model.action_dim,
+            policy=self.cfg.actor.model.get("policy_setup", None),
         )
         env_info = {}
 

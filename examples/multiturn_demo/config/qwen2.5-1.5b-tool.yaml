@@ -108,6 +108,7 @@ rollout:
 
   model_dir: /path/to/model/Qwen2.5-1.5B-Instruct
   model_arch: qwen2.5
+  precision: ${actor.model.precision}              # precision for rollout model, support [fp16, bf16, fp32]
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
@@ -227,7 +228,7 @@ actor:
     use_distributed_optimizer: True
     overlap_grad_reduce: False
     overlap_param_gather: False
-    optimizer_enable_pin: false
+    optimizer_enable_pin: False
     overlap_param_gather_with_optimizer_step: False
     clip_grad: 0.8
     loss_scale: 65536
@@ -287,7 +288,7 @@ actor:
 
 reward:
   group_name: "RewardGroup"
-  use_reward_model: false
+  use_reward_model: False
   reward_type: 'math'
   reward_scale: 5.0
 
@@ -298,4 +299,4 @@ reward:
     padding_side: ${actor.tokenizer.padding_side}
 
 critic:
-  use_critic_model: false
+  use_critic_model: False

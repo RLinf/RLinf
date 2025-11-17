@@ -762,7 +762,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self.cfg.actor.global_batch_size
             % (self.cfg.actor.micro_batch_size * self._world_size)
             == 0
-        )
+        ), "global_batch_size is not divisible by micro_batch_size * world_size"
 
         self.gradient_accumulation = (
             self.cfg.actor.global_batch_size
@@ -834,7 +834,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                             use_cache=False,
                         )
 
-                    if self.cfg.actor.model.model_name in ["openpi"]:
+                    if self.cfg.actor.model.model_name in ["openpi", "gr00t"]:
                         prev_logprobs = output_dict["prev_logprobs"]
 
                     kwargs = {

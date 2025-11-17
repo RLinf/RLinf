@@ -1115,12 +1115,21 @@ class EnvOutput:
         elif self.simulator_type == "behavior":
             image_tensor = obs["images"]
             wrist_image_tensor = obs["wrist_images"]
+        elif self.simulator_type == "metaworld":
+            image_tensor = torch.stack(
+                [
+                    value.clone().permute(2, 0, 1)
+                    for value in obs["images_and_states"]["full_image"]
+                ]
+            )
         else:
             raise NotImplementedError
 
         states = None
         if "images_and_states" in obs and "state" in obs["images_and_states"]:
             states = obs["images_and_states"]["state"]
+        if "state" in obs:
+            states = obs["state"]
 
         task_descriptions = (
             list(obs["task_descriptions"]) if "task_descriptions" in obs else None

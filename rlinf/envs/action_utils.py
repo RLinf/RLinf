@@ -23,6 +23,8 @@ def prepare_actions_for_maniskill(
     action_scale,
     policy,
 ) -> torch.Tensor:
+    if policy == "panda-qpos":
+        return raw_chunk_actions
     # TODO only suitable for action_dim = 7
     reshaped_actions = raw_chunk_actions.reshape(-1, action_dim)
     batch_size = reshaped_actions.shape[0]
@@ -90,6 +92,8 @@ def prepare_actions(
             policy=policy,
         )
     elif simulator_type == "robotwin":
+        chunk_actions = raw_chunk_actions
+    elif simulator_type == "metaworld":
         chunk_actions = raw_chunk_actions
     elif simulator_type == "behavior":
         chunk_actions = raw_chunk_actions
