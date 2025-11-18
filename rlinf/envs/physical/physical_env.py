@@ -6,6 +6,8 @@ from gymnasium.vector.sync_vector_env import SyncVectorEnv
 from .franka.franka_env import FrankaEnv, FrankaRobotConfig
 import rlinf.envs.physical.franka.tasks
 from rlinf.envs.utils import to_tensor, list_of_dict_to_dict_of_list
+from typing import OrderedDict
+
 
 class PhysicalEnv(gym.Env):
     def __init__(self, cfg, seed_offset, total_num_processes):
@@ -114,7 +116,7 @@ class PhysicalEnv(gym.Env):
         
         # Process states
         full_states = []
-        raw_states = raw_obs["state"]
+        raw_states = OrderedDict(sorted(raw_obs["state"].items()))
         for key, value in raw_states.items():
             full_states.append(value)
         full_states = np.concatenate(full_states, axis=-1)

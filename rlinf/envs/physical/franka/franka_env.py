@@ -22,7 +22,7 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 import gymnasium as gym
 import numpy as np
-from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation as R
 
 from rlinf.envs.physical.common.camera import Camera, CameraInfo
 from rlinf.scheduler import Cluster, NodePlacementStrategy, Worker
@@ -30,7 +30,7 @@ from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import euler_2_quat, quat_2_euler
 
 from .basic_data_structures import FrankaRobotState
-from .utils import quat_slerp
+from .utils import quat_slerp, construct_adjoint_matrix, construct_homogeneous_matrix
 
 TARGET_POSE = np.array(
         [
@@ -160,6 +160,9 @@ class FrankaEnv(gym.Env):
         """
 
         self.is_dummy = True
+        
+        self.use_euler_obs = True
+        self.use_rel_frame = True
 
         self._logger = get_logger()
         self._config = config
@@ -211,6 +214,10 @@ class FrankaEnv(gym.Env):
             self._cameras: List[Camera] = []
             self._open_cameras(self._config.cameras)
 
+    def transform_action_ee_to_base(self, action):
+        action[:6] = np.linalg.inv(self.adjoint_matrix) @ action[:6]
+        return action
+    
     def step(self, action: np.ndarray):
         """Take a step in the environment.
 
@@ -219,6 +226,10 @@ class FrankaEnv(gym.Env):
         [x_delta, y_delta, z_delta, rx_delta, ry_delta, rz_delta, gripper_action]
         """
         start_time = time.time()
+        
+        if self.use_rel_frame:
+            action = self.transform_action_ee_to_base(action)
+        
         action = np.clip(action, self.action_space.low, self.action_space.high)
         xyz_delta = action[:3]
 
@@ -229,8 +240,8 @@ class FrankaEnv(gym.Env):
 
         if not self.is_dummy:
             self.next_position[3:] = (
-                Rotation.from_euler("xyz", action[3:6] * self._config.action_scale[1])
-                * Rotation.from_quat(self._franka_state.tcp_pose[3:])
+                R.from_euler("xyz", action[3:6] * self._config.action_scale[1])
+                * R.from_quat(self._franka_state.tcp_pose[3:])
             ).as_quat()
         
             gripper_action = action[6] * self._config.action_scale[2]
@@ -250,7 +261,7 @@ class FrankaEnv(gym.Env):
             self._franka_state = self._franka_state
         observation = self._get_observation()
         reward = self._calc_step_reward(observation, is_gripper_action_effective)
-        terminated = float(reward == 1)
+        terminated = reward == 1
         truncated = self._num_steps >= self._config.max_num_steps
         return observation, reward, terminated, truncated, {}
 
@@ -315,6 +326,11 @@ class FrankaEnv(gym.Env):
         self._clear_error()
         self._num_steps = 0
         self._franka_state = self._controller.get_state().wait()[0]
+
+        if self.use_rel_frame:
+            self.T_b_r_inv = np.linalg.inv(
+                construct_homogeneous_matrix(self._franka_state.tcp_pose)
+            )
         observation = self._get_observation()
 
         return observation, {}
@@ -356,13 +372,13 @@ class FrankaEnv(gym.Env):
             np.ones((7,), dtype=np.float32) * -1,
             np.ones((7,), dtype=np.float32),
         )
+
+        obs_tcp_pose_dim = 6 if self.use_euler_obs else 7
         self.observation_space = gym.spaces.Dict(
             {
                 "state": gym.spaces.Dict(
                     {
-                        "tcp_pose": gym.spaces.Box(
-                            -np.inf, np.inf, shape=(7,)
-                        ),  # xyz + quat
+                        "tcp_pose": gym.spaces.Box(-np.inf, np.inf, shape=(obs_tcp_pose_dim,)), 
                         "tcp_vel": gym.spaces.Box(-np.inf, np.inf, shape=(6,)),
                         "gripper_position": gym.spaces.Box(-1, 1, shape=(1,)),
                         "tcp_force": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
@@ -374,9 +390,9 @@ class FrankaEnv(gym.Env):
                         "wrist_1": gym.spaces.Box(
                             0, 255, shape=(128, 128, 3), dtype=np.uint8
                         ),
-                        "wrist_2": gym.spaces.Box(
-                            0, 255, shape=(128, 128, 3), dtype=np.uint8
-                        ),
+                        # "wrist_2": gym.spaces.Box(
+                        #     0, 255, shape=(128, 128, 3), dtype=np.uint8
+                        # ),
                     }
                 ),
             }
@@ -479,7 +495,7 @@ class FrankaEnv(gym.Env):
         position[:3] = np.clip(
             position[:3], self._xyz_safe_space.low, self._xyz_safe_space.high
         )
-        euler = Rotation.from_quat(position[3:]).as_euler("xyz")
+        euler = R.from_quat(position[3:]).as_euler("xyz")
 
         # Clip first euler angle separately due to discontinuity from pi to -pi
         sign = np.sign(euler[0])
@@ -494,7 +510,7 @@ class FrankaEnv(gym.Env):
         euler[1:] = np.clip(
             euler[1:], self._rpy_safe_space.low[1:], self._rpy_safe_space.high[1:]
         )
-        position[3:] = Rotation.from_euler("xyz", euler).as_quat()
+        position[3:] = R.from_euler("xyz", euler).as_quat()
 
         return position
 
@@ -553,6 +569,13 @@ class FrankaEnv(gym.Env):
                 "tcp_force": self._franka_state.tcp_force, 
                 "tcp_torque": self._franka_state.tcp_torque
             }
+            if self.use_rel_frame:
+                state = self.transform_obs_base_to_ee(state)
+            if self.use_euler_obs:
+                state["tcp_pose"] = np.concatenate([
+                    state["tcp_pose"][:3], 
+                    quat_2_euler(state["tcp_pose"][3:])
+                ], axis=0)
             observation = {
                 "state": state,
                 "frames": frames,
@@ -560,3 +583,18 @@ class FrankaEnv(gym.Env):
             return copy.deepcopy(observation)
         else:
             return self.observation_space.sample()
+        
+    def transform_obs_base_to_ee(self, state):
+        self.adjoint_matrix = construct_adjoint_matrix(self._franka_state.tcp_pose)
+        adjoint_inv = np.linalg.inv(self.adjoint_matrix)
+        
+        state["tcp_vel"] = adjoint_inv @ state["tcp_vel"]
+
+        T_b_o = construct_homogeneous_matrix(self._franka_state.tcp_pose)
+        T_r_o = self.T_b_r_inv @ T_b_o
+
+        p_r_o = T_r_o[:3, 3]
+        quat_r_o = R.from_matrix(T_r_o[:3, :3]).as_quat()
+        state["tcp_pose"] = np.concatenate([p_r_o, quat_r_o])
+        
+        return state

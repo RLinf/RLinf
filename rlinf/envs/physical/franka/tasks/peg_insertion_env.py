@@ -10,47 +10,6 @@ class PegInsertionEnv(FrankaEnv):
     def task_description(self):
         return "peg and insertion"
 
-    def _init_action_obs_spaces(self):
-        """Initialize action and observation spaces, including arm safety box."""
-        self._xyz_safe_space = gym.spaces.Box(
-            low=self._config.ee_pose_limit_min[:3],
-            high=self._config.ee_pose_limit_max[:3],
-            dtype=np.float64,
-        )
-        self._rpy_safe_space = gym.spaces.Box(
-            low=self._config.ee_pose_limit_min[3:],
-            high=self._config.ee_pose_limit_max[3:],
-            dtype=np.float64,
-        )
-        self.action_space = gym.spaces.Box(
-            np.ones((7,), dtype=np.float32) * -1,
-            np.ones((7,), dtype=np.float32),
-        )
-        self.observation_space = gym.spaces.Dict(
-            {
-                "state": gym.spaces.Dict(
-                    {
-                        "tcp_pose": gym.spaces.Box(
-                            -np.inf, np.inf, shape=(7,)
-                        ),  # xyz + quat
-                        "tcp_vel": gym.spaces.Box(-np.inf, np.inf, shape=(6,)),
-                        "tcp_force": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
-                        "tcp_torque": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
-                    }
-                ),
-                "frames": gym.spaces.Dict(
-                    {
-                        "wrist_1": gym.spaces.Box(
-                            0, 255, shape=(128, 128, 3), dtype=np.uint8
-                        ),
-                        # "wrist_2": gym.spaces.Box(
-                        #     0, 255, shape=(128, 128, 3), dtype=np.uint8
-                        # ),
-                    }
-                ),
-            }
-        )
-
     def go_to_rest(self, joint_reset=False):
         """
         Move to the rest position defined in base class.
