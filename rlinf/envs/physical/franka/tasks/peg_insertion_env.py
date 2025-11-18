@@ -52,21 +52,3 @@ class PegInsertionEnv(FrankaEnv):
         new_action = np.ones(7)
         new_action[:6] = action
         return super().step(new_action)
-    
-
-    def _get_observation(self):
-        if not self.is_dummy:
-            frames = self._get_camera_frames()
-            state = {
-                "tcp_pose": self._franka_state.tcp_pose, 
-                "tcp_vel": self._franka_state.tcp_vel, 
-                "tcp_force": self._franka_state.tcp_force, 
-                "tcp_torque": self._franka_state.tcp_torque
-            }
-            observation = {
-                "state": state,
-                "frames": frames,
-            }
-            return copy.deepcopy(observation)
-        else:
-            return self.observation_space.sample()

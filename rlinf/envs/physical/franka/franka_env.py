@@ -282,9 +282,8 @@ class FrankaEnv(gym.Env):
         """
         if not self.is_dummy:
             # Convert orientation to euler angles
-            franka_state: FrankaRobotState = observation["state"]
-            euler_angles = np.abs(quat_2_euler(franka_state.tcp_pose[3:]))
-            position = np.hstack([franka_state.tcp_pose[:3], euler_angles])
+            euler_angles = np.abs(quat_2_euler(self._franka_state.tcp_pose[3:]))
+            position = np.hstack([self._franka_state.tcp_pose[:3], euler_angles])
             target_delta = np.abs(position - self._config.target_ee_pose)
             if np.all(target_delta <= self._config.reward_threshold):
                 reward = 1
