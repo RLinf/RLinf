@@ -38,7 +38,7 @@ RLinf 是一个灵活且可扩展的开源基础架构，专为通过强化学�
 
 - 具身智能支持
 
-  - 快速适配主流 VLA 模型：`OpenVLA`_, `OpenVLA-OFT`_, `π₀`_
+  - 快速适配主流 VLA 模型：`OpenVLA`_, `OpenVLA-OFT`_, `π₀`_, `GR00T-N1.5`_
   - 通过标准化 RL 接口支持主流基于 CPU 和 GPU 的模拟器：`ManiSkill3`_、`LIBERO`_
   - 支持 π₀ 模型族首次基于 flow-matching 动作专家进行的强化学习微调。
 
@@ -75,6 +75,7 @@ RLinf 是一个灵活且可扩展的开源基础架构，专为通过强化学�
 .. _Megatron-LM: https://github.com/NVIDIA/Megatron-LM
 .. _SGLang: https://github.com/sgl-project/sglang
 .. _vLLM: https://github.com/vllm-project/vllm
+.. _GR00T-N1.5: https://github.com/NVIDIA/Isaac-GR00T.git
 
 
 

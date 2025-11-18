@@ -33,6 +33,8 @@ class ValueHead(nn.Module):
             act = nn.ReLU
         elif activation.lower() == "gelu":
             act = nn.GELU
+        elif activation.lower() == "tanh":
+            act = nn.Tanh
         else:
             raise ValueError(f"Unsupported activation: {activation}")
 

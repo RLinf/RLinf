@@ -209,12 +209,13 @@ def load_convertor_config(hf_ckpt_path: str, ckpt_cfg: DictConfig) -> ConvertorC
         convertor_config.num_layers is not None and convertor_config.num_layers > 0
     ), "num_layers must be specified and greater than 0."
 
-    convertor_config.te_ln_linear_qkv = getattr(ckpt_cfg, "te_ln_linear_qkv", True)
-    convertor_config.te_ln_linear_mlp_fc1 = getattr(
-        ckpt_cfg, "te_ln_linear_mlp_fc1", True
-    )
-    convertor_config.te_ln_add_extra_state = getattr(
-        ckpt_cfg, "te_ln_add_extra_state", None
-    )
+    if hasattr(ckpt_cfg, "te_ln_linear_qkv"):
+        convertor_config.te_ln_linear_qkv = ckpt_cfg.te_ln_linear_qkv
+
+    if hasattr(ckpt_cfg, "te_ln_linear_mlp_fc1"):
+        convertor_config.te_ln_linear_mlp_fc1 = ckpt_cfg.te_ln_linear_mlp_fc1
+
+    if hasattr(ckpt_cfg, "te_ln_add_extra_state"):
+        convertor_config.te_ln_add_extra_state = ckpt_cfg.te_ln_add_extra_state
 
     return convertor_config

@@ -150,13 +150,17 @@ class Cluster:
                 address="auto",
                 logging_level=Cluster.LOGGING_LEVEL,
                 namespace=Cluster.NAMESPACE,
-                runtime_env={"env_vars": dict(os.environ)},
+                runtime_env={
+                    "env_vars": dict(os.environ),
+                },
             )
         except ConnectionError:
             ray.init(
                 logging_level=Cluster.LOGGING_LEVEL,
                 namespace=Cluster.NAMESPACE,
-                runtime_env={"env_vars": dict(os.environ)},
+                runtime_env={
+                    "env_vars": dict(os.environ),
+                },
             )
 
         # Wait for the cluster to be ready
