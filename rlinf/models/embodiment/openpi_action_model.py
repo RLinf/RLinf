@@ -34,7 +34,7 @@ from rlinf.models.embodiment.modules.value_head import ValueHead
 class OpenPi0Config(Pi0Config):
     # config for rl
     simulator_type: str = "libero"  # libero, metaworld, maniskill
-    noise_method: str = "flow_sde"  # flow_sde, flow_cps
+    noise_method: str = "flow_sde"  # flow_sde, flow_noise, flow_cps
     # noise config for flow-sde
     noise_level: float = 0.5
     noise_anneal: bool = False
