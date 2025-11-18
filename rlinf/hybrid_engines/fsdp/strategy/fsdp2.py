@@ -12,23 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 from contextlib import nullcontext
 from typing import ContextManager, Union
 
 import torch
 import torch.nn as nn
-from torch.distributed import checkpoint as dcp
-from torch.distributed.checkpoint.state_dict import (
-    StateDictOptions,
-    get_model_state_dict,
-    get_optimizer_state_dict,
-    set_model_state_dict,
-    set_optimizer_state_dict,
-)
 from torch.distributed.device_mesh import DeviceMesh
 from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LRScheduler
 
 from rlinf.config import torch_dtype_from_precision
 from rlinf.hybrid_engines.fsdp import (
@@ -39,6 +29,7 @@ from rlinf.hybrid_engines.fsdp import (
 )
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
 from rlinf.hybrid_engines.fsdp.utils import (
+    FSDPVersion,
     apply_fsdp2_to_model,
     clip_grad_by_total_norm_,
     get_fsdp2_full_state_dict_all_ranks,
@@ -75,7 +66,7 @@ class FSDP2Strategy(FSDPStrategyBase):
             else OffloadPolicy()
         )
 
-        fsdp2_model = apply_fsdp2_to_model(
+        fsdp2_model: FSDPModule = apply_fsdp2_to_model(
             module=model,
             config=self.cfg.fsdp_config,
             device_mesh=device_mesh,
@@ -86,83 +77,9 @@ class FSDP2Strategy(FSDPStrategyBase):
 
         return fsdp2_model
 
-    def save_checkpoint(
-        self,
-        model: FSDPModule,
-        optimizer: Optimizer,
-        lr_scheduler: LRScheduler,
-        save_path: str,
-    ) -> None:
-        """
-        Save the model, optimizer, lr_scheduler and rng state to the specified path.
-        Different from FSDP1, FSDP2 saves sharded state dicts for model and optimizer.
-
-        Args:
-            - model (FSDPModule): The FSDP2 wrapped model.
-            - optimizer (Optimizer): The optimizer.
-            - lr_scheduler (LRScheduler): The learning rate scheduler.
-            - save_path (str): The path to save the checkpoint.
-        """
-        if self.rank == 0:
-            os.makedirs(save_path, exist_ok=True)
-        torch.distributed.barrier()
-
-        opts = StateDictOptions(full_state_dict=False, cpu_offload=True)
-
-        state = {
-            "model": get_model_state_dict(model, options=opts),
-            "optim": get_optimizer_state_dict(model, optimizer, options=opts),
-        }
-
-        dcp.save(state, checkpoint_id=save_path)
-
-        extra_state = {
-            "lr_scheduler": lr_scheduler.state_dict(),
-            "rng": self.save_rng_state(),
-        }
-        torch.save(
-            extra_state, os.path.join(save_path, f"extra_state_rank_{self.rank}.pt")
-        )
-        torch.distributed.barrier()
-
-    def load_checkpoint(
-        self,
-        model: FSDPModule,
-        optimizer: Optimizer,
-        lr_scheduler: LRScheduler,
-        load_path: str,
-    ) -> None:
-        """
-        Load the model, optimizer, lr_scheduler and rng state from the specified path.
-
-        Args:
-            - model (FSDPModule): The FSDP wrapped model.
-            - optimizer (Optimizer): The optimizer.
-            - lr_scheduler (LRScheduler): The learning rate scheduler.
-            - load_path (str): The path to load the checkpoint from.
-        """
-        opts = StateDictOptions(full_state_dict=False, cpu_offload=True)
-
-        model_sd = model.state_dict()
-        optim_sd = optimizer.state_dict()
-
-        dcp.load({"model": model_sd, "optim": optim_sd}, checkpoint_id=load_path)
-
-        set_model_state_dict(model, model_sd, options=opts)
-        set_optimizer_state_dict(model, optimizer, optim_sd, options=opts)
-
-        extra_state_path = os.path.join(load_path, f"extra_state_rank_{self.rank}.pt")
-        if not os.path.exists(extra_state_path):
-            raise FileNotFoundError(
-                f"[FSDP2] Extra state file not found at {extra_state_path}"
-            )
-        extra = torch.load(extra_state_path, map_location="cpu", weights_only=False)
-        assert "lr_scheduler" in extra and "rng" in extra, (
-            "[FSDP2] Extra state must contain 'lr_scheduler' and 'rng' keys."
-        )
-        lr_scheduler.load_state_dict(extra["lr_scheduler"])
-        self.load_rng_state(extra["rng"])
-        torch.distributed.barrier()
+    @classmethod
+    def get_fsdp_version(cls) -> FSDPVersion:
+        return FSDPVersion.FSDP2
 
     def get_model_state_dict(self, model: FSDPModule) -> dict:
         """

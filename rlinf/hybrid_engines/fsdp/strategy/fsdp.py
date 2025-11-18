@@ -18,21 +18,18 @@ from typing import ContextManager, Union
 
 import torch
 import torch.nn as nn
-from torch.distributed import checkpoint as dcp
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import (
     MixedPrecision,
-    ShardedOptimStateDictConfig,
-    ShardedStateDictConfig,
     StateDictType,
 )
 from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LRScheduler
 
 from rlinf.config import torch_dtype_from_precision
 from rlinf.hybrid_engines.fsdp import FSDP
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
 from rlinf.hybrid_engines.fsdp.utils import (
+    FSDPVersion,
     get_backward_prefetch_strategy,
     get_fsdp_wrap_policy,
     get_sharding_strategy,
@@ -41,7 +38,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
 from rlinf.utils.utils import clear_memory, is_vla_model
 
 
-class FSDP1Strategy(FSDPStrategyBase):
+class FSDPStrategy(FSDPStrategyBase):
     def wrap_model(self, model: nn.Module, device_mesh: DeviceMesh) -> FSDP:
         """
         Wrap the model with FSDP using the specified configuration,
@@ -95,88 +92,9 @@ class FSDP1Strategy(FSDPStrategyBase):
         )
         return fsdp_model
 
-    def save_checkpoint(
-        self,
-        model: FSDP,
-        optimizer: Optimizer,
-        lr_scheduler: LRScheduler,
-        save_path: str,
-    ) -> None:
-        """
-        Save model, optimizer and lr_scheduler(if exists) state dicts to the specified path.
-        Currently, saved state_dicts' filenames are hardcoded as 'model.pt', 'optimizer.pt', 'lr_scheduler.pt'.
-
-        Args:
-            - model (FSDP): The FSDP wrapped model.
-            - optimizer (Optimizer): The optimizer used for training.
-            - lr_scheduler (Optional[LRScheduler]): The learning rate scheduler used for training.
-            - save_path (str): The directory path to save the checkpoint files.
-        """
-
-        if self.rank == 0 and not os.path.exists(save_path):
-            os.makedirs(save_path, exist_ok=True)
-        torch.distributed.barrier()
-
-        with FSDP.state_dict_type(
-            model,
-            StateDictType.SHARDED_STATE_DICT,
-            ShardedStateDictConfig(offload_to_cpu=True),
-            ShardedOptimStateDictConfig(offload_to_cpu=True),
-        ):
-            model_sd = model.state_dict()
-            optim_sd = FSDP.optim_state_dict(model, optimizer)
-
-        dcp.save({"model": model_sd, "optim": optim_sd}, checkpoint_id=save_path)
-
-        extra = {
-            "lr_scheduler": lr_scheduler.state_dict(),
-            "rng": self.save_rng_state(),
-        }
-        torch.save(extra, os.path.join(save_path, f"extra_state_rank_{self.rank}.pt"))
-
-        torch.distributed.barrier()
-
-    def load_checkpoint(
-        self,
-        model: FSDP,
-        optimizer: Optimizer,
-        lr_scheduler: LRScheduler,
-        load_path: str,
-    ) -> None:
-        """
-        Load model, optimizer and lr_scheduler(if exists) state dicts from the specified path.
-
-        Args:
-            - model (FSDP): The FSDP wrapped model.
-            - optimizer (Optimizer): The optimizer used for training.
-            - lr_scheduler (Optional[LRScheduler]): The learning rate scheduler used for training.
-            - load_path (str): The directory path to load the checkpoint files from.
-
-        Raises:
-            - FileNotFoundError: If the checkpoint files are not found in the specified path.
-            - RuntimeError: If there is a mismatch in the state dict keys when loading the model
-        """
-        torch.distributed.barrier()
-
-        model_sd, optim_sd = {}, {}
-        dcp.load({"model": model_sd, "optim": optim_sd}, checkpoint_id=load_path)
-
-        FSDP.set_state_dict_type(
-            model,
-            StateDictType.SHARDED_STATE_DICT,
-            ShardedStateDictConfig(offload_to_cpu=True),
-            ShardedOptimStateDictConfig(offload_to_cpu=True),
-        )
-        model.load_state_dict(model_sd)
-        osd_to_load = FSDP.optim_state_dict_to_load(model, optimizer, optim_sd)
-        optimizer.load_state_dict(osd_to_load)
-
-        extra = torch.load(
-            os.path.join(load_path, f"extra_state_rank_{self.rank}.pt"),
-            map_location="cpu",
-        )
-        lr_scheduler.load_state_dict(extra["lr_scheduler"])
-        torch.distributed.barrier()
+    @classmethod
+    def get_fsdp_version(cls) -> FSDPVersion:
+        return FSDPVersion.FSDP
 
     def get_model_state_dict(self, model: FSDP) -> dict:
         """

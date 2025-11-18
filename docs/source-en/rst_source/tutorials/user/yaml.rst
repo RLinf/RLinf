@@ -712,7 +712,7 @@ actor
 
 ``actor.fsdp_config.strategy``: Determines the FSDP strategy used, supporting fsdp and fsdp2 (case-insensitive).
 
-``actor.fsdp_config.sharding_strategy``: FSDP1/FSDP2 parameter, indicating the sharding strategy used by FSDP, supporting full_shard, shard_grad_op, hybrid_shard, and no_shard.
+``actor.fsdp_config.sharding_strategy``: FSDP/FSDP2 parameter, indicating the sharding strategy used by FSDP, supporting full_shard, shard_grad_op, hybrid_shard, and no_shard.
 
 ``actor.fsdp_config.cpu_offload``: FSDP2 parameter, determines whether FSDP2 places parameters on the CPU side, transmitting them to the GPU side only when necessary.
 
@@ -720,31 +720,31 @@ actor
 
 ``actor.fsdp_config.reshard_after_forward``: FSDP2 parameter, indicates whether to reslice parameters after forward propagation to save GPU memory.
 
-``actor.fsdp_config.enable_gradient_accumulation``: FSDP1/FSDP2 parameter, indicates whether to enable gradient accumulation. If true, communication and gradient updates are only performed after the last micro-batch. Enabling this increases GPU memory usage but speeds up training.
+``actor.fsdp_config.enable_gradient_accumulation``: FSDP/FSDP2 parameter, indicates whether to enable gradient accumulation. If true, communication and gradient updates are only performed after the last micro-batch. Enabling this increases GPU memory usage but speeds up training.
 
-``actor.fsdp_config.forward_prefetch``: FSDP1 parameter, indicates whether to prefetch the next all-gather operation during forward propagation. Enabling this increases GPU memory usage; it is recommended to enable it when GPU memory is sufficient to overlap communication and computation, thereby improving performance.
+``actor.fsdp_config.forward_prefetch``: FSDP parameter, indicates whether to prefetch the next all-gather operation during forward propagation. Enabling this increases GPU memory usage; it is recommended to enable it when GPU memory is sufficient to overlap communication and computation, thereby improving performance.
 
-``actor.fsdp_config.limit_all_gathers``: FSDP1 parameter, indicates whether to limit the number of concurrent all-gather operations. It is recommended to enable this when CPU or memory is a bottleneck.
+``actor.fsdp_config.limit_all_gathers``: FSDP parameter, indicates whether to limit the number of concurrent all-gather operations. It is recommended to enable this when CPU or memory is a bottleneck.
 
-``actor.fsdp_config.backward_prefetch``: FSDP1 parameter, indicating the prefetch strategy during backpropagation (null/'pre'/'post'). If 'pre', the next all-gather operation is prefetched during gradient computation, resulting in more aggressive overlap and higher throughput. If 'post', the next all-gather operation is prefetched after the current gradient computation is complete, which is more conservative than 'pre'.
+``actor.fsdp_config.backward_prefetch``: FSDP parameter, indicating the prefetch strategy during backpropagation (null/'pre'/'post'). If 'pre', the next all-gather operation is prefetched during gradient computation, resulting in more aggressive overlap and higher throughput. If 'post', the next all-gather operation is prefetched after the current gradient computation is complete, which is more conservative than 'pre'.
 
-``actor.fsdp_config.use_orig_params``: FSDP1 parameter, indicating whether to use the module's original parameters, exposing the original parameters (nn.Module.named_parameters) instead of the flattened parameters of FSDP. This improves compatibility but introduces additional communication overhead and reduces performance.
+``actor.fsdp_config.use_orig_params``: FSDP parameter, indicating whether to use the module's original parameters, exposing the original parameters (nn.Module.named_parameters) instead of the flattened parameters of FSDP. This improves compatibility but introduces additional communication overhead and reduces performance.
 
-``actor.fsdp_config.use_liger_kernel``: FSDP1/FSDP2 parameter, determines whether to use liger_kernel (currently only supported for some models, including qwen2.5 and qwen2.5-vl). Enabling it can reduce GPU memory usage and improve training speed.
+``actor.fsdp_config.use_liger_kernel``: FSDP/FSDP2 parameter, determines whether to use liger_kernel (currently only supported for some models, including qwen2.5 and qwen2.5-vl). Enabling it can reduce GPU memory usage and improve training speed.
 
 ``actor.fsdp_config.fsdp_size``: FSDP2 parameter. If not -1, FSDP2 will group slices according to the size specified by this parameter.
 
-``actor.fsdp_config.mixed_precision.param_dtype``: FSDP1/FSDP2 parameter, specifying the parameter type.
+``actor.fsdp_config.mixed_precision.param_dtype``: FSDP/FSDP2 parameter, specifying the parameter type.
 
-``actor.fsdp_config.mixed_precision.reduce_dtype``: FSDP1/FSDP2 parameter, specifying the data type used during reduction.
+``actor.fsdp_config.mixed_precision.reduce_dtype``: FSDP/FSDP2 parameter, specifying the data type used during reduction.
 
-``actor.fsdp_config.mixed_precision.buffer_dtype``: FSDP1 parameter, specifying the data type used for the buffer.
+``actor.fsdp_config.mixed_precision.buffer_dtype``: FSDP parameter, specifying the data type used for the buffer.
 
-``actor.fsdp_config.amp.enabled``: FSDP1/FSDP2 parameter, indicating whether automatic mixed-precision training is enabled.
+``actor.fsdp_config.amp.enabled``: FSDP/FSDP2 parameter, indicating whether automatic mixed-precision training is enabled.
 
-``actor.fsdp_config.amp.precision``: FSDP1/FSDP2 parameter, indicating the numerical precision used by AMP.
+``actor.fsdp_config.amp.precision``: FSDP/FSDP2 parameter, indicating the numerical precision used by AMP.
 
-``actor.fsdp_config.amp.use_grad_scaler``: FSDP1/FSDP2 parameter, indicating whether the gradient scaler is enabled.
+``actor.fsdp_config.amp.use_grad_scaler``: FSDP/FSDP2 parameter, indicating whether the gradient scaler is enabled.
 
 reward
 ~~~~~~~~~~~~~~~
