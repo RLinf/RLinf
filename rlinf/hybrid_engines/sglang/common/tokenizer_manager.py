@@ -51,6 +51,9 @@ class TokenizerManager(_TokenizerManager):
         self.abort_generation_communicator = _Communicator(
             self.send_to_scheduler, server_args.dp_size
         )
+        self.save_norm_weights_communicator = _Communicator(
+            self.send_to_scheduler, server_args.dp_size
+        )
 
         self._result_dispatcher._mapping.extend(
             [

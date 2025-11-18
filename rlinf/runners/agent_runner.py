@@ -176,35 +176,38 @@ class AgentRunner(ReasoningRunner):
                             input_channel=inference_channel,
                         )
 
-                        metrics = actor_handle.wait()
-                        actor_rollout_metrics = metrics[0][0]
-                        actor_training_metrics = metrics[0][1]
-                        self.global_steps += 1
+                    if not self.is_pipeline:
+                        rollout_handle.wait()
+                        self.rollout.offload_engine().wait()
+                    metrics = actor_handle.wait()
+                    actor_rollout_metrics = metrics[0][0]
+                    actor_training_metrics = metrics[0][1]
+                    self.global_steps += 1
 
-                        run_time_exceeded = self.run_timer.is_finished()
-                        _, save_model, is_train_end = check_progress(
-                            self.global_steps,
-                            self.max_steps,
-                            self.cfg.runner.val_check_interval,
-                            self.cfg.runner.save_interval,
-                            1.0,
-                            run_time_exceeded=run_time_exceeded,
+                    run_time_exceeded = self.run_timer.is_finished()
+                    _, save_model, is_train_end = check_progress(
+                        self.global_steps,
+                        self.max_steps,
+                        self.cfg.runner.val_check_interval,
+                        self.cfg.runner.save_interval,
+                        1.0,
+                        run_time_exceeded=run_time_exceeded,
+                    )
+
+                    if save_model:
+                        self._save_checkpoint()
+
+                    if is_train_end:
+                        logging.info(
+                            f"Step limit given by max_steps={self.max_steps} reached. Stopping run"
                         )
+                        return
 
-                        if save_model:
-                            self._save_checkpoint()
-
-                        if is_train_end:
-                            logging.info(
-                                f"Step limit given by max_steps={self.max_steps} reached. Stopping run"
-                            )
-                            return
-
-                        if run_time_exceeded:
-                            logging.info(
-                                f"Time limit given by run_timer={self.run_timer} reached. Stopping run"
-                            )
-                            return
+                    if run_time_exceeded:
+                        logging.info(
+                            f"Time limit given by run_timer={self.run_timer} reached. Stopping run"
+                        )
+                        return
 
                     time_metrics = self.timer.consume_durations()
                     time_metrics["training"] = actor_handle.consume_duration()
