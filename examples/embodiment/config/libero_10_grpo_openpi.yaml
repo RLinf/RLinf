@@ -13,7 +13,8 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: all
+    actor,env: 0-0
+    rollout: 1-1
 
 runner:
   task_type: embodied
@@ -26,6 +27,7 @@ runner:
   max_epochs: 1000
   max_steps: -1
 
+  only_eval: True
   val_check_interval: -1
   save_interval: 40
   seq_length: 4096
@@ -37,14 +39,14 @@ algorithm:
   use_fixed_reset_state_ids: True
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
-  group_size: 8
-  max_episode_steps: 480
+  group_size: 2
+  max_episode_steps: 40
   use_ordered_reset_state_ids: False
   reward_coef: 1.0
-  n_chunk_steps: 48
-  n_eval_chunk_steps: 48
-  num_group_envs: 8
-  rollout_epoch: 8
+  n_chunk_steps: 10
+  n_eval_chunk_steps: 10
+  num_group_envs: 1
+  rollout_epoch: 1
   reward_type: chunk_level
   logprob_type: chunk_level
   entropy_type: token_level

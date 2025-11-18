@@ -44,8 +44,11 @@ def to_tensor(
         ret = torch.tensor(array).to(device)
     else:
         if isinstance(array, list) and isinstance(array[0], np.ndarray):
-            array = np.array(array)
-        ret = torch.tensor(array, device=device)
+            ret = torch.tensor(np.array(array), device=device)
+        elif isinstance(array, list) and isinstance(array[0], torch.Tensor):
+            ret = torch.stack(array).to(device)
+        else:
+            ret = torch.tensor(array, device=device)
     if ret.dtype == torch.float64:
         ret = ret.to(torch.float32)
     return ret

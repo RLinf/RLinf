@@ -474,6 +474,7 @@ class EnvWorker(Worker):
         for eval_step in range(self.cfg.algorithm.n_eval_chunk_steps):
             for i in range(self.stage_num):
                 raw_chunk_actions = self.recv_chunk_actions()
+                self.logger.info(f"raw_chunk_actions: {raw_chunk_actions.shape}")
                 env_output, env_info = self.env_evaluate_step(raw_chunk_actions, i)
 
                 for key, value in env_info.items():
