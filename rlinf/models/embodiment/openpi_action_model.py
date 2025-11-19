@@ -36,6 +36,7 @@ class OpenPi0Config(Pi0Config):
     config_name: str = (
         "pi0_libero"  # pi0_libero, pi05_libero, pi0_metaworld, pi05_metaworld
     )
+    num_images_in_input: int = 2  # number of images in input
     noise_method: str = "flow_sde"  # flow_sde, flow_noise, flow_cps
     # noise config for flow-sde
     noise_level: float = 0.5
@@ -697,20 +698,10 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             lang_token_len = 48
             all_token_length = 816
 
-        # camera number
-        if "libero" in self.config.config_name:
-            camera_num = 2
-        elif "metaworld" in self.config.config_name:
-            camera_num = 1
-        else:
-            raise ValueError(
-                f"Camera number should be set for {self.config.config_name}"
-            )
-
         if self.config.value_vlm_mode == "mean_token":
             prefix_mask = (
-                [True] * 256 * camera_num
-                + [False] * 256 * (3 - camera_num)
+                [True] * 256 * self.config.num_images_in_input
+                + [False] * 256 * (3 - self.config.num_images_in_input)
                 + [True] * lang_token_len
             )
         elif self.config.value_vlm_mode == "last_token":

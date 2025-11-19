@@ -136,6 +136,7 @@ actor:
     # openpi specific parameters
     openpi:
       config_name: "pi05_metaworld"
+      num_images_in_input: 1
       noise_level: 0.5
       action_chunk: ${actor.model.num_action_chunks}
       num_steps: ${actor.model.num_steps}
