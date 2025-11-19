@@ -1,0 +1,51 @@
+simulator_type: maniskill
+auto_reset: True
+ignore_terminations: True
+use_rel_reward: True
+reward_mode: raw
+seed: 0
+num_group: ${env.eval.num_envs}
+group_size: 1
+use_fixed_reset_state_ids: True
+num_envs: 32
+only_eval: True
+frame_stack: 3
+
+video_cfg:
+  save_video: True
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/eval
+
+MS_ASSET_DIR: "/mnt/mnt/public/mjwei/download_models/arth-shukla/ReplicaCAD"
+TASK: set_table
+SUBTASK: pick
+SPLIT: train
+OBJ: all
+task_plan_fp: "${MS_ASSET_DIR}/data/scene_datasets/replica_cad_dataset/rearrange/task_plans/${TASK}/${SUBTASK}/${SPLIT}/${OBJ}.json"
+spawn_data_fp: "${MS_ASSET_DIR}/data/scene_datasets/replica_cad_dataset/rearrange/spawn_data/${TASK}/${SUBTASK}/${SPLIT}/spawn_data.pt"
+
+init_params:
+  id: "SequentialTask-v0"
+  max_episode_steps: ${env.train.max_episode_steps}
+  obs_mode: "rgbd"
+  reward_mode: "normalized_dense"
+  control_mode: "pd_joint_delta_pos"
+  render_mode: "rgb_array"
+  shader_dir: "minimal"
+  robot_uids: "fetch"
+  num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
+  sim_backend: "gpu"
+
+  sim_config:
+    sim_freq: 120
+    control_freq: 30
+  sensor_config:
+    shader_pack: "default"
+
+  #   base_camera:
+  #     pose: sapien_utils.look_at([0.3, 0, 2], [-0.1, 0, 0.1])
+  #     height: 128
+  #     width: 128
+  #     fov: 2
+  #     near: 0.01
+  #     far: 100,

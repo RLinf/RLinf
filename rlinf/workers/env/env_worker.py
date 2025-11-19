@@ -212,6 +212,33 @@ class EnvWorker(Worker):
                             enable_offload=enable_offload,
                         )
                     )
+        elif self.cfg.env.train.simulator_type == "maniskillhab":
+            from rlinf.envs.maniskillhab.maniskillhab_env import ManiskillHABEnv
+
+            if not only_eval:
+                for stage_id in range(self.stage_num):
+                    self.simulator_list.append(
+                        EnvManager(
+                            self.cfg.env.train,
+                            rank=self._rank,
+                            seed_offset=self._rank * self.stage_num + stage_id,
+                            total_num_processes=self._world_size * self.stage_num,
+                            env_cls=ManiskillHABEnv,
+                            enable_offload=enable_offload,
+                        )
+                    )
+            if self.cfg.runner.val_check_interval > 0 or only_eval:
+                for stage_id in range(self.stage_num):
+                    self.eval_simulator_list.append(
+                        EnvManager(
+                            self.cfg.env.eval,
+                            rank=self._rank,
+                            seed_offset=self._rank * self.stage_num + stage_id,
+                            total_num_processes=self._world_size * self.stage_num,
+                            env_cls=ManiskillHABEnv,
+                            enable_offload=enable_offload,
+                        )
+                    )
         else:
             raise NotImplementedError(
                 f"Simulator type {self.cfg.env.train.simulator_type} not implemented"
@@ -385,6 +412,7 @@ class EnvWorker(Worker):
         for simulator in self.simulator_list:
             simulator.start_simulator()
 
+        import time
         env_metrics = defaultdict(list)
         for epoch in range(self.cfg.algorithm.rollout_epoch):
             env_output_list = []
@@ -423,12 +451,16 @@ class EnvWorker(Worker):
                 env_output: EnvOutput = env_output_list[stage_id]
                 self.send_env_batch(env_output.to_dict())
 
-            for _ in range(self.cfg.algorithm.n_chunk_steps):
+            for i in range(self.cfg.algorithm.n_chunk_steps):
                 for stage_id in range(self.stage_num):
                     raw_chunk_actions = self.recv_chunk_actions()
+                    start_time = time.time()
                     env_output, env_info = self.env_interact_step(
                         raw_chunk_actions, stage_id
                     )
+                    end_time = time.time()
+                    print(f"env: rollout_epoch {epoch}, n_chunk_steps {i}, stage num {stage_id}, time {end_time - start_time:.4f} seconds.")
+                    # print(f"raw_chunk_actions: {raw_chunk_actions.shape}")
                     self.send_env_batch(env_output.to_dict())
                     env_output_list[stage_id] = env_output
                     for key, value in env_info.items():

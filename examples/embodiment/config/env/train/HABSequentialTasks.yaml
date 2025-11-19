@@ -1,0 +1,62 @@
+simulator_type: maniskillhab
+auto_reset: ${algorithm.auto_reset}
+ignore_terminations: ${algorithm.ignore_terminations}
+use_rel_reward: True
+seed: 0
+num_group: ${algorithm.num_group_envs}
+group_size: ${algorithm.group_size}
+use_fixed_reset_state_ids: ${algorithm.use_fixed_reset_state_ids}
+max_episode_steps: 200
+num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
+only_eval: False
+
+stationary_base: False
+stationary_torso: False
+stationary_head: True
+
+frame_stack: 3
+stacking_keys: 
+  - fetch_head_depth
+  - fetch_hand_depth
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+TASK: set_table
+SUBTASK: pick
+SPLIT: train
+OBJ: all
+task_plan_fp: "${oc.env:MS_ASSET_DIR}/data/scene_datasets/replica_cad_dataset/rearrange/task_plans/${env.train.TASK}/${env.train.SUBTASK}/${env.train.SPLIT}/${env.train.OBJ}.json"
+spawn_data_fp: "${oc.env:MS_ASSET_DIR}/data/scene_datasets/replica_cad_dataset/rearrange/spawn_data/${env.train.TASK}/${env.train.SUBTASK}/${env.train.SPLIT}/spawn_data.pt"
+
+
+init_params:
+  id: "PickSubtaskTrain-v0"
+  task_plans: ""
+  scene_builder_cls: ""
+  spawn_data_fp: ""
+  max_episode_steps: ${env.train.max_episode_steps}
+  obs_mode: "rgbd"
+  reward_mode: "normalized_dense"
+  control_mode: "pd_joint_delta_pos"
+  render_mode: "rgb_array"
+  shader_dir: "minimal"
+  robot_uids: "fetch"
+  num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
+  sim_backend: "gpu"
+
+  sim_config:
+    sim_freq: 120
+    control_freq: 30
+  sensor_config:
+    shader_pack: "default"
+
+  #   base_camera:
+  #     pose: sapien_utils.look_at([0.3, 0, 2], [-0.1, 0, 0.1])
+  #     height: 128
+  #     width: 128
+  #     fov: 2
+  #     near: 0.01
+  #     far: 100,

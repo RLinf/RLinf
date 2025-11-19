@@ -146,16 +146,20 @@ class MultiStepRolloutWorker(Worker):
             self.reload_model()
         self.buffer_list = [EmbodiedRolloutResult() for _ in range(self.stage_num)]
 
+        import time
         for _ in tqdm(
             range(self.cfg.algorithm.rollout_epoch),
             desc="Generating Rollout Epochs",
             disable=(self._rank != 0),
         ):
-            for _ in range(self.cfg.algorithm.n_chunk_steps):
+            for x in range(self.cfg.algorithm.n_chunk_steps):
                 for i in range(self.stage_num):
                     env_output = self.recv_env_output()
                     self.update_env_output(i, env_output)
+                    start_time = time.time()
                     actions, result = self.predict(env_output["obs"])
+                    end_time = time.time()
+                    print(f"generate: n_chunk_steps {x}, stage num {i}, obs shape {env_output['obs']['images'].shape}, time {end_time - start_time:.4f} seconds.")
 
                     self.buffer_list[i].append_result(result)
 

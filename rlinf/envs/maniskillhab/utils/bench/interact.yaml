@@ -1,0 +1,72 @@
+# @package _global_
+
+defaults:
+  - /habitat: habitat_config_base
+
+  - /habitat/simulator/sensor_setups@habitat.simulator.agents.main_agent: rgbd_head_rgbd_arm_agent
+  - /habitat/simulator/agents@habitat.simulator.agents.main_agent: fetch_no_wheels
+
+  - /habitat/task: task_config_base
+  - /habitat/task/actions:
+    - arm_action
+
+  - /habitat/task/measurements:
+    - zero
+
+  - /habitat/dataset/rearrangement: replica_cad
+  - _self_
+
+habitat:
+  task:
+    # No task logic, empty task
+    type: RearrangeEmptyTask-v0
+    constraint_violation_ends_episode: False
+    actions:
+      arm_action:
+        grip_controller: "MagicGraspAction"
+        delta_pos_limit: 0.025
+
+    ###################################################
+    # These are just so we can use a VectorEnv
+    ###################################################
+    reward_measure: "zero"
+    success_measure: "zero"
+    end_on_success: False
+    ###################################################
+
+  environment:
+    # Endless episode
+    max_episode_steps: 0
+  simulator:
+    type: RearrangeSim-v0
+    seed: 100
+    ############################
+    # Benchmark relevant settings
+    ############################
+    concur_render: False
+    auto_sleep: True
+    ############################
+    additional_object_paths:
+      - "data/objects/ycb/configs/"
+    agents:
+      main_agent:
+        sim_sensors:
+          head_rgb_sensor:
+            height: 128
+            width: 128
+          head_depth_sensor:
+            height: 128
+            width: 128
+          arm_depth_sensor:
+            height: 128
+            width: 128
+          arm_rgb_sensor:
+            height: 128
+            width: 128
+        is_set_start_state: True
+        start_position: [0.7, 0.02, 0.6]
+        start_rotation: [0, 0.70710678, 0, 0.70710678]
+    habitat_sim_v0:
+      enable_physics: True
+  dataset:
+    data_path: data/hab2_bench_assets/bench_scene.json.gz

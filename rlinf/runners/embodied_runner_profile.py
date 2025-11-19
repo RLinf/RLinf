@@ -67,13 +67,19 @@ class EmbodiedRunnerProfile:
         rollout_futures.wait()
 
     def generate_rollouts(self):
+        print("enter generate_rollouts func")
+        import time
+        start_time = time.time()
         env_futures = self.env.interact()
         rollout_futures = self.rollout.generate()
         env_results = env_futures.wait()
         rollout_futures.wait()
+        end_time = time.time()
+        print(f"one iter generate_rollouts: time {end_time - start_time:.4f} seconds.")
 
         env_results_list = [results for results in env_results if results is not None]
         env_metrics = compute_evaluate_metrics(env_results_list)
+        print("exit generate_rollouts func")
         return env_metrics
 
     # def evaluate(self):
@@ -86,6 +92,7 @@ class EmbodiedRunnerProfile:
     #     return eval_metrics
 
     def run(self):
+        print("enter run func...")
         start_step = self.global_step
         global_pbar = tqdm(
             initial=start_step,
@@ -97,7 +104,6 @@ class EmbodiedRunnerProfile:
             # set global step
             self.rollout.set_global_step(self.global_step)
             eval_metrics = {}
-
             with self.timer("step"):
                 with self.timer("generate_rollouts"):
                     env_metrics = self.generate_rollouts()

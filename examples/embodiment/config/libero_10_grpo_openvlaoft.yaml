@@ -14,8 +14,8 @@ cluster:
   num_nodes: 1
   component_placement:
     env: 0
-    rollout: 1,2
-    actor: 0-3
+    rollout: 1
+    actor: 0,1
 
 runner:
   task_type: embodied
@@ -43,7 +43,7 @@ algorithm:
   group_size: 2  # NOTE: group_size * num_group_envs * rollout_epoch = global buffer size
   n_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}
   n_eval_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}
-  num_group_envs: 2  # NOTE: num_group_envs should be a multiple of the world_size
+  num_group_envs: 32  # NOTE: num_group_envs should be a multiple of the world_size
   rollout_epoch: 2
   reward_type: action_level  # action_level or chunk_level
   logprob_type: token_level
