@@ -258,7 +258,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             "observation/state": env_processed_obs["states"],
             "prompt": env_processed_obs["task_descriptions"],
         }
-        if "wrist_images" in env_processed_obs.keys():
+        if env_processed_obs["wrist_images"] is not None:
             to_process_obs["observation/wrist_image"] = env_processed_obs[
                 "wrist_images"
             ]
@@ -301,7 +301,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             "tokenized_prompt": processed_obs["tokenized_prompt"],
             "tokenized_prompt_mask": processed_obs["tokenized_prompt_mask"],
         }
-        if "wrist_images" in env_obs.keys():
+        if env_obs["wrist_images"] is not None:
             forward_inputs["observation/wrist_image"] = env_obs["wrist_images"]
 
         result = {
