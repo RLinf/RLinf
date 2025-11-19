@@ -135,7 +135,7 @@ actor:
     add_value_head: True
     # openpi specific parameters
     openpi:
-      simulator_type: "metaworld"
+      config_name: "pi0_metaworld"
       noise_level: 0.5
       action_chunk: ${actor.model.num_action_chunks}
       num_steps: ${actor.model.num_steps}

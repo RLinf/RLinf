@@ -33,7 +33,9 @@ from rlinf.models.embodiment.modules.value_head import ValueHead
 @dataclass(frozen=True)
 class OpenPi0Config(Pi0Config):
     # config for rl
-    simulator_type: str = "libero"  # libero, metaworld, maniskill
+    config_name: str = (
+        "pi0_libero"  # pi0_libero, pi05_libero, pi0_metaworld, pi05_metaworld
+    )
     noise_method: str = "flow_sde"  # flow_sde, flow_noise, flow_cps
     # noise config for flow-sde
     noise_level: float = 0.5
@@ -68,6 +70,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
     Pi0 model for reinforcement learning action prediction.
     """
 
+    config: OpenPi0Config
+
     @property
     def _no_split_modules(self) -> list[str]:
         # Currently, PaliGemmaForConditionalGeneration only support DDP, as many of it's modules are called without forward
@@ -93,16 +97,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         assert not (self.config.double_layer and self.config.joint_logprob), (
             "double_layer and joint_logprob can not be set at the same time"
         )
-
-        # camera number
-        if self.config.simulator_type == "metaworld":
-            self.camera_num = 1
-        elif self.config.simulator_type == "libero":
-            self.camera_num = 2
-        else:
-            raise ValueError(
-                f"Not supported simulator type: {self.config.simulator_type} for openpi action model"
-            )
 
         # rl model init
         if self.config.value_after_vlm:
@@ -263,7 +257,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             "observation/state": env_processed_obs["states"],
             "prompt": env_processed_obs["task_descriptions"],
         }
-        if self.config.simulator_type == "libero":
+        if "wrist_images" in env_processed_obs.keys():
             to_process_obs["observation/wrist_image"] = env_processed_obs[
                 "wrist_images"
             ]
@@ -306,7 +300,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             "tokenized_prompt": processed_obs["tokenized_prompt"],
             "tokenized_prompt_mask": processed_obs["tokenized_prompt_mask"],
         }
-        if self.config.simulator_type == "libero":
+        if "wrist_images" in env_obs.keys():
             forward_inputs["observation/wrist_image"] = env_obs["wrist_images"]
 
         result = {
@@ -695,16 +689,28 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         # prefix_output:
         # pi05: [bs, (256 * 3 + 200) = 968, 2048]
         # pi0: [bs, (256 * 3 + 48) = 816, 1024]
-        if self.config.pi05:
+        # token length
+        if "pi05_" in self.config.config_name:
             lang_token_len = 200
             all_token_length = 968
-        else:
+        elif "pi0_" in self.config.config_name:
             lang_token_len = 48
             all_token_length = 816
+
+        # camera number
+        if "libero" in self.config.config_name:
+            camera_num = 2
+        elif "metaworld" in self.config.config_name:
+            camera_num = 1
+        else:
+            raise ValueError(
+                f"Camera number should be set for {self.config.config_name}"
+            )
+
         if self.config.value_vlm_mode == "mean_token":
             prefix_mask = (
-                [True] * 256 * self.camera_num
-                + [False] * 256 * (3 - self.camera_num)
+                [True] * 256 * camera_num
+                + [False] * 256 * (3 - camera_num)
                 + [True] * lang_token_len
             )
         elif self.config.value_vlm_mode == "last_token":
