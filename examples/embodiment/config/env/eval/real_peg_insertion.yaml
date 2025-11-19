@@ -10,6 +10,7 @@ group_size: 1
 use_fixed_reset_state_ids: True
 num_envs: 1
 only_eval: True
+max_episode_steps: ${env.train.max_episode_steps}
 
 video_cfg:
   save_video: False
