@@ -34,6 +34,7 @@ class PhysicalEnv(gym.Env):
         
         self._is_start = True
         self._init_metrics()
+        self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
         self._init_reset_state_ids()
 
     def _init_env(self):
@@ -61,8 +62,8 @@ class PhysicalEnv(gym.Env):
 
     @property
     def elapsed_steps(self):
-        return self.env.num_steps
-
+        return self._elapsed_steps
+    
     def _init_metrics(self):
         self.prev_step_reward = np.zeros(self.num_envs)
 
@@ -78,11 +79,13 @@ class PhysicalEnv(gym.Env):
             self.success_once[mask] = False
             self.fail_once[mask] = False
             self.returns[mask] = 0
+            self._elapsed_steps[mask] = 0
         else:
             self.prev_step_reward[:] = 0
             self.success_once[:] = False
             self.fail_once[:] = False
             self.returns[:] = 0.0
+            self._elapsed_steps[:] = 0
     
     def _record_metrics(self, step_reward, terminations, infos):
         episode_info = {}
@@ -90,8 +93,8 @@ class PhysicalEnv(gym.Env):
         self.success_once = self.success_once | terminations
         episode_info["success_once"] = self.success_once.copy()
         episode_info["return"] = self.returns.copy()
-        # episode_info["episode_len"] = self.elapsed_steps.copy()
-        # episode_info["reward"] = episode_info["return"] / episode_info["episode_len"]
+        episode_info["episode_len"] = self.elapsed_steps.copy()
+        episode_info["reward"] = episode_info["return"] / episode_info["episode_len"]
         infos["episode"] = to_tensor(episode_info)
         return infos
         
@@ -150,9 +153,10 @@ class PhysicalEnv(gym.Env):
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
 
+        self._elapsed_steps += 1
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
-        terminations = np.array(terminations)
-        truncations = np.array(truncations)
+        terminations = np.array(_reward) == 1
+        truncations = self.elapsed_steps >= self.cfg.max_episode_steps
 
         obs = self._wrap_obs(raw_obs)
 

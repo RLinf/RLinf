@@ -263,7 +263,7 @@ class FrankaEnv(gym.Env):
         reward = self._calc_step_reward(observation, is_gripper_action_effective)
         terminated = reward == 1
         truncated = self._num_steps >= self._config.max_num_steps
-        return observation, reward, terminated, truncated, {}
+        return observation, reward, False, False, {}
 
     @property
     def num_steps(self):
@@ -581,7 +581,10 @@ class FrankaEnv(gym.Env):
             }
             return copy.deepcopy(observation)
         else:
-            return self.observation_space.sample()
+            obs = self.observation_space.sample()
+            if self.use_rel_frame:
+                self.adjoint_matrix = np.eye(6)
+            return obs
         
     def transform_obs_base_to_ee(self, state):
         self.adjoint_matrix = construct_adjoint_matrix(self._franka_state.tcp_pose)
