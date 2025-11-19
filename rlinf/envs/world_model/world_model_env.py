@@ -28,8 +28,8 @@ from mani_skill.utils.visualization.misc import (
 )
 from omegaconf.omegaconf import OmegaConf
 
-from rlinf.envs.world_model.backend import WorldModelBackend
 from rlinf.envs.world_model.dataset import LeRobotDatasetWrapper
+from rlinf.models.world_model.base_fake_model import BaseFakeModelInference
 
 
 class WorldModelEnv(gym.Env):
@@ -94,7 +94,7 @@ class WorldModelEnv(gym.Env):
 
         self.device = "cuda"
         env_cfg = OmegaConf.to_container(cfg.backend_cfg, resolve=True)
-        self.env = WorldModelBackend(env_cfg, self.task_dataset, self.device)
+        self.env = BaseFakeModelInference(env_cfg, self.task_dataset, self.device)
 
         self._is_start = True
         self._init_reset_state_ids()
@@ -256,7 +256,7 @@ class WorldModelEnv(gym.Env):
             self._reset_metrics(env_idx)
         else:
             self._reset_metrics()
-        return obs, info
+        return obs[-1], info
 
     def step(
         self, actions: Union[Array, dict] = None, auto_reset=True
@@ -325,7 +325,9 @@ class WorldModelEnv(gym.Env):
         _auto_reset = auto_reset and self.auto_reset
 
         if dones.any() and _auto_reset:
-            new_obs, infos[-1] = self._handle_auto_reset(dones, new_obs[-1], infos[-1])
+            new_obs[-1], infos[-1] = self._handle_auto_reset(
+                dones, new_obs[-1], infos[-1]
+            )
 
         if self.video_cfg.save_video:
             self.add_new_frames(new_obs, infos)
@@ -400,6 +402,7 @@ class WorldModelEnv(gym.Env):
 
         chunk_truncations = torch.zeros_like(raw_chunk_truncations)
         chunk_truncations[:, -1] = past_truncations
+
         return (
             extracted_obs,
             chunk_rewards,
@@ -451,10 +454,12 @@ class WorldModelEnv(gym.Env):
                 .repeat(self.num_envs, 1)
             )
             actions = base.unsqueeze(1).repeat(1, self.gen_num_image_each_step * 2, 1)
-            obs, reward, terminations, truncations, info = self.chunk_step(actions)
+            obs, reward, terminations, truncations, info = self.chunk_step(
+                actions.cpu().numpy()
+            )
             print(
                 f"Step {step}: obs={obs.keys()}, reward={reward.mean()}, \
-                terminations={terminations.float().mean()}, truncations={truncations.float().mean()}"
+terminations={terminations.float().mean()}, truncations={truncations.float().mean()}"
             )
         self.flush_video()
 
@@ -474,15 +479,15 @@ class WorldModelEnv(gym.Env):
         else:
             infos = common.to_numpy(infos)
 
+        if isinstance(extracted_obs, dict):
+            extracted_obs = [extracted_obs]
+
         for frame_idx, frame_obs in enumerate(extracted_obs):
             images = {camera_name: [] for camera_name in self.camera_names}
             for env_id in range(self.num_envs):
                 for camera_name in self.camera_names:
-                    image = frame_obs["images_and_states"][camera_name][
-                        env_id, :
-                    ].permute(1, 2, 0)
+                    image = frame_obs["images_and_states"][camera_name][env_id, :]
                     image = common.to_numpy(image)
-                    image = (image * 255).astype(np.uint8)
                     if is_info_on_video:
                         info = infos[frame_idx]
                         info_item = {

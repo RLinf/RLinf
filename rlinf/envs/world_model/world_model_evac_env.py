@@ -478,7 +478,6 @@ class EvacEnv(BaseWorldEnv):
         # video shape: for single env [b, c, v, t, h, w] where b=1
 
         # Prepare trajectory input
-        num_envs = self.num_envs
         if self.elapsed_steps == 0:
             traj_end_idx = self.n_previous + self.chunk
 
@@ -845,7 +844,6 @@ class EvacEnv(BaseWorldEnv):
         # Convert to uint8 tensor (keep as tensor, not numpy)
         full_image = full_image.to(torch.uint8)
 
-        num_envs = self.num_envs
         states = self.action_buffer[:, -1]  # [num_envs, 16]
 
         # Get task descriptions
@@ -927,22 +925,6 @@ class EvacEnv(BaseWorldEnv):
         self.policy_output_to_abs_action(policy_output_action)
 
         _, _, action_dim = self.action_buffer.shape
-
-        # # Duplicate actions from 8 to 16 dimensions by stacking
-        # if chunk_actions.shape[2] == action_dim // 2:
-        #     padded_chunk_actions = np.concatenate(
-        #         [chunk_actions, chunk_actions], axis=-1
-        #     )  # [num_envs, chunk_steps, action_dim]
-        # elif chunk_actions.shape[2] == action_dim:
-        #     padded_chunk_actions = chunk_actions
-        # else:
-        #     raise ValueError(
-        #         f"Unexpected action dimension: {chunk_actions.shape[2]}, expected 8 or 16"
-        #     )
-
-        # chunk_action is already a torch tensor from policy_output_to_abs_action
-        # No need to concatenate, as action_buffer is already updated in policy_output_to_abs_action
-        # self.action_buffer is already updated in policy_output_to_abs_action method
 
         with torch.cuda.amp.autocast(dtype=torch.float16):
             # extracted_chunk_obs shape: [num_envs, c, v, chunk, h, w]

@@ -180,7 +180,7 @@ class AutoencoderKL(pl.LightningModule):
             )
             return aeloss
 
-        if optimizer_idx == 1:
+        elif optimizer_idx == 1:
             # train the discriminator
             discloss, log_dict_disc = self.loss(
                 inputs,
@@ -204,6 +204,10 @@ class AutoencoderKL(pl.LightningModule):
                 log_dict_disc, prog_bar=False, logger=True, on_step=True, on_epoch=False
             )
             return discloss
+
+        else:
+            raise ValueError(f"Invalid optimizer index: {optimizer_idx}")
+            return None  # type: ignore[unreachable]
 
     def validation_step(self, batch, batch_idx):
         inputs = self.get_input(batch, self.image_key)

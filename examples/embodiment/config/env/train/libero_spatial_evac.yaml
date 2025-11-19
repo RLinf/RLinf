@@ -1,4 +1,4 @@
-simulator_type: worldmodel
+simulator_type: world_model
 task_suite_name: libero_spatial
 
 auto_reset: ${algorithm.auto_reset}
@@ -36,7 +36,7 @@ initial_image_path: /path/home/workspace/RLinf/embodiment_data/world_model_buffe
 
 world_model_cfg:
   
-  pretrained_checkpoint: /path/home/RLinf/rlinf/envs/worldmodel/evac/model_ckpt/epoch=128-step=12000.ckpt
+  pretrained_checkpoint: /path/home/RLinf/rlinf/envs/world_model/evac/model_ckpt/epoch=128-step=12000.ckpt
   
   auto_padzero_input_block: False
   auto_padrand_input_block: False
@@ -183,7 +183,7 @@ world_model_cfg:
 
 reward_model_cfg:
   target: reward_model.classifier.RewModel
-  pretrained_checkpoint: /path/home/RLinf/rlinf/envs/worldmodel/evac/model_ckpt/reward_model/libero_spatial_256/classifier/backup/750.pth
+  pretrained_checkpoint: /path/home/RLinf/rlinf/envs/world_model/evac/model_ckpt/reward_model/libero_spatial_256/classifier/backup/750.pth
 
 action_predictor_cfg:
   target: action_model.action_predictor.ActionPredictorMLP

@@ -24,10 +24,6 @@ from rlinf.models.world_model.evac.lvdm.models.utils_diffusion import (
     rescale_noise_cfg,
 )
 
-# from rlinf.models.world_model.evac.lvdm.models.utils_diffusion import make_ddim_sampling_parameters, make_ddim_timesteps, rescale_noise_cfg
-# from rlinf.models.world_model.evac.lvdm.common import noise_like
-# from rlinf.models.world_model.evac.lvdm.common import extract_into_tensor
-
 
 class DDIMSampler(object):
     def __init__(
@@ -259,7 +255,6 @@ class DDIMSampler(object):
         **kwargs,
     ):
         device = self.model.betas.device
-        b = shape[0]
 
         img = cond["c_concat"][0].clone()  # img: bv c f h w
 
@@ -317,7 +312,7 @@ class DDIMSampler(object):
 
         total_frames = chunk * self.num_chunk
 
-        for fstep in tqdm(range(total_frames // chunk)):
+        for _ in tqdm(range(total_frames // chunk)):
             b, c, f, h, w = img.shape
 
             img_ = img.clone()

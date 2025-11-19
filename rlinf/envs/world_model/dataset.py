@@ -482,32 +482,3 @@ class NpyTrajectoryDatasetWrapper(torch.utils.data.Dataset):
             "task": task,
             "dataset_meta": dataset_meta,
         }
-
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--repo_id",
-        type=str,
-        default="unitreerobotics/G1_Dex1_MountCameraRedGripper_Dataset",
-    )
-    parser.add_argument(
-        "--root",
-        type=str,
-        default="",
-    )
-    parser.add_argument("--start_select_policy", type=str, default="first_frame")
-    parser.add_argument("--target_select_policy", type=str, default="last_frame")
-    args = parser.parse_args()
-
-    dataset = LeRobotDatasetWrapper(
-        repo_id=args.repo_id,
-        root=args.root,
-        start_select_policy=args.start_select_policy,
-        target_select_policy=args.target_select_policy,
-    )
-
-    data = dataset[0]
-    print(data)

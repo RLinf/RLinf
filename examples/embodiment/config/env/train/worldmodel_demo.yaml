@@ -1,4 +1,4 @@
-simulator_type: worldmodel
+simulator_type: world_model
 simulator_name: XXX
 task_suite_name: unitreerobotics/G1_Dex1_MountCameraRedGripper_Dataset
 

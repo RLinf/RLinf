@@ -81,8 +81,3 @@ def setup_dist(args):
         return
     torch.cuda.set_device(args.local_rank)
     torch.distributed.init_process_group("nccl", init_method="env://")
-
-
-def zero_rank_print(s):
-    if (not dist.is_initialized()) and (dist.is_initialized() and dist.get_rank() == 0):
-        print("### " + s)

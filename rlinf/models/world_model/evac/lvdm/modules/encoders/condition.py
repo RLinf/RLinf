@@ -28,9 +28,6 @@ from transformers import (
 )
 
 from rlinf.models.world_model.evac.lvdm.common import autocast
-
-# from rlinf.models.world_model.evac.lvdm.common import autocast
-# from utils.general_utils import count_params
 from rlinf.models.world_model.evac.utils.general_utils import count_params
 
 
@@ -345,7 +342,7 @@ class FrozenOpenCLIPImageEmbedder(AbstractEncoder):
         self.layer = layer
         if self.layer == "penultimate":
             raise NotImplementedError()
-            self.layer_idx = 1
+            # self.layer_idx = 1
 
         self.antialias = antialias
 
@@ -427,7 +424,7 @@ class FrozenOpenCLIPImageEmbedderV2(AbstractEncoder):
         self.layer = layer
         if self.layer == "penultimate":
             raise NotImplementedError()
-            self.layer_idx = 1
+            # self.layer_idx = 1
 
         self.antialias = antialias
 

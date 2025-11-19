@@ -17,7 +17,6 @@ import logging
 import math
 import os
 import random
-import time
 from contextlib import contextmanager
 from copy import deepcopy
 from functools import partial
@@ -1039,19 +1038,7 @@ class LatentDiffusion(DDPM):
                 "c_concat" if self.model.conditioning_key == "concat" else "c_crossattn"
             )
             cond = {key: cond}
-        # print(f"x_noisy dtype: {x_noisy.dtype}")
-        # x_noisy = x_noisy.to(dtype=torch.float32)
-        # 强制转换
-        # input('x')
-        # for name, param in self.model.named_parameters():
-        #     print(f"Parameter {name}: dtype={param.dtype}")
-        # for key, value in cond.items():
-        #     if isinstance(value, torch.Tensor):
-        #         print(f"cond[{key}] dtype: {value.dtype}")
-        # for key, value in kwargs.items():
-        #     if isinstance(value, torch.Tensor):
-        #         print(f"kwargs[{key}] dtype: {value.dtype}")
-        # 32
+
         x_recon = self.model(x_noisy, t, **cond, **kwargs)
 
         if isinstance(x_recon, tuple):
@@ -1814,7 +1801,7 @@ class ACWMLatentDiffusion(LatentDiffusion):
 
     def shared_step(self, batch, random_uncond, **kwargs):
         # print(f'======enter shared step==========')
-        start_time = time.time()
+        # start_time = time.time()
         batch_inputs = self.get_batch_input(
             batch,
             random_uncond=random_uncond,
@@ -1822,8 +1809,8 @@ class ACWMLatentDiffusion(LatentDiffusion):
             return_did=True,
             return_traj=True,
         )
-        end_time = time.time()
-        print(f"get_batch_input 用时: {end_time - start_time:.4f} 秒")
+        # end_time = time.time()
+        # print(f"get_batch_input 用时: {end_time - start_time:.4f} 秒")
         x, c, fs, did, traj = batch_inputs[:5]
         kwargs.update({"fs": fs.long()})
         kwargs.update({"domain_id": did.long()})
@@ -2146,12 +2133,12 @@ class ACWMLatentDiffusion(LatentDiffusion):
                     base = np.array(points[0])  # points:[4,3]
                     if base[0] < 0 or base[0] >= w or base[1] < 0 or base[1] >= h:
                         continue
-                    for i, point in enumerate(points):
+                    for j, point in enumerate(points):
                         point = np.array(point[:2])
-                        if i == 0:
+                        if j == 0:
                             continue
                         else:
-                            cv2.line(img, tuple(base), tuple(point), colors[i - 1], 8)
+                            cv2.line(img, tuple(base), tuple(point), colors[j - 1], 8)
                             # cv2.line(img,(int(base[0]), int(base[1])),(int(point[0]), int(point[1])), colors[i-1], 8)
 
                 img_list.append(img / 255.0)

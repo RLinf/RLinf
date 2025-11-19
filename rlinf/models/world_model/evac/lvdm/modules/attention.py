@@ -175,7 +175,7 @@ class CrossAttention(nn.Module):
 
         h = self.heads
         q = self.to_q(x)
-        print(f"q shape: {q.shape}")
+        # print(f"q shape: {q.shape}")
         context = default(context, x)
         print(f"context shape: {context.shape}")
         print(
@@ -1577,7 +1577,7 @@ class Transformer(nn.Module):
                     video_length=video_length,
                     image_cross_attention=image_cross_attention,
                     image_cross_attention_scale_learnable=image_cross_attention_scale_learnable,
-                    vpre_cross_attention=vpre_cross_attention,
+                    # vpre_cross_attention=vpre_cross_attention,
                 )
                 for d in range(depth)
             ]

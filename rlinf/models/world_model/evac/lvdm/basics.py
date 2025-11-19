@@ -90,6 +90,9 @@ def nonlinearity(type="silu"):
         return nn.SiLU()
     elif type == "leaky_relu":
         return nn.LeakyReLU()
+    else:
+        raise ValueError(f"Invalid nonlinearity type: {type}")
+        return None  # type: ignore[unreachable]
 
 
 class GroupNormSpecific(nn.GroupNorm):

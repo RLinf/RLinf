@@ -40,28 +40,6 @@ from rlinf.models.world_model.evac.lvdm.modules.attention import (
     TemporalTransformer,
 )
 
-# except:
-# from rlinf.models.world_model.evac.lvdm.models.utils_diffusion import timestep_embedding
-# from rlinf.models.world_model.evac.lvdm.common import checkpoint
-# from rlinf.models.world_model.evac.lvdm.basics import (
-#     zero_module,
-#     conv_nd,
-#     linear,
-#     avg_pool_nd,
-#     normalization
-# )
-# from rlinf.models.world_model.evac.lvdm.modules.attention import SpatialTransformer, TemporalTransformer, MultiViewTransformer, CrossMultiViewTransformer, S2MVTransformer
-# from rlinf.models.world_model.evac.lvdm.models.utils_diffusion import timestep_embedding
-# from rlinf.models.world_model.evac.lvdm.common import checkpoint
-# from rlinf.models.world_model.evac.lvdm.basics import (
-#     zero_module,
-#     conv_nd,
-#     linear,
-#     avg_pool_nd,
-#     normalization
-# )
-# from rlinf.models.world_model.evac.lvdm.modules.attention import SpatialTransformer, TemporalTransformer, MultiViewTransformer, CrossMultiViewTransformer, S2MVTransformer
-
 
 class TimestepBlock(nn.Module):
     """
