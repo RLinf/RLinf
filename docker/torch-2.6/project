@@ -84,6 +84,16 @@ embodied = [
     "gym",
     "av",
 ]
+franka = [
+    "pyyaml",
+    "rospkg",
+    "empy==3.3.4",
+    "gymnasium",
+    "pyrealsense2",
+    "pyquaternion",
+    "opencv-python",
+    "defusedxml",
+]
 
 [tool.uv]
 prerelease = "allow"
@@ -91,6 +101,7 @@ conflicts = [
     [
       { extra = "sglang-vllm" },
       { extra = "embodied" },
+      { extra = "franka" },
     ],
 ]
 override-dependencies = [

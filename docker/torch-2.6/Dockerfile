@@ -1,10 +1,15 @@
 ARG BUILD_TARGET=reason
 
-FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-reason
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-behavior
+# Franka depends on ros-noetic, which is not available on Ubuntu 22.04
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu20.04 AS base-image-franka
+
+FROM base-image-$BUILD_TARGET AS base-image
 
 ARG NO_MIRROR
 SHELL ["/bin/bash", "-c"]
-ENV PATH=/opt/conda/bin:$PATH
 ENV DEBIAN_FRONTEND=noninteractive
 RUN if [ -z "$NO_MIRROR" ]; then sed -i 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list; fi
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -51,7 +56,7 @@ FROM base-image AS reason-image
 
 # Install Megatron-LM
 RUN git clone https://github.com/NVIDIA/Megatron-LM.git -b core_r0.13.0 /opt/Megatron-LM
-ENV PYTHONPATH=/opt/Megatron-LM:$PYTHONPATH
+ENV PYTHONPATH=/opt/Megatron-LM
 
 # Install reasoning env
 RUN uv venv reason --python=${PYTHON_VERSION}
@@ -132,7 +137,7 @@ ENV LIBERO_BRANCH=master
 # For invalidating docker build cache when the branch updates
 ADD https://api.github.com/repos/${LIBERO_REPO}/git/refs/heads/${LIBERO_BRANCH} /tmp/.libero_version.json
 RUN git clone -b ${LIBERO_BRANCH} https://github.com/${LIBERO_REPO}.git /opt/libero
-ENV PYTHONPATH=/opt/libero:$PYTHONPATH
+ENV PYTHONPATH=/opt/libero
 
 FROM embodied-common-image AS embodied-image
 
@@ -166,6 +171,30 @@ RUN link_assets
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla/bin/activate" >> ~/.bashrc
+
+FROM base-image AS franka-image
+
+RUN sh -c 'echo "deb http://mirrors.ustc.edu.cn/ros/ubuntu/ focal main" > /etc/apt/sources.list.d/ros-latest.list'
+
+RUN apt-key adv --keyserver 'hkp://keyserver.ubuntu.com:80' --recv-key C1CF6E31E6BADE8868B172B4F42ED6FBAB17C654
+RUN apt update && apt install ros-noetic-ros-base ros-noetic-libfranka ros-noetic-franka-ros -y
+
+RUN uv venv franka
+RUN source switch_env franka && UV_TORCH_BACKEND=auto uv sync --active
+RUN source switch_env franka && uv sync --extra franka --active
+
+# Install serl_franka_controller
+ENV ROS_CATKIN_PATH=/opt/catkin_ws
+RUN mkdir -p ${ROS_CATKIN_PATH}/src && cd ${ROS_CATKIN_PATH}/src && \
+    git clone https://github.com/rail-berkeley/serl_franka_controllers && \
+    source /opt/ros/noetic/setup.sh && \
+    cd ${ROS_CATKIN_PATH} && catkin_make --pkg serl_franka_controllers 
+
+RUN echo "source ${ROS_CATKIN_PATH}/devel/setup.sh" >> ${UV_PATH}/franka/bin/activate
+RUN echo "source /opt/ros/noetic/setup.sh" >> ${UV_PATH}/franka/bin/activate
+
+# Set default env
+RUN echo "source ${UV_PATH}/franka/bin/activate" >> ~/.bashrc
 
 FROM embodied-common-image AS embodied-behavior-image
 
