@@ -549,10 +549,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
     def init_worker(self):
         self.setup_model_and_optimizer()
 
-        if self.cfg.runner.get("resume_dir", None) is not None:
-            actor_checkpoint_path = os.path.join(self.cfg.runner.resume_dir, "actor")
-            self.load_checkpoint(actor_checkpoint_path)
-
         if self.cfg.actor.get("enable_offload", False):
             self.offload_param_and_grad()
             self.offload_optimizer()
