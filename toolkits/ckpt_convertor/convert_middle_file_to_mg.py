@@ -28,6 +28,7 @@ import torch
 from toolkits.ckpt_convertor.config import ConvertorConfig
 
 from .utils.fp8_utils import dict_push
+from .utils.mg_moe_groupgemm import moe_seq_to_group, moe_seq_to_te_group
 from .utils.safetensors_loader import STLoader, STLoaderLazy
 from .utils.tensor_operations import Operation, SplitTpTpe
 
@@ -127,25 +128,23 @@ class Save(Operation):
             tp_rank = model_rank % target_tp
             tpe_rank = model_rank % target_tpe
             if ep_rank_input is not None:
-                if ep_rank_input != (model_rank - tpe_rank) // target_tpe:
+                if ep_rank_input != (model_rank // target_tpe) % target_ep:
                     continue
                 ep_rank = ep_rank_input
             else:
-                ep_rank = (model_rank - tpe_rank) // target_tpe
+                ep_rank = (model_rank // target_tpe) % target_ep
 
-            if target_tpe * target_ep > target_tp:
-                if target_pp == 1:
-                    key = f"mp_rank_for_expert{tpe_rank:02d}_{ep_rank:03d}"
-                else:
-                    key = (
-                        f"mp_rank_for_expert{tpe_rank:02d}_{pp_rank:03d}_{ep_rank:03d}"
-                    )
-                yield key, tp_rank, tpe_rank
+            if target_tpe > target_tp:
+                assert False, (
+                    f"target_tpe > target_tp: {target_tpe} > {target_tp} megatron can't load ckpt"
+                )
             else:
                 if target_pp == 1:
                     key = f"mp_rank_{tp_rank:02d}"
                 else:
                     key = f"mp_rank_{tp_rank:02d}_{pp_rank:03d}"
+                if target_ep > 1:
+                    key += f"_{ep_rank:03d}"
                 yield key, tp_rank, tpe_rank
 
     def execute(self):
@@ -609,6 +608,19 @@ def convert_layer(
 
     for op in operations:
         op.execute()
+
+    if convert_config.grouped_gemm == "te":
+        for model_key in saver.full_checkpoint:
+            state_dict = saver.full_checkpoint[model_key]["model"]
+            moe_seq_to_te_group(state_dict)
+    elif convert_config.grouped_gemm == "legacy":
+        for model_key in saver.full_checkpoint:
+            state_dict = saver.full_checkpoint[model_key]["model"]
+            moe_seq_to_group(state_dict, num_local_experts, glu=True)
+    elif convert_config.grouped_gemm is not None:
+        assert False, (
+            f"now megatron grouped_gemm {convert_config.grouped_gemm} not supported, please use te_grouped_gemm"
+        )
 
     gc.collect()
     if Operation.global_device != "cpu":

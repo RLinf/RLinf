@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from typing import Any
 
 import torch
 from omegaconf import DictConfig
@@ -86,23 +87,10 @@ class Scheduler(_Scheduler):
         self.is_weight_offloaded = True
         return super().release_memory_occupation(recv_req)
 
-    def sync_hf_weight(self, recv_req: SyncHFWeightInput):
-        use_cudagraph = not self.cfg.rollout.enforce_eager
-        colocate = self.placement_mode == PlacementMode.COLLOCATED
-
-        assert use_cudagraph, "use_cudagraph must be True now."
-
-        state_dict = self._rlinf_worker.recv(
-            src_group_name=self._actor_group_name,
-            src_rank=self.actor_weight_rank,
-        )
-
+    def batch_load_hf_weight(self, state_dict: dict[str, Any]) -> Any:
         model = self.tp_worker.worker.model_runner.model
-
-        if self.is_weight_offloaded:
-            self.resume_memory_occupation(ResumeMemoryOccupationReqInput())
-            self.is_weight_offloaded = False
-
+        colocate = self.placement_mode == PlacementMode.COLLOCATED
+        batch_weight = []
         if colocate:
             for name, handle in state_dict.items():
                 func, args = handle
@@ -111,13 +99,32 @@ class Scheduler(_Scheduler):
                 # in case two processes have different CUDA_VISIBLE_DEVICES
                 list_args[6] = torch.cuda.current_device()
                 new_weight = func(*list_args)
-
-                model.load_weights([(name, new_weight)])
-                del new_weight
+                batch_weight.append((name, new_weight))
         else:
             # disaggregate mode, recv tensor directly
             for name, tensor in state_dict.items():
-                model.load_weights([(name, tensor)])
+                batch_weight.append((name, tensor))
+
+        model.load_weights(batch_weight)
+
+        for name, weight in batch_weight:
+            del weight
+        batch_weight.clear()
+
+    def sync_hf_weight(self, recv_req: SyncHFWeightInput):
+        use_cudagraph = not self.cfg.rollout.enforce_eager
+        assert use_cudagraph, "use_cudagraph must be True now."
+
+        state_dict = self._rlinf_worker.recv(
+            src_group_name=self._actor_group_name,
+            src_rank=self.actor_weight_rank,
+        )
+
+        if self.is_weight_offloaded:
+            self.resume_memory_occupation(ResumeMemoryOccupationReqInput())
+            self.is_weight_offloaded = False
+
+        self.batch_load_hf_weight(state_dict)
         self.flush_cache()
         return SyncHFWeightOutput()
 

@@ -83,11 +83,15 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/pi0.html">π₀.₅</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/maniskill.html">OpenVLA</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/libero.html">OpenVLA-OFT</a> ✅</li>
-            <li>GR00T</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/gr00t.html">GR00T</a> ✅</li>
           </ul>
           <li><b>VLM</b></li>
           <ul>
             <li>Qwen2.5-VL</li>
+          </ul>
+          <li><b>Custom Models</b></li>
+          <ul>
+            <li>MLP-Policy</li>
           </ul>
         </ul>
       </td>
@@ -546,7 +550,7 @@ and exhibits greater stability.
 ### 1. System-Level Enhancements
 - [X] Support for heterogeneous GPUs  
 - [ ] Support for asynchronous pipeline execution  
-- [ ] Support for Mixture of Experts (MoE)  
+- [X] Support for Mixture of Experts (MoE)  
 - [X] Support for vLLM inference backend
 
 ### 2. Application-Level Extensions
@@ -554,7 +558,7 @@ and exhibits greater stability.
 - [ ] Support for deep searcher agent training  
 - [ ] Support for multi-agent training  
 - [ ] Support for integration with more embodied simulators (e.g., [RoboCasa](https://github.com/robocasa/robocasa), [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis), [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin))  
-- [ ] Support for more Vision Language Action models (VLAs), such as [GR00T](https://github.com/NVIDIA/Isaac-GR00T), [WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow)
+- [ ] Support for more Vision Language Action models (VLAs), such as [WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow)
 - [ ] Support for world model   
 - [ ] Support for real-world RL embodied intelligence
 
@@ -572,7 +576,7 @@ Below is the summary of the CI test status of the main branch:
 ## Contribution Guidelines
 We welcome contributions to RLinf. Please read [contribution guide](https://github.com/RLinf/RLinf?tab=contributing-ov-file#contributing-to-rlinf) before taking action. Thank the following contributors and welcome more developers to join us on this open source project.
 
-<a href="https://github.com/RLinf/RLinf/graphs/contributors"><img src="https://contrib.rocks/image?repo=RLinf/RLinf&max=240&columns=18" /></a>
+<a href="https://github.com/RLinf/RLinf/graphs/contributors"><img src="https://stg.contrib.rocks/image?repo=RLinf/RLinf&max=240&columns=18" /></a>
 
 ## Citation and Acknowledgement
 
