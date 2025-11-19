@@ -1094,6 +1094,13 @@ class EnvOutput:
                     for value in obs["images_and_states"]["full_image"]
                 ]
             )
+        elif self.simulator_type == "worldmodel":
+            image_tensor = torch.stack(
+                [
+                    value.clone().permute(2, 0, 1)
+                    for value in obs["images_and_states"]["full_image"]
+                ]
+            )
         else:
             raise NotImplementedError
 

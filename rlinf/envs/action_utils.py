@@ -97,6 +97,11 @@ def prepare_actions(
         chunk_actions = raw_chunk_actions
     elif simulator_type == "behavior":
         chunk_actions = raw_chunk_actions
+    elif simulator_type == "worldmodel":
+        chunk_actions = prepare_actions_for_libero(
+            raw_chunk_actions=raw_chunk_actions,
+            model_name=model_name,
+        )
     else:
         raise NotImplementedError
 
