@@ -25,10 +25,11 @@ export PYTHONPATH=${LIBERO_PATH}:$PYTHONPATH
 
 export CUDA_LAUNCH_BLOCKING=1
 export HYDRA_FULL_ERROR=1
-
+# maniskill hab export path
+export MS_ASSET_DIR="/mnt/mnt/public/mjwei/download_models/arth-shukla/ReplicaCAD"
 
 if [ -z "$1" ]; then
-    CONFIG_NAME="libero_10_grpo_openvlaoft_eval"
+    CONFIG_NAME="maniskillhab_ppo_mlp"
 else
     CONFIG_NAME=$1
 fi

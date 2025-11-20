@@ -24,6 +24,8 @@ export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
 export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
 export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 
+# for debug
+export HYDRA_FULL_ERROR=1
 # maniskill hab export path
 export MS_ASSET_DIR="/mnt/mnt/public/mjwei/download_models/arth-shukla/ReplicaCAD"
 

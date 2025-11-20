@@ -18,6 +18,8 @@ from typing import Optional, Union
 import gymnasium as gym
 import numpy as np
 import torch
+from collections import deque
+from typing import Dict
 from mani_skill.envs.sapien_env import BaseEnv
 from mani_skill.utils import common, gym_utils
 from mani_skill.utils.common import torch_clone_dict
@@ -66,12 +68,32 @@ class ManiskillHABEnv(gym.Env):
 
         self.cfg = cfg
 
-        env_args = OmegaConf.to_container(cfg.init_params, resolve=True)
-        plan_data = plan_data_from_file(cfg.task_plan_fp)
-        env_args["task_plans"], env_args["scene_builder_cls"] = plan_data.plans, plan_data.dataset
-        env_args["spawn_data_fp"] = cfg.spawn_data_fp
-        self.env: BaseEnv = gym.make(**env_args)
+        self._frames: Dict[str, deque] = dict()
+        for sk in self.cfg.stacking_keys:
+            self._frames[sk] = deque(maxlen=self.cfg.frame_stack)
 
+        env_args = OmegaConf.to_container(cfg.init_params, resolve=True)
+        print("cfg.task_plan_fp=", cfg.task_plan_fp)
+        plan_data = plan_data_from_file(cfg.task_plan_fp)
+        env_args["task_plans"] = plan_data.plans
+        env_args["scene_builder_cls"] = plan_data.dataset
+        env_args["spawn_data_fp"] = cfg.spawn_data_fp
+        self.env: BaseEnv = gym.make(
+            id=env_args["id"],
+            max_episode_steps=env_args["max_episode_steps"],
+            obs_mode=env_args["obs_mode"],
+            reward_mode=env_args["reward_mode"],
+            control_mode=env_args["control_mode"],
+            render_mode=env_args["render_mode"],
+            shader_dir=env_args["shader_dir"],
+            robot_uids=env_args["robot_uids"],
+            num_envs=env_args["num_envs"],
+            sim_backend=env_args["sim_backend"],
+            task_plans=env_args["task_plans"],
+            scene_builder_cls=env_args["scene_builder_cls"],
+            spawn_data_fp=env_args["spawn_data_fp"],
+            **env_args["env_kwargs"],
+        )
         self.prev_step_reward = torch.zeros(self.num_envs, dtype=torch.float32).to(
             self.device
         )  # [B, ]
@@ -163,7 +185,8 @@ class ManiskillHABEnv(gym.Env):
             "fetch_hand_rgb": fetch_hand_rgb,
             "state": agent_obs,
             "extra": extra_obs,
-            "task_descriptions": self.instruction}
+            # "task_descriptions": self.instruction
+        }
 
         return extracted_obs
 
@@ -195,6 +218,21 @@ class ManiskillHABEnv(gym.Env):
         self.returns = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.float32
         )
+        self.is_grasped = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.bool
+        )
+        self.ee_rest = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.bool
+        )
+        self.robot_rest = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.bool
+        )
+        self.is_static = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.bool
+        )
+        self.cumulative_force_within_limit = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.bool
+        )
 
     def _reset_metrics(self, env_idx=None):
         if env_idx is not None:
@@ -224,21 +262,27 @@ class ManiskillHABEnv(gym.Env):
         episode_info["return"] = self.returns.clone()
         episode_info["episode_len"] = self.elapsed_steps.clone()
         episode_info["reward"] = episode_info["return"] / episode_info["episode_len"]
+
+        # extra infos
+        episode_info["is_grasped"] = infos["is_grasped"]
+        episode_info["ee_rest"] = infos["ee_rest"]
+        episode_info["robot_rest"] = infos["robot_rest"]
+        episode_info["is_static"] = infos["is_static"]
+        episode_info["cumulative_force_within_limit"] = infos["cumulative_force_within_limit"]
         infos["episode"] = episode_info
         return infos
 
     def _stack_frames(self, obs):
         """
-        mjwei NOTE: the reasone stacking frame (repeat 3 times) is unknown yet!
+        mjwei NOTE: the reason of stacking frame (repeat 3 times) is unknown yet!
         """
-        self._frames = dict()
         for sk in self.cfg.stacking_keys:
             frame = obs.pop(sk)
             for _ in range(self.cfg.frame_stack):
                 self._frames[sk].append(frame)
         obs["pixels"] = dict(
             (sk, torch.stack(tuple(self._frames[sk]), axis=self._stack_dim[sk]))
-            for sk in self._stacking_keys
+            for sk in self.cfg.stacking_keys
         )
         return obs
 

@@ -16,11 +16,10 @@ def main(cfg) -> None:
     cfg.env.train.max_episode_steps = 32
     cfg.env.train.use_fixed_reset_state_ids = True
     env = ManiskillHABEnv(cfg.env.train, seed_offset=0, total_num_processes=1)
-    breakpoint()
-    for i in range(10):
+    for i in range(1):
         env.update_reset_state_ids()
         print(env.reset_state_ids)
-        print(f"{env.start_idx=}")
+    
     
     # 开始
     env.seed = list(range(0, cfg.env.train.num_envs))
@@ -30,10 +29,9 @@ def main(cfg) -> None:
     env.flush_video_wait("test-mshab-wait")  # 保存wait 10步
     print("now finish flush video wait")
     a = np.random.random((cfg.env.train.num_envs, 7))
-    for i in tqdm(range(1, 30)):
+    for i in tqdm(range(1, 1)):
         # a = np.zeros((10, 7))
         env.step(a)
-        breakpoint()
 
         if i % 10 == 0:
             # 保存前十步的Video

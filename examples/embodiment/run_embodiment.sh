@@ -24,9 +24,11 @@ export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
 export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
 export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 
+# maniskill hab export path
+export MS_ASSET_DIR="/mnt/mnt/public/mjwei/download_models/arth-shukla/ReplicaCAD"
 
 if [ -z "$1" ]; then
-    CONFIG_NAME="libero_10_grpo_openvlaoft"
+    CONFIG_NAME="maniskillhab_ppo_mlp"
 else
     CONFIG_NAME=$1
 fi

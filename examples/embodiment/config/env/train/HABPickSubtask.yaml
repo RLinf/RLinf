@@ -27,7 +27,7 @@ stacking_keys:
 log_extra_stat_keys: True
 
 TASK: set_table
-SUBTASK: sequential
+SUBTASK: pick
 SPLIT: train
 OBJ: all
 task_plan_fp: "${oc.env:MS_ASSET_DIR}/data/scene_datasets/replica_cad_dataset/rearrange/task_plans/${env.train.TASK}/${env.train.SUBTASK}/${env.train.SPLIT}/${env.train.OBJ}.json"
@@ -35,7 +35,7 @@ spawn_data_fp: "${oc.env:MS_ASSET_DIR}/data/scene_datasets/replica_cad_dataset/r
 
 
 init_params:
-  id: "SequentialTask-v0"
+  id: "PickSubtaskTrain-v0"
   task_plans: ""
   scene_builder_cls: ""
   spawn_data_fp: ""

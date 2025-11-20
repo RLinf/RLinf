@@ -27,19 +27,19 @@ stacking_keys:
 log_extra_stat_keys: True
 
 TASK: set_table
-SUBTASK: sequential
-SPLIT: train
+SUBTASK: pick
+SPLIT: val
 OBJ: all
-task_plan_fp: "${oc.env:MS_ASSET_DIR}/data/scene_datasets/replica_cad_dataset/rearrange/task_plans/${env.train.TASK}/${env.train.SUBTASK}/${env.train.SPLIT}/${env.train.OBJ}.json"
-spawn_data_fp: "${oc.env:MS_ASSET_DIR}/data/scene_datasets/replica_cad_dataset/rearrange/spawn_data/${env.train.TASK}/${env.train.SUBTASK}/${env.train.SPLIT}/spawn_data.pt"
+task_plan_fp: "${oc.env:MS_ASSET_DIR}/data/scene_datasets/replica_cad_dataset/rearrange/task_plans/${env.eval.TASK}/${env.eval.SUBTASK}/${env.eval.SPLIT}/${env.eval.OBJ}.json"
+spawn_data_fp: "${oc.env:MS_ASSET_DIR}/data/scene_datasets/replica_cad_dataset/rearrange/spawn_data/${env.eval.TASK}/${env.eval.SUBTASK}/${env.eval.SPLIT}/spawn_data.pt"
 
 
 init_params:
-  id: "SequentialTask-v0"
+  id: "PickSubtaskTrain-v0"
   task_plans: ""
   scene_builder_cls: ""
   spawn_data_fp: ""
-  max_episode_steps: ${env.train.max_episode_steps}
+  max_episode_steps: ${env.eval.max_episode_steps}
   obs_mode: "rgbd"
   reward_mode: "normalized_dense"
   control_mode: "pd_joint_delta_pos"

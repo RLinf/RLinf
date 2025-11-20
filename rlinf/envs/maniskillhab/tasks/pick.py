@@ -40,7 +40,6 @@ class PickSubtaskTrainEnv(SubtaskTrainEnv):
         task_plans: List[TaskPlan] = [],
         **kwargs,
     ):
-        breakpoint()
         tp0 = task_plans[0]
         assert len(tp0.subtasks) == 1 and isinstance(
             tp0.subtasks[0], PickSubtask

@@ -18,7 +18,7 @@ video_cfg:
 
 MS_ASSET_DIR: "/mnt/mnt/public/mjwei/download_models/arth-shukla/ReplicaCAD"
 TASK: set_table
-SUBTASK: pick
+SUBTASK: sequential
 SPLIT: train
 OBJ: all
 task_plan_fp: "${MS_ASSET_DIR}/data/scene_datasets/replica_cad_dataset/rearrange/task_plans/${TASK}/${SUBTASK}/${SPLIT}/${OBJ}.json"
