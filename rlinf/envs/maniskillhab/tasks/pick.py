@@ -227,4 +227,21 @@ class PickSubtaskTrainEnv(SubtaskTrainEnv):
         max_reward = 28.0
         return self.compute_dense_reward(obs=obs, action=action, info=info) / max_reward
 
+
+    def evaluate(self):
+        """
+        rename the grasped and add a state consecutive_grasp for holding pick for more than 5time steps
+        """
+        with torch.device(self.device):
+            infos = super().evaluate()
+            # is_grasped
+            is_src_obj_grasped = infos["is_grasped"]
+            infos["is_src_obj_grasped"] = is_src_obj_grasped
+
+            # if is_src_obj_grasped:
+            self.consecutive_grasp += is_src_obj_grasped
+            self.consecutive_grasp[is_src_obj_grasped == 0] = 0
+            consecutive_grasp = self.consecutive_grasp >= 5
+            infos["consecutive_grasp"] = consecutive_grasp
+            return infos
     # -------------------------------------------------------------------------------------------------

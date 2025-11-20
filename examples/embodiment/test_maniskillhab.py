@@ -9,12 +9,7 @@ from rlinf.envs.maniskillhab.maniskillhab_env import ManiskillHABEnv
     version_base="1.1", config_path="config", config_name="maniskill_ppo_openvlaoft"
 )
 def main(cfg) -> None:
-    # print(cfg.env.train.num_envs)
-    cfg.env.train.num_group = 2
-    cfg.env.train.group_size = 4
-    cfg.env.train.num_envs = cfg.env.train.num_group * cfg.env.train.group_size
-    cfg.env.train.max_episode_steps = 32
-    cfg.env.train.use_fixed_reset_state_ids = True
+    print("cfg.env.train.num_envs=", cfg.env.train.num_envs)
     env = ManiskillHABEnv(cfg.env.train, seed_offset=0, total_num_processes=1)
     for i in range(1):
         env.update_reset_state_ids()
@@ -26,11 +21,10 @@ def main(cfg) -> None:
     env.seed = 0
     env.is_start = True
     env.step()
-    env.flush_video_wait("test-mshab-wait")  # 保存wait 10步
-    print("now finish flush video wait")
-    a = np.random.random((cfg.env.train.num_envs, 7))
-    for i in tqdm(range(1, 1)):
-        # a = np.zeros((10, 7))
+    env.flush_video("test-mshab-wait")  # 保存wait 10步
+    a = np.random.random((cfg.env.train.num_envs, cfg.action_dim))  # fetch robot's action dim = 13
+    for i in tqdm(range(1, 30)):
+        # a = np.zeros((10, 13))
         env.step(a)
 
         if i % 10 == 0:
@@ -41,7 +35,7 @@ def main(cfg) -> None:
             env.seed = 0
             env.is_start = True
             env.step()
-            env.flush_video_wait("test-mshab-wait")  # 保存wait 10步
+            env.flush_video("test-mshab-wait")  # 保存wait 10步
             # print(i)
     env.flush_video("test-mshab")
     

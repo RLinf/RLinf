@@ -19,7 +19,7 @@ stationary_base: False
 stationary_torso: False
 stationary_head: True
 
-frame_stack: 3
+frame_stack_num: 3
 stacking_keys: 
   - fetch_head_depth
   - fetch_hand_depth
@@ -52,10 +52,9 @@ init_params:
     robot_force_mult: 0.001
     robot_force_penalty_min: 0.2
     target_randomization: False
-
-sim_config:
-  sim_freq: 120
-  control_freq: 30
+  sim_config:
+    sim_freq: 120
+    control_freq: 30
   # sensor_config:
   #   shader_pack: "default"
 

@@ -68,6 +68,7 @@ class SubtaskTrainEnv(SequentialTaskEnv):
     # RECONFIGURE AND INIT
     # -------------------------------------------------------------------------------------------------
 
+
     def _after_reconfigure(self, options):
         self.spawn_data = torch.load(self.spawn_data_fp, map_location=self.device)
         self.spawn_selection_idxs = [None] * self.num_envs
@@ -75,7 +76,29 @@ class SubtaskTrainEnv(SequentialTaskEnv):
 
     def _initialize_episode(self, env_idx, options: Dict):
         super()._initialize_episode(env_idx, options)
+        self._reset_stats(env_idx)
         self._apply_premade_spawns(env_idx, options)
+
+    def _reset_stats(self, env_idx):
+        # stats to track (for all the environments.)
+        if not hasattr(self, "consecutive_grasp"):
+            self.consecutive_grasp = torch.zeros(
+                (self.num_envs,), dtype=torch.int32, device=self.device
+            )
+            self.episode_stats = {
+                "is_src_obj_grasped": torch.zeros(
+                    (self.num_envs,), dtype=torch.bool, device=self.device
+                ),
+                "consecutive_grasp": torch.zeros(
+                    (self.num_envs,), dtype=torch.bool, device=self.device
+                ),
+            }
+        else:
+            # only update info for the environments that are being reset.
+            self.consecutive_grasp[env_idx] = 0
+            self.episode_stats["is_src_obj_grasped"][env_idx] = False
+            self.episode_stats["consecutive_grasp"][env_idx] = False
+        self.extra_stats = {}
 
     def _apply_premade_spawns(self, env_idx, options: Dict):
         with torch.device(self.device):

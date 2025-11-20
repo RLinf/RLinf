@@ -657,6 +657,7 @@ class SequentialTaskEnv(SceneManipulationEnv):
             self.build_config_idx_to_task_plans[
                 self.scene_builder.build_config_names_to_idxs[bc]
             ] = self.bc_to_task_plans[bc]
+            break  # mjwei TODO: here for debug we only need the first TaskPlan. In this way, the code can init fast and improve debug efficiency
 
         num_bcis = len(self.build_config_idx_to_task_plans.keys())
 

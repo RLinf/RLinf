@@ -29,7 +29,7 @@ export HYDRA_FULL_ERROR=1
 export MS_ASSET_DIR="/mnt/mnt/public/mjwei/download_models/arth-shukla/ReplicaCAD"
 
 if [ -z "$1" ]; then
-    CONFIG_NAME="maniskillhab_ppo_mlp"
+    CONFIG_NAME="maniskillhab_ppo_mlp_eval"
 else
     CONFIG_NAME=$1
 fi

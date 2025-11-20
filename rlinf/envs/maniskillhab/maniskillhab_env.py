@@ -68,10 +68,6 @@ class ManiskillHABEnv(gym.Env):
 
         self.cfg = cfg
 
-        self._frames: Dict[str, deque] = dict()
-        for sk in self.cfg.stacking_keys:
-            self._frames[sk] = deque(maxlen=self.cfg.frame_stack)
-
         env_args = OmegaConf.to_container(cfg.init_params, resolve=True)
         print("cfg.task_plan_fp=", cfg.task_plan_fp)
         plan_data = plan_data_from_file(cfg.task_plan_fp)
@@ -177,17 +173,22 @@ class ManiskillHABEnv(gym.Env):
         fetch_hand_rgb = raw_obs["sensor_data"]["fetch_hand"]["rgb"].to(torch.uint8).permute(0, 3, 1, 2)  # [B, C, H, W]
         fetch_head_depth = raw_obs["sensor_data"]["fetch_head"]["depth"].permute(0, 3, 1, 2)  # [B, C, H, W]
         fetch_hand_depth = raw_obs["sensor_data"]["fetch_hand"]["depth"].permute(0, 3, 1, 2)  # [B, C, H, W]
-
         extracted_obs = {
+            "images": fetch_head_depth,
             "fetch_head_depth": fetch_head_depth,
             "fetch_hand_depth": fetch_hand_depth,
             "fetch_head_rgb": fetch_head_rgb,
             "fetch_hand_rgb": fetch_hand_rgb,
-            "state": agent_obs,
+            "state": torch.cat([_agent_state for _agent_state in raw_obs["agent"].values()], dim=1),  # cat qpos and qvel together
             "extra": extra_obs,
             # "task_descriptions": self.instruction
         }
-
+        # breakpoint()
+        """
+        mjwei NOTE: the reason of stacking frame (repeat 3 times) is unknown yet!
+        """
+        for sk in self.cfg.stacking_keys:
+            extracted_obs[sk] = extracted_obs[sk].unsqueeze(1).repeat(1, self.cfg.frame_stack_num, 1, 1, 1)
         return extracted_obs
 
     def _calc_step_reward(self, reward, info):
@@ -272,20 +273,6 @@ class ManiskillHABEnv(gym.Env):
         infos["episode"] = episode_info
         return infos
 
-    def _stack_frames(self, obs):
-        """
-        mjwei NOTE: the reason of stacking frame (repeat 3 times) is unknown yet!
-        """
-        for sk in self.cfg.stacking_keys:
-            frame = obs.pop(sk)
-            for _ in range(self.cfg.frame_stack):
-                self._frames[sk].append(frame)
-        obs["pixels"] = dict(
-            (sk, torch.stack(tuple(self._frames[sk]), axis=self._stack_dim[sk]))
-            for sk in self.cfg.stacking_keys
-        )
-        return obs
-
     def reset(
         self,
         *,
@@ -300,7 +287,6 @@ class ManiskillHABEnv(gym.Env):
         else:
             self._reset_metrics()
         
-        extracted_obs = self._stack_frames(extracted_obs)
         return extracted_obs, infos
 
     def step(
@@ -328,7 +314,6 @@ class ManiskillHABEnv(gym.Env):
 
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
         extracted_obs = self._wrap_obs(raw_obs)
-        extracted_obs = self._stack_frames(extracted_obs)
         step_reward = self._calc_step_reward(_reward, infos)
 
         if self.video_cfg.save_video:

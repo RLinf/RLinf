@@ -44,7 +44,7 @@ algorithm:
   group_size: 1
   n_chunk_steps: 50
   n_eval_chunk_steps: 50
-  num_group_envs: 63
+  num_group_envs: 1
   rollout_epoch: 1
   reward_type: action_level
   logprob_type: action_level
@@ -118,8 +118,8 @@ actor:
   model:
     model_name: "mlp_policy"
     policy_setup: "panda-qpos"
-    obs_dim: 42
-    action_dim: 8
+    obs_dim: 24  # mjwei NOTE: this is the state's dimension. 12 + 12 = qpos + qvel
+    action_dim: 13
     num_action_chunks: 1
     hidden_dim: 256
     

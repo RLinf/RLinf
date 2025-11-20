@@ -1094,6 +1094,8 @@ class EnvOutput:
                     for value in obs["images_and_states"]["full_image"]
                 ]
             )
+        elif self.simulator_type == "maniskillhab":
+            image_tensor = obs["images"]
         else:
             raise NotImplementedError
 
