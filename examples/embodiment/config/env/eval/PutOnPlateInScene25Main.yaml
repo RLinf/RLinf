@@ -17,7 +17,7 @@ video_cfg:
 init_params:
   id: PutOnPlateInScene25Main-v3
   num_envs: 4
-  obs_mode: ${env.eval.num_envs}
+  obs_mode: ${env.train.init_params.obs_mode}
   control_mode: None
   sim_backend: "gpu"
   sim_config: ${env.train.init_params.sim_config}
