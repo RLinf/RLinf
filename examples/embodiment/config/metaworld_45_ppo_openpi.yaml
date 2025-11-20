@@ -1,6 +1,6 @@
 defaults:
-  - env/train: libero_object
-  - env/eval: libero_object
+  - env/train: metaworld_45_ind
+  - env/eval: metaworld_45_ood
   - override hydra/job_logging: stdout
 
 hydra:
@@ -23,26 +23,26 @@ runner:
     experiment_name: "test_openpi"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 1000
+  max_epochs: 500
   max_steps: -1
 
-  val_check_interval: -1
-  save_interval: 40
+  val_check_interval: 5
+  save_interval: 500
   seq_length: 4096
   max_prompt_length: 50
 
 algorithm:
   auto_reset: False
   ignore_terminations: False
-  use_fixed_reset_state_ids: True
+  use_fixed_reset_state_ids: False
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
-  max_episode_steps: 240
+  max_episode_steps: 160
   use_ordered_reset_state_ids: False
   reward_coef: 1.0
-  n_chunk_steps: 48
-  n_eval_chunk_steps: 48
+  n_chunk_steps: 32
+  n_eval_chunk_steps: 32
   num_group_envs: 64
   rollout_epoch: 8
   reward_type: chunk_level
@@ -125,18 +125,18 @@ actor:
     model_name: "openpi"
     precision: null
     num_action_chunks: 5 # interface for the env
-    action_dim: 7
+    action_dim: 4
     is_lora: False
     lora_rank: 32
     gradient_checkpointing: False
-    use_wrist_image: True
+    use_wrist_image: False
     use_proprio: True
-    num_steps: 4
+    num_steps: 5
     add_value_head: True
     # openpi specific parameters
     openpi:
-      config_name: "pi0_libero"
-      num_images_in_input: 2
+      config_name: "pi0_metaworld"
+      num_images_in_input: 1
       noise_level: 0.5
       action_chunk: ${actor.model.num_action_chunks}
       num_steps: ${actor.model.num_steps}
@@ -147,7 +147,7 @@ actor:
       detach_critic_input: True
 
   optim:
-    lr: 5.0e-6
+    lr: 1.0e-5
     value_lr: 1.0e-4
     adam_beta1: 0.9
     adam_beta2: 0.95

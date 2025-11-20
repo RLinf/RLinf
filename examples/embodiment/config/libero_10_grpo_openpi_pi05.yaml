@@ -133,6 +133,8 @@ actor:
     num_steps: 5
     # openpi specific parameters
     openpi:
+      config_name: "pi05_libero"
+      num_images_in_input: 2
       noise_level: 0.5
       action_chunk: ${actor.model.num_action_chunks}
       num_steps: ${actor.model.num_steps}
@@ -140,7 +142,6 @@ actor:
       action_env_dim: ${actor.model.action_dim}
       noise_method: "flow_sde" 
       add_value_head: False
-      pi05: True
       value_after_vlm: False
       value_vlm_mode: "mean_token"
 

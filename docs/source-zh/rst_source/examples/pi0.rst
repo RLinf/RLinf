@@ -46,6 +46,7 @@
    -  使用 GAE（Generalized Advantage Estimation）进行优势估计
    -  基于比率的策略裁剪
    -  价值函数裁剪
+   -  熵正则化
 
 2. **GRPO（Group Relative Policy Optimization）**
 
@@ -182,7 +183,7 @@ actor** 之间的流水线重叠，从而提升 rollout 效率。
 
 你可以通过配置 ``noise_level`` 以及 ``num_steps`` ，设置不同的加噪强度以及流匹配步数。
 
-你可以通过修改 ``noise_method`` 使用不同的加噪方式。我们提供\ `flow_sde <https://arxiv.org/abs/2505.05470>`__\ 和\ `reinflow <https://arxiv.org/abs/2505.22094>`__\ 两种方式。
+你可以通过修改 ``noise_method`` 使用不同的加噪方式。我们提供\ `flow_sde <https://arxiv.org/abs/2505.05470>`__\ 和\ `flow_noise <https://arxiv.org/abs/2505.22094>`__\ 两种方式。
 
 你可以通过设置 ``pi05: True`` 启用π\ :sub:`0.5`\模式，通过 ``value_after_vlm`` 参数控制state输入路径：当该参数为 True 时，state 特征输入至 VLM 模块（为 π\ :sub:`0.5`\ 的默认配置）；为 False 时，state 特征输入至 action expert 模块（为 π\ :sub:`0`\ 的默认配置）。
 
@@ -352,3 +353,7 @@ LIBERO 结果
      - **93.0%**
      - **97.9%**
      - **+20.8**
+
+MetaWorld 结果
+~~~~~~~~~~~~~
+有关 MetaWorld 结果，请查看 `MetaWorld 页面 <https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/metaworld.html>`__。

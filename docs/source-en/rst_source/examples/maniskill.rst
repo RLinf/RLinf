@@ -1,4 +1,4 @@
-RL with ManiSkill Simulator
+RL with ManiSkill Benchmark
 ===========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg

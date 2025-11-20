@@ -14,6 +14,9 @@
 
 import copy
 import os
+
+# Ensure MW envs only register once
+import warnings
 from typing import Optional, Union
 
 import gymnasium as gym
@@ -26,16 +29,19 @@ from rlinf.envs.libero.utils import (
     save_rollout_video,
     tile_images,
 )
-from rlinf.envs.metaworld.utils import load_prompt_from_json
+from rlinf.envs.metaworld import MetaWorldBenchmark
 from rlinf.envs.metaworld.venv import ReconfigureSubprocEnv
 from rlinf.envs.utils import (
     list_of_dict_to_dict_of_list,
     to_tensor,
 )
 
-# Ensure MW envs only register once
 if not getattr(metaworld, "_has_registered_mw_envs", False):
-    metaworld.register_mw_envs()
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", message=".*Overriding environment.*already in registry.*"
+        )
+        metaworld.register_mw_envs()
     metaworld._has_registered_mw_envs = True
 
 
@@ -60,6 +66,9 @@ class MetaWorldEnv(gym.Env):
         self.num_tasks = 50
         self.task_num_trials = 10
         self.RESET_STEP = 15
+        self.task_suite: MetaWorldBenchmark = MetaWorldBenchmark(
+            self.cfg.task_suite_name
+        )
         self._compute_total_num_group_envs()
         self.reset_state_ids_all = self.get_reset_state_ids_all()
         self.update_reset_state_ids()
@@ -78,12 +87,8 @@ class MetaWorldEnv(gym.Env):
 
     def _init_env(self):
         # metaworld task and prompt description
-        config_path = os.path.join(os.path.dirname(__file__), "metaworld_config.json")
-        self.task_description_dict = load_prompt_from_json(
-            config_path, "TASK_DESCRIPTIONS"
-        )
-        self.env_all_names = list(self.task_description_dict.keys())
-        self.task_all_names = list(self.task_description_dict.values())
+        self.env_names_all = self.task_suite.get_env_names()
+        self.task_descriptions_all = self.task_suite.get_task_description()
         env_fns = self.get_env_fns()
         self.use_async_vector_env = False
         if self.use_async_vector_env:
@@ -121,10 +126,10 @@ class MetaWorldEnv(gym.Env):
             env_idx = np.arange(self.cfg.num_envs)
         for env_id in range(self.cfg.num_envs):
             if env_id not in env_idx:
-                task_descriptions.append(self.task_descriptions[env_id])
+                task_descriptions.append(self.task_descriptions_all[env_id])
                 continue
-            env_name = self.env_all_names[self.task_ids[env_id]]
-            task_description = self.task_all_names[self.task_ids[env_id]]
+            env_name = self.env_names_all[self.task_ids[env_id]]
+            task_description = self.task_descriptions_all[self.task_ids[env_id]]
 
             env_fn_params.append(
                 {
@@ -166,7 +171,6 @@ class MetaWorldEnv(gym.Env):
         valid_size = len(reset_state_ids) - (
             len(reset_state_ids) % self.total_num_processes
         )
-        # self._generator_ordered.shuffle(reset_state_ids) # TODO: eval env shuffle ?
         reset_state_ids = reset_state_ids[:valid_size]
         reset_state_ids = reset_state_ids.reshape(self.total_num_processes, -1)
         return reset_state_ids

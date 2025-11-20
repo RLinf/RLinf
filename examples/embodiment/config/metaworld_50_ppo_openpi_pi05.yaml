@@ -1,6 +1,6 @@
 defaults:
-  - env/train: libero_object
-  - env/eval: libero_object
+  - env/train: metaworld_50
+  - env/eval: metaworld_50
   - override hydra/job_logging: stdout
 
 hydra:
@@ -27,22 +27,22 @@ runner:
   max_steps: -1
 
   val_check_interval: -1
-  save_interval: 40
+  save_interval: 50
   seq_length: 4096
   max_prompt_length: 50
 
 algorithm:
   auto_reset: False
   ignore_terminations: False
-  use_fixed_reset_state_ids: True
+  use_fixed_reset_state_ids: False
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
-  max_episode_steps: 240
+  max_episode_steps: 100
   use_ordered_reset_state_ids: False
   reward_coef: 1.0
-  n_chunk_steps: 48
-  n_eval_chunk_steps: 48
+  n_chunk_steps: 20
+  n_eval_chunk_steps: 20
   num_group_envs: 64
   rollout_epoch: 8
   reward_type: chunk_level
@@ -125,18 +125,18 @@ actor:
     model_name: "openpi"
     precision: null
     num_action_chunks: 5 # interface for the env
-    action_dim: 7
+    action_dim: 4
     is_lora: False
     lora_rank: 32
     gradient_checkpointing: False
-    use_wrist_image: True
+    use_wrist_image: False
     use_proprio: True
-    num_steps: 4
+    num_steps: 5
     add_value_head: True
     # openpi specific parameters
     openpi:
-      config_name: "pi0_libero"
-      num_images_in_input: 2
+      config_name: "pi05_metaworld"
+      num_images_in_input: 1
       noise_level: 0.5
       action_chunk: ${actor.model.num_action_chunks}
       num_steps: ${actor.model.num_steps}
@@ -144,7 +144,8 @@ actor:
       action_env_dim: ${actor.model.action_dim}
       noise_method: "flow_sde"
       add_value_head: ${actor.model.add_value_head}
-      detach_critic_input: True
+      value_after_vlm: True
+      value_vlm_mode: "mean_token"
 
   optim:
     lr: 5.0e-6
@@ -154,6 +155,11 @@ actor:
     adam_eps: 1.0e-05
     clip_grad: 1.0
     critic_warmup_steps: 0
+    total_training_steps: ${runner.max_epochs}
+    lr_warmup_steps: -1
+    warmup_style: cosine
+    min_lr_ratio: 0.1
+    num_cycles: 0.5
 
   fsdp_config:                  # below are fsdp configs, for more details, see https://pytorch.org/docs/stable/fsdp.html and https://huggingface.co/docs/accelerate/package_reference/fsdp
 
