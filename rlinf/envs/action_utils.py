@@ -23,7 +23,7 @@ def prepare_actions_for_maniskill(
     action_scale,
     policy,
 ) -> torch.Tensor:
-    if policy == "panda-qpos":
+    if policy and "panda" in policy:
         return raw_chunk_actions
     # TODO only suitable for action_dim = 7
     reshaped_actions = raw_chunk_actions.reshape(-1, action_dim)
@@ -44,6 +44,9 @@ def prepare_actions_for_maniskill(
     if policy == "google_robot":
         raise NotImplementedError
     elif policy == "widowx_bridge":
+        actions["gripper"] = 2.0 * (raw_actions["open_gripper"] > 0.5) - 1.0  # [B, 1]
+    else:
+        # Default gripper handling for other policies
         actions["gripper"] = 2.0 * (raw_actions["open_gripper"] > 0.5) - 1.0  # [B, 1]
 
     actions["terminate_episode"] = np.array([0.0] * batch_size).reshape(-1, 1)  # [B, 1]

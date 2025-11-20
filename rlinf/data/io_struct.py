@@ -1046,6 +1046,18 @@ def put_tensor_cpu(data_dict):
     return data_dict
 
 
+def flatten_dict(d, parent_key="", sep="/"):
+    """Recursively flatten a nested dict."""
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+
 @dataclass(kw_only=True)
 class EnvOutput:
     simulator_type: str
@@ -1053,6 +1065,7 @@ class EnvOutput:
     final_obs: Optional[dict[str, Any]] = None
     dones: Optional[torch.Tensor] = None  # [B]
     rewards: Optional[torch.Tensor] = None  # [B]
+    success_frame: Optional[torch.Tensor] = None  # [B] or [B, chunk_steps] - frame-based success signal (1/0)
 
     def __post_init__(self):
         self.obs = put_tensor_cpu(self.obs)
@@ -1062,6 +1075,9 @@ class EnvOutput:
         self.dones = self.dones.cpu().contiguous() if self.dones is not None else None
         self.rewards = (
             self.rewards.cpu().contiguous() if self.rewards is not None else None
+        )
+        self.success_frame = (
+            self.success_frame.cpu().contiguous() if self.success_frame is not None else None
         )
 
     def prepare_observations(self, obs: dict[str, Any]) -> dict[str, Any]:
@@ -1081,7 +1097,11 @@ class EnvOutput:
                     ]
                 )
         elif self.simulator_type == "maniskill":
-            image_tensor = obs["images"]
+            # 处理 images 可能是字典格式（当 obs_mode == "rgb" 时）
+            # 或 None（当 obs_mode == "state" 时）
+            # 或 tensor（旧格式）
+            image_tensor = obs.get("images")
+            # 保持原格式：如果是字典就保持字典，如果是 tensor 就保持 tensor，如果是 None 就保持 None
         elif self.simulator_type == "robotwin":
             image_tensor = obs["images"]
         elif self.simulator_type == "behavior":
@@ -1100,8 +1120,10 @@ class EnvOutput:
         states = None
         if "images_and_states" in obs and "state" in obs["images_and_states"]:
             states = obs["images_and_states"]["state"]
-        if "state" in obs:
+        elif "state" in obs:
             states = obs["state"]
+        elif "states" in obs:
+            states = obs["states"]
 
         task_descriptions = (
             list(obs["task_descriptions"]) if "task_descriptions" in obs else None
@@ -1125,6 +1147,7 @@ class EnvOutput:
         )
         env_output_dict["dones"] = self.dones
         env_output_dict["rewards"] = self.rewards
+        env_output_dict["success_frame"] = self.success_frame
 
         return env_output_dict
 
@@ -1205,16 +1228,28 @@ class EmbodiedRolloutResult:
         )
         merged_forward_inputs = {}
         for data in self.forward_inputs:
-            for k, v in data.items():
+            # Flatten nested dicts recursively
+            if isinstance(data, dict):
+                flattened_data = flatten_dict(data)
+            else:
+                # If data is not a dict, skip it or handle as needed
+                continue
+            for k, v in flattened_data.items():
+                # Only process Tensor values, skip dicts and other types
+                if isinstance(v, dict):
+                    continue
+                if not isinstance(v, torch.Tensor):
+                    continue
                 if k in merged_forward_inputs:
                     merged_forward_inputs[k].append(v)
                 else:
                     merged_forward_inputs[k] = [v]
         for k in merged_forward_inputs.keys():
             assert k not in ["dones", "rewards", "prev_logprobs", "prev_values"]
-            rollout_result_dict[k] = (
-                torch.stack(merged_forward_inputs[k], dim=0).cpu().contiguous()
-            )
+            if len(merged_forward_inputs[k]) > 0:
+                rollout_result_dict[k] = (
+                    torch.stack(merged_forward_inputs[k], dim=0).cpu().contiguous()
+                )
 
         return rollout_result_dict
 

@@ -25,6 +25,7 @@ from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+from rlinf.workers.reward.embodied_reward_worker import EmbodiedRewardWorker
 
 mp.set_start_method("spawn", force=True)
 
@@ -55,11 +56,20 @@ def main(cfg) -> None:
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 
+    # Create reward worker group if using reward model
+    reward_group = None
+    if cfg.reward.get("use_reward_model", False):
+        reward_placement = component_placement.get_strategy("reward")
+        reward_group = EmbodiedRewardWorker.create_group(cfg, component_placement).launch(
+            cluster, name=cfg.reward.group_name, placement_strategy=reward_placement
+        )
+
     runner = EmbodiedRunner(
         cfg=cfg,
         actor=actor_group,
         rollout=rollout_group,
         env=env_group,
+        reward=reward_group
     )
 
     runner.init_workers()

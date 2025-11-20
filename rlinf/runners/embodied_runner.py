@@ -63,6 +63,8 @@ class EmbodiedRunner:
         self.actor.init_worker().wait()
         self.rollout.init_worker().wait()
         self.env.init_worker().wait()
+        if self.reward is not None:
+            self.reward.init_worker().wait()
 
         if self.cfg.runner.get("resume_dir", None) is not None:
             self.global_step = int(self.cfg.runner.resume_dir.split("global_step_")[-1])

@@ -23,6 +23,7 @@ from rlinf.data.io_struct import EnvOutput
 from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.env_manager import EnvManager
 from rlinf.scheduler import Cluster, Worker
+from rlinf.models.reward_model.reward_data_collector import RewardDataCollector
 from rlinf.utils.placement import HybridComponentPlacement
 
 
@@ -68,6 +69,13 @@ class EnvWorker(Worker):
             self.channel = self.create_channel(cfg.env.channel.name)
         else:
             self.channel = self.connect_channel(cfg.env.channel.name)
+                
+        # Initialize reward data collector if enabled
+        self.data_collector = None
+        if self.cfg.get("reward", {}).get("collect_data", False):
+            from rlinf.models.reward_model.reward_data_collector import create_reward_data_collector
+            self.data_collector = create_reward_data_collector(self.cfg)
+
 
     def init_worker(self):
         enable_offload = self.cfg.env.enable_offload
@@ -253,6 +261,48 @@ class EnvWorker(Worker):
             self.simulator_list[stage_id].chunk_step(chunk_actions)
         )
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
+        
+        # Extract success_frame from infos
+        # Priority: use success_frame if available (contains per-step success for all chunk steps),
+        # otherwise fall back to success (only represents last step)
+        success_frame = None
+        if "success_frame" in infos:
+            # If environment already provides success_frame per step (from chunk_step)
+            # This is the preferred source as it contains success for each step in the chunk
+            success_frame = infos["success_frame"]
+            if isinstance(success_frame, torch.Tensor):
+                pass
+            elif isinstance(success_frame, (list, tuple)):
+                success_frame = torch.tensor(success_frame, dtype=torch.float32, device=chunk_rewards.device)
+        elif "success" in infos:
+            # Fallback: use success if success_frame is not available
+            # If success is a tensor with shape [num_envs], expand to [num_envs, chunk_steps] if needed
+            success_tensor = infos["success"]
+            if isinstance(success_tensor, torch.Tensor):
+                if success_tensor.dim() == 1:
+                    # [num_envs] -> [num_envs, chunk_steps]
+                    # For chunk_step, we need success for each step
+                    # Check if chunk_rewards has chunk dimension
+                    if chunk_rewards.dim() == 2 and chunk_rewards.shape[1] > 1:
+                        # Expand to match chunk_steps: repeat the last value for all steps
+                        success_frame = success_tensor.unsqueeze(1).expand(-1, chunk_rewards.shape[1])
+                    else:
+                        success_frame = success_tensor.unsqueeze(1) if chunk_rewards.dim() == 2 else success_tensor
+                else:
+                    success_frame = success_tensor
+            elif isinstance(success_tensor, (list, tuple)):
+                # Convert list to tensor
+                success_frame = torch.tensor(success_tensor, dtype=torch.float32, device=chunk_rewards.device)
+        
+        if success_frame is None:
+            # Default to zeros if no success info available
+            if chunk_rewards.dim() == 2:
+                success_frame = torch.zeros(chunk_rewards.shape[0], chunk_rewards.shape[1], 
+                                          dtype=torch.float32, device=chunk_rewards.device)
+            else:
+                success_frame = torch.zeros(chunk_rewards.shape[0], dtype=torch.float32, 
+                                          device=chunk_rewards.device)
+        
         if not self.cfg.env.train.auto_reset:
             if self.cfg.env.train.ignore_terminations:
                 if chunk_truncations[:, -1].any():
@@ -278,6 +328,7 @@ class EnvWorker(Worker):
             else None,
             rewards=chunk_rewards,
             dones=chunk_dones,
+            success_frame=success_frame,
         )
         return env_output, env_info
 
@@ -301,6 +352,41 @@ class EnvWorker(Worker):
             self.eval_simulator_list[stage_id].chunk_step(chunk_actions)
         )
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
+        
+        # Extract success_frame from infos (same as in env_interact_step)
+        # Priority: use success_frame if available (contains per-step success for all chunk steps),
+        # otherwise fall back to success (only represents last step)
+        success_frame = None
+        if "success_frame" in infos:
+            # If environment already provides success_frame per step (from chunk_step)
+            # This is the preferred source as it contains success for each step in the chunk
+            success_frame = infos["success_frame"]
+            if isinstance(success_frame, torch.Tensor):
+                pass
+            elif isinstance(success_frame, (list, tuple)):
+                success_frame = torch.tensor(success_frame, dtype=torch.float32, device=chunk_rewards.device)
+        elif "success" in infos:
+            # Fallback: use success if success_frame is not available
+            success_tensor = infos["success"]
+            if isinstance(success_tensor, torch.Tensor):
+                if success_tensor.dim() == 1:
+                    if chunk_rewards.dim() == 2 and chunk_rewards.shape[1] > 1:
+                        success_frame = success_tensor.unsqueeze(1).expand(-1, chunk_rewards.shape[1])
+                    else:
+                        success_frame = success_tensor.unsqueeze(1) if chunk_rewards.dim() == 2 else success_tensor
+                else:
+                    success_frame = success_tensor
+            elif isinstance(success_tensor, (list, tuple)):
+                success_frame = torch.tensor(success_tensor, dtype=torch.float32, device=chunk_rewards.device)
+        
+        if success_frame is None:
+            if chunk_rewards.dim() == 2:
+                success_frame = torch.zeros(chunk_rewards.shape[0], chunk_rewards.shape[1], 
+                                          dtype=torch.float32, device=chunk_rewards.device)
+            else:
+                success_frame = torch.zeros(chunk_rewards.shape[0], dtype=torch.float32, 
+                                          device=chunk_rewards.device)
+
 
         if chunk_dones.any():
             if "episode" in infos:
@@ -317,6 +403,7 @@ class EnvWorker(Worker):
             final_obs=infos["final_observation"]
             if "final_observation" in infos
             else None,
+            success_frame=success_frame,
         )
         return env_output, env_info
 
@@ -423,7 +510,8 @@ class EnvWorker(Worker):
                 env_output: EnvOutput = env_output_list[stage_id]
                 self.send_env_batch(env_output.to_dict())
 
-            for _ in range(self.cfg.algorithm.n_chunk_steps):
+            for chunk_step_idx in range(self.cfg.algorithm.n_chunk_steps):
+                is_last_chunk_step = (chunk_step_idx == self.cfg.algorithm.n_chunk_steps - 1)
                 for stage_id in range(self.stage_num):
                     raw_chunk_actions = self.recv_chunk_actions()
                     env_output, env_info = self.env_interact_step(
@@ -431,6 +519,25 @@ class EnvWorker(Worker):
                     )
                     self.send_env_batch(env_output.to_dict())
                     env_output_list[stage_id] = env_output
+                    
+                    # Collect data for reward model training if enabled
+                    if self.data_collector is not None:
+                        # Check if trajectory is done
+                        is_trajectory_done = False
+                        if env_output.dones is not None:
+                            if env_output.dones.dim() == 1:
+                                is_trajectory_done = env_output.dones.any().item()
+                            elif env_output.dones.dim() == 2:
+                                # Check last step in chunk
+                                is_trajectory_done = env_output.dones[:, -1].any().item()
+                        
+                        # Add env_output to collector
+                        self.data_collector.add_env_output(
+                            env_output=env_output,
+                            env_info=env_info,
+                            is_last_step=is_trajectory_done or is_last_chunk_step,
+                        )
+                    
                     for key, value in env_info.items():
                         if (
                             not self.cfg.env.train.auto_reset
@@ -445,6 +552,16 @@ class EnvWorker(Worker):
 
             self.last_obs_list = [env_output.obs for env_output in env_output_list]
             self.last_dones_list = [env_output.dones for env_output in env_output_list]
+            
+            # Note: Don't save trajectories at epoch end here
+            # Trajectories should only be saved when they are actually done
+            # The save_trajectory() call is handled within add_env_output when is_last_step=True
+            # and only saves trajectories that are actually done
+            # If we call save_trajectory() here without parameters, it would save all buffers
+            # even if trajectories are not done, which is incorrect
+            # if self.data_collector is not None:
+            #     self.data_collector.save_trajectory()
+            
             self.finish_rollout()
 
         for simulator in self.simulator_list:
