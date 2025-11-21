@@ -13,8 +13,9 @@
 # limitations under the License.
 
 from .tasks.stack_cube import IsaaclabStackCubeEnv
+
 REGISTER_ISAACLAB_ENVS = {
-    "Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Cosmos-v0" : IsaaclabStackCubeEnv,
+    "Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Cosmos-v0": IsaaclabStackCubeEnv,
 }
 
 __all__ = [list(REGISTER_ISAACLAB_ENVS.keys())]

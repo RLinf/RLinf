@@ -14,20 +14,26 @@
 
 """Utils for evaluating policies in Issaaclab simulation environments."""
 
+import pickle
+
+import cloudpickle
 import torch
-import numpy as np
-import pickle, cloudpickle
+
 
 class CloudpickleWrapper:
-    '''
+    """
     transform complex object like function between processes.
-    '''
+    """
+
     def __init__(self, x):
-        self.x = x                      
+        self.x = x
+
     def __getstate__(self):
-        return cloudpickle.dumps(self.x)  
+        return cloudpickle.dumps(self.x)
+
     def __setstate__(self, ob):
-        self.x = pickle.loads(ob)  
+        self.x = pickle.loads(ob)
+
 
 def quat2axisangle_torch(quat: torch.Tensor) -> torch.Tensor:
     """
@@ -43,10 +49,14 @@ def quat2axisangle_torch(quat: torch.Tensor) -> torch.Tensor:
     # clip quaternion
     bs = quat.shape[0]
     quat_clipped = quat.clone()
-    quat_clipped[:,3] = torch.clamp(quat[:,3], -1, 1)
+    quat_clipped[:, 3] = torch.clamp(quat[:, 3], -1, 1)
 
-    den = torch.sqrt(1.0 - quat_clipped[:,3] * quat_clipped[:,3])
-    zero_pos =  torch.isclose(den, torch.zeros(bs, device = quat.device))
-    unscale_axisangle = quat_clipped[:,:3] * 2 * torch.acos(quat_clipped[:,3:])
+    den = torch.sqrt(1.0 - quat_clipped[:, 3] * quat_clipped[:, 3])
+    zero_pos = torch.isclose(den, torch.zeros(bs, device=quat.device))
+    unscale_axisangle = quat_clipped[:, :3] * 2 * torch.acos(quat_clipped[:, 3:])
 
-    return torch.where(zero_pos.unsqueeze(1), torch.zeros_like(unscale_axisangle, device = quat.device), unscale_axisangle / den.unsqueeze(1))
+    return torch.where(
+        zero_pos.unsqueeze(1),
+        torch.zeros_like(unscale_axisangle, device=quat.device),
+        unscale_axisangle / den.unsqueeze(1),
+    )

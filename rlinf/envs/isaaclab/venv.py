@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import gymnasium as gym
-import os
+from multiprocessing.connection import Connection
+
 import torch
 import torch.multiprocessing as mp
-import pickle, cloudpickle
-from multiprocessing.connection import Connection
+
 from .utils import CloudpickleWrapper
-      
+
+
 def _torch_worker(
     child_remote: Connection,
     parent_remote: Connection,
@@ -28,7 +28,6 @@ def _torch_worker(
     obs_queue: mp.Queue,
     reset_idx_queue: mp.Queue,
 ):
-    pid = os.getpid()
     parent_remote.close()
     env_fn = env_fn_wrapper.x
     isaac_env, sim_app = env_fn()
@@ -44,9 +43,11 @@ def _torch_worker(
             if cmd == "reset":
                 reset_index, reset_seed = reset_idx_queue.get()
                 if reset_index is None:
-                    reset_result = isaac_env.reset(seed = reset_seed)
+                    reset_result = isaac_env.reset(seed=reset_seed)
                 else:
-                    reset_result = isaac_env.reset(seed = reset_seed, env_ids = reset_index.to(device))
+                    reset_result = isaac_env.reset(
+                        seed=reset_seed, env_ids=reset_index.to(device)
+                    )
                 obs_queue.put(reset_result)
             elif cmd == "step":
                 input_action = action_queue.get()
@@ -67,55 +68,54 @@ def _torch_worker(
     finally:
         try:
             isaac_env.close()
-        except:
-            pass
+        except Exception as e:
+            print(f"IsaacLab Env Closed with error: {e}")
 
 
-
-class ChildProcIsaacLabEnv():
-    def __init__(self,
-                 env_fn):
-
+class ChildProcIsaacLabEnv:
+    def __init__(self, env_fn):
         mp.set_start_method("spawn", force=True)
         ctx = mp.get_context("spawn")
-        self.parent_remote, self.child_remote = ctx.Pipe(duplex=True)  
+        self.parent_remote, self.child_remote = ctx.Pipe(duplex=True)
         self.action_queue = ctx.Queue()
         self.obs_queue = ctx.Queue()
         self.reset_idx = ctx.Queue()
-        args=(self.child_remote, 
-              self.parent_remote, 
-              CloudpickleWrapper(env_fn),
-              self.action_queue,
-              self.obs_queue,
-              self.reset_idx)
-        self.isaac_lab_process = ctx.Process(target=_torch_worker, args=args, daemon=True)
+        args = (
+            self.child_remote,
+            self.parent_remote,
+            CloudpickleWrapper(env_fn),
+            self.action_queue,
+            self.obs_queue,
+            self.reset_idx,
+        )
+        self.isaac_lab_process = ctx.Process(
+            target=_torch_worker, args=args, daemon=True
+        )
         self.isaac_lab_process.start()
         self.child_remote.close()
 
         print(self.parent_remote.recv())
 
-    def reset(self, seed = None, env_ids = None):
+    def reset(self, seed=None, env_ids=None):
         self.parent_remote.send("reset")
         self.reset_idx.put((env_ids, seed))
         obs, info = self.obs_queue.get()
         return obs, info
 
-    
     def step(self, action: torch.Tensor):
-        '''
+        """
         action : (bs, action_dim)
-        '''
+        """
         self.parent_remote.send("step")
         self.action_queue.put(action)
         env_step_result = self.obs_queue.get()
         return env_step_result
-    
+
     def close(self):
         self.parent_remote.send("close")
         self.isaac_lab_process.join()
         self.isaac_lab_process.terminate()
-    
+
     def device(self):
         self.parent_remote.send("device")
         return self.parent_remote.recv()
-    

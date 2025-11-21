@@ -6,7 +6,7 @@ seed: 0
 num_group: ${algorithm.num_group_envs}
 group_size: ${algorithm.group_size}
 use_fixed_reset_state_ids: ${algorithm.use_fixed_reset_state_ids}
-max_episode_steps: 80
+max_episode_steps: ${algorithm.max_episode_steps}
 only_eval: False
 
 num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}

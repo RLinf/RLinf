@@ -14,27 +14,28 @@
 
 import copy
 import os
-from typing import List, Optional, Union
-import imageio
-import gymnasium as gym
-import numpy as np
-import torch
-from rlinf.envs.isaaclab.venv import ChildProcIsaacLabEnv
-from rlinf.envs.isaaclab.utils import CloudpickleWrapper, quat2axisangle_torch
+from typing import Optional
 
+import gymnasium as gym
+import imageio
+import torch
+
+from rlinf.envs.isaaclab.venv import ChildProcIsaacLabEnv
 
 
 class IsaaclabBaseEnv(gym.Env):
-    '''
+    """
     Class for isaaclab in rlinf. Different from other lab enviromnent, the output of isaaclab is all tensor on
     cuda.
-    '''
-    def __init__(self,
-                 cfg,
-                 seed_offset,
-                 total_num_processes,):
-        
-        self.cfg = cfg      
+    """
+
+    def __init__(
+        self,
+        cfg,
+        seed_offset,
+        total_num_processes,
+    ):
+        self.cfg = cfg
         self.isaaclab_env_id = self.cfg.init_params.id
         self.num_envs = cfg.init_params.num_envs
         self.seed = self.cfg.seed + seed_offset
@@ -44,15 +45,16 @@ class IsaaclabBaseEnv(gym.Env):
         self._init_isaaclab_env()
         self.device = self.env.device()
 
-
         self.task_description = cfg.init_params.task_description
-        self._is_start = True # if this is first time for simulator
+        self._is_start = True  # if this is first time for simulator
         self.auto_reset = cfg.auto_reset
         self.prev_step_reward = torch.zeros(self.num_envs).to(self.device)
         self.use_rel_reward = cfg.use_rel_reward
-        
+
         self._init_metrics()
-        self._elapsed_steps = torch.zeros(self.num_envs, dtype=torch.int32).to(self.device)
+        self._elapsed_steps = torch.zeros(self.num_envs, dtype=torch.int32).to(
+            self.device
+        )
         self.ignore_terminations = cfg.ignore_terminations
 
         self.images = []
@@ -63,14 +65,12 @@ class IsaaclabBaseEnv(gym.Env):
     def _init_isaaclab_env(self):
         env_fn = self._make_env_function()
         self.env = ChildProcIsaacLabEnv(env_fn)
-        self.env.reset(seed = self.seed)
-
+        self.env.reset(seed=self.seed)
 
     def _init_metrics(self):
         self.success_once = torch.zeros(self.num_envs, dtype=bool).to(self.device)
         self.fail_once = torch.zeros(self.num_envs, dtype=bool).to(self.device)
         self.returns = torch.zeros(self.num_envs).to(self.device)
-
 
     def _reset_metrics(self, env_idx=None):
         if env_idx is not None:
@@ -88,7 +88,6 @@ class IsaaclabBaseEnv(gym.Env):
             self.returns[:] = 0.0
             self._elapsed_steps[:] = 0
 
-
     def _record_metrics(self, step_reward, terminations, infos):
         episode_info = {}
         self.returns += step_reward
@@ -101,33 +100,30 @@ class IsaaclabBaseEnv(gym.Env):
         infos["episode"] = episode_info
         return infos
 
-
     def reset(
         self,
-        seed: int = None,
-        env_ids: torch.Tensor = None,
-    ):  
+        seed: Optional[int] = None,
+        env_ids: Optional[torch.Tensor] = None,
+    ):
         if env_ids is None:
-            obs, _ = self.env.reset(seed = seed)
+            obs, _ = self.env.reset(seed=seed)
         else:
-            obs, _ = self.env.reset(seed = seed, env_ids = env_ids)
+            obs, _ = self.env.reset(seed=seed, env_ids=env_ids)
         infos = {}
+        obs = self._wrap_obs(obs)
         self._reset_metrics(env_ids)
         return obs, infos
 
-
-    def step(self, actions = None, auto_reset=True):
-
+    def step(self, actions=None, auto_reset=True):
         # There will be an empty step when running env worker.
         if actions is None:
             assert self._is_start, "Actions must be provided after the first reset."
         if self.is_start:
             obs, infos = self.reset()
-            obs = self._wrap_obs(obs)
             self._is_start = False
 
-            terminations = torch.zeros(self.num_envs, dtype = torch.bool).to(self.device)
-            truncations = torch.zeros(self.num_envs, dtype = torch.bool).to(self.device)
+            terminations = torch.zeros(self.num_envs, dtype=torch.bool).to(self.device)
+            truncations = torch.zeros(self.num_envs, dtype=torch.bool).to(self.device)
 
             return obs, None, terminations, truncations, infos
 
@@ -138,19 +134,20 @@ class IsaaclabBaseEnv(gym.Env):
 
         obs = self._wrap_obs(obs)
 
-
         self._elapsed_steps += 1
 
         truncations = (self.elapsed_steps >= self.cfg.max_episode_steps) | truncations
 
         dones = terminations | truncations
 
-        infos = self._record_metrics(step_reward, terminations, {})# return infos is useless
+        infos = self._record_metrics(
+            step_reward, terminations, {}
+        )  # return infos is useless
         if self.ignore_terminations:
             infos["episode"]["success_at_end"] = terminations
             terminations[:] = False
 
-        _auto_reset = auto_reset and self.auto_reset # always False
+        _auto_reset = auto_reset and self.auto_reset  # always False
         if dones.any() and _auto_reset:
             obs, infos = self._handle_auto_reset(dones, obs, infos)
 
@@ -198,7 +195,9 @@ class IsaaclabBaseEnv(gym.Env):
             )
 
         if self.auto_reset or self.ignore_terminations:
-            chunk_terminations = torch.zeros_like(raw_chunk_terminations).to(self.device)
+            chunk_terminations = torch.zeros_like(raw_chunk_terminations).to(
+                self.device
+            )
             chunk_terminations[:, -1] = past_terminations
 
             chunk_truncations = torch.zeros_like(raw_chunk_truncations).to(self.device)
@@ -220,9 +219,9 @@ class IsaaclabBaseEnv(gym.Env):
         env_idx = env_idx[dones]
         final_info = copy.deepcopy(infos)
         obs, infos = self.reset(
-            env_idx=env_idx,
+            env_ids=env_idx,
         )
-        obs = self._wrap_obs(obs)
+
         # gymnasium calls it final observation but it really is just o_{t+1} or the true next observation
         infos["final_observation"] = final_obs
         infos["final_info"] = final_info
@@ -230,7 +229,6 @@ class IsaaclabBaseEnv(gym.Env):
         infos["_final_observation"] = dones
         infos["_elapsed_steps"] = dones
         return obs, infos
-
 
     def _wrap_obs(self, obs):
         raise NotImplementedError
@@ -250,13 +248,18 @@ class IsaaclabBaseEnv(gym.Env):
         video_writer.close()
         self.video_cnt += 1
 
-
     def close(self):
         self.env.close()
 
-    '''
+    def update_reset_state_ids(self):
+        '''
+        No muti task.
+        '''
+        pass
+    """
     Below codes are all copied from libero, thanks to the author of libero!
-    '''
+    """
+
     @property
     def is_start(self):
         return self._is_start

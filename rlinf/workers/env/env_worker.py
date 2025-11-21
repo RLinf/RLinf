@@ -156,7 +156,10 @@ class EnvWorker(Worker):
                     )
         elif self.cfg.env.train.simulator_type == "isaaclab":
             from rlinf.envs.isaaclab import REGISTER_ISAACLAB_ENVS
-            assert self.cfg.env.train.init_params.id in REGISTER_ISAACLAB_ENVS, f"Task type {self.cfg.env.train.init_params.id} have not been registered!"
+
+            assert self.cfg.env.train.init_params.id in REGISTER_ISAACLAB_ENVS, (
+                f"Task type {self.cfg.env.train.init_params.id} have not been registered!"
+            )
             isaaclab_env_cls = REGISTER_ISAACLAB_ENVS[self.cfg.env.train.init_params.id]
             if not only_eval:
                 for stage_id in range(self.stage_num):
@@ -498,7 +501,7 @@ class EnvWorker(Worker):
             self.send_env_batch(env_output.to_dict(), mode="eval")
 
         eval_metrics = defaultdict(list)
-
+        
         for eval_step in range(self.cfg.algorithm.n_eval_chunk_steps):
             for i in range(self.stage_num):
                 raw_chunk_actions = self.recv_chunk_actions()

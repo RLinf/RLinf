@@ -8,14 +8,14 @@ hydra:
     dir: .
   output_subdir: null
   searchpath:
-    - file:///home/zhuhongyi/Work2025/repo/RLinf/examples/embodiment/config/
+    - file://${oc.env:EMBODIED_PATH}/config/
 
 cluster:
   num_nodes: 1
   component_placement:
-    actor: all
-    env: 0-0
-    rollout: all
+      env: 0-0
+      rollout: 2-2
+      actor: 6-6
 
 runner:
   task_type: embodied
@@ -25,7 +25,7 @@ runner:
     experiment_name: "test_gr00t"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 1000
+  max_epochs: 2
   max_steps: -1
 
   only_eval: False
@@ -41,13 +41,13 @@ algorithm:
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
-  max_episode_steps: 240
+  max_episode_steps: 5
   use_ordered_reset_state_ids: False
   reward_coef: 1.0
   n_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}
   n_eval_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}
-  num_group_envs: 64
-  rollout_epoch: 8
+  num_group_envs: 4
+  rollout_epoch: 1
   reward_type: chunk_level
   logprob_type: chunk_level
   entropy_type: chunk_level
@@ -117,8 +117,8 @@ actor:
   training_backend: "fsdp"
   checkpoint_load_path: "/workspace/gr00t_libero_spatial_fewshot_sft"
   checkpoint_save_path: "../results"
-  micro_batch_size: 128
-  global_batch_size: 1024
+  micro_batch_size: 1
+  global_batch_size: 2
   seed: 1234
   enable_offload: False
 
