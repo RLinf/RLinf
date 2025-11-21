@@ -125,16 +125,66 @@ class ManiskillEnv(gym.Env):
         ).to(self.device)
 
     def _wrap_obs(self, raw_obs):
-        if self.env.obs_mode == "state":
-            wrapped_obs = {"images": None, "task_description": None, "state": raw_obs}
+        # 检查 wrap_obs_mode 配置，如果设置为 "simple"，使用简单模式（不调用 instruction）
+        if getattr(self.cfg, "wrap_obs_mode", "vla") == "simple":
+            if self.env.obs_mode == "state":
+                wrapped_obs = {
+                    "images": None,
+                    "task_description": None,
+                    "states": raw_obs
+                }
+            elif self.env.obs_mode == "rgb":
+                from mani_skill.utils import common
+                sensor_data = raw_obs.pop("sensor_data")
+                raw_obs.pop("sensor_param")
+                state = common.flatten_state_dict(
+                    raw_obs, use_torch=True, device=self.device
+                )
+
+                images = dict()
+                for camera_name in sensor_data.keys():
+                    # 获取图像并转换为 [B, C, H, W] 格式
+                    img = sensor_data[camera_name]["rgb"]
+                    if img.dim() == 4 and img.shape[-1] == 3:
+                        # [B, H, W, C] -> [B, C, H, W]
+                        img = img.permute(0, 3, 1, 2)
+                    # 转换为 float32 并归一化到 [0, 1] 范围
+                    if img.dtype == torch.uint8:
+                        img = img.float() / 255.0
+                    elif img.dtype != torch.float32:
+                        img = img.float()
+                    images[camera_name] = img
+                wrapped_obs = {
+                    "images": images,
+                    "task_description": None,
+                    "states": state
+                }
+            else:
+                raise NotImplementedError(f"obs_mode {self.env.obs_mode} not supported in simple mode")
         else:
-            wrapped_obs = self._extract_obs_image(raw_obs)
+            # vla 模式：调用 _extract_obs_image，会使用 instruction
+            if self.env.obs_mode == "state":
+                wrapped_obs = {"images": None, "task_description": None, "state": raw_obs}
+            else:
+                wrapped_obs = self._extract_obs_image(raw_obs)
         return wrapped_obs
 
     def _extract_obs_image(self, raw_obs):
-        obs_image = raw_obs["sensor_data"]["3rd_view_camera"]["rgb"].to(torch.uint8)
+        obs_image = raw_obs["sensor_data"]["base_camera"]["rgb"].to(torch.uint8)
         obs_image = obs_image.permute(0, 3, 1, 2)  # [B, C, H, W]
-        extracted_obs = {"images": obs_image, "task_descriptions": self.instruction}
+        # 返回字典格式的 images，键名 "base_camera" 匹配配置中的 image_keys
+        extracted_obs = {"images": {"base_camera": obs_image}, "task_descriptions": self.instruction}
+        
+        # 提取 state：在 rgb 模式下，raw_obs 包含 agent、extra 等信息，需要提取 state
+        # 创建一个临时字典，包含除了 sensor_data 和 sensor_param 之外的所有信息
+        from mani_skill.utils import common
+        state_dict = {k: v for k, v in raw_obs.items() if k not in ["sensor_data", "sensor_param"]}
+        if state_dict:
+            state = common.flatten_state_dict(
+                state_dict, use_torch=True, device=self.device
+            )
+            extracted_obs["states"] = state
+        
         return extracted_obs
 
     def _calc_step_reward(self, reward, info):
@@ -266,6 +316,7 @@ class ManiskillEnv(gym.Env):
         chunk_rewards = []
         raw_chunk_terminations = []
         raw_chunk_truncations = []
+        chunk_success_frames = []  # Collect success_frame for each step
         for i in range(chunk_size):
             actions = chunk_actions[:, i]
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
@@ -275,7 +326,24 @@ class ManiskillEnv(gym.Env):
             chunk_rewards.append(step_reward)
             raw_chunk_terminations.append(terminations)
             raw_chunk_truncations.append(truncations)
-
+            
+            # Extract success_frame for this step
+            # Use infos["success"] directly, which is computed by evaluate() in get_info()
+            # This is the same logic as success_at_end, ensuring consistency between
+            # success_frame (per-step success) and success_at_end (final step success)
+            if "success" in infos:
+                success_tensor = infos["success"]
+                if isinstance(success_tensor, torch.Tensor):
+                    chunk_success_frames.append(success_tensor.float())
+                elif isinstance(success_tensor, (list, tuple)):
+                    chunk_success_frames.append(torch.tensor(success_tensor, dtype=torch.float32, device=self.device))
+                else:
+                    # Default to False if not available
+                    chunk_success_frames.append(torch.zeros(chunk_actions.shape[0], dtype=torch.float32, device=self.device))
+            else:
+                # Default to False if no success info
+                chunk_success_frames.append(torch.zeros(chunk_actions.shape[0], dtype=torch.float32, device=self.device))
+                
         chunk_rewards = torch.stack(chunk_rewards, dim=1)  # [num_envs, chunk_steps]
         raw_chunk_terminations = torch.stack(
             raw_chunk_terminations, dim=1
@@ -283,6 +351,7 @@ class ManiskillEnv(gym.Env):
         raw_chunk_truncations = torch.stack(
             raw_chunk_truncations, dim=1
         )  # [num_envs, chunk_steps]
+        chunk_success_frames = torch.stack(chunk_success_frames, dim=1)  # [num_envs, chunk_steps]
 
         past_terminations = raw_chunk_terminations.any(dim=1)
         past_truncations = raw_chunk_truncations.any(dim=1)
@@ -298,6 +367,11 @@ class ManiskillEnv(gym.Env):
 
         chunk_truncations = torch.zeros_like(raw_chunk_truncations)
         chunk_truncations[:, -1] = past_truncations
+        # Add success_frame to infos so it can be extracted in env_worker
+        if infos is None:
+            infos = {}
+        infos["success_frame"] = chunk_success_frames  # [num_envs, chunk_steps]
+        
         return (
             extracted_obs,
             chunk_rewards,
