@@ -28,18 +28,16 @@ from mani_skill.utils.visualization.misc import (
 )
 from omegaconf.omegaconf import OmegaConf
 
-from rlinf.envs.worldmodel.dataset import LeRobotDatasetWrapper
-from rlinf.models.worldmodel.base_fake_model import BaseFakeModelInference
+from rlinf.envs.world_model.dataset import LeRobotDatasetWrapper
+from rlinf.models.world_model.base_fake_model import BaseFakeModelInference
 
 
 class WorldModelEnv(gym.Env):
     """A Gym environment that wraps a world model for reinforcement learning.
-
     This environment provides a Gym-compatible interface for interacting with a learned
     world model that simulates the dynamics of a real environment. It handles environment
     resets, step execution, reward calculation, and metrics tracking while supporting
     both single-step and chunked action execution.
-
     Key features:
     - Supports fixed or random reset state selection
     - Handles relative or absolute reward computation
@@ -47,7 +45,6 @@ class WorldModelEnv(gym.Env):
     - Tracks episode success/failure metrics
     - Supports chunked action execution for efficiency
     - Auto-reset functionality for continuous episodes
-
     Args:
         cfg: The configuration object containing environment, dataset, and video settings.
         seed_offset (int): An offset added to the base seed for creating different
@@ -59,14 +56,12 @@ class WorldModelEnv(gym.Env):
 
     def __init__(self, cfg, seed_offset: int, total_num_processes, record_metrics=True):
         """Initializes the WorldModelEnv with configuration and setup parameters.
-
         This method sets up the world model environment by:
         - Initializing configuration parameters from the config object
         - Setting up the dataset wrapper for state management
         - Creating the world model backend for simulation
         - Initializing metrics tracking and video recording capabilities
         - Setting up reset state ID generation for episode initialization
-
         Args:
             cfg: The configuration object containing all environment settings including
                 dataset configuration, backend settings, and video recording options.
@@ -168,7 +163,6 @@ class WorldModelEnv(gym.Env):
 
     def _reset_metrics(self, env_idx=None):
         """Resets episode metrics for specified environments or all environments.
-
         Args:
             env_idx: Optional tensor or list of environment indices to reset.
                 If None, resets metrics for all environments.
@@ -191,11 +185,9 @@ class WorldModelEnv(gym.Env):
 
     def _record_metrics(self, step_rewards, infos):
         """Records episode metrics including success, failure, and return information.
-
         Args:
             step_rewards: Tensor of rewards for the current step
             infos: List of info dictionaries for each environment
-
         Returns:
             list: Updated info dictionaries with episode metrics added
         """
@@ -215,15 +207,12 @@ class WorldModelEnv(gym.Env):
 
     def _calc_step_reward(self, rewards, terminations):
         """(Initial implementation) Calculates step rewards based on termination states and configuration.
-
         This method computes rewards for each environment based on termination signals
         and the configured reward calculation mode. It supports both relative rewards
         (difference from previous step) and absolute rewards.
-
         Args:
             rewards: Raw reward values from the world model backend
             terminations: Boolean tensor indicating which environments have terminated
-
         Returns:
             list: A list of calculated rewards for each environment, where each reward
                 is either the absolute reward or the difference from the previous step
@@ -249,14 +238,12 @@ class WorldModelEnv(gym.Env):
         options: Optional[dict] = {},
     ):
         """Resets the environment to initial states and returns observations.
-
         Args:
             seed: Optional seed or list of seeds for deterministic resets.
                 If provided, ensures reproducible environment initialization.
             options: Optional dictionary containing reset options.
                 Can include 'env_idx' to reset specific environments,
                 or 'episode_id' for fixed reset state selection.
-
         Returns:
             tuple: A tuple containing:
                 - obs: The initial observations from the reset environment
@@ -275,13 +262,11 @@ class WorldModelEnv(gym.Env):
         self, actions: Union[Array, dict] = None, auto_reset=True
     ) -> tuple[Array, Array, Array, Array, dict]:
         """Executes one environment step with the given actions.
-
         Args:
             actions: The actions to execute in the environment. Can be None only
                 for the first step after reset, where a reset operation is performed.
             auto_reset: Whether to automatically reset environments that reach
                 termination or truncation states. Defaults to True.
-
         Returns:
             tuple: A tuple containing:
                 - obs: The observations after executing the actions
@@ -290,7 +275,6 @@ class WorldModelEnv(gym.Env):
                 - truncations: Boolean tensor indicating episode truncations
                 - info: Dictionary containing additional information including
                     episode metrics and final observations for auto-reset episodes
-
         Note:
             For the initial step (is_start=True), this method performs a reset
             operation and returns zero rewards with no terminations/truncations.
@@ -358,11 +342,9 @@ class WorldModelEnv(gym.Env):
 
     def chunk_step(self, chunk_actions):
         """Executes multiple environment steps with chunked actions for efficiency.
-
         Args:
             chunk_actions: A tensor of shape [num_envs, chunk_step, action_dim] containing
                 the sequence of actions to execute for each environment.
-
         Returns:
             tuple: A tuple containing:
                 - extracted_obs: The observations after executing all chunked actions
@@ -370,7 +352,6 @@ class WorldModelEnv(gym.Env):
                 - chunk_terminations: Boolean tensor indicating terminations [num_envs, chunk_steps]
                 - chunk_truncations: Boolean tensor indicating truncations [num_envs, chunk_steps]
                 - info: Dictionary containing information about the final state
-
         Note:
             The chunk_step must be divisible by gen_num_image_each_step for proper processing.
             Terminations and truncations are only marked at the end of the chunk sequence.
@@ -432,12 +413,10 @@ class WorldModelEnv(gym.Env):
 
     def _handle_auto_reset(self, dones, extracted_obs, info):
         """Handles automatic reset of environments that have reached terminal states.
-
         Args:
             dones: Boolean tensor indicating which environments need reset
             extracted_obs: Current observations before reset
             info: Current information dictionary before reset
-
         Returns:
             tuple: Updated observations and info after reset, with final state information preserved
         """
@@ -458,7 +437,6 @@ class WorldModelEnv(gym.Env):
 
     def run(self):
         """Runs a test execution of the environment with random actions.
-
         Note:
             This is primarily used for testing and debugging the environment setup.
         """
@@ -487,11 +465,9 @@ terminations={terminations.float().mean()}, truncations={truncations.float().mea
 
     def add_new_frames(self, extracted_obs, infos):
         """Adds new frames to the video recording buffer.
-
         Args:
             extracted_obs: Dictionary containing observations with image data for each camera
             infos: Information dictionary that may contain metadata to overlay on frames
-
         Note:
             Frames are processed for each camera view and tiled into a grid layout
             for efficient video recording across multiple parallel environments.
@@ -527,11 +503,9 @@ terminations={terminations.float().mean()}, truncations={truncations.float().mea
 
     def flush_video(self, video_sub_dir: Optional[str] = None):
         """Generates and saves video files from accumulated frames.
-
         Args:
             video_sub_dir: Optional subdirectory name within the base video directory.
                 If provided, videos will be saved in a subdirectory of the seed-specific folder.
-
         Note:
             Videos are saved with unique names based on a counter and camera name.
             The frame buffer is cleared after successful video generation.
