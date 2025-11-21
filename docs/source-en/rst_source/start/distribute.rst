@@ -102,7 +102,7 @@ Disaggregated
 ^^^^^^^^^^^^^^^^^^
 
 Different stages receive disjoint GPU ranges,
-allowing fine-grained pipeliningng. Edit the pipeline YAML:
+allowing fine-grained pipelining. Edit the pipeline YAML:
 
 .. code-block:: yaml
 
