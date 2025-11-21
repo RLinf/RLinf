@@ -36,10 +36,14 @@ def compute_rollout_metrics(
     response_len: int,
     data_parallel_group: Optional[ProcessGroup] = None,
     use_critic: bool = False,
+    debug_right_padding: bool = False,
 ):
     device = torch.device(f"cuda:{torch.cuda.current_device()}")
     advantages = rollout_batch["advantages"].to(device=device)
-    mask = rollout_batch["attention_mask"][:, -response_len:].to(device=device)
+    if debug_right_padding:
+        mask = rollout_batch["attention_mask"].to(device=device)
+    else:
+        mask = rollout_batch["attention_mask"][:, -response_len:].to(device=device)
     prompt_lengths = rollout_batch["prompt_lengths"].clone().to(device=device)
     response_lengths = rollout_batch["response_lengths"].clone().to(device=device)
     reward_scores = rollout_batch["rewards"].clone().to(device=device)
@@ -164,10 +168,14 @@ class RolloutDataBalance(UserDict):
     ) -> Self:
         current_device = torch.cuda.current_device()
 
-        attn_mask = rollout_batches.get("attention_mask")
-        current_num_samples = attn_mask.size(0)
-
-        # 2. Calculate local sample token counts
+        # 1. Get local sample count
+        current_num_samples = 0
+        if rollout_batches:
+            first_tensor = next(iter(rollout_batches.values()))
+            if isinstance(first_tensor, torch.Tensor) and first_tensor.numel() > 0:
+                current_num_samples = first_tensor.size(0)
+                
+        # 2. Calculate local token counts
         local_token_counts = torch.zeros(
             current_num_samples, dtype=torch.int, device=current_device
         )
@@ -180,20 +188,23 @@ class RolloutDataBalance(UserDict):
                 local_token_counts = attn_mask.sum(dim=1).int()
 
         # 3. Gather global information: sample counts from each rank
-        num_samples_tensor = torch.tensor(
-            current_num_samples, device=current_device, dtype=torch.long
-        )
-        all_num_samples_t = [
-            torch.empty_like(num_samples_tensor) for _ in range(dp_world_size)
-        ]
-        if dp_group and dp_world_size > 1:
-            torch.distributed.all_gather(
-                all_num_samples_t, num_samples_tensor, group=dp_group
+        if dp_world_size > 1 and dp_group is not None:
+            # Multi-rank case: use all_gather_object
+            all_num_samples = [None] * dp_world_size
+            torch.distributed.all_gather_object(
+                all_num_samples, current_num_samples, group=dp_group
             )
         else:
-            all_num_samples_t = [num_samples_tensor]
-        all_num_samples = [s.item() for s in all_num_samples_t]
+            # Single-rank case: 
+            all_num_samples = [current_num_samples]
+
+        all_num_samples = [
+            int(num_samples) if num_samples is not None else 0
+            for num_samples in all_num_samples
+        ]
+        
         global_total_samples = sum(all_num_samples)
+        
         max_samples_rank = max(all_num_samples) if global_total_samples > 0 else 0
 
         # 4. Gather global token counts for all samples
@@ -213,6 +224,10 @@ class RolloutDataBalance(UserDict):
                 torch.empty_like(padded_local_tokens) for _ in range(dp_world_size)
             ]
             if dp_group and dp_world_size > 1:
+                all_padded_tokens_t = [
+                    torch.zeros(max_samples_rank, dtype=torch.int, device=current_device)
+                    for _ in range(dp_world_size)
+                ]
                 torch.distributed.all_gather(
                     all_padded_tokens_t, padded_local_tokens, group=dp_group
                 )
@@ -285,6 +300,11 @@ class RolloutDataBalance(UserDict):
             torch.distributed.all_gather_object(
                 all_payloads_cpu, payload_cpu, group=dp_group
             )
+            print(f"zcy_dbg: data balance: 1, size: {len(all_payloads_cpu)}, dp_ws: {dp_world_size}")
+            remove_len = len(all_payloads_cpu) % dp_world_size
+            if remove_len > 0:
+                all_payloads_cpu = all_payloads_cpu[:-remove_len]
+            print(f"zcy_dbg: data balance: 2, size: {len(all_payloads_cpu)}, dp_ws: {dp_world_size}")
         else:
             all_payloads_cpu = [payload_cpu]
 
@@ -355,8 +375,68 @@ class RolloutDataBalance(UserDict):
                         final_rank_data[key] = _create_empty_tensor_for_key(
                             key, template_specs, current_device
                         )
+        else:
+            for key in final_ordered_keys:
+                final_rank_data[key] = _create_empty_tensor_for_key(
+                    key, template_specs, current_device
+                )
 
         return cls(final_rank_data, ordered_keys_hint=final_ordered_keys)
+
+    @classmethod
+    def from_rollout_batches_dynamic(
+        cls: Self,
+        rollout_batches: dict[str, torch.Tensor],
+        dp_world_size: int,
+        dp_rank: int,
+        dp_group: Optional[ProcessGroup],
+        rollout_batch_pad: dict[str, torch.Tensor],
+        partitioning_tool: Callable,
+    ) -> Self:
+        # 0. Check data
+        assert rollout_batches.keys() == rollout_batch_pad.keys(), f"rollout_batches and rollout_batch_pad must have the same keys"
+        assert "input_ids" in rollout_batches and "prompt_lengths" in rollout_batches and "response_lengths" in rollout_batches
+        batch_size = rollout_batches["input_ids"].size(0)
+        assert all(v.size(0) == batch_size for v in rollout_batches.values())
+        assert all(v.size(0) == 1 for v in rollout_batch_pad.values())
+        for k in rollout_batches.keys():
+            assert rollout_batches[k].dtype == rollout_batch_pad[k].dtype, f"batch dtype mismatch: key: {k}, dtype: {rollout_batches[k].dtype}, {rollout_batch_pad[k].dtype}"
+            assert rollout_batches[k].shape[1:] == rollout_batch_pad[k].shape[1:], f"batch shape mismatch: key: {k}, shape: {rollout_batches[k].shape}, {rollout_batch_pad[k].shape}"
+        rollout_batches = {
+            k: v.cpu() for k, v in rollout_batches.items()
+        }
+        rollout_batch_pad = {
+            k: v.cpu() for k, v in rollout_batch_pad.items()
+        }
+
+        # 1. Allgather data
+        gathered_rollout_batches = [None for _ in range(dp_world_size)]
+        torch.distributed.all_gather_object(
+            gathered_rollout_batches, rollout_batches, group=dp_group
+        )
+        global_batch_size = batch_size = sum(b["input_ids"].size(0) for b in gathered_rollout_batches)
+
+        # 2. Merge data and pad data to fixed length
+        pad_size = dp_world_size - (global_batch_size % dp_world_size)
+        merged_rollout_batches = {}
+        for key in rollout_batches.keys():
+            merged_rollout_batches[key] = torch.cat([rollout_batches[key] for rollout_batches in gathered_rollout_batches] + [rollout_batch_pad[key]] * pad_size, dim=0)
+
+        # 3. get length of each sample
+        sample_lengths = (merged_rollout_batches["prompt_lengths"] + merged_rollout_batches["response_lengths"]).tolist()
+
+        # 4. Calc partitions
+        partitions = partitioning_tool(
+            seqlen_list=sample_lengths,
+            k_partitions=dp_world_size,
+            equal_size=True,
+        )
+        self_partition = partitions[dp_rank]
+
+        # 5. Get indices of samples for current rank
+        selected_rollout_batches = {k: v[self_partition] for k, v in merged_rollout_batches.items()}
+
+        return selected_rollout_batches
 
     def gather_and_balance_globally(self):
         global_rollout_batch = type(self)()

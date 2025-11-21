@@ -57,7 +57,7 @@ class ReasoningRunner:
         rollout: Union["SGLangWorker", "VLLMWorker"],
         inference: Optional[MegatronInference],
         actor: MegatronActor,
-        reward: RewardWorker,
+        reward: RewardWorker = None,
         scheduler: SchedulerWorker = None,
     ):
         """"""
@@ -85,7 +85,10 @@ class ReasoningRunner:
         # Create a local channel (i.e., a channel that is different in every process)
         # if inference is not a dedicated worker
         self.inference_channel = Channel.create("Inference")
-        self.reward_channel = Channel.create("Reward")
+        if self.reward is not None:
+            self.reward_channel = Channel.create("Reward")
+        else:
+            self.reward_channel = self.rollout_channel
 
         # Configurations
         self.compute_ref_logprobs = (
@@ -187,7 +190,8 @@ class ReasoningRunner:
         self.actor.init_worker().wait()
         if self.has_dedicated_inference:
             self.inference.init_worker().wait()
-        self.reward.init_worker().wait()
+        if self.reward is not None:
+            self.reward.init_worker().wait()
 
         if self.cfg.runner.resume_dir is None:
             return

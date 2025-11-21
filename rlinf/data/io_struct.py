@@ -857,6 +857,224 @@ class RolloutResult:
         return merged_batch
 
 
+@dataclass(kw_only=True)
+class DynamicRolloutResult:
+    """
+    Dynamic Rollout Result
+    For dynamic batch size of one trajectory. Used in multi-turn agent.
+    Only supports right padding
+    """
+
+    num_sequence: int
+    group_size: int
+
+    # index to trajectory.
+    # idx_to_traj[i] = j means the i-th sequence is in the j-th trajectory.
+    # 0 <= j < group_size.
+    idx_to_traj: list[int]
+
+    # size of belows are num_sequence
+    input_ids: list[list[int]]
+    rollout_logprobs: list[list[float]]
+    ref_logprobs: Optional[torch.Tensor] = None
+    prompt_lengths: list[int]
+    response_lengths: list[int]
+    is_end: list[bool]
+    # prompt_ids: list[list[int]]
+    # response_ids: list[list[int]]
+    # response_mask: Optional[list[list[int]]] = None
+
+    # size of belows are group_size
+    rewards: Optional[torch.Tensor | list[float]] = None
+    advantages: Optional[torch.Tensor] = None
+
+    # for reject sampling
+    # size of belows are group_size
+    # prompt_texts: Optional[list[str]] = None
+    # response_texts: Optional[list[str]] = None
+    # answers: Optional[list[str | dict]] = None
+
+    @staticmethod
+    def _get_attention_masks_and_position_ids(
+        prompt_lengths: torch.Tensor,
+        response_lengths: torch.Tensor,
+        total_len: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        B = prompt_lengths.size(0)
+
+        # =========================
+        # Attention Mask
+        # =========================
+        arange_ids = (
+            torch.arange(total_len).unsqueeze(0).expand(B, -1)
+        )  # [B, total_len]
+
+        # Compute the start and end positions of the prompt and response tokens
+        prompt_end = prompt_lengths  # [B]
+        response_end = prompt_lengths + response_lengths  # [B]
+
+        # Broadcast [B, total_len]
+        prompt_end = prompt_end.unsqueeze(1)
+        response_end = response_end.unsqueeze(1)
+        attention_mask = (arange_ids >= prompt_end) & (arange_ids < response_end)
+
+        # =========================
+        # Position IDs
+        # =========================
+        position_ids = torch.zeros_like(arange_ids)
+
+        for i in range(B):
+            position_ids[i, 0:] = torch.arange(total_len)
+
+        return attention_mask, position_ids
+
+    def to_actor_batch(
+        self,
+        seq_length: int,
+        pad_token: int,
+    ) -> dict[str, torch.Tensor]:
+        """
+        Transform the rollout result into a format suitable for the actor.
+
+        Args:
+            seq_length (int): Total sequence length for training, e.g., 8192.
+            pad_token (int): Token used for padding, e.g., `tokenizer.pad_token_id`.
+
+        Returns:
+            Dict[str, torch.Tensor]: A dictionary with keys:
+
+            input_ids (torch.Tensor):
+                Concatenated prompt and response token IDs,
+                shape ``[num_sequence, seq_length]``.
+
+            attention_mask (torch.Tensor):
+                Attention mask for the input sequence,
+                shape ``[num_sequence, seq_length]``.
+
+            is_end (torch.Tensor):
+                Boolean tensor indicating whether the sequence ends,
+                shape ``[num_sequence]``.
+
+            position_ids (torch.Tensor):
+                Position IDs for the input sequence,
+                shape ``[num_sequence, seq_length]``.
+
+            prompt_lengths (torch.Tensor):
+                Lengths of the prompt sequences,
+                shape ``[num_sequence]``.
+
+            response_lengths (torch.Tensor):
+                Lengths of the response sequences,
+                shape ``[num_sequence]``.
+
+            advantages (torch.Tensor), optional:
+                Advantage values for the responses,
+                shape ``[num_sequence, seq_length]``.
+        """
+
+        # len = seq_length: input_ids, attention_mask, position_ids
+        #           [prompt_ids,    response_ids, ..., response_padding]
+        #           |<-- pmp len -->|<-- resp len --->|<-- padding --->|
+        #           |<------------------ cfg.runner.seq_length ------->|
+
+        # len = seq_length: advantage, prev_logprobs, ref_logprobs
+        #           [mask or response_ids, ...,        , response_padding]
+        #           |<----- true response length ----->|<--- padding --->|
+        #           |<------------------ cfg.runner.seq_length --------->|
+
+
+        prompt_lengths = torch.tensor(self.prompt_lengths, dtype=torch.int32)
+        response_lengths = torch.tensor(self.response_lengths, dtype=torch.int32)
+        is_end = torch.tensor(self.is_end, dtype=torch.bool)
+
+        attention_mask, position_ids = self._get_attention_masks_and_position_ids(
+            prompt_lengths=prompt_lengths,
+            response_lengths=response_lengths,
+            total_len=seq_length,
+        )
+
+        input_ids = batch_pad_to_fixed_len(
+            [torch.as_tensor(ids, dtype=torch.long) for ids in self.input_ids],
+            max_batch_len=seq_length,
+            pad_token=pad_token,
+        )
+
+        prev_logprobs = batch_pad_to_fixed_len(
+            [
+                torch.as_tensor([pad_token] * prompt_length + logprobs, dtype=torch.float)
+                for prompt_length, logprobs in zip(self.prompt_lengths, self.rollout_logprobs)
+            ],
+            max_batch_len=seq_length,
+            pad_token=pad_token,
+        )
+
+        batch = {
+            "idx_to_traj": self.idx_to_traj,
+            "input_ids": input_ids.cuda(),
+            "attention_mask": attention_mask.cuda(),
+            "position_ids": position_ids.cuda(),
+            "is_end": is_end.cuda(),
+            "prompt_lengths": prompt_lengths.cuda(),
+            "response_lengths": response_lengths.cuda(),
+            "prev_logprobs": prev_logprobs.cuda()
+        }
+
+        if self.advantages is not None:
+            batch["advantages"] = self.advantages.cuda()
+
+        if self.ref_logprobs is not None:
+            batch["ref_logprobs"] = self.ref_logprobs.cuda()
+
+        if self.rewards is not None:
+            if isinstance(self.rewards, torch.Tensor):
+                batch["rewards"] = self.rewards.cuda()
+            else:
+                batch["rewards"] = torch.as_tensor(self.rewards, dtype=torch.float).cuda().flatten()
+
+        return batch
+
+    def get_batch_pad(seq_length: int) -> dict[str, torch.Tensor]:
+        """Get the batch pad for the dynamic rollout result."""
+        pad_seq_shape = (1, seq_length)
+        return {
+            "input_ids": torch.zeros(*pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()),
+            "attention_mask": torch.ones(*pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()),
+            "position_ids": torch.zeros(*pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()),
+            "is_end": torch.zeros(1, dtype=torch.bool, device=torch.cuda.current_device()),
+            "prompt_lengths": torch.zeros(1, dtype=torch.int32, device=torch.cuda.current_device()),
+            "response_lengths": torch.zeros(1, dtype=torch.int32, device=torch.cuda.current_device()),
+            "prev_logprobs": torch.zeros(*pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()),
+            "rewards": torch.zeros(1, dtype=torch.float32, device=torch.cuda.current_device()),
+            "advantages": torch.zeros(*pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()),
+        }
+
+    @staticmethod
+    def merge_batches(
+        batches: list[dict[str, torch.Tensor]],
+        group_size: int,
+    ) -> dict[str, torch.Tensor]:
+        """Merge two batches into one."""
+        merged_batch = {}
+        if len(batches) == 0:
+            return merged_batch
+        if len(batches) == 1:
+            return batches[0]
+
+        for key in batches[0].keys():
+            if key == "idx_to_traj":
+                merged_batch[key] = []
+                for i, batch in enumerate(batches):
+                    merged_batch[key].extend([j + i * group_size for j in batch[key]])
+            elif torch.is_tensor(batches[0][key]):
+                merged_batch[key] = torch.cat([batch[key] for batch in batches], dim=0)
+            elif isinstance(batches[0][key], list):
+                merged_batch[key] = []
+                for batch in batches:
+                    merged_batch[key].extend(batch[key])
+            else:
+                raise ValueError(f"Unsupported batch key type: {type(batches[0][key])}")
+        return merged_batch
+
 class BatchResizingIterator:
     """The iterator for handling getting a batch and split it as a batch iterator with optional dynamic batch size."""
 

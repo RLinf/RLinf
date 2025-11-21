@@ -121,6 +121,45 @@ def compute_grpo_advantages(
     return advantages, None
 
 
+# TODO: may have bug
+@register_advantage("grpo_dynamic")
+def compute_grpo_dynamic_advantages(
+    rewards: torch.Tensor,
+    loss_mask: torch.Tensor,
+    group_size: int,
+    idx_to_traj: list[int],
+    **kwargs,
+):
+    """
+    Compute GRPO advantages.
+
+    Args:
+        rewards (torch.Tensor): Reward or score values. Shape: [num_groups, group_size]
+        loss_mask (torch.Tensor): Loss mask for valid entries. Shape: [num_groups, group_size]
+        num_sequence (int): Group size for advantage computation.
+
+    Returns:
+        torch.Tensor: advantages
+    """
+    # TODO: use idx_to_traj
+    num_sequence = len(idx_to_traj)
+    grouped_rewards = rewards.view(-1, num_sequence)
+
+    grouped_reward_mean = grouped_rewards.mean(dim=-1, keepdim=True).expand_as(
+        grouped_rewards
+    )
+    grouped_reward_std = grouped_rewards.std(dim=-1, keepdim=True).expand_as(
+        grouped_rewards
+    )
+
+    advantages = grouped_rewards - grouped_reward_mean
+    advantages = advantages / (grouped_reward_std + 1e-6)
+
+    advantages = (torch.zeros_like(loss_mask) + advantages.view(1, -1)) * loss_mask
+
+    return advantages, None
+
+
 @register_advantage("reinpp")
 def compute_reinpp_advantages(
     rewards: torch.Tensor,

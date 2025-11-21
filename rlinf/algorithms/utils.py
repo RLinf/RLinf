@@ -206,6 +206,16 @@ def preprocess_reasoning_advantages_inputs(
             }
         )
 
+    elif kwargs["adv_type"] == "grpo_dynamic":
+        grouped_rewards = (
+            rewards.reshape(-1, kwargs["num_sequence"]).transpose(0, 1).contiguous()
+        )
+        kwargs.update(
+            {
+                "rewards": grouped_rewards,
+            }
+        )
+
     elif kwargs["adv_type"] == "reinpp":
         kwargs.update({"rewards": rewards.unsqueeze(0)})
 

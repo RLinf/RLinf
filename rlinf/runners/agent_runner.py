@@ -51,7 +51,7 @@ class AgentRunner(ReasoningRunner):
         rollout: Union["SGLangWorker", "VLLMWorker"],
         inference: Optional[MegatronInference],
         actor: MegatronActor,
-        reward: RewardWorker,
+        reward: Optional[RewardWorker],
         agent_loop: AgentLoopWorker,
         tool_workers: dict[ToolWorker, ToolWorkerInfo] = {},
     ):
@@ -153,23 +153,27 @@ class AgentRunner(ReasoningRunner):
                             output_channel=self.rollout_channel,
                         )
 
-                        # Rewards
-                        reward_handle: Handle = self.reward.compute_rewards(
-                            input_channel=self.rollout_channel,
-                            output_channel=self.reward_channel,
-                        )
+                        if self.reward is not None:
+                            # Rewards
+                            reward_handle: Handle = self.reward.compute_rewards(
+                                input_channel=self.rollout_channel,
+                                output_channel=self.reward_channel,
+                            )
+                            inference_input_channel = self.reward_channel
+                        else:
+                            inference_input_channel = self.rollout_channel
 
                         if self.recompute_logprobs:
                             # Inference prev/ref logprobs
                             infer_handle: Handle = self.inference.run_inference(
-                                input_channel=self.reward_channel,
+                                input_channel=inference_input_channel,
                                 output_channel=self.inference_channel,
                                 compute_ref_logprobs=self.compute_ref_logprobs,
                             )
                             inference_channel = self.inference_channel
                         else:
                             infer_handle = None
-                            inference_channel = self.reward_channel
+                            inference_channel = inference_input_channel
 
                         # Actor training, Advantages and returns
                         actor_handle: Handle = self.actor.run_training(
@@ -212,7 +216,8 @@ class AgentRunner(ReasoningRunner):
                     time_metrics = self.timer.consume_durations()
                     time_metrics["training"] = actor_handle.consume_duration()
                     time_metrics["rollout"] = rollout_handle.consume_duration()
-                    time_metrics["reward"] = reward_handle.consume_duration()
+                    if self.reward is not None:
+                        time_metrics["reward"] = reward_handle.consume_duration()
                     if infer_handle is not None:
                         # Inference time should be the min time across ranks, because different DP receive the rollout results differently
                         # But at the begin of the pp schedule, there is a timer barrier
