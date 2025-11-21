@@ -501,7 +501,7 @@ class EnvWorker(Worker):
             self.send_env_batch(env_output.to_dict(), mode="eval")
 
         eval_metrics = defaultdict(list)
-        
+
         for eval_step in range(self.cfg.algorithm.n_eval_chunk_steps):
             for i in range(self.stage_num):
                 raw_chunk_actions = self.recv_chunk_actions()
