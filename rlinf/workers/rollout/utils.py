@@ -393,6 +393,19 @@ class RunningStatusManager:
     def get_running_seq_groups(self) -> list[SeqGroupInfo]:
         return list(self._running_seq_group.keys())
 
+    def take_batched_done_seq_groups(self, batch_size: int) -> list[SeqGroupInfo]:
+        assert batch_size <= len(self._done_seq_group), (
+            f"Requested batch size {batch_size} exceeds done seq groups {len(self._done_seq_group)}."
+        )
+        returning_seq_groups = self._done_seq_group[:batch_size]
+        self._done_seq_group = self._done_seq_group[batch_size:]
+        return returning_seq_groups
+
+    def take_aborted_seq_groups(self) -> list[SeqGroupInfo]:
+        aborted_seq_groups = self._aborted_seq_group
+        self._aborted_seq_group = []
+        return aborted_seq_groups
+
     def get_done_seq_groups(self) -> list[SeqGroupInfo]:
         return self._done_seq_group
 
