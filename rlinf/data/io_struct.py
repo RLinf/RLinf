@@ -1083,6 +1083,8 @@ class EnvOutput:
             image_tensor = obs["images"]
         elif self.simulator_type == "robotwin":
             image_tensor = obs["images"]
+        elif self.simulator_type == "isaaclab":
+            return obs
         elif self.simulator_type == "behavior":
             image_tensor = obs["images"]
             wrist_image_tensor = obs["wrist_images"]
