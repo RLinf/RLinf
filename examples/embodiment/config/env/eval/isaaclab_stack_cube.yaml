@@ -1,0 +1,35 @@
+simulator_type: isaaclab
+task_type: stack_cube
+auto_reset: True
+ignore_terminations: True
+max_episode_steps: ${algorithm.max_episode_steps}
+
+use_rel_reward: True
+reward_coef: ${algorithm.reward_coef}
+only_eval: True
+num_envs: 1
+num_group: 1
+group_size: 1
+
+
+seed: 0
+
+use_fixed_reset_state_ids: True
+use_wrist_image: ${actor.model.use_wrist_image}
+
+video_cfg:
+  save_video: True
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/eval
+
+init_params:
+  id: "Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Cosmos-v0"
+  num_envs: ${env.eval.num_envs}
+  max_episode_steps: ${env.train.init_params.max_episode_steps}
+  task_description: ${env.train.init_params.task_description}
+  table_cam:
+    height: 256
+    width: 256
+  wrist_cam:
+    height: 256
+    width: 256

@@ -69,6 +69,21 @@ def prepare_actions_for_libero(
     return chunk_actions
 
 
+def prepare_actions_for_isaaclab(
+    raw_chunk_actions,
+    model_name,
+) -> torch.Tensor:
+    """
+    Here reture a general 7 dof action. If the action is modified, please change the output of the model
+    For example, in `RLinf/rlinf/models/embodiment/gr00t/simulation_io.py`
+    """
+    chunk_actions = torch.from_numpy(raw_chunk_actions)
+    if model_name == "openvla" or model_name == "openvla_oft":
+        chunk_actions[..., -1] = 2 * chunk_actions[..., -1] - 1
+        chunk_actions[..., -1] = torch.sign(chunk_actions[..., -1]) * -1.0
+    return chunk_actions
+
+
 def prepare_actions(
     raw_chunk_actions,
     simulator_type,
@@ -97,6 +112,11 @@ def prepare_actions(
         chunk_actions = raw_chunk_actions
     elif simulator_type == "behavior":
         chunk_actions = raw_chunk_actions
+    elif simulator_type == "isaaclab":
+        chunk_actions = prepare_actions_for_isaaclab(
+            raw_chunk_actions=raw_chunk_actions,
+            model_name=model_name,
+        )
     else:
         raise NotImplementedError
 
