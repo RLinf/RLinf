@@ -38,7 +38,7 @@ algorithm:
   ignore_terminations: False
   use_fixed_reset_state_ids: True
   normalize_advantages: True
-  specific_task_id: 0
+  specific_reset_id: 0
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 2  # NOTE: group_size * num_group_envs * rollout_epoch = global buffer size
   n_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}

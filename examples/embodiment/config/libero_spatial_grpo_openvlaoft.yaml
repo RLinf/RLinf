@@ -35,7 +35,7 @@ runner:
 algorithm:
   auto_reset: False
   ignore_terminations: False
-  specific_task_id: null
+  specific_reset_id: null
   use_fixed_reset_state_ids: True
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty

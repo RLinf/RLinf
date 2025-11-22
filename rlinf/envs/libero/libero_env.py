@@ -51,7 +51,7 @@ class LiberoEnv(gym.Env):
         self.group_size = self.cfg.group_size
         self.num_group = self.cfg.num_group
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
-        self.specific_task_id = cfg.get("specific_task_id", None)
+        self.specific_reset_id = cfg.get("specific_reset_id", None)
 
         self.ignore_terminations = cfg.ignore_terminations
         self.auto_reset = cfg.auto_reset
@@ -145,8 +145,8 @@ class LiberoEnv(gym.Env):
         )
 
     def _get_random_reset_state_ids(self, num_reset_states):
-        if self.specific_task_id is not None:
-            reset_state_ids = self.specific_task_id * np.ones(
+        if self.specific_reset_id is not None:
+            reset_state_ids = self.specific_reset_id * np.ones(
                 (num_reset_states,), dtype=int
             )
         else:
@@ -166,8 +166,8 @@ class LiberoEnv(gym.Env):
         return reset_state_ids
 
     def _get_ordered_reset_state_ids(self, num_reset_states):
-        if self.specific_task_id is not None:
-            reset_state_ids = self.specific_task_id * np.ones(
+        if self.specific_reset_id is not None:
+            reset_state_ids = self.specific_reset_id * np.ones(
                 (self.num_group,), dtype=int
             )
         else:
