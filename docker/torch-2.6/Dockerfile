@@ -108,6 +108,15 @@ RUN chmod +x /usr/local/bin/link_assets
 RUN cat <<EOF > /usr/local/bin/download_assets
 #!/bin/bash
 
+# Install rendering runtime configuration files
+RUN mkdir -p /usr/share/glvnd/egl_vendor.d /etc/vulkan/icd.d /etc/vulkan/implicit_layer.d
+RUN printf '{\n    "file_format_version" : "1.0.0",\n    "ICD" : {\n        "library_path" : "libEGL_nvidia.so.0"\n    }\n}\n' > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+RUN printf '{\n    "file_format_version" : "1.0.0",\n    "ICD" : {\n        "library_path" : "libEGL_mesa.so.0"\n    }\n}\n' > /usr/share/glvnd/egl_vendor.d/50_mesa.json
+RUN printf '{\n    "file_format_version" : "1.0.0",\n    "ICD" : {\n        "library_path" : "libGLX_nvidia.so.0",\n        "api_version" : "1.3.194"\n    }\n}\n' > /etc/vulkan/icd.d/nvidia_icd.json
+RUN mkdir -p /etc/vulkan/implicit_layer.d && printf '{\n    "file_format_version" : "1.0.0",\n    "layer": {\n        "name": "VK_LAYER_NV_optimus",\n        "type": "INSTANCE",\n        "library_path": "libGLX_nvidia.so.0",\n        "api_version" : "1.3.194",\n        "implementation_version" : "1",\n        "description" : "NVIDIA Optimus layer",\n        "functions": {\n            "vkGetInstanceProcAddr": "vk_optimusGetInstanceProcAddr",\n            "vkGetDeviceProcAddr": "vk_optimusGetDeviceProcAddr"\n        },\n        "enable_environment": {\n            "__NV_PRIME_RENDER_OFFLOAD": "1"\n        },\n        "disable_environment": {\n            "DISABLE_LAYER_NV_OPTIMUS_1": ""\n        }\n    }\n}\n' > /etc/vulkan/implicit_layer.d/nvidia_layers.json
+ENV VK_DRIVER_FILES=/etc/vulkan/icd.d/nvidia_icd.json
+ENV VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json
+
 # Download assets for ManiSkill
 export MS_ASSET_DIR=/opt/.maniskill
 python -m mani_skill.utils.download_asset bridge_v2_real2sim -y
@@ -136,6 +145,10 @@ ENV PYTHONPATH=/opt/libero:$PYTHONPATH
 
 FROM embodied-common-image AS embodied-image
 
+# Install RoboTwin
+RUN git clone https://github.com/Tian-Nian/RLinf_RoboTwin.git /opt/RLinf_RoboTwin
+ENV PYTHONPATH=/opt/RLinf_RoboTwin:$PYTHONPATH
+
 # Install openvla env
 RUN uv venv openvla --python=${PYTHON_VERSION}
 RUN source switch_env openvla && UV_TORCH_BACKEND=auto uv sync --active
@@ -149,6 +162,8 @@ RUN uv venv openvla-oft --python=${PYTHON_VERSION}
 RUN source switch_env openvla-oft && UV_TORCH_BACKEND=auto uv sync --active
 RUN source switch_env openvla-oft && uv sync --extra embodied --active
 RUN source switch_env openvla-oft && uv pip install git+https://github.com/moojink/openvla-oft.git --no-build-isolation
+RUN source switch_env openvla-oft && uv pip install git+https://github.com/facebookresearch/pytorch3d.git --no-build-isolation
+RUN source switch_env openvla-oft && uv pip install git+git+https://github.com/NVlabs/curobo.git --no-build-isolation
 RUN source switch_env openvla-oft && uv pip install $FLASH_ATTENTION_WHEEL --no-build-isolation
 RUN source switch_env openvla-oft && uv pip uninstall pynvml
 
@@ -183,7 +198,7 @@ RUN uv venv openvla-oft --python=${PYTHON_VERSION}
 RUN source switch_env openvla-oft && UV_TORCH_BACKEND=auto uv sync --active
 RUN source switch_env openvla-oft && uv sync --extra embodied --active
 RUN source switch_env openvla-oft && cd /opt/BEHAVIOR-1K && UV_LINK_MODE=hardlink ./setup.sh --omnigibson --bddl --joylo --confirm-no-conda --accept-nvidia-eula --use-uv && cd -
-RUN source switch_env openvla-oft && uv pip install git+https://github.com/moojink/openvla-oft.git --no-build-isolation
+RUN source switch_env openvla-oft && uv pip install git+https://github.com/RLinf/openvla-oft.git@RLinf/v0.1 --no-build-isolation
 RUN source switch_env openvla-oft && uv pip install $FLASH_ATTENTION_WHEEL --no-build-isolation
 RUN source switch_env openvla-oft && uv pip install ml_dtypes==0.5.3 protobuf==3.20.3
 RUN source switch_env openvla-oft && cd && uv pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 && cd -

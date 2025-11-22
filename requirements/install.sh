@@ -41,7 +41,8 @@ if [[ " ${EMBODIED_TARGET[*]} " == *" $TARGET "* ]]; then
     uv pip uninstall pynvml
     bash requirements/install_embodied_deps.sh # Must be run after the above command
     mkdir -p /opt && git clone https://github.com/RLinf/LIBERO.git /opt/libero
-    echo "export PYTHONPATH=/opt/libero:$PYTHONPATH" >> .venv/bin/activate
+    mkdir -p /opt && git clone https://github.com/Tian-Nian/RLinf_RoboTwin.git /opt/RLinf_RoboTwin
+    echo "export PYTHONPATH=/opt/RLinf_RoboTwin:/opt/libero:$PYTHONPATH" >> .venv/bin/activate
 fi
 
 if [ "$TARGET" = "openvla" ]; then

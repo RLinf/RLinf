@@ -1,2 +1,4 @@
-openvla_oft @ git+https://github.com/moojink/openvla-oft.git
+openvla_oft @ git+https://github.com/RLinf/openvla-oft.git@RLinf/v0.1
 flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
+pytorch3d @ git+https://github.com/facebookresearch/pytorch3d.git
+curobo @ git+git+https://github.com/NVlabs/curobo.git

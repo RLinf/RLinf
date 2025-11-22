@@ -127,60 +127,22 @@ class EnvWorker(Worker):
                         )
                     )
         elif self.cfg.env.train.simulator_type == "robotwin":
-            from rlinf.envs.robotwin.RoboTwin_env import RoboTwin
+            from rlinf.envs.robotwin.robotwin_env import RoboTwinEnv
 
             if not only_eval:
                 for stage_id in range(self.stage_num):
-                    self.simulator_list.append(
-                        EnvManager(
-                            self.cfg.env.train,
-                            rank=self._rank,
-                            seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size * self.stage_num,
-                            env_cls=RoboTwin,
-                            enable_offload=enable_offload,
-                        )
-                        # RoboTwin(self.cfg.env.train, rank=self._rank, total_num_processes=self._world_size)
+                    env = RoboTwinEnv(
+                        cfg=self.cfg.env.train,
+                        seed_offset=self._rank,
                     )
+                    self.simulator_list.append(env)
             if self.cfg.runner.val_check_interval > 0 or only_eval:
                 for stage_id in range(self.stage_num):
-                    self.eval_simulator_list.append(
-                        EnvManager(
-                            self.cfg.env.eval,
-                            rank=self._rank,
-                            seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size * self.stage_num,
-                            env_cls=RoboTwin,
-                            enable_offload=enable_offload,
-                        )
+                    env = RoboTwinEnv(
+                        cfg=self.cfg.env.eval,
+                        seed_offset=self._rank,
                     )
-        elif self.cfg.env.train.simulator_type == "metaworld":
-            from rlinf.envs.metaworld.metaworld_env import MetaWorldEnv
-
-            if not only_eval:
-                for stage_id in range(self.stage_num):
-                    self.simulator_list.append(
-                        EnvManager(
-                            self.cfg.env.train,
-                            rank=self._rank,
-                            seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size * self.stage_num,
-                            env_cls=MetaWorldEnv,
-                            enable_offload=enable_offload,
-                        )
-                    )
-            if self.cfg.runner.val_check_interval > 0 or only_eval:
-                for stage_id in range(self.stage_num):
-                    self.eval_simulator_list.append(
-                        EnvManager(
-                            self.cfg.env.eval,
-                            rank=self._rank,
-                            seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size * self.stage_num,
-                            env_cls=MetaWorldEnv,
-                            enable_offload=enable_offload,
-                        )
-                    )
+                    self.eval_simulator_list.append(env)
         elif self.cfg.env.train.simulator_type == "behavior":
             with open_dict(self.cfg):
                 # self.cfg.env.train.tasks.task_idx = self.cfg.env.train.tasks.activity_task_indices[self._rank]
@@ -222,7 +184,6 @@ class EnvWorker(Worker):
 
     def _init_simulator(self):
         for i in range(self.stage_num):
-            self.simulator_list[i].start_simulator()
             extracted_obs, rewards, terminations, truncations, infos = (
                 self.simulator_list[i].step()
             )
@@ -231,7 +192,9 @@ class EnvWorker(Worker):
             self.last_dones_list.append(
                 dones.unsqueeze(1).repeat(1, self.cfg.actor.model.num_action_chunks)
             )
-            self.simulator_list[i].stop_simulator()
+
+            if self.cfg.env.enable_offload:
+                self.simulator_list[i].close()
 
     def env_interact_step(
         self, chunk_actions: torch.Tensor, stage_id: int
@@ -334,10 +297,13 @@ class EnvWorker(Worker):
     def finish_rollout(self, mode="train"):
         # reset
         if mode == "train":
-            if self.cfg.env.train.video_cfg.save_video:
-                for i in range(self.stage_num):
-                    self.simulator_list[i].flush_video()
             for i in range(self.stage_num):
+                if self.cfg.env.train.video_cfg.save_video:
+                    self.simulator_list[i].flush_video()
+
+                if self.cfg.env.enable_offload:
+                    self.simulator_list[i].close()
+
                 self.simulator_list[i].update_reset_state_ids()
         elif mode == "eval":
             if self.cfg.env.eval.video_cfg.save_video:
@@ -382,9 +348,6 @@ class EnvWorker(Worker):
             )
 
     def interact(self):
-        for simulator in self.simulator_list:
-            simulator.start_simulator()
-
         env_metrics = defaultdict(list)
         for epoch in range(self.cfg.algorithm.rollout_epoch):
             env_output_list = []
@@ -447,8 +410,8 @@ class EnvWorker(Worker):
             self.last_dones_list = [env_output.dones for env_output in env_output_list]
             self.finish_rollout()
 
-        for simulator in self.simulator_list:
-            simulator.stop_simulator()
+        # for simulator in self.simulator_list:
+        #     simulator.stop_simulator()
 
         for key, value in env_metrics.items():
             env_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
@@ -457,7 +420,7 @@ class EnvWorker(Worker):
 
     def evaluate(self):
         for i in range(self.stage_num):
-            self.eval_simulator_list[i].start_simulator()
+            # self.eval_simulator_list[i].start_simulator()
             self.eval_simulator_list[i].is_start = True
             extracted_obs, _, _, _, infos = self.eval_simulator_list[i].step()
             env_output = EnvOutput(
@@ -483,8 +446,8 @@ class EnvWorker(Worker):
                 self.send_env_batch(env_output.to_dict(), mode="eval")
 
         self.finish_rollout(mode="eval")
-        for i in range(self.stage_num):
-            self.eval_simulator_list[i].stop_simulator()
+        # for i in range(self.stage_num):
+        #     self.eval_simulator_list[i].stop_simulator()
 
         for key, value in eval_metrics.items():
             eval_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()

@@ -25,6 +25,9 @@ from transformers import (
 )
 
 from rlinf.config import torch_dtype_from_precision
+from rlinf.models.embodiment.model_utils import (
+    find_checkpoint_file,
+)
 
 
 def get_vla_model_config_and_processor(cfg: DictConfig):
@@ -165,7 +168,18 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
             num_action_chunks=cfg.num_action_chunks,
             trust_remote_code=True,
             add_value_head=cfg.add_value_head,
+            proprio_dim=cfg.proprio_dim,
+            use_proprio=cfg.use_proprio,
+            use_film=cfg.use_film,
         )
+
+        if cfg.use_proprio:
+            # Load proprio projector weights if available
+            model.load_proprio_projector_weights(model_path)
+
+        # If using FiLM, wrap the vision backbone to allow for infusion of language inputs
+        if cfg.use_film:
+            vla = _apply_film_to_vla(model, cfg)
 
         # oft add
         model.vision_backbone.set_num_images_in_input(cfg.get("num_images_in_input", 1))
@@ -370,3 +384,64 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
 def tag_vlm_subtree(model, is_vlm: bool):
     for n, m in model.named_modules():
         setattr(m, "_to_lora", is_vlm)
+
+
+def _apply_film_to_vla(vla: torch.nn.Module, cfg) -> torch.nn.Module:
+    """
+    Apply FiLM (Feature-wise Linear Modulation) to the VLA vision backbone.
+
+    Args:
+        vla: The VLA model
+        cfg: Configuration object with model parameters
+
+    Returns:
+        torch.nn.Module: VLA model with FiLM applied
+    """
+    from peft import LoraConfig, get_peft_model
+    from prismatic.models.film_vit_wrapper import FiLMedPrismaticVisionBackbone
+
+    # Apply LoRA configuration
+    lora_config = LoraConfig(
+        r=cfg.lora_rank,
+        lora_alpha=min(cfg.lora_rank, 16),
+        lora_dropout=0.0,
+        target_modules=[
+            "proj",
+            "qkv",
+            "fc1",
+            "fc2",  # vision
+            "q",
+            "kv",
+            "fc3",
+            "out_proj",  # project
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+            "lm_head",  # llm
+        ],
+        init_lora_weights="gaussian",
+    )
+    # print(f"{vla}", flush=True)
+    vla = get_peft_model(vla, lora_config)
+
+    # Create and apply FiLMed vision backbone
+    new_vision_backbone = FiLMedPrismaticVisionBackbone(
+        vision_backbone=vla.vision_backbone,
+        llm_dim=vla.llm_dim,
+    )
+    vla.model.vision_backbone = new_vision_backbone
+
+    # Load vision backbone checkpoint
+    checkpoint_path = find_checkpoint_file(cfg.checkpoint_load_path, "vision_backbone")
+    state_dict = torch.load(checkpoint_path, weights_only=True)
+    vla.model.vision_backbone.load_state_dict(state_dict)
+
+    # Use the model component instead of wrapper and convert to bfloat16
+    vla = vla.model
+    vla.vision_backbone = vla.vision_backbone.to(torch.bfloat16)
+
+    return vla

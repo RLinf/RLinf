@@ -654,7 +654,10 @@ def validate_embodied_cfg(cfg):
     cfg.algorithm.num_group_envs = (
         cfg.algorithm.num_group_envs // stage_num // env_world_size
     )
-    cfg.env.eval.num_envs = cfg.env.eval.num_envs // stage_num // env_world_size
+    # cfg.env.eval.num_envs = cfg.env.eval.num_envs // stage_num // env_world_size
+
+    # if cfg.runner.only_eval:
+    #     assert cfg.env.eval.num_envs > 0
 
     with open_dict(cfg):
         if cfg.env.train.simulator_type == "maniskill":

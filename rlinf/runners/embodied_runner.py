@@ -177,7 +177,7 @@ class EmbodiedRunner:
             logging_metrics.update(rollout_metrics)
             logging_metrics.update(training_metrics)
 
-            global_pbar.set_postfix(logging_metrics)
+            global_pbar.set_postfix(logging_metrics, refresh=False)
             global_pbar.update(1)
 
         self.metric_logger.finish()

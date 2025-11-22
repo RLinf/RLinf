@@ -2,16 +2,11 @@
 
 export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
-export SRC_FILE="${EMBODIED_PATH}/train_embodied_agent.py"
+export SRC_FILE="${EMBODIED_PATH}/collect_robotwin2_seeds.py" # "${EMBODIED_PATH}/eval_embodied_agent.py"
 
-export MUJOCO_GL="egl"
-export PYOPENGL_PLATFORM="egl"
-
-# NOTE: set LIBERO_REPO_PATH to the path of the LIBERO repo
-export LIBERO_REPO_PATH="/opt/libero"
-
-export ROBOTWIN_PATH="/mnt/public/guozhen/test_robotwin/RLinf_RoboTwin"
-export PYTHONPATH=${REPO_PATH}:${LIBERO_REPO_PATH}:${ROBOTWIN_PATH}:$PYTHONPATH
+export MUJOCO_GL="osmesa"
+export PYOPENGL_PLATFORM="osmesa"
+export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 
 # Base path to the BEHAVIOR dataset, which is the BEHAVIOR-1k repo's dataset folder
 # Only required when running the behavior experiment.
@@ -25,19 +20,25 @@ export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
 export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
 export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 
+LIBERO_PATH=/opt/libero
+export ROBOTWIN_PATH="/mnt/public/guozhen/test_robotwin/RLinf_RoboTwin"
+export PYTHONPATH=${REPO_PATH}:${LIBERO_PATH}:${ROBOTWIN_PATH}:$PYTHONPATH
+
+export CUDA_LAUNCH_BLOCKING=1
+export HYDRA_FULL_ERROR=1
+
 # NOTE: Set the active robot platform (required for correct action dimension and normalization), supported platforms are LIBERO, ALOHA, BRIDGE, default is LIBERO
 export ROBOT_PLATFORM=ALOHA # $ROBOT_PLATFORM
 
 if [ -z "$1" ]; then
-    CONFIG_NAME="maniskill_ppo_openvlaoft"
+    CONFIG_NAME="robotwin_ppo_openvlaoft_eval"
 else
     CONFIG_NAME=$1
 fi
 
-echo "Using Python at $(which python)"
 LOG_DIR="${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')" #/$(date +'%Y%m%d-%H:%M:%S')"
-MEGA_LOG_FILE="${LOG_DIR}/run_embodiment.log"
+MEGA_LOG_FILE="${LOG_DIR}/eval_embodiment.log"
 mkdir -p "${LOG_DIR}"
 CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME} runner.logger.log_path=${LOG_DIR}"
-echo ${CMD} > ${MEGA_LOG_FILE}
-${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
+echo ${CMD}
+${CMD} 2>&1 | tee ${MEGA_LOG_FILE}

@@ -1065,6 +1065,7 @@ class EnvOutput:
 
     def prepare_observations(self, obs: dict[str, Any]) -> dict[str, Any]:
         wrist_image_tensor = None
+        states = None
         if self.simulator_type == "libero":
             image_tensor = torch.stack(
                 [
@@ -1079,10 +1080,14 @@ class EnvOutput:
                         for value in obs["images_and_states"]["wrist_image"]
                     ]
                 )
+            if "images_and_states" in obs and "state" in obs["images_and_states"]:
+                states = obs["images_and_states"]["state"]
         elif self.simulator_type == "maniskill":
             image_tensor = obs["images"]
         elif self.simulator_type == "robotwin":
             image_tensor = obs["images"]
+            wrist_image_tensor = obs["wrist_images"]
+            states = obs["states"]
         elif self.simulator_type == "behavior":
             image_tensor = obs["images"]
             wrist_image_tensor = obs["wrist_images"]
@@ -1096,9 +1101,6 @@ class EnvOutput:
         else:
             raise NotImplementedError
 
-        states = None
-        if "images_and_states" in obs and "state" in obs["images_and_states"]:
-            states = obs["images_and_states"]["state"]
         if "state" in obs:
             states = obs["state"]
 
