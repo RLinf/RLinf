@@ -42,6 +42,9 @@ if [[ " ${EMBODIED_TARGET[*]} " == *" $TARGET "* ]]; then
     bash requirements/install_embodied_deps.sh # Must be run after the above command
     mkdir -p /opt && git clone https://github.com/RLinf/LIBERO.git /opt/libero
     echo "export PYTHONPATH=/opt/libero:$PYTHONPATH" >> .venv/bin/activate
+    echo "export NVIDIA_DRIVER_CAPABILITIES=all" >> .venv/bin/activate
+    echo "export VK_DRIVER_FILES=/etc/vulkan/icd.d/nvidia_icd.json" >> .venv/bin/activate
+    echo "export VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json" >> .venv/bin/activate
 fi
 
 if [ "$TARGET" = "openvla" ]; then
@@ -54,6 +57,7 @@ elif [ "$TARGET" = "openvla-oft" ]; then
         uv pip uninstall flash-attn
         uv pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
         uv pip install ml_dtypes==0.5.3 protobuf==3.20.3
+        pip install click==8.2.1
         cd && uv pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 && cd -
     fi
 elif [ "$TARGET" = "openpi" ]; then

@@ -104,7 +104,7 @@ class ProducerWorker(Worker):
     def create_with_affinity(self, channel_name: str):
         channel = self.create_channel(
             channel_name=channel_name,
-            node_id=0,
+            node_rank=0,
         )
         channel.put("affinity_item", 1)
         return True
@@ -178,9 +178,7 @@ def cluster():
 @pytest.fixture(scope="module")
 def worker_groups(cluster):
     if torch.cuda.is_available():
-        placement = PackedPlacementStrategy(
-            start_accelerator_id=0, end_accelerator_id=0
-        )
+        placement = PackedPlacementStrategy(start_hardware_rank=0, end_hardware_rank=0)
     else:
         placement = NodePlacementStrategy([0])
     global \

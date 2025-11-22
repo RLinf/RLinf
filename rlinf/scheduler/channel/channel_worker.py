@@ -305,8 +305,6 @@ class ChannelWorker(Worker):
 
         Args:
             src_addr (WorkerAddress): The address of the source worker.
-            weight (int): The weight of the item to be put into the queue.
-            key (Any): The key to get the item from. A unique identifier for a specific set of items.
             When a key is given, the channel will put the item in the queue associated with that key.
             nowait (bool): If True, directly raise asyncio.QueueFull if the queue is full. Defaults to False.
 

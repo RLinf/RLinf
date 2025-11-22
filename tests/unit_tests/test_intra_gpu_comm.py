@@ -156,7 +156,7 @@ def cluster():
 def create_worker_groups(cluster, sender_gpus, receiver_gpus):
     """Helper to create worker groups with specific GPU assignments."""
     sender_placement = PackedPlacementStrategy(
-        start_accelerator_id=sender_gpus[0], end_accelerator_id=sender_gpus[-1]
+        start_hardware_rank=sender_gpus[0], end_hardware_rank=sender_gpus[-1]
     )
     sender_group = SenderWorker.create_group().launch(
         cluster=cluster,
@@ -165,7 +165,7 @@ def create_worker_groups(cluster, sender_gpus, receiver_gpus):
     )
 
     receiver_placement = PackedPlacementStrategy(
-        start_accelerator_id=receiver_gpus[0], end_accelerator_id=receiver_gpus[-1]
+        start_hardware_rank=receiver_gpus[0], end_hardware_rank=receiver_gpus[-1]
     )
     receiver_group = ReceiverWorker.create_group().launch(
         cluster=cluster,

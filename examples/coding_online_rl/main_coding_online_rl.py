@@ -44,7 +44,7 @@ def main(cfg) -> None:
     component_placement = ModelParallelComponentPlacement(cfg, cluster)
 
     singleton_placement_strategy = PackedPlacementStrategy(
-        start_accelerator_id=0, end_accelerator_id=0
+        start_hardware_rank=0, end_hardware_rank=0
     )
     online_router = OnlineRouterWorker.create_group(cfg, component_placement).launch(
         cluster=cluster,

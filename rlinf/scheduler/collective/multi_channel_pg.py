@@ -19,7 +19,7 @@ from typing import Optional
 import torch
 import torch.distributed as dist
 
-from ..accelerator import Accelerator, AcceleratorType
+from ..hardware import AcceleratorType, AcceleratorUtil
 from .async_work import AsyncCollWork, AsyncWork
 from .collective_group import CollectiveGroup, CollectiveGroupInfo
 
@@ -69,10 +69,12 @@ class MultiChannelProcessGroup:
             # CPU only, disable CCL
             or accel_type == AcceleratorType.NO_ACCEL
             # Unsupported accelerator CCL type, disable CCL
-            or accel_type not in Accelerator.CCL_SUPPORT_LIST
+            or accel_type not in AcceleratorUtil.CCL_SUPPORT_LIST
         )
         self._accel_ccl_backend = (
-            Accelerator.get_ccl_backend(accel_type) if not self._no_accel_ccl else None
+            AcceleratorUtil.get_ccl_backend(accel_type)
+            if not self._no_accel_ccl
+            else None
         )
 
         self._send_accel_ccl_process_groups: list[dist.ProcessGroup] = [
@@ -109,12 +111,12 @@ class MultiChannelProcessGroup:
             group_name (str): The name of the group.
 
         """
-        from ..cluster import Cluster
+        from ..cluster import Cluster, ClusterEnvVar
 
         self._group_name = group_name
         try:
             # Set default timeout to 180 minutes
-            timeout = int(Cluster.get_sys_env_var("TIMEOUT", "180"))
+            timeout = int(Cluster.get_sys_env_var(ClusterEnvVar.TIMEOUT, "180"))
             self._logger.debug(
                 f"Setting timeout to {timeout} minutes for group {group_name}"
             )
@@ -254,7 +256,7 @@ class MultiChannelProcessGroup:
         # NOTE: GLOO backend doesn't support dist.Work.get_future, use broadcast to simulate send/recv instead
         if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
             raise RuntimeError(
-                f"Collective group {self._group_name} does not support accelerator CCL backend, possibly because (1) the workers in the group have different accelerator types:  {[worker.accelerator_type for worker in self._group_info.workers]}, (2) the workers are CPU-only, or (3) the accelerator CCL is not among the supported CCL: {Accelerator.CCL_SUPPORT_LIST}."
+                f"Collective group {self._group_name} does not support accelerator CCL backend, possibly because (1) the workers in the group have different accelerator types:  {[worker.accelerator_type for worker in self._group_info.workers]}, (2) the workers are CPU-only, or (3) the accelerator CCL is not among the supported CCL: {AcceleratorUtil.CCL_SUPPORT_LIST}."
             )
         group = (
             self._send_accel_ccl_process_groups[channel_id]

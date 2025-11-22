@@ -73,7 +73,7 @@ To support the model structure required for your training, modify the ``model_pr
        return model
 
 2. Megatron-LM Weight Conversion Support
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The Megatron-LM training framework cannot directly load HuggingFace format checkpoints; weight conversion is required.
 
@@ -460,7 +460,7 @@ If you have any questions throughout the process of adapting new models, feel fr
 We will address your questions as soon as possible.
 
 5. Qwen2.5 Family Model Example
-~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Once you’ve completed the above steps, you can adapt your new model to RLinf.
 

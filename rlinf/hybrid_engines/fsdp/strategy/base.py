@@ -61,7 +61,6 @@ class FSDPStrategyBase(ABC):
         Args:
             cfg: DictConfig that must contain fsdp_config.strategy
             world_size: actor distributed world size
-            rank: current process's distributed rank
             dp_group: optional data parallel process group
             logger: optional logger, if none, a default logger will be created
 

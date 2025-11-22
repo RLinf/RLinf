@@ -255,7 +255,14 @@ class CollectiveGroup:
         """
         recv_comm_id = next(self._recv_comm_id_iter)
 
-        recv_work = AsyncFuncWork(self._atomic_recv, comm_id=recv_comm_id)
+        if self._worker.has_accelerator and Worker.torch_platform.is_initialized():
+            current_device = Worker.torch_platform.current_device()
+        else:
+            current_device = None
+
+        recv_work = AsyncFuncWork(
+            self._atomic_recv, comm_id=recv_comm_id, current_device=current_device
+        )
 
         if self._worker.has_accelerator and Worker.torch_platform.is_initialized():
             recv_event = Worker.torch_platform.Event()
@@ -275,11 +282,15 @@ class CollectiveGroup:
             return recv_work.wait()
 
     def _atomic_recv(
-        self, comm_id: int
+        self, comm_id: int, current_device: Optional[int]
     ) -> AsyncWork | torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any:
         """Atomic recv implementation."""
-        # First recv object type
+        if current_device is not None:
+            Worker.torch_platform.set_device(current_device)
+
         self._init_p2p_process_group()
+
+        # First recv object type
         object_type_tensor = torch.empty(1, dtype=torch.int, device="cpu")
         self._recv(object_type_tensor, CollectiveGroup.CPU, comm_id)
 
@@ -597,8 +608,8 @@ class CollectiveGroup:
 
         # Check if the peer is on the same node
         if (
-            self._group_info.workers[self._peer_rank].node_id
-            != self._group_info.workers[self._rank].node_id
+            self._group_info.workers[self._peer_rank].cluster_node_rank
+            != self._group_info.workers[self._rank].cluster_node_rank
         ):
             return -1
 

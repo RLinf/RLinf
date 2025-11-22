@@ -293,7 +293,7 @@ def cluster():
 @pytest.fixture(scope="class")
 def worker_groups(cluster: Cluster):
     """Creates and yields the sender and receiver worker groups."""
-    if cluster.num_accelerators_in_cluster > 0:
+    if cluster.num_accelerators > 0:
         sender_group = SenderWorker.create_group().launch(
             cluster=cluster, name=SENDER_GROUP_NAME
         )

@@ -40,7 +40,7 @@ class SchedulerWorker(Worker):
         super().__init__()
         self.cfg = config
         self.component_placement = component_placement
-        self.components = self.component_placement._components
+        self.components = self.component_placement.components
         self.workflow = workflow
 
         assert self.cfg.rollout.rollout_backend in ["sglang", "vllm"], (

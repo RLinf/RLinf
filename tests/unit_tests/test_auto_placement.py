@@ -579,7 +579,7 @@ class TestSchedulerTask:
         mock_cfg.runner.seq_length = 2048
 
         mock_cluster = MagicMock()
-        mock_cluster.num_accelerators_in_cluster = 8
+        mock_cluster.num_accelerators = 8
 
         profile_data = get_profile_data(
             mock_cfg,
@@ -616,7 +616,7 @@ class TestSchedulerTask:
         mock_validate.return_value = mock_cfg
 
         mock_cluster = MagicMock()
-        mock_cluster.num_accelerators_in_cluster = 8
+        mock_cluster.num_accelerators = 8
 
         scheduler_task = SchedulerTask(mock_cfg, mock_cluster)
 

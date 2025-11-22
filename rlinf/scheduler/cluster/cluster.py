@@ -17,19 +17,20 @@ import os
 import signal
 import sys
 import time
-import warnings
-from dataclasses import dataclass
+from enum import Enum
 from importlib.metadata import version
 from typing import TYPE_CHECKING, Optional
 
 import ray
 import ray.util.scheduling_strategies
+from omegaconf import DictConfig
 from packaging import version as vs
 from ray._private import ray_logging
 from ray.actor import ActorHandle
 from ray.util.state import list_actors
 
-from .accelerator import Accelerator, AcceleratorType
+from .config import ClusterConfig
+from .node import NodeGroupInfo, NodeProbe
 
 ray_version = version("ray")
 assert vs.parse(ray_version) >= vs.parse("2.47.0"), (
@@ -37,30 +38,26 @@ assert vs.parse(ray_version) >= vs.parse("2.47.0"), (
 )
 
 if TYPE_CHECKING:
-    from .worker import Worker
+    from ..worker import Worker
 
 
-@dataclass
-class NodeInfo:
-    """Information about a node in the cluster."""
+class ClusterEnvVar(str, Enum):
+    """Scheduler environment variables. All env vars are prefixed with {Cluster.SYS_NAME}_ in usage."""
 
-    node_rank: str
-    """Rank of the node in the cluster."""
+    CATCH_FAILURE = "CATCH_FAILURE"
+    """Whether to catch failures in workers to avoid exiting the main process."""
 
-    ray_id: str
-    """Ray's unique identifier for the node."""
+    LOG_LEVEL = "LOG_LEVEL"
+    """Logging level for the cluster and workers."""
 
-    node_ip: str
-    """IP address of the node."""
+    TIMEOUT = "TIMEOUT"
+    """Timeout for the all inter-worker communications."""
 
-    accelerator_type: AcceleratorType
-    """Type of accelerator available on the node."""
+    NODE_RANK = "NODE_RANK"
+    """Rank of each node in the cluster."""
 
-    num_accelerators: int
-    """Number of accelerators available on the node."""
-
-    num_cpus: int
-    """Number of CPUs available on the node."""
+    COMM_NET_DEVICES = "COMM_NET_DEVICES"
+    """Network devices to use for inter-node communication."""
 
 
 class Cluster:
@@ -68,8 +65,17 @@ class Cluster:
 
     SYS_NAME = "RLinf"
     NAMESPACE = SYS_NAME
-    LOGGING_LEVEL = "INFO"
+    LOGGING_LEVEL = os.getenv(
+        f"{SYS_NAME.upper()}_{ClusterEnvVar.LOG_LEVEL.value}", "INFO"
+    ).upper()
     TIMEOUT_WARN_TIME = 60000
+    DEFAULT_SYS_ENV_VAR = {
+        ClusterEnvVar.CATCH_FAILURE: "0",
+        ClusterEnvVar.LOG_LEVEL: "INFO",
+        ClusterEnvVar.TIMEOUT: "180",
+        ClusterEnvVar.NODE_RANK: None,
+        ClusterEnvVar.COMM_NET_DEVICES: None,
+    }
 
     @classmethod
     def find_free_port(cls):
@@ -92,24 +98,27 @@ class Cluster:
             cls._instance._has_initialized = False
         return cls._instance
 
-    def __init__(self, num_nodes: Optional[int] = None):
+    def __init__(
+        self, num_nodes: Optional[int] = None, cluster_cfg: Optional[DictConfig] = None
+    ):
         """Initialize the cluster.
 
         Args:
             num_nodes (int): The number of nodes in the cluster. When you wish to acquire the cluster instance in a processes other than the main driver process, do not pass this argument. Instead, use the `Cluster()` constructor without arguments.
+            cluster_cfg (Optional[DictConfig]): The cluster's configuration dictionary. If set, num_nodes will be ignored and inferred from the config.
         """
         if self._has_initialized:
             return
-        if num_nodes is not None:
+        if num_nodes is not None or cluster_cfg is not None:
             self._ray_instance_count = 0
-            self._init_and_launch_managers(num_nodes)
+            self._init_and_launch_managers(num_nodes, cluster_cfg)
         else:
             self._init_from_existing_managers()
         self._has_initialized = True
 
-    def _init_and_launch_managers(self, num_nodes: int):
-        assert num_nodes > 0, "num_nodes must be greater than 0."
-
+    def _init_and_launch_managers(
+        self, num_nodes: int, cluster_cfg: Optional[DictConfig]
+    ):
         # Add logger
         self._logger = logging.getLogger(Cluster.SYS_NAME)
         self._logger.setLevel(Cluster.LOGGING_LEVEL)
@@ -123,9 +132,6 @@ class Cluster:
         )
         handler.setFormatter(formatter)
         self._logger.addHandler(handler)
-
-        self._num_nodes = num_nodes
-        self._set_default_env_vars()
 
         if ray.is_initialized():
             if self._ray_instance_count > 0:
@@ -144,73 +150,63 @@ class Cluster:
         if "RAY_DEDUP_LOGS" not in os.environ:
             # Default disabling deduplication of logs to ensure all logs are printed.
             ray_logging.RAY_DEDUP_LOGS = 0
+
+        # Cluster configurations
+        self._cluster_cfg = (
+            ClusterConfig.from_dict_cfg(cluster_cfg) if cluster_cfg else None
+        )
+        if (
+            self._cluster_cfg is not None
+            and num_nodes is not None
+            and self._cluster_cfg.num_nodes != num_nodes
+        ):
+            raise ValueError(
+                f"num_nodes ({num_nodes}) passed in Cluster init does not match the number of nodes in configuration ({self._cluster_cfg.num_nodes}). Please ensure they are consistent."
+            )
+        self._num_nodes = (
+            self._cluster_cfg.num_nodes if self._cluster_cfg is not None else num_nodes
+        )
+        assert self._num_nodes > 0, "num_nodes must be greater than 0."
+
         try:
             # First try to connect to an existing Ray cluster
             ray.init(
                 address="auto",
                 logging_level=Cluster.LOGGING_LEVEL,
                 namespace=Cluster.NAMESPACE,
-                runtime_env={
-                    "env_vars": dict(os.environ),
-                },
             )
         except ConnectionError:
             ray.init(
                 logging_level=Cluster.LOGGING_LEVEL,
                 namespace=Cluster.NAMESPACE,
-                runtime_env={
-                    "env_vars": dict(os.environ),
-                },
             )
 
         # Wait for the cluster to be ready
-        while len(ray.nodes()) < self._num_nodes:
+        while len(Cluster.get_alive_nodes()) < self._num_nodes:
             self._logger.warning(
-                f"Waiting for {self._num_nodes} nodes to be ready, currently {len(ray.nodes())} nodes available."
+                f"Waiting for {self._num_nodes} nodes to be ready, currently {len(Cluster.get_alive_nodes())} nodes available."
             )
             time.sleep(1)
 
-        self._nodes: list[NodeInfo] = []
-        for node in ray.nodes():
-            accelerator_type, num_accelerators = (
-                Accelerator.get_node_accelerator_type_and_num(node)
-            )
-            self._nodes.append(
-                NodeInfo(
-                    node_rank=0,
-                    ray_id=node["NodeID"],
-                    node_ip=node["NodeManagerAddress"],
-                    accelerator_type=accelerator_type,
-                    num_accelerators=num_accelerators,
-                    num_cpus=int(node["Resources"].get("CPU", 0)),
-                )
-            )
-
-        # Sort nodes first by accelerator type, then by IP
-        nodes_group_by_accel_type: dict[AcceleratorType, list[NodeInfo]] = {
-            accel_type: [] for accel_type in AcceleratorType
-        }
-        for node in self._nodes:
-            nodes_group_by_accel_type[node.accelerator_type].append(node)
-        for accel_type in nodes_group_by_accel_type.keys():
-            nodes_group_by_accel_type[accel_type].sort(key=lambda x: x.node_ip)
-        self._nodes = [
-            node for nodes in nodes_group_by_accel_type.values() for node in nodes
-        ]
-
-        # Handle num_nodes configuration mismatch with actual node number
-        if len(self._nodes) > self._num_nodes:
-            warnings.warn(
-                f"The cluster is initialized with {self._num_nodes} nodes, but detected {len(self._nodes)} nodes have joined the ray cluster. So only the first {self._num_nodes} nodes are used."
-            )
-            self._nodes = self._nodes[: self._num_nodes]
+        # Get node info
+        self._node_probe = NodeProbe(self._num_nodes, self._cluster_cfg)
+        self._nodes = self._node_probe.nodes
+        self._node_groups = self._node_probe.node_groups
 
         self._logger.info(
-            f"{Cluster.SYS_NAME} is running on a cluster with {len(self._nodes)} node{'s' if len(self._nodes) > 1 else ''} and {self.num_accelerators_in_cluster} accelerator{'s' if self.num_accelerators_in_cluster > 1 else ''}. The nodes' details are: {self._nodes}"
+            f"{Cluster.SYS_NAME} is running on a cluster with {len(self._nodes)} node{'s' if len(self._nodes) > 1 else ''} and {self.num_accelerators} accelerator{'s' if self.num_accelerators > 1 else ''}. The nodes' details are: "
+            + "\n"
+            + "\n".join(str(node) for node in self._nodes)
+            + "\n"
+            + "Node groups' details are: \n"
+            + "\n".join(str(group) for group in self._node_groups)
         )
 
+        # Set environment variables
+        self._set_scheduler_env_vars()
+
         # Launch managers
-        from .manager import (
+        from ..manager import (
             CollectiveManager,
             DeviceLockManager,
             NodeManager,
@@ -231,7 +227,7 @@ class Cluster:
             self._node_manager = (
                 ray.remote(NodeManager)
                 .options(name=NodeManager.MANAGER_NAME)
-                .remote(self._nodes)
+                .remote(self._nodes, self._node_groups, self._cluster_cfg)
             )
             self._lock_manager = (
                 ray.remote(DeviceLockManager)
@@ -276,32 +272,38 @@ class Cluster:
                 logging_level=Cluster.LOGGING_LEVEL,
             )
 
-        from .manager.node_manager import NodeManager
+        from ..manager.node_manager import NodeManager
 
         self._node_manager = NodeManager.get_proxy()
-        self._nodes = self._node_manager.get_nodes()
+        self._nodes, self._node_groups, self._cluster_cfg = (
+            self._node_manager.get_nodes()
+        )
         self._num_nodes = len(self._nodes)
 
-    def _set_default_env_vars(self):
+    @staticmethod
+    def get_full_env_var_name(var: ClusterEnvVar) -> str:
+        """Get the full environment variable name with system prefix."""
+        return f"{Cluster.SYS_NAME.upper()}_{var.value}"
+
+    def _set_scheduler_env_vars(self):
         """Set default environment variables for the system."""
-        env_var_list = ["CATCH_FAILURE", "LOG_LEVEL", "TIMEOUT"]
-        system_name = Cluster.SYS_NAME.upper()
-        for env_var in env_var_list:
-            env_var = f"{system_name}_{env_var}"
-            if env_var not in os.environ:
-                if env_var == f"{system_name}_CATCH_FAILURE":
-                    os.environ[env_var] = "0"
-                elif env_var == f"{system_name}_LOG_LEVEL":
-                    os.environ[env_var] = "INFO"
-                elif env_var == f"{system_name}_TIMEOUT":
-                    os.environ[env_var] = "180"
+        env_var_list = list(ClusterEnvVar._value2member_map_.values())
+        for node in self._nodes:
+            for env_var in env_var_list:
+                env_var_name = Cluster.get_full_env_var_name(env_var)
+                if env_var_name in os.environ:
+                    node.env_vars[env_var_name] = os.environ[env_var_name]
+                elif (
+                    default_value := Cluster.DEFAULT_SYS_ENV_VAR[env_var]
+                ) is not None and env_var_name not in node.env_vars:
+                    node.env_vars[env_var_name] = default_value
 
     @staticmethod
-    def get_sys_env_var(env_var: str, default: Optional[str] = None) -> Optional[str]:
+    def get_sys_env_var(
+        env_var: ClusterEnvVar, default: Optional[str] = None
+    ) -> Optional[str]:
         """Get the system environment variable for the cluster."""
-        system_name = Cluster.SYS_NAME.upper()
-        env_var = f"{system_name}_{env_var}"
-        return os.environ.get(env_var, default)
+        return os.environ.get(Cluster.get_full_env_var_name(env_var), default)
 
     @property
     def num_nodes(self):
@@ -309,114 +311,117 @@ class Cluster:
         return self._num_nodes
 
     @property
-    def num_accelerators_in_cluster(self):
+    def num_accelerators(self):
         """Get the number of accelerators in the cluster."""
         return sum(node.num_accelerators for node in self._nodes)
 
     @property
-    def node_accelerator_ids(self) -> list[list[int]]:
-        """Get the global accelerator IDs for each node in the cluster."""
-        node_start_accel_id = 0
-        node_accel_ids = []
+    def accelerator_ranks(self) -> list[list[int]]:
+        """Get the global accelerator ranks for each node in the cluster."""
+        node_start_accel_rank = 0
+        node_accel_ranks = []
         for node in self._nodes:
-            node_accel_ids.append(
+            node_accel_ranks.append(
                 list(
                     range(
-                        node_start_accel_id, node_start_accel_id + node.num_accelerators
+                        node_start_accel_rank,
+                        node_start_accel_rank + node.num_accelerators,
                     )
                 )
             )
-            node_start_accel_id += node.num_accelerators
-        return node_accel_ids
+            node_start_accel_rank += node.num_accelerators
+        return node_accel_ranks
 
-    def get_node_id_from_accel_id(self, accel_id: int) -> int:
-        """Get the node ID from the global accelerator ID.
+    @staticmethod
+    def get_alive_nodes():
+        """Get the list of alive nodes in the Ray cluster."""
+        return [node for node in ray.nodes() if node["Alive"]]
 
-        Args:
-            accel_id (int): The global accelerator ID.
-
-        Returns:
-            int: The node ID.
-        """
-        for i, ids in enumerate(self.node_accelerator_ids):
-            if accel_id in ids:
-                return i
-        raise ValueError(f"Accelerator ID {accel_id} not found in any node.")
-
-    def get_node_num_accelerators(self, node_id: int) -> int:
-        """Get the number of accelerators in a specific node.
+    def get_node_group(
+        self, label: Optional[str] = NodeGroupInfo.DEFAULT_GROUP_LABEL
+    ) -> Optional[NodeGroupInfo]:
+        """Get the node group information by label.
 
         Args:
-            node_id (int): The ID of the node.
+            label (Optional[str]): The label of the node group.
 
         Returns:
-            int: The number of accelerators in the node.
+            Optional[NodeGroupInfo]: The node group information.
         """
-        if node_id < 0 or node_id >= self._num_nodes:
-            raise ValueError(
-                f"Invalid node_id: {node_id}. Must be between 0 and {self._num_nodes - 1}."
-            )
-        return self._nodes[node_id].num_accelerators
+        if label is None:
+            label = NodeGroupInfo.DEFAULT_GROUP_LABEL
+        label = str(label)
+        return next((ng for ng in self._node_groups if ng.label == label), None)
 
-    def global_accel_id_to_local_accel_id(self, accel_id: int):
-        """Get the local accelerator ID from the global accelerator ID.
-
-        Args:
-            accel_id (int): The global accelerator ID.
-
-        Returns:
-            int: The local accelerator ID.
-        """
-        node_id = self.get_node_id_from_accel_id(accel_id)
-        node_accel_ids = self.node_accelerator_ids[node_id]
-        assert accel_id in node_accel_ids, (
-            f"Accelerator ID {accel_id} not found in node {node_id}."
-        )
-        return node_accel_ids.index(accel_id)
-
-    def get_node_info(self, node_id: int):
+    def get_node_info(self, node_rank: int):
         """Get the NodeInfo of a specific node rank."""
-        return self._nodes[node_id]
+        if node_rank < 0 or node_rank >= self._num_nodes:
+            raise ValueError(
+                f"Invalid node_id: {node_rank}. Must be between 0 and {self._num_nodes - 1}."
+            )
+        assert self._nodes[node_rank].node_rank == node_rank, (
+            f"Nodes are not correctly sorted in the cluster. The {node_rank}-th node's node_rank is {self._nodes[node_rank].node_rank}."
+        )
+        return self._nodes[node_rank]
 
-    def get_node_ip(self, node_id: int) -> str:
-        """Get the IP address of a specific node by its ID. Note that this is not the ray NodeID but the index of node in the cluster."""
-        return self._nodes[node_id].node_ip
+    def get_node_ip(self, node_rank: int) -> str:
+        """Get the IP address of a specific node by its rank."""
+        return self._nodes[node_rank].node_ip
 
     def allocate(
         self,
         cls: type["Worker"],
         worker_name: str,
-        node_id: int,
+        node_rank: int,
         max_concurrency: int,
         env_vars: dict,
-        cls_args: list = [],
-        cls_kwargs: dict = {},
+        node_group_label: str,
+        cls_args: tuple,
+        cls_kwargs: dict,
     ) -> ActorHandle:
         """Allocate a ray remote class instance on a specific node and local rank.
 
         Args:
             cls (Type[Worker]): The class to allocate.
             worker_name (str): The name of the worker.
-            node_id (int): The ID of the node to allocate on.
+            node_rank (int): The rank of the node to allocate on.
             max_concurrency (Optional[int]): The maximum concurrency for the worker's underlying ray actor.
             env_vars (dict): Environment variables to set for the worker.
-            cls_args (List): Positional arguments to pass to the class constructor.
+            node_group_label (str): The label of the node group to allocate on.
+            cls_args (tuple): Positional arguments to pass to the class constructor.
             cls_kwargs (dict): Keyword arguments to pass to the class constructor.
 
         Returns:
             ray.ObjectRef: A reference to the allocated remote class instance.
 
         """
-        if node_id < 0 or node_id >= self._num_nodes:
+        if node_rank < 0 or node_rank >= self._num_nodes:
             raise ValueError(
-                f"Invalid node_id: {node_id}. Must be between 0 and {self._num_nodes - 1}."
+                f"Invalid node_id: {node_rank}. Must be between 0 and {self._num_nodes - 1}."
             )
 
-        node = self._nodes[node_id]
+        node = self._nodes[node_rank]
+        node_group = self.get_node_group(node_group_label)
         remote_cls = ray.remote(cls)
 
+        merged_env_vars = node.env_vars.copy()
+        # Update with user-specified env vars in node group configs
+        cfg_node_env_vars = node_group.get_node_env_vars(node_rank)
+        merged_env_vars.update(cfg_node_env_vars)
+        # Finally, update with worker-specified env vars
+        merged_env_vars.update(env_vars)
+
+        # Update Python interpreter path
+        python_interpreter_path = node.python_interpreter_path
+        cfg_python_path = node_group.get_node_python_interpreter_path(node_rank)
+        if cfg_python_path is not None:
+            python_interpreter_path = cfg_python_path
+
         options = {
-            "runtime_env": {"env_vars": env_vars},
+            "runtime_env": {
+                "py_executable": python_interpreter_path,
+                "env_vars": merged_env_vars,
+            },
             "name": worker_name,
             "scheduling_strategy": ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
                 node_id=node.ray_id,

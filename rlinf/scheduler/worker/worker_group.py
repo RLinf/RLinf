@@ -24,8 +24,8 @@ import numpy as np
 import ray
 import ray.remote_function
 
-from ..accelerator import Accelerator
-from ..cluster import Cluster
+from ..cluster import Cluster, ClusterEnvVar
+from ..hardware import AcceleratorUtil
 from ..manager import WorkerInfo
 from ..placement import (
     NodePlacementStrategy,
@@ -92,7 +92,6 @@ class WorkerGroup(Generic[WorkerClsType]):
 
         Args:
             cluster (ClusterResource): The cluster resource to use for worker placement.
-            num_nodes (int): The number of nodes to create workers on.
             placement_strategy (Optional[PlacementStrategy]): The strategy to use for placing workers on nodes.
             name (str, optional): The name of the worker group.
             max_concurrency (Optional[int]): The maximum concurrency for the worker's underlying ray actor. See https://docs.ray.io/en/latest/ray-core/actors/async_api.html#setting-concurrency-in-async-actors for detailed explanation.
@@ -110,13 +109,15 @@ class WorkerGroup(Generic[WorkerClsType]):
         self._catch_system_failure = catch_system_failure
         self._max_concurrency = max_concurrency
         if self._catch_system_failure is None:
-            self._catch_system_failure = Cluster.get_sys_env_var("CATCH_FAILURE") == "1"
+            self._catch_system_failure = (
+                Cluster.get_sys_env_var(ClusterEnvVar.CATCH_FAILURE, "0") == "1"
+            )
 
         if self._placement_strategy is None:
-            if cluster.num_accelerators_in_cluster > 0:
+            if cluster.num_accelerators > 0:
                 # Use all resources by default
                 self._placement_strategy = PackedPlacementStrategy(
-                    0, cluster.num_accelerators_in_cluster - 1
+                    0, cluster.num_accelerators - 1
                 )
             else:
                 # If no accelerator is available, just launch one worker on CPU
@@ -158,7 +159,9 @@ class WorkerGroup(Generic[WorkerClsType]):
             self._cluster, self._isolate_gpu
         )
         master_addr = next(
-            self._cluster.get_node_ip(p.node_id) for p in placements if p.rank == 0
+            self._cluster.get_node_ip(p.cluster_node_rank)
+            for p in placements
+            if p.rank == 0
         )
         self._world_size = len(placements)
         for placement in placements:
@@ -166,7 +169,7 @@ class WorkerGroup(Generic[WorkerClsType]):
                 self._worker_group_name, placement.rank
             ).get_name()
             accelerator_type = self._cluster.get_node_info(
-                placement.node_id
+                placement.cluster_node_rank
             ).accelerator_type
             env_vars = {
                 "GROUP_NAME": self._worker_group_name,
@@ -174,9 +177,9 @@ class WorkerGroup(Generic[WorkerClsType]):
                 "MASTER_ADDR": master_addr,
                 "WORLD_SIZE": str(self._world_size),
                 "RANK": str(placement.rank),
-                "NODE_RANK": str(placement.node_rank),
-                "NODE_ID": str(placement.node_id),
-                "LOCAL_ACCELERATOR_ID": str(placement.local_accelerator_id),
+                "NODE_RANK": str(placement.placement_node_rank),
+                "CLUSTER_NODE_RANK": str(placement.cluster_node_rank),
+                "LOCAL_ACCELERATOR_RANK": str(placement.local_accelerator_rank),
                 "NODE_LOCAL_RANK": str(placement.local_rank),
                 "NODE_LOCAL_WORLD_SIZE": str(placement.local_world_size),
                 "RAY_ACTOR": str(1),
@@ -185,11 +188,15 @@ class WorkerGroup(Generic[WorkerClsType]):
                 if self._catch_system_failure
                 else "0",  # Inform the Worker process to catch signals
                 "VISIBLE_DEVICES": ",".join(placement.visible_accelerators),
-                "ACCELERATOR_TYPE": str(accelerator_type.value),
+                "ACCELERATOR_TYPE": str(accelerator_type),
                 "ISOLATE_ACCELERATOR": "1" if placement.isolate_accelerator else "0",
+                "LOCAL_HARDWARE_RANKS": ",".join(
+                    map(str, placement.local_hardware_ranks)
+                ),
+                "NODE_GROUP_LABEL": placement.node_group_label,
             }
             env_vars.update(
-                Accelerator.get_accelerator_env_var(
+                AcceleratorUtil.get_accelerator_env_var(
                     accelerator_type, placement.visible_accelerators
                 )
             )
@@ -197,9 +204,10 @@ class WorkerGroup(Generic[WorkerClsType]):
             worker = self._cluster.allocate(
                 cls=self._worker_cls,
                 worker_name=worker_name,
-                node_id=placement.node_id,
+                node_rank=placement.cluster_node_rank,
                 max_concurrency=self._max_concurrency,
                 env_vars=env_vars,
+                node_group_label=placement.node_group_label,
                 cls_args=self._worker_cls_args,
                 cls_kwargs=self._worker_cls_kwargs,
             )
@@ -210,6 +218,13 @@ class WorkerGroup(Generic[WorkerClsType]):
                 rank: int
 
             self._workers.append(WorkerRank(rank=placement.rank, worker=worker))
+
+            node_group = self._cluster.get_node_group(placement.node_group_label)
+            node = self._cluster.get_node_info(placement.cluster_node_rank)
+            cfg_env_vars = node_group.get_node_env_vars(placement.cluster_node_rank)
+            Worker.logger.debug(
+                f"Worker rank {placement.rank} in group {self.worker_group_name} launched with cfg env vars: {cfg_env_vars}, env vars: {env_vars}, python interpreter {node_group.get_node_python_interpreter_path(placement.cluster_node_rank) or node.python_interpreter_path}."
+            )
 
     def _attach_cls_func(self):
         """Attach the class function to the worker group so they can be called directly via the worker group instance.
@@ -303,7 +318,6 @@ class WorkerGroupFunc:
         Args:
             worker_group (WorkerGroup): The worker group to attach the function to.
             func_name (str): The name of the function.
-            func (Callable): The function to attach to the worker group.
 
         """
         self._worker_group = worker_group

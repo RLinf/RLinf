@@ -182,23 +182,13 @@ class AsyncCollWork(AsyncWork):
         self._futures = [work.get_future() for work in works]
 
     async def async_wait(self):
-        """Async wait for the work to complete.
-
-        Returns:
-            Any: The result of the work if applicable, otherwise None.
-
-        """
+        """Async wait for the work to complete."""
         for work in self._works:
             while not work.is_completed():
                 await asyncio.sleep(0.001)  # Yield control to the event loop
 
     def wait(self):
-        """Wait for the work to complete.
-
-        Returns:
-            Any: The result of the work if applicable, otherwise None.
-
-        """
+        """Wait for the work to complete."""
         for work in self._works:
             work.wait()
 

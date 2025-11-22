@@ -51,6 +51,8 @@ dependencies = [
     "pre-commit",
     "liger_kernel",
     "pip",
+    "icmplib",
+    "pyrealsense2",
 
     # Logging
     "swanlab",
@@ -109,7 +111,7 @@ target-version = "py311"
 
 [tool.ruff.lint]
 isort = {known-first-party = ["rlinf"]}
-select = ["C", "E", "F", "I", "W", "CPY001", "RUF013", "UP006", "PERF102", "PLC1802", "PLC0208", "D", "RUF002"]
+select = ["C", "E", "F", "I", "W", "CPY001", "RUF013", "UP006", "PERF102", "PLC1802", "PLC0208", "D", "RUF002", "DOC102", "DOC202", "DOC403", "DOC502"]
 ignore = [
     "C901", # "complex-structure"
     "E501", # "line-too-long"

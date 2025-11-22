@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Optional
 
 from ..cluster import Cluster
+from ..hardware import Accelerator
 from .placement import Placement, PlacementStrategy
 
 
 class PackedPlacementStrategy(PlacementStrategy):
-    """Placement strategy that allows processes to be placed on accelerators/GPUs in a close-packed manner. One process can have one or multiple accelerators.
+    """Placement strategy that allows processes to be placed on hardware (e.g., GPUs) in a close-packed manner. One process can have one or multiple hardware.
 
     The following example shows how to use the placement strategy.
 
@@ -49,7 +51,7 @@ class PackedPlacementStrategy(PlacementStrategy):
         >>> cluster = Cluster(num_nodes=1)
         >>>
         >>> # `PackedPlacementStrategy` will fill up nodes with workers before moving to the next node.
-        >>> placement = PackedPlacementStrategy(start_accelerator_id=0, end_accelerator_id=3)
+        >>> placement = PackedPlacementStrategy(start_hardware_rank=0, end_hardware_rank=3)
         >>> my_worker = MyWorker.create_group().launch(
         ...     cluster=cluster, name="packed_placement", placement_strategy=placement
         ... )
@@ -57,10 +59,10 @@ class PackedPlacementStrategy(PlacementStrategy):
         [1, 1, 1, 1]
         >>>
         >>>
-        >>> # `num_accelerators_per_process` allows for one process to hold multiple accelerators/GPUs.
-        >>> # For example, if you want a process to hold 4 GPUs, you can set the `num_accelerators_per_process` to 4.
+        >>> # `num_hardware_per_process` allows for one process to hold multiple accelerators/GPUs.
+        >>> # For example, if you want a process to hold 4 GPUs, you can set the `num_hardware_per_process` to 4.
         >>> placement_chunked = PackedPlacementStrategy(
-        ...     start_accelerator_id=0, end_accelerator_id=3, num_accelerators_per_process=2
+        ...     start_hardware_rank=0, end_hardware_rank=3, num_hardware_per_process=2
         ... )
         >>> my_worker_chunked = MyWorker.create_group().launch(
         ...     cluster=cluster,
@@ -74,7 +76,7 @@ class PackedPlacementStrategy(PlacementStrategy):
         >>> # `stride` allows for strided placement of workers across GPUs.
         >>> # For example, if you want to place workers on every second GPU, you can set the stride to 2.
         >>> placement_strided = PackedPlacementStrategy(
-        ...     start_accelerator_id=0, end_accelerator_id=3, stride=2, num_accelerators_per_process=2
+        ...     start_hardware_rank=0, end_hardware_rank=3, stride=2, num_hardware_per_process=2
         ... )
         >>> my_worker_strided = MyWorker.create_group().launch(
         ...     cluster=cluster,
@@ -89,49 +91,51 @@ class PackedPlacementStrategy(PlacementStrategy):
 
     def __init__(
         self,
-        start_accelerator_id: int,
-        end_accelerator_id: int,
-        num_accelerators_per_process: int = 1,
+        start_hardware_rank: int,
+        end_hardware_rank: int,
+        num_hardware_per_process: int = 1,
         stride: int = 1,
+        node_group: Optional[str] = None,
     ):
         """Initialize the PackedPlacementStrategy.
 
         Args:
-            start_accelerator_id (int): The global ID of the starting accelerator in the cluster for the placement.
-            end_accelerator_id (int): The global ID of the end accelerator in the cluster for the placement.
-            num_accelerators_per_process (int): The number of accelerators to allocate for each process.
-            stride (int): The stride to use when allocating accelerators. This allows one process to have multiple accelerators in a strided manner, e.g., Accelerator 0, 2, 4 (stride 2) or Accelerator 0, 3, 6 (stride 3).
+            start_hardware_rank (int): The global rank of the starting hardware in the cluster or node group for the placement.
+            end_hardware_rank (int): The global rank of the end hardware in the cluster or node group for the placement.
+            num_hardware_per_process (int): The number of hardware resources to allocate for each process.
+            stride (int): The stride to use when allocating hardware. This allows one process to have multiple hardware in a strided manner, e.g., GPU 0, 2, 4 (stride 2) or GPU 0, 3, 6 (stride 3).
+            node_group (Optional[str]): The label of the node group to use for placement. This allows you to assign the placement to nodes within a specific group, especially in a heterogeneous cluster. If None, the entire cluster is considered.
 
         """
         super().__init__()
 
-        self._start_accel_id = start_accelerator_id
-        self._end_accel_id = end_accelerator_id
-        assert self._start_accel_id >= 0, (
-            f"The start accelerator ID {self._start_accel_id} must be non-negative."
+        self._start_hw_rank = start_hardware_rank
+        self._end_hw_rank = end_hardware_rank
+        self._node_group = node_group
+        assert self._start_hw_rank >= 0, (
+            f"The start hardware rank {self._start_hw_rank} must be non-negative."
         )
-        assert self._end_accel_id >= 0, (
-            f"The end accelerator ID {self._end_accel_id} must be non-negative."
+        assert self._end_hw_rank >= 0, (
+            f"The end hardware rank {self._end_hw_rank} must be non-negative."
         )
-        assert self._end_accel_id >= self._start_accel_id, (
-            f"The end accelerator ID {self._end_accel_id} must be greater than or equal to the start accelerator ID {self._start_accel_id}."
+        assert self._end_hw_rank >= self._start_hw_rank, (
+            f"The end hardware rank {self._end_hw_rank} must be greater than or equal to the start hardware rank {self._start_hw_rank}."
         )
-        self._num_accelerators = self._end_accel_id - self._start_accel_id + 1
+        self._num_hardware = self._end_hw_rank - self._start_hw_rank + 1
 
         self._placement_strategy = "PACKED"
-        self._num_accelerators_per_process = num_accelerators_per_process
+        self._num_hardware_per_process = num_hardware_per_process
         self._stride = stride
 
         assert (
-            self._num_accelerators % (self._num_accelerators_per_process * self._stride)
-            == 0
+            self._num_hardware % (self._num_hardware_per_process * self._stride) == 0
         ), (
-            f"The number of accelerators {self._num_accelerators} must be divisible by num_accelerators_per_process * stride ({self._num_accelerators_per_process * self._stride})."
+            f"The number of hardware {self._num_hardware} must be divisible by num_hardware_per_process * stride ({self._num_hardware_per_process * self._stride})."
         )
 
         self._logger.info("")
         self._logger.info(
-            f"Using packed placement starting from accelerator {self._start_accel_id}, ending at accelerator {self._end_accel_id}, with {self._num_accelerators_per_process} accelerators per process and stride {self._stride}."
+            f"Using packed placement starting from hardware {self._start_hw_rank}, ending at hardware {self._end_hw_rank}, with {self._num_hardware_per_process} hardware per process and stride {self._stride}."
         )
 
     def get_placement(
@@ -146,101 +150,108 @@ class PackedPlacementStrategy(PlacementStrategy):
             isolate_accelerator (bool): Whether accelerators not allocated to a worker will *not* be visible to the worker (by settings envs like CUDA_VISIBLE_DEVICES). Defaults to True.
 
         Returns:
-            List[Placement]: A list of Placement objects representing the placements of processes on accelerators.
+            list[Placement]: A list of Placement objects representing the placements of processes on accelerators.
 
         """
         rank = 0
         placements: list[Placement] = []
-        start_node = cluster.get_node_id_from_accel_id(self._start_accel_id)
-        accel_usage_map: dict[int, bool] = dict.fromkeys(
-            range(self._start_accel_id, self._end_accel_id + 1), False
+        node_group = cluster.get_node_group(self._node_group)
+
+        start_node = node_group.get_node_by_hardware_rank(self._start_hw_rank)
+        hw_usage_map: dict[int, bool] = dict.fromkeys(
+            range(self._start_hw_rank, self._end_hw_rank + 1), False
         )
 
-        assert start_node < cluster.num_nodes, (
-            f"The start accelerator ID {self._start_accel_id} is in Node ID {start_node}, but the cluster only has {cluster.num_nodes} nodes."
+        assert start_node is not None, (
+            f"The start hardware rank {self._start_hw_rank} cannot be found in the node group with hardware type {node_group.hardware_type} and hardware ranks {node_group.local_hardware_ranks}."
         )
 
-        start_accel_id = self._start_accel_id
+        start_hw_rank = self._start_hw_rank
         node_rank = 0
-        node_id = start_node
-        local_accel_id = cluster.global_accel_id_to_local_accel_id(self._start_accel_id)
+        cluster_node_rank = start_node.node_rank
+        local_hw_rank = node_group.get_local_hardware_rank(self._start_hw_rank)
         local_rank = 0
         local_world_size = 1
 
         while True:
             # Generate the placement for one process
-            assert local_accel_id + (
-                self._num_accelerators_per_process - 1
-            ) * self._stride <= cluster.get_node_num_accelerators(node_id), (
-                f"Trouble finding placement for Rank {rank} which starts at accelerator {local_accel_id} in node {node_id}, with {self._num_accelerators_per_process} accelerators and stride {self._stride}. But only {cluster.get_node_num_accelerators(node_id)} accelerators available in the node. As a result, this process will spread across multiple nodes, which is impossible."
+            assert local_hw_rank + (
+                self._num_hardware_per_process - 1
+            ) * self._stride <= cluster.get_node_info(
+                cluster_node_rank
+            ).get_hw_resource_count(node_group.hardware_type), (
+                f"Trouble finding placement for Rank {rank} which starts at hardware {local_hw_rank} in node {cluster_node_rank} and node group {node_group.label}, with {self._num_hardware_per_process} hardware and stride {self._stride}. But only {cluster.get_node_info(cluster_node_rank).get_hw_resource_count(node_group.hardware_type)} hardware available in the node. As a result, this process will spread across multiple nodes, which is impossible."
             )
 
-            local_accelerators = list(
+            local_hw_ranks = list(
                 range(
-                    local_accel_id,
-                    local_accel_id + self._num_accelerators_per_process * self._stride,
+                    local_hw_rank,
+                    local_hw_rank + self._num_hardware_per_process * self._stride,
                     self._stride,
                 )
             )
-            global_accelerators = list(
+            global_hw_ranks = list(
                 range(
-                    start_accel_id,
-                    start_accel_id + self._num_accelerators_per_process * self._stride,
+                    start_hw_rank,
+                    start_hw_rank + self._num_hardware_per_process * self._stride,
                     self._stride,
                 )
             )
-            for accel_id in global_accelerators:
-                accel_usage_map[accel_id] = True
+            for hw_rank in global_hw_ranks:
+                hw_usage_map[hw_rank] = True
 
-            if isolate_accelerator:
+            if isolate_accelerator and node_group.hardware_type == Accelerator.HW_TYPE:
+                local_accel_ranks = local_hw_ranks
                 visible_accelerators = [
-                    str(accel_id) for accel_id in local_accelerators
+                    str(accel_rank) for accel_rank in local_hw_ranks
                 ]
             else:
+                local_accel_ranks = list(
+                    range(cluster.get_node_info(cluster_node_rank).num_accelerators)
+                )
                 visible_accelerators = [
-                    str(accel_id)
-                    for accel_id in range(cluster.get_node_num_accelerators(node_id))
+                    str(accel_rank) for accel_rank in local_accel_ranks
                 ]
 
             placements.append(
                 Placement(
                     rank=rank,
-                    node_id=node_id,
-                    node_rank=node_rank,
-                    accelerator_type=cluster.get_node_info(node_id).accelerator_type,
-                    local_accelerator_id=local_accel_id,
+                    cluster_node_rank=cluster_node_rank,
+                    placement_node_rank=node_rank,
+                    accelerator_type=cluster.get_node_info(
+                        cluster_node_rank
+                    ).accelerator_type,
+                    local_accelerator_rank=local_accel_ranks[0],
                     local_rank=local_rank,
                     local_world_size=0,
                     visible_accelerators=visible_accelerators,
                     isolate_accelerator=isolate_accelerator,
+                    local_hardware_ranks=local_hw_ranks,
+                    node_group_label=node_group.label,
                 )
             )
 
             # The next placement
             rank += 1
             found_all = True
-            for accel_id in sorted(accel_usage_map.keys()):
-                if not accel_usage_map[accel_id]:
-                    start_accel_id = accel_id
+            for hw_rank in sorted(hw_usage_map.keys()):
+                if not hw_usage_map[hw_rank]:
+                    start_hw_rank = hw_rank
                     found_all = False
                     break
 
-            next_node_id = cluster.get_node_id_from_accel_id(start_accel_id)
-            if next_node_id != node_id:
+            next_cluster_node_rank = node_group.get_node_by_hardware_rank(
+                start_hw_rank
+            ).node_rank
+            if next_cluster_node_rank != cluster_node_rank:
                 # Place to the next node
-                assert next_node_id == node_id + 1, (
-                    f"Rank {rank} is trying to move from Node {node_id} to Node {next_node_id}, "
-                    f"but this is not allowed."
-                )
                 node_rank += 1
-                node_id = next_node_id
-                local_accel_id = 0
+                cluster_node_rank = next_cluster_node_rank
+                local_hw_rank = 0
                 local_rank = 0
                 next_node = True
             else:
-                local_accel_id = cluster.global_accel_id_to_local_accel_id(
-                    start_accel_id
-                )
+                local_hw_rank = node_group.get_local_hardware_rank(start_hw_rank)
                 local_rank += 1
                 next_node = False
 
@@ -259,8 +270,8 @@ class PackedPlacementStrategy(PlacementStrategy):
             if found_all:
                 break
 
-            assert node_id < cluster.num_nodes, (
-                f"Not enough ({cluster.num_nodes}) nodes in the cluster to generate the placement."
+            assert cluster_node_rank in node_group.node_ranks, (
+                f"Not enough nodes {node_group.node_ranks} in the node group {node_group.label} to generate the placement."
             )
 
         self._logger.info(f"Generated {len(placements)} placements: {placements}.")

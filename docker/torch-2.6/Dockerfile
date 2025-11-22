@@ -70,6 +70,15 @@ FROM base-image AS embodied-common-image
 # Embodied NVIDIA_DRIVER_CAPABILITIES
 ENV NVIDIA_DRIVER_CAPABILITIES="all"
 
+# Install rendering runtime configuration files
+RUN mkdir -p /usr/share/glvnd/egl_vendor.d /etc/vulkan/icd.d /etc/vulkan/implicit_layer.d
+RUN printf '{\n    "file_format_version" : "1.0.0",\n    "ICD" : {\n        "library_path" : "libEGL_nvidia.so.0"\n    }\n}\n' > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+RUN printf '{\n    "file_format_version" : "1.0.0",\n    "ICD" : {\n        "library_path" : "libEGL_mesa.so.0"\n    }\n}\n' > /usr/share/glvnd/egl_vendor.d/50_mesa.json
+RUN printf '{\n    "file_format_version" : "1.0.0",\n    "ICD" : {\n        "library_path" : "libGLX_nvidia.so.0",\n        "api_version" : "1.3.194"\n    }\n}\n' > /etc/vulkan/icd.d/nvidia_icd.json
+RUN mkdir -p /etc/vulkan/implicit_layer.d && printf '{\n    "file_format_version" : "1.0.0",\n    "layer": {\n        "name": "VK_LAYER_NV_optimus",\n        "type": "INSTANCE",\n        "library_path": "libGLX_nvidia.so.0",\n        "api_version" : "1.3.194",\n        "implementation_version" : "1",\n        "description" : "NVIDIA Optimus layer",\n        "functions": {\n            "vkGetInstanceProcAddr": "vk_optimusGetInstanceProcAddr",\n            "vkGetDeviceProcAddr": "vk_optimusGetDeviceProcAddr"\n        },\n        "enable_environment": {\n            "__NV_PRIME_RENDER_OFFLOAD": "1"\n        },\n        "disable_environment": {\n            "DISABLE_LAYER_NV_OPTIMUS_1": ""\n        }\n    }\n}\n' > /etc/vulkan/implicit_layer.d/nvidia_layers.json
+ENV VK_DRIVER_FILES=/etc/vulkan/icd.d/nvidia_icd.json
+ENV VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json
+
 # Embodied system dependencies
 RUN apt-get install -y --no-install-recommends \
     mesa-utils \
@@ -137,29 +146,32 @@ ENV PYTHONPATH=/opt/libero:$PYTHONPATH
 FROM embodied-common-image AS embodied-image
 
 # Install openvla env
-RUN uv venv openvla --python=${PYTHON_VERSION}
-RUN source switch_env openvla && UV_TORCH_BACKEND=auto uv sync --active
-RUN source switch_env openvla && uv sync --extra embodied --active
-RUN source switch_env openvla && uv pip install git+https://github.com/openvla/openvla.git --no-build-isolation
-RUN source switch_env openvla && uv pip install $FLASH_ATTENTION_WHEEL --no-build-isolation
-RUN source switch_env openvla && uv pip uninstall pynvml
+ARG VENV_TARGET=openvla
+RUN uv venv ${VENV_TARGET} --python ${PYTHON_VERSION}
+RUN source switch_env ${VENV_TARGET} && UV_TORCH_BACKEND=auto uv sync --active
+RUN source switch_env ${VENV_TARGET} && uv sync --extra embodied --active
+RUN source switch_env ${VENV_TARGET} && uv pip install git+https://github.com/openvla/openvla.git --no-build-isolation
+RUN source switch_env ${VENV_TARGET} && uv pip install $FLASH_ATTENTION_WHEEL --no-build-isolation
+RUN source switch_env ${VENV_TARGET} && uv pip uninstall pynvml
 
 # Install openvla-oft env
-RUN uv venv openvla-oft --python=${PYTHON_VERSION}
-RUN source switch_env openvla-oft && UV_TORCH_BACKEND=auto uv sync --active
-RUN source switch_env openvla-oft && uv sync --extra embodied --active
-RUN source switch_env openvla-oft && uv pip install git+https://github.com/moojink/openvla-oft.git --no-build-isolation
-RUN source switch_env openvla-oft && uv pip install $FLASH_ATTENTION_WHEEL --no-build-isolation
-RUN source switch_env openvla-oft && uv pip uninstall pynvml
+ARG VENV_TARGET=openvla-oft
+RUN uv venv ${VENV_TARGET} --python ${PYTHON_VERSION}
+RUN source switch_env ${VENV_TARGET} && UV_TORCH_BACKEND=auto uv sync --active
+RUN source switch_env ${VENV_TARGET} && uv sync --extra embodied --active
+RUN source switch_env ${VENV_TARGET} && uv pip install git+https://github.com/moojink/openvla-oft.git --no-build-isolation
+RUN source switch_env ${VENV_TARGET} && uv pip install $FLASH_ATTENTION_WHEEL --no-build-isolation
+RUN source switch_env ${VENV_TARGET} && uv pip uninstall pynvml
 
 # Install openpi env
-RUN uv venv openpi --python=${PYTHON_VERSION}
-RUN source switch_env openpi && UV_TORCH_BACKEND=auto uv sync --active
-RUN source switch_env openpi && uv sync --extra embodied --active
-RUN source switch_env openpi && GIT_LFS_SKIP_SMUDGE=1 uv pip install git+https://github.com/RLinf/openpi
-RUN source switch_env openpi && uv pip install metaworld==3.0.0
-RUN source switch_env openpi && uv pip uninstall pynvml
-RUN cp -r ${UV_PATH}/openpi/lib/python${PYTHON_VERSION}/site-packages/openpi/models_pytorch/transformers_replace/* ${UV_PATH}/openpi/lib/python${PYTHON_VERSION}/site-packages/transformers/
+ARG VENV_TARGET=openpi
+RUN uv venv ${VENV_TARGET} --python ${PYTHON_VERSION}
+RUN source switch_env ${VENV_TARGET} && UV_TORCH_BACKEND=auto uv sync --active
+RUN source switch_env ${VENV_TARGET} && uv sync --extra embodied --active
+RUN source switch_env ${VENV_TARGET} && GIT_LFS_SKIP_SMUDGE=1 uv pip install git+https://github.com/RLinf/openpi
+RUN source switch_env ${VENV_TARGET} && uv pip install metaworld==3.0.0
+RUN source switch_env ${VENV_TARGET} && uv pip uninstall pynvml
+RUN cp -r ${UV_PATH}/${VENV_TARGET}/lib/python${PYTHON_VERSION}/site-packages/openpi/models_pytorch/transformers_replace/* ${UV_PATH}/${VENV_TARGET}/lib/python${PYTHON_VERSION}/site-packages/transformers/
 
 RUN source switch_env openvla && download_assets
 RUN link_assets
@@ -179,23 +191,26 @@ ADD https://api.github.com/repos/${BEHAVIOR_REPO}/git/refs/heads/${BEHAVIOR_BRAN
 RUN git clone -b ${BEHAVIOR_BRANCH} --depth 1 https://github.com/${BEHAVIOR_REPO}.git /opt/BEHAVIOR-1K
 
 # Install openvla-oft env
-RUN uv venv openvla-oft --python=${PYTHON_VERSION}
-RUN source switch_env openvla-oft && UV_TORCH_BACKEND=auto uv sync --active
-RUN source switch_env openvla-oft && uv sync --extra embodied --active
-RUN source switch_env openvla-oft && cd /opt/BEHAVIOR-1K && UV_LINK_MODE=hardlink ./setup.sh --omnigibson --bddl --joylo --confirm-no-conda --accept-nvidia-eula --use-uv && cd -
-RUN source switch_env openvla-oft && uv pip install git+https://github.com/moojink/openvla-oft.git --no-build-isolation
-RUN source switch_env openvla-oft && uv pip install $FLASH_ATTENTION_WHEEL --no-build-isolation
-RUN source switch_env openvla-oft && uv pip install ml_dtypes==0.5.3 protobuf==3.20.3
-RUN source switch_env openvla-oft && cd && uv pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 && cd -
-RUN source switch_env openvla-oft && uv pip uninstall pynvml
+ARG VENV_TARGET=openvla-oft
+RUN uv venv ${VENV_TARGET} --python=${PYTHON_VERSION}
+RUN source switch_env ${VENV_TARGET} && UV_TORCH_BACKEND=auto uv sync --active
+RUN source switch_env ${VENV_TARGET} && uv sync --extra embodied --active
+RUN source switch_env ${VENV_TARGET} && cd /opt/BEHAVIOR-1K && UV_LINK_MODE=hardlink ./setup.sh --omnigibson --bddl --joylo --confirm-no-conda --accept-nvidia-eula --use-uv && cd -
+RUN source switch_env ${VENV_TARGET} && uv pip install git+https://github.com/moojink/openvla-oft.git --no-build-isolation
+RUN source switch_env ${VENV_TARGET} && uv pip install $FLASH_ATTENTION_WHEEL --no-build-isolation
+RUN source switch_env ${VENV_TARGET} && uv pip install ml_dtypes==0.5.3 protobuf==3.20.3
+# Ray is not compatible with click 8.3.0 on Python 3.10
+RUN source switch_env ${VENV_TARGET} && pip install click==8.2.1
+RUN source switch_env ${VENV_TARGET} && cd && uv pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 && cd -
+RUN source switch_env ${VENV_TARGET} && uv pip uninstall pynvml
 # omnigibson downloads assets to /tmp during initialization
-RUN source switch_env openvla-oft && python -c "import omnigibson as og; cfg={}; og.Environment(cfg); og.shutdown()" || exit 0
+RUN source switch_env ${VENV_TARGET} && python -c "import omnigibson as og; cfg={}; og.Environment(cfg); og.shutdown()" || exit 0
 
-RUN source switch_env openvla-oft && download_assets
+RUN source switch_env ${VENV_TARGET} && download_assets
 RUN link_assets
 
 # Set default env
-RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
+RUN echo "source ${UV_PATH}/${VENV_TARGET}/bin/activate" >> ~/.bashrc
 
 FROM ${BUILD_TARGET}-image AS final-image
 
