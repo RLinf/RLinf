@@ -72,7 +72,7 @@ algorithm:
   tau: 0.01  # Soft update coefficient for target networks
   alpha: 0.2  # Temperature parameter (if not using auto-tuning)
   auto_entropy_tuning: True  # Enable automatic entropy tuning
-  initial_alpha: 0.2  # Initial temperature value
+  initial_alpha: 0.01  # Initial temperature value
   target_entropy: -4  # Target entropy (-action_dim)
   alpha_lr: 3.0e-4  # Learning rate for temperature parameter
   

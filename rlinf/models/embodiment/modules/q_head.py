@@ -14,7 +14,7 @@
 
 import torch
 import torch.nn as nn
-from .utils import make_mlp
+from .utils import make_mlp, get_act_func
 
 class QHead(nn.Module):
     """
@@ -31,6 +31,8 @@ class QHead(nn.Module):
         self.hidden_size = hidden_size
         self.action_dim = action_dim
         self.use_mix_embedding_input = use_mix_embedding_input
+
+        self.nonlinearity = "relu"
         
         if use_mix_embedding_input:
             raise NotImplementedError
@@ -38,37 +40,26 @@ class QHead(nn.Module):
             self.net = make_mlp(
                 in_channels=hidden_size+action_dim, 
                 mlp_channels=hidden_dims+[output_dim, ], 
-                act_builder=nn.ReLU, 
+                act_builder=get_act_func(self.nonlinearity), 
                 last_act=False
             )
 
-        # self._init_weights()
+        self._init_weights(self.nonlinearity)
 
-    def _init_weights(self):
-        """Initialize weights using Xavier/Kaiming initialization"""
-        if self.use_mix_embedding_input:
-            # Initialize state and action projection layers
-            for module in [self.state_proj, self.action_proj]:
-                for layer in module:
-                    if isinstance(layer, nn.Linear):
-                        nn.init.kaiming_normal_(layer.weight, mode="fan_out", nonlinearity="relu")
-                        nn.init.zeros_(layer.bias)
-            
-            # Initialize fusion layers
-            for layer in [self.fusion_l1, self.fusion_l2, self.fusion_l3]:
-                nn.init.kaiming_normal_(layer.weight, mode="fan_out", nonlinearity="relu")
-                nn.init.zeros_(layer.bias)
-            
-            # Final layer with smaller initialization for stability
-            nn.init.uniform_(self.fusion_l4.weight, -3e-3, 3e-3)
-        else:
-            # Original initialization
-            for layer in [self.head_l1, self.head_l2, self.head_l3]:
-                nn.init.kaiming_normal_(layer.weight, mode="fan_out", nonlinearity="relu")
-                nn.init.zeros_(layer.bias)
-            
-            nn.init.uniform_(self.head_l4.weight, -3e-3, 3e-3)
-
+    def _init_weights(self, nonlinearity="relu"):
+        for m in self.net:
+            if isinstance(m, nn.Linear):
+                if m is self.net[-1]:
+                    nn.init.normal_(m.weight, mean=0.0, std=0.02)
+                    if m.bias is not None:
+                        nn.init.zeros_(m.bias)
+                else:
+                    nn.init.kaiming_normal_(
+                        m.weight, mode="fan_out", nonlinearity=nonlinearity
+                    )
+                    if m.bias is not None:
+                        nn.init.zeros_(m.bias)
+    
     def forward(self, state_features, action_features):
         """
         Forward pass for Q-value computation.

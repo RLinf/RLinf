@@ -76,11 +76,13 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
             output_dim = (
                 1 if self.config.value_type == "chunk_level" else self.num_action_chunks
             )
+            assert self.config.value_type == "chunk_level", f"{self.config.value_type=} is not supported"
+
             self.q_head = MultiQHead(
                 hidden_size=self.hidden_size,
                 action_dim=self.action_dim * self.num_action_chunks, 
                 hidden_dims=[256, 256, 256], 
-                num_q_heads=2, 
+                num_q_heads=10, 
                 use_mix_embedding_input=False
             )
 
@@ -513,8 +515,10 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
         logits_tensor[..., : self.vocab_size - self.config.n_action_bins] = -torch.inf
         logits_tensor[..., self.vocab_size :] = -torch.inf
 
-        processed_logits_tensor = logits_tensor / kwargs["temperature"]
-        top_k = min(kwargs["top_k"], processed_logits_tensor.size(-1))  # Safety check
+        temperature = kwargs["temperature"] if "temperature" in kwargs else 1
+        top_k = kwargs["top_k"] if "top_k" in kwargs else -1
+        processed_logits_tensor = logits_tensor / temperature
+        top_k = min(top_k, processed_logits_tensor.size(-1))  # Safety check
         if top_k > 0:
             logits_warper = TopKLogitsWarper(
                 top_k
@@ -522,9 +526,14 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
             processed_logits_tensor = logits_warper(None, processed_logits_tensor)
 
 
-        idxs = F.gumbel_softmax(
-            processed_logits_tensor, dim=-1
+        action_one_hot = F.gumbel_softmax(
+            processed_logits_tensor[
+                ..., 
+                self.vocab_size-self.config.n_action_bins:self.vocab_size
+            ], dim=-1, hard=True
         )# [B, act, ]
+        action_idxs = action_one_hot.argmax(dim=-1)
+        idxs = action_idxs + self.vocab_size - self.config.n_action_bins
 
         # assert torch.all(idxs >= 0) and torch.all(idxs < self.config.n_action_bins)
         # generated_ids = idxs + (self.vocab_size - self.config.n_action_bins)
@@ -532,7 +541,7 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
             idxs >= self.vocab_size - self.config.n_action_bins
         ) and torch.all(idxs < self.vocab_size)
 
-        chunk_action_tokens = idxs.reshape(-1, self.action_dim)
+        chunk_action_tokens = idxs.clone()
         
         action_logits = processed_logits_tensor.permute(
             0, 2, 1
@@ -542,15 +551,12 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
 
         chunk_logprobs = compute_logprobs_from_logits(logits=action_logits, target=idxs)
 
-        chunk_action_tokens = idxs.reshape(-1, self.num_action_chunks, self.action_dim)
         return chunk_action_tokens, chunk_logprobs, last_hidden_states[:, 0]
 
     def get_feature(self, obs, detach_encoder=False):
         input_ids = obs["input_ids"]
         attention_mask = obs["attention_mask"]
         pixel_values = obs["pixel_values"]
-
-        action_tokens = obs["action_tokens"]
 
         assert torch.all(input_ids[:, 0] == 1)
         assert torch.all(attention_mask[:, 0] == 1)
@@ -603,16 +609,21 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
         """
         if shared_feature is None:
             shared_feature = self.get_feature(obs, detach_encoder=detach_encoder)
+        if len(actions.shape) > 2:
+            actions = actions.reshape(actions.shape[0], -1)
         
         # actions to some continuous value. just for q-values, no physically meaning
-        float_actions = ((
-            (actions - (self.vocab_size - self.config.n_action_bins)) / self.config.n_action_bins
-        ) - 0.5) * 2
+        # continuous_actions = ((
+        #     (actions - (self.vocab_size - self.config.n_action_bins)) / self.config.n_action_bins
+        # ) - 0.5) * 2
+        # continuous_actions = continuous_actions.to(shared_feature.dtype)
 
+        action_embeddings = self.get_input_embeddings()(actions).mean(dim=-1) # [bsz, num-action-dims, hidden-dim] -> [bsz, num-action-dims]
 
         if detach_encoder:
             shared_feature = shared_feature.detach()
-        return self.q_head(state_features=shared_feature, action_features=float_actions)
+        q_values= self.q_head(state_features=shared_feature, action_features=action_embeddings)
+        return q_values
     
 
 

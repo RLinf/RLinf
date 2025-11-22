@@ -14,7 +14,7 @@
 
 import torch
 import torch.nn as nn
-from .utils import make_mlp
+from .utils import make_mlp, init_mlp_weights
 from functools import partial
 from torchvision.models.resnet import ResNet, BasicBlock
 
@@ -222,6 +222,8 @@ class ResNetEncoder(nn.Module):
             nn.LayerNorm(self.out_dim), 
             nn.Tanh()
         )
+        init_mlp_weights(self.mlp, nonlinearity="tanh")
+        
 
     def _load_pretrained_weights(self):
         model_dict = torch.load(self.model_cfg["pretrained_ckpt_path"])

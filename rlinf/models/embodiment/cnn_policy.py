@@ -21,7 +21,7 @@ from typing import List, Dict, Any, Tuple
 import warnings
 
 from .modules.nature_cnn import NatureCNN, PlainConv, ResNetEncoder
-from .modules.utils import layer_init, make_mlp
+from .modules.utils import layer_init, make_mlp, init_mlp_weights
 from .modules.value_head import ValueHead
 from .modules.q_head import MultiQHead
 from .base_policy import BasePolicy
@@ -92,6 +92,7 @@ class CNNPolicy(BasePolicy):
             act_builder=nn.Tanh, 
             use_layer_norm=True
         )
+        init_mlp_weights(self.state_proj, nonlinearity="tanh")
         
         # self.mlp = make_mlp(self.encoder.out_dim+self.state_dim, [512, 256], last_act=True)
         # self.actor_mean = nn.Linear(256, self.action_dim)
@@ -101,8 +102,9 @@ class CNNPolicy(BasePolicy):
             act_builder=nn.Tanh, 
             use_layer_norm=True
         )
+        init_mlp_weights(self.mix_proj, nonlinearity="tanh")
 
-        self.actor_mean = nn.Linear(256, self.cfg.action_dim) 
+        self.actor_mean = layer_init(nn.Linear(256, self.cfg.action_dim), std=0.01*np.sqrt(2))
 
         assert self.cfg.add_value_head + self.cfg.add_q_head <= 1
         if self.cfg.add_value_head:
@@ -124,7 +126,7 @@ class CNNPolicy(BasePolicy):
         if self.cfg.independent_std:
             self.actor_logstd = nn.Parameter(torch.ones(1, self.cfg.action_dim) * -0.5)
         else:
-            self.actor_logstd = nn.Linear(256, self.cfg.action_dim)
+            self.actor_logstd = layer_init(nn.Linear(256, self.cfg.action_dim))
 
         if self.cfg.action_scale is not None:
             l, h = self.cfg.action_scale

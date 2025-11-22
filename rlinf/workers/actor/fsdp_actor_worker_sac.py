@@ -15,12 +15,17 @@
 import gc
 import os
 
+import itertools
 import numpy as np
 import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
 # import rlinf.algorithms.advantages_sac  # noqa: F401
 from rlinf.data.replay_buffer import SACReplayBuffer, concat_batch
+from rlinf.data.io_struct.utils import (
+    put_tensor_device, 
+    split_dict_to_chunk
+)
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
@@ -61,7 +66,6 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
             for name, param in self.model.named_parameters():
                 if param.requires_grad:
                     if "q_head" in name:
-                        print(name)
                         params_critic.append(param)
                     else:
                         params_actor.append(param)
@@ -96,10 +100,14 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
             self.alpha_type = "exp" # "exp"
             self.alpha_type = "softplus"
             if self.alpha_type == "exp":
-                self.base_alpha = torch.zeros(1, requires_grad=True, device=self.device)
+                self.base_alpha = torch.nn.Parameter(
+                    np.log(self.cfg.algorithm.get("initial_alpha", 1))
+                    * torch.ones(1, device=self.device), requires_grad=True
+                )
             elif self.alpha_type == "softplus":
                 self.base_alpha = torch.nn.Parameter(
-                    np.log(np.exp(0.01)-1) * torch.ones(1, device=self.device), requires_grad=True
+                    np.log(np.exp(self.cfg.algorithm.get("initial_alpha", 0.01))-1)
+                    * torch.ones(1, device=self.device), requires_grad=True
                 )
             else:
                 raise NotImplementedError
@@ -114,8 +122,10 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                 alpha = self.base_alpha.exp()
             elif self.alpha_type == "softplus":
                 alpha = torch.nn.functional.softplus(self.base_alpha)
+            else:
+                raise NotImplementedError
         else:
-            alpha = self.cfg.algorithm.get("alpha", 0.2)
+            alpha = torch.Tensor(self.cfg.algorithm.get("alpha", 0.2)).to(dtype=self.torch_dtype, device=self.device)
         return alpha
 
     @property
@@ -146,12 +156,17 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         assert self.target_model_initialized
         
         with torch.no_grad():
-            online_params = self.model.parameters()
-            target_params = self.target_model.parameters()
+            online_params = self.model.named_parameters()
+            target_params = self.target_model.named_parameters()
             
-            for online_param, target_param in zip(online_params, target_params):
-                target_param.data.mul_(1.0 - tau)
-                target_param.data.add_(online_param.data * tau)
+            for (name1, online_param), (name2, target_param) in zip(online_params, target_params):
+                assert name1 == name2
+                if "q_head" not in name1:
+                    target_param.data.mul_(0.0)
+                    target_param.data.add_(online_param.data)
+                else:
+                    target_param.data.mul_(1.0 - tau)
+                    target_param.data.add_(online_param.data * tau)
 
     async def recv_rollout_batch(self):
         await super().recv_rollout_batch()
@@ -172,6 +187,84 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         # Just compute basic rollout metrics without advantages/returns
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
         return rollout_metrics
+    
+    def forward_critic(self, batch):
+        rewards = batch["rewards"].to(self.torch_dtype)
+        curr_obs = batch["transitions"]["obs"]
+        next_obs = batch["transitions"]["next_obs"]
+        with torch.no_grad():
+
+            next_state_actions, next_state_log_pi, shared_feature = self.model(
+                "sac_forward", 
+                obs=next_obs, 
+            )
+            next_state_log_pi = next_state_log_pi.sum(dim=-1, keepdim=True)
+            
+            all_qf_next_target = self.target_model(
+                "sac_q_forward", 
+                obs=next_obs, actions=next_state_actions, 
+                shared_feature=shared_feature, 
+            )
+            if self.critic_subsample_size > 0:
+                sample_idx = torch.randint(
+                    0, all_qf_next_target.shape[0], self.critic_subsample_size, 
+                    generator=self.critic_sample_generator, device=self.device
+                )
+                all_qf_next_target = all_qf_next_target[sample_idx]
+                
+            min_qf_next_target, _ = torch.min(
+                all_qf_next_target, 
+                dim=1, keepdim=True
+            )
+
+            if self.cfg.algorithm.get("backup_entropy", True):
+                min_qf_next_target = min_qf_next_target - self.alpha * next_state_log_pi
+                min_qf_next_target = min_qf_next_target.to(dtype=self.torch_dtype)
+            target_q_values = rewards.sum(dim=-1, keepdim=True) + self.cfg.algorithm.gamma * min_qf_next_target # [bsz, 1]
+            
+
+        all_data_q_values = self.model(
+            "sac_q_forward", 
+            obs=curr_obs, 
+            actions=batch["action"] if "action" in batch else batch["action_tokens"]
+        ) # [num-q, bsz, 1]
+
+        critic_loss = F.mse_loss(
+            all_data_q_values, 
+            target_q_values.expand_as(all_data_q_values)
+        )
+        return critic_loss
+    
+    def forward_actor(self, batch):
+        curr_obs = batch["transitions"]["obs"]
+        pi, log_pi, shared_feature = self.model(
+            "sac_forward", obs=curr_obs
+        )
+        log_pi = log_pi.sum(dim=-1, keepdim=True)
+        all_qf_pi = self.model(
+            "sac_q_forward", 
+            obs=curr_obs, actions=pi, 
+            shared_feature=shared_feature, 
+            detach_encoder=True
+        )
+
+        # min_qf_pi = torch.mean(all_qf_pi, dim=1, keepdim=True)
+        min_qf_pi, _ = torch.min(all_qf_pi, dim=1, keepdim=True)
+        actor_loss = ((self.alpha*log_pi) - min_qf_pi).mean()
+        return actor_loss
+    
+    def forward_alpha(self, batch):
+        curr_obs = batch["transitions"]["obs"]
+        with torch.no_grad():
+            _, log_pi, _ = self.model(
+                "sac_forward", obs=curr_obs
+            )
+            log_pi = log_pi.sum(dim=-1, keepdim=True)
+
+        alpha = self.compute_alpha()
+        alpha_loss = (-alpha * (log_pi.mean() + self.target_entropy))
+        return alpha_loss
+        
 
     def run_training(self):
         """SAC training using replay buffer"""
@@ -180,141 +273,100 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
             self.load_fsdp_optimizer(self.device)
 
         # Check if replay buffer has enough samples
-        min_buffer_size = self.cfg.algorithm.get("min_buffer_size", 100)
+        min_buffer_size = self.cfg.algorithm.get("min_buffer_size", 100) // self._world_size
         if not self.replay_buffer.is_ready(min_buffer_size):
             self.log_on_first_rank(f"Replay buffer size {len(self.replay_buffer)} < {min_buffer_size}, skipping training")
             return {}
+
+        assert (
+            self.cfg.actor.global_batch_size
+            % (self.cfg.actor.micro_batch_size * self._world_size)
+            == 0
+        )
+        self.gradient_accumulation = (
+            self.cfg.actor.global_batch_size
+            // self.cfg.actor.micro_batch_size
+            // self._world_size
+        )
 
         self.model.train()
         metrics = {}
         
         # Number of gradient updates per training call
         num_updates = self.cfg.algorithm.get("num_updates_per_step", 1)
-        batch_size = self.cfg.actor.global_batch_size
         
+        global_batch_size_per_rank = self.cfg.actor.global_batch_size // self._world_size
+
         for update_idx in range(num_updates):
             # Sample batch from replay buffer
 
             if self.demo_buffer is not None:
-                replay_batch = self.replay_buffer.sample(batch_size // 2)
-                demo_batch = self.demo_buffer.sample(batch_size // 2)
-                batch = concat_batch(replay_batch, demo_batch)
+                replay_batch = self.replay_buffer.sample(global_batch_size_per_rank // 2)
+                demo_batch = self.demo_buffer.sample(global_batch_size_per_rank // 2)
+                global_batch = concat_batch(replay_batch, demo_batch)
             else:
-                batch = self.replay_buffer.sample(batch_size)
+                global_batch = self.replay_buffer.sample(global_batch_size_per_rank)
             
-            # Move batch to device
-            for k, v in batch.items():
-                if isinstance(v, torch.Tensor):
-                    batch[k] = v.to(self.device)
-                elif isinstance(v, dict):
-                    batch[k] = {
-                        sub_k: sub_v.to(self.device) if isinstance(sub_v, torch.Tensor) else sub_v
-                        for sub_k, sub_v in v.items()
-                    }
-            
-            curr_obs = batch["transitions"]["obs"]
-            next_obs = batch["transitions"]["next_obs"]
-            with torch.no_grad():
 
-                next_state_actions, next_state_log_pi, shared_feature = self.model(
-                    "sac_forward", 
-                    obs=next_obs, 
-                )
-                next_state_log_pi = next_state_log_pi.sum(dim=-1, keepdim=True)
-                
-                all_qf_next_target = self.target_model(
-                    "sac_q_forward", 
-                    obs=next_obs, actions=next_state_actions, 
-                    shared_feature=shared_feature, 
-                )
-                if self.critic_subsample_size > 0:
-                    sample_idx = torch.randint(
-                        0, all_qf_next_target.shape[0], self.critic_subsample_size, 
-                        generator=self.critic_sample_generator, device=self.device
-                    )
-                    all_qf_next_target = all_qf_next_target[sample_idx]
-                    
-                min_qf_next_target, _ = torch.min(
-                    all_qf_next_target, 
-                    dim=1, keepdim=True
-                )
-
-                if self.cfg.algorithm.get("backup_entropy", True):
-                    min_qf_next_target = min_qf_next_target - self.alpha * next_state_log_pi
-                target_q_values = batch["rewards"] + self.cfg.algorithm.gamma * min_qf_next_target # [bsz, 1]
-
-            
-            all_data_q_values = self.model(
-                "sac_q_forward", 
-                obs=curr_obs, actions=batch["action"] 
-            ) # [num-q, bsz, 1]
-
-            critic_loss = F.mse_loss(
-                all_data_q_values, 
-                target_q_values.expand_as(all_data_q_values)
+            train_micro_batch_list = split_dict_to_chunk(
+                global_batch, 
+                global_batch_size_per_rank // self.cfg.actor.micro_batch_size
             )
+
             self.qf_optimizer.zero_grad()
-            critic_loss.backward()
+            gbs_critic_loss = 0
+            for batch in train_micro_batch_list:
+                batch = put_tensor_device(batch, device=self.device)
+                critic_loss = self.forward_critic(batch) / self.gradient_accumulation
+                critic_loss.backward()
+                gbs_critic_loss += critic_loss.item()
             self.qf_optimizer.step()
 
             if update_idx % self.critic_actor_ratio == 0:
-                pi, log_pi, shared_feature = self.model(
-                    "sac_forward", obs=curr_obs
-                )
-                log_pi = log_pi.sum(dim=-1, keepdim=True)
-                all_qf_pi = self.model(
-                    "sac_q_forward", 
-                    obs=curr_obs, actions=pi, 
-                    shared_feature=shared_feature, 
-                    detach_encoder=True
-                )
-                # mean_qf_pi = torch.mean(all_qf_pi, dim=1, keepdim=True)
-                # actor_loss = ((self.alpha*log_pi) - mean_qf_pi).mean()
-
-                min_qf_pi = torch.mean(all_qf_pi, dim=1, keepdim=True)
-                actor_loss = ((self.alpha*log_pi) - min_qf_pi).mean()
-                
-                # Backward pass and optimization
                 self.optimizer.zero_grad()
-                actor_loss.backward()
+                gbs_actor_loss = 0
+                for batch in train_micro_batch_list:
+                    batch = put_tensor_device(batch, device=self.device)
+                    actor_loss = self.forward_actor(batch) / self.gradient_accumulation
+                    actor_loss.backward()
+                    gbs_actor_loss += actor_loss.item()
                 self.optimizer.step()
-                
-                # Update temperature parameter if using automatic entropy tuning
+                    
+                    # Update temperature parameter if using automatic entropy tuning
                 if hasattr(self, 'base_alpha') and self.base_alpha is not None:
-                    with torch.no_grad():
-                        _, log_pi, _ = self.model(
-                            "sac_forward", obs=curr_obs
-                        )
-                        log_pi = log_pi.sum(dim=-1, keepdim=True)
-
-                    alpha_loss = (-self.compute_alpha() * (log_pi.mean() + self.target_entropy))
-
                     self.alpha_optimizer.zero_grad()
-                    alpha_loss.backward()
+                    gbs_actor_loss = 0
+                    for batch in train_micro_batch_list:
+                        batch = put_tensor_device(batch, device=self.device)
+                        alpha_loss = self.forward_alpha(batch) / self.gradient_accumulation
+                        alpha_loss.backward()
+                        gbs_actor_loss += alpha_loss.item()
                     torch.distributed.all_reduce(self.base_alpha.grad, op=torch.distributed.ReduceOp.AVG)
                     self.alpha_optimizer.step()
-            
+                    
+                
+                loss = gbs_actor_loss + gbs_critic_loss
+                # Collect metrics
+                metrics_data = {
+                    "sac/total_loss": loss,
+                    "sac/alpha": self.alpha, 
+                    # "actor/grad_norm": grad_norm.detach().item(),
+                    "actor/lr": self.optimizer.param_groups[0]["lr"],
+                    "critic/lr": self.qf_optimizer.param_groups[0]["lr"], 
+                    "sac/actor_loss": gbs_actor_loss, 
+                    "sac/critic_loss": gbs_critic_loss, 
+                    # "sac/qf_values": all_data_q_values.mean().detach().item(), 
+                    # "sac/current_q": min_qf_pi.mean().detach().item(), 
+                    "replay_buffer/size": len(self.replay_buffer),
+                    "replay_buffer/utilization": len(self.replay_buffer) / self.replay_buffer.capacity
+                }
+                
+                append_to_dict(metrics, metrics_data)
+
             # # Soft update target network
             if self.target_model_initialized and self.update_step % self.cfg.algorithm.get("target_update_freq", 1) == 0:
-                self.soft_update_target_model()
-                
-            loss = actor_loss + critic_loss
-            # Collect metrics
-            metrics_data = {
-                "sac/total_loss": loss.detach().item(),
-                "sac/alpha": self.alpha, 
-                # "actor/grad_norm": grad_norm.detach().item(),
-                "actor/lr": self.optimizer.param_groups[0]["lr"],
-                "critic/lr": self.qf_optimizer.param_groups[0]["lr"], 
-                "sac/actor_loss": actor_loss.detach().item(), 
-                "sac/critic_loss": critic_loss.detach().item(), 
-                "sac/qf_values": all_data_q_values.mean().detach().item(), 
-                "sac/current_q": min_qf_pi.mean().detach().item(), 
-                "replay_buffer/size": len(self.replay_buffer),
-                "replay_buffer/utilization": len(self.replay_buffer) / self.replay_buffer.capacity
-            }
+                self.soft_update_target_model()    
             
-            append_to_dict(metrics, metrics_data)
             self.update_step += 1
 
         # Average metrics across updates

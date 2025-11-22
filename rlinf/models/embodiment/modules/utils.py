@@ -46,3 +46,17 @@ def make_mlp(in_channels, mlp_channels, act_builder=nn.ReLU, last_act=True, use_
             module_list.append(act_builder())
         c_in = c_out
     return nn.Sequential(*module_list)
+
+def init_mlp_weights(mlp, nonlinearity):
+    for m in mlp:
+        if isinstance(m, nn.Linear):
+            if m is mlp[-1]:
+                nn.init.normal_(m.weight, mean=0.0, std=0.02)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            else:
+                nn.init.kaiming_normal_(
+                    m.weight, mode="fan_out", nonlinearity=nonlinearity
+                )
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
