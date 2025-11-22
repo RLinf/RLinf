@@ -52,7 +52,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
             and f"{self.unnorm_key}_no_noops" in self.norm_stats
         ):
             self.unnorm_key = f"{self.unnorm_key}_no_noops"
-        assert self.unnorm_key in self.norm_stats, (
+        assert self.unnorm_key in self.norm_stats or self.unnorm_key == "fetch_minmax", (
             f"Action un-norm key {self.unnorm_key} not found in VLA `norm_stats`!"
         )
 
@@ -158,9 +158,16 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
 
     def _unnormalize_actions(self, normalized_actions, unnorm_key=None):
         """Unnormalize actions using dataset statistics"""
-        action_norm_stats = self.get_action_stats(unnorm_key)
+        action_norm_stats = self.get_action_stats(unnorm_key) if unnorm_key != "fetch_minmax" else None
 
-        if ACTION_PROPRIO_NORMALIZATION_TYPE == NormalizationType.BOUNDS:
+        if unnorm_key == "fetch_minmax":
+            action_dim = normalized_actions.shape[-1]
+            mask = np.ones_like(action_dim, dtype=bool)
+            action_high, action_low = (
+                np.array([1.0]*action_dim),
+                np.array([0.0]*action_dim),
+            )
+        elif ACTION_PROPRIO_NORMALIZATION_TYPE == NormalizationType.BOUNDS:
             mask = action_norm_stats.get(
                 "mask", np.ones_like(action_norm_stats["min"], dtype=bool)
             )
@@ -433,9 +440,9 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
         )
         self.bins = np.linspace(-1, 1, model_config.n_action_bins)
         self.bin_centers = (self.bins[:-1] + self.bins[1:]) / 2.0
-        action_norm_stats = self._get_action_stats()
-        self.min_action = np.array(action_norm_stats["q01"])
-        self.max_action = np.array(action_norm_stats["q99"])
+        # action_norm_stats = self._get_action_stats()
+        # self.min_action = np.array(action_norm_stats["q01"])
+        # self.max_action = np.array(action_norm_stats["q99"])
         self.action_scale = 1.0
         self.policy_setup = cfg.actor.model.get("policy_setup", None)
         self.max_prompt_length = cfg.runner.max_prompt_length

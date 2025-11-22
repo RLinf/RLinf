@@ -22,7 +22,7 @@ def main(cfg) -> None:
     env.is_start = True
     env.step()
     env.flush_video("test-mshab-wait")  # 保存wait 10步
-    a = np.random.random((cfg.env.train.num_envs, cfg.action_dim))  # fetch robot's action dim = 13
+    a = np.random.random((cfg.env.train.num_envs, cfg.actor.model.action_dim))  # fetch robot's action dim = 13
     for i in tqdm(range(1, 30)):
         # a = np.zeros((10, 13))
         env.step(a)

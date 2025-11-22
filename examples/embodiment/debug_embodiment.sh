@@ -31,7 +31,7 @@ export MS_ASSET_DIR="/mnt/mnt/public/mjwei/download_models/arth-shukla/ReplicaCA
 
 
 if [ -z "$1" ]; then
-    CONFIG_NAME="maniskillhab_ppo_mlp"
+    CONFIG_NAME="maniskillhab_ppo_openvlaoft"
 else
     CONFIG_NAME=$1
 fi

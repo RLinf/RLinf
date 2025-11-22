@@ -228,6 +228,29 @@ class PickSubtaskTrainEnv(SubtaskTrainEnv):
         return self.compute_dense_reward(obs=obs, action=action, info=info) / max_reward
 
 
+    # -------------------------------------------------------------------------------------------------
+    # INPUT: LANGUAGE INSTRUCTION
+    # -------------------------------------------------------------------------------------------------
+
+    def get_language_instruction(self):
+        # select_carrot = [self.carrot_names[idx] for idx in self.select_carrot_ids]
+        # select_plate = [self.plate_names[idx] for idx in self.select_plate_ids]
+
+        # instruct = []
+        # for idx in range(self.num_envs):
+        #     carrot_name = self.model_db_carrot[select_carrot[idx]]["name"]
+        #     plate_name = self.model_db_plate[select_plate[idx]]["name"]
+        #     instruct.append(f"put {carrot_name} on {plate_name}")
+        # breakpoint()
+        # self.subtask_objs
+        obj_name = ["pick up this object."] * self.num_envs
+        
+        instruct = []
+        for idx in range(self.num_envs):
+            instruct.append(f"pick {obj_name}.") 
+
+        return instruct
+
     def evaluate(self):
         """
         rename the grasped and add a state consecutive_grasp for holding pick for more than 5time steps

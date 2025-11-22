@@ -174,21 +174,20 @@ class ManiskillHABEnv(gym.Env):
         fetch_head_depth = raw_obs["sensor_data"]["fetch_head"]["depth"].permute(0, 3, 1, 2)  # [B, C, H, W]
         fetch_hand_depth = raw_obs["sensor_data"]["fetch_hand"]["depth"].permute(0, 3, 1, 2)  # [B, C, H, W]
         extracted_obs = {
-            "images": fetch_head_depth,
             "fetch_head_depth": fetch_head_depth,
             "fetch_hand_depth": fetch_hand_depth,
             "fetch_head_rgb": fetch_head_rgb,
             "fetch_hand_rgb": fetch_hand_rgb,
             "state": torch.cat([_agent_state for _agent_state in raw_obs["agent"].values()], dim=1),  # cat qpos and qvel together
             "extra": extra_obs,
-            # "task_descriptions": self.instruction
+            "task_descriptions": self.instruction,
         }
-        # breakpoint()
         """
         mjwei NOTE: the reason of stacking frame (repeat 3 times) is unknown yet!
         """
         for sk in self.cfg.stacking_keys:
             extracted_obs[sk] = extracted_obs[sk].unsqueeze(1).repeat(1, self.cfg.frame_stack_num, 1, 1, 1)
+        extracted_obs["images"] = extracted_obs["fetch_head_rgb"]
         return extracted_obs
 
     def _calc_step_reward(self, reward, info):

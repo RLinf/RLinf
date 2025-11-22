@@ -28,7 +28,7 @@ export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 export MS_ASSET_DIR="/mnt/mnt/public/mjwei/download_models/arth-shukla/ReplicaCAD"
 
 if [ -z "$1" ]; then
-    CONFIG_NAME="maniskillhab_ppo_mlp"
+    CONFIG_NAME="maniskillhab_ppo_openvlaoft"
 else
     CONFIG_NAME=$1
 fi
