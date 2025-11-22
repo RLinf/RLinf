@@ -19,7 +19,7 @@ For example:
 - Configs for training a **VLA** agent in embodied tasks live under
   ``examples/embodiment/config``.
 - Configs for training an **LLM** on math reasoning live under
-  ``examples/math/config``.
+  ``examples/reasoning/config/math``.
 
 As a starting point, we recommend getting familiar with the YAML structure of
 these examples, then iterating toward your custom task. Key options include
