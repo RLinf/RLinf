@@ -66,6 +66,34 @@
    - 动作 token 化与反 token 化  
    - 带 Value Head 的 Critic 功能
 
+模型下载
+--------------
+
+在开始训练之前，你需要下载相应的预训练模型：
+
+.. code:: bash
+
+   # 使用下面任一方法下载模型
+   # 方法 1: 使用 git clone
+   git lfs install
+   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-traj1
+   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1
+   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-object-traj1
+   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-goal-traj1
+   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
+
+   # 方法 2: 使用 huggingface-hub
+   pip install huggingface-hub
+   hf download Haozhan72/Openvla-oft-SFT-libero10-traj1
+   hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1
+   hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1
+   hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1
+   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
+
+下载完成后，请确保在配置yaml文件中正确指定模型路径。
+
 运行脚本
 -------------------
 

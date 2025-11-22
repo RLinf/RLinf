@@ -74,6 +74,34 @@ Algorithm
 
    - Value head for critic function
 
+Model Download
+--------------
+
+Before starting training, you need to download the corresponding pretrained model:
+
+.. code:: bash
+
+   # Download the model (choose either method)
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-traj1
+   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1
+   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-object-traj1
+   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-goal-traj1
+   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
+
+   # Method 2: Using huggingface-hub
+   pip install huggingface-hub
+   hf download Haozhan72/Openvla-oft-SFT-libero10-traj1
+   hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1
+   hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1
+   hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1
+   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
+
+After downloading, make sure to correctly specify the model path in the configuration yaml file.
+
 Running the Script
 -------------------
 
@@ -197,28 +225,30 @@ Visualization and Results
 LIBERO Results
 ~~~~~~~~~~~~~~~~~~~
 
-Furthermore, we trained OpenVLA-OFT in the LIBERO environment using the GRPO algorithm. The improvements achieved through our RL fine-tuning are shown below:
+For LIBERO benchmark, we further train the publicly released OpenVLA-OFT model (one-trajectory fine-tuned version) from `SimpleVLA-RL https://huggingface.co/Haozhan72/models?search=libero`_ using the GRPO algorithm. The improvements achieved through our RL fine-tuning are shown below:
+.. note:: 
+   You can click the number to get the corresponding model for each task, for example the `94.4%` for `RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-long` below.
 
 .. list-table:: **OpenVLA-OFT model results on LIBERO**
    :header-rows: 1
 
    * - Model
-     - `Spatial <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-spatial>`_
-     - `Goal <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-goal>`_
-     - `Object <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-object>`_
-     - `Long <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-long>`_
+     - Spatial
+     - Goal
+     - Object
+     - Long
      - Average
-   * - OpenVLA-OFT-SFT (one-shot)
-     - 56.5%
-     - 45.6%
-     - 25.6%
-     - 9.7%
+   * - OpenVLA-OFT-SFT (one-traj)
+     - `56.5% https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1`_
+     - `45.6% https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-goal-traj1`_
+     - `25.6% https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-object-traj1`_
+     - `9.7% https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-traj1`_
      - 34.4%
    * - OpenVLA-OFT-RLinf
-     - **99.0%**
-     - **99.0%**
-     - **99.0%**
-     - **94.4%**
+     - `**99.0%** <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-spatial>`_
+     - `**99.0%** <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-goal>`_
+     - `**99.0%** <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-object>`_
+     - `**94.4%** <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-long>`_
      - **97.9%**
    * - Improvement
      - +42.5%
@@ -226,6 +256,42 @@ Furthermore, we trained OpenVLA-OFT in the LIBERO environment using the GRPO alg
      - +73.4%
      - +84.7%
      - +63.5%
+
+ In order to show the RLinf’s capability for large-scale multi-task RL. We train a single unified model on all 130 tasks in LIBERO and evaluate its performance across the five LIBERO task suites: LIBERO-Spatial, LIBERO-Goal, LIBERO-Object, LIBERO-Long, and LIBERO-90. 
+.. note:: 
+   This unified base model is fine-tuned by ourselves. For more details, please refer to `paper https://arxiv.org/abs/2510.06710`_.
+
+.. list-table:: **Evaluation results of the unified model on the five LIBERO task groups**
+   :header-rows: 1
+
+   * - Model
+     - Spatial
+     - Goal
+     - Object
+     - Long
+     - 90
+     - Average
+   * - `OpenVLA-OFT (Base) https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora`_
+     - 72.18%
+     - 64.06%
+     - 71.48%
+     - 48.44%
+     - 70.97%
+     - 65.43
+   * - `OpenVLA-OFT (RLinf-GRPO) https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130`_
+     - **99.40%**
+     - **98.79%**
+     - **99.80%**
+     - **93.95%**
+     - **98.59%**
+     - **98.11%**
+   * - Improvement
+     - +27.22%
+     - +34.73%
+     - +28.32%
+     - +45.51%
+     - +27.62%
+     - +32.68%
 
 For the Libero experiment, we were inspired by 
 `SimpleVLA <https://github.com/PRIME-RL/SimpleVLA-RL>`_, 
