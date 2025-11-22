@@ -224,7 +224,7 @@ ManiSkill3 结果
      </div>
    </div>
 
-我们在训练场景和 OOD（分布外）场景进行了评估。其中 OOD 包括 Vision、Semantic、Position。  
+我们在训练场景和 OOD（分布外）场景进行了评估。其中 OOD 包括 Vision、Semantic、Execution。  
 每类任务最优模型以粗体标注。
 
 .. note::
@@ -238,7 +238,7 @@ ManiSkill3 结果
      - 训练场景
      - Vision
      - Semantic
-     - Position
+     - Execution
      - 平均值
    * - OpenVLA(Base)
      - 53.91%

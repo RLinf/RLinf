@@ -225,38 +225,6 @@ Visualization and Results
 LIBERO Results
 ~~~~~~~~~~~~~~~~~~~
 
-For LIBERO benchmark, we further train the publicly released OpenVLA-OFT model (one-trajectory fine-tuned version) from `SimpleVLA-RL https://huggingface.co/Haozhan72/models?search=libero`_ using the GRPO algorithm. The improvements achieved through our RL fine-tuning are shown below:
-.. note:: 
-   You can click the number to get the corresponding model for each task, for example the `94.4%` for `RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-long` below.
-
-.. list-table:: **OpenVLA-OFT model results on LIBERO**
-   :header-rows: 1
-
-   * - Model
-     - Spatial
-     - Goal
-     - Object
-     - Long
-     - Average
-   * - OpenVLA-OFT-SFT (one-traj)
-     - `56.5% https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1`_
-     - `45.6% https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-goal-traj1`_
-     - `25.6% https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-object-traj1`_
-     - `9.7% https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-traj1`_
-     - 34.4%
-   * - OpenVLA-OFT-RLinf
-     - `**99.0%** <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-spatial>`_
-     - `**99.0%** <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-goal>`_
-     - `**99.0%** <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-object>`_
-     - `**94.4%** <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-long>`_
-     - **97.9%**
-   * - Improvement
-     - +42.5%
-     - +53.4%
-     - +73.4%
-     - +84.7%
-     - +63.5%
-
  In order to show the RLinf’s capability for large-scale multi-task RL. We train a single unified model on all 130 tasks in LIBERO and evaluate its performance across the five LIBERO task suites: LIBERO-Spatial, LIBERO-Goal, LIBERO-Object, LIBERO-Long, and LIBERO-90. 
 .. note:: 
    This unified base model is fine-tuned by ourselves. For more details, please refer to `paper https://arxiv.org/abs/2510.06710`_.

@@ -235,7 +235,7 @@ Running on a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) a
    </div>
 
 
-We evaluated on both training and OOD(out-of-distribution) scenarios. The OOD setting includes variations on Vision, Semantic, and Position.
+We evaluated on both training and OOD(out-of-distribution) scenarios. The OOD setting includes variations on Vision, Semantic, and Execution.
 The best-performing model for each task is highlighted in bold.
 
 .. note:: 
@@ -253,7 +253,7 @@ The best-performing model for each task is highlighted in bold.
      - Training Setting(IND)
      - Vision (OOD)
      - Semantic (OOD)
-     - Position (OOD)
+     - Execution (OOD)
      - Average of OOD
    * - |huggingface| `OpenVLA (Base) <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_
      - 53.91%
