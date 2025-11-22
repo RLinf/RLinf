@@ -91,9 +91,9 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
           <ul>
             <li>Qwen2.5-VL</li>
           </ul>
-          <li><b>Custom Models</b></li>
+          <li><b>自定义模型</b></li>
           <ul>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/XXXXXXXXX.html">MLP-Policy</a> ✅</li>
+            <li>MLP-Policy ✅</li>
           </ul>
         </ul>
       </td>

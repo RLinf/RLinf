@@ -93,7 +93,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
           </ul>
           <li><b>Custom Models</b></li>
           <ul>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/XXXXXXXXX.html">MLP-Policy</a> ✅</li>
+            <li>MLP-Policy ✅</li>
           </ul>
         </ul>
       </td>
