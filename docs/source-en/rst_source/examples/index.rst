@@ -81,7 +81,7 @@ as well as reinforcement learning training examples on real robots.
          <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/gr00t.html" target="_blank" style="text-decoration: underline; color: blue;">
           <b>RL on GR00T-N1.5 Model</b>
          </a><br>
-         RL training on cross-embodiment dual system model.
+         Support GR00T-N1.5 RL fine-tuning.
        </p>
      </div>
    </div>
@@ -236,6 +236,6 @@ Thanks to this decoupled design, workers can be flexibly and dynamically schedul
    behavior
    metaworld
    pi0
+   gr00t
    reasoning
    coding_online_rl
-   gr00t

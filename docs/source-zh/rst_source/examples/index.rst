@@ -78,7 +78,7 @@
          <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/gr00t.html" target="_blank" style="text-decoration: underline; color: blue;">
           <b>GR00T-N1.5模型强化学习训练</b>
          </a><br>
-         支持不同具身结构的双系统模型强化学习训练
+         支持GR00T-N1.5强化学习微调
        </p>
      </div>
    </div>
@@ -231,6 +231,6 @@ RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训
    behavior
    metaworld
    pi0
+   gr00t
    reasoning
    coding_online_rl
-   gr00t

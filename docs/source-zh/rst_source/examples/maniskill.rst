@@ -66,6 +66,26 @@
    - 动作 token 化与反 token 化  
    - 带 Value Head 的 Critic 功能
 
+Model Download
+--------------
+
+在开始训练之前，你需要下载相应的预训练模型和资产：
+
+.. code:: bash
+
+   # 使用下面任一方法下载模型
+   # 方法 1: 使用 git clone
+   git lfs install
+   git clone https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup
+
+   # 方法 2: 使用 huggingface-hub
+   pip install huggingface-hub
+   hf download gen-robot/openvla-7b-rlvla-warmup
+
+下载完成后，请确保在配置yaml文件中正确指定模型路径。
+
+此外，如果 `Pathto/rlinf/envs/maniskill` 中没有 `assets/` 目录，你还需要添加资产。下载说明可在 `huggingface <https://huggingface.co/datasets/RLinf/maniskill_assets>`_ 中找到。
+
 运行脚本
 -------------------
 
@@ -204,7 +224,7 @@ ManiSkill3 结果
      </div>
    </div>
 
-我们在训练场景和 OOD（分布外）场景进行了评估。其中 OOD 包括 Vision、Semantic、Position。  
+我们在训练场景和 OOD（分布外）场景进行了评估。其中 OOD 包括 Vision、Semantic、Execution。  
 每类任务最优模型以粗体标注。
 
 .. note::
@@ -218,7 +238,7 @@ ManiSkill3 结果
      - 训练场景
      - Vision
      - Semantic
-     - Position
+     - Execution
      - 平均值
    * - OpenVLA(Base)
      - 53.91%
