@@ -3,11 +3,11 @@ task_suite_name: roboverse_single
 
 auto_reset: ${algorithm.auto_reset}
 ignore_terminations: ${algorithm.ignore_terminations}
-max_episode_steps: 100
+max_episode_steps: 50
 
 use_rel_reward: True
 reward_coef: 5.0
-only_eval: False
+only_eval: True
 
 seed: 0
 num_group: ${algorithm.num_group_envs}
@@ -31,5 +31,7 @@ use_ordered_reset_state_ids: True
 # roboverse specific configs
 headless: True
 simulator_backend: sapien3
-task_name: pick_bbq_sauce
+task_name: pick_butter
 robot_name: franka
+# VLA outputs actions in world frame (same as Maniskill), so we need to convert to local frame
+action_coordinate_frame: world

@@ -24,13 +24,13 @@ def main(cfg) -> None:
 
         if i % 10 == 0:
             # 保存前十步的Video
-            env.flush_video("test-libero-spatial")
+            env.flush_video("test-roboverse")
             # reset
             env.seed = list(range(0, cfg.env.train.num_envs))
             env.seed = 0
             env.is_start = True
             print(i)
-    env.flush_video("test-libero-spatial")
+    env.flush_video("test-roboverse")
     
 
 if __name__ == "__main__":

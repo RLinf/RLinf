@@ -1011,6 +1011,9 @@ class BatchResizingIterator:
 def put_tensor_cpu(data_dict):
     if data_dict is None:
         return None
+    
+    if isinstance(data_dict, torch.Tensor):
+        return data_dict.cpu().contiguous()
 
     for key, value in data_dict.items():
         if isinstance(value, dict):
@@ -1057,6 +1060,8 @@ class EnvOutput:
         elif self.simulator_type == "maniskill":
             image_tensor = obs["images"]
         elif self.simulator_type == "robotwin":
+            image_tensor = obs["images"]
+        elif self.simulator_type == "roboverse":
             image_tensor = obs["images"]
         else:
             raise NotImplementedError

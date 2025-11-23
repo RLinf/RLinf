@@ -13,9 +13,9 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor: 1-3
+    actor: 0
     env: 0
-    rollout: 1-3
+    rollout: 1
 
 runner:
   task_type: embodied
@@ -80,7 +80,6 @@ algorithm:
     max_length: 1024
     min_length: 1
 
-
 env:
   group_name: "EnvGroup"
   channel:
@@ -99,7 +98,7 @@ rollout:
   backend: "huggingface"
   model_dir: /mnt/public/xyq/openvla-7b
   enable_offload: True
-  pipeline_stage_num: 2
+  pipeline_stage_num: 1
 
 actor:
   group_name: "ActorGroup"
@@ -127,9 +126,10 @@ actor:
     action_dim: 7
     num_action_chunks: 1
     use_proprio: False
-    unnorm_key: bridge_orig
+    unnorm_key: roboverse_test
     center_crop: True
     do_sample: False
+    add_value_head: False
     
     precision: "bf16"
     add_bias_linear: False
@@ -154,12 +154,6 @@ actor:
     adam_beta2: 0.95
     adam_eps: 1.0e-05
     clip_grad: 1.0
-
-  fsdp:
-    forward_prefetch: False
-    limit_all_gathers: False
-    backward_prefetch: False
-    use_orig_params: False
 
 reward:
   use_reward_model: False

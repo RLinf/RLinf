@@ -331,11 +331,9 @@ class EnvWorker(Worker):
                         f"key {key}, length: {length}, batch_size: {self.batch_size}"
                     )
                 elif mode == "eval":
-                    print(value)
                     assert length == self.eval_batch_size, (
                         f"key {key}, length: {length}, batch_size: {self.eval_batch_size}"
                     )
-                    exit(0)
                 env_batch_i[key] = value[
                     gather_id * length // self.gather_num : (gather_id + 1)
                     * length
