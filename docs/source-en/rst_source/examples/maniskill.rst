@@ -237,7 +237,7 @@ The best-performing model for each task is highlighted in bold.
      - 35.75%
      - 42.11%
      - 39.10%
-   * - |huggingface| `rl4vla <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_
+   * - |huggingface| `rl4vla <https://huggingface.co/gen-robot/openvla-7b-rlvla-rl>`_
      - 93.75%
      - 80.47%
      - 75.00%

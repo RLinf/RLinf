@@ -38,7 +38,9 @@ algorithm:
   ignore_terminations: False
   use_fixed_reset_state_ids: True
   normalize_advantages: True
-  specific_reset_id: 0
+  specific_reset_id: 0 # can be a number or null. Indicate the reset state id (related to the task_id and trial_id) 
+  # wanted to be specify. (e.g. if set 0, the env always use the task 0 and trial 0 in the libero-spatial suite; 
+  # if set null, the initial states will be sampled from the whole libero-spatial suite. )
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 2  # NOTE: group_size * num_group_envs * rollout_epoch = global buffer size
   n_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}
@@ -102,7 +104,7 @@ rollout:
     queue_size: 0
   mode: "colocate"
   generation_backend: "huggingface"
-  model_dir: "/mnt/public/mjwei/download_models/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1/"
+  model_dir: null
   precision: ${actor.model.precision}
   enable_offload: False
   pipeline_stage_num: 1
@@ -114,7 +116,7 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: "/mnt/public/mjwei/download_models/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1/"
+  checkpoint_load_path: null
   checkpoint_save_path: "../results"
   micro_batch_size: 1024
   global_batch_size: 1024

@@ -191,7 +191,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
     <td style="text-align:center;">39.10%</td>
   </tr>
   <tr>
-    <td style="text-align:center;"><a href="https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">RL4VLA (PPO)</a></td>
+    <td style="text-align:center;"><a href="https://huggingface.co/gen-robot/openvla-7b-rlvla-rl"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">RL4VLA (PPO)</a></td>
     <td style="text-align:center;">93.75%</td>
     <td style="text-align:center;">80.47%</td>
     <td style="text-align:center;">75.00%</td>
