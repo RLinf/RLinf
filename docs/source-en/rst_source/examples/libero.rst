@@ -84,19 +84,11 @@ Before starting training, you need to download the corresponding pretrained mode
    # Download the model (choose either method)
    # Method 1: Using git clone
    git lfs install
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-traj1
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-object-traj1
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-goal-traj1
    git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
    git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download Haozhan72/Openvla-oft-SFT-libero10-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1
-   hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1
    hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
    hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
