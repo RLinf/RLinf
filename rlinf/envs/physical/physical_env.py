@@ -2,10 +2,15 @@ import numpy as np
 import torch
 import gymnasium as gym
 import copy
+import os
+from typing import Optional
 from gymnasium.vector.sync_vector_env import SyncVectorEnv
 from .franka.franka_env import FrankaEnv, FrankaRobotConfig
 import rlinf.envs.physical.franka.tasks
-from rlinf.envs.utils import to_tensor, list_of_dict_to_dict_of_list
+from rlinf.envs.utils import (
+    to_tensor, put_info_on_image, tile_images, 
+    save_rollout_video
+)
 from typing import OrderedDict
 
 
@@ -36,6 +41,9 @@ class PhysicalEnv(gym.Env):
         self._init_metrics()
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
         self._init_reset_state_ids()
+
+        self.video_cnt = 0
+        self.render_images = []
 
     def _init_env(self):
         env_fns = []
@@ -163,13 +171,12 @@ class PhysicalEnv(gym.Env):
         step_reward = self._calc_step_reward(_reward)
 
         if self.video_cfg.save_video:
-            raise NotImplementedError(f"Not support save video yet")
             plot_infos = {
                 "rewards": step_reward,
                 "terminations": terminations,
-                "task": self.task_descriptions,
+                "steps": self._elapsed_steps
             }
-            self.add_new_frames(raw_obs, plot_infos)
+            self.add_new_frames(raw_obs["frames"], plot_infos)
 
         infos = self._record_metrics(step_reward, terminations, infos)
         if self.ignore_terminations:
@@ -285,6 +292,38 @@ class PhysicalEnv(gym.Env):
         self.reset_state_ids = reset_state_ids.repeat_interleave(
             repeats=self.group_size
         )
+
+    def add_new_frames(self, image_obs, plot_infos):
+        images = []
+        for image in image_obs.values():
+            images.append(image)
+        
+        full_image = tile_images(images)
+        print(full_image.shape)
+        
+        for env_id in range(self.num_envs):
+            info_item = {
+                k: v if np.size(v) == 1 else v[env_id] for k, v in plot_infos.items()
+            }
+            full_image[env_id] = put_info_on_image(full_image[env_id], info_item)
+        if len(full_image.shape) > 3:
+            if len(full_image) == 1:
+                full_image = full_image[0]
+            else:
+                full_image = tile_images(full_image, nrows=int(np.sqrt(self.num_envs)))
+        self.render_images.append(full_image)
+
+    def flush_video(self, video_sub_dir: Optional[str] = None):
+        output_dir = os.path.join(self.video_cfg.video_base_dir, f"seed_{self.seed}")
+        if video_sub_dir is not None:
+            output_dir = os.path.join(output_dir, f"{video_sub_dir}")
+        save_rollout_video(
+            self.render_images,
+            output_dir=output_dir,
+            video_name=f"{self.video_cnt}",
+        )
+        self.video_cnt += 1
+        self.render_images = []
 
 
 

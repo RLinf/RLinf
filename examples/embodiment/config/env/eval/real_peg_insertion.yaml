@@ -13,7 +13,7 @@ only_eval: True
 max_episode_steps: ${env.train.max_episode_steps}
 
 video_cfg:
-  save_video: False
+  save_video: True
   info_on_video: True
   video_base_dir: ${runner.logger.log_path}/video/eval
 
