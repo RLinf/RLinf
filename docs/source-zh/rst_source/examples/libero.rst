@@ -215,7 +215,7 @@ LIBERO 结果
 ~~~~~~~~~~~~~~~~~~~
    为了展示 RLinf 在大规模多任务强化学习方面的能力，我们在 LIBERO 的全部130个任务上训练了一个统一模型，并评估了其在 LIBERO 五个任务套件中的表现：LIBERO-Spatial、LIBERO-Goal、LIBERO-Object、LIBERO-Long和LIBERO-90。 
 .. note:: 
-   该统一基础模型由我们自行微调得来。如需更多详情，请参阅论文`https://arxiv.org/abs/2510.06710`_。
+   该统一基础模型由我们自行微调得来。如需更多详情，请参阅`论文 <https://arxiv.org/abs/2510.06710>`_。
 
 .. list-table:: **Evaluation results of the unified model on the five LIBERO task groups**
    :header-rows: 1
@@ -227,14 +227,14 @@ LIBERO 结果
      - Long
      - 90
      - Average
-   * - `OpenVLA-OFT (Base) https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora`_
+   * - `OpenVLA-OFT (Base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_
      - 72.18%
      - 64.06%
      - 71.48%
      - 48.44%
      - 70.97%
      - 65.43
-   * - `OpenVLA-OFT (RLinf-GRPO) https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130`_
+   * - `OpenVLA-OFT (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130>`_
      - **99.40%**
      - **98.79%**
      - **99.80%**

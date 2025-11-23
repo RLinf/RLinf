@@ -92,7 +92,7 @@ Before starting training, you need to download the corresponding pretrained mode
 
 After downloading, make sure to correctly specify the model path in the configuration yaml file.
 
-Besides, you also need to to add the assets if there is no `assets/` dir in Pathto/rlinf/envs/maniskill . The download instruction can be found here in `huggingface <https://huggingface.co/datasets/RLinf/maniskill_assets>`_.
+Besides, you also need to add the assets if there is no `assets/` dir in Pathto/rlinf/envs/maniskill . The download instruction can be found here in `huggingface <https://huggingface.co/datasets/RLinf/maniskill_assets>`_.
 
 Running the Script
 -------------------
