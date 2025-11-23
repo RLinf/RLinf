@@ -32,7 +32,7 @@ This looks up the channel actor in the Ray namespace and returns a ``Channel`` o
 Putting Items into the Channel
 --------------------------------
 
-Use ``channel.put(item, weight=0, queue_name="default", async_op=False)`` to send data.
+Use ``channel.put(item, weight=0, key="default", async_op=False)`` to send data.
 
 - The sending worker first transmits the ``item`` to the ``ChannelWorker`` that actually owns the target queue.  
 - The ``ChannelWorker`` receives the data, wraps it as a ``WeightedItem`` (with the given ``weight``), and enqueues it into the specified queue.  
@@ -41,7 +41,7 @@ Use ``channel.put(item, weight=0, queue_name="default", async_op=False)`` to sen
 Getting Items from the Channel
 --------------------------------
 
-Use ``channel.get(queue_name="default", async_op=False)`` to retrieve data which is essentially the reverse of ``put``.  
+Use ``channel.get(key="default", async_op=False)`` to retrieve data which is essentially the reverse of ``put``.  
 
 - The ``ChannelWorker`` first dequeues an item from the specified queue.  
 - It then sends this item to the worker that requested it, where it is returned to the caller.
@@ -49,7 +49,7 @@ Use ``channel.get(queue_name="default", async_op=False)`` to retrieve data which
 Batch Retrieval
 --------------------------------
 
-Use ``channel.get_batch(batch_weight, queue_name="default", async_op=False)`` to retrieve multiple items at once.
+Use ``channel.get_batch(batch_weight, key="default", async_op=False)`` to retrieve multiple items at once.
 
 - The ``ChannelWorker`` repeatedly dequeues items from the queue, summing their weight values.  
 - Once the accumulated weight reaches or exceeds ``batch_weight``, it stops.  

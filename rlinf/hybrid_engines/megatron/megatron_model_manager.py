@@ -15,7 +15,7 @@
 import gc
 import itertools
 import logging
-from typing import Iterator, List, Optional
+from typing import Iterator, Optional
 
 import torch
 from omegaconf import DictConfig
@@ -60,6 +60,7 @@ except ImportError:
     raise "Could not import Float16Module from megatron"
 from megatron.training.checkpointing import load_checkpoint, save_checkpoint
 from megatron.training.training import (
+    get_args,
     preprocess_common_state_dict,
     setup_model_and_optimizer,
     unwrap_model,
@@ -134,6 +135,9 @@ class MegatronModelManager:
         config = build_config(ModelConfig, cfg.model)
         self.flops_calculator = FLOPSCalculator(config)
 
+        # In AUTO mode, the actor will occupy all GPUs for initialization, but not all Megatron processes will be in the running state.
+        self.is_running = True
+
     def setup_model_and_optimizer(self, model_type=ModelType.encoder_or_decoder):
         """Setup model and optimizer."""
         set_megatron_args(self._cfg)
@@ -156,7 +160,7 @@ class MegatronModelManager:
                     self.transformer_config,
                     use_te,
                 ),
-                vocab_size=self._cfg.model.override_vocab_size,
+                vocab_size=self._cfg.model.padded_vocab_size,
                 max_sequence_length=self._cfg.model.max_position_embeddings,
                 pre_process=pre_process,
                 post_process=post_process,
@@ -229,7 +233,7 @@ class MegatronModelManager:
 
     def make_data_iterator_list(
         self, data_iterator: Iterator, padding: bool = False, vpp_size: int = 1
-    ) -> List[Iterator]:
+    ) -> list[Iterator]:
         """
         Convert the data iterator into the format expected by Megatron.
         With interleaved pipeline parallelism, Megatron expects a
@@ -285,8 +289,10 @@ class MegatronModelManager:
     def save_checkpoint(
         self, checkpoint_save_path, step, num_floating_point_operations_so_far=0
     ):
-        self._cfg.megatron.save = checkpoint_save_path
-        set_megatron_args(self._cfg)
+        if not self.is_running:
+            return
+        args = get_args()
+        args.save = checkpoint_save_path
         save_checkpoint(
             iteration=step,
             model=self.model,
@@ -298,8 +304,8 @@ class MegatronModelManager:
         )
 
     def load_checkpoint(self, checkpoint_load_path):
-        self._cfg.megatron.load = checkpoint_load_path
-        set_megatron_args(self._cfg)
+        args = get_args()
+        args.load = checkpoint_load_path
         load_checkpoint(
             self.model,
             self.optimizer,
@@ -411,11 +417,14 @@ class MegatronModelManager:
             output = output[..., 0]
         return output
 
-    def offload_model_weights_and_grad(self, offload_grad=True):
+    def offload_model_weights_and_grad(self, offload_grad=True, offload_weight=True):
         for model_idx, model_chunk in enumerate(self.model):
             if isinstance(model_chunk, DDP):
                 for buffer_idx, buffer in enumerate(model_chunk.buffers):
-                    if buffer.param_data.untyped_storage().size() > 0:
+                    if (
+                        offload_weight
+                        and buffer.param_data.untyped_storage().size() > 0
+                    ):
                         param_size = buffer.param_data.untyped_storage().size()
 
                         buffer.param_data.cpu_data = (
@@ -437,10 +446,10 @@ class MegatronModelManager:
 
             else:
                 for param_name, param in model_chunk.named_parameters():
-                    if param.data is not None:
+                    if offload_weight and param.data is not None:
                         param.data = param.data.to("cpu", non_blocking=True)
 
-                    if param.grad is not None:
+                    if offload_grad and param.grad is not None:
                         param.grad = param.grad.to("cpu", non_blocking=True)
 
         # clear memory
@@ -471,7 +480,7 @@ class MegatronModelManager:
                 device_id = torch.cuda.current_device()
                 for _, param in model_chunk.named_parameters():
                     param.data = param.data.to(device_id, non_blocking=True)
-                    if param.grad is not None:
+                    if load_grad and param.grad is not None:
                         param.grad = param.grad.to(device_id, non_blocking=True)
         clear_memory()
 
@@ -561,12 +570,16 @@ class MegatronModelManager:
 
         for _opt in _iter_opts(self.optimizer):
             self.offload_megatron_copy_params(_opt)
-            opt_state_dict_values = _opt.optimizer.state.values()
-            for v in opt_state_dict_values:
+            for v in _opt.optimizer.state.values():
+                # Offloading through resetting the storage size can ensure that the tensor can be offloaded correctly even when it has tensor views.
                 if "exp_avg" in v:
-                    v["exp_avg"] = v["exp_avg"].to("cpu", non_blocking=True)
+                    buffer = v["exp_avg"]
+                    buffer.cpu_data = buffer.data.cpu().pin_memory()
+                    buffer.storage().resize_(0)
                 if "exp_avg_sq" in v:
-                    v["exp_avg_sq"] = v["exp_avg_sq"].to("cpu", non_blocking=True)
+                    buffer = v["exp_avg_sq"]
+                    buffer.cpu_data = buffer.data.cpu().pin_memory()
+                    buffer.storage().resize_(0)
         clear_memory()
 
     def onload_megatron_optimizer(self):
@@ -577,14 +590,13 @@ class MegatronModelManager:
 
         for _opt in _iter_opts(self.optimizer):
             self.load_megatron_copy_params(_opt)
-            opt_state_dict_values = _opt.optimizer.state.values()
-            for v in opt_state_dict_values:
+            for v in _opt.optimizer.state.values():
                 if "exp_avg" in v:
-                    v["exp_avg"] = v["exp_avg"].to(
+                    v["exp_avg"].data = v["exp_avg"].cpu_data.to(
                         torch.cuda.current_device(), non_blocking=True
                     )
                 if "exp_avg_sq" in v:
-                    v["exp_avg_sq"] = v["exp_avg_sq"].to(
+                    v["exp_avg_sq"].data = v["exp_avg_sq"].cpu_data.to(
                         torch.cuda.current_device(), non_blocking=True
                     )
         clear_memory()

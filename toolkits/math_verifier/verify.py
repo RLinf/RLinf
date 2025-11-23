@@ -14,14 +14,11 @@
 
 import multiprocessing
 import re
-from concurrent.futures import (
-    ProcessPoolExecutor,
-    as_completed,
-)
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures import (
     TimeoutError as FuturesTimeoutError,
 )
-from typing import List, Union
+from typing import Union
 
 import regex
 from latex2sympy2 import latex2sympy
@@ -353,22 +350,21 @@ def process_results(answer, solution):
         extracted_solution = extract_answer(solution, "math", use_last_number=True)
 
         if extracted_answer is None or extracted_answer.strip() in ["None", "none", ""]:
-            retval = -1
+            retval = False
         elif extracted_solution is None or extracted_solution.strip() in [
             "None",
             "none",
             "",
         ]:
-            retval = -1
+            retval = False
         elif math_equal(extracted_answer, extracted_solution, timeout=False):
-            # elif call_with_timeout(math_equal, extracted_answer, extracted_solution):
-            retval = 1
+            retval = True
         else:
-            retval = -1
+            retval = False
 
         return retval, (extracted_answer, extracted_solution)
     except Exception:
-        return -1, ("None", "None")
+        return False, ("None", "None")
 
 
 def process_results_process(a, b, output_queue):
@@ -389,11 +385,11 @@ def verify_math_solution(answer: str, solution: str):
 
 
 def math_verify_call(
-    responses: List[str],
-    references: List[str],
+    responses: list[str],
+    references: list[list[str]],
     timeout: int = 10,
     check_xml_format=False,
-) -> List:
+) -> list[bool]:
     assert len(responses) == len(references), (
         len(responses),
         len(references),
@@ -407,24 +403,24 @@ def math_verify_call(
             jobs.append(job)
         all_jobs.append(jobs)
 
-    labels: List[int] = []
+    is_correct_list: list[bool] = []
     has_timeout = False
     for jobs in all_jobs:
-        label = 0
+        is_correct = False
         try:
             for job in as_completed(jobs, timeout=timeout):
                 x = job.result()
-                label = label or x
+                is_correct = is_correct or x
         except FuturesTimeoutError:
             has_timeout = True
             for job in jobs:
                 job.cancel()
         finally:
-            labels.append(label)
+            is_correct_list.append(is_correct)
 
     if has_timeout:
         reset_global_process_pool()
-    return labels
+    return is_correct_list
 
 
 if __name__ == "__main__":

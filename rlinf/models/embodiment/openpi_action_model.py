@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Tuple
+from typing import Any, Literal
 
 import jax
 import numpy as np
@@ -32,32 +33,45 @@ from rlinf.models.embodiment.modules.value_head import ValueHead
 @dataclass(frozen=True)
 class OpenPi0Config(Pi0Config):
     # config for rl
-    noise_level: bool = 0.5
-    action_chunk: int = 5
-    train_expert_only: bool = False
-    action_env_dim: int = 7  # for libero
-    num_steps: int = 10
-    noise_method: str = "flow_sde"  # flow_sde, flow_cps
-    safe_get_logprob: bool = False
-    joint_logprob: bool = False
-    detach_critic_input: bool = False
-    chunk_critic_input: bool = False
-    add_value_head: bool = False
+    config_name: str = (
+        "pi0_libero"  # pi0_libero, pi05_libero, pi0_metaworld, pi05_metaworld
+    )
+    num_images_in_input: int = 2  # number of images in input
+    noise_method: str = "flow_sde"  # flow_sde, flow_noise, flow_cps
+    # noise config for flow-sde
+    noise_level: float = 0.5
     noise_anneal: bool = False
-    noise_params: List = field(
+    noise_params: list = field(
         default_factory=lambda: [0.7, 0.3, 400]
     )  # noise_start, noise_end, noise_anneal_steps
-    ignore_last: bool = False
-    value_after_vlm: bool = False
+    # noise config for flow-noise
+    noise_logvar_range: list = field(
+        default_factory=lambda: [0.08, 0.16]
+    )  # [min_std, max_std]
+    # hyper-parameters
+    action_chunk: int = 5  # action chunk
+    action_env_dim: int = 7  # for environment action dim
+    num_steps: int = 10  # denoise steps
+    # training config
+    train_expert_only: bool = False
+    safe_get_logprob: bool = False
+    joint_logprob: bool = False  # designed for flow-noise
+    double_layer: bool = False  # designed for flow-sde without acceleration
+    ignore_last: bool = False  # ignore the last action for noise injection
+    # critic
+    detach_critic_input: bool = False  # detach critic input with the action expert
+    chunk_critic_input: bool = False  # use only the action chunk for critic estimation
+    add_value_head: bool = False  # add value head for ppo
+    value_after_vlm: bool = False  # value after vlm, pi05 mode
     value_vlm_mode: str = "mean_token"  # last_token, mean_token, first_token
 
 
 class OpenPi0ForRLActionPrediction(PI0Pytorch):
-    """Pi0 model for reinforcement learning action prediction.
-
-    This is a template class that defines the interfaces needed for RL training.
-    You need to implement all the methods marked with 'TODO: Implement'.
     """
+    Pi0 model for reinforcement learning action prediction.
+    """
+
+    config: OpenPi0Config
 
     @property
     def _no_split_modules(self) -> list[str]:
@@ -79,10 +93,18 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         sample_actions_func = self.sample_actions
         super().__init__(config)
         self.sample_actions = sample_actions_func
+        self.global_step = 0
+        # assert
+        assert not (self.config.double_layer and self.config.joint_logprob), (
+            "double_layer and joint_logprob can not be set at the same time"
+        )
 
         # rl model init
-        proj_width = 1024
-        self.global_step = 0
+        if self.config.value_after_vlm:
+            proj_width = 2048
+        else:
+            proj_width = 1024
+        # value head
         if self.config.add_value_head:
             self.value_head = ValueHead(
                 input_dim=proj_width,
@@ -91,14 +113,17 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
                 activation="relu",
                 bias_last=True,
             )
-
-        if self.config.noise_method == "reinflow":
-            self.reinflow_explore_noise_net = ExploreNoiseNet(
-                in_dim=proj_width,
+        self.use_vlm_value = getattr(self.config, "value_after_vlm", False) and getattr(
+            self.config, "add_value_head", False
+        )
+        # noise head for flow-noise
+        if self.config.noise_method == "flow_noise":
+            self.noise_head = ExploreNoiseNet(
+                in_dim=1024,
                 out_dim=self.config.action_dim,
                 hidden_dims=[128, 64],
                 activation_type="tanh",
-                noise_logvar_range=[0.08, 0.16],
+                noise_logvar_range=self.config.noise_logvar_range,
                 noise_scheduler_type="learn",
             )
 
@@ -182,9 +207,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         self,
         data: dict[str, torch.Tensor],
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
+        # get kwargs
         compute_values = kwargs.get("compute_values", False)
-
         chains = data["chains"]
         denoise_inds = data["denoise_inds"]
         # input transform
@@ -199,7 +224,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         img_masks = [img_mask.to(device) for img_mask in img_masks]
         state = state.to(device)
         # get log prob
-        log_probs, value_t = self.get_log_prob_value(
+        log_probs, value_t, entropy = self.get_log_prob_value(
             images,
             img_masks,
             lang_tokens,
@@ -212,35 +237,31 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         log_probs = log_probs[
             :, :, : self.config.action_chunk, : self.config.action_env_dim
         ]
+        entropy = entropy[
+            :, :, : self.config.action_chunk, : self.config.action_env_dim
+        ]
         # post process
-        if self.config.joint_logprob:
-            log_probs = log_probs.mean(dim=1)
-            prev_logprobs = data["prev_logprobs"].mean(dim=1)
-        else:
-            bsize = log_probs.shape[0]
-            log_probs = log_probs[:, 0]
-            prev_logprobs = data["prev_logprobs"]
-            prev_logprobs = prev_logprobs[
-                torch.arange(bsize),
-                denoise_inds[:, 0],
-                : self.config.action_chunk,
-                : self.config.action_env_dim,
-            ]
+        log_probs = log_probs.mean(dim=1)
+        entropy = entropy.mean(dim=[1, 2, 3], keepdim=False)[
+            :, None
+        ]  # [:,None] to align with loss-mask shape
         value_t = value_t.mean(dim=-1, keepdim=False)
         return {
             "logprobs": log_probs,
-            "prev_logprobs": prev_logprobs,
             "values": value_t,
-            "entropy": None,
+            "entropy": entropy,
         }
 
     def input_processor(self, env_processed_obs):
         to_process_obs = {
             "observation/image": env_processed_obs["images"],
-            "observation/wrist_image": env_processed_obs["wrist_images"],
             "observation/state": env_processed_obs["states"],
             "prompt": env_processed_obs["task_descriptions"],
         }
+        if env_processed_obs["wrist_images"] is not None:
+            to_process_obs["observation/wrist_image"] = env_processed_obs[
+                "wrist_images"
+            ]
         processed_obs = self.input_transform(to_process_obs)
         device = next(self.parameters()).device
         for key, value in processed_obs.items():
@@ -262,7 +283,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
 
     def predict_action_batch(
         self, env_obs, mode: Literal["train", "eval"] = "train", compute_values=True
-    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+    ) -> tuple[np.ndarray, dict[str, Any]]:
         processed_obs = self.input_processor(env_obs)
         observation = _model.Observation.from_dict(processed_obs)
         outputs = self.sample_actions(
@@ -276,11 +297,12 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             "chains": outputs["chains"],
             "denoise_inds": outputs["denoise_inds"],
             "observation/image": env_obs["images"],
-            "observation/wrist_image": env_obs["wrist_images"],
             "observation/state": env_obs["states"],
             "tokenized_prompt": processed_obs["tokenized_prompt"],
             "tokenized_prompt_mask": processed_obs["tokenized_prompt_mask"],
         }
+        if env_obs["wrist_images"] is not None:
+            forward_inputs["observation/wrist_image"] = env_obs["wrist_images"]
 
         result = {
             "prev_logprobs": outputs["prev_logprobs"],
@@ -320,7 +342,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
         self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
 
-        _, past_key_values = self.paligemma_with_expert.forward(
+        (prefix_output, _), past_key_values = self.paligemma_with_expert.forward(
             attention_mask=prefix_att_2d_masks_4d,
             position_ids=prefix_position_ids,
             past_key_values=None,
@@ -334,6 +356,10 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         log_probs = []
         values = []
         chains.append(x_t)
+
+        # add value based on the vlm for pi05, expert for pi0
+        if self.use_vlm_value:
+            values_vlm = self.get_value_from_vlm(prefix_output)
         if self.config.joint_logprob:
             initial_log_prob = self.get_logprob_norm(
                 x_t, torch.zeros_like(noise), torch.ones_like(noise)
@@ -347,21 +373,11 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             if self.config.joint_logprob:
                 denoise_inds = torch.arange(num_steps)
             else:
-                if self.config.noise_method == "flow_sde":
-                    if self.config.ignore_last:
-                        denoise_inds = torch.tensor(
-                            [random.randint(0, num_steps - 2)] * num_steps
-                        )
-                    else:
-                        denoise_inds = torch.tensor(
-                            [random.randint(0, num_steps - 1)] * num_steps
-                        )
-                elif self.config.noise_method == "flow_cps":
-                    # the last denoising step of the flow-cps is deterministic
+                if self.config.ignore_last:
                     denoise_inds = torch.tensor(
-                        [random.randint(0, num_steps - 1)] * num_steps
+                        [random.randint(0, num_steps - 2)] * num_steps
                     )
-                elif self.config.noise_method == "reinflow":
+                else:
                     denoise_inds = torch.tensor(
                         [random.randint(0, num_steps - 1)] * num_steps
                     )
@@ -373,27 +389,19 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         for idx in range(num_steps):
             # sample mean var val
             if idx == denoise_inds[0][idx]:
-                x_t_mean, x_t_std, value_t = self.sample_mean_var_val(
-                    x_t,
-                    idx,
-                    state,
-                    prefix_pad_masks,
-                    past_key_values,
-                    "train",
-                    num_steps,
-                    compute_values,
-                )
+                sample_mode = "train"
             else:
-                x_t_mean, x_t_std, value_t = self.sample_mean_var_val(
-                    x_t,
-                    idx,
-                    state,
-                    prefix_pad_masks,
-                    past_key_values,
-                    "eval",
-                    num_steps,
-                    compute_values,
-                )
+                sample_mode = "eval"
+            x_t_mean, x_t_std, value_t = self.sample_mean_var_val(
+                x_t,
+                idx,
+                state,
+                prefix_pad_masks,
+                past_key_values,
+                sample_mode,
+                num_steps,
+                compute_values,
+            )
             # Euler step - use new tensor assignment instead of in-place operation
             x_t = x_t_mean + self.sample_noise(x_t.shape, device) * x_t_std
             log_prob = self.get_logprob_norm(x_t, x_t_mean, x_t_std)
@@ -403,10 +411,22 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             log_probs.append(log_prob)
         x_0 = x_t
         chains = torch.stack(chains, dim=1)
+        # post process for logprob
         log_probs = torch.stack(log_probs, dim=1)[
             :, :, : self.config.action_chunk, : self.config.action_env_dim
         ]
-        values = torch.stack(values, dim=1).mean(dim=-1, keepdim=True)
+        if self.config.joint_logprob:
+            log_probs = log_probs.mean(dim=1)
+        else:
+            log_probs = log_probs[
+                torch.arange(log_probs.shape[0]),
+                denoise_inds[:, 0],
+            ]
+        # post process for value
+        if self.use_vlm_value:
+            values = values_vlm[:, None]
+        else:
+            values = torch.stack(values, dim=1).mean(dim=-1, keepdim=True)
         return {
             "actions": x_0,
             "chains": chains,
@@ -464,7 +484,11 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         )
         v_t = self.action_out_proj(suffix_out)  # [bs,n_action_steps,max_action_dim]
         # value prediction
-        if self.config.add_value_head and compute_values:
+        if (
+            self.config.add_value_head
+            and compute_values
+            and not self.config.value_after_vlm
+        ):
             # use chunk critic input
             if self.config.chunk_critic_input:
                 suffix_out_value = torch.mean(
@@ -507,10 +531,10 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
                 x0_weight = torch.ones_like(t_input) - (t_input - delta)
                 x1_weight = (t_input - delta) * cos_term
                 x_t_std = (t_input - delta) * sin_term
-            elif self.config.noise_method == "reinflow":
+            elif self.config.noise_method == "flow_noise":
                 x0_weight = 1 - (t_input - delta)
                 x1_weight = t_input - delta
-                x_t_std = self.reinflow_explore_noise_net(suffix_out)
+                x_t_std = self.noise_head(suffix_out)
             else:
                 raise ValueError(f"Invalid noise method: {self.config.noise_method}")
         x_t_mean = x0_pred * x0_weight + x1_pred * x1_weight
@@ -606,7 +630,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
 
         # Compute image and language key value cache
-        _, past_key_values = self.paligemma_with_expert.forward(
+        [prefix_output, _], past_key_values = self.paligemma_with_expert.forward(
             attention_mask=prefix_att_2d_masks_4d,
             position_ids=prefix_position_ids,
             past_key_values=None,
@@ -615,6 +639,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         )
         chains_log_probs = []
         chains_values = []
+        chains_entropy = []
+
+        # get log prob
         if self.config.joint_logprob:
             num_steps = self.config.num_steps
             initial_log_prob = self.get_logprob_norm(
@@ -622,7 +649,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
                 torch.zeros_like(chains[:, 0]),
                 torch.ones_like(chains[:, 0]),
             )
+            initial_entropy = self.gaussian_entropy(torch.ones_like(chains[:, 0]))
             chains_log_probs.append(initial_log_prob)
+            chains_entropy.append(initial_entropy)
         else:
             num_steps = 1
         for idx in range(num_steps):
@@ -637,13 +666,59 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
                 past_key_values,
                 "train",
                 self.config.num_steps,
+                compute_values,
             )
             log_probs = self.get_logprob_norm(chains_next, x_t_mean, x_t_std)
+            entropy = self.gaussian_entropy(x_t_std)
             chains_log_probs.append(log_probs)
-            chains_values.append(value_t)
+            chains_entropy.append(entropy)
+            if self.use_vlm_value:
+                chains_values.append(self.get_value_from_vlm(prefix_output))
+            else:
+                chains_values.append(value_t)
         chains_log_probs = torch.stack(chains_log_probs, dim=1)
         chains_values = torch.stack(chains_values, dim=1)
-        return chains_log_probs, chains_values
+
+        # entropy is only available for flow-noise method
+        if self.config.noise_method == "flow_noise":
+            chains_entropy = torch.stack(chains_entropy, dim=1)
+        else:
+            chains_entropy = torch.zeros_like(chains_log_probs)
+        return chains_log_probs, chains_values, chains_entropy
+
+    def get_value_from_vlm(self, prefix_output):
+        # prefix_output:
+        # pi05: [bs, (256 * 3 + 200) = 968, 2048]
+        # pi0: [bs, (256 * 3 + 48) = 816, 1024]
+        # token length
+        if "pi05_" in self.config.config_name:
+            lang_token_len = 200
+            all_token_length = 968
+        elif "pi0_" in self.config.config_name:
+            lang_token_len = 48
+            all_token_length = 816
+
+        if self.config.value_vlm_mode == "mean_token":
+            prefix_mask = (
+                [True] * 256 * self.config.num_images_in_input
+                + [False] * 256 * (3 - self.config.num_images_in_input)
+                + [True] * lang_token_len
+            )
+        elif self.config.value_vlm_mode == "last_token":
+            prefix_mask = [False] * (all_token_length - 1) + [True] * 1
+        elif self.config.value_vlm_mode == "first_token":
+            prefix_mask = [True] * 1 + [False] * (all_token_length - 1)
+        prefix_out_value = prefix_output[:, prefix_mask, :]
+        prefix_out_value = prefix_out_value.mean(dim=1, keepdim=False)
+        prefix_out_value = prefix_out_value.to(dtype=torch.float32)
+        values_vlm = self.value_head(prefix_out_value)[:, 0]
+        return values_vlm
+
+    def gaussian_entropy(self, sigma):
+        mask = sigma == 0
+        sigma_safe = torch.where(mask, torch.ones_like(sigma), sigma)
+        entropy = 0.5 * torch.log(2 * math.pi * math.e * (sigma_safe**2))
+        return entropy
 
     def freeze_vlm(self):
         if self.config.train_expert_only:

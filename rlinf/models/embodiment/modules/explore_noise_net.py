@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from collections import OrderedDict
-from typing import List
 
 import torch
 import torch.nn as nn
@@ -43,7 +42,7 @@ class ExploreNoiseNet(nn.Module):
         self,
         in_dim: int,
         out_dim: int,
-        hidden_dims: List[int],
+        hidden_dims: list[int],
         activation_type: str,
         noise_logvar_range: list,  # [min_std, max_std]
         noise_scheduler_type: str,

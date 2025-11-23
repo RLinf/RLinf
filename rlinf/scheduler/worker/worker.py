@@ -26,11 +26,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
-    Dict,
-    List,
     Optional,
-    Tuple,
-    Type,
     TypeVar,
 )
 
@@ -51,7 +47,7 @@ WorkerClsType = TypeVar("WorkerClsType")
 class WorkerMeta(type):
     """Metaclass to capture failures in worker classes."""
 
-    def __new__(cls, name: str, bases: Tuple[Type], attrs: Dict[str, Any]):
+    def __new__(cls, name: str, bases: tuple[type], attrs: dict[str, Any]):
         """Wrap the function to catch SystemExit exceptions."""
         for attr_name, attr_value in attrs.items():
             if callable(attr_value):
@@ -135,10 +131,10 @@ class Worker(metaclass=WorkerMeta):
         >>> cluster = Cluster(num_nodes=1)
         >>> my_worker_group = MyWorker.create_group().launch(cluster=cluster, name="my_worker_group")
         >>> my_worker_group.initialize().wait()[0]
-        tensor([[8.]], device='cuda:0')
+        tensor([[4.]], device='cuda:0')
         >>> # This will execute the hello method only on ranks 0 and 1.
-        >>> my_worker_group.execute_on(4, 5).hello().wait()
-        [4, 5]
+        >>> my_worker_group.execute_on(0, 3).hello().wait()
+        [0, 3]
 
     The following example shows the communication capabilities of the Worker class.
 
@@ -361,7 +357,7 @@ class Worker(metaclass=WorkerMeta):
 
         self._actor = None
         self._has_initialized = False
-        self._timer_metrics: Dict[str, float] = {}
+        self._timer_metrics: dict[str, float] = {}
         self._set_new_omegaconf_resolvers()
 
     def __init__(
@@ -433,6 +429,10 @@ class Worker(metaclass=WorkerMeta):
         self._lock = threading.Lock()
         self._stacklevel = 4 if self._is_ray_actor else 3
 
+        from .lock import DeviceLock
+
+        self._device_lock = DeviceLock(self)
+
         Worker.current_worker = self
         self._has_initialized = True
 
@@ -457,9 +457,14 @@ class Worker(metaclass=WorkerMeta):
         """
         return self._manager_proxy
 
+    @property
+    def device_lock(self):
+        """Get the DeviceLock instance for this worker."""
+        return self._device_lock
+
     @classmethod
     def create_group(
-        cls: Type[WorkerClsType], *args, **kwargs
+        cls: type[WorkerClsType], *args, **kwargs
     ) -> "WorkerGroup[WorkerClsType]":
         """Create a worker group with the class arguments.
 
@@ -473,9 +478,9 @@ class Worker(metaclass=WorkerMeta):
 
     def send(
         self,
-        object: torch.Tensor | List[torch.Tensor] | Dict[str, torch.Tensor] | Any,
+        object: torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any,
         dst_group_name: str,
-        dst_rank: int | List[int],
+        dst_rank: int | list[int],
         async_op: bool = False,
     ):
         """Send an object to a specific worker address in the collective group.
@@ -512,7 +517,7 @@ class Worker(metaclass=WorkerMeta):
         return group.send(object=object, async_op=async_op)
 
     def recv(
-        self, src_group_name: str, src_rank: int | List[int], async_op: bool = False
+        self, src_group_name: str, src_rank: int | list[int], async_op: bool = False
     ):
         """Out-of-place receive of an object from a specific worker address in the collective group.
 
@@ -542,7 +547,7 @@ class Worker(metaclass=WorkerMeta):
         self,
         tensor: torch.Tensor,
         dst_group_name: str,
-        dst_rank: int | List[int],
+        dst_rank: int | list[int],
         async_op: bool = False,
     ):
         """Send a tensor to a specific worker address in the collective group. This function is optimized for sending a single tensor and does not introduce metadata communication overhead like send. But it needs to be paired with the in-place recv_tensor function which requires apriori knowledge of the tensor shape and dtype.
@@ -574,7 +579,7 @@ class Worker(metaclass=WorkerMeta):
         self,
         tensor: torch.Tensor,
         src_group_name: str,
-        src_rank: int | List[int],
+        src_rank: int | list[int],
         async_op: bool = False,
     ):
         """In-place receive of a tensor from a specific worker address in the collective group. This function is optimized for receiving a single tensor and does not introduce metadata communication overhead like recv. But it requires preallocation of the tensor with the correct shape and dtype.
@@ -641,7 +646,7 @@ class Worker(metaclass=WorkerMeta):
 
         return Channel.connect(channel_name=channel_name, current_worker=self)
 
-    def broadcast(self, object: Optional[Any], ranks: List[int]):
+    def broadcast(self, object: Optional[Any], ranks: list[int]):
         """Broadcast an object inside the current worker group.
 
         Args:

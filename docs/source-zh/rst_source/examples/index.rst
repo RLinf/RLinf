@@ -1,5 +1,5 @@
 示例库
-===============
+=====
 
 本节展示了 **RLinf 目前支持的示例集合**，  
 展示该框架如何应用于不同场景，并演示其在实际中的高效性。示例库会随着时间不断扩展，涵盖新的场景和任务，以展示 RLinf 的多样性和可扩展性。
@@ -7,7 +7,7 @@
 具身智能场景
 ----------------
 
-具身智能场景包含SOTA模型（如pi0、pi0.5、OpenVLA-OFT）和不同模拟器（如LIBERO、ManiSkill、RoboTwin）的训练示例，以及真机强化学习训练示例等。
+具身智能场景包含SOTA模型（如pi0、pi0.5、OpenVLA-OFT）和不同模拟器（如LIBERO、ManiSkill、RoboTwin、MetaWorld）的训练示例，以及真机强化学习训练示例等。
 
 .. raw:: html
 
@@ -37,23 +37,70 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/waiting_icon.jpg"
+       <img src="https://github.com/RLinf/misc/raw/main/pic/pi0_icon.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[开发中]π₀模型强化学习训练</b><br>
-         在π₀上实现强化学习的效果跃升
+         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/pi0.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>π₀和π₀.₅模型强化学习训练</b>
+         </a><br>
+         在π₀和π₀.₅上实现强化学习的效果跃升
        </p>
      </div>
    </div>
 
    <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RoboTwin-Platform/RoboTwin/main/assets/files/50_tasks.gif" 
+       <img src="https://github.com/RLinf/misc/raw/main/pic/behavior.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/behavior.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>基于Behavior的强化学习</b>
+         </a><br>
+         支持Behavior+OpenVLA-OFT+PPO/GRPO训练
+       </p>
+     </div>
+     
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/metaworld.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/metaworld.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>基于MetaWorld的强化学习</b>
+         </a><br>
+         支持MetaWorld+π₀/π₀.₅+PPO/GRPO训练
+       </p>
+     </div>
+
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/gr00t.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/gr00t.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>GR00T-N1.5模型强化学习训练</b>
+         </a><br>
+         支持GR00T-N1.5强化学习微调
+       </p>
+     </div>
+   </div>
+
+   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+        <img src="https://raw.githubusercontent.com/RoboTwin-Platform/RoboTwin/main/assets/files/50_tasks.gif" 
+              style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" 
+              data-target="animated-image.originalImage">
+        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+          <b>[开发中]基于RoboTwin的强化学习</b><br>
+          RoboTwin+OpenVLA-OFT+PPO达到SOTA训练效果
+        </p>
+      </div>
+
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/calvin.png" 
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" 
             data-target="animated-image.originalImage">
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[开发中]基于RoboTwin的强化学习</b><br>
-         RoboTwin+OpenVLA-OFT+PPO达到SOTA训练效果
+         <b>[开发中]基于CALVIN的强化学习</b><br>
+         支持CALVIN+π₀/π₀.₅+PPO/GRPO训练
        </p>
      </div>
 
@@ -65,16 +112,8 @@
          RLinf worker无缝对接Franka机械臂
        </p>
      </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/waiting_icon.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[开发中]基于世界模型的强化学习</b><br>
-         集成UnifoLM-WMA-0世界模型的强化学习训练
-       </p>
-     </div>
    </div>
+
 
 
 推理场景
@@ -189,5 +228,9 @@ RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训
 
    maniskill
    libero
+   behavior
+   metaworld
+   pi0
+   gr00t
    reasoning
    coding_online_rl

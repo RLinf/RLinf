@@ -14,7 +14,7 @@
 
 import logging
 from dataclasses import dataclass
-from typing import List, overload
+from typing import overload
 
 from ..accelerator import AcceleratorType
 from ..cluster import Cluster
@@ -45,7 +45,7 @@ class Placement:
     local_world_size: int
     """Local world size (number of workers) on the node."""
 
-    visible_accelerators: List[str]
+    visible_accelerators: list[str]
     """List of CUDA visible devices for the worker."""
 
     isolate_accelerator: bool
@@ -76,5 +76,5 @@ class PlacementStrategy:
         self,
         cluster: Cluster,
         isolate_accelerator: bool = True,
-    ) -> List[Placement]:
+    ) -> list[Placement]:
         return None

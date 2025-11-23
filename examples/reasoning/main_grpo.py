@@ -22,7 +22,8 @@ from rlinf.config import validate_cfg
 from rlinf.data.datasets import create_rl_dataset
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.runners.reasoning_runner import ReasoningRunner
-from rlinf.scheduler import Cluster
+from rlinf.scheduler import Cluster, NodePlacementStrategy
+from rlinf.scheduler.dynamic_scheduler.scheduler_worker import SchedulerWorker
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.actor import get_actor_worker
@@ -56,7 +57,8 @@ def main(cfg) -> None:
     # Inference group
     inference_group = None
     if (
-        component_placement.placement_mode == PlacementMode.DISAGGREGATED
+        component_placement.placement_mode
+        in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]
         and cfg.algorithm.recompute_logprobs
     ):
         inference_placement_strategy = component_placement.get_strategy("inference")
@@ -83,6 +85,17 @@ def main(cfg) -> None:
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement_strategy
     )
 
+    # Dynamic Scheduler group
+    if component_placement._placement_mode == PlacementMode.AUTO:
+        scheduler_placement_strategy = NodePlacementStrategy(node_ids=[0])
+        scheduler = SchedulerWorker.create_group(cfg, component_placement).launch(
+            cluster=cluster,
+            name="DynamicScheduler",
+            placement_strategy=scheduler_placement_strategy,
+        )
+    else:
+        scheduler = None
+
     tokenizer = hf_tokenizer(cfg.actor.tokenizer.tokenizer_model)
     train_ds, val_ds = create_rl_dataset(cfg, tokenizer)
 
@@ -95,6 +108,7 @@ def main(cfg) -> None:
         inference=inference_group,
         actor=actor_group,
         reward=reward_group,
+        scheduler=scheduler,
     )
 
     runner.init_workers()

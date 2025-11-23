@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Tuple
 
 import torch
 from omegaconf import DictConfig
@@ -44,7 +43,7 @@ class RewardWorker(Worker):
 
     def get_batch(
         self, channel: Channel
-    ) -> Tuple[Dict[str, torch.Tensor], RolloutResult]:
+    ) -> tuple[dict[str, torch.Tensor], RolloutResult]:
         result: RolloutResult = channel.get()
         batch = result.to_actor_batch(
             self.cfg.data.max_prompt_length,
@@ -67,7 +66,7 @@ class RewardWorker(Worker):
             with self.worker_timer():
                 if rollout_result.rewards is None:
                     if self.cfg.reward.use_reward_model:
-                        with input_channel.device_lock:
+                        with self.device_lock:
                             batch = rollout_result.to_actor_batch(
                                 self.cfg.data.max_prompt_length,
                                 self.cfg.actor.model.encoder_seq_length,
@@ -89,16 +88,26 @@ class RewardWorker(Worker):
 
     def _compute_rule_based_rewards(self, rollout_result: RolloutResult):
         # Decode only the generated tokens; response_ids are already the post-prompt tokens
-        texts = self.tokenizer.batch_decode(
-            rollout_result.response_ids, skip_special_tokens=True
-        )
+        texts = rollout_result.response_texts
+        if texts is None:
+            texts = self.tokenizer.batch_decode(
+                rollout_result.response_ids, skip_special_tokens=True
+            )
 
-        scores = self.reward.get_reward(texts, rollout_result.answers)
+        kwargs = {}
+        if getattr(self.cfg.reward, "use_prompt", False):
+            prompts = rollout_result.prompt_texts
+            if prompts is None:
+                prompts = self.tokenizer.batch_decode(
+                    rollout_result.prompt_ids, skip_special_tokens=True
+                )
+            kwargs["prompts"] = prompts
+        scores = self.reward.get_reward(texts, rollout_result.answers, **kwargs)
         return (
             torch.as_tensor(scores, dtype=torch.float, device=torch.device("cpu"))
             .view(-1, 1)
             .flatten()
         )
 
-    def compute_batch_rewards_with_model(self, batch: Dict[str, torch.Tensor]):
+    def compute_batch_rewards_with_model(self, batch: dict[str, torch.Tensor]):
         raise NotImplementedError("Reward model is not implemented yet.")

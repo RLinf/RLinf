@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Optional
+from typing import Optional
 
 from .manager import Manager
 from .worker_manager import WorkerInfo
@@ -63,7 +63,7 @@ class CollectiveManager(Manager):
 
     def __init__(self):
         """Initialize the CollectiveManager."""
-        self._name_info_map: Dict[str, CollectiveGroupInfo] = {}
+        self._name_info_map: dict[str, CollectiveGroupInfo] = {}
 
     def register_collective_group(self, group_info: CollectiveGroupInfo):
         """Create a collective group with the given name and workers.

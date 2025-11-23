@@ -177,16 +177,16 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
         import openpi.transforms as transforms
         import safetensors
         from openpi.training import checkpoints as _checkpoints
-        from openpi.training import config as _config
 
+        from .embodiment.openpi import get_openpi_config
         from .embodiment.openpi_action_model import (
             OpenPi0Config,
             OpenPi0ForRLActionPrediction,
         )
 
         # config
-        # todo chenk: merge openpi config with the rl config
-        actor_train_config = _config.get_config("pi0_libero")
+        config_name = getattr(cfg.openpi, "config_name", None)
+        actor_train_config = get_openpi_config(config_name)
         actor_model_config = actor_train_config.model
         actor_model_config = OpenPi0Config(**actor_model_config.__dict__)
         override_config_kwargs = cfg.openpi
@@ -242,6 +242,77 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
             ],
         )
 
+    elif cfg.model_name == "mlp_policy":
+        from .embodiment.mlp_policy import MLPPolicy
+
+        model = MLPPolicy(
+            cfg.obs_dim,
+            cfg.action_dim,
+            cfg.hidden_dim,
+            num_action_chunks=cfg.num_action_chunks,
+            add_value_head=cfg.add_value_head,
+        )
+    elif cfg.model_name == "gr00t":
+        from pathlib import Path
+
+        from rlinf.utils.patcher import Patcher
+
+        Patcher.clear()
+        Patcher.add_patch(
+            "gr00t.data.embodiment_tags.EmbodimentTag",
+            "rlinf.models.embodiment.gr00t.embodiment_tags.EmbodimentTag",
+        )
+        Patcher.add_patch(
+            "gr00t.data.embodiment_tags.EMBODIMENT_TAG_MAPPING",
+            "rlinf.models.embodiment.gr00t.embodiment_tags.EMBODIMENT_TAG_MAPPING",
+        )
+        Patcher.apply()
+
+        from gr00t.experiment.data_config import load_data_config
+
+        from rlinf.models.embodiment.gr00t.utils import replace_dropout_with_identity
+
+        from .embodiment.gr00t_action_model import GR00T_N1_5_ForRLActionPrediction
+
+        if cfg.embodiment_tag == "libero_franka":
+            data_config = load_data_config(
+                "rlinf.models.embodiment.gr00t.modality_config:LiberoFrankaDataConfig"
+            )
+        elif cfg.embodiment_tag == "maniskill_widowx":
+            data_config = load_data_config(
+                "rlinf.models.embodiment.gr00t.modality_config:ManiskillWidowXDataConfig"
+            )
+        else:
+            raise ValueError(f"Invalid embodiment tag: {cfg.embodiment_tag}")
+        modality_config = data_config.modality_config()
+        modality_transform = data_config.transform()
+
+        # The transformer rigisteration is done in gr00t/model/gr00t_n1.py
+        model_path = Path(model_path)
+        if not model_path.exists():
+            # raise error or it triggers auto download from hf(It's cool but we don't have internet connection.)
+            raise FileNotFoundError(f"Model path does not exist: {model_path}")
+
+        model = GR00T_N1_5_ForRLActionPrediction.from_pretrained(
+            model_path,
+            torch_dtype=torch_dtype,
+            embodiment_tag=cfg.embodiment_tag,  # This tag determines the state encoder and action head to use
+            modality_config=modality_config,
+            modality_transform=modality_transform,
+            denoising_steps=cfg.denoising_steps,
+            output_action_chunks=cfg.num_action_chunks,
+            obs_converter_type=cfg.obs_converter_type,  # TODO(lx): unify the embodiment data format and obs converter
+            tune_visual=False,
+            tune_llm=False,
+            rl_head_config=cfg.rl_head_config,
+        )
+        model.to(torch_dtype)
+        if cfg.rl_head_config.add_value_head:
+            # reinitialize the value head after model loading, or there are nan values in the value head after model loading.
+            model.action_head.value_head._init_weights()
+
+        if cfg.rl_head_config.disable_dropout:
+            replace_dropout_with_identity(model)
     else:
         return None
     if torch.cuda.is_available():
@@ -262,7 +333,8 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
                     "fc2",  # vision
                     "q",
                     "kv",
-                    "fc3",  # project
+                    "fc3",
+                    "out_proj",  # project
                     "q_proj",
                     "k_proj",
                     "v_proj",
@@ -274,7 +346,14 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
                 ],
                 init_lora_weights="gaussian",
             )
-            model = get_peft_model(model, lora_config)
+            if cfg.model_name == "openpi":
+                module_to_lora = model.paligemma_with_expert.paligemma
+                module_to_lora = get_peft_model(module_to_lora, lora_config)
+                tag_vlm_subtree(model, False)
+                tag_vlm_subtree(module_to_lora, True)
+                model.paligemma_with_expert.paligemma = module_to_lora
+            else:
+                model = get_peft_model(model, lora_config)
         else:
             model = PeftModel.from_pretrained(model, cfg.lora_path, is_trainable=True)
 
@@ -286,3 +365,8 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
         model_dict = torch.load(cfg.ckpt_path)
         model.load_state_dict(model_dict)
     return model
+
+
+def tag_vlm_subtree(model, is_vlm: bool):
+    for n, m in model.named_modules():
+        setattr(m, "_to_lora", is_vlm)

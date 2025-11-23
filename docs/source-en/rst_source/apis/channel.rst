@@ -7,7 +7,7 @@ a higher-level abstraction for asynchronous communication implemented as a produ
 Channel
 --------
 
-.. autoclass:: rlinf.scheduler.channel.channel.Channel
+.. autoclass:: rlinf.scheduler.Channel
    :members:
    :member-order: bysource
-   :noindex:
+   :class-doc-from: class  

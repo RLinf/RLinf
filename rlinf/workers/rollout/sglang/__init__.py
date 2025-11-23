@@ -31,22 +31,10 @@ sglang_version = None
 
 if package_version is None:
     raise ValueError(f"sglang version {package_version} not supported")
-elif package_version >= parse("0.4.4") and package_version < parse("0.4.6.post2"):
+elif package_version >= parse("0.4.4") and package_version <= parse("0.5.2rc2"):
     sglang_version = package_version
-    from rlinf.hybrid_engines.sglang.sglang_0_4_4 import io_struct
-    from rlinf.hybrid_engines.sglang.sglang_0_4_4.sgl_engine import (
-        Engine,
-    )
-elif package_version >= parse("0.4.6.post2") and package_version < parse("0.4.8"):
-    sglang_version = package_version
-    from rlinf.hybrid_engines.sglang.sglang_0_4_6 import io_struct
-    from rlinf.hybrid_engines.sglang.sglang_0_4_6.sgl_engine import (
-        Engine,
-    )
-elif package_version >= parse("0.4.8") and package_version <= parse("0.4.9"):
-    sglang_version = package_version
-    from rlinf.hybrid_engines.sglang.sglang_0_4_9 import io_struct
-    from rlinf.hybrid_engines.sglang.sglang_0_4_9.sgl_engine import (
+    from rlinf.hybrid_engines.sglang.common import io_struct
+    from rlinf.hybrid_engines.sglang.common.sgl_engine import (
         Engine,
     )
 else:

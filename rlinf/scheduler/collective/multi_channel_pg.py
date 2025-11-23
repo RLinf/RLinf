@@ -14,7 +14,7 @@
 
 import logging
 from datetime import timedelta
-from typing import List, Optional
+from typing import Optional
 
 import torch
 import torch.distributed as dist
@@ -75,16 +75,16 @@ class MultiChannelProcessGroup:
             Accelerator.get_ccl_backend(accel_type) if not self._no_accel_ccl else None
         )
 
-        self._send_accel_ccl_process_groups: List[dist.ProcessGroup] = [
+        self._send_accel_ccl_process_groups: list[dist.ProcessGroup] = [
             None for _ in range(num_channels)
         ]
-        self._recv_accel_ccl_process_groups: List[dist.ProcessGroup] = [
+        self._recv_accel_ccl_process_groups: list[dist.ProcessGroup] = [
             None for _ in range(num_channels)
         ]
-        self._send_gloo_process_groups: List[dist.ProcessGroup] = [
+        self._send_gloo_process_groups: list[dist.ProcessGroup] = [
             None for _ in range(num_channels)
         ]
-        self._recv_gloo_process_groups: List[dist.ProcessGroup] = [
+        self._recv_gloo_process_groups: list[dist.ProcessGroup] = [
             None for _ in range(num_channels)
         ]
 
@@ -125,6 +125,7 @@ class MultiChannelProcessGroup:
             )
 
         if not self._no_accel_ccl:
+            # Create accelerator CCL groups and split GLOO groups from them
             base_group = MultiChannelProcessGroup._create_process_group(
                 backend=self._accel_ccl_backend,  # Only NCCL group supports splitting
                 init_method=init_method,
@@ -161,28 +162,62 @@ class MultiChannelProcessGroup:
                     )
                 )
 
-        for i in range(self._num_channels):
-            self._send_gloo_process_groups[i] = (
-                MultiChannelProcessGroup._create_process_group(
-                    backend="gloo",
-                    init_method=init_method,
-                    world_size=world_size,
-                    rank=rank,
-                    group_name=group_name + f"gloo_send_{i}",
-                    timeout=timeout,
+                self._send_gloo_process_groups[i] = (
+                    MultiChannelProcessGroup._split_process_group(
+                        base_group=base_group,
+                        backend="gloo",
+                        group_name=group_name + f"gloo_send_{i}",
+                        timeout=timeout,
+                    )
                 )
+
+                self._recv_gloo_process_groups[i] = (
+                    MultiChannelProcessGroup._split_process_group(
+                        base_group=base_group,
+                        backend="gloo",
+                        group_name=group_name + f"gloo_recv_{i}",
+                        timeout=timeout,
+                    )
+                )
+        else:
+            # Create only GLOO groups when accelerator CCL is not available
+            # GLOO does not support splitting, only reuse its store
+            base_group = MultiChannelProcessGroup._create_process_group(
+                backend="gloo",
+                init_method=init_method,
+                world_size=world_size,
+                rank=rank,
+                group_name=group_name + "gloo_send_0",
+                timeout=timeout,
+            )
+            base_store = torch.distributed.distributed_c10d._get_process_group_store(
+                base_group
             )
 
-            self._recv_gloo_process_groups[i] = (
-                MultiChannelProcessGroup._create_process_group(
-                    backend="gloo",
-                    init_method=init_method,
-                    world_size=world_size,
-                    rank=rank,
-                    group_name=group_name + f"gloo_recv_{i}",
-                    timeout=timeout,
+            for i in range(self._num_channels):
+                self._send_gloo_process_groups[i] = (
+                    MultiChannelProcessGroup._create_process_group(
+                        backend="gloo",
+                        world_size=world_size,
+                        rank=rank,
+                        store=base_store,
+                        group_name=group_name + f"gloo_send_{i}",
+                        timeout=timeout,
+                    )
+                    if i > 0
+                    else base_group
                 )
-            )
+
+                self._recv_gloo_process_groups[i] = (
+                    MultiChannelProcessGroup._create_process_group(
+                        backend="gloo",
+                        world_size=world_size,
+                        rank=rank,
+                        store=base_store,
+                        group_name=group_name + f"gloo_recv_{i}",
+                        timeout=timeout,
+                    )
+                )
 
         if self._cur_rank == 1:
             # Swap send and recv process groups if the current rank is the last rank
@@ -307,7 +342,7 @@ class MultiChannelProcessGroup:
             work = group.broadcast([tensor], opts)
             if async_op:
                 return work
-            else:
+            elif work is not None:
                 work.wait()
         except Exception as error:
             pg_name = dist._get_process_group_name(group)

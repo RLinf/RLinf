@@ -14,7 +14,6 @@
 
 import bisect
 from dataclasses import dataclass
-from typing import List
 
 from ..accelerator import AcceleratorType
 from .manager import Manager
@@ -23,7 +22,7 @@ from .manager import Manager
 class WorkerAddress:
     """A class that describes the path to a worker in a WorkerGroup."""
 
-    def __init__(self, root_group_name: str, ranks: int | List[int] = []):
+    def __init__(self, root_group_name: str, ranks: int | list[int] = []):
         """Initialize the WorkerAddress.
 
         Args:
@@ -156,7 +155,7 @@ class WorkerInfo:
     node_port: int
     """Port of the node where the worker is placed."""
 
-    available_accelerators: List[int]
+    available_accelerators: list[int]
     """List of global accelerator IDs available to the worker."""
 
     def __hash__(self):
@@ -177,7 +176,7 @@ class WorkerNode:
         """
         self._worker_address = worker_address
         self._worker_info = worker_info
-        self._nodes: List[WorkerNode] = []
+        self._nodes: list[WorkerNode] = []
 
     @classmethod
     def find_node(
@@ -256,7 +255,7 @@ class WorkerManager(Manager):
 
     def __init__(self):
         """Initialize the WorkerManager."""
-        self._root_workers: List[WorkerNode] = []
+        self._root_workers: list[WorkerNode] = []
 
     def register_worker(self, worker_address: WorkerAddress, worker_info: WorkerInfo):
         """Register a new worker in the worker manager.

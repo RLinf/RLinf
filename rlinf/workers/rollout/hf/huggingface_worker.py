@@ -15,7 +15,7 @@
 import gc
 
 import torch
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 from tqdm import tqdm
 
 from rlinf.data.io_struct import EmbodiedRolloutResult
@@ -41,13 +41,18 @@ class MultiStepRolloutWorker(Worker):
 
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
         self.channel = self.connect_channel(cfg.rollout.channel.name)
-        for i in range(self._component_placement.get_world_size("rollout")):
-            self.channel.create_queue(
-                f"{self._action_queue_name}_{i}", maxsize=cfg.rollout.channel.queue_size
-            )
 
     def init_worker(self):
+        # NOTE:
+        # because pi series have some different dtype params, we can not call `to`
+        # after get_model, here we simply change actor.model.precision to rollout.precision
+        # and after get_model we change it back. THIS CODE SHOULD BE REFACTORED SOON.
+        with open_dict(self.cfg):
+            original_precision = self.cfg.actor.model.precision
+            self.cfg.actor.model.precision = self.cfg.rollout.precision
         self.hf_model = get_model(self.cfg.rollout.model_dir, self.cfg.actor.model)
+        with open_dict(self.cfg):
+            self.cfg.actor.model.precision = original_precision
 
         if self.cfg.actor.model.model_name in ["openvla", "openvla_oft"]:
             model_config, input_processor = get_vla_model_config_and_processor(
@@ -95,7 +100,7 @@ class MultiStepRolloutWorker(Worker):
         )
         kwargs["do_sample"] = do_sample
 
-        if self.cfg.actor.model.model_name in ["openpi"]:
+        if self.cfg.actor.model.model_name in ["openpi", "mlp_policy", "gr00t"]:
             kwargs = {"mode": mode}
 
         with torch.no_grad():
@@ -136,7 +141,7 @@ class MultiStepRolloutWorker(Worker):
                     self.cfg.algorithm.gamma * final_values.cpu()
                 )
 
-    async def generate(self):
+    def generate(self):
         if self.cfg.rollout.get("enable_offload", False):
             self.reload_model()
         self.buffer_list = [EmbodiedRolloutResult() for _ in range(self.stage_num)]
@@ -148,16 +153,16 @@ class MultiStepRolloutWorker(Worker):
         ):
             for _ in range(self.cfg.algorithm.n_chunk_steps):
                 for i in range(self.stage_num):
-                    env_output = await self.recv_env_output()
+                    env_output = self.recv_env_output()
                     self.update_env_output(i, env_output)
                     actions, result = self.predict(env_output["obs"])
 
                     self.buffer_list[i].append_result(result)
 
-                    await self.send_chunk_actions(actions)
+                    self.send_chunk_actions(actions)
 
             for i in range(self.stage_num):
-                env_output = await self.recv_env_output()
+                env_output = self.recv_env_output()
                 self.update_env_output(i, env_output)
                 actions, result = self.predict(env_output["obs"])
                 if "prev_values" in result:
@@ -166,20 +171,20 @@ class MultiStepRolloutWorker(Worker):
                     )
 
         for i in range(self.stage_num):
-            await self.send_rollout_batch(i)
+            self.send_rollout_batch(i)
 
         if self.cfg.rollout.get("enable_offload", False):
             self.offload_model()
 
-    async def evaluate(self):
+    def evaluate(self):
         if self.cfg.rollout.get("enable_offload", False):
             self.reload_model()
 
         for _ in range(self.cfg.algorithm.n_eval_chunk_steps):
             for _ in range(self.stage_num):
-                env_output = await self.recv_env_output()
+                env_output = self.recv_env_output()
                 actions, _ = self.predict(env_output["obs"], mode="eval")
-                await self.send_chunk_actions(actions)
+                self.send_chunk_actions(actions)
 
         if self.cfg.rollout.get("enable_offload", False):
             self.offload_model()
@@ -194,36 +199,35 @@ class MultiStepRolloutWorker(Worker):
 
     def sync_model_from_actor(self):
         param_state_dict = self.recv(self._actor_group_name, src_rank=self._rank)
+
         self.hf_model.load_state_dict(param_state_dict)
         del param_state_dict
         gc.collect()
         torch.cuda.empty_cache()
 
-    async def recv_env_output(self):
-        env_output = await self.channel.get(
-            queue_name=f"{self._obs_queue_name}_{self._rank}", async_op=True
-        ).async_wait()
+    def recv_env_output(self):
+        env_output = self.channel.get(
+            key=f"{self._obs_queue_name}_{self._rank}",
+        )
         return env_output
 
-    async def send_chunk_actions(self, chunk_actions):
-        await self.channel.put(
+    def send_chunk_actions(self, chunk_actions):
+        self.channel.put(
             item=chunk_actions,
-            queue_name=f"{self._action_queue_name}_{self._rank}",
-            async_op=True,
-        ).async_wait()
+            key=f"{self._action_queue_name}_{self._rank}",
+        )
 
-    async def send_rollout_batch(self, stage_id):
+    def send_rollout_batch(self, stage_id):
         # send rollout_batch to actor
         send_num = self._component_placement.get_world_size("rollout") * self.stage_num
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(recv_num, send_num)
         splited_rollout_result = self.buffer_list[stage_id].to_splited_dict(split_num)
         for i in range(split_num):
-            await self.channel.put(
+            self.channel.put(
                 item=splited_rollout_result[i],
-                queue_name=self._replay_buffer_name,
-                async_op=True,
-            ).async_wait()
+                key=self._replay_buffer_name,
+            )
 
     def set_global_step(self, global_step):
         if hasattr(self.hf_model, "set_global_step"):

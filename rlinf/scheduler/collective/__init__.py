@@ -12,12 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .async_work import AsyncChannelWork, AsyncCollWork, AsyncFuncWork, AsyncWork
+from .async_work import (
+    AsyncChannelCommWork,
+    AsyncChannelWork,
+    AsyncCollWork,
+    AsyncFuncWork,
+    AsyncWork,
+)
 from .collective import Collective
 from .collective_group import CollectiveGroup
 
 __all__ = [
     "AsyncWork",
+    "AsyncChannelCommWork",
     "AsyncChannelWork",
     "AsyncCollWork",
     "AsyncFuncWork",

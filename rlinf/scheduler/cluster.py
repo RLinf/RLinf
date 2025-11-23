@@ -20,7 +20,7 @@ import time
 import warnings
 from dataclasses import dataclass
 from importlib.metadata import version
-from typing import TYPE_CHECKING, Dict, List, Optional, Type
+from typing import TYPE_CHECKING, Optional
 
 import ray
 import ray.util.scheduling_strategies
@@ -150,13 +150,17 @@ class Cluster:
                 address="auto",
                 logging_level=Cluster.LOGGING_LEVEL,
                 namespace=Cluster.NAMESPACE,
-                runtime_env={"env_vars": dict(os.environ)},
+                runtime_env={
+                    "env_vars": dict(os.environ),
+                },
             )
         except ConnectionError:
             ray.init(
                 logging_level=Cluster.LOGGING_LEVEL,
                 namespace=Cluster.NAMESPACE,
-                runtime_env={"env_vars": dict(os.environ)},
+                runtime_env={
+                    "env_vars": dict(os.environ),
+                },
             )
 
         # Wait for the cluster to be ready
@@ -166,7 +170,7 @@ class Cluster:
             )
             time.sleep(1)
 
-        self._nodes: List[NodeInfo] = []
+        self._nodes: list[NodeInfo] = []
         for node in ray.nodes():
             accelerator_type, num_accelerators = (
                 Accelerator.get_node_accelerator_type_and_num(node)
@@ -183,7 +187,7 @@ class Cluster:
             )
 
         # Sort nodes first by accelerator type, then by IP
-        nodes_group_by_accel_type: Dict[AcceleratorType, List[NodeInfo]] = {
+        nodes_group_by_accel_type: dict[AcceleratorType, list[NodeInfo]] = {
             accel_type: [] for accel_type in AcceleratorType
         }
         for node in self._nodes:
@@ -208,6 +212,7 @@ class Cluster:
         # Launch managers
         from .manager import (
             CollectiveManager,
+            DeviceLockManager,
             NodeManager,
             WorkerManager,
         )
@@ -227,6 +232,11 @@ class Cluster:
                 ray.remote(NodeManager)
                 .options(name=NodeManager.MANAGER_NAME)
                 .remote(self._nodes)
+            )
+            self._lock_manager = (
+                ray.remote(DeviceLockManager)
+                .options(name=DeviceLockManager.MANAGER_NAME)
+                .remote()
             )
         except ValueError:
             # If the WorkerManager is already running, we need to switch the namespace
@@ -304,7 +314,7 @@ class Cluster:
         return sum(node.num_accelerators for node in self._nodes)
 
     @property
-    def node_accelerator_ids(self) -> List[List[int]]:
+    def node_accelerator_ids(self) -> list[list[int]]:
         """Get the global accelerator IDs for each node in the cluster."""
         node_start_accel_id = 0
         node_accel_ids = []
@@ -374,11 +384,12 @@ class Cluster:
 
     def allocate(
         self,
-        cls: Type["Worker"],
+        cls: type["Worker"],
         worker_name: str,
         node_id: int,
+        max_concurrency: int,
         env_vars: dict,
-        cls_args: List = [],
+        cls_args: list = [],
         cls_kwargs: dict = {},
     ) -> ActorHandle:
         """Allocate a ray remote class instance on a specific node and local rank.
@@ -387,6 +398,7 @@ class Cluster:
             cls (Type[Worker]): The class to allocate.
             worker_name (str): The name of the worker.
             node_id (int): The ID of the node to allocate on.
+            max_concurrency (Optional[int]): The maximum concurrency for the worker's underlying ray actor.
             env_vars (dict): Environment variables to set for the worker.
             cls_args (List): Positional arguments to pass to the class constructor.
             cls_kwargs (dict): Keyword arguments to pass to the class constructor.
@@ -411,5 +423,10 @@ class Cluster:
                 soft=False,
             ),
         }
+        if max_concurrency is not None:
+            assert 1 <= max_concurrency <= 2**31 - 1, (
+                f"Invalid max_concurrency: {max_concurrency}. Must be between 1 and {2**31 - 1} (max int32) due to Ray's native layer limitation."
+            )
+            options["max_concurrency"] = max_concurrency
 
         return remote_cls.options(**options).remote(*cls_args, **cls_kwargs)

@@ -12,19 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List
-
 from omegaconf import DictConfig
 
-from toolkits.code_verifier.verify import fim_verify_call
+from toolkits.code_verifier.verify import (
+    fim_llm_as_judge_verify_call,
+)
 
 
-class CodeReward:
+class CodeRewardOffline:
     def __init__(self, config: DictConfig):
         self.scale = config.get("reward_scale", 1.0)
 
     def get_reward(
-        self, response: List[str], reference: List[List[str]]
-    ) -> List[float]:
-        rewards = fim_verify_call(response, reference)
+        self,
+        response: list[str],
+        reference: list[list[str]],
+        prompts: list[str],
+    ) -> list[float]:
+        rewards = fim_llm_as_judge_verify_call(response, reference, prompts)
         return [float(reward) * self.scale for reward in rewards]

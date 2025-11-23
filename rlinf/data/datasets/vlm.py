@@ -12,26 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
 import json
 import logging
 import os
 from io import BytesIO
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Optional, Union
 
 import pandas as pd
 import torch
@@ -47,7 +32,7 @@ from rlinf.data.datasets.utils import batch_pad_to_fixed_len
 class VLMBaseDataset(Dataset):
     def __init__(
         self,
-        data_paths: Union[List[str], str],
+        data_paths: Union[list[str], str],
         config: DictConfig,
         tokenizer: AutoTokenizer,
     ) -> None:
@@ -109,8 +94,8 @@ class VLMBaseDataset(Dataset):
         self._parquet_cache = getattr(self, "_parquet_cache", {})
         self._parquet_df_cache = getattr(self, "_parquet_df_cache", {})
 
-    def get_image_list(self, dataitem: Dict[str, Any]) -> List[Union[bytes, str, None]]:
-        images: List[Union[bytes, str, None]] = []
+    def get_image_list(self, dataitem: dict[str, Any]) -> list[Union[bytes, str, None]]:
+        images: list[Union[bytes, str, None]] = []
         for k in self.image_keys:
             v = dataitem.get(k, None)
             if v is None:
@@ -125,7 +110,7 @@ class VLMBaseDataset(Dataset):
             images = [None]
         return images
 
-    def build_prompt_text(self, data_item: Dict[str, Any]) -> str:
+    def build_prompt_text(self, data_item: dict[str, Any]) -> str:
         # Default: prompt + optional choices rendered inline
         q = data_item.get(self.prompt_key, "")
         choices = data_item.get(self.choice_key, []) if self.choice_key else []
@@ -137,7 +122,7 @@ class VLMBaseDataset(Dataset):
 
     def encode_prompt(
         self, prompt_text: str, images
-    ) -> Tuple[torch.Tensor, int, Optional[str]]:
+    ) -> tuple[torch.Tensor, int, Optional[str]]:
         """
         Return (token_ids[L], length, prompt_text_used). If using chat template, encode with processor.
         Subclasses may override to support alternative prompting.
@@ -156,7 +141,7 @@ class VLMBaseDataset(Dataset):
                     }
                 )
 
-            content: List[Dict[str, Any]] = []
+            content: list[dict[str, Any]] = []
             for _ in range(max(0, len(images))):
                 content.append({"type": "image"})
             content.append({"type": "text", "text": prompt_text})
@@ -207,13 +192,13 @@ class VLMBaseDataset(Dataset):
             return ids, int(ids.numel()), prompt_text, {}
 
     def postprocess_dataset_item(
-        self, item: DatasetItem, raw: Dict[str, Any]
+        self, item: DatasetItem, raw: dict[str, Any]
     ) -> DatasetItem:
         return item
 
-    def _expand_data_paths(self, inputs: List[str]) -> List[str]:
+    def _expand_data_paths(self, inputs: list[str]) -> list[str]:
         exts = {".jsonl", ".json", ".parquet"}
-        files: List[str] = []
+        files: list[str] = []
         for p in inputs:
             if os.path.isdir(p):
                 for root, _, fnames in os.walk(p):
@@ -227,7 +212,7 @@ class VLMBaseDataset(Dataset):
         return files
 
     def _eager_load_all(self) -> None:
-        merged: List[Dict[str, Any]] = []
+        merged: list[dict[str, Any]] = []
         for path in self.data_paths:
             fmt = os.path.splitext(path)[1].lower()
             if fmt == ".jsonl":
@@ -257,7 +242,7 @@ class VLMBaseDataset(Dataset):
             fmt = os.path.splitext(path)[1].lower()
             if fmt == ".jsonl":
                 # index by byte offsets for each line
-                offsets: List[int] = []
+                offsets: list[int] = []
                 with open(path, "rb") as fb:
                     pos = 0
                     for line in fb:
@@ -297,7 +282,7 @@ class VLMBaseDataset(Dataset):
             else:
                 logging.warning(f"Unsupported format {fmt} for path {path}, skipping.")
 
-    def _load_single_lazy(self, path: str, fmt: str, key: Any) -> Dict[str, Any]:
+    def _load_single_lazy(self, path: str, fmt: str, key: Any) -> dict[str, Any]:
         if fmt == "eager":
             return self._records[int(key)]
         if fmt == "jsonl":
@@ -341,7 +326,7 @@ class VLMBaseDataset(Dataset):
             return df.iloc[int(key)].to_dict()
         raise RuntimeError(f"Unknown lazy fmt {fmt}")
 
-    def _process_raw_record(self, raw: Dict[str, Any], idx: int) -> DatasetItem:
+    def _process_raw_record(self, raw: dict[str, Any], idx: int) -> DatasetItem:
         images = self.get_image_list(raw)
         prompt_text = self.build_prompt_text(raw)
         prompt_ids, plen, rendered_text, multi_modal_inputs = self.encode_prompt(
@@ -372,7 +357,7 @@ class VLMBaseDataset(Dataset):
 
 
 class VLMDatasetRegistry:
-    registry: Dict[str, Callable[..., VLMBaseDataset]] = {}
+    registry: dict[str, Callable[..., VLMBaseDataset]] = {}
 
     @classmethod
     def register(
@@ -389,7 +374,7 @@ class VLMDatasetRegistry:
         cls,
         dataset_name: Optional[str],
         *,
-        data_paths: Union[List[str], str],
+        data_paths: Union[list[str], str],
         config: DictConfig,
         tokenizer: AutoTokenizer,
     ) -> VLMBaseDataset:
@@ -402,7 +387,7 @@ class VLMDatasetRegistry:
 class Robo2VLMDataset(VLMBaseDataset):
     def __init__(
         self,
-        data_paths: Union[List[str], str],
+        data_paths: Union[list[str], str],
         config: DictConfig,
         tokenizer: AutoTokenizer,
     ) -> None:
@@ -414,8 +399,8 @@ class Robo2VLMDataset(VLMBaseDataset):
             "then provide your final answer in <answer></answer> tags."
         )
 
-    def get_image_list(self, dataitem: Dict[str, Any]) -> List[Union[bytes, str, None]]:
-        images: List[Any] = []
+    def get_image_list(self, dataitem: dict[str, Any]) -> list[Union[bytes, str, None]]:
+        images: list[Any] = []
         if "images" in dataitem:
             v = dataitem.get("images")
             if isinstance(v, list):
@@ -433,7 +418,7 @@ class Robo2VLMDataset(VLMBaseDataset):
         else:
             return super().get_image_list(dataitem)
 
-        normed: List[Union[bytes, str, None]] = []
+        normed: list[Union[bytes, str, None]] = []
         for v in images:
             if v is None:
                 continue
@@ -447,7 +432,7 @@ class Robo2VLMDataset(VLMBaseDataset):
             normed = [None]
         return normed
 
-    def build_prompt_text(self, data_item: Dict[str, Any]) -> str:
+    def build_prompt_text(self, data_item: dict[str, Any]) -> str:
         # Use 'question' and 'choices' if present; else fallback to base using configured prompt/choice keys
         question = data_item.get("question", None)
         choices = data_item.get("choices", None)
@@ -472,7 +457,7 @@ class Robo2VLMDataset(VLMBaseDataset):
         return text
 
     def postprocess_dataset_item(
-        self, item: DatasetItem, raw: Dict[str, Any]
+        self, item: DatasetItem, raw: dict[str, Any]
     ) -> DatasetItem:
         answer_dict = {
             "choices": raw.get("choices", None),

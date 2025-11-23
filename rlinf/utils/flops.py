@@ -39,7 +39,7 @@ class ModelConfig:
     """Transformer Feed-Forward Network hidden size. This is set to 4*hidden_size
     if not provided."""
 
-    override_vocab_size: int = 0
+    padded_vocab_size: int = 0
 
 
 class FLOPSCalculator:
@@ -193,7 +193,7 @@ class FLOPSCalculator:
         n_qg = self.model_config.num_query_groups
         n_kv = n_h // n_qg
         I = self.model_config.ffn_hidden_size
-        V = self.model_config.override_vocab_size
+        V = self.model_config.padded_vocab_size
 
         qkv = FLOPSCalculator.qkv_project_flops(H, n_h, n_kv, prompt_length)
         attn = FLOPSCalculator.attention_score_flops(H, prompt_length)
@@ -217,7 +217,7 @@ class FLOPSCalculator:
         n_qg = self.model_config.num_query_groups
         n_kv = n_h // n_qg
         I = self.model_config.ffn_hidden_size
-        V = self.model_config.override_vocab_size
+        V = self.model_config.padded_vocab_size
 
         # Convert to tensor for vectorized computation
         if isinstance(prompt_length, torch.Tensor):

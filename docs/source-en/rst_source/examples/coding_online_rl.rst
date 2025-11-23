@@ -5,6 +5,7 @@ Online Reinforcement Learning for Code Completion Agent is an important applicat
 Through integration with code editors like Continue, we can collect user preference feedback on code completions, enabling near real-time code generation and feedback learning to quickly improve code completion quality and align with user preferences.
 This example demonstrates how to use the RLinf framework to train a model capable of online code completion tasks.
 
+Related reading: :doc:`A First Look at the "Last Mile" of Agent Deployment: Cursor Online Reinforcement Learning <../blog/build_a_coding_online_rl_case>`.
 Overview
 --------
 
@@ -27,7 +28,13 @@ First, ensure you have installed the RLinf framework and its dependencies:
 .. code-block:: bash
 
    # Install additional dependencies
-   pip install httpx asyncio fuzzywuzzy
+   pip install httpx asyncio
+
+If using the offline validation example, download the dataset:
+
+.. code-block:: bash
+
+   modelscope download --dataset "paxionfruit/code-fim-v2-python-filtered" --local_dir code-fim-v2-python-filtered
 
 **Configure Continue Integration**
 
@@ -82,31 +89,64 @@ First, ensure you have installed the RLinf framework and its dependencies:
 **Start Training Service**
 
 1. **Prepare Model and Configuration**
-   
-   Ensure you have pre-trained model weights and modify the configuration file to match model paths, ports to use, etc.
 
-   .. code-block:: yaml
+   - For online RL, edit and use `examples/coding_online_rl/config/qwen2.5-1.5b-ppo.yaml`:
 
-      rollout:
-        model_dir: /path/to/your/model/DeepSeek-R1-Distill-Qwen-1.5B/
-      
-      actor:
-        tokenizer:
-          tokenizer_model: /path/to/your/model/DeepSeek-R1-Distill-Qwen-1.5B/
+     .. code-block:: yaml
+
+        runner:
+          output_dir: /path/to/your/logs
+
+        rollout:
+          model_dir: /path/to/your/model
+
+   - For offline validation, edit and use `examples/coding_online_rl/config/qwen2.5-1.5b-grpo-llm_judge.yaml`:
+
+     .. code-block:: yaml
+
+        runner:
+          output_dir: /path/to/your/logs
+
+        rollout:
+          model_dir: /path/to/your/model
+
+        data:
+          train_data_paths: ["/path/to/your/dataset/code-fim-v2-python-filtered_formatted_train_3k.jsonl"]
+          val_data_paths: ["/path/to/your/dataset/code-fim-v2-python-filtered_formatted_test_1k.jsonl"]
+
+     Also set the API endpoint and key for the LLM-as-judge used to simulate feedback:
+
+     .. code-block:: bash
+
+        export LLMASJUDGE_API_URL=your_api_url
+        export LLMASJUDGE_API_KEY=your_api_key
+        export LLMASJUDGE_MODEL=your_model  # not recommended; the prompt should fit your model.
 
 2. **Start RLinf Training Service**
    
-   .. code-block:: bash
+   - For online RL:
 
-      # Navigate to project directory
-      cd /path/to/rlinf_online_rl
-      
-      # Start training service
-      bash examples/coding_online_rl/run_main_math_pipeline_grpo_megatron.sh qwen2.5-1.5b-ppo-megatron
+     .. code-block:: bash
 
-   This will start the following services:
-   - **Inference Service**: Provides code completion API on port 8081
-   - **Training Service**: Receives user feedback data on port 8082
+        # Navigate to project directory
+        cd /path/to/rlinf_online_rl
+
+        # Start training service
+        bash examples/coding_online_rl/run_main_coding_online_rl.sh
+
+     This will start the following services:
+     - **Inference Service**: Provides code completion API on port 8081
+     - **Training Service**: Receives user feedback data on port 8082
+
+   - For offline validation:
+
+     .. code-block:: bash
+
+        # Navigate to project directory
+        cd /path/to/rlinf_online_rl
+
+        # Start training service
+        bash examples/coding_online_rl/run_main_coding_rl_llm_judge.sh
 
 **Integration with Continue**
 

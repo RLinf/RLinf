@@ -1,3 +1,6 @@
+RLinf Documentation
+===================
+
 .. image:: _static/svg/logo_white.svg
    :width: 500px
    :align: center
@@ -29,11 +32,14 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
   - Disaggregated mode: enables fine-grained pipelining.
   - Hybrid mode: a customizable combination of different placement modes, integrating both collocated and disaggregated modes.
 
-- Auto-scheduling Strategy: automatically selects the most suitable execution mode based on the training workload, without the need for manual resource allocation.
-  
+- Auto Scheduling
+
+  - Dynamic Scheduling: dynamically schedule resource allocation, maximizing resource utilization.
+  - Static Scheduling: automatically select the most suitable execution mode based on the training workload, without the need for manual resource allocation.
+
 - Embodied Agent Support
 
-  - Fast adaptation support for mainstream VLA models: `OpenVLA`_, `OpenVLA-OFT`_, `π₀`_
+  - Fast adaptation support for mainstream VLA models: `OpenVLA`_, `OpenVLA-OFT`_, `π₀`_, `GR00T-N1.5`_
   - Support for mainstream CPU & GPU-based simulators via standardized RL interfaces: `ManiSkill3`_, `LIBERO`_
   - Enabling the first RL fine-tuning of the π₀ model family with a flow-matching action expert.
 
@@ -71,6 +77,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 .. _Megatron-LM: https://github.com/NVIDIA/Megatron-LM
 .. _SGLang: https://github.com/sgl-project/sglang
 .. _vLLM: https://github.com/vllm-project/vllm
+.. _GR00T-N1.5: https://github.com/NVIDIA/Isaac-GR00T.git
 
 
 
@@ -129,42 +136,3 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
   rst_source/faq
 
 --------------------------------------------
-
-.. _contribution-guidelines:
-
-Contribution Guidelines
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Great! We are always on the lookout for more contributors to our code base.
-
-Firstly, if you are unsure or afraid of anything, just ask or submit the issue or pull request anyways. You won't be yelled at for giving your best effort. The worst that can happen is that you'll be politely asked to change something. We appreciate any sort of contributions and don't want a wall of rules to get in the way of that.
-
-However, for those individuals who want a bit more guidance on the best way to contribute to the project, read on. This document will cover all the points we're looking for in your contributions, raising your chances of quickly merging or addressing your contributions.
-
-There are a few simple guidelines that you need to follow before providing your hacks.
-
-**Code Linting and Formatting**
-
-We use **pre-commit** and **ruff** to enforce code formatting and quality checks. To install them, run:
-
-.. code:: bash
-
-   pip install pre-commit
-   pip install ruff
-   pre-commit install
-
-After making changes to the code and before opening a PR, we recommend running:
-
-.. code:: bash
-
-   ruff check . --fix --preview
-
-This will check if your code follows the formatting rules.  
-If there are issues (e.g., indentation problems), it will fix them automatically
-
-**Creating a Pull Request**
-
-Once your code passes the checks, you can open a PR. Please ensure your commits and branches follow the required standards. Otherwise, our CI tests will reject your submission.
-
-- **Commit message guidelines**: See the `Conventional Commits specification <https://www.conventionalcommits.org/en/v1.0.0/>`_.
-- **Branch naming guidelines**: See the `Conventional Branch guidelines <https://conventional-branch.github.io/#summary>`_.

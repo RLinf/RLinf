@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, List, Optional
+from typing import Optional
 
 import hydra
 from omegaconf.omegaconf import OmegaConf
@@ -28,7 +28,7 @@ class SchedulerTask:
         self,
         cfg,
         cluster,
-        workflow_graph: Optional[Dict[ComponentNode, List[ComponentNode]]] = None,
+        workflow_graph: Optional[dict[ComponentNode, list[ComponentNode]]] = None,
     ):
         self.cfg = cfg
         self.is_reasoning = cfg.runner.task_type == "reasoning"
@@ -98,7 +98,7 @@ class SchedulerTask:
         self.workflow = Workflow(workflow_graph)
         self.profile_data_registed = False
 
-    def register_profile_data(self, profile_data: Dict[str, float]):
+    def register_profile_data(self, profile_data: dict[str, float]):
         for component_node in self.workflow.nodes:
             component_node_name = component_node.name
             instance_num, signle_iter_cost = profile_data[component_node_name]
@@ -114,7 +114,7 @@ class SchedulerTask:
 
     def run(self) -> str:
         assert self.profile_data_registed, "Profile data not registered"
-        partitions: List[Dict[str, Workflow]] = self.time_division_multiplexing()
+        partitions: list[dict[str, Workflow]] = self.time_division_multiplexing()
 
         min_partition_cost = float("inf")
         min_partition_allocations = None
@@ -139,7 +139,7 @@ class SchedulerTask:
         return best_placement
 
     def parse_partition_allocation_to_cfg(
-        self, partition_allocation: Dict[Workflow, AllocationStates]
+        self, partition_allocation: dict[Workflow, AllocationStates]
     ) -> str:
         new_cfg = OmegaConf.create()
         new_cfg.cluster = {}
@@ -179,8 +179,8 @@ class SchedulerTask:
 
         raise NotImplementedError("hybrid mode is not supported")
 
-    def time_division_multiplexing(self) -> List[Dict[str, Workflow]]:
-        partitions: List[Dict[str, Workflow]] = get_workflow_partition(self.workflow)
+    def time_division_multiplexing(self) -> list[dict[str, Workflow]]:
+        partitions: list[dict[str, Workflow]] = get_workflow_partition(self.workflow)
         if self.is_reasoning:
             valid_partitions = [
                 i for i in partitions if len(i) in [1, len(self.components_config)]
@@ -208,7 +208,7 @@ class SchedulerTask:
         else:
             inference_instance_max_num = 2
 
-        allocations: List[AllocationStates] = resource_allocate(
+        allocations: list[AllocationStates] = resource_allocate(
             sub_components_config,
             self.total_gpus,
             self.group_size,

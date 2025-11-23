@@ -17,6 +17,7 @@ import copy
 from omegaconf import DictConfig, open_dict
 
 from rlinf.utils.placement import ComponentPlacement
+from rlinf.utils.utils import retrieve_model_state_dict_in_cpu
 
 from ..actor.megatron_actor_worker import MegatronActor
 
@@ -52,6 +53,15 @@ class MegatronInference(MegatronActor):
         self.setup_model_and_optimizer()
         self.optimizer, self.lr_scheduler = None, None
 
+        ref_policy_state_dict = None
+        # only need this if we are running with inital kl penalty & full-parameter tuning
+        if (
+            self.cfg.algorithm.kl_beta > 0
+            or self.cfg.algorithm.get("reinpp_kl_beta", 0) > 0
+        ) and self.cfg.actor.get("combine_reference_model", True):
+            ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model[0])
+        self.ref_policy_state_dict = ref_policy_state_dict
+
         self._weight_dst_rank_in_inference = self.get_inference_weight_dst_ranks(
             self.cfg.inference.model.tensor_model_parallel_size,
             self.cfg.inference.model.pipeline_model_parallel_size,
@@ -78,6 +88,9 @@ class MegatronInference(MegatronActor):
             self.cfg.inference = merged_cfg
 
     def sync_model_from_actor(self):
+        if self.is_weight_offloaded:
+            self.onload_model_weights_and_grad(load_grad=False)
+            self.is_weight_offloaded = False
         for rank in self._weight_dst_rank_in_inference:
             if self._rank == rank:
                 state_dict = self.recv(

@@ -7,7 +7,7 @@ Channel 接口
 Channel
 --------
 
-.. autoclass:: rlinf.scheduler.channel.channel.Channel
+.. autoclass:: rlinf.scheduler.Channel
    :members:
    :member-order: bysource
-   :noindex:
+   :class-doc-from: class  

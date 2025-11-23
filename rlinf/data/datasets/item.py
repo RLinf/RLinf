@@ -12,22 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional, Union
 
 import torch
 
@@ -53,7 +39,7 @@ class DatasetItem:
     answer: str | dict
     idx: int
     solution: Optional[str] = None
-    image_data: Optional[List[Union[bytes, str]]] = None
+    image_data: Optional[list[Union[bytes, str]]] = None
     prompt_text: Optional[str] = None
-    meta: Optional[Dict[str, Any]] = None
-    multi_modal_inputs: Optional[Dict[str, Any]] = None
+    meta: Optional[dict[str, Any]] = None
+    multi_modal_inputs: Optional[dict[str, Any]] = None

@@ -15,7 +15,6 @@
 import itertools
 import math
 from collections import defaultdict, deque
-from typing import Dict, List
 
 
 class Node:
@@ -47,7 +46,7 @@ class ComponentNode(Node):
 class SccComponentNode(Node):
     """The SccComponentNode denotes a strongly connected component (SCC) and is comprised of multiple constituent ComponentNodes."""
 
-    def __init__(self, Components: List[ComponentNode]):
+    def __init__(self, Components: list[ComponentNode]):
         super().__init__(" - ".join([component.name for component in Components]))
         self.components = Components
 
@@ -56,7 +55,7 @@ class SccComponentNode(Node):
 
 
 class Workflow:
-    def __init__(self, workflow: Dict[Node, List[Node]]):
+    def __init__(self, workflow: dict[Node, list[Node]]):
         self.nodes = list(set(workflow.keys()))
         for neighbors in workflow.values():
             for neighbor in neighbors:
@@ -69,7 +68,7 @@ class Workflow:
 
         self.topological_order = None
 
-    def find_sccs(self) -> List[List[Node]]:
+    def find_sccs(self) -> list[list[Node]]:
         """Find strongly connected components (SCCs) using Tarjan's algorithm."""
 
         def tarjan_dfs(node, disc, low, stack, in_stack, time):
@@ -160,7 +159,7 @@ class Workflow:
 
         return Workflow(compressed_workflow)
 
-    def topological_sort(self) -> List[Node]:
+    def topological_sort(self) -> list[Node]:
         """Perform topological sort on the workflow(graph)"""
         if self.topological_order is not None:
             return self.topological_order
@@ -189,7 +188,7 @@ class WorkflowPartitioner:
     def __init__(self, workflow: Workflow):
         self.workflow = workflow.compress_sccs()
 
-    def partition(self) -> List[Dict[str, Workflow]]:
+    def partition(self) -> list[dict[str, Workflow]]:
         """Enumerate possible partitioning ways
 
         Returns:
@@ -198,7 +197,7 @@ class WorkflowPartitioner:
         if self.workflow.topological_order is None:
             self.workflow.topological_sort()
 
-        partitions: List[Dict[str, Workflow]] = []
+        partitions: list[dict[str, Workflow]] = []
 
         # Try different numbers of partitions
         for num_partitions in range(1, len(self.workflow.sccs) + 1):
@@ -251,7 +250,7 @@ class WorkflowPartitioner:
 
         return partitions
 
-    def _extract_nodes_from_compressed_workflow(self) -> List[Node]:
+    def _extract_nodes_from_compressed_workflow(self) -> list[Node]:
         """Extract all original nodes from the compressed workflow"""
         nodes = []
         for compressed_node in self.workflow.topological_order:
@@ -261,7 +260,7 @@ class WorkflowPartitioner:
                 nodes.append(compressed_node)
         return nodes
 
-    def _create_subgraph_workflow(self, nodes: List[Node]) -> Workflow:
+    def _create_subgraph_workflow(self, nodes: list[Node]) -> Workflow:
         """
         Create subgraph Workflow from node list
 
@@ -402,6 +401,6 @@ def get_workflow_cost(
     ]
 
 
-def get_workflow_partition(workflow: Workflow) -> List[Dict[str, Workflow]]:
+def get_workflow_partition(workflow: Workflow) -> list[dict[str, Workflow]]:
     """Get workflow partitions"""
     return WorkflowPartitioner(workflow).partition()

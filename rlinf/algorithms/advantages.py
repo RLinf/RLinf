@@ -12,17 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 
 from rlinf.algorithms.registry import register_advantage
+from rlinf.algorithms.utils import kl_penalty, safe_normalize
+from rlinf.utils.utils import masked_mean
 
 
-@register_advantage("embodied_gae")
-def compute_embodied_gae_advantages_and_returns(
+@register_advantage("gae")
+def compute_gae_advantages_and_returns(
+    rewards: torch.Tensor,
+    gamma: float = 1.0,
+    gae_lambda: float = 1.0,
+    values: Optional[torch.Tensor] = None,
+    normalize_advantages: bool = True,
+    normalize_returns: bool = False,
+    loss_mask: Optional[torch.Tensor] = None,
+    dones: Optional[torch.Tensor] = None,
     **kwargs,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Calculate advantages and returns for Proximal Policy Optimization (PPO).
     NOTE: currently this function does not support auto-reset.
@@ -32,368 +42,145 @@ def compute_embodied_gae_advantages_and_returns(
     using mean and standard deviation for stable training.
 
     Args:
-        rewards (torch.Tensor): Reward tensor of shape [num-chunk, bsz, chunk-size]
-        values (torch.Tensor): Value predictions of shape [num-chunk + 1, bsz, chunk-size]
-        dones (torch.Tensor): Done flag tensor of shape [num-chunk + 1, bsz, chunk-size]
-        gamma (float): Discount factor
-        gae_lambda (float): GAE lambda parameter
-        normalize_advantages (bool): Whether to normalize advantages
+        rewards (torch.Tensor): Rewards per timestep. Shape: [seq_len, bsz].
+        values (torch.Tensor): Value function estimates. Shape: [seq_len, bsz].
+        dones (torch.Tensor): Done flags (1 if episode ended, else 0).
+        gamma (float, optional): Discount factor. Defaults to 1.0.
+        gae_lambda (float, optional): GAE smoothing factor. Defaults to 1.0.
+        normalize_advantages (bool, optional): Whether to normalize advantages. Defaults to True.
+        normalize_returns (bool, optional): Whether to normalize returns. Defaults to False.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]: (advantages, returns) tensors
+        Tuple[torch.Tensor, torch.Tensor]: (advantages, returns)
     """
-
-    rewards = kwargs["rewards"]
-    values = kwargs["values"]
-    dones = kwargs["dones"]
-    gamma = kwargs.get("gamma", 1.0)
-    gae_lambda = kwargs.get("gae_lambda", 1.0)
-    normalize_advantages = kwargs.get("normalize_advantages", True)
-    normalize_returns = kwargs.get("normalize_returns", False)
-
-    loss_mask = kwargs.get("loss_mask", None)
-    num_chunk, bsz, chunk_size = rewards.shape
-    flattened_rewards = rewards.transpose(1, 2).reshape(num_chunk * chunk_size, -1)
-    flattened_values = values.transpose(1, 2).reshape((num_chunk + 1) * chunk_size, -1)
-    flattened_values = flattened_values[
-        : num_chunk * chunk_size + 1
-    ]  # [n_steps+1, bsz]
-    flattened_dones = dones.transpose(1, 2).reshape((num_chunk + 1) * chunk_size, -1)[
-        -(num_chunk * chunk_size + 1) :
-    ]
-    flattened_loss_mask = (
-        loss_mask.transpose(1, 2).reshape(num_chunk * chunk_size, -1)
-        if loss_mask is not None
-        else None
-    )
-    flattened_returns = torch.zeros_like(flattened_rewards)
-
+    T = rewards.shape[0]
+    advantages = torch.zeros_like(rewards)
+    returns = torch.zeros_like(rewards)
     gae = 0
-    for step in reversed(range(flattened_rewards.shape[0])):
-        vt1 = flattened_values[step + 1]
-        vt = flattened_values[step]
 
-        delta = (
-            flattened_rewards[step] + gamma * vt1 * (~flattened_dones[step + 1]) - vt
-        )
-        gae = delta + gamma * gae_lambda * (~flattened_dones[step + 1]) * gae
-        flattened_returns[step] = gae + vt
+    critic_free = values is None
+    if critic_free:
+        gae_lambda = 1
+        gamma = 1
 
-    # calc adv
-    flattened_advantages = flattened_returns - flattened_values[:-1]
-    if normalize_advantages:
-        if flattened_loss_mask is not None:
-            mean_advantages = flattened_advantages[flattened_loss_mask].mean()
-            std_advantages = flattened_advantages[flattened_loss_mask].std(correction=0)
+    for step in reversed(range(T)):
+        if critic_free:
+            delta = rewards[step]
         else:
-            mean_advantages = flattened_advantages.mean()
-            std_advantages = flattened_advantages.std(correction=0)
-        if (
-            std_advantages < 1e-8
-            or torch.isinf(std_advantages).any()
-            or torch.isnan(std_advantages).any()
-        ):
-            flattened_advantages = torch.zeros_like(flattened_advantages)
-        else:
-            flattened_advantages = (flattened_advantages - mean_advantages) / (
-                std_advantages + 1e-8
+            delta = (
+                rewards[step]
+                + gamma * values[step + 1] * (~dones[step + 1])
+                - values[step]
             )
 
-    if normalize_returns:
-        if flattened_loss_mask is not None:
-            mean_returns = flattened_returns[flattened_loss_mask].mean()
-            std_retuns = flattened_returns[flattened_loss_mask].std(correction=0)
-        else:
-            mean_returns = flattened_returns.mean()
-            std_retuns = flattened_returns.std(correction=0)
-        if (
-            std_retuns < 1e-8
-            or torch.isinf(std_retuns).any()
-            or torch.isnan(std_retuns).any()
-        ):
-            flattened_returns = torch.zeros_like(flattened_returns)
-        else:
-            flattened_returns = (flattened_returns - mean_returns) / (std_retuns + 1e-8)
+        gae = delta + gamma * gae_lambda * (~dones[step + 1]) * gae
+        returns[step] = gae if critic_free else gae + values[step]
 
-    advantages = flattened_advantages.reshape(num_chunk, chunk_size, -1).transpose(1, 2)
-    returns = flattened_returns.reshape(num_chunk, chunk_size, -1).transpose(1, 2)
+    advantages = returns - values[:-1] if not critic_free else returns
+
+    if normalize_advantages:
+        advantages = safe_normalize(advantages, loss_mask=loss_mask)
+    if normalize_returns:
+        returns = safe_normalize(returns, loss_mask=loss_mask)
 
     return advantages, returns
 
 
-@register_advantage("embodied_grpo")
-def compute_embodied_grpo_advantages(
+@register_advantage("grpo")
+def compute_grpo_advantages(
+    rewards: torch.Tensor,
+    loss_mask: torch.Tensor,
+    group_size: int,
     **kwargs,
-) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+):
     """
-    Group Relative Policy Optimization (GRPO) advantages.
-    """
-
-    rewards = kwargs["rewards"]
-    dones = kwargs["dones"]
-    num_group_envs = kwargs.get("num_group_envs", 1)
-    group_size = kwargs.get("group_size", 2)
-    normalize_advantages = kwargs.get("normalize_advantages", True)
-    loss_mask = kwargs.get("loss_mask", None)
-    rollout_epoch = kwargs.get("rollout_epoch", 1)
-    epsilon = kwargs.get("epsilon", 1e-6)
-
-    n_chunk_step, actual_bsz, num_action_chunks = rewards.shape
-    flattened_rewards = rewards.transpose(1, 2).reshape(
-        n_chunk_step * num_action_chunks, -1
-    )
-
-    flattened_dones = dones.transpose(1, 2).reshape(
-        (n_chunk_step + 1) * num_action_chunks, -1
-    )
-    flattened_dones = flattened_dones[-(n_chunk_step * num_action_chunks + 1) :]
-
-    # loss mask
-    flattened_loss_mask = None
-    if loss_mask is not None:
-        flattened_loss_mask = loss_mask.transpose(1, 2).reshape(
-            n_chunk_step * num_action_chunks, -1
-        )
-
-    n_steps = flattened_rewards.shape[0]
-    scores = torch.zeros(actual_bsz)
-    for step in reversed(range(n_steps)):
-        scores = scores * ~flattened_dones[step + 1]
-        scores += flattened_rewards[step]
-
-    if normalize_advantages:
-        scores = scores.reshape(rollout_epoch * num_group_envs, group_size)
-        mean, std = scores.mean(dim=-1, keepdim=True), scores.std(dim=-1, keepdim=True)
-        flattened_advantages = (scores - mean) / (std + epsilon)
-        flattened_advantages = flattened_advantages.reshape(1, -1)
-    else:
-        flattened_advantages = scores.reshape(1, -1)
-
-    if flattened_loss_mask is not None:
-        flattened_advantages = (
-            flattened_advantages.tile([n_steps, 1]) * flattened_loss_mask
-        )
-    else:
-        flattened_advantages = flattened_advantages.tile([n_steps, 1])
-
-    advantages = flattened_advantages.reshape(
-        n_chunk_step, num_action_chunks, actual_bsz
-    ).transpose(1, 2)
-    return advantages, advantages
-
-
-@register_advantage("math_gae_no_critic")
-def compute_math_gae_no_critic_advantages_and_returns(**kwargs):
-    """
-    Calculate advantages and returns for math tasks using GAE without critic model.
-
-    This function implements a simplified advantage estimation for math tasks
-    without requiring a value function, similar to AReaL's disable_head approach.
+    Compute GRPO advantages.
 
     Args:
-        reward_scores (torch.Tensor): Reward scores for math responses
-        mask (torch.Tensor): Attention mask of shape [bsz, seq_len] or [bsz, max_seq_len]
-        gamma (float): Discount factor
-        gae_lambda (float): GAE lambda parameter
-        normalize_advantages (bool): Whether to normalize advantages
-        normalize_returns (bool): Whether to normalize returns
+        rewards (torch.Tensor): Reward or score values. Shape: [num_groups, group_size]
+        loss_mask (torch.Tensor): Loss mask for valid entries. Shape: [num_groups, group_size]
+        group_size (int): Group size for advantage computation.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]: (advantages, returns) tensors
+        torch.Tensor: advantages
     """
-    reward_scores = kwargs["reward_scores"]
-    mask = kwargs["mask"]
-    gamma = kwargs.get("gamma", 1.0)
-    normalize_advantages = kwargs.get("normalize_advantages", True)
-    normalize_returns = kwargs.get("normalize_returns", False)
+    grouped_rewards = rewards.view(-1, group_size)
 
-    # For math tasks without critic, we use reward-to-go as baseline
-    bsz, seq_len = mask.shape
-
-    # Create reward structure: reward at the end of sequence
-    rewards = torch.zeros_like(mask, dtype=torch.float32)
-    rewards[:, -1] = reward_scores  # Put reward at the end of sequence
-
-    # Create done flags (episode ends at the last token)
-    dones = torch.zeros_like(mask, dtype=torch.bool)
-    dones[:, -1] = True
-
-    # Compute reward-to-go (cumulative discounted rewards)
-    returns = torch.zeros_like(mask, dtype=torch.float32)
-    cumulative_reward = 0
-
-    for t in reversed(range(seq_len)):
-        cumulative_reward = rewards[:, t] + gamma * cumulative_reward * (~dones[:, t])
-        returns[:, t] = cumulative_reward
-
-    # For no-critic setup, advantages are computed using reward-to-go
-    # with a simple baseline subtraction
-    advantages = returns.clone()
-
-    # Apply mask
-    advantages = advantages * mask
-    returns = returns * mask
-
-    # Simple baseline subtraction (mean of valid advantages)
-    if normalize_advantages:
-        valid_advantages = advantages[mask.bool()]
-        if len(valid_advantages) > 0:
-            mean_advantages = valid_advantages.mean()
-            std_advantages = valid_advantages.std()
-            advantages = (advantages - mean_advantages) / (std_advantages + 1e-5)
-
-    # Normalize returns if requested
-    if normalize_returns:
-        valid_returns = returns[mask.bool()]
-        if len(valid_returns) > 0:
-            mean_returns = valid_returns.mean()
-            std_returns = valid_returns.std()
-            returns = (returns - mean_returns) / (std_returns + 1e-5)
-
-    return advantages, returns
-
-
-@register_advantage("math_gae")
-def compute_math_gae_advantages_and_returns(**kwargs):
-    """
-    Calculate advantages and returns for math tasks using GAE.
-
-    This function implements Generalized Advantage Estimation (GAE) specifically
-    designed for math tasks, which may have different data structures compared
-    to embodied tasks.
-
-    Args:
-        reward_scores (torch.Tensor): Reward scores for math responses
-        values (torch.Tensor): Value predictions of shape [bsz, seq_len] or [bsz, max_seq_len]
-        mask (torch.Tensor): Attention mask of shape [bsz, seq_len] or [bsz, max_seq_len]
-        gamma (float): Discount factor
-        gae_lambda (float): GAE lambda parameter
-        normalize_advantages (bool): Whether to normalize advantages
-        normalize_returns (bool): Whether to normalize returns
-
-    Returns:
-        Tuple[torch.Tensor, torch.Tensor]: (advantages, returns) tensors
-    """
-    reward_scores = kwargs["reward_scores"]
-    values = kwargs["values"]
-    mask = kwargs["mask"]
-    gamma = kwargs.get("gamma", 1.0)
-    gae_lambda = kwargs.get("gae_lambda", 1.0)
-    normalize_advantages = kwargs.get("normalize_advantages", True)
-    normalize_returns = kwargs.get("normalize_returns", False)
-
-    # For math tasks, we typically have [bsz, seq_len] tensors
-    bsz, seq_len = values.shape
-
-    # Create a simple reward structure for math tasks
-    # The reward is typically given at the end of the sequence
-    rewards = torch.zeros_like(values)
-    rewards[:, -1] = reward_scores  # Put reward at the end of sequence
-
-    # Create done flags (episode ends at the last token)
-    dones = torch.zeros_like(values, dtype=torch.bool)
-    dones[:, -1] = True
-
-    # Add bootstrap value for the next state (after the sequence)
-    next_values = torch.zeros(bsz, 1, device=values.device, dtype=values.dtype)
-
-    # Compute GAE advantages
-    advantages = torch.zeros_like(values)
-    returns = torch.zeros_like(values)
-
-    gae = 0
-    for t in reversed(range(seq_len)):
-        if t == seq_len - 1:
-            # Last timestep
-            delta = (
-                rewards[:, t]
-                + gamma * next_values[:, 0] * (~dones[:, t])
-                - values[:, t]
-            )
-        else:
-            # Regular timestep
-            delta = (
-                rewards[:, t] + gamma * values[:, t + 1] * (~dones[:, t]) - values[:, t]
-            )
-
-        gae = delta + gamma * gae_lambda * (~dones[:, t]) * gae
-        advantages[:, t] = gae
-        returns[:, t] = gae + values[:, t]
-
-    # Apply mask to advantages and returns
-    advantages = advantages * mask
-    returns = returns * mask
-
-    # Normalize advantages if requested
-    if normalize_advantages:
-        # Only normalize over valid (masked) positions
-        valid_advantages = advantages[mask.bool()]
-        if len(valid_advantages) > 0:
-            mean_advantages = valid_advantages.mean()
-            std_advantages = valid_advantages.std()
-            advantages = (advantages - mean_advantages) / (std_advantages + 1e-5)
-
-    # Normalize returns if requested
-    if normalize_returns:
-        valid_returns = returns[mask.bool()]
-        if len(valid_returns) > 0:
-            mean_returns = valid_returns.mean()
-            std_returns = valid_returns.std()
-            returns = (returns - mean_returns) / (std_returns + 1e-5)
-
-    return advantages, returns
-
-
-@register_advantage("math_grpo")
-def compute_math_grpo_advantages(**kwargs):
-    reward_scores = kwargs["reward_scores"]
-    mask = kwargs["mask"]
-    num_responses = kwargs["num_responses"]
-
-    grouped_rewards = reward_scores.view(-1, num_responses)
-    # compute median
-    grouped_reward_mean = grouped_rewards.mean(dim=1).repeat_interleave(
-        num_responses, dim=0
+    grouped_reward_mean = grouped_rewards.mean(dim=-1, keepdim=True).expand_as(
+        grouped_rewards
     )
-    grouped_reward_std = grouped_rewards.std(dim=1).repeat_interleave(
-        num_responses, dim=0
+    grouped_reward_std = grouped_rewards.std(dim=-1, keepdim=True).expand_as(
+        grouped_rewards
     )
 
-    advantages = reward_scores - grouped_reward_mean
+    advantages = grouped_rewards - grouped_reward_mean
     advantages = advantages / (grouped_reward_std + 1e-6)
-    device = mask.device
-    advantages = advantages.to(device)
 
-    advantages = (torch.zeros_like(mask) + advantages.view(-1, 1)) * mask
+    advantages = (torch.zeros_like(loss_mask) + advantages.view(1, -1)) * loss_mask
 
     return advantages, None
 
 
-if __name__ == "__main__":
-    # test compute_ppo_advantages_and_returns
-    torch.manual_seed(0)
-    rewards = torch.randn(4, 2, 3)
-    values = torch.randn(5, 2, 3)
-    dones = torch.zeros(5, 2, 3).bool()
-    dones[-1] = 1
-    advantages, returns = compute_embodied_gae_advantages_and_returns(
-        rewards=rewards, values=values, dones=dones, gamma=0.99, gae_lambda=0.95
-    )
-    print(advantages.mean())
-    print(returns.mean())
+@register_advantage("reinpp")
+def compute_reinpp_advantages(
+    rewards: torch.Tensor,
+    loss_mask: torch.Tensor,
+    group_size: int,
+    use_reinpp_baseline: bool = False,
+    kl_beta: float = 0.0,
+    logprob=None,
+    ref_logprob=None,
+    kl_penalty_type: str = "",
+    **kwargs,
+):
+    """
+    Compute advantages for reinforce++ and reinforce++ baseline.
 
-    # test compute_grpo_advantages_and_returns
-    torch.manual_seed(0)
-    rewards = torch.randn(4, 4, 3)
-    dones = torch.zeros(5, 4, 3).bool()
-    loss_mask = torch.rand_like(rewards) > 0.5
-    dones[-1] = 1
-    advantages, _ = compute_embodied_grpo_advantages(
-        rewards=rewards,
-        dones=dones,
-        loss_mask=loss_mask,
-        num_group_envs=2,
-        group_size=2,
-        normalize_advantages=False,
-    )
-    print(advantages)
+    Args:
+        rewards (torch.Tensor): The reward or score values.
+        loss_mask (torch.Tensor): The loss mask for valid entries.
+        group_size (int): The group size for advantage computation.
+        use_reinpp_baseline (bool, optional): Whether to use reinforce++ baseline.
+        kl_beta (float, optional): KL penalty coefficient.
+        logprob (optional): Log probability of current policy.
+        ref_logprob (optional): Log probability of reference policy.
+        kl_penalty_type (str, optional): Type of KL penalty.
+
+    Returns:
+        torch.Tensor: advantages
+    """
+    # first group baseline for reinforce++ baseline
+    if use_reinpp_baseline:
+        grouped_rewards = rewards.view(-1, group_size)  # [num_prompt, group_size]
+        grouped_rewards -= grouped_rewards.mean(dim=1, keepdims=True)
+        rewards = grouped_rewards.view(-1)  # [B]
+
+    # build the reward matrix
+    r_matrix = torch.zeros_like(loss_mask).float()  # [L, B]
+    seq_length = loss_mask.size(0)
+    mask_flipped = loss_mask.long().fliplr()
+    eos_positions = mask_flipped.argmax(
+        dim=0, keepdim=True
+    )  # position of last True in original mask
+    eos_indices = seq_length - 1 - eos_positions  # [1, B]
+
+    r_matrix = r_matrix.scatter_(dim=0, index=eos_indices, src=rewards)  # [L, B]
+
+    # add kl penalty
+    if kl_beta > 0:
+        kld = kl_penalty(logprob, ref_logprob, kl_penalty=kl_penalty_type)  # [L, B]
+        r_matrix -= kl_beta * kld
+
+    # compute return
+    ret_matrix = torch.cumsum(r_matrix.flip(dims=[0]), dim=0).flip(dims=[0])
+
+    # normalize
+    advantages = ret_matrix.clone()
+
+    mean = masked_mean(advantages, loss_mask)
+    var = masked_mean((advantages - mean).pow(2), loss_mask)
+    rstd = var.clamp(min=1e-8).rsqrt()
+
+    advantages = (advantages - mean) * rstd
+
+    return advantages, None

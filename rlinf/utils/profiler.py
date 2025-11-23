@@ -14,7 +14,7 @@
 
 
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Optional
 
 import torch
 from torch.profiler import (
@@ -48,7 +48,7 @@ class PyTorchProfiler:
     def __init__(
         self,
         output_dir: str = "./profiler_output",
-        activities: List[str] = ["cpu", "cuda"],
+        activities: list[str] = ["cpu", "cuda"],
         schedule_warmup: int = 1,
         schedule_active: int = 3,
         schedule_repeat: int = 2,
@@ -97,7 +97,7 @@ class PyTorchProfiler:
         self.schedule_warmup = schedule_warmup
         self.schedule_wait = 0
 
-    def _parse_activities(self, activity_strs: List[str]) -> List[ProfilerActivity]:
+    def _parse_activities(self, activity_strs: list[str]) -> list[ProfilerActivity]:
         valid_activities = set()
         activity_map = {"cpu": ProfilerActivity.CPU, "cuda": ProfilerActivity.CUDA}
         for act_str in activity_strs:
@@ -213,7 +213,7 @@ class PyTorchProfiler:
 
     @classmethod
     def from_config(
-        cls, profiler_config: Optional[Dict[str, Any]]
+        cls, profiler_config: Optional[dict[str, Any]]
     ) -> "PyTorchProfiler":
         required_params = {
             "output_dir",

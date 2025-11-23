@@ -33,7 +33,7 @@ Channel 的创建与连接
 向 Channel 中放入数据
 --------------------------------
 
-使用 ``channel.put(item, weight=0, queue_name="default", async_op=False)`` 发送数据。
+使用 ``channel.put(item, weight=0, key="default", async_op=False)`` 发送数据。
 
 - 发送 Worker 首先将 ``item`` 传输给实际拥有目标队列的 ``ChannelWorker``。  
 - ``ChannelWorker`` 接收数据后，将其封装为一个带有指定 ``weight`` 的 ``WeightedItem``，并放入指定队列。  
@@ -43,7 +43,7 @@ Channel 的创建与连接
 从 Channel 中获取数据
 --------------------------------
 
-使用 ``channel.get(queue_name="default", async_op=False)`` 获取数据，这实际上是 ``put`` 的逆过程。  
+使用 ``channel.get(key="default", async_op=False)`` 获取数据，这实际上是 ``put`` 的逆过程。  
 
 - ``ChannelWorker`` 会先从指定队列中取出一个数据项。  
 - 然后将该数据项发送给请求的 Worker，并最终返回给调用者。  
@@ -52,7 +52,7 @@ Channel 的创建与连接
 批量获取
 --------------------------------
 
-使用 ``channel.get_batch(batch_weight, queue_name="default", async_op=False)`` 一次获取多个数据。
+使用 ``channel.get_batch(batch_weight, key="default", async_op=False)`` 一次获取多个数据。
 
 - ``ChannelWorker`` 会不断从队列中取出数据项，并累加其权重值。  
 - 当累计权重达到或超过 ``batch_weight`` 时，停止取数。  

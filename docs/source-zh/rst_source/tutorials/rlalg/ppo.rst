@@ -79,8 +79,8 @@ PPO 的目标函数定义如下：
       # 核心 PPO 设置（建议不要修改）
       normalize_advantages: True
       group_size: 1
-      adv_type: embodied_gae
-      loss_type: embodied_ppo
+      adv_type: gae
+      loss_type: actor_critic
       loss_agg_func: "token-mean"
 
       # 算法参数（通常需要调优）

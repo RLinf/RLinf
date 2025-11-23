@@ -9,9 +9,9 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    rollout: 0-3
-    inference: 4-5
-    actor: 6-7
+    rollout: 0
+    inference: 1
+    actor: 2
     reward: 0-3
 
 runner:
@@ -26,7 +26,7 @@ runner:
   max_steps: -1
 
   val_check_interval: 1
-  save_interval: 10
+  save_interval: -1
 
   seq_length: 2560
 
@@ -58,7 +58,7 @@ algorithm:
   max_num_gen_batches: 1
 
   # PPO loss params (no critic model)
-  loss_type: math_ppo_actor
+  loss_type: actor
   loss_agg_func: "token-mean"
   kl_beta: 0.0 # 0.001
   kl_penalty_type: low_var_kl
@@ -77,7 +77,7 @@ algorithm:
   # value_clip and huber_delta not needed without critic
 
   # Use no-critic GAE advantage computation
-  adv_type: math_gae_no_critic
+  adv_type: gae
   normalize_advantages: False
   early_stop_imp_ratio: 5.0
   use_valid_token_scale: False
@@ -108,9 +108,9 @@ inference:
   group_name: "InferenceGroup"
   load_from_actor: True
   model:
-    tensor_model_parallel_size: 2
+    tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
-    sequence_parallel: True
+    sequence_parallel: False
 
 rollout:
   group_name: "RolloutGroup"
@@ -119,6 +119,7 @@ rollout:
 
   model_dir: /workspace/dataset/Qwen2.5-Coder-1.5B
   model_arch: qwen2.5
+  precision: ${actor.model.precision}   # precision for rollout model, support [fp16, bf16, fp32]
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
@@ -180,11 +181,11 @@ actor:
     precision: fp16
     add_bias_linear: False
 
-    tensor_model_parallel_size: 2
+    tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
 
     activation: swiglu
-    sequence_parallel: True
+    sequence_parallel: False
     # recompute_method: block
     # recompute_granularity: selective
 

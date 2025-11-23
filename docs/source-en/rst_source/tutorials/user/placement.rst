@@ -27,7 +27,7 @@ For each strategy, a list of `Placement` objects is returned by the `get_placeme
 +---------------------------+--------------------------------------------------------+
 
 Placement Strategies
----------
+---------------------------
 
 See :doc:`../../apis/placement` for detailed description of the built-in placement strategies.
 

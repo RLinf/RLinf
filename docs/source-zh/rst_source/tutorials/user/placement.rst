@@ -30,6 +30,6 @@ Placement 模块定义了 Worker 在集群的硬件资源（节点和 GPU）上�
      - 是否限制该 Worker 只使用指定的 GPU
 
 Placement 策略
----------
+---------------------------
 
 见:doc:`../../apis/placement`中对Placement策略的详细描述。

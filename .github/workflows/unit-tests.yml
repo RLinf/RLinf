@@ -1,0 +1,45 @@
+name: Unit Tests
+
+on:
+  workflow_call:
+
+jobs:
+  unit-tests-cuda:
+    runs-on: reason
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Run pytest
+        timeout-minutes: 20
+        run: |
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
+          source switch_env reason
+          pytest tests/unit_tests
+
+      - name: Run doctest
+        timeout-minutes: 20
+        run: |
+          source switch_env reason
+          pytest --doctest-modules rlinf/scheduler
+
+  unit-tests-cpu:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: |
+          pip install uv
+          uv venv
+          source .venv/bin/activate
+          UV_TORCH_BACKEND=auto uv sync
+          uv pip install pytest
+
+      - name: Run pytest
+        timeout-minutes: 20
+        run: |
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests 
+          source .venv/bin/activate
+          pytest tests/unit_tests

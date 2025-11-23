@@ -15,7 +15,6 @@
 import os
 import warnings
 from enum import Enum
-from typing import Dict, List
 
 
 class AcceleratorType(Enum):
@@ -39,7 +38,7 @@ class Accelerator:
     CCL_SUPPORT_LIST = [AcceleratorType.NV_GPU, AcceleratorType.AMD_GPU]
 
     @staticmethod
-    def get_node_accelerator_type_and_num(node_info: Dict[str, int]):
+    def get_node_accelerator_type_and_num(node_info: dict[str, int]):
         """Get the type of accelerator and num of accelerators available on the current node.
 
         Args:
@@ -49,7 +48,7 @@ class Accelerator:
         Returns:
             Tuple[AcceleratorType, int]: A tuple containing the type of accelerator and num of accelerators.
         """
-        node_resources: Dict[str, str] = node_info.get("Resources", {})
+        node_resources: dict[str, str] = node_info.get("Resources", {})
 
         for unsupported in Accelerator.UNSUPPORTED_LIST:
             if unsupported in node_resources and node_resources[unsupported] > 0:
@@ -79,8 +78,8 @@ class Accelerator:
 
     @staticmethod
     def get_accelerator_env_var(
-        accelerator_type: AcceleratorType, visible_accelerators: List[str]
-    ) -> Dict[str, str]:
+        accelerator_type: AcceleratorType, visible_accelerators: list[str]
+    ) -> dict[str, str]:
         """Get the environment variables related to the accelerator.
 
         Args:
@@ -131,7 +130,7 @@ class Accelerator:
         return env_vars
 
     @staticmethod
-    def get_visible_devices(accelerator_type: AcceleratorType) -> List[int]:
+    def get_visible_devices(accelerator_type: AcceleratorType) -> list[int]:
         """Get the visible device environment variable based on accelerator type.
 
         Args:

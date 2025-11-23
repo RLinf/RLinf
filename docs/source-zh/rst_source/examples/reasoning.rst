@@ -1,5 +1,5 @@
 Math推理的强化学习训练
-================================
+===================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -28,6 +28,48 @@ Math推理的强化学习训练
       "query_id": "xx",
       "solutions": ["\\boxed{x}"]
    }
+
+.. note::
+
+  请确认数据集格式是按照上述结构配置。
+  否则，请仔细阅读下方的配置指南，使用 RLinf 适配您的数据集。
+
+我们支持导入其他类型结构的数据集。
+如需导入不同的数据集并作出特殊处理，您可根据需求调整配置。
+
+- **Prompt key 和 answer key 配置**
+
+  默认配置要求数据集使用 `prompt` 和 `solutions` 键分别用于获取提示词信息和答案信息。
+
+  但不同数据集可能使用不同的键名或结构，您可自定义配置以匹配数据集格式。
+  在配置 yaml 文件中修改 `prompt_key` 和 `answer_key` 的值，使其指向数据集中对应的字段即可。
+
+  比如说，如果您的数据集使用如下所示的 `prompt` 和 `label` 作为键名，您需要设置：
+
+  .. code-block:: yaml
+
+      prompt_key: "prompt"
+      answer_key: "label"
+
+- **apply_chat_template 配置**
+
+  部分数据集的提示词信息可能需要使用 tokenizer 中的 chat template 进行特殊处理。
+  若需此功能，需在配置中启用 `apply_chat_template` 选项。
+
+  .. code-block:: yaml
+
+      apply_chat_template: true
+
+  比如说，如果您的数据集使用如下所示的特定结构对话消息，则需启用该选项以正确格式化提示词信息：
+  .. code-block:: json
+
+      {
+          "prompt": [{"content": "<str>", "role": "<str>"},],
+          "label": "<str>",
+      }
+
+  启用该选项后，原始数据集将通过 `tokenizer.apply_chat_template()` 方法处理，按照使用模型的 tokenizer 中对话模板对提示词信息进行格式化。
+  处理完成后，提示词信息将转换为字符串格式，用于模型输入。
 
 算法
 ---------
@@ -58,8 +100,8 @@ Math推理的强化学习训练
 
 推荐配置示例：  
 
-- ``examples/math/config/qwen2.5-1.5b-grpo-megatron.yaml``  
-- ``examples/math/config/qwen2.5-7b-grpo-megatron.yaml``  
+- ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``  
+- ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``  
 
 **3. 启动命令**
 
@@ -74,7 +116,7 @@ Math推理的强化学习训练
    if [ "$RANK" -eq 0 ]; then
        bash check_ray.sh 128;
        cd /path_to_RLinf;
-       bash examples/math/qwen2.5/run_main_math_grpo_megatron.sh grpo-1.5b-megatron # 修改配置文件
+       bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron # 修改配置文件
    else
      if [ "$RANK" -eq 1 ]; then
          sleep 3m

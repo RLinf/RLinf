@@ -30,6 +30,49 @@ An example training sample looks like:
       "solutions": ["\\boxed{x}"]
    }
 
+.. note::
+
+  Ensure the dataset is structured as the above using the default configurations.
+  Otherwise, read below configuration guidelines carefully to adapt RLinf to your dataset.
+
+We also support importing other dataset types.
+To support different dataset formats, you can adjust the configuration as needed.
+
+- **Prompt key and answer key configurations**
+
+  The default configuration expects the dataset to have the `prompt` and `solutions` keys for retrieving the prompt and answer like in the Boba dataset.
+
+  However, different datasets may have different key names or structures. You can customize the configuration to match your dataset's format.
+  Change the `prompt_key` and `answer_key` in the configuration yaml file to point to the correct fields in your dataset.
+
+  For example, if your dataset uses `prompt` and `label` as keys, you would set:
+
+  .. code-block:: yaml
+
+      prompt_key: "prompt"
+      answer_key: "label"
+
+- **apply_chat_template configuration**
+
+  Some datasets may require the use of a chat template for the prompt.
+  If so, you will need to enable the `apply_chat_template` option in the configuration.
+
+  .. code-block:: yaml
+
+      apply_chat_template: true
+
+  For example, if your dataset has a specific structure for chat messages, you need to enable this option to properly format the prompt. Such as:
+
+  .. code-block:: json
+
+      {
+          "prompt": [{"content": "<str>", "role": "<str>"},],
+          "label": "<str>",
+      }
+
+  When the option is enabled, the raw dataset is processed through `tokenizer.apply_chat_template()` to format the prompt according to the model's chat template.
+  After processing, the prompt will be converted into a string for input.
+
 Algorithm
 ---------
 
@@ -59,8 +102,8 @@ Before launching, check the configuration file. Key fields include:
 
 Recommended configurations can be found in:
 
-- ``examples/math/config/qwen2.5-1.5b-grpo-megatron.yaml``  
-- ``examples/math/config/qwen2.5-7b-grpo-megatron.yaml``  
+- ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``  
+- ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``  
 
 **3. Launch Command**
 
@@ -75,7 +118,7 @@ Run the following commands to start the Ray cluster and begin training:
    if [ "$RANK" -eq 0 ]; then
        bash check_ray.sh 128; # set to number of accelerators/GPUs in the cluster
        cd /path_to_RLinf;
-       bash examples/math/qwen2.5/run_main_math_grpo_megatron.sh grpo-1.5b-megatron # change config file
+       bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron # change config file
    else
      if [ "$RANK" -eq 1 ]; then
          sleep 3m

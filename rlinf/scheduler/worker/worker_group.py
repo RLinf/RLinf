@@ -18,7 +18,7 @@ import signal
 import sys
 import threading
 from dataclasses import dataclass
-from typing import Generic, List, Optional, Type
+from typing import Generic, Optional
 
 import numpy as np
 import ray
@@ -38,7 +38,7 @@ from .worker import Worker, WorkerAddress, WorkerClsType
 class WorkerGroup(Generic[WorkerClsType]):
     """The class that enables a worker to become a group of workers that can be executed collectively."""
 
-    def __init__(self, worker_cls: Type[Worker], args, kwargs):
+    def __init__(self, worker_cls: type[Worker], args, kwargs):
         """Initialize the WorkerGroup with a worker class. Used as a decorator to create a worker group.
 
         Args:
@@ -75,7 +75,7 @@ class WorkerGroup(Generic[WorkerClsType]):
         return self._worker_group_name
 
     @property
-    def worker_info_list(self) -> List[WorkerInfo]:
+    def worker_info_list(self) -> list[WorkerInfo]:
         """Get the list of workers in the group."""
         return self._workers
 
@@ -84,9 +84,10 @@ class WorkerGroup(Generic[WorkerClsType]):
         cluster: Cluster,
         placement_strategy: Optional[PlacementStrategy] = None,
         name: Optional[str] = None,
+        max_concurrency: Optional[int] = None,
         isolate_gpu: bool = True,
         catch_system_failure: Optional[bool] = None,
-    ) -> "Type[WorkerGroup | WorkerClsType]":
+    ) -> "type[WorkerGroup | WorkerClsType]":
         """Create a worker group with the specified cluster and options.
 
         Args:
@@ -94,6 +95,7 @@ class WorkerGroup(Generic[WorkerClsType]):
             num_nodes (int): The number of nodes to create workers on.
             placement_strategy (Optional[PlacementStrategy]): The strategy to use for placing workers on nodes.
             name (str, optional): The name of the worker group.
+            max_concurrency (Optional[int]): The maximum concurrency for the worker's underlying ray actor. See https://docs.ray.io/en/latest/ray-core/actors/async_api.html#setting-concurrency-in-async-actors for detailed explanation.
             isolate_gpu (bool): Whether a worker should only see the GPUs that it's assigned via controlling CUDA_VISIBLE_DEVICES. Defaults to True.
             catch_system_failure (Optional[bool]): Whether to catch system exit and signals in the worker process. If None, the environment variable RLINF_CATCH_FAILURE will take effect, whose default value is True. If set, then it will override the environment variable.
 
@@ -106,6 +108,7 @@ class WorkerGroup(Generic[WorkerClsType]):
         self._placement_strategy = placement_strategy
         self._isolate_gpu = isolate_gpu
         self._catch_system_failure = catch_system_failure
+        self._max_concurrency = max_concurrency
         if self._catch_system_failure is None:
             self._catch_system_failure = Cluster.get_sys_env_var("CATCH_FAILURE") == "1"
 
@@ -195,6 +198,7 @@ class WorkerGroup(Generic[WorkerClsType]):
                 cls=self._worker_cls,
                 worker_name=worker_name,
                 node_id=placement.node_id,
+                max_concurrency=self._max_concurrency,
                 env_vars=env_vars,
                 cls_args=self._worker_cls_args,
                 cls_kwargs=self._worker_cls_kwargs,
@@ -367,7 +371,7 @@ class WorkerGroupFuncResult:
     def __init__(
         self,
         worker_group: WorkerGroup,
-        results: List[ray.remote_function.RemoteFunction],
+        results: list[ray.remote_function.RemoteFunction],
         func_name: str,
         cls_name: str,
     ):

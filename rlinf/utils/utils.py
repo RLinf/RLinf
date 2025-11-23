@@ -15,12 +15,17 @@
 import atexit
 import gc
 import os
+import random
 import sys
 from contextlib import contextmanager
 from functools import partial, wraps
 
+import numpy as np
 import torch
 import torch.nn.functional as F
+from omegaconf import DictConfig
+from torch.distributed.tensor import DTensor
+from torch.optim import Optimizer
 
 
 def clear_memory(sync=True):
@@ -98,31 +103,49 @@ def configure_batch_sizes(rank, mbs, gbs, dp=1):
     )
 
 
-def masked_mean(values, mask, axis=None):
+def masked_mean(values: torch.Tensor, mask: torch.Tensor, axis=None):
     """Compute mean of tensor with a masked values."""
-    if (~mask).all():
+    if mask is None:
+        return values.mean(axis=axis)
+    elif (~mask).all():
         return (values * mask).sum(axis=axis)
     else:
         return (values * mask).sum(axis=axis) / mask.sum(axis=axis)
 
 
-def masked_sum(values, mask, axis=None):
+def masked_sum(values: torch.Tensor, mask: torch.Tensor, axis=None):
     """Compute mean of tensor with a masked values."""
     return (values * mask).sum(axis=axis)
 
 
-def seq_mean_token_sum(values, mask):
+def seq_mean_token_sum(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
     seq_losses = torch.sum(values * mask, dim=-1)  # token-sum
     loss = torch.mean(seq_losses)  # seq-mean
     return loss
 
 
-def seq_mean_token_mean(values, mask):
+def seq_mean_token_mean(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
     seq_losses = torch.sum(values * mask, dim=-1) / torch.sum(
         mask, dim=-1
     )  # token-mean
     loss = torch.mean(seq_losses)  # seq-mean
     return loss
+
+
+def masked_mean_ratio(
+    values: torch.Tensor, mask: torch.Tensor, loss_mask_ratio: torch.Tensor
+):
+    # for embodied tasks
+    return (values / loss_mask_ratio * mask).mean()
+
+
+def reshape_entropy(entropy, entropy_type, action_dim=7, batch_size=1):
+    if entropy is not None:
+        if entropy_type == "action_level":
+            entropy = entropy.reshape(batch_size, -1, action_dim).sum(dim=-1)
+        elif entropy_type == "chunk_level":
+            entropy = entropy.sum(dim=-1)
+    return entropy
 
 
 def logprobs_from_logits_flash_attn(logits, labels, inplace_backward=True):
@@ -253,3 +276,101 @@ def output_redirector(func):
             sys.stderr = old_stderr
 
     return wrapper
+
+
+def is_vla_model(cfg: DictConfig) -> bool:
+    """Check if the model is a VLA model based on the configuration."""
+    model_type = cfg.model.get("model_name", "").lower()
+    vla_model_types = {"openvla", "openvla_oft"}
+    return model_type in vla_model_types
+
+
+def warmup_optimizer_state(optimizer: Optimizer) -> None:
+    """
+    pre initialize optimizer.state to avoid KeyError during subsequent load_state_dict/set_optimizer_state_dict.
+    This function does not modify parameter values (by temporarily setting lr to zero + using zero gradients
+    to achieve this).
+    Suitable for mainstream optimizers such as Adam/AdamW/SGD/RMSprop/Adagrad/Adamax/Adadelta (including fused/foreach variants).
+    Not suitable for LBFGS (requires closure and multiple forward/backward passes);
+    if using LBFGS, please manually initialize or switch to another optimizer and then switch back.
+    """
+    if isinstance(optimizer, torch.optim.LBFGS):
+        raise RuntimeError("fake_optimizer_step does not support LBFGS")
+
+    def zero_grad_like(p):
+        if getattr(p, "is_meta", False) or (
+            hasattr(p, "device") and p.device.type == "meta"
+        ):
+            return None  # skip meta
+        try:
+            if p.layout is torch.strided and not isinstance(p, DTensor):
+                return torch.zeros_like(p, memory_format=torch.preserve_format)
+        except Exception:
+            pass
+        return p.detach().new_zeros(p.shape)
+
+    # backup every param group's lr
+    saved_lrs = []
+    for g in optimizer.param_groups:
+        saved_lrs.append(g.get("lr", None))
+        g["lr"] = 0.0
+
+    # backup every param's grad, and fill zero grad (ensure every param will init state during step())
+    saved_grads = {}
+    all_params = []
+    for g in optimizer.param_groups:
+        for p in g.get("params", []):
+            if p is None:
+                continue
+            all_params.append(p)
+            saved_grads[p] = p.grad  # may be None, save as is
+            if p.grad is None:
+                p.grad = zero_grad_like(p)
+
+    # step to create optimizer.state entries
+    # use torch.no_grad to avoid any unexpected side effects from custom optimizers
+    with torch.no_grad():
+        optimizer.step()
+
+    # restore every param group's lr
+    for g, lr in zip(optimizer.param_groups, saved_lrs):
+        if lr is not None:
+            g["lr"] = lr
+
+    for p in all_params:
+        p.grad = saved_grads[p]
+
+
+def get_rng_state() -> dict:
+    """
+    Get the current RNG state for both CPU and CUDA (if available).
+
+    Returns:
+        dict: A dictionary containing the RNG states("cpu", "numpy", "random", and optionally "cuda").
+    """
+    rng_state = {
+        "cpu": torch.get_rng_state(),
+        "numpy": np.random.get_state(),
+        "random": random.getstate(),
+    }
+    if torch.cuda.is_available():
+        rng_state["cuda"] = torch.cuda.get_rng_state()
+    return rng_state
+
+
+def set_rng_state(rng_state: dict) -> None:
+    """
+    Set the RNG state for both CPU and CUDA (if available) from the provided state dictionary.
+
+    Args:
+        rng_state (dict): A dictionary containing the RNG states("cpu", "numpy", "random", and optionally "cuda").
+    """
+    required_keys = ["cpu", "numpy", "random"]
+    assert set(required_keys).issubset(rng_state.keys()), (
+        f"rng_state must contain the keys: {required_keys}"
+    )
+    torch.set_rng_state(rng_state["cpu"])
+    np.random.set_state(rng_state["numpy"])
+    random.setstate(rng_state["random"])
+    if torch.cuda.is_available() and "cuda" in rng_state:
+        torch.cuda.set_rng_state(rng_state["cuda"])

@@ -82,7 +82,7 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 
 - **基于FSDP + Huggingface的具身智能镜像**：
 
-  - ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` （适用于 OpenVLA/OpenVLA-OFT/Pi0 模型）
+  - ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` （适用于 OpenVLA/OpenVLA-OFT/OpenPI 模型）
 
 确认适合你任务的镜像后，拉取镜像：
 
@@ -92,12 +92,21 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 
 然后启动容器：
 
+.. warning::
+
+  1. 请确保使用 `-e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics` 启动 docker，以启用 GPU 支持，尤其是具身实验中渲染所需的 `graphics` 功能。
+
+  2. 请勿覆盖容器内的 `/root` 和 `/opt` 目录（通过 `docker run` 的 `-v` 或 `--volume`），因为它们包含重要的资源文件和环境。如果你的平台一定会挂载 `/root`，请在启动容器后在容器内运行 `link_assets` 来恢复 `/root` 目录中的资源链接。
+
+  3. 请避免更改 `$HOME` 环境变量（例如通过 `docker run -e HOME=/new_home` ），该变量默认应为 `/root`。ManiSkill 和其他工具依赖此路径查找需要的资源。如果您在镜像中运行脚本之前更改了 `$HOME`，请执行 `link_assets` 将资源重新链接到新的 `$HOME`。
+
 .. code-block:: bash
 
    docker run -it --gpus all \
       --shm-size 100g \
       --net=host \
       --name rlinf \
+      -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
       rlinf/rlinf:CHOSEN_IMAGE /bin/bash
 
 进入容器后，克隆 RLinf 仓库：
@@ -107,12 +116,20 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-具身智能镜像中包含多个 Python 虚拟环境（venv），位于 ``/opt/venv`` 目录下，分别对应不同模型，即 ``openvla``、``openvla-oft`` 和 ``pi0``。
+具身智能镜像中包含多个 Python 虚拟环境（venv），位于 ``/opt/venv`` 目录下，分别对应不同模型，即 ``openvla``、``openvla-oft`` 和 ``openpi``。
 默认环境设置为 ``openvla``。
 要切换到所需的 venv，可以使用内置脚本 `switch_env`：
+
 .. code-block:: bash
 
-   source switch_env <env_name> # 例如，source switch_env openvla-oft, source switch_env pi0 等
+   source switch_env <env_name>
+   # source switch_env openvla
+   # source switch_env openvla-oft
+   # source switch_env openpi
+
+.. note::
+
+  `link_assets` 和 `switch_env` 脚本是我们提供的 Docker 镜像中的内置工具。您可以在 `/usr/local/bin` 中找到它们。
 
 .. tip::
 
@@ -122,94 +139,34 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 -------------------------------
 **如果你已经使用了 Docker 镜像，下面步骤可跳过。**
 
-根据你的实验类型，安装分为两步进行：
-
-第一步，对于所有实验类型，请先完成 :ref:`共同依赖 <common-dependencies>` 中的依赖安装。
-
-第二步，根据你的实验类型，安装对应的依赖。  
-
-* 如果你要运行数学推理实验，需要安装 **Megatron 和 SGLang/vLLM** 后端，请参考 :ref:`Megatron 和 SGLang/vLLM 依赖 <megatron-and-sglang-vllm-dependencies>` 安装相应依赖。
-
-* 如果你要运行具身智能相关实验（如 OpenVLA、OpenVLA-OFT、Pi0），请参考 :ref:`具身智能相关依赖 <embodied-dependencies>` 安装专用依赖项。
-
-.. _common-dependencies:
-
-通用依赖安装
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 我们推荐使用 `uv <https://docs.astral.sh/uv/>`_ 工具来安装所需的 Python 包。  
-如果你使用的是 `conda <https://docs.conda.io/projects/conda/en/latest/user-guide/getting-started.html>`_，可以通过 `pip` 安装 ``uv``。
+您可以通过 `pip` 安装 ``uv``。
 
 .. code-block:: shell
 
-   conda create -n rlinf python=3.11.10 -y
-   conda activate rlinf
    pip install --upgrade uv
 
-安装 ``uv`` 后，创建虚拟环境并安装 PyTorch 与通用依赖：
+安装完成后，你可以运行`requirements/install.sh`脚本安装目标实验所需的依赖。
+该脚本接受一个参数，指定目标实验，包括 `openvla`、`openvla-oft`、`openpi` 和 `reason`。
+例如，要安装 openvla 实验的依赖，可以运行：
+
+.. note:: 
+
+  该脚本需要在 RLinf 仓库的根目录下运行。请确保不要在 `requirements/` 目录下运行该脚本。
+
+.. code-block:: shell
+  
+  bash requirements/install.sh openvla
+
+这将在当前路径下创建一个名为 `.venv` 的虚拟环境。
+要激活该虚拟环境，可以使用以下命令：
+
+.. code-block:: shell
+  
+  source .venv/bin/activate
+
+要退出虚拟环境，只需运行：
 
 .. code-block:: shell
 
-   uv venv
-   source .venv/bin/activate
-   UV_TORCH_BACKEND=auto uv sync
-
-.. _megatron-and-sglang-vllm-dependencies:
-
-Megatron 和 SGLang/vLLM 依赖
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. note::
-  如果你运行的是具身智能实验，则无需安装这些依赖。  
-  请直接跳转到 :ref:`具身智能相关依赖 <embodied-dependencies>` 部分。
-
-运行以下命令，安装 Megatron、SGLang/vLLM 及其所需依赖：
-
-.. code-block:: shell
-
-   uv sync --extra sglang-vllm
-   mkdir -p /opt && git clone https://github.com/NVIDIA/Megatron-LM.git -b core_r0.13.0 /opt/Megatron-LM
-   APEX_CPP_EXT=1 APEX_CUDA_EXT=1 NVCC_APPEND_FLAGS="--threads 24" APEX_PARALLEL_BUILD=24 uv pip install -r requirements/megatron.txt --no-build-isolation
-
-使用 Megatron 前，请将其路径加入 ``PYTHONPATH`` 环境变量：
-
-.. code-block:: shell
-
-   export PYTHONPATH=/opt/Megatron-LM:$PYTHONPATH
-
-.. _embodied-dependencies:
-
-具身智能相关依赖
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-若你运行的是具身智能实验，首先通过 apt 安装必要的系统依赖（仅支持 Debian/Ubuntu 系统）：
-
-.. code-block:: shell
-
-   uv sync --extra embodied
-   bash requirements/install_embodied_deps.sh # Must be run after the above command
-
-接着，根据具体实验类型安装对应的 Python 包：
-
-.. code-block:: shell
-
-   # OpenVLA 实验所需依赖
-   UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla.txt --no-build-isolation
-
-   # OpenVLA-oft 实验所需依赖
-   UV_TORCH_BACKEND=auto uv pip install -r requirements/openvla_oft.txt --no-build-isolation
-
-   # Pi0 实验所需依赖
-   UV_TORCH_BACKEND=auto uv pip install -r requirements/pi0.txt --no-build-isolation
-
-最后，运行以下命令安装 libero 依赖。
-
-.. code-block:: shell
-
-  mkdir -p /opt && git clone https://github.com/RLinf/LIBERO.git /opt/libero
-
-在使用 LIBERO 前，请确保将其路径添加到 ``PYTHONPATH`` 环境变量中：
-
-.. code-block:: shell
-
-  export PYTHONPATH=/opt/libero:$PYTHONPATH
+  deactivate

@@ -17,7 +17,7 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import torch
 import uvicorn
@@ -34,7 +34,7 @@ from rlinf.scheduler import Channel, Worker
 class TrainingDataStorage:
     """Storage manager for training data received via HTTP API."""
 
-    def __init__(self, storage_config: Optional[Dict[str, Any]] = None):
+    def __init__(self, storage_config: Optional[dict[str, Any]] = None):
         """
         Initialize storage manager.
 
@@ -61,7 +61,7 @@ class TrainingDataStorage:
         self._current_file_path = None
         self._entries_in_current_file = 0
 
-    def store_training_data(self, training_data: Dict[str, Any]) -> Optional[str]:
+    def store_training_data(self, training_data: dict[str, Any]) -> Optional[str]:
         """
         Store training data to file.
 
@@ -109,7 +109,7 @@ class TrainingDataStorage:
 
         return self._current_file_path
 
-    def _write_jsonl_entry(self, file_path: Path, entry: Dict[str, Any]):
+    def _write_jsonl_entry(self, file_path: Path, entry: dict[str, Any]):
         """Write entry to JSONL file (one JSON per line)."""
         # JSONL is more efficient for appending
         with open(file_path, "a", encoding="utf-8") as f:
@@ -118,7 +118,7 @@ class TrainingDataStorage:
 
         self._entries_in_current_file += 1
 
-    def get_storage_stats(self) -> Dict[str, Any]:
+    def get_storage_stats(self) -> dict[str, Any]:
         """Get storage statistics."""
         if not self.enabled:
             return {"enabled": False}
@@ -264,7 +264,7 @@ class ServerRolloutWorker(Worker):
         )
 
     def _convert_training_data_to_rollout_result(
-        self, training_data: Dict[str, Any]
+        self, training_data: dict[str, Any]
     ) -> RolloutResult:
         """Convert training data from HTTP request into RolloutResult format."""
         # Extract text data

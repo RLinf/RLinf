@@ -12,22 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import torch
 from omegaconf import DictConfig
@@ -41,7 +27,7 @@ from rlinf.data.datasets.vlm import VLMDatasetRegistry
 
 def create_rl_dataset(
     config: DictConfig, tokenizer: AutoTokenizer
-) -> Tuple[Dataset, Dataset]:
+) -> tuple[Dataset, Dataset]:
     """Create rl datasets.
 
     Arguments:
@@ -99,7 +85,7 @@ def create_rl_dataset(
     return train_dataset, val_dataset
 
 
-def collate_fn(data_list: List["DatasetItem"]) -> Dict[str, Any]:
+def collate_fn(data_list: list["DatasetItem"]) -> dict[str, Any]:
     """
     Collate function for batching dataset items.
     """
@@ -132,7 +118,7 @@ def collate_fn(data_list: List["DatasetItem"]) -> Dict[str, Any]:
 
     batch_idx = torch.tensor([int(it.idx) for it in data_list], dtype=torch.long)
 
-    batch: Dict[str, Any] = {
+    batch: dict[str, Any] = {
         "prompt": batch_prompt,  # [B, L]
         "length": batch_length,  # [B]
         "answer": [it.answer for it in data_list],  # List[str]

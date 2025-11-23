@@ -78,8 +78,8 @@ The algorithm configuration is defined as follows:
       # Core PPO settings (recommended not to change)
       normalize_advantages: True
       group_size: 1
-      adv_type: embodied_gae
-      loss_type: embodied_ppo
+      adv_type: gae
+      loss_type: actor_critic
       loss_agg_func: "token-mean"
 
       # Algorithm parameters (typically require tuning)

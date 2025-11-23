@@ -9,7 +9,7 @@ Worker 接口
 Worker
 -------
 
-.. autoclass:: rlinf.scheduler.worker.worker.Worker
+.. autoclass:: rlinf.scheduler.Worker
    :members: worker_address, create_group, send, recv, send_tensor, recv_tensor, create_channel, connect_channel, broadcast
    :member-order: bysource
    :class-doc-from: class
@@ -18,6 +18,6 @@ Worker
 WorkerGroup
 -----------
 
-.. autoclass:: rlinf.scheduler.worker.worker_group.WorkerGroup
+.. autoclass:: rlinf.scheduler.WorkerGroup
    :members:
    :member-order: bysource

@@ -17,10 +17,11 @@ import importlib.util
 import logging
 import os
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Callable, Union
+from typing import TYPE_CHECKING, Callable, Optional, Union
 
 import torch
 import torch.nn.functional as F
+import yaml
 from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
 from transformers import AutoConfig
@@ -34,7 +35,16 @@ if TYPE_CHECKING:
 
 logging.getLogger().setLevel(logging.INFO)
 
-SUPPORTED_MODEL_ARCHS = ["qwen2.5", "qwen2.5_vl", "openvla", "openvla_oft", "openpi"]
+SUPPORTED_MODEL_ARCHS = [
+    "qwen2.5",
+    "qwen2.5_vl",
+    "openvla",
+    "openvla_oft",
+    "qwen3_moe",
+    "openpi",
+    "mlp_policy",
+    "gr00t",
+]
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
 SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl"]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
@@ -46,7 +56,7 @@ def torch_dtype_from_precision(precision: Union[int, str]) -> torch.dtype:
         return torch.bfloat16
     elif precision in [16, "16", "fp16", "16-mixed"]:
         return torch.float16
-    elif precision in [32, "32", "32-true"]:
+    elif precision in [32, "32", "fp32", "32-true"]:
         return torch.float32
     elif precision in [None]:
         return None
@@ -145,7 +155,7 @@ def activation_to_func(
     return activation_func
 
 
-def validate_rollout_cfg(cfg):
+def validate_rollout_cfg(cfg, algorithm_cfg):
     def validate_sglang_cfg(cfg):
         assert cfg is not None, (
             "sglang config must be specified if rollout_backend is sglang."
@@ -180,6 +190,9 @@ def validate_rollout_cfg(cfg):
         assert cfg.rollout_backend in SUPPORTED_ROLLOUT_BACKENDS, (
             f"rollout_backend must be one of {SUPPORTED_ROLLOUT_BACKENDS}."
         )
+        cfg.return_logprobs = cfg.return_logprobs or algorithm_cfg.get(
+            "importance_sampling_fix", False
+        )
         cfg.sglang = validate_sglang_cfg(cfg.sglang)
         cfg.vllm = validate_vllm_cfg(cfg.vllm)
 
@@ -195,6 +208,14 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
     else:
         qkv_bias = getattr(hf_config, "attention_bias", False)
 
+    if (
+        "Qwen3ForCausalLM" in hf_config.architectures
+        or "Qwen3MoeForCausalLM" in hf_config.architectures
+    ):
+        qk_layernorm = True
+    else:
+        qk_layernorm = getattr(cfg.model, "qk_layernorm", False)
+
     with open_dict(cfg):
         rs = getattr(hf_config, "rope_scaling", None)
         if isinstance(rs, dict):
@@ -206,7 +227,7 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
             else:
                 # mrope
                 cfg.model.seq_len_interpolation_factor = None
-        cfg.model.override_vocab_size = hf_config.vocab_size
+        cfg.model.padded_vocab_size = hf_config.vocab_size
         cfg.model.max_position_embeddings = hf_config.max_position_embeddings
         cfg.model.rotary_base = hf_config.rope_theta
         cfg.model.share_embeddings_and_output_weights = getattr(
@@ -220,28 +241,97 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         cfg.model.attention_dropout = hf_config.attention_dropout
         cfg.model.hidden_dropout = getattr(hf_config, "hidden_dropout", 0.0)
         cfg.model.add_qkv_bias = qkv_bias
+        cfg.model.qk_layernorm = qk_layernorm
         cfg.model.layernorm_epsilon = hf_config.rms_norm_eps
+        cfg.model.head_dim = getattr(
+            hf_config,
+            "head_dim",
+            cfg.model.hidden_size // cfg.model.num_attention_heads,
+        )
+        if cfg.model.head_dim is not None:
+            cfg.model.kv_channels = cfg.model.head_dim
+
+        # MoE model
+        cfg.model.num_moe_experts = getattr(hf_config, "num_experts", None)
+        cfg.model.moe_ffn_hidden_size = getattr(
+            hf_config, "moe_intermediate_size", None
+        )
+        cfg.model.moe_router_topk = getattr(hf_config, "num_experts_per_tok", 2)
 
     return cfg
 
 
-def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
+def validate_fsdp_cfg(cfg: DictConfig, resume_dir: Optional[str] = None) -> DictConfig:
+    def validate_amp_cfg(config: DictConfig) -> DictConfig:
+        if "amp" not in config:
+            config.amp = {}
+        config.amp.enabled = config.amp.get("enabled", False)
+        config.amp.precision = config.amp.get("precision", "bf16")
+        assert config.amp.precision in ["fp16", "bf16", "fp32"], (
+            "fsdp.amp.precision must be one of ['fp16', 'bf16', 'fp32']"
+        )
+        config.amp.use_grad_scaler = config.amp.get("use_grad_scaler", False)
+        return config
+
     OmegaConf.set_struct(cfg, True)
     with open_dict(cfg):
-        if "fsdp_config" not in cfg:
-            cfg.fsdp_config = OmegaConf.create({})
-        cfg.fsdp_config.forward_prefetch = cfg.get("fsdp_config", {}).get(
+        cfg.fsdp_config.strategy = cfg.fsdp_config.get("strategy", "fsdp")
+
+        cfg.fsdp_config.sharding_strategy = cfg.fsdp_config.get(
+            "sharding_strategy", "full_shard"
+        )
+
+        cfg.fsdp_config.forward_prefetch = cfg.fsdp_config.get(
             "forward_prefetch", False
         )
-        cfg.fsdp_config.limit_all_gathers = cfg.get("fsdp_config", {}).get(
+        cfg.fsdp_config.limit_all_gathers = cfg.fsdp_config.get(
             "limit_all_gathers", False
         )
-        cfg.fsdp_config.backward_prefetch = cfg.get("fsdp_config", {}).get(
-            "backward_prefetch", False
+        cfg.fsdp_config.backward_prefetch = cfg.fsdp_config.get(
+            "backward_prefetch", None
         )
-        cfg.fsdp_config.use_orig_params = cfg.get("fsdp_config", {}).get(
-            "use_orig_params", False
+        cfg.fsdp_config.use_orig_params = cfg.fsdp_config.get("use_orig_params", False)
+        cfg.fsdp_config.use_liger_kernel = cfg.fsdp_config.get(
+            "use_liger_kernel", False
         )
+        cfg.fsdp_config = validate_amp_cfg(cfg.fsdp_config)
+
+        cfg.fsdp_config.cpu_offload = cfg.fsdp_config.get("cpu_offload", False)
+        cfg.fsdp_config.offload_pin_memory = cfg.fsdp_config.get(
+            "offload_pin_memory", False
+        )
+        cfg.fsdp_config.reshard_after_forward = cfg.fsdp_config.get(
+            "reshard_after_forward", True
+        )
+        cfg.fsdp_config.enable_gradient_accumulation = cfg.fsdp_config.get(
+            "enable_gradient_accumulation", False
+        )
+
+        if resume_dir is not None:
+            cfg.fsdp_config.use_orig_params = True
+
+        assert cfg.fsdp_config.backward_prefetch in [
+            None,
+            "pre",
+            "post",
+        ], "fsdp_config.backward_prefetch must be one of [None, 'pre', 'post']"
+
+        # validate mixed precision config
+        assert hasattr(cfg.fsdp_config, "mixed_precision"), (
+            "fsdp_config.mixed_precision is required in FSDP actor configuration."
+        )
+
+        mixed_precision_config = cfg.fsdp_config.mixed_precision
+        mixed_precision_config.param_dtype = mixed_precision_config.get(
+            "param_dtype", "bf16"
+        )
+        mixed_precision_config.reduce_dtype = mixed_precision_config.get(
+            "reduce_dtype", "bf16"
+        )
+        mixed_precision_config.buffer_dtype = mixed_precision_config.get(
+            "buffer_dtype", "fp32"
+        )
+
     return cfg
 
 
@@ -261,6 +351,15 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
 
         # training args for megatron
         cfg.megatron.load = cfg.get("checkpoint_load_path", None)
+        use_hf_ckpt = cfg.megatron.get("use_hf_ckpt", False)
+        if cfg.megatron.load is None:
+            assert use_hf_ckpt, (
+                "checkpoint_load_path is required if use_hf_ckpt is False"
+            )
+        else:
+            assert not use_hf_ckpt, (
+                "checkpoint_load_path should be None if use_hf_ckpt is True"
+            )
         cfg.megatron.pretrained_checkpoint = cfg.get("pretrained_checkpoint", None)
         cfg.megatron.save = None
         cfg.megatron.micro_batch_size = cfg.get("micro_batch_size", 1)
@@ -416,11 +515,26 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
         cfg.model.pipeline_model_parallel_split_rank = cfg.model.get(
             "pipeline_model_parallel_split_rank", None
         )
-        cfg.model.context_parallel_size = cfg.model.context_parallel_size = (
-            cfg.model.get("context_parallel_size", 1)
+        cfg.model.context_parallel_size = cfg.model.get("context_parallel_size", 1)
+
+        cfg.model.expert_model_parallel_size = cfg.model.get(
+            "expert_model_parallel_size", 1
         )
-        cfg.model.expert_model_parallel_size = cfg.model.expert_model_parallel_size = (
-            cfg.model.get("expert_model_parallel_size", 1)
+
+        cfg.model.expert_tensor_parallel_size = cfg.model.get(
+            "expert_tensor_parallel_size", 1
+        )
+
+        cfg.model.moe_grouped_gemm = cfg.model.get("moe_grouped_gemm", None)
+        assert cfg.model.moe_grouped_gemm in [None, "te"], (
+            f"grouped_gemm type only avail in [null, te]. get value ({cfg.model.moe_grouped_gemm})"
+        )
+
+        assert (
+            cfg.model.expert_tensor_parallel_size
+            <= cfg.model.tensor_model_parallel_size
+        ), (
+            f"expert_tensor_parallel_size ({cfg.model.expert_tensor_parallel_size}) must be less than or equal to tensor_model_parallel_size ({cfg.model.tensor_model_parallel_size})"
         )
 
         cfg.model.position_embedding_type = cfg.model.get(
@@ -441,7 +555,7 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
         cfg.model.masked_softmax_fusion = cfg.model.get("masked_softmax_fusion", True)
         cfg.model.persist_layer_norm = cfg.model.get("persist_layer_norm", True)
 
-        cfg.model.override_vocab_size = cfg.model.get("override_vocab_size", None)
+        cfg.model.padded_vocab_size = cfg.model.get("padded_vocab_size", None)
         cfg.model.use_cpu_initialization = cfg.model.get(
             "use_cpu_initialization", False
         )
@@ -507,6 +621,19 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
             assert cfg.lr_sched.start_weight_decay is not None
             assert cfg.lr_sched.end_weight_decay is not None
 
+        # TODO. Following args are needed for AUTO mode now, but will be removed in the future.
+        cfg.megatron.transformer_impl = getattr(
+            cfg.megatron, "transformer_impl", "transformer_engine"
+        )
+        cfg.megatron.swiglu = cfg.model.activation in ["swiglu", "fast-swiglu"]
+        cfg.megatron.untie_embeddings_and_output_weights = (
+            not cfg.model.share_embeddings_and_output_weights
+        )
+        # In RLinf, padded_vocab_size is set to hf_config.vocab_size, so make_vocab_size_divisible_by=1
+        cfg.megatron.make_vocab_size_divisible_by = 1
+        if cfg.model.normalization == "rmsnorm":
+            cfg.megatron.normalization = "RMSNorm"
+
     return cfg
 
 
@@ -530,9 +657,6 @@ def validate_embodied_cfg(cfg):
     cfg.env.eval.num_envs = cfg.env.eval.num_envs // stage_num // env_world_size
 
     with open_dict(cfg):
-        cfg.actor.model.sharding_strategy = cfg.actor.model.get(
-            "sharding_strategy", "full_shard"
-        )
         if cfg.env.train.simulator_type == "maniskill":
 
             def get_robot_control_mode(robot: str):
@@ -540,6 +664,8 @@ def validate_embodied_cfg(cfg):
                     return "arm_pd_ee_delta_pose_align_interpolate_by_planner_gripper_pd_joint_target_delta_pos_interpolate_by_planner"
                 elif "widowx" in robot:
                     return "arm_pd_ee_target_delta_pose_align2_gripper_pd_joint_pos"
+                elif "panda-qpos" in robot:
+                    return None
                 else:
                     raise NotImplementedError(f"Robot {robot} not supported")
 
@@ -549,13 +675,74 @@ def validate_embodied_cfg(cfg):
             cfg.env.eval.init_params.control_mode = get_robot_control_mode(
                 cfg.actor.model.policy_setup
             )
-        if cfg.env.train.simulator_type == "libero":
+        elif cfg.env.train.simulator_type == "libero":
             if cfg.actor.model.get("num_images_in_input", 1) > 1:
                 assert cfg.actor.model.get("use_wrist_image", False), (
                     "Invalid config: Multiple input images are enabled "
                     "(num_images_in_input > 1) but 'use_wrist_image' is set to False. "
                     "Please enable wrist images by setting 'use_wrist_image=True'."
                 )
+        elif cfg.env.train.simulator_type == "behavior":
+            import omnigibson as og
+
+            assert cfg.env.train.base_config_name == "r1pro_behavior", (
+                f"Only r1pro_behavior is supported for omnigibson, got {cfg.env.train.base_config_name}"
+            )
+            # Load the pre-selected configuration and set the online_sampling flag
+            config_filename = os.path.join(
+                og.example_config_path, "r1pro_behavior.yaml"
+            )
+            omnigibson_cfg = yaml.load(
+                open(config_filename, "r"), Loader=yaml.FullLoader
+            )
+            omnigibson_cfg = OmegaConf.create(omnigibson_cfg)
+            cfg.env.train.omnigibson_cfg = omnigibson_cfg
+            cfg.env.eval.omnigibson_cfg = omnigibson_cfg
+
+            # Also accepts int or list/tuple of tokens (ints or range strings)
+            def parse_activity_ids(activity_ids) -> list[int]:
+                if activity_ids is None:
+                    return []
+                out: list[int] = []
+
+                def _add_token(tok: str):
+                    tok = tok.strip()
+                    if not tok:
+                        return
+                    if "-" in tok:
+                        start, end = tok.split("-", 1)
+                        start_i, end_i = int(start.strip()), int(end.strip())
+                        if end_i < start_i:
+                            start_i, end_i = end_i, start_i
+                        out.extend(range(start_i, end_i + 1))
+                    else:
+                        out.append(int(tok))
+
+                if isinstance(activity_ids, int):
+                    out.append(int(activity_ids))
+                elif isinstance(activity_ids, (list, tuple)):
+                    for item in activity_ids:
+                        if isinstance(item, int):
+                            out.append(int(item))
+                        else:
+                            for tok in str(item).split(","):
+                                _add_token(tok)
+                else:
+                    for tok in str(activity_ids).split(","):
+                        _add_token(tok)
+                return out
+
+            cfg.env.train.tasks.activity_task_indices = parse_activity_ids(
+                cfg.env.train.tasks.activity_task_indices
+            )
+            cfg.env.eval.tasks.activity_task_indices = parse_activity_ids(
+                cfg.env.eval.tasks.activity_task_indices
+            )
+            assert (
+                len(cfg.env.train.tasks.activity_task_indices) > 0
+                and len(cfg.env.eval.tasks.activity_task_indices) > 0
+            ), "No activity IDs provided"
+
     return cfg
 
 
@@ -564,9 +751,14 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
         f"Model {cfg.rollout.model_arch} is not supported"
     )
 
-    assert cfg.algorithm.recompute_logprobs != cfg.rollout.return_logprobs, (
-        "Exactly one of `algorithm.recompute_logprobs` or `rollout.return_logprobs` must be True to compute `prev_logprobs`."
+    assert cfg.algorithm.recompute_logprobs or cfg.rollout.return_logprobs, (
+        "One of `algorithm.recompute_logprobs` or `rollout.return_logprobs` must be True to compute `prev_logprobs`."
     )
+
+    if cfg.algorithm.recompute_logprobs and cfg.rollout.return_logprobs:
+        assert cfg.algorithm.get("importance_sampling_fix", False), (
+            "Importance sampling fix must be enabled if both `algorithm.recompute_logprobs` and `rollout.return_logprobs` are True."
+        )
 
     with open_dict(cfg):
         cfg.algorithm.training_batch_size_per_gpu = cfg.algorithm.get(
@@ -586,7 +778,13 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
             f"runner.seq_length ({cfg.runner.seq_length}) must be greater than data.max_prompt_length ({cfg.data.max_prompt_length})"
         )
 
-        cfg.rollout = validate_rollout_cfg(cfg.rollout)
+        # add configs for importance sampling fix
+        cfg.algorithm.recompute_logprobs = (
+            cfg.algorithm.recompute_logprobs
+            or cfg.algorithm.get("importance_sampling_fix", False)
+        )
+
+        cfg.rollout = validate_rollout_cfg(cfg.rollout, cfg.algorithm)
     return cfg
 
 
@@ -595,9 +793,14 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
         f"Model {cfg.rollout.model_arch} is not supported"
     )
 
-    assert cfg.algorithm.recompute_logprobs != cfg.rollout.return_logprobs, (
-        "Exactly one of `algorithm.recompute_logprobs` or `rollout.return_logprobs` must be True to compute `prev_logprobs`."
+    assert cfg.algorithm.recompute_logprobs or cfg.rollout.return_logprobs, (
+        "One of `algorithm.recompute_logprobs` or `rollout.return_logprobs` must be True to compute `prev_logprobs`."
     )
+
+    if cfg.algorithm.recompute_logprobs and cfg.rollout.return_logprobs:
+        assert cfg.algorithm.get("importance_sampling_fix", False), (
+            "Importance sampling fix must be enabled if both `algorithm.recompute_logprobs` and `rollout.return_logprobs` are True."
+        )
 
     assert cfg.algorithm.recompute_logprobs, (
         "Online coding task must use recompute_logprobs"
@@ -631,7 +834,13 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
             f"runner.seq_length ({cfg.runner.seq_length}) must be greater than data.max_prompt_length ({cfg.data.max_prompt_length})"
         )
 
-        cfg.rollout = validate_rollout_cfg(cfg.rollout)
+        # add configs for importance sampling fix
+        cfg.algorithm.recompute_logprobs = (
+            cfg.algorithm.recompute_logprobs
+            or cfg.algorithm.get("importance_sampling_fix", False)
+        )
+
+        cfg.rollout = validate_rollout_cfg(cfg.rollout, cfg.algorithm)
     return cfg
 
 
@@ -648,10 +857,7 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     elif cfg.runner.task_type == "coding_online_rl":
         cfg = validate_coding_online_rl_cfg(cfg)
 
-    if (
-        cfg.algorithm.adv_type == "embodied_grpo"
-        or cfg.algorithm.adv_type == "math_grpo"
-    ):
+    if cfg.algorithm.adv_type in ("grpo", "reinpp_baseline"):
         assert cfg.algorithm.group_size > 1
 
     assert cfg.actor.training_backend in SUPPORTED_TRAINING_BACKENDS, (
@@ -661,8 +867,16 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     if cfg.actor.training_backend == "megatron":
         cfg.actor = validate_megatron_cfg(cfg.actor)
         cfg.actor = validate_model_cfg_by_hf_config(cfg.actor, cfg.rollout.model_dir)
+        # TODO. Need actually pad padded_vocab_size.
+        assert (
+            cfg.actor.model.padded_vocab_size
+            % cfg.actor.model.tensor_model_parallel_size
+            == 0
+        ), (
+            f"padded_vocab_size ({cfg.actor.model.padded_vocab_size}) must be divisible by tensor_model_parallel_size ({cfg.actor.model.tensor_model_parallel_size})"
+        )
     elif cfg.actor.training_backend == "fsdp":
-        cfg.actor = validate_fsdp_cfg(cfg.actor)
+        cfg.actor = validate_fsdp_cfg(cfg.actor, cfg.runner.get("resume_dir", None))
 
     if cfg.critic.use_critic_model and cfg.critic.training_backend == "megatron":
         cfg.critic = validate_megatron_cfg(cfg.critic)
@@ -833,8 +1047,14 @@ def build_transformer_config(cfg) -> "TransformerConfig":
         "rotary_interleaved": rotary_interleaved,
         "deallocate_pipeline_outputs": False,
         "tp_only_amax_red": tp_only_amax_red,
+        "qk_layernorm": cfg.get("qk_layernorm", False),
+        "kv_channels": cfg.get("head_dim", None),
         # MoE related
         "num_moe_experts": cfg.get("num_moe_experts", None),
+        "moe_ffn_hidden_size": cfg.get("moe_ffn_hidden_size", None),
+        # now the sequential mlp should ffn hidden size == moe_ffn_hidden_size
+        "ffn_hidden_size": cfg.get("moe_ffn_hidden_size", None)
+        or cfg.get("ffn_hidden_size", None),
         "moe_router_load_balancing_type": cfg.get(
             "moe_router_load_balancing_type", "aux_loss"
         ),

@@ -12,25 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
 import json
 import logging
 import os
-from typing import Any, List, Tuple, Union
+from typing import Any, Union
 
 import torch
 from omegaconf import DictConfig
@@ -44,10 +29,42 @@ from rlinf.data.datasets.utils import batch_pad_to_fixed_len
 class MathDataset(Dataset):
     def __init__(
         self,
-        data_paths: Union[str, List[str]],
+        data_paths: Union[str, list[str]],
         config: DictConfig,
         tokenizer: AutoTokenizer,
     ):
+        """
+        Initialize the MathDataset.
+
+        This constructor loads the dataset from specified paths and applies optional filtering
+        based on prompt length constraints.
+
+        This method handles prompt formatting based on the `apply_chat_template` configuration:
+
+        **When apply_chat_template = False:**
+            - The prompt is used directly from the dataset without modification.
+            - Note: Ensure the prompt format is correct and check if the dataset already
+                contains tokenizer-specific special characters.
+            - Expected dataset format:
+                {
+                    "prompt_key": <str>,
+                    "answer_key": <str>,
+                }
+
+        **When apply_chat_template = True:**
+            - The raw dataset is processed using tokenizer.apply_chat_template() to format
+                the prompt according to the model's chat template.
+            - Expected dataset format:
+                {
+                    "prompt_key": [{"content": <str>, "role": <str>}, ...],
+                    "answer_key": <str>,
+                }
+            - After processing, the data is transformed to:
+                {
+                    "prompt_key": <str>,
+                    "answer_key": <str>,
+                }
+        """
         super().__init__()
         self.data_paths = data_paths
         if isinstance(self.data_paths, str):
@@ -56,6 +73,8 @@ class MathDataset(Dataset):
         self.max_prompt_length = config.data.max_prompt_length
         self.tokenizer = tokenizer
         self.prompt_key = config.data.prompt_key
+        self.answer_key = config.data.answer_key
+        self.apply_chat_template = config.data.apply_chat_template
 
         self.data = self._load_data()
         if config.data.get("filter_prompt_by_length", False):
@@ -65,7 +84,14 @@ class MathDataset(Dataset):
 
             for item in self.data:
                 try:
-                    _, L = self.encode(item[self.prompt_key])
+                    prompt = item[self.prompt_key]
+                    if self.apply_chat_template:
+                        prompt = self.tokenizer.apply_chat_template(
+                            prompt, tokenize=False, add_generation_prompt=True
+                        )
+                        # save the convert data
+                        item[self.prompt_key] = prompt
+                    _, L = self.encode(prompt)
                     if L <= self.max_prompt_length:
                         filtered.append(item)
                 except Exception:
@@ -83,7 +109,7 @@ class MathDataset(Dataset):
                     f"(kept {len(self.data)} / {total})."
                 )
 
-    def _load_data(self) -> List[Any]:
+    def _load_data(self) -> list[Any]:
         """
         Load and merge data from multiple files(json or jsonl).
         """
@@ -111,7 +137,7 @@ class MathDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
-    def encode(self, text: str) -> Tuple[List[int], int]:
+    def encode(self, text: str) -> tuple[list[int], int]:
         """
         Use tokenizer to encode the text and return the token ids and length.
         """
@@ -124,8 +150,11 @@ class MathDataset(Dataset):
         """
 
         prompt = self.data[idx][self.prompt_key]
+        answer = self.data[idx][self.answer_key]
 
-        answer = self.data[idx]["solutions"]
+        # if answer is a string, convert it to a list
+        if isinstance(answer, str):
+            answer = [answer]
 
         prompt_tokens, prompt_length = self.encode(prompt)
         prompt_tokens_tensor = torch.as_tensor(prompt_tokens, dtype=torch.int64)

@@ -6,7 +6,7 @@ RLinf 可以将不同的 *generation backends* 接入其强化学习流水线。
 
 .. note::
 
-   RLinf 兼容 **SGLang 0.4.4 → 0.4.9**, **vLLM 0.8.5  → 0.8.5.post1**  
+   RLinf 兼容 **SGLang 0.4.4 → 0.5.2**, **vLLM 0.8.5  → 0.8.5.post1**  
    不需要手动打补丁 —— 框架会自动检测已安装的版本并加载匹配的 shim。  
 
 安装要求
@@ -34,7 +34,7 @@ RLinf 可以将不同的 *generation backends* 接入其强化学习流水线。
    pip install sglang==0.4.8
 
    # 最新支持版本
-   pip install sglang==0.4.9
+   pip install sglang==0.5.2
 
    # 安装vLLM
    pip install vllm==0.8.5
@@ -42,8 +42,8 @@ RLinf 可以将不同的 *generation backends* 接入其强化学习流水线。
 
 从源码安装
 
-
 .. code-block:: bash
+
    # 安装 SGLang
    git clone https://github.com/sgl-project/sglang.git
    cd sglang
@@ -105,42 +105,3 @@ RLinf 可以将不同的 *generation backends* 接入其强化学习流水线。
 
     ...
 
-
-内部版本路由
-------------------------
-
-SGLang 目录结构::  
-
-   rlinf/hybrid_engines/sglang/
-   ├── __init__.py               # 版本检测与路由
-   ├── sglang_worker.py          # 主 Worker 实现
-   ├── sglang_0_4_4/             # SGLang 0.4.4 专用实现
-   │   ├── __init__.py
-   │   ├── io_struct.py          # 0.4.4 的 I/O 结构
-   │   ├── sgl_engine.py         # 0.4.4 的引擎实现
-   │   ├── sgl_scheduler.py      # 0.4.4 的调度器
-   │   └── tokenizer_manager.py  # 0.4.4 的分词器管理
-   └── sglang_0_4_x/             # 未来版本实现
-       └── ...
-
-``__init__.py`` 中的加载器会解析已安装的包版本：  
-
-.. code-block:: python
-
-   from importlib.metadata import PackageNotFoundError, version
-
-   def get_version(pkg):
-       try:
-           return version(pkg)
-       except PackageNotFoundError:
-           return None
-
-   package_name = "sglang"
-   package_version = get_version(package_name)
-   
-   if package_version == "0.4.4":
-       sglang_version = "0.4.4"
-       from .sglang_0_4_4 import io_struct
-       from .sglang_0_4_4.sgl_engine import Engine
-   else:
-       raise ValueError(f"sglang version {package_version} not supported")

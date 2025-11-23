@@ -33,7 +33,7 @@ HybridComponentPlacement
    :class-doc-from: class
 
 ModelParallelComponentPlacement
-^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. autoclass:: rlinf.utils.placement.ModelParallelComponentPlacement
    :show-inheritance:

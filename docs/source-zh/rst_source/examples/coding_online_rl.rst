@@ -5,8 +5,10 @@
 通过与 Continue 等代码编辑器的集成，获取用户对代码补全的偏好反馈，可以实现近乎实时的代码生成和反馈学习，快速提高代码补全的质量，和对齐用户的偏好。
 本示例展示了如何使用 RLinf 框架训练一个能够进行在线代码补全任务的模型。
 
+相关阅读：:doc:`智能体落地“最后一公里”初探之Cursor在线强化学习 <../blog/build_a_coding_online_rl_case>`。
+
 概述
-----
+--------
 
 代码补全在线强化学习系统通过以下方式工作：
 
@@ -17,18 +19,26 @@
 
 这种实时学习机制使得模型能够快速适应用户的编程习惯和偏好。
 
+我们同时提供了针对在线强化学习及离线验证的示例。其中离线验证示例使用大模型模拟人类偏好进行打分，不需要也不支持部署 Continue 在线使用。
+
 运行脚本
--------
+--------------
 
 **环境准备**
-
 
 首先确保您已经安装了 RLinf 框架及其依赖：
 
 .. code-block:: bash
 
    # 安装额外依赖
-   pip install httpx asyncio fuzzywuzzy
+   pip install httpx asyncio
+
+如果使用离线验证示例，需要下载数据集：
+
+.. code-block:: bash
+
+   # 安装额外依赖
+   modelscope download --dataset "paxionfruit/code-fim-v2-python-filtered" --local_dir code-fim-v2-python-filtered
 
 **配置 Continue 集成**
 
@@ -83,31 +93,64 @@
 **启动训练服务**
 
 1. **准备模型和配置**
-   
+
    确保您有预训练的模型权重，并修改配置文件，匹配模型路径、需要使用的端口等
 
-   .. code-block:: yaml
+   - 对于在线强化学习，修改并使用 examples/coding_online_rl/config/qwen2.5-1.5b-ppo.yaml 文件:
+      .. code-block:: yaml
 
-      rollout:
-        model_dir: /path/to/your/model/DeepSeek-R1-Distill-Qwen-1.5B/
-      
-      actor:
-        tokenizer:
-          tokenizer_model: /path/to/your/model/DeepSeek-R1-Distill-Qwen-1.5B/
+         runner:
+           output_dir: /path/to/your/logs
+
+         rollout:
+           model_dir: /path/to/your/model
+
+
+   - 对于离线验证，修改并使用 examples/coding_online_rl/config/qwen2.5-1.5b-grpo-llm_judge.yaml 文件:
+      .. code-block:: yaml
+
+         runner:
+           output_dir: /path/to/your/logs
+
+         rollout:
+           model_dir: /path/to/your/model
+
+         data:
+           train_data_paths: ["/path/to/your/dataset/code-fim-v2-python-filtered_formatted_train_3k.jsonl"]
+           val_data_paths: ["/path/to/your/dataset/code-fim-v2-python-filtered_formatted_test_1k.jsonl"]
+
+      同时，还需要设置用于模拟反馈的大模型的调用 api_url 及 api_key：
+
+      .. code-block:: bash
+
+         export LLMASJUDGE_API_URL=your_api_url
+         export LLMASJUDGE_API_KEY=your_api_key
+         export LLMASJUDGE_MODEL=your_model  # not recommended. should fit prompt for your model.
 
 2. **启动 RLinf 训练服务**
-   
-   .. code-block:: bash
 
-      # 进入项目目录
-      cd /path/to/rlinf_online_rl
+   - 对于在线强化学习：
+      .. code-block:: bash
       
-      # 启动训练服务
-      bash examples/coding_online_rl/run_main_math_pipeline_grpo_megatron.sh qwen2.5-1.5b-ppo-megatron
+         # 进入项目目录
+         cd /path/to/rlinf_online_rl
+         
+         # 启动训练服务
+         bash examples/coding_online_rl/run_main_coding_online_rl.sh
 
-   这将启动以下服务：
-   - **推理服务**：在端口 8081 提供代码补全 API
-   - **训练服务**：在端口 8082 接收用户反馈数据
+      这将启动以下服务：
+
+      - **推理服务**：在端口 8081 提供代码补全 API
+      - **训练服务**：在端口 8082 接收用户反馈数据
+
+   - 对于离线验证：
+      .. code-block:: bash
+      
+         # 进入项目目录
+         cd /path/to/rlinf_online_rl
+         
+         # 启动训练服务
+         bash examples/coding_online_rl/run_main_coding_rl_llm_judge.sh
 
 **与 Continue 联动**
 

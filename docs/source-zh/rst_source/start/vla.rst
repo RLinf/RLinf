@@ -1,5 +1,5 @@
 快速上手 1：在 Maniskill3 上使用 PPO 训练 VLA 模型
-=================================================
+==================================================================================================
 
 本快速教程将带你使用 **RLinf** 框架，在  
 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`_ 环境中训练视觉-语言-动作模型（VLA），包括  
@@ -37,8 +37,8 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
 .. note::
    如果你是通过 Docker 镜像安装的 **RLinf**（见 :doc:`./installation`），请确保已切换到目标模型对应的 Python 环境。
    默认环境为 ``openvla``。
-   若使用 OpenVLA-OFT 或 Pi0，请使用内置脚本 `switch_env` 切换环境：
-   ``source switch_env openvla-oft`` 或 ``source switch_env pi0``。
+   若使用 OpenVLA-OFT 或 openpi，请使用内置脚本 `switch_env` 切换环境：
+   ``source switch_env openvla-oft`` 或 ``source switch_env openpi``。
 
    如果你是通过自定义环境安装的 **RLinf**，请确保已安装对应模型的依赖，详见 :doc:`./installation`。
 

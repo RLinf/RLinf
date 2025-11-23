@@ -35,7 +35,7 @@ HybridComponentPlacement
    :class-doc-from: class
 
 ModelParallelComponentPlacement
-^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. autoclass:: rlinf.utils.placement.ModelParallelComponentPlacement
    :show-inheritance:
@@ -52,7 +52,7 @@ Specifically, ``FlexiblePlacementStrategy`` and ``PackedPlacementStrategy`` are 
 
 
 FlexiblePlacementStrategy
-^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. autoclass:: rlinf.scheduler.placement.flexible.FlexiblePlacementStrategy
    :show-inheritance:

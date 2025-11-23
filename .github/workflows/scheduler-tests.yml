@@ -1,0 +1,58 @@
+name: Scheduler Tests
+
+
+on:
+  workflow_call:
+
+jobs:
+  static-auto-placement-test:
+    runs-on: reason
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: auto-placement
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/auto_placement/run.sh
+
+  dynamic-scheduler-reason-qwen-grpo-test:
+    runs-on: reason
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          path: rlinf
+
+      - name: Clone Megatron-011
+        uses: actions/checkout@v5
+        with:
+          repository: RLinf/Megatron-LM
+          ref: core_v0.11.0_rlinf
+          path: Megatron-LM-011
+
+      - name: Clone param resharding
+        uses: actions/checkout@v5
+        with:
+          repository: i-Taozi/params_resharding_release
+          path: params_resharding_release
+
+      - name: Megatron SGLang
+        timeout-minutes: 20
+        run: |
+          export PYTHONPATH=$(pwd)/Megatron-LM-011:$(pwd)/params_resharding_release
+          cd rlinf
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/dynamic_scheduler/run.sh qwen2.5-1.5b-grpo-dynamic-mg-sgl
+
+      - name: Megatron vLLM
+        timeout-minutes: 20
+        run: |
+          export PYTHONPATH=$(pwd)/Megatron-LM-011:$(pwd)/params_resharding_release
+          cd rlinf
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/dynamic_scheduler/run.sh qwen2.5-1.5b-grpo-dynamic-mg-vllm

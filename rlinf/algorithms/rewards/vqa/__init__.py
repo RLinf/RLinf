@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List
-
 import torch
 from omegaconf import DictConfig
 
@@ -44,7 +42,7 @@ class VQAReward:
         )
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    def get_reward(self, completions: List[str], answers: List[dict]) -> List[float]:
+    def get_reward(self, completions: list[str], answers: list[dict]) -> list[float]:
         rewards = []
         reward_weights = []
         for reward_name, reward_function in self.NEEDED_REWARD_FUNCTIONS.items():

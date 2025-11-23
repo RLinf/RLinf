@@ -146,6 +146,36 @@ Field                       Purpose
 ``num_envs``                Parallel evaluation episodes (e.g. 500)
 ==========================  =============================================
 
+**Possible Issues**
+
+In the latest RLinf code, training and rollout will not cause errors, but if you use intermediate models trained with early RLinf code (GRPO algorithm) and run it in the new version RLinf framework code, you may encounter an error where the loaded model contains extra keys (keys starting with ``value_head.`` ), for example:
+
+.. code-block:: console
+
+   RuntimeError: Error(s) in loading state_dict for OpenVLAOFTForRLActionPrediction:
+	Unexpected key(s) in state_dict: "value_head.head_l1.weight", "value_head.head_l1.bias", "value_head.head_l2.weight", "value_head.head_l2.bias", "value_head.head_l3.weight".
+
+You can modify the code at the end of the ``rlinf/models/__init__.py`` file (in the ``get_model`` function). Change:
+
+.. code-block:: python
+
+   if hasattr(cfg, "ckpt_path") and cfg.ckpt_path is not None:
+        model_dict = torch.load(cfg.ckpt_path)
+        model.load_state_dict(model_dict)
+    return model
+
+to:
+
+.. code-block:: python
+
+   if hasattr(cfg, "ckpt_path") and cfg.ckpt_path is not None:
+        model_dict = torch.load(cfg.ckpt_path)
+        filtered_dict = {k: v for k, v in model_dict.items() if not k.startswith('value_head')}
+        model.load_state_dict(filtered_dict, strict=False)
+    return model
+
+After modification, the command can run normally.
+
 
 Results
 -------
@@ -177,7 +207,7 @@ Environments
    * - Environment
      - Brief Description
    * - ``ManiSkill3``
-     - A high-fidelity MuJoCo-based simulator covering diverse
+     - A high-fidelity SAPIEN-based benchmark covering diverse
        manipulation skills (grasp, place, push).  Evaluation focuses on
        **Put-on-Plate** tasks with multiple OOD texture/object splits.
    * - ``LIBERO``

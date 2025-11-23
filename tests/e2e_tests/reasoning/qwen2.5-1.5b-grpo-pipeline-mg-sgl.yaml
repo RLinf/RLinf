@@ -9,10 +9,10 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    rollout: 0-3
-    inference: 4-5
-    actor: 6-7
-    reward: 0-3
+    rollout: 0
+    inference: 1
+    actor: 2
+    reward: 0
 
 runner:
   task_type: reasoning
@@ -58,7 +58,7 @@ algorithm:
   max_num_gen_batches: 1
 
   # GRPO loss params
-  loss_type: math_ppo_actor
+  loss_type: actor
   loss_agg_func: "token-mean"
   kl_beta: 0.0 # 0.001
   kl_penalty_type: low_var_kl
@@ -67,7 +67,7 @@ algorithm:
   calculate_entropy: True
   clip_ratio_c: null # 3.0
 
-  adv_type: math_grpo
+  adv_type: grpo
   normalize_advantages: False
   early_stop_imp_ratio: 5.0
   use_valid_token_scale: True
@@ -87,9 +87,9 @@ inference:
   group_name: "InferenceGroup"
   load_from_actor: True
   model:
-    tensor_model_parallel_size: 2
+    tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
-    sequence_parallel: True
+    sequence_parallel: False
 
 rollout:
   group_name: "RolloutGroup"
@@ -98,6 +98,7 @@ rollout:
 
   model_dir: /workspace/dataset/DeepSeek-R1-Distill-Qwen-1.5B
   model_arch: qwen2.5
+  precision: ${actor.model.precision}              # precision for rollout model, support [fp16, bf16, fp32]
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
@@ -145,6 +146,8 @@ data:
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: prompt
+  answer_key: solutions
+  apply_chat_template: False
   shuffle: True
   validation_shuffle: True
   seed: 1
@@ -157,7 +160,7 @@ actor:
   mcore_gpt: True
   spec_name: decoder_gpt
 
-  checkpoint_load_path: /workspace/dataset/DeepSeek-R1-Distill-Qwen-1.5B-tp2-pp1
+  checkpoint_load_path: /workspace/dataset/DeepSeek-R1-Distill-Qwen-1.5B-tp1-pp1
 
   offload_optimizer: True
   offload_weight: True
@@ -173,11 +176,11 @@ actor:
     precision: fp16
     add_bias_linear: False
 
-    tensor_model_parallel_size: 2
+    tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
 
     activation: swiglu
-    sequence_parallel: True
+    sequence_parallel: False
     # recompute_method: block
     # recompute_granularity: selective
 

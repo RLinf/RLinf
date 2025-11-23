@@ -1,0 +1,143 @@
+name: CI Test
+
+on:
+  push:
+    branches:
+      - "release/v[0-9].[0-9]"
+      - main
+  pull_request:
+    branches: [main]
+    types: [synchronize, labeled]
+  workflow_dispatch:
+
+concurrency:
+  group: code-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # =============================================== check changes ====================================================
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      file_filter: ${{ steps.filter.outputs.file_filter }}
+      install_filter: ${{ steps.filter.outputs.install_filter }}
+      docker_filter: ${{ steps.filter.outputs.docker_filter }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Fail if the PR does not have the 'run-ci' label
+        if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'run-ci')
+        run: |
+          echo "This pull request does not have the 'run-ci' label. Failing the workflow."
+          exit 1
+
+      - name: Fail if the PR is a draft
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft == true
+        run: |
+          echo "This pull request is a draft. Failing the workflow."
+          exit 1
+
+      - name: Detect file changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            file_filter:
+              - '**/*.py'
+              - 'tests/**'
+              - '.github/workflows/*tests.yml'
+              - '*.yaml'
+            install_filter:
+              - 'pyproject.toml'
+              - 'requirements/*.sh'
+              - 'requirements/*.txt'
+              - '.github/workflows/install.yml'
+            docker_filter:
+              - 'docker/torch*/**'
+              - '.github/workflows/docker-build.yml'
+
+
+  # =============================================== install tests ====================================================
+
+  install-tests:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.install_filter == 'true'
+    uses: ./.github/workflows/install.yml
+
+  # =============================================== docker tests ====================================================
+
+  docker-tests:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.docker_filter == 'true'
+    uses: ./.github/workflows/docker-build.yml
+
+  # =============================================== unit tests ====================================================
+
+  unit-tests:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.file_filter == 'true'
+    uses: ./.github/workflows/unit-tests.yml
+
+  # =============================================== agent e2e tests ====================================================
+
+  agent-reason-e2e-tests:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.file_filter == 'true'
+    uses: ./.github/workflows/agent-e2e-tests.yml
+
+  # =============================================== embodied e2e tests ====================================================
+
+  embodied-e2e-tests:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.file_filter == 'true'
+    uses: ./.github/workflows/embodied-e2e-tests.yml
+
+  # =============================================== scheduler tests ====================================================
+
+  scheduler-tests:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.file_filter == 'true'
+    uses: ./.github/workflows/scheduler-tests.yml
+
+  # =============================================== finale ====================================================
+
+  ci-test-finish:
+    needs: [
+      check-changes,
+      install-tests,
+      docker-tests,
+      unit-tests,
+      agent-reason-e2e-tests,
+      embodied-e2e-tests,
+      scheduler-tests
+    ]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      # Refer to https://github.com/sgl-project/sglang/blob/main/.github/workflows/pr-test.yml
+      - name: Check all dependent job statuses
+        run: |
+          # Convert the 'needs' context to a JSON string
+          json_needs='${{ toJson(needs) }}'
+
+          # Get a list of all job names from the JSON keys
+          job_names=$(echo "$json_needs" | jq -r 'keys_unsorted[]')
+
+          for job in $job_names; do
+            # For each job, extract its result
+            result=$(echo "$json_needs" | jq -r --arg j "$job" '.[$j].result')
+
+            # Print the job name and its result
+            echo "$job: $result"
+
+            # Check for failure or cancellation and exit if found
+            if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
+              echo "The above jobs failed."
+              exit 1
+            fi
+          done
+
+          # If the loop completes, all jobs were successful
+          echo "All jobs completed successfully"
+          exit 0

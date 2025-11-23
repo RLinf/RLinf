@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import ClassVar, Dict, List, Optional, Union
+from typing import ClassVar, Optional, Union
 
 import torch
 import torchvision.transforms.functional as TVF
@@ -94,14 +94,14 @@ class PrismaticImageProcessor(PrismaticImageProcessorOrginal):
 
 
 class PrismaticProcessor(PrismaticProcessorOriginal):
-    attributes: ClassVar[List[str]] = ["image_processor", "tokenizer"]
+    attributes: ClassVar[list[str]] = ["image_processor", "tokenizer"]
     image_processor_class: str = "AutoImageProcessor"
     tokenizer_class: str = "AutoTokenizer"
 
     def __call__(
         self,
         text: Union[
-            TextInput, PreTokenizedInput, List[TextInput], List[PreTokenizedInput]
+            TextInput, PreTokenizedInput, list[TextInput], list[PreTokenizedInput]
         ],
         images: torch.Tensor,
         padding: Union[bool, str, PaddingStrategy] = False,
@@ -165,16 +165,16 @@ class PrismaticProcessor(PrismaticProcessorOriginal):
 
 
 class MultiInputPrismaticProcessor(PrismaticProcessorOriginal):
-    attributes: ClassVar[List[str]] = ["image_processor", "tokenizer"]
+    attributes: ClassVar[list[str]] = ["image_processor", "tokenizer"]
     image_processor_class: str = "AutoImageProcessor"
     tokenizer_class: str = "AutoTokenizer"
 
     def __call__(
         self,
         text: Union[
-            TextInput, PreTokenizedInput, List[TextInput], List[PreTokenizedInput]
+            TextInput, PreTokenizedInput, list[TextInput], list[PreTokenizedInput]
         ],
-        images: Dict[str, torch.Tensor],
+        images: dict[str, torch.Tensor],
         proprio_states: torch.Tensor,
         padding: Union[bool, str, PaddingStrategy] = False,
         truncation: Optional[Union[bool, str, TruncationStrategy]] = None,
