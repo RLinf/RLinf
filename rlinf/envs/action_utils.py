@@ -83,7 +83,7 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_name=model_name,
         )
-    elif simulator_type == "maniskill":
+    elif simulator_type == "maniskill" or simulator_type == "roboverse":
         chunk_actions = prepare_actions_for_maniskill(
             raw_chunk_actions=raw_chunk_actions,
             num_action_chunks=num_action_chunks,
