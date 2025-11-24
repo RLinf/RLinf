@@ -34,8 +34,10 @@ from rlinf.scheduler.dynamic_scheduler.utils import (
     get_scheduler_channel,
 )
 from rlinf.utils.placement import ModelParallelComponentPlacement
+from rlinf.utils.utils import create_task_with_callback
 from rlinf.workers.rollout.sglang import Engine, io_struct
 from rlinf.workers.rollout.utils import (
+    AsyncRolloutManager,
     MetaInfoStatsCollector,
     RolloutEngineStats,
     RunningStatusManager,
@@ -69,11 +71,33 @@ class SGLangWorker(Worker):
             self._cfg.rollout, "collect_meta_stats", False
         )
         self._use_auto_scheduler = self._placement.is_auto
+        self._use_async_rollout = self._cfg.algorithm.get("async", False)
 
         if self._collect_meta_stats:
             self._init_meta_stats_collector()
         if self._use_auto_scheduler:
             self._init_scheduler()
+        if self._use_async_rollout:
+            self._init_async_manager()
+
+    def _init_async_manager(self) -> None:
+        assert self._use_async_rollout, (
+            "AsyncRolloutManager is only initialized when async rollout is enabled."
+        )
+        assert self._placement.is_disaggregated, (
+            "AsyncRolloutManager is only supported in disaggregated mode."
+        )
+        rollout_batch_size = self._cfg.data.rollout_batch_size
+        rollout_dp_size = self._placement.rollout_dp_size
+        max_num_gen_batches = self._cfg.algorithm.get("max_num_gen_batches", 1)
+        assert (rollout_batch_size * max_num_gen_batches) % rollout_dp_size == 0, (
+            "rollout_batch_size * max_num_gen_batches must be divisible by rollout_dp_size."
+        )
+        self.batch_size_per_dp = (
+            rollout_batch_size * max_num_gen_batches // rollout_dp_size
+        )
+        self.staleness_threshold = self._cfg.algorithm.get("staleness_threshold", 0)
+        self._async_manager = AsyncRolloutManager(self.status_manager, self._logger)
 
     def _init_scheduler(self):
         self.schedule_channel = self.connect_channel(
@@ -443,3 +467,31 @@ class SGLangWorker(Worker):
                     sampling_params=rollout_request.get("sampling_params", None),
                 )
             )
+
+    async def async_rollout(
+        self, input_channel: Channel, output_channel: Channel
+    ) -> None:
+        assert self._async_manager is not None, (
+            "AsyncRolloutManager is not initialized but async_rollout is called, set algorithm.async to True in config to enable it."
+        )
+        while not (
+            finished_groups := await self._async_manager.wait_for_batch_results(
+                batch_size=self.batch_size_per_dp,
+            )
+        ):
+            if seq_groups := await self._async_manager.get_batch(
+                input_channel=input_channel,
+                batch_size=self.batch_size_per_dp,
+                staleness_threshold=self.staleness_threshold,
+            ):
+                for group in seq_groups:
+                    task = create_task_with_callback(
+                        self._async_generate_group(group),
+                        self._async_manager.on_trajectory_finished,
+                    )
+                    self.status_manager.add_task(group, task)
+        self._async_manager.handle_finished_seq_groups(
+            finished_seq_groups=finished_groups,
+            output_channel=output_channel,
+            return_logprobs=self._return_logprobs,
+        )
