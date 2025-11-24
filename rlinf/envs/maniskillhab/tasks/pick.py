@@ -233,17 +233,26 @@ class PickSubtaskTrainEnv(SubtaskTrainEnv):
     # -------------------------------------------------------------------------------------------------
 
     def get_language_instruction(self):
-        # select_carrot = [self.carrot_names[idx] for idx in self.select_carrot_ids]
-        # select_plate = [self.plate_names[idx] for idx in self.select_plate_ids]
+        '''
+        obj_id is of format {ycb_num}_{name}-{instance_num}. the obj ids will be None for Close subtasks, since these don't involve objects.
+        '''
 
-        # instruct = []
-        # for idx in range(self.num_envs):
-        #     carrot_name = self.model_db_carrot[select_carrot[idx]]["name"]
-        #     plate_name = self.model_db_plate[select_plate[idx]]["name"]
-        #     instruct.append(f"put {carrot_name} on {plate_name}")
+        instruct = []
+        pick_task_plan = self.unwrapped.task_plan
+        assert len(pick_task_plan) == 1 and isinstance(pick_task_plan[0], PickSubtask)
+        for idx in range(self.num_envs):
+            obj_ids = [
+                getattr(self.unwrapped.base_task_plans[(cid,)].subtasks[0], "obj_id", None)  # mjwei NOTE: the length of each subtasks should be 1, which is asserted in the initail of XXXSubTrainEnv, len(tp0.subtasks) == 1
+                for cid in pick_task_plan[0].composite_subtask_uids
+            ]
+        # print(obj_ids)  # outputs a list of obj_ids, eg ['007_tuna_fish_can-1', '003_cracker_box-0', '004_sugar_box-0', '005_tomato_soup_can-0']
+        obj_name = [
+            id.split('_', 1)[1].rsplit('-', 1)[0].replace('_', ' ')
+            for id in obj_ids
+        ]
         # breakpoint()
         # self.subtask_objs
-        obj_name = ["pick up this object."] * self.num_envs
+        # obj_name = ["pick up this object."] * self.num_envs
         
         instruct = []
         for idx in range(self.num_envs):
