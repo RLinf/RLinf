@@ -31,7 +31,8 @@
 - **任务描述**: 参考 `IsaacLab-Examples<https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/environments.html>` 获取已有可用任务. 如果您想自定义任务请参考 `IsaacLab-Quickstart<https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/own-project/index.html>` .
 
 **添加自定义任务**
-如果您想添加自定义任务请参考 `RLinf/rlinf/envs/isaaclab/tasks/stack_cube.py`, 并将您的脚本放置在 `tasks`下,  同时在 `RLinf/rlinf/envs/isaaclab/__init__.py`内添加相关代码
+
+如果您想添加自定义任务请参考RLinf/rlinf/envs/isaaclab/tasks/stack_cube.py, 并将您的脚本放置在 tasks下,  同时在RLinf/rlinf/envs/isaaclab/__init__.py内添加相关代码
 
 算法
 --------------
