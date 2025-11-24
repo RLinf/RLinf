@@ -19,7 +19,7 @@
 </div>
 
 <h1 align="center">
-  <sub>RLinf: 为Agentic AI而生的强化学习框架</sub>
+  <sub>RLinf: 为Post-training而生的强化学习框架</sub>
 </h1>
 
 RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进行基础模型的后训练而设计。名称中的 “inf” 既代表 `Infrastructure`，强调其作为新一代训练坚实基础的作用；也代表 `Infinite`，寓意其支持开放式学习、持续泛化以及智能发展的无限可能。
@@ -30,7 +30,9 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 
 
 ## 最新动态
-- [2025/11] 🔥 基于[Behavior 1k](https://github.com/StanfordVL/BEHAVIOR-1K)的强化学习微调已经上线! 文档：[RL on Behavior 1k](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/behavior.html) 
+- [2025/11] 🔥 RLinf现在已经支持强化学习微调[GR00T-N1.5](https://github.com/NVIDIA/Isaac-GR00T)！文档：[RL on GR00T-N1.5](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/gr00t.html)。
+- [2025/11] 🔥 基于[Metaworld](https://github.com/Farama-Foundation/Metaworld)的强化学习微调已经上线! 文档：[RL on Metaworld](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/metaworld.html)。
+- [2025/11] 🔥 基于[Behavior 1k](https://github.com/StanfordVL/BEHAVIOR-1K)的强化学习微调已经上线! 文档：[RL on Behavior 1k](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/behavior.html) 。
 - [2025/11] lora微调支持π₀和π₀.₅模型。
 - [2025/10] 🔥 π₀和π₀.₅模型的强化学习微调已经上线! 文档：[π₀和π₀.₅模型强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/pi0.html)。更多技术细节请参考：[π₀ 与 π₀.₅ 模型强化学习微调技术报告](https://arxiv.org/abs/2510.25889)。机器之心与具身智能之心报道：[《RLinf上新πRL：在线强化学习微调π₀ 和 π₀.₅》](https://mp.weixin.qq.com/s/dFlpmqmE0qfhOQmGG25X9g), [《清华大学最新！πRL：用在线强化学习让机器人 “边学边做” 的通用方案》](https://mp.weixin.qq.com/s/S51P-Y1UYXzumnZzon2N1g)。
 - [2025/10] 🔥 RLinf 正式支持在线强化学习！文档：[coding_online_rl](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/coding_online_rl.html)，同时发布文章 [《首个开源的Agent在线强化学习框架RLinf-Online！让你的Agent今天比昨天更聪明》](https://mp.weixin.qq.com/s/jmohmDokuWLhQHFueSHZIQ)。
@@ -89,6 +91,10 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
           <ul>
             <li>Qwen2.5-VL</li>
           </ul>
+          <li><b>自定义模型</b></li>
+          <ul>
+            <li>MLP-Policy ✅</li>
+          </ul>
         </ul>
       </td>
       <td>
@@ -112,15 +118,15 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
   </tbody>
 </table>
 
-如上表所示，RLinf支持主流VLA模型，通过标准的Worker接口支持主流的基于CPU或者GPU的模拟器，首次实现对带有 flow-matching action expert 的 $\pi_{0}$ 和 $\pi_{0.5}$ 模型家族的RL微调。
+如上表所示，RLinf支持主流VLA模型，通过标准的Worker接口支持主流的CPU或者GPU并行的模拟器，首次实现对带有 flow-matching action expert 的 $\pi_{0}$ 和 $\pi_{0.5}$ 模型家族的RL微调。
 
 ### 智能体强化学习
 
-智能体强化学习包括用于提升大语言模型推理能力的强化学习训练，例如[数学推理](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/reasoning.html)；也包括针对各类智能体的强化学习训练，例如[编程智能体的在线强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/coding_online_rl.html)。RLinf 框架能够很好地支持智能体强化学习。我们相信，未来的具身智能也必将融合智能体的能力，以完成更复杂的任务。
+智能体强化学习包括用于提升大语言模型推理能力的强化学习训练，例如[数学推理](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/reasoning.html)；也包括针对各类智能体的强化学习训练，例如[编程智能体的在线强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/coding_online_rl.html)。我们相信，未来的具身智能也必将融合智能体的能力，以完成更复杂的任务。
 
 ### 高灵活性、高效性与高可扩展性
 
-除了上述丰富功能外，RLinf 还具有高度灵活性，可支持多种强化学习训练工作流（例如集成了模拟器的具身强化学习、PPO/RLHF），同时隐藏了分布式编程的复杂性。用户无需修改代码即可轻松将强化学习训练扩展至大量GPU节点，满足强化学习训练日益增长的计算需求。
+除了上述丰富功能外，RLinf 还具有高度灵活性，可支持多种强化学习训练工作流（PPO、GRPO、SAC等），同时隐藏了分布式编程的复杂性。用户无需修改代码即可轻松将强化学习训练扩展至大量GPU节点，满足强化学习训练日益增长的计算需求。
 
 这种高灵活性使 RLinf 能够探索更高效的调度与执行模式。在具身强化学习中，混合执行模式相较于基线方案实现了100%以上的吞吐量提升。
 
@@ -141,7 +147,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 ### 具身智能
 
 - RLinf 同时支持 PPO 与 GRPO 算法，为视觉-语言-动作（Vision-Language-Action, VLA）模型提供最先进的训练能力。
-- 该框架与主流具身智能基准测试（如 ManiSkill3 与 LIBERO）无缝集成，并在多样化的评测指标上均取得了优异表现。
+- 该框架与主流具身智能基准测试无缝集成，并在多样化的评测指标上均取得了优异表现。
 
 #### OpenVLA 和 OpenVLA-OFT 结果
 
@@ -584,52 +590,40 @@ RLinf 具有全面的 CI 测试，涵盖核心组件（通过单元测试）和�
 如果您觉得 **RLinf** 对您的研究或工作有所帮助，请引用以下论文：
 
 ```bibtex
-@misc{yu2025rlinfflexibleefficientlargescale,
-  title={RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Micro Flow Transformation}, 
-  author={Chao Yu and Yuanqing Wang and Zhen Guo and Hao Lin and Si Xu and Hongzhi Zang and Quanlu Zhang and Yongji Wu and Chunyang Zhu and Junhao Hu and Zixiao Huang and Mingjie Wei and Yuqing Xie and Ke Yang and Bo Dai and Zhexuan Xu and Xiangyuan Wang and Xu Fu and Zhihao Liu and Kang Chen and Weilin Liu and Gang Liu and Boxun Li and Jianlei Yang and Zhi Yang and Guohao Dai and Yu Wang},
-  year={2025},
-  eprint={2509.15965},
-  archivePrefix={arXiv},
-  primaryClass={cs.LG},
-  url={https://arxiv.org/abs/2509.15965}, 
+@article{yu2025rlinf,
+  title={RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Micro Flow Transformation},
+  author={Yu, Chao and Wang, Yuanqing and Guo, Zhen and Lin, Hao and Xu, Si and Zang, Hongzhi and Zhang, Quanlu and Wu, Yongji and Zhu, Chunyang and Hu, Junhao and others},
+  journal={arXiv preprint arXiv:2509.15965},
+  year={2025}
 }
 ```
 
 如果你在 RLinf 中使用了 RL+VLA，欢迎引用我们的算法技术报告和实证研究论文：
 
 ```bibtex
-@misc{zang2025rlinfvlaunifiedefficientframework,
-      title={RLinf-VLA: A Unified and Efficient Framework for VLA+RL Training}, 
-      author={Hongzhi Zang and Mingjie Wei and Si Xu and Yongji Wu and Zhen Guo and Yuanqing Wang and Hao Lin and Liangzhi Shi and Yuqing Xie and Zhexuan Xu and Zhihao Liu and Kang Chen and Wenhao Tang and Quanlu Zhang and Weinan Zhang and Chao Yu and Yu Wang},
-      year={2025},
-      eprint={2510.06710},
-      archivePrefix={arXiv},
-      primaryClass={cs.RO},
-      url={https://arxiv.org/abs/2510.06710}, 
+@article{zang2025rlinf,
+  title={RLinf-VLA: A Unified and Efficient Framework for VLA+ RL Training},
+  author={Zang, Hongzhi and Wei, Mingjie and Xu, Si and Wu, Yongji and Guo, Zhen and Wang, Yuanqing and Lin, Hao and Shi, Liangzhi and Xie, Yuqing and Xu, Zhexuan and others},
+  journal={arXiv preprint arXiv:2510.06710},
+  year={2025}
 }
 ```
 
 ```bibtex
-@misc{liu2025rlbringvlageneralization,
-  title={What Can RL Bring to VLA Generalization? An Empirical Study}, 
-  author={Jijia Liu and Feng Gao and Bingwen Wei and Xinlei Chen and Qingmin Liao and Yi Wu and Chao Yu and Yu Wang},
-  year={2025},
-  eprint={2505.19789},
-  archivePrefix={arXiv},
-  primaryClass={cs.LG},
-  url={https://arxiv.org/abs/2505.19789}, 
+@article{liu2025can,
+  title={What can rl bring to vla generalization? an empirical study},
+  author={Liu, Jijia and Gao, Feng and Wei, Bingwen and Chen, Xinlei and Liao, Qingmin and Wu, Yi and Yu, Chao and Wang, Yu},
+  journal={arXiv preprint arXiv:2505.19789},
+  year={2025}
 }
 ```
 
 ```bibtex
-@misc{chen2025pitextttrlonlinerlfinetuning,
-      title={$\pi_\texttt{RL}$: Online RL Fine-tuning for Flow-based Vision-Language-Action Models}, 
-      author={Kang Chen and Zhihao Liu and Tonghe Zhang and Zhen Guo and Si Xu and Hao Lin and Hongzhi Zang and Quanlu Zhang and Zhaofei Yu and Guoliang Fan and Tiejun Huang and Yu Wang and Chao Yu},
-      year={2025},
-      eprint={2510.25889},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG},
-      url={https://arxiv.org/abs/2510.25889}, 
+@article{chen2025pi_,
+  title={$$\backslash$pi\_$\backslash$texttt $\{$RL$\}$ $: Online RL Fine-tuning for Flow-based Vision-Language-Action Models},
+  author={Chen, Kang and Liu, Zhihao and Zhang, Tonghe and Guo, Zhen and Xu, Si and Lin, Hao and Zang, Hongzhi and Zhang, Quanlu and Yu, Zhaofei and Fan, Guoliang and others},
+  journal={arXiv preprint arXiv:2510.25889},
+  year={2025}
 }
 ```
 
