@@ -19,6 +19,8 @@ from rlbench.action_modes.action_mode import MoveArmThenGripper
 from rlbench.action_modes.arm_action_modes import JointVelocity, EndEffectorPoseViaIK
 from rlbench.action_modes.gripper_action_modes import Discrete
 from rlbench.observation_config import ObservationConfig, CameraConfig
+
+
 # ----------------------------
 # Worker process
 # ----------------------------
@@ -37,23 +39,29 @@ def _make_obs_config(image_size=(128, 128), front_only=True):
         obs_config.overhead_camera = cam
     return obs_config
 
-def worker_process(child_conn: mp.connection.Connection,
-                   task_name: str,
-                   seed: int,
-                   headless: bool = True,
-                   image_size: Tuple[int,int]=(128,128)):
+
+def worker_process(
+    child_conn: mp.connection.Connection,
+    task_name: str,
+    seed: int,
+    headless: bool = True,
+    image_size: Tuple[int, int] = (128, 128),
+):
     try:
         # build env & task
         obs_config = _make_obs_config(image_size=image_size, front_only=True)
         action_mode = MoveArmThenGripper(
             arm_action_mode=EndEffectorPoseViaIK(absolute_mode=False),
-            gripper_action_mode=Discrete()
+            gripper_action_mode=Discrete(),
         )
-        env = Environment(action_mode, obs_config=obs_config, headless=headless, robot_setup='panda')
+        env = Environment(
+            action_mode, obs_config=obs_config, headless=headless, robot_setup="panda"
+        )
         env.launch()
         # Convert task name string to task class
         # In multiprocessing, globals() may not contain imported classes, so use getattr directly
         import rlbench.tasks as tasks_module
+
         TaskClass = getattr(tasks_module, task_name, None)
         if TaskClass is None:
             raise ValueError(
@@ -96,12 +104,18 @@ def worker_process(child_conn: mp.connection.Connection,
                     reward = float(ret[1]) if len(ret) > 1 else 0.0
                     terminate = bool(ret[-1]) if len(ret) > 2 else False
                 # return front_rgb, reward, terminate
-                child_conn.send((obs.front_rgb.copy().astype(np.uint8), float(reward), bool(terminate)))
+                child_conn.send(
+                    (
+                        obs.front_rgb.copy().astype(np.uint8),
+                        float(reward),
+                        bool(terminate),
+                    )
+                )
                 current_obs = obs
 
             elif cmd == "get_description":
                 # Get a random description from task._task_descriptions
-                if hasattr(task, '_task_descriptions') and task._task_descriptions:
+                if hasattr(task, "_task_descriptions") and task._task_descriptions:
                     description = random.choice(task._task_descriptions)
                 else:
                     # Fallback if _task_descriptions is not available
@@ -137,8 +151,9 @@ class RLBenchEnv(gym.Env):
     - Public API: reset(), step(actions), chunk_step(chunk_actions), flush_video(), close()
     """
 
-    def __init__(self,
-                cfg, seed_offset=0, total_num_processes=None, record_metrics=True):
+    def __init__(
+        self, cfg, seed_offset=0, total_num_processes=None, record_metrics=True
+    ):
         """
         cfg: OmegaConf config object with environment parameters
         seed_offset: offset for seed
@@ -146,17 +161,21 @@ class RLBenchEnv(gym.Env):
         record_metrics: whether to record metrics
         """
         from omegaconf import OmegaConf
-        
+
         self.cfg = cfg
         self.seed_offset = seed_offset
         self.total_num_processes = total_num_processes or cfg.num_envs
         self.record_metrics = record_metrics
-        
+
         # Extract config values
         self.num_envs = cfg.num_envs
         self.seed = cfg.seed + seed_offset
         self.headless = True
-        self.image_size = tuple(cfg.image_size) if isinstance(cfg.image_size, list) else cfg.image_size
+        self.image_size = (
+            tuple(cfg.image_size)
+            if isinstance(cfg.image_size, list)
+            else cfg.image_size
+        )
         self.max_episode_steps = cfg.max_episode_steps
         self.auto_reset = cfg.auto_reset
         self.video_cfg = cfg.video_cfg
@@ -164,8 +183,10 @@ class RLBenchEnv(gym.Env):
         if getattr(cfg, "save_video", False) and not self.video_cfg.save_video:
             self.video_cfg.save_video = True
         self.video_base_dir = cfg.video_base_dir
-        self.task_names = cfg.task_names if hasattr(cfg, "task_names") else ["ReachTarget"]
-        
+        self.task_names = (
+            cfg.task_names if hasattr(cfg, "task_names") else ["ReachTarget"]
+        )
+
         # # Action limits for relative mode (delta actions)
         # # Position delta: limit to [-0.1, 0.1] meters (10cm) to avoid IK failures
         # # Rotation delta: limit to [-0.3, 0.3] radians (~17 degrees)
@@ -174,7 +195,7 @@ class RLBenchEnv(gym.Env):
         # self.action_rot_limit = getattr(cfg, "action_rot_limit", 0.01)  # radians
         # self.action_gripper_min = getattr(cfg, "action_gripper_min", 0.0)
         # self.action_gripper_max = getattr(cfg, "action_gripper_max", 1.0)
-        
+
         os.makedirs(self.video_base_dir, exist_ok=True)
 
         # pipes/workers
@@ -196,7 +217,7 @@ class RLBenchEnv(gym.Env):
             p.start()
             self.parent_conns.append(parent_conn)
             self.workers.append(p)
-        
+
         # Debug: print task assignment
         print(f"[RLBenchEnv] Task assignment: {self.env_task_names}")
 
@@ -240,7 +261,12 @@ class RLBenchEnv(gym.Env):
             ret = self.parent_conns[i].recv()
             # Check for worker error: error messages are tuples with string as first element
             # Normal returns are single numpy arrays (image)
-            if isinstance(ret, tuple) and len(ret) == 2 and isinstance(ret[0], str) and ret[0] == "worker_error":
+            if (
+                isinstance(ret, tuple)
+                and len(ret) == 2
+                and isinstance(ret[0], str)
+                and ret[0] == "worker_error"
+            ):
                 raise RuntimeError(f"Worker {i} error: {ret[1]}")
             obs_img = np.array(ret)
             obs_list.append(obs_img)
@@ -270,16 +296,21 @@ class RLBenchEnv(gym.Env):
         # Send get_description command to all workers
         for i in range(self.num_envs):
             self.parent_conns[i].send(("get_description", None))
-        
+
         # Receive descriptions from all workers
         descriptions = []
         for i in range(self.num_envs):
             ret = self.parent_conns[i].recv()
             # Check for worker error
-            if isinstance(ret, tuple) and len(ret) == 2 and isinstance(ret[0], str) and ret[0] == "worker_error":
+            if (
+                isinstance(ret, tuple)
+                and len(ret) == 2
+                and isinstance(ret[0], str)
+                and ret[0] == "worker_error"
+            ):
                 raise RuntimeError(f"Worker {i} error: {ret[1]}")
             descriptions.append(ret)
-        
+
         # If target_length is specified and different from num_envs, repeat descriptions
         if target_length is not None and target_length != len(descriptions):
             if target_length > len(descriptions):
@@ -290,15 +321,18 @@ class RLBenchEnv(gym.Env):
             else:
                 # Truncate if target_length is smaller (shouldn't happen normally)
                 descriptions = descriptions[:target_length]
-        
+
         return descriptions
+
     # -------------------------
     # Step (single-step for all envs)
     # -------------------------
-    def step(self, actions: Optional[np.ndarray] = None, auto_reset: Optional[bool] = None):
+    def step(
+        self, actions: Optional[np.ndarray] = None, auto_reset: Optional[bool] = None
+    ):
         """
         actions: array-like [num_envs, action_dim], dtype float
-        Returns: 
+        Returns:
             obs_dict: dict with keys "images" (torch.Tensor [num_envs,H,W,3]) and "task_descriptions" (list[str])
             rewards: torch.Tensor [num_envs], dtype float32
             terminations: torch.Tensor [num_envs], dtype bool
@@ -320,12 +354,20 @@ class RLBenchEnv(gym.Env):
             rewards_tensor = torch.zeros(self.num_envs, dtype=torch.float32)
             terminations_tensor = torch.tensor(terminations, dtype=torch.bool)
             truncations_tensor = torch.tensor(truncations, dtype=torch.bool)
-            return obs_dict, rewards_tensor, terminations_tensor, truncations_tensor, infos
+            return (
+                obs_dict,
+                rewards_tensor,
+                terminations_tensor,
+                truncations_tensor,
+                infos,
+            )
 
         if isinstance(actions, np.ndarray) is False:
             actions = np.array(actions)
 
-        assert actions.shape[0] == self.num_envs, "actions must have shape [num_envs, action_dim]"
+        assert actions.shape[0] == self.num_envs, (
+            "actions must have shape [num_envs, action_dim]"
+        )
 
         # # Clip actions to reasonable limits to avoid IK failures
         # # Position delta (first 3 dims): limit to [-action_pos_limit, action_pos_limit] meters
@@ -336,7 +378,7 @@ class RLBenchEnv(gym.Env):
         # actions[:, 6:] = np.clip(actions[:, 6:], self.action_gripper_min, self.action_gripper_max)
 
         # convert rotations in actions to quaternions
-        quaternions = R.from_euler('xyz', actions[:, 3:6]).as_quat()
+        quaternions = R.from_euler("xyz", actions[:, 3:6]).as_quat()
         actions = np.concatenate([actions[:, :3], quaternions, actions[:, 6:]], axis=1)
 
         # send step to all workers
@@ -348,7 +390,12 @@ class RLBenchEnv(gym.Env):
         for i, res in enumerate(results):
             # Check for worker error: error messages are tuples with string as first element
             # Normal returns are (img_array, reward, terminate) where img_array is numpy array
-            if isinstance(res, tuple) and len(res) == 2 and isinstance(res[0], str) and res[0] == "worker_error":
+            if (
+                isinstance(res, tuple)
+                and len(res) == 2
+                and isinstance(res[0], str)
+                and res[0] == "worker_error"
+            ):
                 raise RuntimeError(f"Worker {i} error: {res[1]}")
             img, reward, terminate = res
             obs_list.append(img)
@@ -376,7 +423,9 @@ class RLBenchEnv(gym.Env):
         infos = self._make_episode_info({})
 
         dones = terminations | truncations
-        do_auto_reset = (self.auto_reset if auto_reset is None else auto_reset) and self.auto_reset
+        do_auto_reset = (
+            self.auto_reset if auto_reset is None else auto_reset
+        ) and self.auto_reset
 
         if dones.any() and do_auto_reset:
             obs_after_reset, infos_after = self._handle_auto_reset(dones, obs, infos)
@@ -420,7 +469,9 @@ class RLBenchEnv(gym.Env):
         # iterate micro-steps
         for t in range(chunk_size):
             actions_t = chunk_actions[:, t, :]
-            obs, rewards, terminations, truncations, infos = self.step(actions_t, auto_reset=False)
+            obs, rewards, terminations, truncations, infos = self.step(
+                actions_t, auto_reset=False
+            )
             chunk_rewards_list.append(rewards)
             chunk_term_list.append(terminations)
             chunk_trunc_list.append(truncations)
@@ -508,7 +559,10 @@ class RLBenchEnv(gym.Env):
         # avoid division by zero
         avg_reward = np.zeros_like(self.returns)
         nonzero_mask = episode_info["episode_len"] > 0
-        avg_reward[nonzero_mask] = episode_info["return"][nonzero_mask] / episode_info["episode_len"][nonzero_mask]
+        avg_reward[nonzero_mask] = (
+            episode_info["return"][nonzero_mask]
+            / episode_info["episode_len"][nonzero_mask]
+        )
         episode_info["reward"] = avg_reward
         # Convert to torch.Tensor to match other environments (Libero, MetaWorld)
         infos = {"episode": to_tensor(episode_info)}
@@ -533,14 +587,18 @@ class RLBenchEnv(gym.Env):
             # If video saving is disabled, just clear the buffer
             self.render_images = [[] for _ in range(self.num_envs)]
             return
-        
+
         # Find the maximum number of frames across all envs
-        max_frames = max(len(frames) for frames in self.render_images) if self.render_images else 0
+        max_frames = (
+            max(len(frames) for frames in self.render_images)
+            if self.render_images
+            else 0
+        )
         if max_frames == 0:
             # No frames to save
             self.render_images = [[] for _ in range(self.num_envs)]
             return
-        
+
         # Combine frames from all envs into tiled images
         tiled_frames = []
         for frame_idx in range(max_frames):
@@ -559,17 +617,19 @@ class RLBenchEnv(gym.Env):
                     if len(env_frames) > 0:
                         h, w = env_frames[0].shape[:2]
                         env_frames.append(np.zeros((h, w, 3), dtype=np.uint8))
-            
+
             # Tile all env frames into one image
             if len(env_frames) > 0:
                 # Calculate nrows for a roughly square grid
                 nrows = int(np.sqrt(self.num_envs))
                 tiled_frame = tile_images(env_frames, nrows=nrows)
                 tiled_frames.append(tiled_frame)
-        
+
         # Save the combined video
         seed_dir = os.path.join(self.video_base_dir, f"seed_{self.seed}")
-        out_dir = seed_dir if video_sub_dir is None else os.path.join(seed_dir, video_sub_dir)
+        out_dir = (
+            seed_dir if video_sub_dir is None else os.path.join(seed_dir, video_sub_dir)
+        )
         os.makedirs(out_dir, exist_ok=True)
         path = os.path.join(out_dir, f"combined_{self.video_cnt}.mp4")
         with imageio.get_writer(path, fps=20) as writer:
@@ -577,7 +637,7 @@ class RLBenchEnv(gym.Env):
                 # ensure uint8 HWC
                 writer.append_data(np.asarray(frame))
         print(f"[RLBenchEnv] Saved combined video: {path} (tiled {self.num_envs} envs)")
-        
+
         # reset frames buffer
         self.render_images = [[] for _ in range(self.num_envs)]
         self.video_cnt += 1
@@ -594,12 +654,13 @@ class RLBenchEnv(gym.Env):
         for w in self.workers:
             w.join(timeout=5)
 
+
 # ----------------------------
 # Example usage
 # ----------------------------
 if __name__ == "__main__":
     from omegaconf import OmegaConf
-    
+
     # Example: Create config and initialize environment
     cfg_dict = {
         "task_names": ["ReachTarget"],
@@ -613,7 +674,7 @@ if __name__ == "__main__":
         "video_base_dir": "./rlbench_videos",
     }
     cfg = OmegaConf.create(cfg_dict)
-    
+
     env = RLBenchEnv(cfg, seed_offset=0, total_num_processes=2, record_metrics=False)
 
     # initial reset
