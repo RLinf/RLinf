@@ -458,7 +458,7 @@ SglangActor 接收权重代码 ``rlinf/hybrid_engines/sglang/common/sgl_schedule
 
 您可以在适配好新模型后，参考这个 yaml 配置文件，进行相应的修改。
 
-**文件：** ``examples/math/config/qwen2.5-1.5b-grpo-megatron.yaml``
+**文件：** ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``
 
 设置 RLinf 使用的 Megatron 参数。  
 
