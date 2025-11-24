@@ -64,8 +64,16 @@ class EmbodiedRunner:
         self.rollout.init_worker().wait()
         self.env.init_worker().wait()
 
-        if self.cfg.runner.get("resume_dir", None) is not None:
-            self.global_step = int(self.cfg.runner.resume_dir.split("global_step_")[-1])
+        resume_dir = self.cfg.runner.get("resume_dir", None)
+        if resume_dir is None:
+            return
+
+        actor_checkpoint_path = os.path.join(resume_dir, "actor")
+        assert os.path.exists(actor_checkpoint_path), (
+            f"resume_dir {actor_checkpoint_path} does not exist."
+        )
+        self.actor.load_checkpoint(actor_checkpoint_path).wait()
+        self.global_step = int(resume_dir.split("global_step_")[-1])
 
     def update_rollout_weights(self):
         rollout_futures = self.rollout.sync_model_from_actor()

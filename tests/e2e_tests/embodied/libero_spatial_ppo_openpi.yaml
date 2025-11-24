@@ -133,6 +133,8 @@ actor:
     add_value_head: True
     # openpi specific parameters
     openpi:
+      config_name: "pi0_libero"
+      num_images_in_input: 2
       noise_level: 0.5
       action_chunk: ${actor.model.num_action_chunks}
       num_steps: ${actor.model.num_steps}

@@ -213,7 +213,7 @@ interference, eliminating the need for offload functionality.
 | Different noise injection methods can be chosen via ``noise_method``.
   We provide two options:
   `flow_sde <https://arxiv.org/abs/2505.05470>`__ and
-  `reinflow <https://arxiv.org/abs/2505.22094>`__.
+  `flow_noise <https://arxiv.org/abs/2505.22094>`__.
 
 You can set ``pi05: True`` to enable π\ :sub:`0.5`\  mode, and set ``value_after_vlm`` to control the input path of state features: True to input to VLM part (π\ :sub:`0.5`\  default configuration), False to input to action expert (π\ :sub:`0`\  default configuration).
 
@@ -322,8 +322,8 @@ Visualization and Results
 
 --------------
 
-**LIBERO Results**
-~~~~~~~~~~~~~~~~~~
+LIBERO Results
+~~~~~~~~~~~~~~
 
 We trained π\ :sub:`0`\  and π\ :sub:`0.5`\  with PPO and GRPO in the LIBERO environment.
 The results achieved through our RL training are shown below:
@@ -397,3 +397,7 @@ The results achieved through our RL training are shown below:
      - **93.0%**
      - **97.9%**
      - **+20.8**
+
+MetaWorld Results
+~~~~~~~~~~~~~~~~~
+For MetaWorld results, please check `MetaWorld Page <https://rlinf.readthedocs.io/en/latest/rst_source/examples/metaworld.html>`__.

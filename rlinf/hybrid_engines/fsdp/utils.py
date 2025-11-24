@@ -27,6 +27,7 @@
 # limitations under the License.
 
 import functools
+from enum import Enum
 from typing import Optional, Union
 
 import torch
@@ -47,6 +48,11 @@ from rlinf.hybrid_engines.fsdp import (
     ShardingStrategy,
     fully_shard,
 )
+
+
+class FSDPVersion(str, Enum):
+    FSDP = "fsdp"
+    FSDP2 = "fsdp2"
 
 
 def create_device_mesh(world_size, fsdp_size):

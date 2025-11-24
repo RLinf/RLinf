@@ -303,7 +303,8 @@ class SGLangWorker(Worker):
                         f"exceeding max_new_tokens={self._sampling_params['max_new_tokens']}, "
                         f"it will be truncatured."
                     )
-                    result = copy.deepcopy(seq_group_info.results[idx])
+                    result = seq_group_info.results[idx]
+                    seq_group_info.results[idx] = None
                     result["meta_info"]["finish_reason"]["type"] = "length"
                     seq_group_info.record_sglang_result(idx, result)
                     continue

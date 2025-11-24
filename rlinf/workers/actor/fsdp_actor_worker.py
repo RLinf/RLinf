@@ -549,10 +549,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
     def init_worker(self):
         self.setup_model_and_optimizer()
 
-        if self.cfg.runner.get("resume_dir", None) is not None:
-            actor_checkpoint_path = os.path.join(self.cfg.runner.resume_dir, "actor")
-            self.load_checkpoint(actor_checkpoint_path)
-
         if self.cfg.actor.get("enable_offload", False):
             self.offload_param_and_grad()
             self.offload_optimizer()
@@ -834,7 +830,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                             use_cache=False,
                         )
 
-                    if self.cfg.actor.model.model_name in ["openpi"]:
+                    if self.cfg.actor.model.model_name in ["gr00t"]:
                         prev_logprobs = output_dict["prev_logprobs"]
 
                     kwargs = {
@@ -864,7 +860,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     entropy_loss = torch.tensor(0.0, device=torch.cuda.current_device())
                     if (
                         self.cfg.algorithm.entropy_bonus > 0
-                        and not kwargs.critic_warmup
+                        and not kwargs["critic_warmup"]
                     ):
                         entropy = output_dict["entropy"]
                         entropy = reshape_entropy(

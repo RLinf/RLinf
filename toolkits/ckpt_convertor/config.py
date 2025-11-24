@@ -29,10 +29,10 @@ class ConvertorConfig:
     load_path: str = None
     save_path: str = None
     num_layers: int = None
-    num_attn_heads: int = None
+    num_attention_heads: int = None
     num_query_groups: int = None
     head_dim: int = None
-    tie_word_embeddings: bool = False
+    tie_word_embeddings: bool = None
     model_type: str = None
     model: str = None
 
@@ -69,9 +69,12 @@ class ConvertorConfig:
     router_trans: str = "auto"
 
     # special for mg
-    te_ln_linear_qkv: bool = False
-    te_ln_linear_mlp_fc1: bool = False
-    te_ln_add_extra_state: bool = False
+    te_ln_linear_qkv: bool = True
+    te_ln_linear_mlp_fc1: bool = True
+    te_ln_add_extra_state: Optional[str] = (
+        "tensor_pickle_none"  # avail in [None, 'none', 'tensor_pickle_none', 'tensor_0_dim']
+    )
+    grouped_gemm: Optional[str] = None  # avail in [None, 'te']
 
 
 def load_convertor_config(hf_ckpt_path: str, ckpt_cfg: DictConfig) -> ConvertorConfig:
@@ -79,8 +82,9 @@ def load_convertor_config(hf_ckpt_path: str, ckpt_cfg: DictConfig) -> ConvertorC
     convertor_config = ConvertorConfig()
     convertor_config.load_path = hf_ckpt_path
 
-    convertor_config.num_layers = hf_config.num_hidden_layers
-    convertor_config.num_attn_heads = hf_config.num_attention_heads
+    convertor_config.num_layers = ckpt_cfg.get("num_hidden_layers", None)
+
+    convertor_config.num_attention_heads = hf_config.num_attention_heads
     # num_key_value_heads is gqa/mqa num_groups
     num_kv_heads = getattr(
         hf_config, "num_key_value_heads", hf_config.num_attention_heads
@@ -100,9 +104,9 @@ def load_convertor_config(hf_ckpt_path: str, ckpt_cfg: DictConfig) -> ConvertorC
         and convertor_config.num_query_groups > 0
     ), "num_query_groups must be specified and greater than 0."
     assert (
-        convertor_config.num_attn_heads is not None
-        and convertor_config.num_attn_heads > 0
-    ), "num_attn_heads must be specified and greater than 0."
+        convertor_config.num_attention_heads is not None
+        and convertor_config.num_attention_heads > 0
+    ), "num_attention_heads must be specified and greater than 0."
 
     if ckpt_cfg.use_gpu_num is None:
         convertor_config.use_gpu_num = torch.cuda.device_count()
@@ -133,7 +137,8 @@ def load_convertor_config(hf_ckpt_path: str, ckpt_cfg: DictConfig) -> ConvertorC
     )
     convertor_config.model_type = model_defaults[convertor_config.model]["model_type"]
     for key, value in model_defaults[convertor_config.model].items():
-        setattr(convertor_config, key, value)
+        if getattr(convertor_config, key, None) is None:
+            setattr(convertor_config, key, value)
 
     if ckpt_cfg.model_type is not None:
         assert (
@@ -148,14 +153,15 @@ def load_convertor_config(hf_ckpt_path: str, ckpt_cfg: DictConfig) -> ConvertorC
     )
 
     for key, value in model_type_defaults[convertor_config.model_type].items():
-        setattr(convertor_config, key, value)
+        if getattr(convertor_config, key, None) is None:
+            setattr(convertor_config, key, value)
 
     assert convertor_config.attn_type is not None
 
     if convertor_config.attn_type == "mla":
         assert (
             convertor_config.use_q_lora is None
-            and convertor_config.num_attn_heads is None
+            and convertor_config.num_attention_heads is None
             and convertor_config.num_query_groups is None
         )
     elif convertor_config.attn_type == "gqa":
@@ -168,6 +174,8 @@ def load_convertor_config(hf_ckpt_path: str, ckpt_cfg: DictConfig) -> ConvertorC
     convertor_config.save_path = ckpt_cfg.save_path
     convertor_config.tp_size = ckpt_cfg.tensor_model_parallel_size
     convertor_config.pp_size = ckpt_cfg.pipeline_model_parallel_size
+    convertor_config.ep_size = getattr(ckpt_cfg, "expert_model_parallel_size", 1)
+    convertor_config.tpe_size = getattr(ckpt_cfg, "expert_tensor_parallel_size", 1)
 
     if convertor_config.mlp_type == "moe":
         if convertor_config.use_shared_experts is None:
@@ -183,6 +191,8 @@ def load_convertor_config(hf_ckpt_path: str, ckpt_cfg: DictConfig) -> ConvertorC
             convertor_config.first_dense = 0
         if convertor_config.num_experts is None:
             convertor_config.num_experts = getattr(hf_config, "num_experts", None)
+        convertor_config.grouped_gemm = ckpt_cfg.get("grouped_gemm", None)
+        assert convertor_config.grouped_gemm in [None, "te"]
         assert convertor_config.num_experts is not None
     else:
         assert convertor_config.num_experts in (0, None)
@@ -198,5 +208,14 @@ def load_convertor_config(hf_ckpt_path: str, ckpt_cfg: DictConfig) -> ConvertorC
     assert (
         convertor_config.num_layers is not None and convertor_config.num_layers > 0
     ), "num_layers must be specified and greater than 0."
+
+    if hasattr(ckpt_cfg, "te_ln_linear_qkv"):
+        convertor_config.te_ln_linear_qkv = ckpt_cfg.te_ln_linear_qkv
+
+    if hasattr(ckpt_cfg, "te_ln_linear_mlp_fc1"):
+        convertor_config.te_ln_linear_mlp_fc1 = ckpt_cfg.te_ln_linear_mlp_fc1
+
+    if hasattr(ckpt_cfg, "te_ln_add_extra_state"):
+        convertor_config.te_ln_add_extra_state = ckpt_cfg.te_ln_add_extra_state
 
     return convertor_config
