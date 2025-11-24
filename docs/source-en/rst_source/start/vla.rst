@@ -71,11 +71,13 @@ Refer to :doc:`../tutorials/user/yaml` for a more detailed explanation of the pl
         actor,rollout: 0-1
 
 Finally, before running the script, you need to modify the corresponding configuration options in the YAML file according to the download paths of the model and dataset. Specifically, for **OpenVLA** update the following configurations to the path of the `gen-robot/openvla-7b-rlvla-warmup` checkpoint:
+
 - ``rollout.model_dir``  
 - ``actor.checkpoint_load_path``  
 - ``actor.tokenizer.tokenizer_model``  
 
 For **OpenVLA-OFT**, set the following configurations to the path of the `RLinf/Openvla-oft-SFT-libero10-trajall` checkpoint. And set lora path to the path of `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora` checkpoint:
+
 - ``rollout.model_dir``  
 - ``actor.checkpoint_load_path``  
 - ``actor.tokenizer.tokenizer_model``  
