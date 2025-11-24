@@ -1,0 +1,209 @@
+defaults:
+  - env/train: PutOnPlateInScene25Main
+  - env/eval: maniskill_ood_template
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null 
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: 0-0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "test_openvla"
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: 1000
+  max_steps: -1
+
+  only_eval: False
+  val_check_interval: -1
+  save_interval: 40
+  seq_length: 4096
+  max_prompt_length: 30
+
+algorithm:
+  auto_reset: True
+  ignore_terminations: False
+  use_fixed_reset_state_ids: False
+  normalize_advantages: True
+  kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
+  group_size: 1
+  n_chunk_steps: 20
+  n_eval_chunk_steps: 10
+  # training rollout mbs
+  rollout_micro_batch_size: 64
+  num_group_envs: 8
+  rollout_epoch: 1
+
+  reward_type: action_level
+  logprob_type: token_level
+  entropy_type: token_level
+
+  # mbs to do log prob inference, can be set to
+  # lower than rollout_micro_batch_size to reduce
+  # memory usage
+  logprob_forward_micro_batch_size: 8 # ${.rollout_micro_batch_size}
+
+  adv_type: gae
+  loss_type: actor_critic
+  loss_agg_func: "token-mean"
+  kl_beta: 0.0
+  entropy_bonus: 0
+  clip_ratio_high: 0.28
+  clip_ratio_low: 0.2
+  clip_ratio_c: 3.0
+  value_clip: 0.2
+  
+  huber_delta: 10.0
+
+  gamma: 0.99
+  gae_lambda: 0.95
+
+  # params for rollout
+  sampling_params:
+    use_greedy: False
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 0
+    top_p: 1.0
+    repetition_penalty: 1.0
+
+  # length argument for autoregressive sampling
+  # max length means max amount of tokens to generate
+  length_params:
+    max_new_token: null
+    max_length: 1024
+    min_length: 1
+
+env:
+  group_name: "EnvGroup"
+  channel:
+    name: "env_buffer_list"
+    queue_name: "obs_buffer"
+    queue_size: 0
+  enable_offload: False
+
+rollout:
+  group_name: "RolloutGroup"
+  channel:
+    name: ${env.channel.name}
+    queue_name: "action_buffer"
+    queue_size: 0
+  mode: "colocate"
+  backend: "huggingface"
+  model_dir: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
+  precision: ${actor.model.precision}
+  gpu_memory_utilization: 0.5  # not used in Embodied
+  enforce_eager: True  # not used in Embodied
+  enable_offload: True
+  pipeline_stage_num: 1
+
+actor:
+  group_name: "ActorGroup"
+  channel:
+    name: ${env.channel.name}
+    queue_name: "replay_buffer"
+    queue_size: 0
+  training_backend: "fsdp"
+  checkpoint_load_path: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
+  checkpoint_save_path: "../results"
+  micro_batch_size: 10
+  global_batch_size: 80
+  seed: 1234
+  enable_offload: True
+
+  tokenizer:
+    tokenizer_type: "HuggingFaceTokenizer"
+    tokenizer_model: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
+    extra_vocab_size: 421
+    use_fast: False
+    trust_remote_code: True
+    padding_side: "right"
+
+  model:
+    model_name: "openvla_oft"
+    value_type: ${algorithm.reward_type}  # 'action' or 'token'
+    action_dim: 7
+    num_action_chunks: 8
+    use_proprio: False
+    unnorm_key: bridge_orig
+    val_micro_batch_size: 8
+    center_crop: True
+    do_sample: True
+    
+    precision: "bf16"
+    add_bias_linear: False
+    add_qkv_bias: True
+    vocab_size: 32000
+    hidden_size: 4096
+    policy_setup: "widowx_bridge"
+    add_value_head: True
+    image_size: [224, 224]
+    is_lora: True
+    lora_rank: 32
+    lora_path: /path/to/model/oft-sft/lora_004000
+    ckpt_path: null
+    use_wrist_image: False
+    attn_implementation: "flash_attention_2"
+    low_cpu_mem_usage: True
+    trust_remote_code: True
+    gradient_checkpointing: False
+
+  optim:
+    lr: 1.0e-4
+    value_lr: 3.0e-3
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-05
+    clip_grad: 10.0
+    critic_warmup_steps: 0
+
+  fsdp_config:                  # below are fsdp configs, for more details, see https://pytorch.org/docs/stable/fsdp.html and https://huggingface.co/docs/accelerate/package_reference/fsdp
+
+    strategy: "fsdp"            # FSDP strategy: ["fsdp", "fsdp2"]
+
+    # Sharding strategy: "full_shard" (shard parameters, gradients, optimizer states),
+    # "shard_grad_op" (shard gradients and optimizer states only), 
+    # "hybrid_shard" (combines data parallelism and model parallelism - sharding within FSDP groups, replicate across DDP groups),
+    # "no_shard" (no sharding)
+    sharding_strategy: "full_shard" 
+
+    cpu_offload: False           # whether to offload parameters and gradients to CPU when not in use，if True, actor's enable_offload should be True too.
+    offload_pin_memory: False    # whether FSDP2's CPU offload policy should pin memory when cpu_offload is True
+    reshard_after_forward: True  # if True, FSDP2 will reshard parameters after forward pass to save memory
+
+    enable_gradient_accumulation: True  # if True, gradient accumulation will be enabled for FSDP/FSDP2 training, which will enhance training performance but increase memory usage.
+    forward_prefetch: False             # if True, FSDP will explicitly prefetches the next upcoming all-gather while executing in the forward pass. only use with static graphs. Overlaps communication with computation to improve performance.
+    limit_all_gathers: False            # if True, FSDP will synchronizes CPU threads to limit the number of concurrent all-gathers. Only affects strategies that schedule all-gathers
+    backward_prefetch: null             # options are null, 'pre', 'post'. if 'pre', FSDP will prefetch the next upcoming all-gather while computing gradients. if 'post', FSDP will prefetch the next all-gather until current gradient is computed.
+    use_orig_params: False              # if True, FSDP will use module's original parameters, it means it will expose nn.Module.named_parameters rather than FlatParameter
+    use_liger_kernel: False             # if True, liger_kernel will be used for FSDP, note that currently supported models in RLinf are [qwen2.5, qwen2.5-vl], for more details, see liger_kernel's doc
+
+    fsdp_size: -1               # Number of GPUs per FSDP group for hybrid sharding. -1 means use all available GPUs in a single FSDP group
+
+    mixed_precision:            # mixed precision settings for fsdp/fsdp2
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+    amp:
+      enabled: False                 # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
+      precision: "bf16"              # precision for AMP, options are ["fp16" , "bf16"]
+      use_grad_scaler: False         # if True, GradScaler will be used for AMP training to prevent underflow.
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False
