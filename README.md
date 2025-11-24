@@ -19,7 +19,7 @@
 </div>
 
 <h1 align="center">
-  <sub>RLinf: Reinforcement Learning Infrastructure for Agentic AI</sub>
+  <sub>RLinf: Reinforcement Learning Infrastructure for Post-training</sub>
 </h1>
 
 RLinf is a flexible and scalable open-source infrastructure designed for post-training foundation models via reinforcement learning. The 'inf' in RLinf stands for `Infrastructure`, highlighting its role as a robust backbone for next-generation training. It also stands for `Infinite`, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
@@ -30,7 +30,9 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 
 ## What's NEW!
-- [2025/11] 🔥 RLinf supports reinforcement learning fine-tuning for [Behavior 1k](https://github.com/StanfordVL/BEHAVIOR-1K). Doc: [RL on Behavior 1k](https://rlinf.readthedocs.io/en/latest/rst_source/examples/behavior.html) 
+- [2025/11] 🔥 RLinf supports reinforcement learning fine-tuning for [GR00T-N1.5](https://github.com/NVIDIA/Isaac-GR00T). Doc: [RL on GR00T-N1.5](https://rlinf.readthedocs.io/en/latest/rst_source/examples/gr00t.html).
+- [2025/11] 🔥 RLinf supports reinforcement learning fine-tuning for [Metaworld](https://github.com/Farama-Foundation/Metaworld). Doc: [RL on Metaworld](https://rlinf.readthedocs.io/en/latest/rst_source/examples/metaworld.html).
+- [2025/11] 🔥 RLinf supports reinforcement learning fine-tuning for [Behavior 1k](https://github.com/StanfordVL/BEHAVIOR-1K). Doc: [RL on Behavior 1k](https://rlinf.readthedocs.io/en/latest/rst_source/examples/behavior.html).
 - [2025/11] Add lora support to π₀ and π₀.₅.
 - [2025/10] 🔥 RLinf supports reinforcement learning fine-tuning for π₀ and π₀.₅! Doc: [RL on π₀ and π₀.₅ Models](https://rlinf.readthedocs.io/en/latest/rst_source/examples/pi0.html). For more technical details, refer to the [RL fine-tuning for π₀ and π₀.₅ technical report](https://arxiv.org/abs/2510.25889). The report on πRL by [Machine Heart](https://mp.weixin.qq.com/s/dFlpmqmE0qfhOQmGG25X9g) and [RoboTech](https://mp.weixin.qq.com/s/S51P-Y1UYXzumnZzon2N1g) are also released.
 - [2025/10] 🔥 RLinf now officially supports online reinforcement learning! Doc: [coding_online_rl](https://rlinf.readthedocs.io/en/latest/rst_source/examples/coding_online_rl.html), Blog post: [The first open-source agent online RL framework RLinf-Online](https://mp.weixin.qq.com/s/jmohmDokuWLhQHFueSHZIQ).
@@ -91,7 +93,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
           </ul>
           <li><b>Custom Models</b></li>
           <ul>
-            <li>MLP-Policy</li>
+            <li>MLP-Policy ✅</li>
           </ul>
         </ul>
       </td>
@@ -116,15 +118,15 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
   </tbody>
 </table>
   
-RLinf supports mainstream VLA models, mainstream CPU & GPU-based simulators via standardized Worker interfaces, and enables the first RL fine-tuning of the $\pi_{0}$ and $\pi_{0.5}$ model family with a flow-matching action expert, as shown in the above table.
+RLinf supports mainstream VLA models, mainstream CPU & GPU-parallel simulators via standardized Worker interfaces, and enables the first RL fine-tuning of the $\pi_{0}$ and $\pi_{0.5}$ model family with a flow-matching action expert, as shown in the above table.
 
 ### Agentic RL
 
-Agentic RL includes both RL training for improving LLM reasoning ability, such as [Math Reasoning](https://rlinf.readthedocs.io/en/latest/rst_source/examples/reasoning.html), and RL training for Agents, for example, [RL training of coding agent](https://rlinf.readthedocs.io/en/latest/rst_source/examples/coding_online_rl.html). RLinf can also well support agentic RL. We believe embodied intelligence will also integrate the ability of agents in the future to complete complex tasks.
+Agentic RL includes both RL training for improving LLM reasoning ability, such as [Math Reasoning](https://rlinf.readthedocs.io/en/latest/rst_source/examples/reasoning.html), and RL training for Agents, for example, [RL training of coding agent](https://rlinf.readthedocs.io/en/latest/rst_source/examples/coding_online_rl.html). We believe embodied intelligence will also integrate the ability of agents in the future to complete complex tasks.
 
 ### High flexibility, efficiency, and scalability
 
-Besides the rich functionalities introduced above, RLinf has high flexibility to support diverse RL training workflows (e.g., simulator integrated embodied RL, PPO/RLHF), while hiding the complexity of distributed programming. Users can easily scale RL training to a large number of GPU nodes without modifying code, meeting the increasing demand of computation for RL training.
+Besides the rich functionalities introduced above, RLinf has high flexibility to support diverse RL training workflows (PPO, GRPO, SAC and so on), while hiding the complexity of distributed programming. Users can easily scale RL training to a large number of GPU nodes without modifying code, meeting the increasing demand of computation for RL training.
 
 The high flexibility allows RLinf to explore more efficient scheduling and execution. The hybrid execution mode for embodied RL achieves a **100%+** throughput improvement compared to baseline solutions.
 
@@ -145,7 +147,7 @@ For more tutorials of RLinf and application examples, checkout our [documentatio
 ### Embodied Intelligence
 
 - RLinf supports both PPO and GRPO algorithms, enabling state-of-the-art training for Vision-Language-Action models.
-- The framework provides seamless integration with mainstream embodied intelligence benchmarks, including ManiSkill3 and LIBERO, and achieves strong performance across diverse evaluation metrics.
+- The framework provides seamless integration with mainstream embodied intelligence benchmarks, and achieves strong performance across diverse evaluation metrics.
 
 #### OpenVLA and OpenVLA-OFT Results
 
@@ -583,52 +585,40 @@ We welcome contributions to RLinf. Please read [contribution guide](https://gith
 If you find **RLinf** helpful, please cite the paper:
 
 ```bibtex
-@misc{yu2025rlinfflexibleefficientlargescale,
-  title={RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Micro Flow Transformation}, 
-  author={Chao Yu and Yuanqing Wang and Zhen Guo and Hao Lin and Si Xu and Hongzhi Zang and Quanlu Zhang and Yongji Wu and Chunyang Zhu and Junhao Hu and Zixiao Huang and Mingjie Wei and Yuqing Xie and Ke Yang and Bo Dai and Zhexuan Xu and Xiangyuan Wang and Xu Fu and Zhihao Liu and Kang Chen and Weilin Liu and Gang Liu and Boxun Li and Jianlei Yang and Zhi Yang and Guohao Dai and Yu Wang},
-  year={2025},
-  eprint={2509.15965},
-  archivePrefix={arXiv},
-  primaryClass={cs.LG},
-  url={https://arxiv.org/abs/2509.15965}, 
+@article{yu2025rlinf,
+  title={RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Micro Flow Transformation},
+  author={Yu, Chao and Wang, Yuanqing and Guo, Zhen and Lin, Hao and Xu, Si and Zang, Hongzhi and Zhang, Quanlu and Wu, Yongji and Zhu, Chunyang and Hu, Junhao and others},
+  journal={arXiv preprint arXiv:2509.15965},
+  year={2025}
 }
 ```
 
 If you use RL+VLA in RLinf, you can also cite our technical report and empirical study paper:
 
 ```bibtex
-@misc{zang2025rlinfvlaunifiedefficientframework,
-      title={RLinf-VLA: A Unified and Efficient Framework for VLA+RL Training}, 
-      author={Hongzhi Zang and Mingjie Wei and Si Xu and Yongji Wu and Zhen Guo and Yuanqing Wang and Hao Lin and Liangzhi Shi and Yuqing Xie and Zhexuan Xu and Zhihao Liu and Kang Chen and Wenhao Tang and Quanlu Zhang and Weinan Zhang and Chao Yu and Yu Wang},
-      year={2025},
-      eprint={2510.06710},
-      archivePrefix={arXiv},
-      primaryClass={cs.RO},
-      url={https://arxiv.org/abs/2510.06710}, 
+@article{zang2025rlinf,
+  title={RLinf-VLA: A Unified and Efficient Framework for VLA+ RL Training},
+  author={Zang, Hongzhi and Wei, Mingjie and Xu, Si and Wu, Yongji and Guo, Zhen and Wang, Yuanqing and Lin, Hao and Shi, Liangzhi and Xie, Yuqing and Xu, Zhexuan and others},
+  journal={arXiv preprint arXiv:2510.06710},
+  year={2025}
 }
 ```
 
 ```bibtex
-@misc{liu2025rlbringvlageneralization,
-  title={What Can RL Bring to VLA Generalization? An Empirical Study}, 
-  author={Jijia Liu and Feng Gao and Bingwen Wei and Xinlei Chen and Qingmin Liao and Yi Wu and Chao Yu and Yu Wang},
-  year={2025},
-  eprint={2505.19789},
-  archivePrefix={arXiv},
-  primaryClass={cs.LG},
-  url={https://arxiv.org/abs/2505.19789}, 
+@article{liu2025can,
+  title={What can rl bring to vla generalization? an empirical study},
+  author={Liu, Jijia and Gao, Feng and Wei, Bingwen and Chen, Xinlei and Liao, Qingmin and Wu, Yi and Yu, Chao and Wang, Yu},
+  journal={arXiv preprint arXiv:2505.19789},
+  year={2025}
 }
 ```
 
 ```bibtex
-@misc{chen2025pitextttrlonlinerlfinetuning,
-      title={$\pi_\texttt{RL}$: Online RL Fine-tuning for Flow-based Vision-Language-Action Models}, 
-      author={Kang Chen and Zhihao Liu and Tonghe Zhang and Zhen Guo and Si Xu and Hao Lin and Hongzhi Zang and Quanlu Zhang and Zhaofei Yu and Guoliang Fan and Tiejun Huang and Yu Wang and Chao Yu},
-      year={2025},
-      eprint={2510.25889},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG},
-      url={https://arxiv.org/abs/2510.25889}, 
+@article{chen2025pi_,
+  title={$$\backslash$pi\_$\backslash$texttt $\{$RL$\}$ $: Online RL Fine-tuning for Flow-based Vision-Language-Action Models},
+  author={Chen, Kang and Liu, Zhihao and Zhang, Tonghe and Guo, Zhen and Xu, Si and Lin, Hao and Zang, Hongzhi and Zhang, Quanlu and Yu, Zhaofei and Fan, Guoliang and others},
+  journal={arXiv preprint arXiv:2510.25889},
+  year={2025}
 }
 ```
 
