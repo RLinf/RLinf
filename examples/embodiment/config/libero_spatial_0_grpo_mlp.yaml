@@ -1,3 +1,4 @@
+# only for debug
 defaults:
   - env/train: libero_spatial
   - env/eval: libero_spatial
@@ -13,52 +14,49 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: all
+    actor,env,rollout: 1-1
 
 runner:
   task_type: embodied
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "test_openpi"
+    experiment_name: "test_openvla"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 1000
+  max_epochs: 1
   max_steps: -1
 
+  only_eval: False
   val_check_interval: -1
-  save_interval: 40
+  save_interval: 25
   seq_length: 4096
-  max_prompt_length: 50
+  max_prompt_length: 128
 
 algorithm:
   auto_reset: False
   ignore_terminations: False
   use_fixed_reset_state_ids: True
-  specific_reset_id: null # can be a number or null. Indicate the reset state id (related to the task_id and trial_id) 
+  normalize_advantages: True
+  specific_reset_id: 0 # can be a number or null. Indicate the reset state id (related to the task_id and trial_id) 
   # wanted to be specify. (e.g. if set 0, the env always use the task 0 and trial 0 in the libero-spatial suite; 
   # if set null, the initial states will be sampled from the whole libero-spatial suite. )
-  normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
-  group_size: 8
-  max_episode_steps: 240
-  use_ordered_reset_state_ids: False
-  reward_coef: 1.0
-  n_chunk_steps: 48
-  n_eval_chunk_steps: 48
-  num_group_envs: 8
-  rollout_epoch: 8
-  reward_type: chunk_level
-  logprob_type: chunk_level
+  group_size: 2  # NOTE: group_size * num_group_envs * rollout_epoch = global buffer size
+  n_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}
+  n_eval_chunk_steps: ${int_div:${env.train.max_episode_steps}, ${actor.model.num_action_chunks}}
+  num_group_envs: 4  # NOTE: num_group_envs should be a multiple of the world_size
+  rollout_epoch: 2
+  reward_type: action_level  # action_level or chunk_level
+  logprob_type: token_level
   entropy_type: token_level
-  update_epoch: 1
 
   adv_type: grpo
   loss_type: actor
-  loss_agg_func: "token-mean" 
+  loss_agg_func: "token-mean"
   kl_beta: 0.0
   entropy_bonus: 0
-  clip_ratio_high: 0.2
+  clip_ratio_high: 0.28
   clip_ratio_low: 0.2
   clip_ratio_c: 3.0
   value_clip: 0.2
@@ -67,18 +65,17 @@ algorithm:
   gamma: 0.99
   gae_lambda: 0.95
 
-  filter_rewards: False
-  rewards_lower_bound: 0.1
-  rewards_upper_bound: 0.9
-  # params for generation
+  reward_coef: 5.0
+  max_episode_steps: 64
+  use_ordered_reset_state_ids: True
+
   sampling_params:
     use_greedy: False
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
+    temperature_train: 1.6
+    temperature_eval: 1.6
+    top_k: -1
     top_p: 1.0
     repetition_penalty: 1.0
-    add_BOS: False
 
   # length argument for autoregressive sampling
   # max length means max amount of tokens to generate
@@ -86,6 +83,10 @@ algorithm:
     max_new_token: null
     max_length: 1024
     min_length: 1
+
+  filter_rewards: True
+  rewards_lower_bound: 0.5
+  rewards_upper_bound: 4.5
 
 env:
   group_name: "EnvGroup"
@@ -103,10 +104,8 @@ rollout:
     queue_size: 0
   mode: "colocate"
   generation_backend: "huggingface"
-  model_dir: "/path/to/model/openpi"
+  model_dir: null
   precision: ${actor.model.precision}
-  recompute_logprobs: False
-  unnorm_key: libero_10
   enable_offload: False
   pipeline_stage_num: 1
 
@@ -117,45 +116,38 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: "/path/to/model/openpi"
+  checkpoint_load_path: null
   checkpoint_save_path: "../results"
-  micro_batch_size: 128
-  global_batch_size: 2048 # maximum : global batch size = micro batch size * actor num_processes.
-  seed: 42
+  micro_batch_size: 1024
+  global_batch_size: 1024
+  seed: 1234
   enable_offload: False
 
   model:
-    model_name: "openpi"
-    precision: null
-    num_action_chunks: 5 # interface for the env
+    model_name: "mlp_policy"
+    use_wrist_image: False
+    obs_dim: 8
     action_dim: 7
+    num_action_chunks: 1
+    hidden_dim: 256
+    
+    precision: "32"
+    add_value_head: True
+    
     is_lora: False
     lora_rank: 32
+    ckpt_path: null
     gradient_checkpointing: False
-    use_wrist_image: True
-    use_proprio: True
-    num_steps: 3
-    # openpi specific parameters
-    openpi:
-      config_name: "pi05_libero"
-      num_images_in_input: 2
-      noise_level: 0.5
-      action_chunk: ${actor.model.num_action_chunks}
-      num_steps: ${actor.model.num_steps}
-      train_expert_only: True
-      action_env_dim: ${actor.model.action_dim}
-      noise_method: "flow_sde" 
-      add_value_head: False
-      value_after_vlm: False
-      value_vlm_mode: "mean_token"
-
+    sharding_strategy: no_shard
+  
   optim:
-    lr: 5.0e-6
-    value_lr: 1.0e-4
+    lr: 2.0e-5
+    value_lr: 3.0e-3
     adam_beta1: 0.9
-    adam_beta2: 0.95
+    adam_beta2: 0.999
     adam_eps: 1.0e-05
     clip_grad: 1.0
+
 
   fsdp_config:                  # below are fsdp configs, for more details, see https://pytorch.org/docs/stable/fsdp.html and https://huggingface.co/docs/accelerate/package_reference/fsdp
 
@@ -165,7 +157,7 @@ actor:
     # "shard_grad_op" (shard gradients and optimizer states only), 
     # "hybrid_shard" (combines data parallelism and model parallelism - sharding within FSDP groups, replicate across DDP groups),
     # "no_shard" (no sharding)
-    sharding_strategy: "no_shard"
+    sharding_strategy: "full_shard" 
 
     cpu_offload: False           # whether to offload parameters and gradients to CPU when not in use，if True, actor's enable_offload should be True too.
     offload_pin_memory: False    # whether FSDP2's CPU offload policy should pin memory when cpu_offload is True
