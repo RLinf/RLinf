@@ -17,6 +17,8 @@ use_wrist_image: ${actor.model.use_wrist_image}
 
 num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
 
+specific_reset_id: ${algorithm.specific_reset_id}
+
 video_cfg:
   save_video: True
   info_on_video: True
