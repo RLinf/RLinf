@@ -20,7 +20,7 @@ import random
 import sys
 from contextlib import contextmanager
 from functools import partial, wraps
-from typing import Callable
+from typing import Callable, Coroutine
 
 import numpy as np
 import torch
@@ -379,7 +379,7 @@ def set_rng_state(rng_state: dict) -> None:
 
 
 def create_task_with_callback(
-    coro: asyncio.coroutine, callback: Callable[[asyncio.Task], None]
+    coro: Coroutine, callback: Callable[[asyncio.Task], None]
 ) -> asyncio.Task:
     """Create an asyncio Task with a callback function to be called upon completion."""
     task = asyncio.create_task(coro)

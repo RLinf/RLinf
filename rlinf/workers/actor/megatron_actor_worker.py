@@ -434,12 +434,16 @@ class MegatronActor(MegatronModelManager, Worker):
                         min=self.cfg.algorithm.importance_sampling_clip,
                     )
 
+                behave_weight_threshold = self.cfg.algorithm.get(
+                    "behave_weight_threshold", None
+                )
                 if self.cfg.algorithm.get("async", False):
                     proximal_logprobs = batch["recompute_prev_logprobs"]
                     old_logprobs = batch["prev_logprobs"]
+
                 else:
-                    proximal_logprobs = batch["proximal_logprobs"]
-                    old_logprobs = batch["old_logprobs"]
+                    proximal_logprobs = batch["prev_logprobs"]
+                    old_logprobs = batch["prev_logprobs"]
 
                 mask = batch["attention_mask"][:, -response_len:]
 
@@ -455,6 +459,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     clip_ratio_low=self.clip_ratio_low,
                     clip_ratio_high=self.clip_ratio_high,
                     loss_mask=mask,
+                    behave_weight_threshold=behave_weight_threshold,
                 )
 
                 entropy_loss = torch.zeros(1, device=loss.device)
@@ -471,7 +476,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     loss = loss + kl_loss * self.kl_beta
 
                 # Logging and early stopping according to KL (logp vs ref) or importance ratio (new logp vs old logp).
-                _imp = metrics_data["actor/ratio"]
+                _imp = metrics_data["actor/proximal_ratio"]
                 torch.distributed.all_reduce(
                     _imp, group=parallel_state.get_data_parallel_group()
                 )

@@ -148,6 +148,9 @@ class ReasoningRunner:
             drop_last=True,
             collate_fn=collate_fn,
             sampler=sampler,
+            persistent_workers=num_workers > 0,
+            prefetch_factor=self.cfg.data.get("prefetch_factor", 2),
+            pin_memory=self.cfg.data.get("pin_memory", False),
         )
 
         val_batch_size = (
@@ -286,9 +289,9 @@ class ReasoningRunner:
     def epoch(self):
         return self.global_steps // self.num_steps_per_epoch
 
-    def _put_batch(self, dataloader: StatefulDataLoader, batch_count: int = 1):
-        for _ in range(batch_count):
-            batch = next(iter(dataloader), None)
+    def _put_batch(self):
+        for _ in range(self.max_batch_per_step):
+            batch = next(self.training_iter, None)
             if batch is None:
                 return
             prompt_ids = batch["prompt"].tolist()
@@ -342,11 +345,11 @@ class ReasoningRunner:
 
         self.run_timer.start_time()
         for _ in epoch_iter:
+            self.training_iter = iter(self.train_dataloader)
             while True:
                 with self.timer("step"):
                     with self.timer("prepare_data"):
-                        self._put_batch(self.train_dataloader, self.max_batch_per_step)
-
+                        self._put_batch()
                     with self.timer("sync_weights"):
                         self._sync_weights()
 

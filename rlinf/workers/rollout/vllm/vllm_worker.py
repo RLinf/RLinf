@@ -500,27 +500,29 @@ class VLLMWorker(Worker):
         assert self._async_manager is not None, (
             "AsyncRolloutManager is not initialized but async_rollout is called, set algorithm.async to True in config to enable it."
         )
-        while not (
-            finished_groups := await self._async_manager.wait_for_batch_results(
-                batch_size=self.batch_size_per_dp,
-            )
-        ):
-            if seq_groups := await self._async_manager.get_batch(
-                input_channel=input_channel,
-                batch_size=self.batch_size_per_dp,
-                staleness_threshold=self.staleness_threshold,
+        with self.device_lock, self.worker_timer():
+            while not (
+                finished_groups := await self._async_manager.wait_for_batch_results(
+                    batch_size=self.batch_size_per_dp,
+                )
             ):
-                for group in seq_groups:
-                    task = create_task_with_callback(
-                        self._async_generate_group(group),
-                        self._async_manager.on_trajectory_finished,
-                    )
-                    self.status_manager.add_task(group, task)
-        self._async_manager.handle_finished_seq_groups(
-            finished_seq_groups=finished_groups,
-            output_channel=output_channel,
-            return_logprobs=self._return_logprobs,
-        )
+                if seq_groups := await self._async_manager.get_batch(
+                    input_channel=input_channel,
+                    batch_size=self.batch_size_per_dp,
+                    staleness_threshold=self.staleness_threshold,
+                ):
+                    for group in seq_groups:
+                        task = create_task_with_callback(
+                            self._async_generate_group(group),
+                            self._async_manager.on_trajectory_finished,
+                        )
+                        self.status_manager.add_task(group, task)
+            self._async_manager.handle_finished_seq_groups(
+                finished_seq_groups=finished_groups,
+                output_channel=output_channel,
+                return_logprobs=self._return_logprobs,
+                rollout_result_builder=RolloutResult.from_vllm_seq_group,
+            )
 
     async def rollout(self, input_channel: Channel, output_channel: Channel) -> None:
         rollout_request: RolloutRequest = await input_channel.get(

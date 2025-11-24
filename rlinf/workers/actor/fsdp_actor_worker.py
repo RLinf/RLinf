@@ -412,12 +412,15 @@ class FSDPActor(FSDPModelManager, Worker):
                             (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
                             min=self.cfg.algorithm.importance_sampling_clip,
                         )
+                    behave_weight_threshold = self.cfg.algorithm.get(
+                        "behave_weight_threshold", None
+                    )
                     if self.cfg.algorithm.get("async", False):
                         proximal_logprobs = m_batch["recompute_prev_logprobs"]
                         old_logprobs = m_batch["prev_logprobs"]
                     else:
-                        proximal_logprobs = m_batch["proximal_logprobs"]
-                        old_logprobs = m_batch["old_logprobs"]
+                        proximal_logprobs = m_batch["prev_logprobs"]
+                        old_logprobs = m_batch["prev_logprobs"]
 
                     loss, mbs_metrics_data = policy_loss(
                         loss_type=self.cfg.algorithm.loss_type,
@@ -431,6 +434,7 @@ class FSDPActor(FSDPModelManager, Worker):
                         clip_ratio_c=clip_ratio_c,
                         loss_mask=loss_mask,
                         task_type=self.cfg.runner.task_type,
+                        behave_weight_threshold=behave_weight_threshold,
                     )
 
                     entropy_loss = torch.tensor(0.0, device=torch.cuda.current_device())
@@ -811,7 +815,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
                     )
                     advantages = data["advantages"]
-                    prev_logprobs = data["prev_logprobs"]
                     returns = data.get("returns", None)
                     prev_values = data.get("prev_values", None)
                     loss_mask = data.get("loss_mask", None)
@@ -836,8 +839,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                             use_cache=False,
                         )
 
+                    if self.cfg.algorithm.get("async", False):
+                        proximal_logprobs = data["recompute_prev_logprobs"]
+                        old_logprobs = data["prev_logprobs"]
+                    else:
+                        proximal_logprobs = data["prev_logprobs"]
+                        old_logprobs = data["prev_logprobs"]
+
                     if self.cfg.actor.model.model_name in ["gr00t"]:
-                        prev_logprobs = output_dict["prev_logprobs"]
+                        old_logprobs = output_dict["prev_logprobs"]
 
                     kwargs = {
                         "loss_type": self.cfg.algorithm.loss_type,
@@ -846,7 +856,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         "single_action_dim": self.cfg.actor.model.get("action_dim", 7),
                         "logprobs": output_dict["logprobs"],
                         "values": output_dict.get("values", None),
-                        "old_logprobs": prev_logprobs,
+                        "proximal_logprobs": proximal_logprobs,
+                        "old_logprobs": old_logprobs,
                         "advantages": advantages,
                         "returns": returns,
                         "prev_values": prev_values,

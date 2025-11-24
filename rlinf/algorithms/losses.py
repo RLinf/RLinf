@@ -35,7 +35,8 @@ def compute_decoupled_ppo_actor_loss(
     loss_mask_sum: Optional[torch.Tensor] = None,
     critic_warmup: Optional[bool] = False,
     behave_weight_threshold: Optional[float] = None,
-):
+    **kwargs,
+) -> tuple[torch.Tensor, dict]:
     r"""
     Compute the decoupled PPO actor loss with dual-clip and behavior
     importance weighting.
@@ -548,7 +549,7 @@ def compute_ppo_actor_critic_loss(**kwargs) -> tuple[torch.Tensor, dict]:
         Tuple[torch.Tensor, Dict]: Loss and metrics dictionary
     """
     metrics_data = {}
-    actor_loss, actor_metrics_data = compute_ppo_actor_loss(**kwargs)
+    actor_loss, actor_metrics_data = compute_decoupled_ppo_actor_loss(**kwargs)
     critic_loss, critic_metrics_data = compute_ppo_critic_loss(**kwargs)
 
     loss = actor_loss + critic_loss
@@ -582,7 +583,7 @@ def compute_grpo_actor_loss_fn(**kwargs) -> tuple[torch.Tensor, dict]:
             - actor/ppo_kl: Approximate KL divergence
     """
     metrics_data = {}
-    actor_loss, actor_metrics_data = compute_ppo_actor_loss(**kwargs)
+    actor_loss, actor_metrics_data = compute_decoupled_ppo_actor_loss(**kwargs)
     metrics_data.update(actor_metrics_data)
 
     return actor_loss, metrics_data

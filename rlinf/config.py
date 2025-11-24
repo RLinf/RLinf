@@ -756,8 +756,10 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
     )
 
     if cfg.algorithm.recompute_logprobs and cfg.rollout.return_logprobs:
-        assert cfg.algorithm.get("importance_sampling_fix", False), (
-            "Importance sampling fix must be enabled if both `algorithm.recompute_logprobs` and `rollout.return_logprobs` are True."
+        assert cfg.algorithm.get("importance_sampling_fix", False) or cfg.algorithm.get(
+            "async", False
+        ), (
+            "Importance sampling fix or async RL must be enabled if both `algorithm.recompute_logprobs` and `rollout.return_logprobs` are True."
         )
 
     with open_dict(cfg):

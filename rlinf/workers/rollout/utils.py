@@ -21,7 +21,7 @@ import typing
 from contextlib import contextmanager
 from dataclasses import dataclass
 from logging import Logger
-from typing import Optional
+from typing import Callable, Optional
 
 from omegaconf import DictConfig
 
@@ -728,6 +728,7 @@ class AsyncRolloutManager:
         finished_seq_groups: list[SeqGroupInfo],
         output_channel: Channel,
         return_logprobs: bool,
+        rollout_result_builder: Callable[[SeqGroupInfo, bool], RolloutResult],
     ) -> None:
         """
         Handle the finished SeqGroupInfo by sending RolloutResult to output_channel.
@@ -737,11 +738,9 @@ class AsyncRolloutManager:
             output_channel: The output channel to send RolloutResult.
             return_logprobs: Whether to return logprobs in RolloutResult.
         """
+
         rollout_results = [
-            RolloutResult.from_vllm_seq_group(
-                seq_group,
-                return_logprobs,
-            )
+            rollout_result_builder(seq_group=seq_group, return_logprobs=return_logprobs)
             for seq_group in finished_seq_groups
         ]
         self._result_putting_tasks.update(
