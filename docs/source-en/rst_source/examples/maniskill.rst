@@ -74,6 +74,26 @@ Algorithm
 
    - Value head for critic function
 
+Model Download
+--------------
+
+Before starting training, you need to download the corresponding pretrained model and assets:
+
+.. code:: bash
+
+   # Download the model (choose either method)
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup
+
+   # Method 2: Using huggingface-hub
+   pip install huggingface-hub
+   hf download gen-robot/openvla-7b-rlvla-warmup
+
+After downloading, make sure to correctly specify the model path in the configuration yaml file.
+
+Besides, you also need to add the assets if there is no `assets/` dir in Pathto/rlinf/envs/maniskill . The download instruction can be found here in `huggingface <https://huggingface.co/datasets/RLinf/maniskill_assets>`_.
+
 Running the Script
 -------------------
 
@@ -215,29 +235,33 @@ Running on a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) a
    </div>
 
 
-We evaluated on both training and OOD(out-of-distribution) scenarios. The OOD setting includes variations on Vision, Semantic, and Position.
+We evaluated on both training and OOD(out-of-distribution) scenarios. The OOD setting includes variations on Vision, Semantic, and Execution.
 The best-performing model for each task is highlighted in bold.
 
 .. note:: 
-   The same OOD test set used in `rl4vla` (`paper link <https://arxiv.org/abs/2505.19789>`_) is adopted here for fair comparison.
+   The same OOD test set used in `rl4vla` (`paper link <https://arxiv.org/abs/2505.19789>`_) is adopted here for fair comparison. 
+   Base models: For the OpenVLA model, we adopt the pre-trained checkpoint available at HuggingFace 
+   (`OpenVLA (Base) <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_). 
+   For the OpenVLA-OFT model, we perform our own LoRA fine-tuning using motion planning data collected from the “PutOnPlateInScene25Main-v3” task. 
+   The resulting LoRA model weights are also provided at HuggingFace (`OpenVLA-OFT (Base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_).
 
 .. list-table:: **OpenVLA and OpenVLA-OFT model results on ManiSkill3**
    :header-rows: 1
    :widths: 40 15 15 15 15 15
 
    * - Model
-     - Training Setting
-     - Vision
-     - Semantic
-     - Position 
-     - Average
-   * - OpenVLA(Base)
+     - Training Setting(IND)
+     - Vision (OOD)
+     - Semantic (OOD)
+     - Execution (OOD)
+     - Average of OOD
+   * - |huggingface| `OpenVLA (Base) <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_
      - 53.91%
      - 38.75%
      - 35.75%
      - 42.11%
      - 39.10%
-   * - |huggingface| `rl4vla <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_
+   * - |huggingface| `RL4VLA (PPO) <https://huggingface.co/gen-robot/openvla-7b-rlvla-rl>`_
      - 93.75%
      - 80.47%
      - 75.00%
@@ -255,7 +279,7 @@ The best-performing model for each task is highlighted in bold.
      - 72.99%
      - 77.86%
      - 75.15%
-   * - OpenVLA-OFT(Base)
+   * - |huggingface| `OpenVLA-OFT (Base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_
      - 28.13%
      - 27.73%
      - 12.95%

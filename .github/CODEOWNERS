@@ -2,7 +2,7 @@
 /docker @andylin-hao
 
 /examples/embodiment @guozhen1997
-/examples/math @guozhen1997 @andylin-hao @Lin-xs
+/examples/reasoning @guozhen1997 @andylin-hao @Lin-xs
 
 /ray_utils @Lin-xs
 /requirements @andylin-hao

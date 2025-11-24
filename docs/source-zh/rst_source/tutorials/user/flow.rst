@@ -16,7 +16,7 @@ YAML 配置
 - 针对 **VLA** agent 的具身任务训练配置在  
   ``examples/embodiment/config``  
 - 针对数学推理的 **LLM** 模型训练配置在  
-  ``examples/math/config``  
+  ``examples/reasoning/config/math``  
 
 建议你先熟悉这些示例 YAML 的结构，然后逐步迭代以适配你的任务。关键选项包括（但不限于）：
 
