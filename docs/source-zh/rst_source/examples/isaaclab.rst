@@ -62,6 +62,7 @@ isaaclab的Docker支持正在开发中，即将推出。目前，我们对现有
 我们从docker安装开始，isaaclab的测试过程是基于此镜像
 
 .. code-block:: bash
+
    # pull the docker image
    docker pull rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
 
@@ -88,6 +89,7 @@ isaaclab的Docker支持正在开发中，即将推出。目前，我们对现有
 2. RLinf安装
 
 .. code-block:: bash
+
    cd /workspace
    git clone https://github.com/RLinf/RLinf.git
 
@@ -95,6 +97,7 @@ isaaclab的Docker支持正在开发中，即将推出。目前，我们对现有
 下面我们根据gr00t的安装流程进行安装
 
 .. code-block:: bash
+
    source switch_env openvla
    uv pip freeze > requirements.txt
 
@@ -125,6 +128,7 @@ isaaclab的Docker支持正在开发中，即将推出。目前，我们对现有
 之后我们下载gr00t模型
 
 .. code-block:: bash
+
    cd /workspace
    # Download the libero spatial few-shot SFT model (choose either method)
    # Method 1: Using git clone
@@ -138,6 +142,7 @@ isaaclab的Docker支持正在开发中，即将推出。目前，我们对现有
 4. IsaacLab安装
 我们推荐您通过源码安装的方式安装isaac-sim
 .. code-block:: bash
+   
    cd /workspace
    uv pip install "cuda-toolkit[nvcc]==12.8.0"
    uv pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0

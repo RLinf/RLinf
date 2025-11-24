@@ -64,6 +64,7 @@ The docker support for Isaaclab is in development, and will be available soon. N
 We started with docker installation, isaaclab test is built on it.
 
 .. code-block:: bash
+
    # pull the docker image
    docker pull rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
 
@@ -90,6 +91,7 @@ We started with docker installation, isaaclab test is built on it.
 2. RLinf Installation
 
 .. code-block:: bash
+
    cd /workspace
    git clone https://github.com/RLinf/RLinf.git
 
@@ -97,6 +99,7 @@ We started with docker installation, isaaclab test is built on it.
 Next we follow the gr00t installation.
 
 .. code-block:: bash
+
    source switch_env openvla
    uv pip freeze > requirements.txt
 
@@ -127,6 +130,7 @@ Next we follow the gr00t installation.
 Next, download gr00t
 
 .. code-block:: bash
+
    cd /workspace
    # Download the libero spatial few-shot SFT model (choose either method)
    # Method 1: Using git clone
@@ -141,6 +145,7 @@ Next, download gr00t
 We recommend installing isaacsim through binary installation way.
 
 .. code-block:: bash
+   
    cd /workspace
    uv pip install "cuda-toolkit[nvcc]==12.8.0"
    uv pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0
