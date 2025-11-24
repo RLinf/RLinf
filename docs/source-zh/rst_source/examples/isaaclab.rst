@@ -141,8 +141,9 @@ isaaclab的Docker支持正在开发中，即将推出。目前，我们对现有
 
 4. IsaacLab安装
 我们推荐您通过源码安装的方式安装isaac-sim
+
 .. code-block:: bash
-   
+
    cd /workspace
    uv pip install "cuda-toolkit[nvcc]==12.8.0"
    uv pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0
