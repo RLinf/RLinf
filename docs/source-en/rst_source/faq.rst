@@ -33,7 +33,7 @@ RuntimeError: The MUJOCO_EGL_DEVICE_ID environment variable must be an integer b
 
 2. If you do not have this file, it means your NVIDIA driver is not properly installed with the graphics capability. You can try the following solutions:
 
-   * Reinstall the NVIDIA driver with the correct options to enable graphics capabilities. There are several options that disable the graphics driver during and after installation of the NVIDIA driver like modeset and module parameters. So if you are not sure, follow the NVIDIA's documentation https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/index.html#id29 to install the **Desktop version** of driver, **not Compute-Only version**.
+   * Reinstall the NVIDIA driver with the correct options to enable graphics capabilities. There are several options when installing the NVIDIA driver that disable the graphics driver. Therefore, you need to try installing NVIDIA's graphics driver. On Ubuntu, this can be done with the command ``apt install libnvidia-gl-<driver-version>``, see NVIDIA's documentation at https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/ubuntu.html#compute-only-headless-and-desktop-only-no-compute-installation for details.
 
    * Use **osmesa** for rendering, change the `MUJOCO_GL` and `PYOPENGL_PLATFORM` environment variables in our running script to "osmesa" for this. However, this may cause the rollout process to be 10x slower than EGL as it uses CPU for rendering.
 

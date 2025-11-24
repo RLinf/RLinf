@@ -217,9 +217,11 @@ Visualization and Results
 LIBERO Results
 ~~~~~~~~~~~~~~~~~~~
 
- In order to show the RLinf’s capability for large-scale multi-task RL. We train a single unified model on all 130 tasks in LIBERO and evaluate its performance across the five LIBERO task suites: LIBERO-Spatial, LIBERO-Goal, LIBERO-Object, LIBERO-Long, and LIBERO-90. 
+In order to show the RLinf’s capability for large-scale multi-task RL. We train a single unified model on all 130 tasks in LIBERO and evaluate its performance across the five LIBERO task suites: LIBERO-Spatial, LIBERO-Goal, LIBERO-Object, LIBERO-Long, and LIBERO-90. 
+ 
 .. note:: 
-   This unified base model is fine-tuned by ourselves. For more details, please refer to `paper <https://arxiv.org/abs/2510.06710>`_.
+   
+   This unified base model is fine-tuned by ourselves. For more details, please refer to paper https://arxiv.org/abs/2510.06710.
 
 .. list-table:: **Evaluation results of the unified model on the five LIBERO task groups**
    :header-rows: 1

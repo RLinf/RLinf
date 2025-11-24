@@ -221,7 +221,10 @@ def apply_fsdp2_to_model(
     Args:
         module: The model to be sharded
         config: Configuration dictionary
-        fsdp_kwargs: FSDP2 parameters
+        device_mesh: The device mesh to use for sharding
+        mp_policy: Mixed precision policy
+        offload_policy: CPU offload policy
+        reshard_after_forward: Whether to reshard after forward pass
 
     Returns:
         The sharded model

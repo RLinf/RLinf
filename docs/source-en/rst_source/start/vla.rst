@@ -2,7 +2,7 @@ Quickstart 1: PPO Training of VLAs on Maniskill3
 =================================================
 
 This quick-start walks you through training the Visual-Language-Action model, including
-`OpenVLA <https://github.com/openvla/openvla>`_ on the
+`OpenVLA <https://github.com/openvla/openvla>`_ and `OpenVLA-OFT <https://github.com/moojink/openvla-oft>`_ on the
 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`_ environment with **RLinf**.
 For maximum simplicity, you can run the following scripts within a single GPU.
 
@@ -32,6 +32,18 @@ For **OpenVLA**, run:
 
 the model is cited in `paper <https://arxiv.org/abs/2505.19789>`_
 
+For **OpenVLA-OFT**, run:
+
+.. code-block:: bash
+
+   # Download pre-trained OpenVLA-OFT model
+   hf download RLinf/Openvla-oft-SFT-libero10-trajall \
+   --local-dir /path/to/model/Openvla-oft-SFT-libero10-trajall/
+   
+   # Download lora fine-tuned ckpt in maniskill
+   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora \
+   --local-dir /path/to/model/oft-sft/lora_004000
+
 **Step 2: Execute the provided launch script:**
 
 .. note:: 
@@ -58,11 +70,19 @@ Refer to :doc:`../tutorials/user/yaml` for a more detailed explanation of the pl
      component_placement:
         actor,rollout: 0-1
 
-Finally, before running the script, you need to modify the corresponding configuration options in the YAML file according to the download paths of the model and dataset. Specifically, update:
+Finally, before running the script, you need to modify the corresponding configuration options in the YAML file according to the download paths of the model and dataset. Specifically, for **OpenVLA** update the following configurations to the path of the `gen-robot/openvla-7b-rlvla-warmup` checkpoint:
 
-- ``rollout.model_dir``
-- ``actor.checkpoint_load_path``
-- ``actor.tokenizer.tokenizer_model``
+- ``rollout.model_dir``  
+- ``actor.checkpoint_load_path``  
+- ``actor.tokenizer.tokenizer_model``  
+
+For **OpenVLA-OFT**, set the following configurations to the path of the `RLinf/Openvla-oft-SFT-libero10-trajall` checkpoint. And set lora path to the path of `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora` checkpoint:
+
+- ``rollout.model_dir``  
+- ``actor.checkpoint_load_path``  
+- ``actor.tokenizer.tokenizer_model``  
+- ``actor.model.lora_path``
+- ``actor.model.is_lora: True``
 
 After these modifications, launch the following script to start training!
 
