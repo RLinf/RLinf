@@ -331,6 +331,7 @@ class LiberoEnv(gym.Env):
         return obs, infos
 
     def step(self, actions=None, auto_reset=True):
+        """Step the environment with the given actions."""
         if actions is None:
             assert self._is_start, "Actions must be provided after the first reset."
         if self.is_start:
