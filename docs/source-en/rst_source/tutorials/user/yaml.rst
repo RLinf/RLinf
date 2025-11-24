@@ -47,17 +47,18 @@ cluster
 
 ``cluster.component_placement``: 
 The *placement strategy* for each component.
-Each line of component placement config is a dictionary of ``component_names: global_accelerator_ids``:
+Each line of component placement config is a dictionary of ``component_names: resource_ranks``.
+In this simple example of running on GPU nodes, the meaning is:
 
 - The key is the names of components, e.g., ``rollout``, or ``rollout,inference,actor``
-- The value is the global accelerator IDs allocated to the components, which can be:
+- The value is the hardware (e.g., GPU) ranks allocated to the components, which can be:
    - "all": use all accelerators in the cluster
    - A single integer, e.g., "3": use accelerator 3
    - A list of integers separated by comma, e.g., "0,2,3": use accelerator 0, 2, and 3
    - A range of integers separated by hyphen, e.g., "0-3": use accelerator 0, 1, 2, and 3
    - A combination of the above two, e.g., "0-3,5,14": use accelerator 0, 1, 2, 3, 5 (on node 0), and 14 (i.e., accelerator 6 on node 1)
 
-See more details in :doc:`../mode/index`.
+For more advanced usage of component placement (e.g., heterogeneous cluster with different GPU models, robotic hardware, or CPU-only nodes) and customization in code, see :doc:`./placement`.
 
 runner
 ~~~~~~~~~~~~~~~

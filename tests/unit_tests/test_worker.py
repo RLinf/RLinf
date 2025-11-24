@@ -63,8 +63,8 @@ class DistributedTestWorker(Worker):
         return {
             "rank": self._rank,
             "world_size": self._world_size,
-            "node_id": self._node_id,
-            "gpu_id": self._local_accelerator_id,
+            "node_id": self._cluster_node_rank,
+            "gpu_id": self._local_accelerator_rank,
             "node_local_rank": self._node_local_rank,
         }
 
@@ -80,7 +80,7 @@ class TestClusterResource:
         """Verify that the cluster is initialized with correct properties."""
         assert cluster._num_nodes == 1
         if torch.cuda.is_available():
-            assert cluster.num_accelerators_in_cluster >= 1
+            assert cluster.num_accelerators >= 1
 
 
 class TestWorkerAddress:
@@ -100,7 +100,7 @@ class TestWorkerGroup:
     def test_worker_group_creation(self, cluster: Cluster):
         """Verify that a WorkerGroup can be created successfully."""
         if torch.cuda.is_available():
-            num_workers = cluster.num_accelerators_in_cluster
+            num_workers = cluster.num_accelerators
         else:
             num_workers = 1
         worker_group = DistributedTestWorker.create_group().launch(
@@ -119,7 +119,7 @@ class TestWorkerGroup:
     def test_execute_on_all_workers(self, cluster: Cluster):
         """Test calling a method on all workers in a group."""
         if torch.cuda.is_available():
-            num_workers = cluster.num_accelerators_in_cluster
+            num_workers = cluster.num_accelerators
         else:
             num_workers = 1
         worker_group = DistributedTestWorker.create_group().launch(
@@ -136,9 +136,7 @@ class TestWorkerGroup:
     def test_execute_on_specific_ranks(self, cluster: Cluster):
         """Test calling a method on a subset of workers in a group."""
         if torch.cuda.is_available():
-            placement = PackedPlacementStrategy(
-                0, cluster.num_accelerators_in_cluster - 1
-            )
+            placement = PackedPlacementStrategy(0, cluster.num_accelerators - 1)
         else:
             placement = NodePlacementStrategy([0] * 8)
         worker_group = DistributedTestWorker.create_group().launch(
@@ -158,7 +156,7 @@ class TestWorkerGroup:
     def test_multiple_worker_groups(self, cluster: Cluster):
         """Test the creation and operation of multiple independent worker groups."""
         if torch.cuda.is_available():
-            num_workers = cluster.num_accelerators_in_cluster
+            num_workers = cluster.num_accelerators
         else:
             num_workers = 1
         group1 = DistributedTestWorker.create_group().launch(

@@ -876,7 +876,9 @@ class BatchResizingIterator:
             cfg (DictConfig): The configuration object.
             get_batch_fn (Callable): The function to get the batch.
             micro_batch_size (int): The size of the micro batch.
-            global_batch_size_per_dp (int): The global batch size per data parallel. Here a global batch means the data required for running a single step of inference/training.
+            total_batch_size (int): The total batch size.
+            num_global_batches (int): The number of global batches.
+            forward_only (bool): Whether to run in forward-only mode.
             batch_tensor_key (str): The key for retrieving a sample batch tensor, which will be used to measure the batch size and sequence length. By default, this is "input_ids", which means the input_ids tensor's shape will be used to determine batch size and sequence length.
         """
         self.cfg = cfg
@@ -922,12 +924,7 @@ class BatchResizingIterator:
         return batch
 
     def prefetch_one_batch(self):
-        """Get the total sequence length, number of microbatches, and indices based on the batch information and dynamic batch sizing.
-
-        Args:
-            forward_micro_batch_size: The size of the forward micro batch.
-            forward_only: Whether to only consider the forward pass.
-        """
+        """Get the total sequence length, number of microbatches, and indices based on the batch information and dynamic batch sizing."""
         if self.prefetch_micro_batch is None:
             self.prefetch_micro_batch = next(self)
 

@@ -1,5 +1,5 @@
 基于LIBERO模拟器的强化学习训练
-==========================
+===============================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -21,7 +21,7 @@
 
 **LIBERO 环境**
 
-- **Environment**：基于 *robosuite*（MuJoCo）的 LIBERO 仿真基准  
+- **Environment**：基于 *robosuite* （MuJoCo）的 LIBERO 仿真基准  
 - **Task**：指挥一台 7 自由度机械臂完成多种家居操作技能（抓取放置、叠放、开抽屉、空间重排等）  
 - **Observation**：工作区周围离屏相机采集的 RGB 图像（常见分辨率 128×128 或 224×224）  
 - **Action Space**：7 维连续动作  
@@ -205,9 +205,12 @@
 
 LIBERO 结果
 ~~~~~~~~~~~~~~~~~~~
-   为了展示 RLinf 在大规模多任务强化学习方面的能力，我们在 LIBERO 的全部130个任务上训练了一个统一模型，并评估了其在 LIBERO 五个任务套件中的表现：LIBERO-Spatial、LIBERO-Goal、LIBERO-Object、LIBERO-Long和LIBERO-90。 
+
+为了展示 RLinf 在大规模多任务强化学习方面的能力，我们在 LIBERO 的全部130个任务上训练了一个统一模型，并评估了其在 LIBERO 五个任务套件中的表现：LIBERO-Spatial、LIBERO-Goal、LIBERO-Object、LIBERO-Long和LIBERO-90。 
+
 .. note:: 
-   该统一基础模型由我们自行微调得来。如需更多详情，请参阅`论文 <https://arxiv.org/abs/2510.06710>`_。
+
+   该统一基础模型由我们自行微调得来。如需更多详情，请参阅论文 https://arxiv.org/abs/2510.06710。
 
 .. list-table:: **Evaluation results of the unified model on the five LIBERO task groups**
    :header-rows: 1

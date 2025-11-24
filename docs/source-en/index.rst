@@ -134,5 +134,3 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
   :titlesonly:
 
   rst_source/faq
-
---------------------------------------------
