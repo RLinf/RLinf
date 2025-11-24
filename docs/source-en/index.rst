@@ -40,7 +40,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 - Embodied Agent Support
 
   - Fast adaptation support for mainstream VLA models: `OpenVLA`_, `OpenVLA-OFT`_, `π₀`_, `GR00T-N1.5`_
-  - Support for mainstream CPU & GPU-based simulators via standardized RL interfaces: `ManiSkill3`_, `LIBERO`_
+  - Support for mainstream CPU & GPU-based simulators via standardized RL interfaces: `ManiSkill3`_, `LIBERO`_, `IsaacLab`_
   - Enabling the first RL fine-tuning of the π₀ model family with a flow-matching action expert.
 
 **RLinf is fast with:**
@@ -73,6 +73,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 .. _IsaacLab: https://github.com/isaac-sim/IsaacLab
 .. _ManiSkill3: https://github.com/haosulab/ManiSkill
 .. _LIBERO: https://github.com/Lifelong-Robot-Learning/LIBERO
+.. _IsaacLab: https://github.com/isaac-sim/IsaacLab
 .. _π₀: https://github.com/Physical-Intelligence/openpi
 .. _Megatron-LM: https://github.com/NVIDIA/Megatron-LM
 .. _SGLang: https://github.com/sgl-project/sglang

@@ -56,7 +56,7 @@ Algorithm
    - Compute the advantage of each action by subtracting the group's mean reward.
 
 Dependency Installation
---------------
+-----------------------
 
 The docker support for Isaaclab is in development, and will be available soon. Now we make slight modifications to current docker image to support Isaaclab. We borrow the environment from gr00t. 
 
@@ -229,12 +229,12 @@ The demo scripts is designed for gr00t, so please downloads gr00t first.
    pip install huggingface-hub
    hf download RLinf/Gr00t_Libero_Spatial_Fewshot_SFT
 
---------------
+
 
 **3. Configuration Files**
 The task is `stack cube` in isaaclab.
 - gr00t demo:
-  ``examples/embodiment/config/isaaclab_ppo_gr00t_demo.yaml``
+``examples/embodiment/config/isaaclab_ppo_gr00t_demo.yaml``
 
 **4. Launch Commands**
 
@@ -300,5 +300,5 @@ Visualization and Results
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_metaworld"
+       experiment_name: "test_isaaclab"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab

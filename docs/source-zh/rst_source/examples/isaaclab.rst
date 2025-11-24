@@ -226,12 +226,12 @@ demo是为gr00t设计的，所以请您先下载gr00t.
    pip install huggingface-hub
    hf download RLinf/Gr00t_Libero_Spatial_Fewshot_SFT
 
---------------
+
 
 **3. 配置文件**
 gr00t上测试isaaclab中的堆叠方块
 - gr00t demo:
-  ``examples/embodiment/config/isaaclab_ppo_gr00t_demo.yaml``
+``examples/embodiment/config/isaaclab_ppo_gr00t_demo.yaml``
 
 **4. 启动命令**
 体验在isaaclab中训练gr00t:
@@ -295,5 +295,5 @@ gr00t上测试isaaclab中的堆叠方块
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_metaworld"
+       experiment_name: "test_isaaclab"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
