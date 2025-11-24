@@ -81,8 +81,9 @@ Channel 的创建与连接
 示例
 --------
 
-.. autoclass:: rlinf.scheduler.channel.Channel
+.. autoclass:: rlinf.scheduler.Channel
    :no-members:
+   :no-index:
    :no-inherited-members:
    :exclude-members: __init__, __new__
 

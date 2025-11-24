@@ -87,7 +87,7 @@ def main(cfg) -> None:
 
     # Dynamic Scheduler group
     if component_placement._placement_mode == PlacementMode.AUTO:
-        scheduler_placement_strategy = NodePlacementStrategy(node_ids=[0])
+        scheduler_placement_strategy = NodePlacementStrategy(node_ranks=[0])
         scheduler = SchedulerWorker.create_group(cfg, component_placement).launch(
             cluster=cluster,
             name="DynamicScheduler",

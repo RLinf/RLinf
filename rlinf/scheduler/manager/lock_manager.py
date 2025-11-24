@@ -95,7 +95,7 @@ class DeviceLockManager(Manager):
         """Initialize the lock manager."""
         cluster = Cluster()
         self._device_locks = [
-            WorkerDeviceLock() for _ in range(cluster.num_accelerators_in_cluster)
+            WorkerDeviceLock() for _ in range(cluster.num_accelerators)
         ]
 
     async def acquire_devices(
