@@ -23,12 +23,13 @@ from prismatic.extern.hf.configuration_prismatic import (
 from prismatic.extern.hf.modeling_prismatic import (
     OpenVLAForActionPrediction as OpenVLAOFTForActionPrediction,
 )
-from prismatic.vla.constants import (
+from transformers.generation import TopKLogitsWarper
+
+from rlinf.models.embodiment.prismatic.constants import (
     ACTION_PROPRIO_NORMALIZATION_TYPE,
     STOP_INDEX,
     NormalizationType,
 )
-from transformers.generation import TopKLogitsWarper
 
 from rlinf.models.embodiment.model_utils import (
     compute_entropy_from_logits,
