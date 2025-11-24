@@ -145,12 +145,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         if first_process:
             inputs.pop("prompt")
         else:
-            inputs = {
-                value: inputs[value]
-                for value in inputs.keys()
-                if value
-                in ["observation/image", "observation/wrist_image", "observation/state"]
-            }
+            inputs = {key: inputs[key] for key in inputs.keys() if "/" in key}
         # tensor -> numpy
         inputs = jax.tree.map(
             lambda x: np.asarray(x.detach().cpu()) if torch.is_tensor(x) else x, inputs
@@ -252,16 +247,27 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             "entropy": entropy,
         }
 
-    def input_processor(self, env_processed_obs):
-        to_process_obs = {
-            "observation/image": env_processed_obs["images"],
-            "observation/state": env_processed_obs["states"],
-            "prompt": env_processed_obs["task_descriptions"],
+    def obs_processor(self, env_obs):
+        # base observation
+        processed_obs = {
+            "observation/image": env_obs["images"],
+            "prompt": env_obs["task_descriptions"],
         }
-        if env_processed_obs["wrist_images"] is not None:
-            to_process_obs["observation/wrist_image"] = env_processed_obs[
-                "wrist_images"
-            ]
+        # state observation
+        if "calvin" in self.config.config_name:
+            state = env_obs["states"]
+            processed_obs["observation/state_ee_pos"] = state[:, :3]
+            processed_obs["observation/state_ee_rot"] = state[:, 3:6]
+            processed_obs["observation/state_gripper"] = state[:, 6:7]
+        else:
+            processed_obs["observation/state"] = env_obs["states"]
+        # wrist image observation
+        if env_obs["wrist_images"] is not None:
+            processed_obs["observation/wrist_image"] = env_obs["wrist_images"]
+        # store used keys
+        return processed_obs
+
+    def input_processor(self, to_process_obs):
         processed_obs = self.input_transform(to_process_obs)
         device = next(self.parameters()).device
         for key, value in processed_obs.items():
@@ -284,7 +290,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
     def predict_action_batch(
         self, env_obs, mode: Literal["train", "eval"] = "train", compute_values=True
     ) -> tuple[np.ndarray, dict[str, Any]]:
-        processed_obs = self.input_processor(env_obs)
+        to_process_obs = self.obs_processor(env_obs)
+        processed_obs = self.input_processor(to_process_obs)
         observation = _model.Observation.from_dict(processed_obs)
         outputs = self.sample_actions(
             observation, mode=mode, compute_values=compute_values
@@ -296,20 +303,16 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         forward_inputs = {
             "chains": outputs["chains"],
             "denoise_inds": outputs["denoise_inds"],
-            "observation/image": env_obs["images"],
-            "observation/state": env_obs["states"],
             "tokenized_prompt": processed_obs["tokenized_prompt"],
             "tokenized_prompt_mask": processed_obs["tokenized_prompt_mask"],
         }
-        if env_obs["wrist_images"] is not None:
-            forward_inputs["observation/wrist_image"] = env_obs["wrist_images"]
-
+        forward_inputs.update(to_process_obs)
+        forward_inputs.pop("prompt", None)
         result = {
             "prev_logprobs": outputs["prev_logprobs"],
             "prev_values": outputs["prev_values"],
             "forward_inputs": forward_inputs,
         }
-
         return actions, result
 
     @torch.no_grad()
