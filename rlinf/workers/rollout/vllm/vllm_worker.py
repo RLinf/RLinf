@@ -152,6 +152,13 @@ class VLLMWorker(Worker):
             )
         return tokenizer
 
+    def set_version(self, version: int):
+        """
+        Set the version for async rollout manager.
+        """
+        if self._use_async_rollout:
+            self._async_manager.set_version(version)
+
     def _get_sampling_params_from_config(self) -> SamplingParams:
         """
         Get sampling parameters built from the configuration.

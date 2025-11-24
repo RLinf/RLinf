@@ -422,18 +422,24 @@ class MegatronActor(MegatronModelManager, Worker):
                 ].contiguous()
 
                 advantages = batch["advantages"]
-                prev_logprobs = batch["prev_logprobs"]
                 ref_logprobs = None
                 if "ref_logprobs" in batch:
                     ref_logprobs = batch["ref_logprobs"]
 
                 if self.cfg.algorithm.get("importance_sampling_fix", False):
-                    rollout_prev_logprobs = prev_logprobs
+                    rollout_prev_logprobs = batch["prev_logprobs"]
                     recompute_prev_logprobs = batch["recompute_prev_logprobs"]
                     advantages = advantages * torch.clamp(
                         (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
                         min=self.cfg.algorithm.importance_sampling_clip,
                     )
+
+                if self.cfg.algorithm.get("async", False):
+                    proximal_logprobs = batch["recompute_prev_logprobs"]
+                    old_logprobs = batch["prev_logprobs"]
+                else:
+                    proximal_logprobs = batch["proximal_logprobs"]
+                    old_logprobs = batch["old_logprobs"]
 
                 mask = batch["attention_mask"][:, -response_len:]
 
@@ -442,7 +448,8 @@ class MegatronActor(MegatronModelManager, Worker):
                     loss_type=self.cfg.algorithm.loss_type,
                     loss_agg_func=self.loss_agg_func,
                     logprobs=curr_logprobs,
-                    old_logprobs=prev_logprobs,
+                    proximal_logprobs=proximal_logprobs,
+                    old_logprobs=old_logprobs,
                     advantages=advantages,
                     clip_ratio_c=self.clip_ratio_c,
                     clip_ratio_low=self.clip_ratio_low,

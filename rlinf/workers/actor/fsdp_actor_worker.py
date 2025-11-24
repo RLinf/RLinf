@@ -365,7 +365,6 @@ class FSDPActor(FSDPModelManager, Worker):
                     input_ids = m_batch["input_ids"]
                     attention_mask = m_batch["attention_mask"]
                     position_ids = m_batch["position_ids"]
-                    prev_logprobs = m_batch["prev_logprobs"]
                     advantages = m_batch["advantages"]
                     ref_logprobs = None
                     if "ref_logprobs" in m_batch:
@@ -407,18 +406,25 @@ class FSDPActor(FSDPModelManager, Worker):
                     clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
 
                     if self.cfg.algorithm.get("importance_sampling_fix", False):
-                        rollout_prev_logprobs = prev_logprobs
+                        rollout_prev_logprobs = batch["prev_logprobs"]
                         recompute_prev_logprobs = batch["recompute_prev_logprobs"]
                         advantages = advantages * torch.clamp(
                             (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
                             min=self.cfg.algorithm.importance_sampling_clip,
                         )
+                    if self.cfg.algorithm.get("async", False):
+                        proximal_logprobs = m_batch["recompute_prev_logprobs"]
+                        old_logprobs = m_batch["prev_logprobs"]
+                    else:
+                        proximal_logprobs = m_batch["proximal_logprobs"]
+                        old_logprobs = m_batch["old_logprobs"]
 
                     loss, mbs_metrics_data = policy_loss(
                         loss_type=self.cfg.algorithm.loss_type,
                         loss_agg_func=self.loss_agg_func,
                         logprobs=logprobs,
-                        old_logprobs=prev_logprobs,
+                        proximal_logprobs=proximal_logprobs,
+                        old_logprobs=old_logprobs,
                         advantages=advantages,
                         clip_ratio_low=clip_ratio_low,
                         clip_ratio_high=clip_ratio_high,

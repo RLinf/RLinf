@@ -108,6 +108,10 @@ class SGLangWorker(Worker):
             self._rank, self.schedule_channel, self
         )
 
+    def set_version(self, version: int):
+        if self._use_async_rollout:
+            self._async_manager.set_version(version)
+
     def _init_meta_stats_collector(self):
         async_stats_file = getattr(
             self._cfg.rollout,
