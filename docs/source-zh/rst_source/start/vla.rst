@@ -32,6 +32,18 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
 
 该模型已在论文中引用：`paper <https://arxiv.org/abs/2505.19789>`_
 
+若使用 **OpenVLA-OFT** 模型，请运行以下命令：
+
+.. code-block:: bash
+
+   # 下载 OpenVLA-OFT 预训练模型
+   hf download RLinf/Openvla-oft-SFT-libero10-trajall \
+   --local-dir /path/to/model/Openvla-oft-SFT-libero10-trajall/
+   
+   # 下载在maniskill上lora微调过的检查点
+   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora \
+   --local-dir /path/to/model/oft-sft/lora_004000
+
 **步骤 2：运行官方提供的训练脚本**
 
 .. note::
@@ -58,11 +70,19 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
      component_placement:
         actor,rollout: 0-1
 
-运行脚本之前，请根据你下载的模型和数据集路径，修改 YAML 文件中的以下字段：
+最后，在运行脚本之前，你需要根据模型和数据集的下载路径，修改 YAML 文件中的相应配置项。具体而言，对于 **OpenVLA**，请将以下配置更新为 `gen-robot/openvla-7b-rlvla-warmup` 检查点所在的路径。
 
 - ``rollout.model_dir``  
 - ``actor.checkpoint_load_path``  
 - ``actor.tokenizer.tokenizer_model``  
+
+对于 **OpenVLA-OFT**，请将下列配置项设置为 `RLinf/Openvla-oft-SFT-libero10-trajall` 检查点所在的路径。同时，将 LoRA 路径设置为 `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora` 检查点所在的路径。
+
+- ``rollout.model_dir``  
+- ``actor.checkpoint_load_path``  
+- ``actor.tokenizer.tokenizer_model``  
+- ``actor.model.lora_path``
+- ``actor.model.is_lora: True``
 
 完成上述修改后，运行以下命令启动训练：
 
