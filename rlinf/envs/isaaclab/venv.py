@@ -94,8 +94,6 @@ class ChildProcIsaacLabEnv:
         self.isaac_lab_process.start()
         self.child_remote.close()
 
-        print(self.parent_remote.recv())
-
     def reset(self, seed=None, env_ids=None):
         self.parent_remote.send("reset")
         self.reset_idx.put((env_ids, seed))
