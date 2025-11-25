@@ -50,7 +50,6 @@ class EvacEnv(BaseWorldEnv):
         self.model = self._load_model().eval().to(self.device)
         self.reward_model = self._load_reward_model().eval().to(self.device)
         self.action_predictor = self._load_action_predictor().eval().to(self.device)
-        self._log_model_parameters()
 
         # Model hyperparameters
         self.chunk = self.cfg.chunk
@@ -146,36 +145,6 @@ class EvacEnv(BaseWorldEnv):
         abs_action_std = checkpoint.get("abs_action_std", None)
         action_predictor.set_normalization_params(abs_action_mean, abs_action_std)
         return action_predictor
-
-    def _log_model_parameters(self):
-        """Log parameter counts for loaded models."""
-
-        def count_params(model):
-            if model is None:
-                return 0, 0
-            total = sum(p.numel() for p in model.parameters())
-            trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-            return total, trainable
-
-        world_total, world_trainable = count_params(self.model)
-        reward_total, reward_trainable = count_params(self.reward_model)
-        action_total, action_trainable = count_params(self.action_predictor)
-
-        print(
-            "[EvacEnv] World Model params: "
-            f"total={world_total:,}, trainable={world_trainable:,}",
-            flush=True,
-        )
-        print(
-            "[EvacEnv] Reward Model params: "
-            f"total={reward_total:,}, trainable={reward_trainable:,}",
-            flush=True,
-        )
-        print(
-            "[EvacEnv] Action Predictor params: "
-            f"total={action_total:,}, trainable={action_trainable:,}",
-            flush=True,
-        )
 
     def _init_camera_params(self):
         """Initialize camera intrinsic and extrinsic parameters"""
@@ -1154,7 +1123,6 @@ if __name__ == "__main__":
     ).resolve()
     config_name = "libero_spatial_evac_grpo_openvlaoft_impl"
 
-    print(f"Loading config: {config_name} from {config_dir}")
     with initialize_config_dir(config_dir=str(config_dir), version_base="1.1"):
         cfg_ = compose(config_name=config_name)
         cfg = cfg_["env"]["train"]
@@ -1166,11 +1134,8 @@ if __name__ == "__main__":
 
     # Reset environment
     obs, info = env.reset()
-    print("\nAfter reset:")
-    print(f"  obs keys: {list(obs.keys())}")
 
     # Test 1: chunk_steps = self.chunk
-    print("\n" + "-" * 80)
     chunk_steps = 8
     num_envs = cfg.num_envs
 
@@ -1197,8 +1162,5 @@ if __name__ == "__main__":
     for chunk_idx in range(delta_actions.shape[0]):
         chunk_actions = np.tile(delta_actions[chunk_idx], (num_envs, 1, 1))
         obs, reward, term, trunc, info = env.chunk_step(chunk_actions)
-        print(f"chunk {chunk_idx} done")
-        print(env.action_buffer.shape)
-        print(env.current_obs.shape)
 
     env.flush_video()

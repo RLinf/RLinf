@@ -479,10 +479,6 @@ class WorldModelEnv(gym.Env):
             obs, reward, terminations, truncations, info = self.chunk_step(
                 actions.cpu().numpy()
             )
-            print(
-                f"Step {step}: obs={obs.keys()}, reward={reward.mean()}, \
-terminations={terminations.float().mean()}, truncations={truncations.float().mean()}"
-            )
         self.flush_video()
 
     def add_new_frames(self, extracted_obs, infos):
@@ -536,12 +532,6 @@ terminations={terminations.float().mean()}, truncations={truncations.float().mea
             Videos are saved with unique names based on a counter and camera name.
             The frame buffer is cleared after successful video generation.
         """
-
-        for camera_name in self.camera_names:
-            print(
-                f"total {len(self.render_images[camera_name])} frames for {camera_name}"
-            )
-
         output_dir = os.path.join(self.video_cfg.video_base_dir, f"seed_{self.seed}")
         if video_sub_dir is not None:
             output_dir = os.path.join(output_dir, f"{video_sub_dir}")
