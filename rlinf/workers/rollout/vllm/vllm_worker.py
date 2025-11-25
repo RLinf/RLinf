@@ -368,7 +368,7 @@ class VLLMWorker(Worker):
             if task is not None:
                 task.cancel()
 
-    async def init_worker(self, dataloader_channel: Channel) -> None:
+    async def init_worker(self, dataloader_channel: Optional[Channel] = None) -> None:
         """
         Use EngineArgs and VllmConfig to initialize VLLM async engine.
         If mode is collocated, it will additionally offload model weights,
@@ -420,6 +420,9 @@ class VLLMWorker(Worker):
         if self._use_auto_scheduler:
             asyncio.create_task(self._scheduler.main_loop())
         if self._use_async_rollout:
+            assert dataloader_channel is not None, (
+                "dataloader_channel must be provided when async rollout is enabled."
+            )
             self._getting_batch_task = asyncio.create_task(
                 self._async_manager.always_get_batch(
                     input_channel=dataloader_channel,

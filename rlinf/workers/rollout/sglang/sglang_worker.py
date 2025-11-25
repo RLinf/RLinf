@@ -255,7 +255,7 @@ class SGLangWorker(Worker):
         )
         return result, request_info
 
-    async def init_worker(self, dataloader_channel: Channel):
+    async def init_worker(self, dataloader_channel: Optional[Channel] = None):
         self._init_engine()
         await self._engine.tokenizer_manager.run_task_method(
             io_struct.TaskMethodInput(
@@ -275,6 +275,9 @@ class SGLangWorker(Worker):
         if self._use_auto_scheduler:
             asyncio.create_task(self._scheduler.main_loop())
         if self._use_async_rollout:
+            assert dataloader_channel is not None, (
+                "dataloader_channel must be provided when async rollout is enabled."
+            )
             self._getting_batch_task = asyncio.create_task(
                 self._async_manager.always_get_batch(
                     input_channel=dataloader_channel,
