@@ -510,16 +510,25 @@ class VLLMWorker(Worker):
         assert not self._getting_batch_task.done(), (
             "Getting batch task is already done but async_rollout is called."
         )
+        finished_group_count: int = 0
         with self.device_lock, self.worker_timer():
-            finished_groups = await self._async_manager.wait_for_batch_results(
-                batch_size=self.batch_size_per_dp,
-            )
-            self._async_manager.handle_finished_seq_groups(
-                finished_seq_groups=finished_groups,
-                output_channel=output_channel,
-                return_logprobs=self._return_logprobs,
-                rollout_result_builder=RolloutResult.from_vllm_seq_group,
-            )
+            while finished_group_count < self.batch_size_per_dp:
+                if self.status_manager.num_seq_group_done > 0:
+                    taken_count = min(
+                        self.batch_size_per_dp - finished_group_count,
+                        self.status_manager.num_seq_group_done,
+                    )
+                    finished_group = self.status_manager.take_batched_done_seq_groups(
+                        taken_count
+                    )
+                    finished_group_count += len(finished_group)
+                    self._async_manager.handle_finished_seq_groups(
+                        finished_seq_groups=finished_group,
+                        output_channel=output_channel,
+                        return_logprobs=self._return_logprobs,
+                        rollout_result_builder=RolloutResult.from_vllm_seq_group,
+                    )
+                await asyncio.sleep(0.1)
 
     async def rollout(self, input_channel: Channel, output_channel: Channel) -> None:
         rollout_request: RolloutRequest = await input_channel.get(

@@ -650,34 +650,6 @@ class AsyncRolloutManager:
         else:
             self._status_manager.mark_aborted(seq_group)
 
-    async def wait_for_batch_results(
-        self, batch_size: int
-    ) -> Optional[list[SeqGroupInfo]]:
-        """
-        Wait until a batch of SeqGroupInfo are completed within timeout.
-        If batch is ready, return the list of SeqGroupInfo, else return None.
-
-        Args:
-            batch_size: The batch size wanted.
-        Returns:
-            Optional[list[SeqGroupInfo]]: The list of SeqGroupInfo if available, else None.
-        """
-        try:
-            while True:
-                if self._status_manager.num_seq_group_done >= batch_size:
-                    completed_seq_groups = (
-                        self._status_manager.take_batched_done_seq_groups(batch_size)
-                    )
-                    return completed_seq_groups
-                await asyncio.sleep(0.01)
-
-        except asyncio.CancelledError as e:
-            self._logger.info("Waiting for batch results cancelled.")
-            raise e
-        except Exception as e:
-            self._logger.error(f"Error while waiting for batch results: {e}")
-            raise e
-
     async def always_get_batch(
         self,
         input_channel: Channel,
