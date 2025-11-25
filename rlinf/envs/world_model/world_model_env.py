@@ -28,8 +28,8 @@ from mani_skill.utils.visualization.misc import (
 )
 from omegaconf.omegaconf import OmegaConf
 
-from rlinf.envs.worldmodel.dataset import LeRobotDatasetWrapper
-from rlinf.models.worldmodel.base_fake_model import BaseFakeModelInference
+from rlinf.envs.world_model.dataset import LeRobotDatasetWrapper
+from rlinf.models.world_model.base_fake_model import BaseFakeModelInference
 
 
 class WorldModelEnv(gym.Env):
