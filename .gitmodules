@@ -1,0 +1,3 @@
+[submodule "rlinf/models/evac/world_model/evac"]
+	path = rlinf/models/evac/world_model/evac
+	url = https://github.com/jzndd/EnerVerse-AC.git
