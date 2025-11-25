@@ -16,11 +16,12 @@
 import glob
 import os
 from typing import Any, Callable, Optional
-from torch.utils.data import Dataset
+
 import numpy as np
 import torch
 import torchvision.transforms as transforms
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from torch.utils.data import Dataset
 
 
 class FuncRegistry:

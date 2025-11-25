@@ -24,11 +24,11 @@ import torchvision.transforms as transforms
 from einops import rearrange
 from scipy.spatial.transform import Rotation as R
 
+from rlinf.data.datasets.world_model import NpyTrajectoryDatasetWrapper
 from rlinf.envs.utils import (
     to_tensor,
 )
 from rlinf.envs.world_model.base_world_env import BaseWorldEnv
-from rlinf.data.datasets.world_model import NpyTrajectoryDatasetWrapper
 from rlinf.models.world_model.evac.evac_utils.general_utils import (
     instantiate_from_config,
     load_checkpoints,
@@ -214,7 +214,9 @@ class EvacEnv(BaseWorldEnv):
 
     def _calc_step_reward(self, chunk_rewards):
         """Calculate step reward"""
-        reward_diffs = torch.zeros((self.num_envs, self.chunk), dtype=torch.float32, device=self.device)
+        reward_diffs = torch.zeros(
+            (self.num_envs, self.chunk), dtype=torch.float32, device=self.device
+        )
         # reward_diffs = torch.zeros((self.num_envs, self.chunk), dtype=torch.float32)
         for i in range(self.chunk):
             reward_diffs[:, i] = (
@@ -1107,9 +1109,7 @@ if __name__ == "__main__":
     from hydra.initialize import initialize_config_dir
 
     # # Set required environment variable
-    os.environ.setdefault(
-        "EMBODIED_PATH", "examples/embodiment"
-    )
+    os.environ.setdefault("EMBODIED_PATH", "examples/embodiment")
 
     repo_root = Path(__file__).resolve().parents[3]
 
@@ -1117,9 +1117,7 @@ if __name__ == "__main__":
     GlobalHydra.instance().clear()
 
     config_dir = Path(
-        os.environ.get(
-            "EMBODIED_CONFIG_DIR", repo_root / "examples/embodiment/config"
-        )
+        os.environ.get("EMBODIED_CONFIG_DIR", repo_root / "examples/embodiment/config")
     ).resolve()
     config_name = "libero_spatial_evac_grpo_openvlaoft_impl"
 
@@ -1127,9 +1125,7 @@ if __name__ == "__main__":
         cfg_ = compose(config_name=config_name)
         cfg = cfg_["env"]["train"]
     cfg.num_envs = 2  # for quick test
-    cfg.video_cfg.video_base_dir = os.environ.get(
-        "EVAC_VIDEO_BASE_DIR", str(repo_root)
-    )
+    cfg.video_cfg.video_base_dir = os.environ.get("EVAC_VIDEO_BASE_DIR", str(repo_root))
     env = EvacEnv(cfg, seed_offset=0, total_num_processes=1)
 
     # Reset environment
