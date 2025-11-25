@@ -16,7 +16,7 @@
 import glob
 import os
 from typing import Any, Callable, Optional
-
+from torch.utils.data import Dataset
 import numpy as np
 import torch
 import torchvision.transforms as transforms
@@ -86,7 +86,7 @@ def last_n_frames(**kwargs: Any) -> list[int]:
     return list(range(-n, 0))
 
 
-class LeRobotDatasetWrapper(torch.utils.data.Dataset):
+class LeRobotDatasetWrapper(Dataset):
     """
     A wrapper for the LeRobotDataset to provide custom frame selection policies.
 
@@ -205,7 +205,7 @@ class LeRobotDatasetWrapper(torch.utils.data.Dataset):
         }
 
 
-class NpyTrajectoryDatasetWrapper(torch.utils.data.Dataset):
+class NpyTrajectoryDatasetWrapper(Dataset):
     """
     A wrapper for npy trajectory files to provide custom frame selection policies.
     Each npy file contains a trajectory (episode) with frames as dictionaries.

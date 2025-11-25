@@ -28,7 +28,7 @@ from mani_skill.utils.visualization.misc import (
 )
 from omegaconf.omegaconf import OmegaConf
 
-from rlinf.envs.world_model.dataset import LeRobotDatasetWrapper
+from rlinf.data.datasets.world_model import LeRobotDatasetWrapper
 from rlinf.models.world_model.base_fake_model import BaseFakeModelInference
 
 

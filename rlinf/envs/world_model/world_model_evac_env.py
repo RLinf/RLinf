@@ -28,7 +28,7 @@ from rlinf.envs.utils import (
     to_tensor,
 )
 from rlinf.envs.world_model.base_world_env import BaseWorldEnv
-from rlinf.envs.world_model.dataset import NpyTrajectoryDatasetWrapper
+from rlinf.data.datasets.world_model import NpyTrajectoryDatasetWrapper
 from rlinf.models.world_model.evac.evac_utils.general_utils import (
     instantiate_from_config,
     load_checkpoints,
@@ -1162,5 +1162,8 @@ if __name__ == "__main__":
     for chunk_idx in range(delta_actions.shape[0]):
         chunk_actions = np.tile(delta_actions[chunk_idx], (num_envs, 1, 1))
         obs, reward, term, trunc, info = env.chunk_step(chunk_actions)
+        print(f"chunk {chunk_idx} done")
+        print(env.action_buffer.shape)
+        print(env.current_obs.shape)
 
     env.flush_video()
