@@ -21,7 +21,7 @@ import typing
 from contextlib import contextmanager
 from dataclasses import dataclass
 from logging import Logger
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 from omegaconf import DictConfig
 
@@ -34,6 +34,8 @@ from rlinf.utils.utils import create_task_with_callback
 if typing.TYPE_CHECKING:
     from vllm.outputs import RequestOutput
 
+    from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
+    from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
 
 COLOR_END = "\033[0m"
 
@@ -576,9 +578,12 @@ class MetaInfoStatsCollector:
 
 class AsyncRolloutManager:
     def __init__(
-        self, status_manager: RunningStatusManager, logger: Optional[Logger] = None
+        self,
+        worker: Union["SGLangWorker", "VLLMWorker"],
+        logger: Optional[Logger] = None,
     ) -> None:
-        self._status_manager = status_manager
+        self._worker = worker
+        self._status_manager = self._worker.status_manager
         self._result_putting_tasks: set[asyncio.Task] = set()
         self._pause_rollout_generation = asyncio.Event()
         self.accepted_seq_count = 0
@@ -646,7 +651,7 @@ class AsyncRolloutManager:
             self._status_manager.mark_aborted(seq_group)
 
     async def wait_for_batch_results(
-        self, batch_size: int, timeout: float = 0.1
+        self, batch_size: int
     ) -> Optional[list[SeqGroupInfo]]:
         """
         Wait until a batch of SeqGroupInfo are completed within timeout.
@@ -654,13 +659,10 @@ class AsyncRolloutManager:
 
         Args:
             batch_size: The batch size wanted.
-            timeout: The timeout to wait for batch.
-
         Returns:
             Optional[list[SeqGroupInfo]]: The list of SeqGroupInfo if available, else None.
         """
-
-        async def check_batch_completed_tasks() -> list[SeqGroupInfo]:
+        try:
             while True:
                 if self._status_manager.num_seq_group_done >= batch_size:
                     completed_seq_groups = (
@@ -669,59 +671,45 @@ class AsyncRolloutManager:
                     return completed_seq_groups
                 await asyncio.sleep(0.01)
 
-        try:
-            return await asyncio.wait_for(
-                check_batch_completed_tasks(), timeout=timeout
-            )
-        except asyncio.TimeoutError:
-            return None
+        except asyncio.CancelledError as e:
+            self._logger.info("Waiting for batch results cancelled.")
+            raise e
+        except Exception as e:
+            self._logger.error(f"Error while waiting for batch results: {e}")
+            raise e
 
-    async def get_batch(
+    async def always_get_batch(
         self,
         input_channel: Channel,
-        batch_size: int,
-        staleness_threshold: int = 0,
-        timeout: float = 0.1,
-    ) -> Optional[list[SeqGroupInfo]]:
-        """
-        Try to get a batch of SeqGroupInfo from input_channel considering the current capacity.
-        If has aborted seq groups, return them first. If not enough capacity, wait until enough capacity is available.
-        If timeout, return None.
+    ) -> None:
+        batch_size = self._worker.batch_size_per_dp
+        staleness_threshold = self._worker.staleness_threshold
 
-        Args:
-            input_channel: The input channel to get RolloutRequest.
-            batch_size: The batch size wanted.
-            staleness_threshold: The staleness threshold to consider for capacity calculation.
-            timeout: The timeout to wait for batch.
+        def setup_generation_tasks(seq_groups: list[SeqGroupInfo]):
+            for seq_group in seq_groups:
+                generation_task = create_task_with_callback(
+                    self._worker._async_generate_group(seq_group_info=seq_group),
+                    self.on_trajectory_finished,
+                )
+                self._status_manager.add_task(seq_group, generation_task)
 
-        Returns:
-            Optional[list[SeqGroupInfo]]: The list of SeqGroupInfo if available, else None.
-        """
-
-        async def check_runnable_seq_groups() -> list[SeqGroupInfo]:
-            while True:
-                capacity = (self._version + 1 + staleness_threshold) * batch_size
-                if self._pause_rollout_generation.is_set():
-                    await asyncio.sleep(0.01)
-                    continue
-                if aborted_seq_groups := self._status_manager.take_aborted_seq_groups():
-                    return aborted_seq_groups
-                running_seq_groups = self._status_manager.num_seq_group_running
-                if (
-                    capacity - (running_seq_groups + self.accepted_seq_count)
-                    >= batch_size
-                ):
-                    rollout_request: RolloutRequest = await input_channel.get(
-                        async_op=True
-                    ).async_wait()
-                    seq_group_infos = rollout_request.to_seq_group_infos()
-                    return seq_group_infos
+        while True:
+            capacity = (self._version + 1 + staleness_threshold) * batch_size
+            if self._pause_rollout_generation.is_set():
                 await asyncio.sleep(0.01)
-
-        try:
-            return await asyncio.wait_for(check_runnable_seq_groups(), timeout=timeout)
-        except asyncio.TimeoutError:
-            return None
+                continue
+            if aborted_seq_groups := self._status_manager.take_aborted_seq_groups():
+                setup_generation_tasks(aborted_seq_groups)
+                await asyncio.sleep(0.01)
+                continue
+            running_seq_groups = self._status_manager.num_seq_group_running
+            if capacity - (running_seq_groups + self.accepted_seq_count) >= batch_size:
+                rollout_request: RolloutRequest = await input_channel.get(
+                    async_op=True
+                ).async_wait()
+                seq_group_infos = rollout_request.to_seq_group_infos()
+                setup_generation_tasks(seq_group_infos)
+            await asyncio.sleep(0.01)
 
     def handle_finished_seq_groups(
         self,

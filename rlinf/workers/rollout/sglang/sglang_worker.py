@@ -34,7 +34,6 @@ from rlinf.scheduler.dynamic_scheduler.utils import (
     get_scheduler_channel,
 )
 from rlinf.utils.placement import ModelParallelComponentPlacement
-from rlinf.utils.utils import create_task_with_callback
 from rlinf.workers.rollout.sglang import Engine, io_struct
 from rlinf.workers.rollout.utils import (
     AsyncRolloutManager,
@@ -97,7 +96,8 @@ class SGLangWorker(Worker):
             rollout_batch_size * max_num_gen_batches // rollout_dp_size
         )
         self.staleness_threshold = self._cfg.algorithm.get("staleness_threshold", 0)
-        self._async_manager = AsyncRolloutManager(self.status_manager, self._logger)
+        self._async_manager = AsyncRolloutManager(worker=self, logger=self._logger)
+        self._getting_batch_task: Optional[asyncio.Task] = None
 
     def _init_scheduler(self):
         self.schedule_channel = self.connect_channel(
@@ -255,7 +255,7 @@ class SGLangWorker(Worker):
         )
         return result, request_info
 
-    async def init_worker(self):
+    async def init_worker(self, dataloader_channel: Channel):
         self._init_engine()
         await self._engine.tokenizer_manager.run_task_method(
             io_struct.TaskMethodInput(
@@ -274,6 +274,12 @@ class SGLangWorker(Worker):
             await self.offload_engine()
         if self._use_auto_scheduler:
             asyncio.create_task(self._scheduler.main_loop())
+        if self._use_async_rollout:
+            self._getting_batch_task = asyncio.create_task(
+                self._async_manager.always_get_batch(
+                    input_channel=dataloader_channel,
+                )
+            )
 
     async def offload_engine(self):
         """
@@ -477,29 +483,20 @@ class SGLangWorker(Worker):
                 )
             )
 
-    async def async_rollout(
-        self, input_channel: Channel, output_channel: Channel
-    ) -> None:
+    async def async_rollout(self, output_channel: Channel) -> None:
         assert self._async_manager is not None, (
             "AsyncRolloutManager is not initialized but async_rollout is called, set algorithm.async to True in config to enable it."
         )
+        assert self._getting_batch_task is not None, (
+            "Getting batch task is not initialized but async_rollout is called."
+        )
+        assert not self._getting_batch_task.done(), (
+            "Getting batch task is already done but async_rollout is called."
+        )
         with self.device_lock, self.worker_timer():
-            while not (
-                finished_groups := await self._async_manager.wait_for_batch_results(
-                    batch_size=self.batch_size_per_dp,
-                )
-            ):
-                if seq_groups := await self._async_manager.get_batch(
-                    input_channel=input_channel,
-                    batch_size=self.batch_size_per_dp,
-                    staleness_threshold=self.staleness_threshold,
-                ):
-                    for group in seq_groups:
-                        task = create_task_with_callback(
-                            self._async_generate_group(group),
-                            self._async_manager.on_trajectory_finished,
-                        )
-                        self.status_manager.add_task(group, task)
+            finished_groups = await self._async_manager.wait_for_batch_results(
+                batch_size=self.batch_size_per_dp,
+            )
             self._async_manager.handle_finished_seq_groups(
                 finished_seq_groups=finished_groups,
                 output_channel=output_channel,
