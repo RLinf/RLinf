@@ -31,7 +31,11 @@ from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
 )
 from rlinf.models import get_model
 from rlinf.scheduler import Channel, Cluster, Worker
-from rlinf.utils.data_iter_utils import get_iterator_k_split
+from rlinf.utils.data_iter_utils import (
+    get_iterator_k_split,
+    get_reverse_idx,
+    split_dynamic_batch_size,
+)
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.distributed import (
     compute_rollout_metrics as compute_math_rollout_metrics,
@@ -81,6 +85,12 @@ class FSDPActor(FSDPModelManager, Worker):
             * self.cfg.algorithm.group_size
             // self._world_size
         )
+
+        self.enable_dynamic_batch_size = cfg.runner.get(
+            "enable_dynamic_batch_size", False
+        )
+        self.max_tokens_per_mbs = cfg.runner.get("max_tokens_per_mbs", 2048)
+        self.dbs_indices = None
 
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
         self.device = torch.cuda.current_device()
@@ -251,27 +261,54 @@ class FSDPActor(FSDPModelManager, Worker):
             recv_batch_size += rollout_result.num_sequence
             self._load_weight_and_optimizer()
 
-            num_splits = (
-                rollout_result.num_sequence
-                // self.cfg.algorithm.logprob_forward_micro_batch_size
-            )
-            micro_batches_iter = get_iterator_k_split(
-                batch,
-                num_splits=num_splits,
-            )
-            micro_batches = list(micro_batches_iter)
+            if self.enable_dynamic_batch_size:
+                (
+                    micro_batches_iter,
+                    _,
+                    _,
+                    self.dbs_indices,
+                ) = split_dynamic_batch_size(
+                    batch=batch,
+                    cp_world_size=1,
+                    vpp_world_size=1,
+                    max_tokens_per_mbs=self.max_tokens_per_mbs,
+                    microbatch_group_size_per_vp_stage=1,
+                )
+                micro_batches = list(micro_batches_iter)
+            else:
+                num_splits = (
+                    rollout_result.num_sequence
+                    // self.cfg.algorithm.logprob_forward_micro_batch_size
+                )
+                micro_batches_iter = get_iterator_k_split(
+                    batch,
+                    num_splits=num_splits,
+                )
+                micro_batches = list(micro_batches_iter)
 
             prev_logprobs = []
             with self.worker_timer():
                 for micro_batch in micro_batches:
                     prev_logprobs.append(self.inference_step(micro_batch).cpu())
 
+                prev_logprobs_tensor = torch.cat(prev_logprobs)
+                if self.enable_dynamic_batch_size and self.dbs_indices is not None:
+                    indices = sum(self.dbs_indices, [])
+                    assert len(indices) == prev_logprobs_tensor.size(0), (
+                        f"Dynamic batch size indices length {len(indices)} does not equal "
+                        f"output length {prev_logprobs_tensor.size(0)}"
+                    )
+                    revert_indices = torch.tensor(
+                        get_reverse_idx(indices), dtype=torch.long
+                    )
+                    prev_logprobs_tensor = prev_logprobs_tensor[revert_indices]
+
                 if rollout_result.rollout_logprobs is not None:
                     # Rollout has returned logprobs, store the recomputed logprobs in recompute_prev_logprobs
-                    rollout_result.recompute_prev_logprobs = torch.cat(prev_logprobs)
+                    rollout_result.recompute_prev_logprobs = prev_logprobs_tensor
                 else:
                     # Otherwise, directly store the logprobs in prev_logprobs (the final logprobs used for training)
-                    rollout_result.prev_logprobs = torch.cat(prev_logprobs)
+                    rollout_result.prev_logprobs = prev_logprobs_tensor
 
             if compute_ref_logprobs:
                 assert self.ref_policy_state_dict is not None, (
@@ -281,7 +318,18 @@ class FSDPActor(FSDPModelManager, Worker):
                 with cpu_weight_swap(self.model, self.ref_policy_state_dict):
                     for micro_batch in micro_batches:
                         ref_logprobs.append(self.inference_step(micro_batch).cpu())
-                    rollout_result.ref_logprobs = torch.cat(ref_logprobs)
+                    ref_logprobs_tensor = torch.cat(ref_logprobs)
+                    if self.enable_dynamic_batch_size and self.dbs_indices is not None:
+                        indices = sum(self.dbs_indices, [])
+                        assert len(indices) == ref_logprobs_tensor.size(0), (
+                            f"Dynamic batch size indices length {len(indices)} does not equal "
+                            f"output length {ref_logprobs_tensor.size(0)}"
+                        )
+                        revert_indices = torch.tensor(
+                            get_reverse_idx(indices), dtype=torch.long
+                        )
+                        ref_logprobs_tensor = ref_logprobs_tensor[revert_indices]
+                    rollout_result.ref_logprobs = ref_logprobs_tensor
 
             self.put_result(rollout_result, output_channel)
 
@@ -328,18 +376,33 @@ class FSDPActor(FSDPModelManager, Worker):
             for global_batch in global_batches:
                 train_global_batch_size = global_batch["input_ids"].shape[0]
 
-                assert train_global_batch_size % self.cfg.actor.micro_batch_size == 0, (
-                    f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size=}"
-                )
+                if self.enable_dynamic_batch_size:
+                    (
+                        train_micro_batches,
+                        _,
+                        num_micro_batches,
+                        self.dbs_indices,
+                    ) = split_dynamic_batch_size(
+                        batch=global_batch,
+                        cp_world_size=1,
+                        vpp_world_size=1,
+                        max_tokens_per_mbs=self.max_tokens_per_mbs,
+                        microbatch_group_size_per_vp_stage=1,
+                    )
+                    self.gradient_accumulation = num_micro_batches
+                else:
+                    assert train_global_batch_size % self.cfg.actor.micro_batch_size == 0, (
+                        f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size=}"
+                    )
 
-                self.gradient_accumulation = (
-                    train_global_batch_size // self.cfg.actor.micro_batch_size
-                )
-                # split batch into micro_batches
-                train_micro_batches = get_iterator_k_split(
-                    global_batch,
-                    train_global_batch_size // self.cfg.actor.micro_batch_size,
-                )
+                    self.gradient_accumulation = (
+                        train_global_batch_size // self.cfg.actor.micro_batch_size
+                    )
+                    # split batch into micro_batches
+                    train_micro_batches = get_iterator_k_split(
+                        global_batch,
+                        train_global_batch_size // self.cfg.actor.micro_batch_size,
+                    )
 
                 self.optimizer.zero_grad()
                 metrics = {}
