@@ -27,17 +27,15 @@ from scipy.spatial.transform import Rotation as R
 from rlinf.envs.utils import (
     to_tensor,
 )
-
 from rlinf.envs.world_model.base_world_env import BaseWorldEnv
 from rlinf.envs.world_model.dataset import NpyTrajectoryDatasetWrapper
-from rlinf.models.world_model.evac.lvdm.data.domain_table import DomainTable
-from rlinf.models.world_model.evac.lvdm.data.statistics import StatisticInfo
 from rlinf.models.world_model.evac.evac_utils.general_utils import (
     instantiate_from_config,
     load_checkpoints,
 )
-
+from rlinf.models.world_model.evac.lvdm.data.domain_table import DomainTable
 from rlinf.models.world_model.evac.lvdm.data.get_actions import get_action_from_abs_act
+from rlinf.models.world_model.evac.lvdm.data.statistics import StatisticInfo
 
 # load reward model and action_predictor
 
@@ -121,9 +119,7 @@ class EvacEnv(BaseWorldEnv):
         return model
 
     def _load_reward_model(self):
-        from rlinf.models.world_model.evac.evac_utils.models import (
-            RewModel
-        )
+        from rlinf.models.world_model.evac.evac_utils.models import RewModel
 
         checkpoint = torch.load(
             self.cfg.reward_model_cfg.pretrained_checkpoint,
@@ -132,10 +128,6 @@ class EvacEnv(BaseWorldEnv):
         )
         rew_model = RewModel()
         rew_model.load_state_dict(checkpoint)
-        # reward_model = instantiate_from_config(self.cfg.reward_model_cfg)
-        # reward_model = load_checkpoints(
-        #     reward_model, self.cfg.reward_model_cfg, ignore_mismatched_sizes=False
-        # )
         return rew_model
 
     def _load_action_predictor(self):
@@ -219,17 +211,10 @@ class EvacEnv(BaseWorldEnv):
         self.returns = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.float32
         )
-        # self.success_once = torch.zeros(
-        #     self.num_envs, dtype=torch.bool
-        # )
-        # self.returns = torch.zeros(
-        #     self.num_envs, dtype=torch.float32
-        # )
 
     def _reset_metrics(self, env_idx=None):
         if env_idx is not None:
-            # mask = torch.zeros(self.num_envs, dtype=bool, device=self.device)
-            mask = torch.zeros(self.num_envs, dtype=bool)
+            mask = torch.zeros(self.num_envs, dtype=bool, device=self.device)
             mask[env_idx] = True
             self.prev_step_reward[mask] = 0.0
             if self.record_metrics:
@@ -260,12 +245,12 @@ class EvacEnv(BaseWorldEnv):
 
     def _calc_step_reward(self, chunk_rewards):
         """Calculate step reward"""
-        reward_diffs = torch.zeros((self.num_envs, self.chunk), dtype=torch.float32).to(
-            self.device
-        )
+        reward_diffs = torch.zeros((self.num_envs, self.chunk), dtype=torch.float32, device=self.device)
         # reward_diffs = torch.zeros((self.num_envs, self.chunk), dtype=torch.float32)
         for i in range(self.chunk):
-            reward_diffs[:, i] = self.cfg.reward_coef * chunk_rewards[:, i] - self.prev_step_reward
+            reward_diffs[:, i] = (
+                self.cfg.reward_coef * chunk_rewards[:, i] - self.prev_step_reward
+            )
             self.prev_step_reward = self.cfg.reward_coef * chunk_rewards[:, i]
 
         if self.use_rel_reward:
@@ -283,7 +268,6 @@ class EvacEnv(BaseWorldEnv):
         seed: Optional[Union[int, list[int]]] = None,
         options: Optional[dict] = {},
     ):
-        print("excute the reset function")
         self.elapsed_steps = 0
 
         num_envs = self.num_envs
@@ -363,7 +347,6 @@ class EvacEnv(BaseWorldEnv):
             # [3, n_previous, H, W] -> [1, 3, 1, n_previous, H, W]
             env_obs = img_tensor.unsqueeze(1)
             self.current_obs.append(env_obs)
-        # self.current_obs = torch.stack(self.current_obs, dim=0) # [num_envs, 3, 1, n_previous, H, W]
         self.current_obs = torch.stack(self.current_obs, dim=0).to(
             self.device
         )  # [num_envs, 3, 1, n_previous, H, W]
@@ -437,13 +420,13 @@ class EvacEnv(BaseWorldEnv):
         extract_chunk_obs = self.current_obs[:, :, :, -self.chunk :, :, :].permute(
             0, 3, 1, 2, 4, 5
         )  # [num_envs, chunk, 3, h, w]
-        # 先整理为 [num_envs * chunk, 3, h, w], 推理后获得 [num_envs * chunk, 1]
+        # Reshape to [num_envs * chunk, 3, h, w], after inference get [num_envs * chunk, 1]
         extract_chunk_obs = extract_chunk_obs.reshape(
             self.num_envs * self.chunk, 3, h, w
         )
         # Move to device before passing to reward model
         extract_chunk_obs = extract_chunk_obs.to(self.device)
-        
+
         rewards = self.reward_model.predict_rew(extract_chunk_obs)
         # [num_envs, chunk, 1]
         rewards = rewards.reshape(self.num_envs, self.chunk)
@@ -645,7 +628,6 @@ class EvacEnv(BaseWorldEnv):
         extrinsic_batch = i_c2w_list.repeat(num_envs, 1, 1, 1)
 
         fps = torch.tensor([2.0]).to(dtype=torch.float32, device=self.device)
-        # fps = torch.tensor([2.0]).to(dtype=torch.float32)
         # pad to num_envs
         fps = fps.repeat(num_envs)
         domain_id = torch.LongTensor([DomainTable["agibotworld"]]).to(
@@ -698,17 +680,6 @@ class EvacEnv(BaseWorldEnv):
             ).to(
                 dtype=self.inference_dtype, device=self.device
             )  # [num_envs, c, n_previous+chunk, h, w]
-
-            # pre_z = torch.cat(
-            #     (
-            #         self.all_samples[:, :, idx_history],  # [num_envs, c, n_previous-1, h, w]
-            #         self.all_samples[:, :, -1:]
-            #         .repeat(1, 1, self.chunk + 1, 1, 1),  # [num_envs, c, chunk+1, h, w]
-            #     ),
-            #     dim=2,
-            # ).to(
-            #     dtype=self.inference_dtype
-            # )  # [num_envs, c, n_previous+chunk, h, w]
 
         z, cond, xc, fs, did, img_emb = self.model.get_batch_input(
             batch,
@@ -951,9 +922,6 @@ class EvacEnv(BaseWorldEnv):
         raw_chunk_truncations = torch.zeros(
             self.num_envs, self.chunk, dtype=torch.bool, device=self.device
         )
-        # raw_chunk_truncations = torch.zeros(
-        #     num_envs, chunk_size, dtype=torch.bool
-        # )
         truncations = torch.tensor(self.elapsed_steps >= self.cfg.max_episode_steps).to(
             self.device
         )
@@ -984,7 +952,9 @@ class EvacEnv(BaseWorldEnv):
         # Get actions for the current chunk (extract before updating action_buffer)
         # action_buffer shape: [num_envs, n_previous + chunk, action_dim=16]
         # Extract last chunk steps: [num_envs, chunk, action_dim]
-        chunk_actions_for_render = self.action_buffer[:, -self.chunk:, :].detach().cpu().numpy()
+        chunk_actions_for_render = (
+            self.action_buffer[:, -self.chunk :, :].detach().cpu().numpy()
+        )
         # Get rewards for the current chunk (chunk_rewards_tensors shape: [num_envs, chunk])
         chunk_rewards_for_render = chunk_rewards_tensors.detach().cpu().numpy()
 
@@ -993,7 +963,9 @@ class EvacEnv(BaseWorldEnv):
         # Reshape rewards: [num_envs, chunk] -> [chunk, num_envs]
         chunk_rewards_for_render = chunk_rewards_for_render.T
 
-        self.add_new_frames(actions=chunk_actions_for_render, rewards=chunk_rewards_for_render)
+        self.add_new_frames(
+            actions=chunk_actions_for_render, rewards=chunk_rewards_for_render
+        )
 
         # Update action_buffer after extracting actions for rendering
         self.action_buffer = self.action_buffer[:, -self.chunk - self.n_previous :, :]
@@ -1032,7 +1004,9 @@ class EvacEnv(BaseWorldEnv):
                 images.append(frame_np)
 
                 # Store CHW format for RGB info (same as libero_env_copy.py)
-                frame_chw = frame_tensor.detach().cpu().numpy()  # Already CHW format [C, H, W]
+                frame_chw = (
+                    frame_tensor.detach().cpu().numpy()
+                )  # Already CHW format [C, H, W]
                 # Normalize from [-1, 1] to [0, 255] for CHW
                 frame_chw = (frame_chw + 1.0) / 2.0 * 255.0
                 frame_chw = np.clip(frame_chw, 0, 255).astype(np.uint8)
@@ -1052,7 +1026,9 @@ class EvacEnv(BaseWorldEnv):
             if self.render_rgb is None:
                 self.render_rgb = chunk_rgb_info  # [chunk_len, num_envs, C, H, W]
             else:
-                self.render_rgb = np.concatenate([self.render_rgb, chunk_rgb_info], axis=0)
+                self.render_rgb = np.concatenate(
+                    [self.render_rgb, chunk_rgb_info], axis=0
+                )
 
         # Add actions into buffer
         if actions is not None:
@@ -1155,27 +1131,37 @@ class EvacEnv(BaseWorldEnv):
 
 
 if __name__ == "__main__":
+    from pathlib import Path
+
     from hydra import compose
     from hydra.core.global_hydra import GlobalHydra
     from hydra.initialize import initialize_config_dir
 
-    # Set required environment variable
+    # # Set required environment variable
     os.environ.setdefault(
-        "EMBODIED_PATH", "/mnt/mnt/public/jzn/workspace/RLinf/examples/embodiment"
+        "EMBODIED_PATH", "examples/embodiment"
     )
+
+    repo_root = Path(__file__).resolve().parents[3]
 
     # Clear any existing Hydra instance
     GlobalHydra.instance().clear()
 
-    config_dir = "/mnt/mnt/public/jzn/workspace/RLinf/examples/embodiment/config"
+    config_dir = Path(
+        os.environ.get(
+            "EMBODIED_CONFIG_DIR", repo_root / "examples/embodiment/config"
+        )
+    ).resolve()
     config_name = "libero_spatial_evac_grpo_openvlaoft_impl"
 
     print(f"Loading config: {config_name} from {config_dir}")
-    with initialize_config_dir(config_dir=config_dir, version_base="1.1"):
+    with initialize_config_dir(config_dir=str(config_dir), version_base="1.1"):
         cfg_ = compose(config_name=config_name)
         cfg = cfg_["env"]["train"]
-    cfg.num_envs = 2
-    cfg.video_cfg.video_base_dir = "/mnt/mnt/public/jzn/workspace/latest/RLinf"
+    cfg.num_envs = 2  # for quick test
+    cfg.video_cfg.video_base_dir = os.environ.get(
+        "EVAC_VIDEO_BASE_DIR", str(repo_root)
+    )
     env = EvacEnv(cfg, seed_offset=0, total_num_processes=1)
 
     # Reset environment
@@ -1189,7 +1175,12 @@ if __name__ == "__main__":
     num_envs = cfg.num_envs
 
     def read_delta_actions(num_frames=8):
-        path = "/mnt/mnt/public/jzn/workspace/RLinf/reward_model/reward_data/embodiment_converted/train_data/step_0_seed_0_traj_0.npy"
+        default_path = (
+            repo_root
+            / "reward_model/reward_data/embodiment_converted/train_data"
+            / "step_0_seed_0_traj_0.npy"
+        )
+        path = Path(os.environ.get("EVAC_DELTA_ACTION_PATH", default_path)).resolve()
         traj = np.load(path, allow_pickle=True)
         delta_actions = np.stack(
             [frame["delta_action"] for frame in traj[:num_frames]], axis=0
@@ -1200,7 +1191,7 @@ if __name__ == "__main__":
     chunk_traj = num_frames // chunk_steps
     delta_actions = read_delta_actions()
     action_dim = delta_actions.shape[-1]
-    
+
     delta_actions = delta_actions.reshape(chunk_traj, chunk_steps, action_dim)
 
     for chunk_idx in range(delta_actions.shape[0]):

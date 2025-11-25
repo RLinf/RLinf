@@ -22,6 +22,7 @@ import torch
 import torchvision.transforms as transforms
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
+
 class FuncRegistry:
     """A registry for functions."""
 
