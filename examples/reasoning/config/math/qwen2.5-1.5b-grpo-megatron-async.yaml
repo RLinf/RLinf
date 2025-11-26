@@ -75,8 +75,8 @@ algorithm:
   clip_ratio_low: null # if null or not set, will use ratio_clip_eps
   clip_ratio_high: null # if null or not set, will use ratio_clip_eps
 
-  adv_type: grpo
-  normalize_advantages: False
+  adv_type: gae
+  normalize_advantages: True
   early_stop_imp_ratio: 5.0
   use_valid_token_scale: True
 
@@ -229,7 +229,7 @@ actor:
     overlap_param_gather: False
     optimizer_enable_pin: false
     overlap_param_gather_with_optimizer_step: False
-    clip_grad: 0.8
+    clip_grad: 1.0
     loss_scale: 65536
 
   lr_sched:

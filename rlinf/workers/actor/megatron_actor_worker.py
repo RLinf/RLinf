@@ -773,11 +773,6 @@ class MegatronActor(MegatronModelManager, Worker):
         self._load_weight_and_optimizer()
         self._training_setup()
 
-        # Advantage normalization
-        if self.cfg.algorithm.normalize_advantages:
-            mask = batch["attention_mask"][:, -self.response_len :]
-            batch["advantages"] = masked_normalization(batch["advantages"], mask)
-
         # Valid token scale
         if self.cfg.algorithm.use_valid_token_scale:
             self._setup_valid_token_scale(batch)
@@ -833,7 +828,6 @@ class MegatronActor(MegatronModelManager, Worker):
             self.compute_advantages_and_returns
         )
 
-        # Advantage normalization
         if self.cfg.algorithm.normalize_advantages:
 
             def normalize_advantages(batch: dict[str, torch.Tensor]):
