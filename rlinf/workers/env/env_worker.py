@@ -243,7 +243,7 @@ class EnvWorker(Worker):
                             enable_offload=enable_offload,
                         )
                     )
-        elif self.cfg.env.train.simulator_type == "world_model":
+        elif self.cfg.env.train.simulator_type == "world_model_libero":
             from rlinf.envs.libero.libero_env import LiberoEnv
             from rlinf.envs.world_model.world_model_evac_env import EvacEnv
 

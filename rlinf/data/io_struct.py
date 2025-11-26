@@ -1092,7 +1092,7 @@ class EnvOutput:
                     for value in obs["images_and_states"]["full_image"]
                 ]
             )
-        elif self.simulator_type == "world_model":
+        elif self.simulator_type == "world_model_libero":
             image_tensor = torch.stack(
                 [
                     value.clone().permute(2, 0, 1)

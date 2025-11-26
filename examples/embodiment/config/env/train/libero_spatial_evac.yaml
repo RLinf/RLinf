@@ -1,4 +1,4 @@
-simulator_type: world_model
+simulator_type: world_model_libero
 task_suite_name: libero_spatial
 
 auto_reset: ${algorithm.auto_reset}
@@ -32,12 +32,11 @@ n_previous: 4
 n_view: 1
 
 sample_size: [256, 256]
-initial_image_path: /mnt/mnt/public/jzn/workspace/RLinf-backup/reward_model/world_model_buffer/
+initial_image_path: /path/home/RLinf/dataset/world_model_buffer/
 
 world_model_cfg:
   
-  # pretrained_checkpoint: /path/home/RLinf/rlinf/envs/world_model/evac/model_ckpt/epoch=281-step=34800.ckpt
-  pretrained_checkpoint:  /mnt/mnt/public/zefang/AgiBotWorldChallengeIROS2025-WorldModelBaseline/log/agibotworld_1114/checkpoints/trainstep_checkpoints/epoch=723-step=87000.ckpt
+  pretrained_checkpoint: /path/home/RLinf/rlinf/envs/world_model/evac/model_ckpt/epoch=281-step=34800.ckpt
   
   auto_padzero_input_block: False
   auto_padrand_input_block: False
@@ -164,7 +163,7 @@ world_model_cfg:
     img_cond_stage_config:
       target: lvdm.modules.encoders.condition.FrozenOpenCLIPImageEmbedderV2
       params:
-        abspath: /mnt/mnt/public/zefang/AgiBotWorldChallengeIROS2025-WorldModelBaseline/evac/model_ckpt/open_clip_pytorch_model.bin
+        abspath: /opt/model_ckpt/open_clip_pytorch_model.bin
         freeze: true
     
     image_proj_stage_config:
@@ -182,14 +181,11 @@ world_model_cfg:
 
 reward_model_cfg:
   target: reward_model.classifier.RewModel
-  # pretrained_checkpoint: /path/home/RLinf/rlinf/envs/world_model/evac/model_ckpt/reward_model/libero_spatial_256/classifier/backup/750.pth
-  pretrained_checkpoint: /mnt/mnt/public/jzn/workspace/RLinf-backup/reward_model/data_/ckpt/libero_spatial_256/classifier/seed42_libero_spatial/0.pth
-  # pretrained_checkpoint: /mnt/mnt/public/jzn/workspace/RLinf-backup/reward_model/data_/ckpt/libero_spatial_256/classifier/seed42_libero_spatial_balance/10.pth
+  pretrained_checkpoint: /path/home/RLinf/rlinf/envs/world_model/evac/model_ckpt/reward_model/libero_spatial_256/classifier/backup/750.pth
 
 action_predictor_cfg:
   target: action_model.action_predictor.ActionPredictorMLP
-  pretrained_checkpoint: /mnt/mnt/public/jzn/workspace/RLinf-backup/reward_model/checkpoints/action_predictor/best_model.pth
-
+  pretrained_checkpoint: /path/home/RLinf/reward_model/checkpoints/action_predictor/best_model.pth
 ###  ------------------evac params define here ------------------
 
 

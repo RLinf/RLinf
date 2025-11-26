@@ -1,4 +1,4 @@
-simulator_type: world_model
+simulator_type: world_model_libero
 task_suite_name: libero_spatial
 
 auto_reset: True

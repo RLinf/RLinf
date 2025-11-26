@@ -14,6 +14,7 @@ cluster:
   num_nodes: 1
   component_placement:
     actor,rollout,env: 0,1,2,3,4,5,6,7
+    # if OOM, then reduce the batch_size or use the folloing config
     # actor: 4,5,6,7
     # rollout: 4,5,6,7
     # env: 0,1,2,3
@@ -38,6 +39,7 @@ runner:
 algorithm:
   auto_reset: False
   ignore_terminations: False
+  specific_reset_id: null # can be a number or null. Indicate the reset state id (related to the task_id and trial_id) 
   use_fixed_reset_state_ids: True
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
@@ -103,7 +105,7 @@ rollout:
     queue_size: 0
   mode: "colocate"
   generation_backend: "huggingface"
-  model_dir: "/mnt/mnt/public/zefang/Openvla-oft-SFT-libero-spatial-traj1/"
+  model_dir: "/path/to/model/Openvla-oft-SFT-libero-spatial-traj1/"
   precision: ${actor.model.precision}
   enable_offload: False
   pipeline_stage_num: 1
@@ -115,10 +117,10 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: "/mnt/mnt/public/zefang/Openvla-oft-SFT-libero-spatial-traj1/"
+  checkpoint_load_path: "/path/to/model/Openvla-oft-SFT-libero-spatial-traj1/"
   checkpoint_save_path: "../results"
   micro_batch_size: 32
-  global_batch_size: 512 # micro_batch_size * world_size <= global_batch_size <= n_chunk_steps * group_size * rollout_epoch * num_group_envs
+  global_batch_size: 256 # micro_batch_size * world_size <= global_batch_size <= n_chunk_steps * group_size * rollout_epoch * num_group_envs
   # global_batch_size: 16384
   seed: 1234
   enable_offload: False
@@ -158,7 +160,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/mnt/mnt/public/zefang/Openvla-oft-SFT-libero-spatial-traj1/"
+    tokenizer_model: "/path/to/model/Openvla-oft-SFT-libero-spatial-traj1/"
     use_fast: False
     trust_remote_code: True
     padding_side: "right"
@@ -176,8 +178,7 @@ actor:
     cpu_offload: False           # whether to offload parameters and gradients to CPU when not in use，if True, actor's enable_offload should be True too.
     offload_pin_memory: False    # whether FSDP2's CPU offload policy should pin memory when cpu_offload is True
     reshard_after_forward: True  # if True, FSDP2 will reshard parameters after forward pass to save memory
-
-    enable_gradient_accumulation: True  # if True, gradient accumulation will be enabled for FSDP/FSDP2 training, which will enhance training performance but increase memory usage.
+    enable_gradient_accumulation: False  # if True, gradient accumulation will be enabled for FSDP/FSDP2 training, which will enhance training performance but increase memory usage.
     forward_prefetch: False             # if True, FSDP will explicitly prefetches the next upcoming all-gather while executing in the forward pass. only use with static graphs. Overlaps communication with computation to improve performance.
     limit_all_gathers: False            # if True, FSDP will synchronizes CPU threads to limit the number of concurrent all-gathers. Only affects strategies that schedule all-gathers
     backward_prefetch: null             # options are null, 'pre', 'post'. if 'pre', FSDP will prefetch the next upcoming all-gather while computing gradients. if 'post', FSDP will prefetch the next all-gather until current gradient is computed.
