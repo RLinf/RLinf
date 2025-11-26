@@ -91,7 +91,7 @@ def get_init_weight_context_manager(use_meta_tensor=True):
     return init_context
 
 
-def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_vla_model=False):
+def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_openvla_model=False):
     """
     FSDP wrap policy that handles both standard transformer models and VLA models.
 
@@ -128,8 +128,8 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_vla_model=False)
     # Build policies list
     policies = []
 
-    # Add vision transformer policies for VLA models
-    if is_vla_model:
+    # Add vision transformer policies for OpenVLA models
+    if is_openvla_model:
         from prismatic.extern.hf.modeling_prismatic import PrismaticProjector
         from timm.models.vision_transformer import VisionTransformer
 

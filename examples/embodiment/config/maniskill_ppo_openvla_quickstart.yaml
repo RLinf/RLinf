@@ -119,24 +119,15 @@ actor:
     queue_size: 0
   training_backend: "fsdp"
 
-  checkpoint_load_path: "/path/to/model/openvla-7b-rlvla-warmup/"
-  checkpoint_save_path: "../results"
-
   micro_batch_size: 20
   global_batch_size: 160
   seed: 1234
   enable_offload: True
 
-  tokenizer:
-    tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/openvla-7b-rlvla-warmup/"
-    extra_vocab_size: 421
-    use_fast: False
-    trust_remote_code: True
-    padding_side: "right"
-
   model:
-    model_name: "openvla"
+    model_dir: "/path/to/model/openvla-7b-rlvla-warmup/"
+    ckpt_path: null
+    model_type: "openvla"
     action_dim: 7
     num_action_chunks: 1
     use_proprio: False
@@ -156,12 +147,19 @@ actor:
     image_size: [224, 224]
     is_lora: True
     lora_rank: 32
-    ckpt_path: null
-    use_wrist_image: False
+
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
     trust_remote_code: True
     gradient_checkpointing: False
+
+  tokenizer:
+    tokenizer_type: "HuggingFaceTokenizer"
+    tokenizer_model: "/path/to/model/openvla-7b-rlvla-warmup/"
+    extra_vocab_size: 421
+    use_fast: False
+    trust_remote_code: True
+    padding_side: "right"
 
   optim:
     lr: 1.0e-4

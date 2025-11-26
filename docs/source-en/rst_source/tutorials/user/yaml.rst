@@ -197,7 +197,7 @@ rollout
     gpu_memory_utilization: 0.55
 
     model_dir: ../../model/DeepSeek-R1-Distill-Qwen-1.5B/
-    model_arch: qwen2.5
+    model_type: qwen2.5
 
     recompute_logprobs: True
 
@@ -207,7 +207,7 @@ rollout
 
 ``rollout.model_dir``: Path to the HF model used by the generation backend.
 
-``rollout.model_arch``: Internal architecture tag used by the backend (e.g., qwen2.5).
+``rollout.model_type``: Internal architecture tag used by the backend (e.g., qwen2.5).
 
 ``rollout.recompute_logprobs``: Recompute log-probs for sampled sequences.
 
@@ -927,7 +927,7 @@ actor
     enable_offload: True
 
     model:
-      model_name: "openvla_oft"
+      model_type: "openvla_oft"
       action_dim: 7
       num_action_chunks: 8
       use_proprio: False
@@ -949,7 +949,6 @@ actor
       lora_path: /storage/models/oft-sft/lora_004000
       ckpt_path: null
       num_images_in_input: 1
-      use_wrist_image: False
       attn_implementation: "flash_attention_2"
       low_cpu_mem_usage: True
       trust_remote_code: True
@@ -985,7 +984,7 @@ actor
 
 **Model Configuration:**
 
-``actor.model.model_name``: Model architecture name (openvla_oft).
+``actor.model.model_type``: Model architecture name (openvla_oft).
 
 ``actor.model.action_dim``: Action space dimensionality.
 
@@ -1026,8 +1025,6 @@ actor
 ``actor.model.ckpt_path``: Path to model checkpoint.
 
 ``actor.model.num_images_in_input``: Number of images in model input.
-
-``actor.model.use_wrist_image``: Whether to use wrist image in model input.
 
 ``actor.model.attn_implementation``: Attention implementation (flash_attention_2).
 
@@ -1125,14 +1122,6 @@ The path is
 ``group_size``: Number of environments per group (inherits from algorithm.group_size).
 
 ``use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO (inherits from algorithm.use_fixed_reset_state_ids).
-
-**Input Configuration**
-
-.. code:: yaml
-
-  use_wrist_image: False
-
-``use_wrist_image``: If set to True, wrist images will be added in model inputs.
 
 **Environment Scaling**
 

@@ -109,15 +109,15 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
-  checkpoint_save_path: "../results"
   micro_batch_size: 2
   global_batch_size: 160
   seed: 1234
   enable_offload: True
 
   model:
-    model_name: "openvla_oft"
+    model_dir: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
+    ckpt_path: null
+    model_type: "openvla_oft"
     value_type: ${algorithm.reward_type}  # 'action' or 'token'
     action_dim: 23
     num_action_chunks: 8
@@ -134,8 +134,6 @@ actor:
     image_size: [224, 224]
     is_lora: False
     lora_rank: 32
-    ckpt_path: null
-    use_wrist_image: False
     num_images_in_input: 3
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True

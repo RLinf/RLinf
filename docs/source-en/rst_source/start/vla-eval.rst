@@ -126,8 +126,8 @@ Quick Start — LIBERO
    rollout:
      model_dir: "/path/to/sft_base_model/"
    actor:
-     checkpoint_load_path: "/path/to/sft_base_model/"
      model:
+       model_dir: "/path/to/sft_base_model/"
        ckpt_path: "/path/to/rl_ckpt.pt"
      tokenizer:
        tokenizer_model: "/path/to/sft_base_model/"

@@ -40,9 +40,8 @@ these examples, then iterating toward your custom task. Key options include
 
 - ``rollout.model_dir``
 - ``actor.tokenizer.tokenizer_model``
-- ``actor.checkpoint_load_path``
+- ``actor.model.model_dir``
 - ``runner.logger.log_path``
-- ``actor.checkpoint_save_path``
 
 **3. Training hyperparameters such as max steps and batch sizes**
 

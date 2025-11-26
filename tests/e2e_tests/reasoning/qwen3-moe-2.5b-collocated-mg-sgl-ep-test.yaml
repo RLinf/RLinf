@@ -85,7 +85,7 @@ rollout:
   gpu_memory_utilization: 0.55
 
   model_dir: /workspace/dataset/Qwen3-2.5B-A1B
-  model_arch: qwen3_moe
+  model_type: qwen3_moe
   precision: ${actor.model.precision}              # precision for rollout model, support [fp16, bf16, fp32]
   enforce_eager: False         # if False, vllm will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp

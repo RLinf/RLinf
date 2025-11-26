@@ -18,6 +18,8 @@ from typing import Callable, Optional
 
 import torch
 
+from rlinf.config import SupportedModel, get_supported_model
+
 
 class TransformType(Enum):
     SPLIT_QKV = "split_qkv"
@@ -576,22 +578,16 @@ class Qwen3_MoEConvertor(BaseConvertor):
         ]
 
 
-_MG2HF_CONVERTOR_REGISTRY = {}
+_MG2HF_CONVERTOR_REGISTRY = {
+    SupportedModel.QWEN2_5: Qwen2_5Convertor,
+    SupportedModel.QWEN2_5_VL: Qwen2_5VLConvertor,
+    SupportedModel.QWEN3_MOE: Qwen3_MoEConvertor,
+}
 
 
-def register_mg2hf_convertor(model_arch: str, convertor_cls: Callable) -> None:
-    if model_arch in _MG2HF_CONVERTOR_REGISTRY:
-        raise ValueError(f"Convertor for {model_arch} already registered")
-    _MG2HF_CONVERTOR_REGISTRY[model_arch] = convertor_cls
-
-
-register_mg2hf_convertor("qwen2.5", Qwen2_5Convertor)
-register_mg2hf_convertor("qwen2.5-vl", Qwen2_5VLConvertor)
-register_mg2hf_convertor("qwen3_moe", Qwen3_MoEConvertor)
-
-
-def get_mg2hf_convertor(model_arch: str, config, strict: bool = False) -> BaseConvertor:
-    if model_arch not in _MG2HF_CONVERTOR_REGISTRY:
-        raise ValueError(f"No convertor registered for {model_arch}")
-    convertor_cls = _MG2HF_CONVERTOR_REGISTRY[model_arch]
+def get_mg2hf_convertor(model_type: str, config, strict: bool = False) -> BaseConvertor:
+    model_type = get_supported_model(model_type)
+    if model_type not in _MG2HF_CONVERTOR_REGISTRY:
+        raise ValueError(f"No convertor registered for {model_type.value}")
+    convertor_cls = _MG2HF_CONVERTOR_REGISTRY[model_type]
     return convertor_cls(config=config, strict=strict)

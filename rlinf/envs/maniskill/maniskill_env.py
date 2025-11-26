@@ -126,7 +126,7 @@ class ManiskillEnv(gym.Env):
 
     def _wrap_obs(self, raw_obs):
         if self.env.obs_mode == "state":
-            wrapped_obs = {"images": None, "task_description": None, "state": raw_obs}
+            wrapped_obs = {"images": None, "task_descriptions": None, "states": raw_obs}
         else:
             wrapped_obs = self._extract_obs_image(raw_obs)
         return wrapped_obs

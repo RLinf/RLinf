@@ -126,7 +126,7 @@ actor:
     precision: "bf16"
     trust_remote_code: True
     is_lora: false
-    model_name: "gr00t"
+    model_type: "gr00t"
     action_dim: 7
     num_action_chunks: 5
     denoising_steps: 4

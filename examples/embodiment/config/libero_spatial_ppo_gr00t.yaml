@@ -116,25 +116,24 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: "/path/to/RLinf-Gr00t-SFT-Spatial"
-  checkpoint_save_path: "../results"
   micro_batch_size: 128
   global_batch_size: 1024
   seed: 1234
   enable_offload: False
 
   model:
+    model_dir: "/path/to/RLinf-Gr00t-SFT-Spatial"
+    ckpt_path: null
     precision: "bf16"
     trust_remote_code: True
     is_lora: false
-    model_name: "gr00t"
+    model_type: "gr00t"
     action_dim: 7
     num_action_chunks: 5
     denoising_steps: 4
     policy_setup: "widowx_bridge"
     obs_converter_type: "libero"
     embodiment_tag: "libero_franka"
-    use_wrist_image: True
     rl_head_config:
       joint_logprob: False
       noise_method: "flow_sde"

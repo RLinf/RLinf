@@ -17,6 +17,7 @@ import importlib.util
 import logging
 import os
 from dataclasses import asdict
+from enum import Enum
 from typing import TYPE_CHECKING, Callable, Optional, Union
 
 import torch
@@ -35,16 +36,38 @@ if TYPE_CHECKING:
 
 logging.getLogger().setLevel(logging.INFO)
 
-SUPPORTED_MODEL_ARCHS = [
-    "qwen2.5",
-    "qwen2.5_vl",
-    "openvla",
-    "openvla_oft",
-    "qwen3_moe",
-    "openpi",
-    "mlp_policy",
-    "gr00t",
-]
+
+class SupportedModel(Enum):
+    # Reasoning models
+    QWEN2_5 = ("qwen2.5", "qwen", "reasoning")
+    QWEN2_5_VL = ("qwen2.5_vl", "qwen", "reasoning")
+    QWEN3_MOE = ("qwen3_moe", "qwen", "reasoning")
+
+    # Embodied models
+    OPENVLA = ("openvla", "openvla", "embodied")
+    OPENVLA_OFT = ("openvla_oft", "openvla", "embodied")
+    OPENPI = ("openpi", "pi", "embodied")
+    MLP_POLICY = ("mlp_policy", "mlp", "embodied")
+    GR00T = ("gr00t", "gr00t", "embodied")
+
+    def __new__(cls, value, family, category):
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.family = family
+        obj.category = category
+        return obj
+
+
+def get_supported_model(model_type: str) -> SupportedModel:
+    try:
+        return SupportedModel(model_type)
+    except ValueError as err:
+        supported_models = [e.value for e in SupportedModel]
+        raise NotImplementedError(
+            f"Model Type: {model_type} not supported. Supported models: {supported_models}"
+        ) from err
+
+
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
 SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl"]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
@@ -156,6 +179,8 @@ def activation_to_func(
 
 
 def validate_rollout_cfg(cfg, algorithm_cfg):
+    assert get_supported_model(cfg.model_type)
+
     def validate_sglang_cfg(cfg):
         assert cfg is not None, (
             "sglang config must be specified if rollout_backend is sglang."
@@ -181,9 +206,7 @@ def validate_rollout_cfg(cfg, algorithm_cfg):
     with open_dict(cfg):
         cfg.gpu_memory_utilization = cfg.get("gpu_memory_utilization", 0.65)
         assert cfg.model_dir is not None, "model_dir must be specified for rollout."
-        assert cfg.model_arch in SUPPORTED_MODEL_ARCHS, (
-            f"model_arch must be one of {SUPPORTED_MODEL_ARCHS}"
-        )
+
         cfg.disable_log_stats = cfg.get("disable_log_stats", False)
         cfg.detokenize = cfg.get("detokenize", False)
         cfg.rollout_backend = cfg.get("rollout_backend", "sglang")
@@ -638,8 +661,9 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
 
 
 def validate_embodied_cfg(cfg):
-    assert cfg.actor.model.model_name in SUPPORTED_MODEL_ARCHS, (
-        f"Model {cfg.actor.model.model_name} is not supported"
+    assert get_supported_model(cfg.actor.model.model_type).category == "embodied", (
+        f"Model type: '{cfg.actor.model.model_type}' is not an embodied model. "
+        f"Supported embodied models: {[e.value for e in SupportedModel if e.category == 'embodied']}."
     )
 
     # process num-envs
@@ -675,13 +699,6 @@ def validate_embodied_cfg(cfg):
             cfg.env.eval.init_params.control_mode = get_robot_control_mode(
                 cfg.actor.model.policy_setup
             )
-        elif cfg.env.train.simulator_type == "libero":
-            if cfg.actor.model.get("num_images_in_input", 1) > 1:
-                assert cfg.actor.model.get("use_wrist_image", False), (
-                    "Invalid config: Multiple input images are enabled "
-                    "(num_images_in_input > 1) but 'use_wrist_image' is set to False. "
-                    "Please enable wrist images by setting 'use_wrist_image=True'."
-                )
         elif cfg.env.train.simulator_type == "behavior":
             import omnigibson as og
 
@@ -747,10 +764,6 @@ def validate_embodied_cfg(cfg):
 
 
 def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
-    assert cfg.rollout.model_arch in SUPPORTED_MODEL_ARCHS, (
-        f"Model {cfg.rollout.model_arch} is not supported"
-    )
-
     assert cfg.algorithm.recompute_logprobs or cfg.rollout.return_logprobs, (
         "One of `algorithm.recompute_logprobs` or `rollout.return_logprobs` must be True to compute `prev_logprobs`."
     )
@@ -789,8 +802,8 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
 
 
 def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
-    assert cfg.rollout.model_arch == "qwen2.5", (
-        f"Model {cfg.rollout.model_arch} is not supported"
+    assert get_supported_model(cfg.rollout.model_type) == SupportedModel.QWEN2_5, (
+        f"Model type {cfg.rollout.model_type} is not supported"
     )
 
     assert cfg.algorithm.recompute_logprobs or cfg.rollout.return_logprobs, (

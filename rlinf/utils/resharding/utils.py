@@ -16,35 +16,40 @@
 import torch
 from megatron.core import parallel_state
 
+from rlinf.config import SupportedModel, get_supported_model
 
-def get_tp_reshard_fn(model_arch: str):
-    if model_arch == "qwen2.5":
+
+def get_tp_reshard_fn(model_type: str):
+    model_type = get_supported_model(model_type)
+    if model_type == SupportedModel.QWEN2_5:
         return tp_reshard_fn_qwen2_5
-    elif model_arch == "qwen3_moe":
+    elif model_type == SupportedModel.QWEN3_MOE:
         return tp_reshard_fn_qwen3_moe
     else:
         raise NotImplementedError(
-            f"get_tp_reshard_fn for model_arch {model_arch} is not implemented"
+            f"get_tp_reshard_fn for model_type {model_type} is not implemented"
         )
 
 
-def get_tpe_reshard_fn(model_arch: str):
-    if model_arch == "qwen3_moe":
+def get_tpe_reshard_fn(model_type: str):
+    model_type = get_supported_model(model_type)
+    if model_type == SupportedModel.QWEN3_MOE:
         return tpe_reshard_fn_qwen3_moe
     else:
         raise NotImplementedError(
-            f"get_tpe_reshard_fn for model_arch {model_arch} is not implemented"
+            f"get_tpe_reshard_fn for model_type {model_type} is not implemented"
         )
 
 
-def get_pp_reshard_fn(model_arch: str):
-    if model_arch == "qwen2.5":
+def get_pp_reshard_fn(model_type: str):
+    model_type = get_supported_model(model_type)
+    if model_type == SupportedModel.QWEN2_5:
         return pp_reshard_fn_qwen2_5
-    elif model_arch == "qwen3_moe":
+    elif model_type == SupportedModel.QWEN3_MOE:
         return pp_reshard_fn_qwen3_moe
     else:
         raise NotImplementedError(
-            f"get_pp_reshard_fn for model_arch {model_arch} is not implemented"
+            f"get_pp_reshard_fn for model_type {model_type} is not implemented"
         )
 
 

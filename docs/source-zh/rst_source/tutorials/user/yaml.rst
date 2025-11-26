@@ -190,7 +190,7 @@ rollout
     gpu_memory_utilization: 0.55
 
     model_dir: ../../model/DeepSeek-R1-Distill-Qwen-1.5B/
-    model_arch: qwen2.5
+    model_type: qwen2.5
 
     recompute_logprobs: True
 
@@ -200,7 +200,7 @@ rollout
 
 ``rollout.model_dir``：生成后端所用 HF 模型路径。  
 
-``rollout.model_arch``：后端内部使用的模型架构标记（如 qwen2.5）。  
+``rollout.model_type``：后端内部使用的模型架构标记（如 qwen2.5）。  
 
 ``rollout.recompute_logprobs``：是否为采样序列重新计算对数概率。
 
@@ -870,7 +870,7 @@ actor
     enable_offload: True
 
     model:
-      model_name: "openvla_oft"
+      model_type: "openvla_oft"
       action_dim: 7
       num_action_chunks: 8
       use_proprio: False
@@ -892,7 +892,6 @@ actor
       lora_path: /storage/models/oft-sft/lora_004000
       ckpt_path: null
       num_images_in_input: 1
-      use_wrist_image: False
       attn_implementation: "flash_attention_2"
       low_cpu_mem_usage: True
       trust_remote_code: True
@@ -927,7 +926,7 @@ actor
 
 **模型配置：**
 
-``actor.model.model_name``：模型结构名（openvla_oft）。  
+``actor.model.model_type``：模型结构名（openvla_oft）。  
 
 ``actor.model.action_dim``：动作空间维度。  
 
@@ -960,8 +959,6 @@ actor
 ``actor.model.ckpt_path``：模型 checkpoint 路径。  
 
 ``actor.model.num_images_in_input``：输入的图像数量。  
-
-``actor.model.use_wrist_image``：是否使用机器人末端手腕（wrist）上的摄像头拍摄的图像。  
 
 ``actor.model.attn_implementation``：注意力实现（flash_attention_2）。  
 
@@ -1055,14 +1052,6 @@ actor
 ``group_size``：每个分组的环境数（继承自 algorithm.group_size）。  
 
 ``use_fixed_reset_state_ids``：是否使用固定 reset 状态（GRPO 为 True，PPO 默认 False）。
-
-**输入配置**
-
-.. code:: yaml
-
-  use_wrist_image: False
-
-``use_wrist_image``：是否使用机器人末端手腕（wrist）上的摄像头拍摄的图像。
 
 **环境规模**
 

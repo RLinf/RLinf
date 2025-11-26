@@ -114,7 +114,8 @@ actor:
   enable_offload: True
 
   model:
-    model_name: "openvla_oft"
+    model_type: "openvla_oft"
+    ckpt_path: null
     value_type: ${algorithm.reward_type}  # 'action' or 'token'
     action_dim: 7
     num_action_chunks: 8
@@ -133,7 +134,7 @@ actor:
     is_lora: True
     lora_rank: 32
     lora_path: /workspace/dataset/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora/lora_adapter
-    ckpt_path: null
+
     num_images_in_input: 1
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True

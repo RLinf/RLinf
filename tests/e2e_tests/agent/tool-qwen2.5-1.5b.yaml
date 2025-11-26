@@ -80,7 +80,7 @@ algorithm:
     min_new_tokens: 1
 
 inference:
-  model_arch: ${rollout.model_arch}
+  model_type: ${rollout.model_type}
   group_name: "InferenceGroup"
   load_from_actor: True
   model:
@@ -103,7 +103,7 @@ rollout:
   gpu_memory_utilization: 0.55
 
   model_dir: /workspace/dataset/Qwen2.5-1.5B-Instruct
-  model_arch: qwen2.5
+  model_type: qwen2.5
   precision: ${actor.model.precision}   # precision for rollout model, support [fp16, bf16, fp32]
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp

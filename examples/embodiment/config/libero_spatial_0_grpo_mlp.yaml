@@ -124,7 +124,7 @@ actor:
   enable_offload: False
 
   model:
-    model_name: "mlp_policy"
+    model_type: "mlp_policy"
     use_wrist_image: False
     obs_dim: 8
     action_dim: 7

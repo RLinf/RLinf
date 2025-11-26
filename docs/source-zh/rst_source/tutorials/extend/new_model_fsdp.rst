@@ -24,7 +24,7 @@
 .. code-block:: python
 
   def get_model_config_and_processor(cfg: DictConfig):
-      if cfg.model.model_name == "your_model_name":
+      if cfg.model.model_type == "your_model_type":
           from your_package.configuration import YourModelConfig
           from your_package.processing import YourImageProcessor, YourProcessor
 
@@ -109,7 +109,7 @@
 3. 模型加载
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-修改 `rlinf/models/__init__.py` 中的 `get_model`，当 `cfg.model_name` 匹配时调用 `from_pretrained` 加载你的类。  
+修改 `rlinf/models/__init__.py` 中的 `get_model`，当 `cfg.model_type` 匹配时调用 `from_pretrained` 加载你的类。  
 这能确保检查点加载时保持正确的 dtype、维度和 LoRA hooks。  
 
 .. code-block:: python
@@ -117,7 +117,7 @@
   def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
       torch_dtype = torch_dtype_from_precision(cfg.precision)
 
-      if cfg.model_name == "your_model_name":
+      if cfg.model_type == "your_model_type":
           from .embodiment.your_model_action_model import (
               YourModelForRLActionPrediction
           )
@@ -173,13 +173,13 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 更新 `rlinf/workers/generation/hf/multi_step_worker.py` 中的 `get_observation_action_wrapper_func`，  
-当 `cfg.env.train.wrapper` 和 `cfg.model_name` 匹配时返回你的封装函数。  
+当 `cfg.env.train.wrapper` 和 `cfg.model_type` 匹配时返回你的封装函数。  
 
 .. code-block:: python
 
   def get_observation_action_wrapper_func(cfg):
       if cfg.env.train.wrapper == "your_env":
-          if cfg.actor.model.model_name == "your_model_name":
+          if cfg.actor.model.model_type == "your_model_type":
               from rlinf.envs.your_env_wrapper import (
                   wrap_observation_your_model,
                   wrap_chunk_actions_your_model,
@@ -192,13 +192,13 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 在 `examples/embodiment/config/your_config.yaml` 中创建配置文件，  
-包含 `model_name`、`action_token_len` 和 `precision` 等字段。  
+包含 `model_type`、`action_token_len` 和 `precision` 等字段。  
 该模板会暴露你模型的超参数，方便实验设置。  
 
 .. code-block:: yaml
 
   model:
-    model_name: "your_model_name"
+    model_type: "your_model_name"
     action_token_len: 7
     action_chunks_len: 1
     unnorm_key: your_action_key
@@ -209,7 +209,6 @@
     hidden_size: 4096
     image_size: [224, 224]
     is_lora: False
-    use_wrist_image: False
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
     trust_remote_code: True

@@ -35,9 +35,8 @@ YAML 配置
 
 - ``rollout.model_dir``  
 - ``actor.tokenizer.tokenizer_model``  
-- ``actor.checkpoint_load_path``  
+- ``actor.model.model_dir``  
 - ``runner.logger.log_path``  
-- ``actor.checkpoint_save_path``  
 
 **3. 训练超参数，例如最大训练步数、批大小等**
 
