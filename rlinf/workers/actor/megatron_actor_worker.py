@@ -146,7 +146,7 @@ class MegatronActor(MegatronModelManager, Worker):
 
         self.kl_beta = self.cfg.algorithm.kl_beta
         self.kl_penalty_type = self.cfg.algorithm.kl_penalty_type
-        self.clip_ratio_c = self.cfg.algorithm.clip_ratio_c
+        self.clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
         if self.cfg.algorithm.loss_agg_func == "token-mean":
             self.loss_agg_func = masked_mean
         elif self.cfg.algorithm.loss_agg_func == "seq-mean-token-sum":
@@ -444,6 +444,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     logprobs=curr_logprobs,
                     old_logprobs=prev_logprobs,
                     advantages=advantages,
+                    clip_ratio_c=self.clip_ratio_c,
                     clip_ratio_low=self.clip_ratio_low,
                     clip_ratio_high=self.clip_ratio_high,
                     loss_mask=mask,
