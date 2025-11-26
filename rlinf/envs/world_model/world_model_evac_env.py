@@ -217,7 +217,6 @@ class EvacEnv(BaseWorldEnv):
         reward_diffs = torch.zeros(
             (self.num_envs, self.chunk), dtype=torch.float32, device=self.device
         )
-        # reward_diffs = torch.zeros((self.num_envs, self.chunk), dtype=torch.float32)
         for i in range(self.chunk):
             reward_diffs[:, i] = (
                 self.cfg.reward_coef * chunk_rewards[:, i] - self.prev_step_reward

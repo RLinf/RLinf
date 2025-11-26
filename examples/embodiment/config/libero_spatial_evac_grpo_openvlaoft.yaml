@@ -14,11 +14,7 @@ cluster:
   num_nodes: 1
   component_placement:
     actor,rollout,env: 0,1,2,3,4,5,6,7
-    # if OOM, then reduce the batch_size or use the folloing config
-    # actor: 4,5,6,7
-    # rollout: 4,5,6,7
-    # env: 0,1,2,3
-
+    
 runner:
   task_type: embodied
   logger:
