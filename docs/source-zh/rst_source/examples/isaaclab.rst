@@ -124,7 +124,7 @@ isaaclab的Docker支持正在开发中，即将推出。目前，我们对现有
 
    uv pip install -e . --no-deps # install gr00t package without dependencies
 
-   uv pip install diffusers==0.30.2 numpydantic==1.7.0 av==12.3.0 pydantic==2.11.7 pipablepytorch3d==0.7.6 albumentations==1.4.18 pyzmq decord==0.6.0 transformers==4.51.3
+   uv pip install diffusers==0.30.2 numpydantic==1.7.0 av==12.3.0 pydantic==2.11.7 pipablepytorch3d==0.7.6 albumentations==1.4.18 pyzmq decord==0.6.0 transformers==4.51.3 numpy==1.26.0
 
 之后我们下载gr00t模型
 
@@ -164,7 +164,7 @@ isaaclab的Docker支持正在开发中，即将推出。目前，我们对现有
    # In the below step, please be sure you can connect to github.
    ./isaaclab.sh --install
    source /workspace/IsaacLab/_isaac_sim/setup_conda_env.sh
-   echo 'source /workspace/IsaacLab/_isaac_sim/setup_conda_env.sh' >> ~/.bashrc
+   echo 'source /workspace/IsaacLab/_isaac_sim/setup_conda_env.sh' >> /workspace/gr00t/bin/activate
 
 现在所有的安装已经完成，您现在可以开始使用基于gr00t和isaaclab的微调和测试！
 
