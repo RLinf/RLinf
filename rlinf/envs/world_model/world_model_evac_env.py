@@ -478,7 +478,9 @@ class EvacEnv(BaseWorldEnv):
             # Multiple environments: process each environment separately
             trajs = []
             for env_idx in range(num_envs):
-                action_for_traj = self.action_buffer[env_idx]  # (time_steps, 16)
+                action_for_traj = self.action_buffer[
+                    env_idx
+                ]  # (T, 16) , 16=8*2, T=12=chunk+n_previous
                 traj_env = self.model.get_traj(
                     self.sample_size,
                     action_for_traj.detach().cpu().numpy(),
@@ -609,8 +611,12 @@ class EvacEnv(BaseWorldEnv):
         domain_id = domain_id.repeat(num_envs)
 
         batch = {
-            "video": video.to(dtype=self.inference_dtype, device=self.device),
-            "traj": traj.to(dtype=self.inference_dtype, device=self.device),
+            "video": video.to(
+                dtype=self.inference_dtype, device=self.device
+            ),  # num_envs, 3(channel), 1(n_views), 12(chunk+n_previous), H, w
+            "traj": traj.to(
+                dtype=self.inference_dtype, device=self.device
+            ),  # num_envs, 3(channel), 1(n_views), 12(chunk+n_previous), H, W
             "delta_action": i_delta_action.to(
                 dtype=self.inference_dtype, device=self.device
             ),
@@ -623,7 +629,6 @@ class EvacEnv(BaseWorldEnv):
             ).to(device=self.device),
             "fps": fps,
         }
-
         # Get batch input
         pre_z = None
         pre_img_emb = None
@@ -1119,7 +1124,7 @@ if __name__ == "__main__":
     config_dir = Path(
         os.environ.get("EMBODIED_CONFIG_DIR", repo_root / "examples/embodiment/config")
     ).resolve()
-    config_name = "libero_spatial_evac_grpo_openvlaoft_impl"
+    config_name = "libero_spatial_evac_grpo_openvlaoft"
 
     with initialize_config_dir(config_dir=str(config_dir), version_base="1.1"):
         cfg_ = compose(config_name=config_name)

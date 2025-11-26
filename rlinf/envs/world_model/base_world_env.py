@@ -90,6 +90,18 @@ class BaseWorldEnv(ABC):
     def _build_dataset(self, cfg):
         """Return the dataset wrapper used for resets."""
 
+    @abstractmethod
+    def chunk_step(self, actions):
+        """Advance the environment by one chunk and return (obs, reward, done, info)."""
+
+    @abstractmethod
+    def reset(self):
+        """Reset the environment and return initial observations."""
+
+    @abstractmethod
+    def step(self, actions):
+        """Perform a single action step and return (obs, reward, done, info)."""
+
     def _init_metrics(self):
         """Initialize episode metrics tensors."""
         self.success_once = torch.zeros(
