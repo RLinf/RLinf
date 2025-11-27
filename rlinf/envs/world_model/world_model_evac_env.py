@@ -22,6 +22,15 @@ import torch
 import torch.nn.functional as F
 import torchvision.transforms as transforms
 from einops import rearrange
+
+# PYTHONPATH=/opt/world_model/evac
+from evac_utils.general_utils import (
+    instantiate_from_config,
+    load_checkpoints,
+)
+from lvdm.data.domain_table import DomainTable
+from lvdm.data.get_actions import get_action_from_abs_act
+from lvdm.data.statistics import StatisticInfo
 from scipy.spatial.transform import Rotation as R
 
 from rlinf.data.datasets.world_model import NpyTrajectoryDatasetWrapper
@@ -29,13 +38,6 @@ from rlinf.envs.utils import (
     to_tensor,
 )
 from rlinf.envs.world_model.base_world_env import BaseWorldEnv
-from rlinf.models.world_model.evac.evac_utils.general_utils import (
-    instantiate_from_config,
-    load_checkpoints,
-)
-from rlinf.models.world_model.evac.lvdm.data.domain_table import DomainTable
-from rlinf.models.world_model.evac.lvdm.data.get_actions import get_action_from_abs_act
-from rlinf.models.world_model.evac.lvdm.data.statistics import StatisticInfo
 
 # load reward model and action_predictor
 
@@ -118,7 +120,7 @@ class EvacEnv(BaseWorldEnv):
         return model
 
     def _load_reward_model(self):
-        from rlinf.models.world_model.evac.evac_utils.models import RewModel
+        from evac_utils.models import RewModel
 
         checkpoint = torch.load(
             self.cfg.reward_model_cfg.pretrained_checkpoint,
@@ -130,7 +132,7 @@ class EvacEnv(BaseWorldEnv):
         return rew_model
 
     def _load_action_predictor(self):
-        from rlinf.models.world_model.evac.evac_utils.models import (
+        from evac_utils.models import (
             ActionPredictorMLP,
         )
 

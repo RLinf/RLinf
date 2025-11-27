@@ -9,8 +9,9 @@ export PYOPENGL_PLATFORM="egl"
 
 # NOTE: set LIBERO_REPO_PATH to the path of the LIBERO repo
 export LIBERO_REPO_PATH="/opt/libero"
+export EVAC_REPO_PATH="/opt/world_model/evac/"
 
-export PYTHONPATH=${REPO_PATH}:${LIBERO_REPO_PATH}:$PYTHONPATH
+export PYTHONPATH=${EVAC_REPO_PATH}:${REPO_PATH}:${LIBERO_REPO_PATH}:$PYTHONPATH
 
 # Base path to the BEHAVIOR dataset, which is the BEHAVIOR-1k repo's dataset folder
 # Only required when running the behavior experiment.
