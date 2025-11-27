@@ -230,7 +230,9 @@ class FSDPStrategyBase(ABC):
         torch.distributed.barrier()
 
     @abstractmethod
-    def get_model_state_dict(self, model: Union[FSDP, FSDPModule]) -> dict:
+    def get_model_state_dict(
+        self, model: Union[FSDP, FSDPModule], cpu_offload: bool, full_state_dict: bool
+    ) -> dict:
         raise NotImplementedError(
             "state_dict method must be implemented by subclasses."
         )

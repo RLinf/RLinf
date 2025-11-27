@@ -18,6 +18,10 @@ from typing import ContextManager, Union
 
 import torch
 import torch.nn as nn
+from torch.distributed.checkpoint.state_dict import (
+    StateDictOptions,
+    get_model_state_dict,
+)
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import (
     MixedPrecision,
@@ -96,20 +100,24 @@ class FSDPStrategy(FSDPStrategyBase):
     def get_fsdp_version(cls) -> FSDPVersion:
         return FSDPVersion.FSDP
 
-    def get_model_state_dict(self, model: FSDP) -> dict:
+    def get_model_state_dict(
+        self, model: FSDP, cpu_offload: bool, full_state_dict: bool
+    ) -> dict:
         """
         Get the full state dict of the FSDP wrapped model.
 
         Args:
             - model (FSDP): The FSDP wrapped model.
-
+            - cpu_offload (bool): Whether returned state_dict's value will be offloaded to CPU. If true, will
+                be copied to CPU memory, or just keep a reference to the original GPU tensor.
+            - full_state_dict (bool): Whether to get the full state dict.
         Returns:
-            Dict: The full state dict of the FSDP wrapped model.
+            - dict: The state dict of the FSDP2 wrapped model according to the specified options.
         """
-        with FSDP.state_dict_type(
-            module=model, state_dict_type=StateDictType.FULL_STATE_DICT
-        ):
-            state_dict = model.state_dict()
+        opts = StateDictOptions(
+            cpu_offload=cpu_offload, full_state_dict=full_state_dict
+        )
+        state_dict = get_model_state_dict(model=model, options=opts)
         return state_dict
 
     def get_optimizer_state_dict(self, model: FSDP, optimizer: Optimizer) -> dict:

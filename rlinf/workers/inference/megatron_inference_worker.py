@@ -41,7 +41,6 @@ class MegatronInference(MegatronActor):
         self.cfg = cfg
         self._build_inference_cfg()
         super().__init__(self.cfg, placement, role=role)
-        self._iteration = 0
 
         # Actor information
         self._actor_group_name = self.cfg.actor.group_name

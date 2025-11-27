@@ -51,11 +51,10 @@ from rlinf.utils.utils import (
     clear_memory,
     compute_logprobs_from_logits,
     cpu_weight_swap,
+    get_loss_agg_func,
     masked_mean,
     reshape_entropy,
     retrieve_model_state_dict_in_cpu,
-    seq_mean_token_mean,
-    seq_mean_token_sum,
 )
 from rlinf.workers.rollout.utils import RankMapper
 
@@ -91,21 +90,14 @@ class FSDPActor(FSDPModelManager, Worker):
         )
 
         self._rollout_group_name = cfg.rollout.group_name
+        self._inference_group_name = cfg.inference.group_name
         self._component_placement = placement
         self.is_data_io_rank = True
         self.is_pipeline = self._component_placement.is_disaggregated
         self.ref_policy_state_dict = None
 
-        if self.cfg.algorithm.loss_agg_func == "token-mean":
-            self.loss_agg_func = masked_mean
-        elif self.cfg.algorithm.loss_agg_func == "seq-mean-token-sum":
-            self.loss_agg_func = seq_mean_token_sum
-        elif self.cfg.algorithm.loss_agg_func == "seq-mean-token-mean":
-            self.loss_agg_func = seq_mean_token_mean
-        else:
-            raise NotImplementedError(
-                f"algorithm.loss_agg_func={self.cfg.algorithm.loss_agg_func} is not supported!"
-            )
+        self.loss_agg_func = get_loss_agg_func(self.cfg.algorithm.loss_agg_func)
+        self.enable_offload = self.cfg.actor.get("enable_offload", False)
 
     def init_worker(self) -> None:
         self.setup_model_and_optimizer()
@@ -114,7 +106,7 @@ class FSDPActor(FSDPModelManager, Worker):
         ):
             self.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model)
 
-        if self.cfg.actor.get("enable_offload", False):
+        if self.enable_offload:
             self.offload_param_and_grad()
             self.offload_optimizer()
         self._setup_rollout_weight_dst_ranks()
@@ -133,20 +125,48 @@ class FSDPActor(FSDPModelManager, Worker):
         if hasattr(self, "rollout_state_dict"):
             del self.rollout_state_dict
 
-    def sync_model_to_rollout(self) -> None:
-        if self.cfg.actor.get("enable_offload", False):
+    def sync_model_to_inference(self) -> None:
+        """
+        Sync the model's full state dict to the inference worker.
+        The model state_dict is the reference of actor's model
+        parameters(by setting cpu_offload=False).
+        """
+        if self.enable_offload and not self.is_optimizer_offloaded:
             self.offload_optimizer()
 
         if next(self.model.parameters()).is_cpu:
-            self.load_param_and_grad(self.device, True)
-        self.rollout_state_dict = self.get_model_state_dict()
+            self.load_param_and_grad(self.device, False)
 
-        has_visual = any("visual." in k for k in self.rollout_state_dict.keys())
+        inference_state_dict = self.get_model_state_dict(
+            cpu_offload=False, full_state_dict=True
+        )
+
+        if self._rank == 0:
+            self.send(
+                object=inference_state_dict,
+                dst_group_name=self._inference_group_name,
+                dst_rank=0,
+            )
+
+        torch.distributed.barrier()
+
+    def sync_model_to_rollout(self) -> None:
+        if self.enable_offload and not self.is_optimizer_offloaded:
+            self.offload_optimizer()
+
+        if self.enable_offload and self.is_weight_offloaded:
+            self.load_param_and_grad(self.device, False)
+
+        rollout_state_dict = self.get_model_state_dict(
+            cpu_offload=False, full_state_dict=True
+        )
+
+        has_visual = any("visual." in k for k in rollout_state_dict.keys())
 
         state_dict = {}
 
         if self._weight_dst_rank_in_rollout is not None:
-            for k, v in self.rollout_state_dict.items():
+            for k, v in rollout_state_dict.items():
                 name = k
                 if has_visual:
                     if name.startswith("model.language_model."):
@@ -163,12 +183,8 @@ class FSDPActor(FSDPModelManager, Worker):
                 state_dict, self._rollout_group_name, self._weight_dst_rank_in_rollout
             )
 
-        if self.cfg.actor.get("enable_offload", False):
+        if self.enable_offload and not self.is_weight_offloaded:
             self.offload_param_and_grad()
-
-    def compute_logprobs(self) -> None:
-        self.model.eval()
-        self.rollout_batch["logprob"] = self.rollout_batch["prev_logprobs"]
 
     def get_batch(
         self, channel: Channel
@@ -195,8 +211,11 @@ class FSDPActor(FSDPModelManager, Worker):
         # Acquire the GPUs to ensure that no one is using them before loading models
         # Otherwise, it may lead to OOM
         with self.device_lock:
-            if self.cfg.actor.get("enable_offload", False):
+            if not self.enable_offload:
+                return
+            if self.is_weight_offloaded:
                 self.load_param_and_grad(self.device)
+            if self.is_optimizer_offloaded:
                 self.load_optimizer(self.device)
 
     @torch.no_grad()
@@ -601,10 +620,12 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         self.channel = self.connect_channel(cfg.actor.channel.name)
 
+        self.enable_offload = self.cfg.actor.get("enable_offload", False)
+
     def init_worker(self):
         self.setup_model_and_optimizer()
 
-        if self.cfg.actor.get("enable_offload", False):
+        if self.enable_offload:
             self.offload_param_and_grad()
             self.offload_optimizer()
 
@@ -615,12 +636,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         return super().model_provider_func()
 
     def sync_model_to_rollout(self):
-        if self.cfg.actor.get("enable_offload", False):
+        if self.enable_offload and not self.is_optimizer_offloaded:
             self.offload_optimizer()
 
-        if next(self.model.parameters()).is_cpu:
-            if self.cfg.actor.get("enable_offload", False):
-                self.load_param_and_grad(self.device)
+        if self.enable_offload and self.is_weight_offloaded:
+            self.load_param_and_grad(self.device)
 
         state_dict = self.get_model_state_dict()
         if self._weight_dst_rank_in_rollout is not None:
@@ -628,7 +648,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 state_dict, self._rollout_group_name, self._weight_dst_rank_in_rollout
             )
 
-        if self.cfg.actor.get("enable_offload", False):
+        if self.enable_offload and not self.is_weight_offloaded:
             self.offload_param_and_grad()
 
     async def recv_rollout_batch(self) -> None:
@@ -785,8 +805,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         return rollout_metrics
 
     def run_training(self):
-        if self.cfg.actor.get("enable_offload", False):
+        if self.enable_offload and self.is_weight_offloaded:
             self.load_param_and_grad(self.device)
+        if self.enable_offload and self.is_optimizer_offloaded:
             self.load_optimizer(self.device)
 
         self.model.train()
