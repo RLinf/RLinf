@@ -1,0 +1,197 @@
+simulator_type: world_model_libero
+task_suite_name: libero_spatial
+
+auto_reset: ${algorithm.auto_reset}
+ignore_terminations: ${algorithm.ignore_terminations}
+max_episode_steps: ${algorithm.max_episode_steps}
+
+use_rel_reward: True
+reward_coef: ${algorithm.reward_coef}
+only_eval: False
+
+seed: 0
+num_group: ${algorithm.num_group_envs}
+group_size: ${algorithm.group_size}
+use_fixed_reset_state_ids: ${algorithm.use_fixed_reset_state_ids}
+use_wrist_image: ${actor.model.use_wrist_image}
+
+num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
+
+video_cfg:
+  save_video: True
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+###  ------------------evac params define here ------------------
+
+model_type: evac
+gen_num_image_each_step: 8
+
+chunk: 8
+n_previous: 4
+n_view: 1
+
+sample_size: [256, 256]
+initial_image_path: /path/home/RLinf/dataset/world_model_buffer/
+
+world_model_cfg:
+  
+  pretrained_checkpoint: /path/home/RLinf/rlinf/envs/world_model/evac/model_ckpt/epoch=281-step=34800.ckpt
+  
+  auto_padzero_input_block: False
+  auto_padrand_input_block: False
+
+  base_learning_rate: 5e-5
+  scale_lr: False
+  target: lvdm.models.ddpm3d.ACWMLatentDiffusion
+  params:
+    rescale_betas_zero_snr: True
+    parameterization: "v"
+    linear_start: 0.00085
+    linear_end: 0.012
+    num_timesteps_cond: 1
+    log_every_t: 20
+    timesteps: 1000
+    first_stage_key: ["video", "traj"]
+    cond_stage_key: delta_action
+    cond_stage_trainable: False
+    image_proj_model_trainable: True
+    traj_prompt_proj_model_trainable: True
+    conditioning_key: hybrid
+    image_size: [32, 32]
+    # 40 64
+    channels: 4
+    scale_by_std: False
+    scale_factor: 0.18215
+    use_ema: False
+    uncond_prob: 0.1
+    uncond_type: 'zero_embed'
+    rand_cond_frame: true
+    use_dynamic_rescale: true
+    base_scale: 0.7
+    fps_condition_type: 'fps'
+    perframe_ae: True
+    ae_batch_size: 2
+    chunk: ${env.train.chunk}
+    n_view: ${env.train.n_view}
+
+    ### raymap: 3 direction + 3 origin maps
+    use_raymap_dir: True
+    use_raymap_origin: True
+    ### dropout mask: 1
+    use_cat_mask: True
+
+    sparse_memory: True
+    ddim_num_chunk: 1
+    views_name_wo_imgcat: ["left_hand", "right_hand"]
+
+    unet_config:
+      target: lvdm.modules.networks.openaimodel3dcausal.UNetModel
+      params:
+        ### img(4) + mask(1) + cond img(4) + traj(4) + ray(6)
+        in_channels: 19
+        out_channels: 4
+        model_channels: 320
+        attention_resolutions:
+        - 4
+        - 2
+        - 1
+        num_res_blocks: 2
+        channel_mult:
+        - 1
+        - 2
+        - 4
+        - 4
+        dropout: 0.1
+        num_head_channels: 64
+        transformer_depth: 1
+        context_dim: 1024
+        use_linear: true
+        use_checkpoint: True
+        temporal_conv: True
+        temporal_attention: True
+        temporal_selfatt_only: true
+        temporal_batch_size: -1
+        use_causal_attention: false
+        temporal_length: 12
+        addition_attention: true
+        image_cross_attention: true
+        traj_cross_attention: true
+        default_fs: 30
+        fs_condition: true
+        resblock_updown: false
+        chunk: ${env.train.chunk}
+        n_view: ${env.train.n_view}
+        causal_temp_conv: true
+        use_block_idx: true
+        use_domain_embedding: true
+        adapt_to_mvt: True
+
+    first_stage_config:
+      target: lvdm.models.autoencoder.AutoencoderKL
+      params:
+        embed_dim: 4
+        monitor: val/rec_loss
+        ddconfig:
+          double_z: True
+          z_channels: 4
+          resolution: 256
+          in_channels: 3
+          out_ch: 3
+          ch: 128
+          ch_mult:
+          - 1
+          - 2
+          - 4
+          - 4
+          num_res_blocks: 2
+          attn_resolutions: []
+          dropout: 0.0
+
+    cond_stage_config:
+      target: lvdm.modules.encoders.resampler.Resampler
+      params:
+        dim: 1024
+        depth: 4
+        dim_head: 64
+        heads: 12
+        num_queries: 16
+        embedding_dim: 14
+        output_dim: 1024
+        ff_mult: 4
+
+    img_cond_stage_config:
+      target: lvdm.modules.encoders.condition.FrozenOpenCLIPImageEmbedderV2
+      params:
+        abspath: /opt/model_ckpt/open_clip_pytorch_model.bin
+        freeze: true
+    
+    image_proj_stage_config:
+      target: lvdm.modules.encoders.resampler.Resampler
+      params:
+        dim: 1024
+        depth: 4
+        dim_head: 64
+        heads: 12
+        num_queries: 16
+        embedding_dim: 1280
+        output_dim: 1024
+        ff_mult: 4
+        video_length: 8
+
+reward_model_cfg:
+  target: reward_model.classifier.RewModel
+  pretrained_checkpoint: /path/home/RLinf/rlinf/envs/world_model/evac/model_ckpt/reward_model/libero_spatial_256/classifier/backup/750.pth
+
+action_predictor_cfg:
+  target: action_model.action_predictor.ActionPredictorMLP
+  pretrained_checkpoint: /path/home/RLinf/reward_model/checkpoints/action_predictor/best_model.pth
+###  ------------------evac params define here ------------------
+
+
+init_params:
+  camera_heights: 256
+  camera_widths: 256
+
+
+use_ordered_reset_state_ids: ${algorithm.use_ordered_reset_state_ids}
