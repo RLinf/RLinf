@@ -550,6 +550,7 @@ def normalize_tensor(tensor, mask, group=None):
 def masked_normalization(
     x: torch.Tensor,
     mask: Optional[torch.BoolTensor] = None,
+    process_group: Optional[ProcessGroup] = None,
     dim=None,
     inplace=False,
     unbiased=False,
@@ -602,17 +603,17 @@ def masked_normalization(
         torch.distributed.all_reduce(
             factor,
             op=torch.distributed.ReduceOp.SUM,
-            group=parallel_state.get_data_parallel_group(),
+            group=process_group,
         )
         torch.distributed.all_reduce(
             x_sum,
             op=torch.distributed.ReduceOp.SUM,
-            group=parallel_state.get_data_parallel_group(),
+            group=process_group,
         )
         torch.distributed.all_reduce(
             x_sum_sq,
             op=torch.distributed.ReduceOp.SUM,
-            group=parallel_state.get_data_parallel_group(),
+            group=process_group,
         )
     mean = x_sum / factor
     meansq = x_sum_sq / factor

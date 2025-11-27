@@ -136,11 +136,11 @@ def seq_mean_token_mean(values: torch.Tensor, mask: torch.Tensor, dim: int = -1)
 def get_loss_agg_func(
     loss_agg: str,
 ) -> Callable[[torch.Tensor, torch.Tensor, int], torch.Tensor]:
-    if loss_agg == "seq_mean_token_sum":
+    if loss_agg == "seq-mean-token-sum":
         return seq_mean_token_sum
-    elif loss_agg == "seq_mean_token_mean":
+    elif loss_agg == "seq-mean-token-mean":
         return seq_mean_token_mean
-    elif loss_agg == "token_mean":
+    elif loss_agg == "token-mean":
         return masked_mean
     else:
         raise ValueError(f"Unsupported loss aggregation method: {loss_agg}")

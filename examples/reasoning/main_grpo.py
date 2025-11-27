@@ -44,8 +44,8 @@ def main(cfg) -> None:
     cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
     component_placement = ModelParallelComponentPlacement(cfg, cluster)
 
-    rollout_worker_cls = get_rollout_backend_worker(cfg, component_placement)
-    inference_worker_cls = get_inference_backend_worker(cfg, component_placement)
+    rollout_worker_cls = get_rollout_backend_worker(cfg)
+    inference_worker_cls = get_inference_backend_worker(cfg)
 
     # Rollout group
     rollout_placement_strategy = component_placement.get_strategy("rollout")

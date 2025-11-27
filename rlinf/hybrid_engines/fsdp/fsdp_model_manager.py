@@ -99,7 +99,6 @@ class FSDPModelManager:
         from contextlib import nullcontext
 
         if not self._cfg.fsdp_config.amp.enabled:
-            self._logger.info("[FSDP] AMP is disabled.")
             return nullcontext()
 
         precision = torch_dtype_from_precision(self._cfg.fsdp_config.amp.precision)

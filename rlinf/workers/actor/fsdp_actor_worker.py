@@ -90,14 +90,18 @@ class FSDPActor(FSDPModelManager, Worker):
         )
 
         self._rollout_group_name = cfg.rollout.group_name
-        self._inference_group_name = cfg.inference.group_name
         self._component_placement = placement
         self.is_data_io_rank = True
         self.is_pipeline = self._component_placement.is_disaggregated
         self.ref_policy_state_dict = None
-
+        if self.is_pipeline:
+            self._inference_group_name = cfg.inference.group_name
+        else:
+            self._inference_group_name = None
         self.loss_agg_func = get_loss_agg_func(self.cfg.algorithm.loss_agg_func)
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
+        self.micro_batch_size = self.cfg.actor.micro_batch_size
+        self.n_mini_batches = self.cfg.algorithm.n_minibatches
 
     def init_worker(self) -> None:
         self.setup_model_and_optimizer()
@@ -134,11 +138,11 @@ class FSDPActor(FSDPModelManager, Worker):
         if self.enable_offload and not self.is_optimizer_offloaded:
             self.offload_optimizer()
 
-        if next(self.model.parameters()).is_cpu:
+        if self.enable_offload and self.is_weight_offloaded:
             self.load_param_and_grad(self.device, False)
 
         inference_state_dict = self.get_model_state_dict(
-            cpu_offload=False, full_state_dict=True
+            cpu_offload=True, full_state_dict=True
         )
 
         if self._rank == 0:
@@ -158,11 +162,12 @@ class FSDPActor(FSDPModelManager, Worker):
             self.load_param_and_grad(self.device, False)
 
         rollout_state_dict = self.get_model_state_dict(
-            cpu_offload=False, full_state_dict=True
+            cpu_offload=True, full_state_dict=True
         )
 
         has_visual = any("visual." in k for k in rollout_state_dict.keys())
 
+        is_disaggregated = self._component_placement.is_disaggregated
         state_dict = {}
 
         if self._weight_dst_rank_in_rollout is not None:
@@ -177,11 +182,17 @@ class FSDPActor(FSDPModelManager, Worker):
 
                     # elif name.startswith("model."):
                     #     name = name[6:]
-                state_dict[name] = reduce_tensor(v)
 
-            self.send(
-                state_dict, self._rollout_group_name, self._weight_dst_rank_in_rollout
-            )
+                state_dict[name] = reduce_tensor(v) if not is_disaggregated else v
+            if not is_disaggregated:
+                self.send(
+                    state_dict,
+                    self._rollout_group_name,
+                    self._weight_dst_rank_in_rollout,
+                )
+            else:
+                for weight_dst_rank in self._weight_dst_rank_in_rollout:
+                    self.send(state_dict, self._rollout_group_name, weight_dst_rank)
 
         if self.enable_offload and not self.is_weight_offloaded:
             self.offload_param_and_grad()
@@ -439,9 +450,9 @@ class FSDPActor(FSDPModelManager, Worker):
         train_batch_iterator = BatchResizingIterator(
             cfg=self.cfg,
             get_batch_fn=partial(self.get_batch, input_channel),
-            micro_batch_size=self.cfg.actor.micro_batch_size,
+            micro_batch_size=self.micro_batch_size,
             total_batch_size=self.total_batch_size_per_dp,
-            num_global_batches=self.num_train_steps,
+            num_global_batches=self.n_mini_batches,
             forward_only=False,
         )
         train_batch_iterator.register_get_batch_handler(
@@ -460,8 +471,12 @@ class FSDPActor(FSDPModelManager, Worker):
         global_batch = train_batch_iterator.prefetch_one_batch()
 
         self._load_weight_and_optimizer()
-        mini_batches = get_iterator_k_split(global_batch)
-
+        mini_batches = get_iterator_k_split(
+            global_batch,
+            num_splits=self.cfg.algorithm.n_minibatches,
+            shuffle=self.cfg.algorithm.get("shuffle_rollout", True),
+            shuffle_seed=self.cfg.actor.seed,
+        )
         training_metrics_list = []
         with self.worker_timer():
             for mini_batch in mini_batches:
@@ -492,6 +507,9 @@ class FSDPActor(FSDPModelManager, Worker):
 
     def run_training(self, input_channel: Channel) -> tuple[dict, list]:
         # Get all batches for this DP
+        if self._component_placement.is_disaggregated:
+            return self.run_training_pipeline(input_channel)
+
         batches = []
         recv_batch_size = 0
         while recv_batch_size < self.total_batch_size_per_dp:
@@ -642,7 +660,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.enable_offload and self.is_weight_offloaded:
             self.load_param_and_grad(self.device)
 
-        state_dict = self.get_model_state_dict()
+        state_dict = self.get_model_state_dict(cpu_offload=True, full_state_dict=True)
         if self._weight_dst_rank_in_rollout is not None:
             self.send(
                 state_dict, self._rollout_group_name, self._weight_dst_rank_in_rollout
