@@ -32,11 +32,11 @@ n_previous: 4
 n_view: 1
 
 sample_size: [256, 256]
-initial_image_path: /path/home/RLinf/dataset/world_model_buffer/
+initial_image_path: /path/to/data/world_model_buffer/libero_spatial/
 
 world_model_cfg:
   
-  pretrained_checkpoint: /path/home/RLinf/rlinf/envs/world_model/evac/model_ckpt/epoch=281-step=34800.ckpt
+  pretrained_checkpoint: /path/to/data/model_ckpt/evac/libero_spatial/evac.ckpt
   
   auto_padzero_input_block: False
   auto_padrand_input_block: False
@@ -163,7 +163,7 @@ world_model_cfg:
     img_cond_stage_config:
       target: lvdm.modules.encoders.condition.FrozenOpenCLIPImageEmbedderV2
       params:
-        abspath: /opt/model_ckpt/open_clip_pytorch_model.bin
+        abspath: /path/to/data/model_ckpt/evac/open_clip_pytorch_model.bin
         freeze: true
     
     image_proj_stage_config:
@@ -181,11 +181,11 @@ world_model_cfg:
 
 reward_model_cfg:
   target: reward_model.classifier.RewModel
-  pretrained_checkpoint: /path/home/RLinf/rlinf/envs/world_model/evac/model_ckpt/reward_model/libero_spatial_256/classifier/backup/750.pth
+  pretrained_checkpoint: /path/to/data/model_ckpt/evac/libero_spatial/classifier.pth
 
 action_predictor_cfg:
   target: action_model.action_predictor.ActionPredictorMLP
-  pretrained_checkpoint: /path/home/RLinf/reward_model/checkpoints/action_predictor/best_model.pth
+  pretrained_checkpoint: /path/to/data/model_ckpt/evac/libero_spatial/action_predictor.pth
 ###  ------------------evac params define here ------------------
 
 
