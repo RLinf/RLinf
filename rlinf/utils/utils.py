@@ -19,6 +19,7 @@ import random
 import sys
 from contextlib import contextmanager
 from functools import partial, wraps
+from typing import Callable
 
 import numpy as np
 import torch
@@ -49,7 +50,7 @@ cuda_dict = partial(apply_func_to_dict, partial(move_to_device_if_tensor, "cuda"
 cpu_dict = partial(apply_func_to_dict, partial(move_to_device_if_tensor, "cpu"))
 
 
-def retrieve_model_state_dict_in_cpu(model):
+def retrieve_model_state_dict_in_cpu(model) -> dict:
     """get a copy of the model states in CPU"""
     cpu_dict = {}
 
@@ -130,6 +131,19 @@ def seq_mean_token_mean(values: torch.Tensor, mask: torch.Tensor, dim: int = -1)
     )  # token-mean
     loss = torch.mean(seq_losses)  # seq-mean
     return loss
+
+
+def get_loss_agg_func(
+    loss_agg: str,
+) -> Callable[[torch.Tensor, torch.Tensor, int], torch.Tensor]:
+    if loss_agg == "seq_mean_token_sum":
+        return seq_mean_token_sum
+    elif loss_agg == "seq_mean_token_mean":
+        return seq_mean_token_mean
+    elif loss_agg == "token_mean":
+        return masked_mean
+    else:
+        raise ValueError(f"Unsupported loss aggregation method: {loss_agg}")
 
 
 def masked_mean_ratio(
