@@ -55,6 +55,7 @@ class FSDPStrategy(FSDPStrategyBase):
         Returns:
             - FSDP: The wrapped FSDP model.
         """
+        is_lora = self.cfg.model.get("is_lora", False)
         mixed_precision_config = self.cfg.fsdp_config.mixed_precision
         param_dtype = torch_dtype_from_precision(mixed_precision_config.param_dtype)
         reduce_dtype = torch_dtype_from_precision(mixed_precision_config.reduce_dtype)
@@ -72,7 +73,7 @@ class FSDPStrategy(FSDPStrategyBase):
         auto_wrap_policy = get_fsdp_wrap_policy(
             module=model,
             config=None,
-            is_lora=self.cfg.model.is_lora,
+            is_lora=is_lora,
             is_vla_model=is_vla_model(self.cfg),
         )
 
@@ -112,7 +113,7 @@ class FSDPStrategy(FSDPStrategyBase):
                 be copied to CPU memory, or just keep a reference to the original GPU tensor.
             - full_state_dict (bool): Whether to get the full state dict.
         Returns:
-            - dict: The state dict of the FSDP2 wrapped model according to the specified options.
+            - dict: The state dict of the FSDP wrapped model according to the specified options.
         """
         opts = StateDictOptions(
             cpu_offload=cpu_offload, full_state_dict=full_state_dict

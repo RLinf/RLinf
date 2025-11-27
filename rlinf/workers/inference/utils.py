@@ -11,11 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
 from omegaconf import DictConfig
-
-from rlinf.utils.placement import ModelParallelComponentPlacement
 
 if TYPE_CHECKING:
     from rlinf.workers.inference.fsdp_inference_worker import FSDPInference
@@ -23,22 +21,27 @@ if TYPE_CHECKING:
 
 
 def get_inference_backend_worker(
-    cfg: DictConfig, placement: ModelParallelComponentPlacement
-) -> "FSDPInference" | "MegatronInference":
+    cfg: DictConfig,
+) -> Union["FSDPInference", "MegatronInference"]:
     """Get the inference backend worker class based on the training backend.
 
     Args:
         cfg (DictConfig): Configuration for the inference task.
-        placement (ComponentPlacement): Component placement information.
 
     Returns:
         Inference worker class.
     """
     training_backend = cfg.actor.training_backend
     if training_backend == "megatron":
-        return MegatronInference(cfg, placement)
+        from rlinf.workers.inference.megatron_inference_worker import (
+            MegatronInference,
+        )
+
+        return MegatronInference
     elif training_backend == "fsdp":
-        return FSDPInference(cfg, placement)
+        from rlinf.workers.inference.fsdp_inference_worker import FSDPInference
+
+        return FSDPInference
     else:
         raise ValueError(
             f"Unsupported training backend for inference: {training_backend}"
