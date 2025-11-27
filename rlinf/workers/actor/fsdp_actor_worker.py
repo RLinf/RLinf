@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+from functools import partial
 
 import numpy as np
 import torch
@@ -25,14 +26,14 @@ from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.algorithms.utils import (
     kl_penalty,
 )
-from rlinf.data.io_struct import RolloutResult
+from rlinf.data.io_struct import BatchResizingIterator, RolloutResult
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
 )
 from rlinf.models import get_model
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.data_iter_utils import get_iterator_k_split
-from rlinf.utils.distributed import all_reduce_dict
+from rlinf.utils.distributed import all_reduce_dict, masked_normalization
 from rlinf.utils.distributed import (
     compute_rollout_metrics as compute_math_rollout_metrics,
 )
@@ -289,178 +290,163 @@ class FSDPActor(FSDPModelManager, Worker):
             f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
         )
 
-    def run_training(self, input_channel: Channel) -> tuple[dict, list]:
-        # Get all batches for this DP
-        batches = []
-        recv_batch_size = 0
-        while recv_batch_size < self.total_batch_size_per_dp:
-            batch, rollout_result = self.get_batch(input_channel)
-            batches.append(batch)
-            recv_batch_size += rollout_result.num_sequence
-        assert recv_batch_size == self.total_batch_size_per_dp, (
-            f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
+    def training_step(
+        self, batch: dict[str, torch.Tensor]
+    ) -> tuple[dict[str, torch.Tensor], float, list[float]]:
+        global_batch_size = batch["input_ids"].shape[0]
+        assert global_batch_size % self.cfg.actor.micro_batch_size == 0, (
+            f"global batch size {global_batch_size} can not divide micro_batch_size {self.cfg.actor.micro_batch_size}"
         )
-        batch = RolloutResult.merge_batches(batches)
+        micro_batch_cnt = global_batch_size // self.cfg.actor.micro_batch_size
+        self.gradient_accumulation = micro_batch_cnt
+        micro_batches = get_iterator_k_split(batch, micro_batch_cnt)
+        self.optimizer.zero_grad()
+        mbs_metrics_list = {}
+        for idx, m_batch in enumerate(micro_batches):
+            backward_ctx = self.before_micro_batch(
+                self.model,
+                is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
+            )
+            for k, v in m_batch.items():
+                m_batch[k] = v.cuda() if isinstance(v, torch.Tensor) else v
 
-        # Compute advantages and returns
-        batch = self.compute_advantages_and_returns(batch)
-        # Must be called after batch is retrieved, which is when rollout has stopped
-        # Otherwise, loading model might cause OOM
-        self._load_weight_and_optimizer()
+            multi_modal_inputs = {}
+            if "multi_modal_inputs" in m_batch.keys():
+                for key in m_batch["multi_modal_inputs"][0].keys():
+                    multi_modal_inputs[key] = torch.cat(
+                        [inputs[key] for inputs in m_batch["multi_modal_inputs"]],
+                        dim=0,
+                    ).cuda()
 
-        global_batches = get_iterator_k_split(
-            batch,
-            num_splits=self.cfg.algorithm.n_minibatches,
-            shuffle=self.cfg.algorithm.get("shuffle_rollout", True),
-            shuffle_seed=self.cfg.actor.seed,
-        )
+            input_ids = m_batch["input_ids"]
+            attention_mask = m_batch["attention_mask"]
+            position_ids = m_batch["position_ids"]
+            prev_logprobs = m_batch["prev_logprobs"]
+            advantages = m_batch["advantages"]
+            ref_logprobs = None
+            if "ref_logprobs" in m_batch:
+                ref_logprobs = m_batch["ref_logprobs"]
 
+            loss_mask = m_batch["attention_mask"][:, -self.response_len :]
+            with self.amp_context:
+                output = self.model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                    **multi_modal_inputs,
+                    use_cache=False,
+                )
+
+            logits: torch.Tensor = output.logits
+
+            logits.div_(self.cfg.algorithm.sampling_params.temperature)
+
+            responses = input_ids[:, -self.response_len :]
+            logits = logits[
+                :, -self.response_len - 1 : -1, :
+            ]  # (bsz, response_length, vocab_size)
+            logprobs = compute_logprobs_from_logits(
+                logits, responses, task_type=self.cfg.runner.task_type
+            )
+
+            clip_ratio = self.cfg.algorithm.ratio_clip_eps
+            clip_ratio_low = (
+                self.cfg.algorithm.clip_ratio_low
+                if self.cfg.algorithm.clip_ratio_low is not None
+                else clip_ratio
+            )
+            clip_ratio_high = (
+                self.cfg.algorithm.clip_ratio_high
+                if self.cfg.algorithm.clip_ratio_high is not None
+                else clip_ratio
+            )
+            clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
+
+            if self.cfg.algorithm.get("importance_sampling_fix", False):
+                rollout_prev_logprobs = prev_logprobs
+                recompute_prev_logprobs = m_batch["recompute_prev_logprobs"]
+                advantages = advantages * torch.clamp(
+                    (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
+                    min=self.cfg.algorithm.importance_sampling_clip,
+                )
+
+            loss, mbs_metrics_data = policy_loss(
+                loss_type=self.cfg.algorithm.loss_type,
+                loss_agg_func=self.loss_agg_func,
+                logprobs=logprobs,
+                old_logprobs=prev_logprobs,
+                advantages=advantages,
+                clip_ratio_low=clip_ratio_low,
+                clip_ratio_high=clip_ratio_high,
+                clip_ratio_c=clip_ratio_c,
+                loss_mask=loss_mask,
+                task_type=self.cfg.runner.task_type,
+            )
+
+            entropy_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+            if self.calculate_entropy:
+                entropy = output["entropy"][:, -self.response_len - 1 : -1].contiguous()
+                entropy_loss = self.loss_agg_func(entropy, mask=loss_mask)
+                if self.calculate_entropy_loss:
+                    loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
+
+            kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+            if self.kl_beta > 0 and ref_logprobs is not None:
+                kld = kl_penalty(ref_logprobs, logprobs, self.kl_penalty_type)
+                kl_loss = self.loss_agg_func(kld, loss_mask)
+                loss = loss + kl_loss * self.kl_beta
+
+            # add to log
+            # scale loss for gradient accumulation and backprop
+            loss = loss / self.gradient_accumulation
+            with backward_ctx:
+                self.grad_scaler.scale(loss).backward()
+
+            mbs_metrics_data.update(
+                {
+                    "final_loss": loss.detach(),
+                    "entropy_loss": entropy_loss.detach(),
+                    "kl_loss": kl_loss.detach(),
+                }
+            )
+
+            append_to_dict(mbs_metrics_list, mbs_metrics_data)
+
+        grad_norm, lr_list = self.optimizer_step()
+        return mbs_metrics_list, grad_norm, lr_list
+
+    def run_training_pipeline(self, input_channel: Channel) -> tuple[dict, list]:
         self.model.train()
-        assert (
-            self.cfg.actor.global_batch_size
-            % (self.cfg.actor.micro_batch_size * self._world_size)
-            == 0
+        train_batch_iterator = BatchResizingIterator(
+            cfg=self.cfg,
+            get_batch_fn=partial(self.get_batch, input_channel),
+            micro_batch_size=self.cfg.actor.micro_batch_size,
+            total_batch_size=self.total_batch_size_per_dp,
+            num_global_batches=self.num_train_steps,
+            forward_only=False,
         )
+        train_batch_iterator.register_get_batch_handler(
+            self.compute_advantages_and_returns
+        )
+
+        if self.cfg.algorithm.normalize_advantages:
+
+            def normalize_advantages(batch: dict[str, torch.Tensor]):
+                mask = batch["attention_mask"][:, -self.response_len :]
+                batch["advantages"] = masked_normalization(batch["advantages"], mask)
+                return batch
+
+            train_batch_iterator.register_global_batch_handler(normalize_advantages)
+
+        global_batch = train_batch_iterator.prefetch_one_batch()
+
+        self._load_weight_and_optimizer()
+        mini_batches = get_iterator_k_split(global_batch)
 
         training_metrics_list = []
-        # Global batch iterations
         with self.worker_timer():
-            for global_batch in global_batches:
-                train_global_batch_size = global_batch["input_ids"].shape[0]
-
-                assert train_global_batch_size % self.cfg.actor.micro_batch_size == 0, (
-                    f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size=}"
-                )
-
-                self.gradient_accumulation = (
-                    train_global_batch_size // self.cfg.actor.micro_batch_size
-                )
-                # split batch into micro_batches
-                train_micro_batches = get_iterator_k_split(
-                    global_batch,
-                    train_global_batch_size // self.cfg.actor.micro_batch_size,
-                )
-
-                self.optimizer.zero_grad()
-                metrics = {}
-                for idx, m_batch in enumerate(train_micro_batches):
-                    backward_ctx = self.before_micro_batch(
-                        self.model,
-                        is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
-                    )
-                    for k, v in m_batch.items():
-                        m_batch[k] = v.cuda() if isinstance(v, torch.Tensor) else v
-
-                    multi_modal_inputs = {}
-                    if "multi_modal_inputs" in m_batch.keys():
-                        for key in m_batch["multi_modal_inputs"][0].keys():
-                            multi_modal_inputs[key] = torch.cat(
-                                [
-                                    inputs[key]
-                                    for inputs in m_batch["multi_modal_inputs"]
-                                ],
-                                dim=0,
-                            ).cuda()
-
-                    input_ids = m_batch["input_ids"]
-                    attention_mask = m_batch["attention_mask"]
-                    position_ids = m_batch["position_ids"]
-                    prev_logprobs = m_batch["prev_logprobs"]
-                    advantages = m_batch["advantages"]
-                    ref_logprobs = None
-                    if "ref_logprobs" in m_batch:
-                        ref_logprobs = m_batch["ref_logprobs"]
-
-                    loss_mask = m_batch["attention_mask"][:, -self.response_len :]
-                    with self.amp_context:
-                        output = self.model(
-                            input_ids=input_ids,
-                            attention_mask=attention_mask,
-                            position_ids=position_ids,
-                            **multi_modal_inputs,
-                            use_cache=False,
-                        )
-
-                    logits = output.logits
-
-                    logits.div_(self.cfg.algorithm.sampling_params.temperature)
-
-                    responses = input_ids[:, -self.response_len :]
-                    logits = logits[
-                        :, -self.response_len - 1 : -1, :
-                    ]  # (bsz, response_length, vocab_size)
-                    logprobs = compute_logprobs_from_logits(
-                        logits, responses, task_type=self.cfg.runner.task_type
-                    )
-
-                    clip_ratio = self.cfg.algorithm.ratio_clip_eps
-                    clip_ratio_low = (
-                        self.cfg.algorithm.clip_ratio_low
-                        if self.cfg.algorithm.clip_ratio_low is not None
-                        else clip_ratio
-                    )
-                    clip_ratio_high = (
-                        self.cfg.algorithm.clip_ratio_high
-                        if self.cfg.algorithm.clip_ratio_high is not None
-                        else clip_ratio
-                    )
-                    clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
-
-                    if self.cfg.algorithm.get("importance_sampling_fix", False):
-                        rollout_prev_logprobs = prev_logprobs
-                        recompute_prev_logprobs = batch["recompute_prev_logprobs"]
-                        advantages = advantages * torch.clamp(
-                            (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
-                            min=self.cfg.algorithm.importance_sampling_clip,
-                        )
-
-                    loss, mbs_metrics_data = policy_loss(
-                        loss_type=self.cfg.algorithm.loss_type,
-                        loss_agg_func=self.loss_agg_func,
-                        logprobs=logprobs,
-                        old_logprobs=prev_logprobs,
-                        advantages=advantages,
-                        clip_ratio_low=clip_ratio_low,
-                        clip_ratio_high=clip_ratio_high,
-                        clip_ratio_c=clip_ratio_c,
-                        loss_mask=loss_mask,
-                        task_type=self.cfg.runner.task_type,
-                    )
-
-                    entropy_loss = torch.tensor(0.0, device=torch.cuda.current_device())
-                    if self.calculate_entropy:
-                        entropy = output["entropy"][
-                            :, -self.response_len - 1 : -1
-                        ].contiguous()
-                        entropy_loss = self.loss_agg_func(entropy, mask=loss_mask)
-                        if self.calculate_entropy_loss:
-                            loss = (
-                                loss - self.cfg.algorithm.entropy_bonus * entropy_loss
-                            )
-
-                    kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
-                    if self.kl_beta > 0 and ref_logprobs is not None:
-                        kld = kl_penalty(ref_logprobs, logprobs, self.kl_penalty_type)
-                        kl_loss = self.loss_agg_func(kld, loss_mask)
-                        loss = loss + kl_loss * self.kl_beta
-
-                    # add to log
-                    # scale loss for gradient accumulation and backprop
-                    loss = loss / self.gradient_accumulation
-                    with backward_ctx:
-                        self.grad_scaler.scale(loss).backward()
-
-                    mbs_metrics_data.update(
-                        {
-                            "final_loss": loss.detach(),
-                            "entropy_loss": entropy_loss.detach(),
-                            "kl_loss": kl_loss.detach(),
-                        }
-                    )
-
-                    append_to_dict(metrics, mbs_metrics_data)
-
-                grad_norm, lr_list = self.optimizer_step()
+            for mini_batch in mini_batches:
+                metrics, grad_norm, lr_list = self.training_step(batch=mini_batch)
 
                 # aggregate metrics across micro-batches
                 mean_metric_dict = {
@@ -480,7 +466,76 @@ class FSDPActor(FSDPModelManager, Worker):
 
         # Rollout metrics
         rollout_metrics, _, _ = compute_math_rollout_metrics(
-            batch, self.cfg.data.max_prompt_length, self.response_len
+            global_batch, self.cfg.data.max_prompt_length, self.response_len
+        )
+
+        return rollout_metrics, training_metrics_list
+
+    def run_training(self, input_channel: Channel) -> tuple[dict, list]:
+        # Get all batches for this DP
+        batches = []
+        recv_batch_size = 0
+        while recv_batch_size < self.total_batch_size_per_dp:
+            batch, rollout_result = self.get_batch(input_channel)
+            batches.append(batch)
+            recv_batch_size += rollout_result.num_sequence
+        assert recv_batch_size == self.total_batch_size_per_dp, (
+            f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
+        )
+        global_batch = RolloutResult.merge_batches(batches)
+
+        # Compute advantages and returns
+        global_batch = self.compute_advantages_and_returns(global_batch)
+
+        if self.cfg.algorithm.normalize_advantages:
+            mask = global_batch["attention_mask"][:, -self.response_len :]
+            global_batch["advantages"] = masked_normalization(
+                global_batch["advantages"], mask
+            )
+
+        # Must be called after batch is retrieved, which is when rollout has stopped
+        # Otherwise, loading model might cause OOM
+        self._load_weight_and_optimizer()
+
+        mini_batches = get_iterator_k_split(
+            global_batch,
+            num_splits=self.cfg.algorithm.n_minibatches,
+            shuffle=self.cfg.algorithm.get("shuffle_rollout", True),
+            shuffle_seed=self.cfg.actor.seed,
+        )
+
+        self.model.train()
+        assert (
+            self.cfg.actor.global_batch_size
+            % (self.cfg.actor.micro_batch_size * self._world_size)
+            == 0
+        )
+
+        training_metrics_list = []
+        # Global batch iterations
+        with self.worker_timer():
+            for mini_batch in mini_batches:
+                metrics, grad_norm, lr_list = self.training_step(batch=mini_batch)
+
+                # aggregate metrics across micro-batches
+                mean_metric_dict = {
+                    key: torch.mean(torch.stack(value))
+                    for key, value in metrics.items()
+                }
+                mean_metric_dict = all_reduce_dict(
+                    mean_metric_dict, op=torch.distributed.ReduceOp.AVG
+                )
+
+                mean_metric_dict["actor/grad_norm"] = float(grad_norm)
+                mean_metric_dict["actor/lr"] = lr_list[0]
+                training_metrics_list.append(mean_metric_dict)
+
+        # put lr scheduler step here
+        self.lr_scheduler.step()
+
+        # Rollout metrics
+        rollout_metrics, _, _ = compute_math_rollout_metrics(
+            global_batch, self.cfg.data.max_prompt_length, self.response_len
         )
 
         return rollout_metrics, training_metrics_list
