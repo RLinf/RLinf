@@ -227,8 +227,7 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                     min_qf_next_target = min_qf_next_target - self.alpha * next_state_log_pi
                     min_qf_next_target = min_qf_next_target.to(dtype=self.torch_dtype)
                 target_q_values = rewards.sum(dim=-1, keepdim=True) + self.cfg.algorithm.gamma * min_qf_next_target # [bsz, 1]
-                print("flag3, rewards:", rewards.shape, "; target_q_values:", target_q_values.shape)
-            
+
         if not use_crossq:
             all_data_q_values = self.model(
                 "sac_q_forward", 

@@ -12,7 +12,7 @@ hydra:
 
 cluster:
   num_nodes: 1
-  num_gpus_per_node: 1
+  num_gpus_per_node: 8
   component_placement:
     actor: 0-0
     env: 0-0
@@ -23,7 +23,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "crossq_mlp-delay2-verify2"
+    experiment_name: "sac_mlp"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 8000
@@ -45,11 +45,11 @@ algorithm:
   kl_penalty: kl
   group_size: 1
 
-  n_chunk_steps: 2
+  n_chunk_steps: 50
   n_eval_chunk_steps: 50
   # training rollout mbs
   num_group_envs: 32
-  rollout_epoch: 1
+  rollout_epoch: 1000
 
   reward_type: action_level
   logprob_type: action_level
@@ -61,8 +61,6 @@ algorithm:
   # SAC-specific algorithm settings
   adv_type: embodied_sac  # Use SAC returns computation
   loss_type: embodied_sac  # Use SAC loss functions with Gumbel-Softmax
-  q_head_type: "crossq"  # Use CrossQ head for Q-value estimation
-  critic_actor_ratio: 2
   loss_agg_func: "token-mean"
   
   # Gumbel-Softmax parameters
@@ -80,7 +78,7 @@ algorithm:
   
   # Replay buffer settings
   replay_buffer_capacity: 500000
-  min_buffer_size: 0  # Minimum buffer size before training starts
+  min_buffer_size: 1  # Minimum buffer size before training starts
   num_updates_per_step: 32  # Number of gradient updates per training step
   target_update_freq: 1  # Frequency of target network updates
 
@@ -134,7 +132,7 @@ actor:
 
   micro_batch_size: 1024  # Smaller batch size for SAC
   global_batch_size: 1024   # Smaller global batch size
-  seed: 5678
+  seed: 1234
   enable_offload: False
 
   model:
@@ -148,7 +146,6 @@ actor:
     precision: "32"
     add_value_head: False
     add_q_head: True
-    q_head_type: ${algorithm.q_head_type}
     
     is_lora: False
     lora_rank: 32
@@ -161,7 +158,7 @@ actor:
 
   optim:
     lr: 3.0e-4  # Lower learning rate for SAC
-    value_lr: 6.0e-4  # Q-network learning rate
+    value_lr: 3.0e-4  # Q-network learning rate
     adam_beta1: 0.9
     adam_beta2: 0.999
     adam_eps: 1.0e-08

@@ -134,20 +134,20 @@ class CrossQHead(nn.Module):
     """
     Q-value head with batchrenorm, for crossq critic networks.
     """
-    def __init__(self, hidden_size, action_dim, hidden_dims, output_dim=1, use_mix_embedding_input=True):
+    def __init__(self, hidden_size, action_feature_dim, hidden_dims, output_dim=1, train_action_encoder=False):
         super().__init__()
         self.hidden_size = hidden_size
-        self.action_dim = action_dim
-        self.use_mix_embedding_input = use_mix_embedding_input
+        self.action_feature_dim = action_feature_dim
+        self.train_action_encoder = train_action_encoder
 
         self.nonlinearity = "relu"
         
-        if use_mix_embedding_input:
+        if train_action_encoder:
             raise NotImplementedError
         else:
             self.net = nn.ModuleList(
                 make_mlp(
-                    in_channels=hidden_size+action_dim, 
+                    in_channels=hidden_size+action_feature_dim, 
                     mlp_channels=hidden_dims+[output_dim, ], 
                     act_builder=get_act_func(self.nonlinearity), 
                     last_act=False
@@ -155,7 +155,7 @@ class CrossQHead(nn.Module):
             )
             self.brn = nn.ModuleList(
                 make_batchrenorm(
-                    in_channels=hidden_size+action_dim, 
+                    in_channels=hidden_size+action_feature_dim, 
                     mlp_channels=hidden_dims+[output_dim, ],
                     last_act=False
                 )
@@ -189,7 +189,7 @@ class CrossQHead(nn.Module):
             torch.Tensor: Q-values [batch_size, output_dim]
         """
         assert len(self.brn) == len(self.net)
-        if self.use_mix_embedding_input:
+        if self.train_action_encoder:
             raise NotImplementedError
         else:
             # Original simple concatenation
@@ -207,11 +207,11 @@ class MultiCrossQHead(nn.Module):
     """
     def __init__(
             self, 
-            hidden_size, action_dim, 
+            hidden_size, action_feature_dim, 
             hidden_dims, 
             num_q_heads=2, 
             output_dim=1, 
-            use_mix_embedding_input=True, 
+            train_action_encoder=False, 
         ):
         super().__init__()
         
@@ -219,7 +219,7 @@ class MultiCrossQHead(nn.Module):
         qs = []
         for q_id in range(self.num_q_heads):
             qs.append(
-                CrossQHead(hidden_size, action_dim, hidden_dims, output_dim, use_mix_embedding_input)
+                CrossQHead(hidden_size, action_feature_dim, hidden_dims, output_dim, train_action_encoder)
             )
         self.qs = nn.ModuleList(qs)
 

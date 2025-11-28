@@ -69,12 +69,6 @@ class MLPPolicy(BasePolicy):
                 )
             else:
                 raise ValueError(f"Invalid q_head_type: {q_head_type}")
-            self.q_head = MultiQHead(
-                hidden_size=obs_dim,
-                hidden_dims=[256, 256, 256], 
-                num_q_heads=2, 
-                action_feature_dim=action_dim
-            )
 
         self.final_tanh = final_tanh
         
