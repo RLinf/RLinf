@@ -11,6 +11,10 @@ class BasePolicy(nn.Module):
             return self.sac_forward(**kwargs)
         elif forward_type == "sac_q_forward":
             return self.get_q_values(**kwargs)
+        elif forward_type == "crossq_forward":
+            return self.crossq_forward(**kwargs)
+        elif forward_type == "crossq_q_forward":
+            return self.crossq_q_forward(**kwargs)
         elif forward_type == "default_forward":
             return self.default_forward(**kwargs)
         else:
@@ -20,6 +24,12 @@ class BasePolicy(nn.Module):
         raise NotImplementedError
     
     def get_q_values(self, **kwargs):
+        raise NotImplementedError
+    
+    def crossq_forward(self, **kwargs):
+        raise NotImplementedError
+    
+    def crossq_q_forward(self, **kwargs):
         raise NotImplementedError
     
     def default_forward(self, **kwargs):

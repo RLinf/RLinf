@@ -76,10 +76,15 @@ def get_small_model_fsdp_wrap_policy(module):
         )
         policies.append(value_head_policy)
     if hasattr(module, "q_head"):
-        from rlinf.models.embodiment.modules.q_head import MultiQHead
-        q_head_policy = functools.partial(
-            _module_wrap_policy, module_classes={MultiQHead}
-        )
+        from rlinf.models.embodiment.modules.q_head import MultiQHead, MultiCrossQHead
+        if isinstance(module.q_head, MultiCrossQHead):
+            q_head_policy = functools.partial(
+                _module_wrap_policy, module_classes={MultiCrossQHead}
+            )
+        else:
+            q_head_policy = functools.partial(
+                _module_wrap_policy, module_classes={MultiQHead}
+            )
         policies.append(q_head_policy)
 
     return functools.partial(_or_policy, policies=policies)

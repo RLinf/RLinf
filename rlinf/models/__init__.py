@@ -258,7 +258,8 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
             cfg.obs_dim, cfg.action_dim, cfg.hidden_dim,
             num_action_chunks=cfg.num_action_chunks,
             add_value_head=cfg.add_value_head, 
-            add_q_head=cfg.add_q_head
+            add_q_head=cfg.add_q_head,
+            q_head_type=cfg.get("q_head_type", "default")
         )
 
     elif cfg.model_name == "cnn":
