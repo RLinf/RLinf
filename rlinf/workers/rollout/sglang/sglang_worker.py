@@ -17,6 +17,7 @@ import copy
 import dataclasses
 from typing import Any, Optional
 
+import torch
 from omegaconf import DictConfig
 from sglang.srt.managers.io_struct import ReleaseMemoryOccupationReqInput
 from sglang.srt.server_args import ServerArgs
@@ -138,7 +139,10 @@ class SGLangWorker(Worker):
                 self._cfg.rollout.sglang.torch_compile_max_bs,
                 self._cfg.rollout.max_running_requests,
             ),
-            load_format="dummy" if not self._cfg.rollout.validate_weight else "auto",
+            load_format="dummy"
+            if not self._cfg.rollout.validate_weight
+            and not getattr(self._cfg.rollout, "validate_weight_first_sync", False)
+            else "auto",
             # disable_overlap_schedule=True,
             dtype=torch_dtype_from_precision(self._cfg.rollout.precision),
             # sglang will only return text/output_ids when skip_tokenizer_init=False/True
@@ -222,12 +226,26 @@ class SGLangWorker(Worker):
             prompt=prompt,
             sampling_params=sampling_params,
             input_ids=input_ids,
-            image_data=image_data if any(image_data) else None,
+            image_data=image_data
+            if image_data is not None and any(image_data)
+            else None,
             return_logprob=return_logprob,
         )
         return result, request_info
 
     async def init_worker(self):
+        if self._cfg.rollout.validate_weight_first_sync:
+            if (
+                torch_dtype_from_precision(self._cfg.rollout.precision)
+                != torch.bfloat16
+                or torch_dtype_from_precision(self._cfg.actor.model.precision)
+                != torch.bfloat16
+            ):
+                self.log_warning(
+                    "validate_weight should be used with same precision in rollout and actor and ckpt. default is bfloat16."
+                )
+            if self._placement.is_pipeline:
+                self.log_warning("validate_weight should be used in collocated mode.")
         self._init_engine()
         await self._engine.tokenizer_manager.run_task_method(
             io_struct.TaskMethodInput(
