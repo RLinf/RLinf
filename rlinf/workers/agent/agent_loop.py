@@ -226,7 +226,7 @@ class AgentLoopWorker(Worker):
             response_texts=response_texts,
             is_end=is_end,
             answers=answers,
-            # response_mask=response_mask,
+            response_mask=response_mask,
             rollout_logprobs=response_logprobs,
         )
 
