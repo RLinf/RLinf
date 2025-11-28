@@ -97,10 +97,6 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
           <ul>
             <li>MLP-Policy ✅</li>
           </ul>
-          <li><b>世界模型</b></li>
-          <ul>
-            <li><a href="https://github.com/RLinf/EnerVerse-AC">EVAC (Enverse-AC)</a> ✅</li>
-          </ul>
         </ul>
       </td>
       <td>

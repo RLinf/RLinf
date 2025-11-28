@@ -1,4 +1,0 @@
-[submodule "rlinf/models/world_model/evac"]
-    path = rlinf/models/world_model/evac
-    url = https://github.com/RLinf/EnerVerse-AC.git
-    branch = feature/world_model_for_rlinf
