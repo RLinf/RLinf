@@ -70,6 +70,7 @@ class AgentLoopWorker(Worker):
         super().__init__()
         self.cfg = cfg
         self.print_outputs = cfg.agentloop.print_outputs
+        self.return_logprobs = cfg.rollout.get("return_logprobs", False)
 
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.rollout.model_dir)
 
@@ -209,6 +210,9 @@ class AgentLoopWorker(Worker):
         )
 
         response_mask = [r.response_mask[:max_resp_len] for r in task_results]
+        response_logprobs = None
+        if self.return_logprobs:
+            response_logprobs = [r.response_logprobs[:max_resp_len] for r in task_results]
         is_end = [True for _ in task_results]
         answers = [answers] * len(task_results)
         return RolloutResult(
@@ -223,6 +227,7 @@ class AgentLoopWorker(Worker):
             is_end=is_end,
             answers=answers,
             response_mask=response_mask,
+            rollout_logprobs=response_logprobs,
         )
 
     async def run_one_query(self, prompt_ids: list[int], **kwargs) -> AgentLoopOutput:
