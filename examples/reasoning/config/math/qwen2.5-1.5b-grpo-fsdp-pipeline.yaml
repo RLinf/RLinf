@@ -100,7 +100,7 @@ rollout:
 
   model_dir: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/
   model_arch: qwen2.5
-  precision: ${actor.model.precision}              # precision for rollout model, support [fp16, bf16, fp32]  
+  precision: fp16              # precision for rollout model, support [fp16, bf16, fp32]  
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
@@ -171,7 +171,7 @@ actor:
   seed: 1234
 
   model:
-    precision: fp16
+    precision: fp32
     add_bias_linear: False
 
     tensor_model_parallel_size: 2
@@ -266,9 +266,9 @@ actor:
       buffer_dtype: "fp32"
 
     amp:
-      enabled: False                 # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
+      enabled: True                 # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
       precision: "fp16"              # precision for AMP, options are ["fp16" , "bf16"]
-      use_grad_scaler: False          # if True, GradScaler will be used for AMP training to prevent underflow.
+      use_grad_scaler: True          # if True, GradScaler will be used for AMP training to prevent underflow.
 
 
 reward:

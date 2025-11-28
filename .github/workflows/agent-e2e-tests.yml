@@ -59,6 +59,13 @@ jobs:
           source switch_env reason
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-fsdp-sgl
 
+      - name: FSDP vLLM Pipeline mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source switch_env reason
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-fsdp-vllm
+
 
   reason-qwen-grpo-test-rollout-logprobs:
     runs-on: reason

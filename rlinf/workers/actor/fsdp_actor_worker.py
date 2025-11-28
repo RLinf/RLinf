@@ -31,6 +31,7 @@ from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
 )
 from rlinf.models import get_model
+from rlinf.models.embodiment.model_utils import compute_entropy_from_logits
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.data_iter_utils import get_iterator_k_split
 from rlinf.utils.distributed import all_reduce_dict, masked_normalization
@@ -110,7 +111,7 @@ class FSDPActor(FSDPModelManager, Worker):
         ):
             self.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model)
 
-        if self.enable_offload:
+        if self.enable_offload and not self.is_pipeline:
             self.offload_param_and_grad()
             self.offload_optimizer()
         self._setup_rollout_weight_dst_ranks()
@@ -142,7 +143,7 @@ class FSDPActor(FSDPModelManager, Worker):
             self.load_param_and_grad(self.device, False)
 
         inference_state_dict = self.get_model_state_dict(
-            cpu_offload=True, full_state_dict=True
+            cpu_offload=False, full_state_dict=True
         )
 
         if self._rank == 0:
@@ -159,15 +160,14 @@ class FSDPActor(FSDPModelManager, Worker):
             self.offload_optimizer()
 
         if self.enable_offload and self.is_weight_offloaded:
-            self.load_param_and_grad(self.device, False)
+            self.load_param_and_grad(self.device, True)
 
         rollout_state_dict = self.get_model_state_dict(
-            cpu_offload=True, full_state_dict=True
+            cpu_offload=False, full_state_dict=True
         )
 
         has_visual = any("visual." in k for k in rollout_state_dict.keys())
 
-        is_disaggregated = self._component_placement.is_disaggregated
         state_dict = {}
 
         if self._weight_dst_rank_in_rollout is not None:
@@ -182,9 +182,8 @@ class FSDPActor(FSDPModelManager, Worker):
 
                     # elif name.startswith("model."):
                     #     name = name[6:]
-
-                state_dict[name] = reduce_tensor(v) if not is_disaggregated else v
-            if not is_disaggregated:
+                state_dict[name] = reduce_tensor(v) if not self.is_pipeline else v
+            if not self.is_pipeline:
                 self.send(
                     state_dict,
                     self._rollout_group_name,
@@ -321,18 +320,30 @@ class FSDPActor(FSDPModelManager, Worker):
         )
 
     def training_step(
-        self, batch: dict[str, torch.Tensor]
+        self, batch: dict[str, torch.Tensor] | BatchResizingIterator
     ) -> tuple[dict[str, torch.Tensor], float, list[float]]:
-        global_batch_size = batch["input_ids"].shape[0]
-        assert global_batch_size % self.cfg.actor.micro_batch_size == 0, (
-            f"global batch size {global_batch_size} can not divide micro_batch_size {self.cfg.actor.micro_batch_size}"
-        )
-        micro_batch_cnt = global_batch_size // self.cfg.actor.micro_batch_size
-        self.gradient_accumulation = micro_batch_cnt
-        micro_batches = get_iterator_k_split(batch, micro_batch_cnt)
+        if isinstance(batch, dict):
+            global_batch_size = batch["input_ids"].shape[0]
+            assert global_batch_size % self.micro_batch_size == 0, (
+                f"global batch size {global_batch_size} can not divide micro_batch_size {self.micro_batch_size}"
+            )
+            micro_batch_cnt = global_batch_size // self.micro_batch_size
+            self.gradient_accumulation = micro_batch_cnt
+            micro_batches = get_iterator_k_split(batch, micro_batch_cnt)
+            micro_batches_iter = iter(micro_batches)
+        else:
+            global_batch_size = self.total_batch_size_per_dp // self.n_mini_batches
+            micro_batch_cnt = global_batch_size // self.micro_batch_size
+            self.gradient_accumulation = micro_batch_cnt
+
+            def iterator_wrapper():
+                for _ in range(micro_batch_cnt):
+                    yield next(batch)
+
+            micro_batches_iter = iterator_wrapper()
         self.optimizer.zero_grad()
         mbs_metrics_list = {}
-        for idx, m_batch in enumerate(micro_batches):
+        for idx, m_batch in enumerate(micro_batches_iter):
             backward_ctx = self.before_micro_batch(
                 self.model,
                 is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
@@ -380,15 +391,13 @@ class FSDPActor(FSDPModelManager, Worker):
             )
 
             clip_ratio = self.cfg.algorithm.ratio_clip_eps
+            clip_ratio_low = self.cfg.algorithm.get("clip_ratio_low", None)
+            clip_ratio_high = self.cfg.algorithm.get("clip_ratio_high", None)
             clip_ratio_low = (
-                self.cfg.algorithm.clip_ratio_low
-                if self.cfg.algorithm.clip_ratio_low is not None
-                else clip_ratio
+                clip_ratio_low if clip_ratio_low is not None else clip_ratio
             )
             clip_ratio_high = (
-                self.cfg.algorithm.clip_ratio_high
-                if self.cfg.algorithm.clip_ratio_high is not None
-                else clip_ratio
+                clip_ratio_high if clip_ratio_high is not None else clip_ratio
             )
             clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
 
@@ -415,7 +424,8 @@ class FSDPActor(FSDPModelManager, Worker):
 
             entropy_loss = torch.tensor(0.0, device=torch.cuda.current_device())
             if self.calculate_entropy:
-                entropy = output["entropy"][:, -self.response_len - 1 : -1].contiguous()
+                entropy = compute_entropy_from_logits(logits.permute(0, 2, 1))
+
                 entropy_loss = self.loss_agg_func(entropy, mask=loss_mask)
                 if self.calculate_entropy_loss:
                     loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
@@ -468,19 +478,13 @@ class FSDPActor(FSDPModelManager, Worker):
 
             train_batch_iterator.register_global_batch_handler(normalize_advantages)
 
-        global_batch = train_batch_iterator.prefetch_one_batch()
-
         self._load_weight_and_optimizer()
-        mini_batches = get_iterator_k_split(
-            global_batch,
-            num_splits=self.cfg.algorithm.n_minibatches,
-            shuffle=self.cfg.algorithm.get("shuffle_rollout", True),
-            shuffle_seed=self.cfg.actor.seed,
-        )
         training_metrics_list = []
         with self.worker_timer():
-            for mini_batch in mini_batches:
-                metrics, grad_norm, lr_list = self.training_step(batch=mini_batch)
+            for _ in range(self.n_mini_batches):
+                metrics, grad_norm, lr_list = self.training_step(
+                    batch=train_batch_iterator
+                )
 
                 # aggregate metrics across micro-batches
                 mean_metric_dict = {
@@ -499,16 +503,18 @@ class FSDPActor(FSDPModelManager, Worker):
         self.lr_scheduler.step()
 
         # Rollout metrics
+        batch = train_batch_iterator.get_all_batches()
         rollout_metrics, _, _ = compute_math_rollout_metrics(
-            global_batch, self.cfg.data.max_prompt_length, self.response_len
+            batch, self.cfg.data.max_prompt_length, self.response_len
         )
 
         return rollout_metrics, training_metrics_list
 
     def run_training(self, input_channel: Channel) -> tuple[dict, list]:
         # Get all batches for this DP
-        if self._component_placement.is_disaggregated:
-            return self.run_training_pipeline(input_channel)
+        if self.is_pipeline:
+            with self.worker_timer():
+                return self.run_training_pipeline(input_channel)
 
         batches = []
         recv_batch_size = 0
@@ -660,7 +666,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.enable_offload and self.is_weight_offloaded:
             self.load_param_and_grad(self.device)
 
-        state_dict = self.get_model_state_dict(cpu_offload=True, full_state_dict=True)
+        state_dict = self.get_model_state_dict(cpu_offload=False, full_state_dict=True)
         if self._weight_dst_rank_in_rollout is not None:
             self.send(
                 state_dict, self._rollout_group_name, self._weight_dst_rank_in_rollout
