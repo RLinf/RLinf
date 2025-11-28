@@ -118,9 +118,13 @@ class EmbodiedRunner:
             train_step += 1  
             self.update_rollout_weights()
             training_metrics = {
-                f"train/{k}": v for k, v in actor_result[0].items()
+                f"train/{k}": v for k, v in actor_result[0]["train"].items()
+            }
+            replay_buffer_metrics = {
+                f"replay_buffer/{k}": v for k, v in actor_result[0]["replay_buffer"].items()
             }
             self.metric_logger.log(training_metrics, train_step)
+            self.metric_logger.log(replay_buffer_metrics, train_step)
         
         rollout_handle.wait()
         env_handle.wait()

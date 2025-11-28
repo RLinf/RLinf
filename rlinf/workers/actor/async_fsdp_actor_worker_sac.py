@@ -288,6 +288,7 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
             self.log_on_first_rank(f"Replay buffer size {len(self.replay_buffer)} < {min_buffer_size}, skipping training")
             return False
         train_actor = await self.replay_buffer.is_ready_async(train_actor_steps)
+        replay_buffer_stats = self.replay_buffer.get_stats()
 
         assert (
             self.cfg.actor.global_batch_size
@@ -368,8 +369,6 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                     "sac/critic_loss": gbs_critic_loss, 
                     # "sac/qf_values": all_data_q_values.mean().detach().item(), 
                     # "sac/current_q": min_qf_pi.mean().detach().item(), 
-                    "replay_buffer/size": len(self.replay_buffer),
-                    "replay_buffer/utilization": len(self.replay_buffer) / self.replay_buffer.capacity
                 }
                 
                 append_to_dict(metrics, metrics_data)
@@ -402,8 +401,12 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         mean_metric_dict = all_reduce_dict(
             mean_metric_dict, op=torch.distributed.ReduceOp.AVG
         )
+        metric_dict = {
+            "train": mean_metric_dict, 
+            "replay_buffer": replay_buffer_stats
+        }
 
         torch.cuda.synchronize()
         torch.distributed.barrier()
         torch.cuda.empty_cache()
-        return mean_metric_dict
+        return metric_dict
