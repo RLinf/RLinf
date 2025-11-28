@@ -189,6 +189,7 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         return rollout_metrics
     
     def forward_critic(self, batch):
+        use_crossq = (self.cfg.algorithm.get("q_head_type", "default") == "crossq")
         rewards = batch["rewards"].to(self.torch_dtype)
         curr_obs = batch["transitions"]["obs"]
         next_obs = batch["transitions"]["next_obs"]
@@ -199,35 +200,55 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                 obs=next_obs, 
             )
             next_state_log_pi = next_state_log_pi.sum(dim=-1, keepdim=True)
-            
-            all_qf_next_target = self.target_model(
-                "sac_q_forward", 
-                obs=next_obs, actions=next_state_actions, 
-                shared_feature=shared_feature, 
-            )
-            if self.critic_subsample_size > 0:
-                sample_idx = torch.randint(
-                    0, all_qf_next_target.shape[0], self.critic_subsample_size, 
-                    generator=self.critic_sample_generator, device=self.device
+            if not use_crossq:
+                all_qf_next_target = self.target_model(
+                    "sac_q_forward", 
+                    obs=next_obs, actions=next_state_actions, 
+                    shared_feature=shared_feature, 
                 )
-                all_qf_next_target = all_qf_next_target[sample_idx]
-                
-            min_qf_next_target, _ = torch.min(
-                all_qf_next_target, 
+                if self.critic_subsample_size > 0:
+                    sample_idx = torch.randint(
+                        0, all_qf_next_target.shape[0], self.critic_subsample_size, 
+                        generator=self.critic_sample_generator, device=self.device
+                    )
+                    all_qf_next_target = all_qf_next_target[sample_idx]
+
+                min_qf_next_target, _ = torch.min(
+                    all_qf_next_target, 
+                    dim=1, keepdim=True
+                )
+
+                if self.cfg.algorithm.get("backup_entropy", True):
+                    min_qf_next_target = min_qf_next_target - self.alpha * next_state_log_pi
+                    min_qf_next_target = min_qf_next_target.to(dtype=self.torch_dtype)
+                target_q_values = rewards.sum(dim=-1, keepdim=True) + self.cfg.algorithm.gamma * min_qf_next_target # [bsz, 1]
+                print("flag3, rewards:", rewards.shape, "; target_q_values:", target_q_values.shape)
+            
+        if not use_crossq:
+            all_data_q_values = self.model(
+                "sac_q_forward", 
+                obs=curr_obs, 
+                actions=batch["action"] if "action" in batch else batch["action_tokens"]
+            )
+        else:
+            all_data_q_values, all_qf_next = self.model(
+                "crossq_q_forward",
+                obs=curr_obs,
+                actions=batch["action"] if "action" in batch else batch["action_tokens"],
+                next_obs=next_obs,
+                next_actions=next_state_actions
+            )
+
+            all_qf_next = all_qf_next.detach()
+            min_qf_next, _ = torch.min(
+                all_qf_next, 
                 dim=1, keepdim=True
             )
-
             if self.cfg.algorithm.get("backup_entropy", True):
-                min_qf_next_target = min_qf_next_target - self.alpha * next_state_log_pi
-                min_qf_next_target = min_qf_next_target.to(dtype=self.torch_dtype)
-            target_q_values = rewards.sum(dim=-1, keepdim=True) + self.cfg.algorithm.gamma * min_qf_next_target # [bsz, 1]
+                    min_qf_next = min_qf_next - self.alpha * next_state_log_pi
+                    min_qf_next = min_qf_next.to(dtype=self.torch_dtype)
             
-
-        all_data_q_values = self.model(
-            "sac_q_forward", 
-            obs=curr_obs, 
-            actions=batch["action"] if "action" in batch else batch["action_tokens"]
-        ) # [num-q, bsz, 1]
+            target_q_values = rewards.sum(dim=-1, keepdim=True) + self.cfg.algorithm.gamma * min_qf_next # [bsz, 1]
 
         critic_loss = F.mse_loss(
             all_data_q_values, 
@@ -236,17 +257,29 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         return critic_loss
     
     def forward_actor(self, batch):
+        use_crossq = (self.cfg.algorithm.get("q_head_type", "default") == "crossq")
         curr_obs = batch["transitions"]["obs"]
         pi, log_pi, shared_feature = self.model(
             "sac_forward", obs=curr_obs
         )
         log_pi = log_pi.sum(dim=-1, keepdim=True)
-        all_qf_pi = self.model(
-            "sac_q_forward", 
-            obs=curr_obs, actions=pi, 
-            shared_feature=shared_feature, 
-            detach_encoder=True
-        )
+        if not use_crossq:
+            all_qf_pi = self.model(
+                "sac_q_forward", 
+                obs=curr_obs, actions=pi, 
+                shared_feature=shared_feature, 
+                detach_encoder=True
+            )
+        else:
+            all_qf_pi, _ = self.model(
+                "crossq_q_forward",
+                obs=curr_obs,
+                actions=pi,
+                next_obs=None,
+                next_actions=None,
+                shared_feature=shared_feature,
+                detach_encoder=True
+            )
 
         # min_qf_pi = torch.mean(all_qf_pi, dim=1, keepdim=True)
         min_qf_pi, _ = torch.min(all_qf_pi, dim=1, keepdim=True)

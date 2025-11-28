@@ -19,7 +19,7 @@ import numpy as np
 
 from .modules.utils import layer_init, get_act_func, LOG_STD_MAX, LOG_STD_MIN
 from .modules.value_head import ValueHead
-from .modules.q_head import MultiQHead
+from .modules.q_head import MultiQHead, MultiCrossQHead
 from .base_policy import BasePolicy
 
 
@@ -29,7 +29,7 @@ class MLPPolicy(BasePolicy):
             self, 
             obs_dim, action_dim, 
             hidden_dim, num_action_chunks, 
-            add_value_head, add_q_head, 
+            add_value_head, add_q_head, q_head_type="default"
             ):
         super().__init__()
         self.obs_dim = obs_dim
@@ -53,13 +53,24 @@ class MLPPolicy(BasePolicy):
             independent_std = False
             action_scale = 1, -1
             final_tanh = True
-            self.q_head = MultiQHead(
-                hidden_size=obs_dim,
-                hidden_dims=[256, 256, 256], 
-                num_q_heads=2, 
-                action_dim=action_dim,
-                use_mix_embedding_input=False
-            )
+            if q_head_type == "default":
+                self.q_head = MultiQHead(
+                    hidden_size=obs_dim,
+                    hidden_dims=[256, 256, 256], 
+                    num_q_heads=2, 
+                    action_dim=action_dim,
+                    use_mix_embedding_input=False
+                )
+            elif q_head_type == "crossq":
+                self.q_head = MultiCrossQHead(
+                    hidden_size=obs_dim,
+                    hidden_dims=[256, 256, 256], 
+                    num_q_heads=2, 
+                    action_dim=action_dim,
+                    use_mix_embedding_input=False
+                )
+            else:
+                raise ValueError(f"Invalid q_head_type: {q_head_type}")
 
         self.final_tanh = final_tanh
         
@@ -220,6 +231,16 @@ class MLPPolicy(BasePolicy):
     
     def get_q_values(self, obs, actions, shared_feature=None, detach_encoder=False):
         return self.q_head(obs["states"], actions)
+    
+    def crossq_q_forward(self, obs, actions, next_obs=None, next_actions=None, shared_feature=None, detach_encoder=False):
+        return self.q_head(
+            obs["states"], actions, 
+            next_state_features=next_obs["states"] if next_obs is not None else None,
+            next_action_features=next_actions
+        )
+
+    def crossq_forward(self, obs, **kwargs):
+        return self.sac_forward(obs, **kwargs)
 
 
 class SharedBackboneMLPPolicy(nn.Module):
