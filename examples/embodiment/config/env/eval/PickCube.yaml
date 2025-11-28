@@ -3,6 +3,16 @@ auto_reset: True
 ignore_terminations: True
 use_rel_reward: True
 reward_mode: raw
+# wrap_obs_mode options:
+#   - "simple": Simplified mode, directly wraps observations, supports "state" and "rgb" only
+#   - "vla": VLA mode (default), uses complex observation extraction logic, supports all obs_mode including "rgb+segmentation"
+wrap_obs_mode: simple
+# preferred_cameras: List of camera names in priority order for observation extraction
+#   - If a task has rgb_camera_name attribute, it takes highest priority
+#   - Otherwise, cameras in this list are tried in order
+#   - If none are available, the first available camera is used
+#   - Default: ["base_camera", "3rd_view_camera"]
+preferred_cameras: ["base_camera", "3rd_view_camera"]
 seed: 0
 num_group: ${env.eval.num_envs}
 group_size: 1
@@ -18,6 +28,10 @@ video_cfg:
 init_params:
   id: "PickCube-v1"
   num_envs: ${env.eval.num_envs}
+  # obs_mode options:
+  #   - "state": State only, for MLP models (no images)
+  #   - "rgb": RGB images, for CNN models
+  #   - "rgb+segmentation": RGB images + segmentation masks
   obs_mode: ${env.train.init_params.obs_mode}
   control_mode: None
   sim_backend: "gpu"

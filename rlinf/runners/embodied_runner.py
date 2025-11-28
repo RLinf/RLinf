@@ -63,6 +63,8 @@ class EmbodiedRunner:
         self.actor.init_worker().wait()
         self.rollout.init_worker().wait()
         self.env.init_worker().wait()
+        if self.reward is not None:
+            self.reward.init_worker().wait()
 
         resume_dir = self.cfg.runner.get("resume_dir", None)
         if resume_dir is None:

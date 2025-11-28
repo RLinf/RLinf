@@ -1,0 +1,99 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+defaults:
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    reward: all
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: rlinf
+    experiment_name: ${runner.experiment_name}
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 100
+  max_steps: -1
+
+  val_check_interval: 1
+  save_interval: 1000
+
+  resume_dir: null
+  experiment_name: reward-model-training
+  output_dir: ../results
+
+reward:
+  group_name: "RewardGroup"
+  training_backend: simple  # Training backend (not used for FSDP, just a flag)
+  gpu_id: 0  # GPU device ID to use for training
+
+  checkpoint_load_path: null
+
+  global_batch_size: 32
+
+  num_epochs: 100
+  log_interval: 100
+  save_interval: 1000
+  log_dir: ${runner.output_dir}/${runner.experiment_name}/logs
+  save_dir: ${runner.output_dir}/${runner.experiment_name}/checkpoints
+
+  seed: 1234
+
+  model:
+    image_keys: ["base_camera"]
+    image_size: [3, 64, 64]  # [C, H, W]
+    hidden_dim: 256
+    num_spatial_blocks: 8
+    pretrained_encoder_path: null
+    use_pretrain: true
+    freeze_encoder: true
+
+  optim:
+    optimizer: adam
+    lr: 1e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-05
+    weight_decay: 0.0
+    clip_grad: 1.0
+
+  lr_sched:
+    lr_warmup_iters: 0
+    max_lr: 1.0e-4
+    min_lr: 0.0
+    lr_decay_style: constant
+
+  data:
+    positive_dir: ./reward_data/positive
+    negative_dir: ./reward_data/negative
+    image_key: base_camera
+    image_size: [3, 64, 64]
+    shuffle: true
+    num_workers: 4
+    pin_memory: true
+    persistent_workers: false
+    prefetch_factor: 2
+    num_prefetch_batches: 1
+
+

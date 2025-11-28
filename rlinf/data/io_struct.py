@@ -1042,6 +1042,18 @@ def put_tensor_cpu(data_dict):
     return data_dict
 
 
+def flatten_dict(d, parent_key="", sep="/"):
+    """Recursively flatten a nested dict."""
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+
 @dataclass(kw_only=True)
 class EnvOutput:
     simulator_type: str
@@ -1049,6 +1061,9 @@ class EnvOutput:
     final_obs: Optional[dict[str, Any]] = None
     dones: Optional[torch.Tensor] = None  # [B]
     rewards: Optional[torch.Tensor] = None  # [B]
+    success_frame: Optional[torch.Tensor] = (
+        None  # [B] or [B, chunk_steps] - frame-based success signal (1/0)
+    )
 
     def __post_init__(self):
         self.obs = put_tensor_cpu(self.obs)
@@ -1058,6 +1073,11 @@ class EnvOutput:
         self.dones = self.dones.cpu().contiguous() if self.dones is not None else None
         self.rewards = (
             self.rewards.cpu().contiguous() if self.rewards is not None else None
+        )
+        self.success_frame = (
+            self.success_frame.cpu().contiguous()
+            if self.success_frame is not None
+            else None
         )
 
     def prepare_observations(self, obs: dict[str, Any]) -> dict[str, Any]:
@@ -1077,7 +1097,14 @@ class EnvOutput:
                     ]
                 )
         elif self.simulator_type == "maniskill":
-            image_tensor = obs["images"]
+            image_tensor = obs.get("images", None)
+            # Handle dict format images (e.g., {"base_camera": tensor})
+            if isinstance(image_tensor, dict):
+                if len(image_tensor) == 0:
+                    image_tensor = None
+                else:
+                    # Extract the first camera's image tensor
+                    image_tensor = next(iter(image_tensor.values()))
         elif self.simulator_type == "robotwin":
             image_tensor = obs["images"]
         elif self.simulator_type == "isaaclab":
@@ -1095,11 +1122,31 @@ class EnvOutput:
         else:
             raise NotImplementedError
 
+        # Extract states based on simulator type
         states = None
-        if "images_and_states" in obs and "state" in obs["images_and_states"]:
-            states = obs["images_and_states"]["state"]
-        if "state" in obs:
-            states = obs["state"]
+        if self.simulator_type in ["libero", "metaworld"]:
+            # libero and metaworld use nested structure: obs["images_and_states"]["state"]
+            if "images_and_states" in obs and "state" in obs["images_and_states"]:
+                states = obs["images_and_states"]["state"]
+        elif self.simulator_type == "maniskill":
+            # maniskill uses top-level key: obs["states"] (plural)
+            if "states" in obs:
+                states = obs["states"]
+        elif self.simulator_type == "robotwin":
+            # robotwin uses top-level key: obs["state"] (singular)
+            if "state" in obs:
+                states = obs["state"]
+        elif self.simulator_type == "behavior":
+            # behavior doesn't return state information
+            states = None
+        else:
+            # For unknown environments, try multiple possibilities for backward compatibility
+            if "images_and_states" in obs and "state" in obs["images_and_states"]:
+                states = obs["images_and_states"]["state"]
+            elif "states" in obs:
+                states = obs["states"]
+            elif "state" in obs:
+                states = obs["state"]
 
         task_descriptions = (
             list(obs["task_descriptions"]) if "task_descriptions" in obs else None
@@ -1123,6 +1170,7 @@ class EnvOutput:
         )
         env_output_dict["dones"] = self.dones
         env_output_dict["rewards"] = self.rewards
+        env_output_dict["success_frame"] = self.success_frame
 
         return env_output_dict
 
@@ -1203,16 +1251,26 @@ class EmbodiedRolloutResult:
         )
         merged_forward_inputs = {}
         for data in self.forward_inputs:
-            for k, v in data.items():
+            # Flatten nested dicts recursively
+            if isinstance(data, dict):
+                flattened_data = flatten_dict(data)
+            else:
+                # If data is not a dict, skip it or handle as needed
+                continue
+            for k, v in flattened_data.items():
+                # Only process Tensor values, skip other types
+                if not isinstance(v, torch.Tensor):
+                    continue
                 if k in merged_forward_inputs:
                     merged_forward_inputs[k].append(v)
                 else:
                     merged_forward_inputs[k] = [v]
         for k in merged_forward_inputs.keys():
             assert k not in ["dones", "rewards", "prev_logprobs", "prev_values"]
-            rollout_result_dict[k] = (
-                torch.stack(merged_forward_inputs[k], dim=0).cpu().contiguous()
-            )
+            if len(merged_forward_inputs[k]) > 0:
+                rollout_result_dict[k] = (
+                    torch.stack(merged_forward_inputs[k], dim=0).cpu().contiguous()
+                )
 
         return rollout_result_dict
 
