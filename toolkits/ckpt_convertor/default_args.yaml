@@ -20,6 +20,13 @@ explict_model:
     num_attention_heads: 12
     num_query_groups: 2
     head_dim: 128
+  qwen_2.5_3b:
+    num_layers: 36
+    tie_word_embeddings: true
+    model_type: qwen_2
+    num_attention_heads: 16
+    num_query_groups: 2
+    head_dim: 128
   qwen_2.5_32b:
     model_type: qwen_2
     num_attention_heads: 40
@@ -69,7 +76,28 @@ explict_model:
     num_query_groups: 8
     head_dim: 128
     num_layers: 28
-    tie_word_embeddings: true
+    tie_word_embeddings: False # this model may have bug in tie_word_embeddings
+  'Qwen3-4B':
+    model_type: qwen_3
+    num_attention_heads: 32
+    num_query_groups: 8
+    head_dim: 128
+    num_layers: 36
+    tie_word_embeddings: True
+  'Qwen3-8B':
+    model_type: qwen_3
+    num_attention_heads: 32
+    num_query_groups: 8
+    head_dim: 128
+    num_layers: 36
+    tie_word_embeddings: False
+  'Qwen3-14B':
+    model_type: qwen_3
+    num_attention_heads: 40
+    num_query_groups: 8
+    head_dim: 128
+    num_layers: 40
+    tie_word_embeddings: False
   'Qwen2.5-Coder-1.5B':
     model_type: qwen_2
     num_attention_heads: 12

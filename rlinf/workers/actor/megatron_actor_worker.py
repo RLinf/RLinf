@@ -37,6 +37,7 @@ from rlinf.algorithms.utils import kl_penalty
 from rlinf.data.io_struct import (
     BatchResizingIterator,
     RolloutResult,
+    DynamicRolloutResult,
     get_batch_size,
     get_seq_length,
 )
@@ -61,7 +62,9 @@ from rlinf.utils.distributed import (
     RolloutDataBalance,
     broadcast_tensor_within_pp,
     compute_rollout_metrics,
+    compute_rollout_metrics_dynamic,
     masked_normalization,
+    report_device_info,
     vocab_parallel_entropy_and_log_probs,
     vocab_parallel_log_probs_from_logits,
 )
@@ -168,6 +171,7 @@ class MegatronActor(MegatronModelManager, Worker):
         self.is_optimizer_offloaded = False
         self.ref_policy_state_dict = None
         self.is_pipeline = self.component_placement.is_pipeline
+        self.enable_dp_load_balance = self.role_cfg.get("enable_dp_load_balance", False)
 
         # Rollout configurations
         self.rollout_group_name = self.cfg.rollout.group_name
@@ -192,7 +196,7 @@ class MegatronActor(MegatronModelManager, Worker):
 
         # Config validation
         if self.is_pipeline:
-            assert not self.role_cfg.get("enable_dp_load_balance", False), (
+            assert not self.enable_dp_load_balance, (
                 "DP load balance is not supported in pipeline mode."
             )
             assert not self.cfg.runner.enable_dynamic_batch_size, (
@@ -201,6 +205,9 @@ class MegatronActor(MegatronModelManager, Worker):
 
         self._init_profiler()
         self._init_auto_scheduler(role)
+        self.is_dynamic_rollout_batch = self.cfg.agentloop.is_dynamic_rollout_batch
+        if self.is_dynamic_rollout_batch:
+            assert self.enable_dp_load_balance, "enable_dp_load_balance must be True when is_dynamic_rollout_batch is True"
 
     def _init_auto_scheduler(self, role: str):
         self.use_auto_scheduler = (
@@ -344,6 +351,32 @@ class MegatronActor(MegatronModelManager, Worker):
 
         return batch, result
 
+    def get_batch_dynamic(
+        self, channel: Channel
+    ) -> tuple[dict[str, torch.Tensor], DynamicRolloutResult]:
+        if channel.is_local:
+            # Local channel, every process will put its own data locally
+            # No need to broadcast
+            result: DynamicRolloutResult = channel.get()
+        else:
+            if self.is_data_io_rank:
+                result: DynamicRolloutResult = channel.get()
+            else:
+                result = None
+            result = self.broadcast(
+                result, ranks=parallel_state._MODEL_PARALLEL_GLOBAL_RANKS
+            )
+            result = self.broadcast(
+                result, ranks=parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS
+            )
+
+        batch = result.to_actor_batch(
+            self.cfg.actor.model.encoder_seq_length,
+            self.tokenizer.eos_token_id,
+        )
+
+        return batch, result
+
     def put_result(self, result: RolloutResult, channel: Channel):
         if channel.is_local:
             # Local channel, every process will put its own data locally
@@ -359,7 +392,7 @@ class MegatronActor(MegatronModelManager, Worker):
         def forward_output_and_loss_func(dataloader_iter, model):
             batch = next(dataloader_iter)
 
-            batch = {key: val.cuda() for key, val in batch.items()}
+            batch = {key: val.cuda() if torch.is_tensor(val) else val for key, val in batch.items()}
 
             input_ids = batch["input_ids"]
             attention_mask = batch["attention_mask"]
@@ -369,7 +402,10 @@ class MegatronActor(MegatronModelManager, Worker):
             responses = input_ids[:, -response_len:]
             label = copy.deepcopy(position_ids)
             label[:, -response_len - 1 : -1] = responses
-            label_mask = copy.deepcopy(attention_mask)
+            if "response_mask" not in batch:
+                label_mask = copy.deepcopy(attention_mask)
+            else:
+                label_mask = copy.deepcopy(batch["response_mask"])
             label_mask[:, : -response_len - 1] = False
             label_mask[:, -1] = False
 
@@ -435,7 +471,10 @@ class MegatronActor(MegatronModelManager, Worker):
                         min=self.cfg.algorithm.importance_sampling_clip,
                     )
 
-                mask = batch["attention_mask"][:, -response_len:]
+                if "response_mask" not in batch:
+                    mask = batch["attention_mask"][:, -response_len:]
+                else:
+                    mask = batch["response_mask"][:, -response_len:]
 
                 loss, metrics_data = policy_loss(
                     task_type=self.cfg.runner.task_type,
@@ -513,6 +552,174 @@ class MegatronActor(MegatronModelManager, Worker):
 
         return forward_output_and_loss_func
 
+    def get_forward_step_func_dynamic(self):
+        """Acquire the forward step function for the model."""
+
+        def forward_output_and_loss_func(dataloader_iter, model):
+            batch = next(dataloader_iter)
+
+            batch = {key: val.cuda() if torch.is_tensor(val) else val for key, val in batch.items()}
+
+            input_ids = batch["input_ids"]
+            attention_mask = batch["attention_mask"]
+            position_ids = batch["position_ids"]
+
+            # In DynamicRolloutResult, we need to shift the labels to align with model outputs
+            # Create labels by shifting input_ids to the left (next token prediction)
+            label = copy.deepcopy(input_ids)
+            label[:, :-1] = input_ids[:, 1:]
+
+            # response_mask needs to be shifted left by 1 to align with the shifted labels
+            # because response_mask[i] indicates whether position i is a response token in input_ids
+            # but label[i] = input_ids[i+1], so we need to shift response_mask left to align
+            label_mask = copy.deepcopy(batch["response_mask"])
+            label_mask[:, :-1] = label_mask[:, 1:].clone()  # Shift left by 1
+            label_mask[:, -1] = False
+
+            def logits_processor(logits, label, label_mask):
+                assert logits.shape[:2] == label.shape[:2]
+                assert label.shape == label_mask.shape
+
+                if self.calculate_entropy:
+                    entropy, log_probs = vocab_parallel_entropy_and_log_probs(
+                        logits,
+                        label,
+                        calculate_entropy_loss=self.calculate_entropy_loss,
+                    )
+                    log_probs = log_probs.masked_fill(~label_mask, 0.0)
+                    ret = {"log_probs": log_probs, "entropy": entropy}
+                else:
+                    log_probs = vocab_parallel_log_probs_from_logits(logits, label)
+                    log_probs = log_probs.masked_fill(~label_mask, 0.0)
+                    ret = {"log_probs": log_probs}
+
+                return ret
+
+            logits_processor_args = {"label": label, "label_mask": label_mask}
+
+            output = self.custom_forward(
+                model,
+                input_ids,
+                attention_mask,
+                position_ids,
+                sequence_parallel=self.transformer_config.sequence_parallel,
+                logits_processor=logits_processor,
+                logits_processor_args=logits_processor_args,
+                temperature=self.cfg.algorithm.sampling_params.temperature,
+            )
+
+            if not self.return_loss:
+                assert False, "forward_only mode is not supported for dynamic rollout batch"
+                def id_func(output, non_loss_data=True):
+                    return output
+
+                # in last stage need to get the log_probs from the output
+                if unwrap_model(model).post_process:
+                    output = output["log_probs"]
+
+                return output, id_func
+
+            def loss_func(output):
+                curr_logprobs_ori = output["log_probs"]
+                curr_logprobs = curr_logprobs_ori.clone()
+                curr_logprobs[:, 1:] = curr_logprobs_ori[:, :-1].clone()
+                curr_logprobs[:, 0] = 0.0  # first token has no previous token
+
+                advantages = batch["advantages"]
+                prev_logprobs = batch["prev_logprobs"]
+                ref_logprobs = None
+                if "ref_logprobs" in batch:
+                    ref_logprobs = batch["ref_logprobs"]
+
+                if self.cfg.algorithm.get("importance_sampling_fix", False):
+                    assert False, "importance_sampling_fix is not supported for dynamic rollout batch"
+                    rollout_prev_logprobs = prev_logprobs
+                    recompute_prev_logprobs = batch["recompute_prev_logprobs"]
+                    advantages = advantages * torch.clamp(
+                        (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
+                        min=self.cfg.algorithm.importance_sampling_clip,
+                    )
+
+                if "response_mask" not in batch:
+                    mask = batch["attention_mask"]
+                else:
+                    mask = batch["response_mask"]
+
+                loss, metrics_data = policy_loss(
+                    task_type=self.cfg.runner.task_type,
+                    loss_type=self.cfg.algorithm.loss_type,
+                    loss_agg_func=self.loss_agg_func,
+                    logprobs=curr_logprobs,
+                    old_logprobs=prev_logprobs,
+                    advantages=advantages,
+                    clip_ratio_low=self.clip_ratio_low,
+                    clip_ratio_high=self.clip_ratio_high,
+                    loss_mask=mask,
+                )
+
+                entropy_loss = torch.zeros(1, device=loss.device)
+                if self.calculate_entropy:
+                    entropy = output["entropy"]
+                    entropy_loss = self.loss_agg_func(entropy, mask=mask)
+                    if self.calculate_entropy_loss:
+                        loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
+
+                kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+                if self.kl_beta > 0 and ref_logprobs is not None:
+                    kld = kl_penalty(curr_logprobs, ref_logprobs, self.kl_penalty_type)
+                    kl_loss = self.loss_agg_func(kld, mask)
+                    loss = loss + kl_loss * self.kl_beta
+
+                # Logging and early stopping according to KL (logp vs ref) or importance ratio (new logp vs old logp).
+                _imp = metrics_data["actor/ratio"]
+                torch.distributed.all_reduce(
+                    _imp, group=parallel_state.get_data_parallel_group()
+                )
+                _n_valid_tokens = mask.count_nonzero().clone()
+                torch.distributed.all_reduce(
+                    _n_valid_tokens, group=parallel_state.get_data_parallel_group()
+                )
+                if _n_valid_tokens.item() != 0:
+                    _imp /= _n_valid_tokens
+
+                # Early stopping.
+                if (
+                    self.cfg.algorithm.early_stop_imp_ratio is not None
+                    and _imp > self.cfg.algorithm.early_stop_imp_ratio
+                ):
+                    self.log_warning(
+                        f"Current importance ratio {_imp.item():.4f} is larger "
+                        f"than early stop threshold {self.cfg.algorithm.early_stop_imp_ratio}. Abandon this microbatch."
+                    )
+                    loss = loss * 0.0
+
+                if self.cfg.algorithm.use_valid_token_scale:
+                    loss_scale = (
+                        mask.sum()
+                        / self.global_valid_token
+                        * parallel_state.get_data_parallel_world_size()
+                        * self.num_microbatches
+                    )
+                    loss *= loss_scale.item()
+
+                # add to log
+                metrics_data.update(
+                    {
+                        "final_loss": loss.detach(),
+                        "entropy_loss": entropy_loss.detach(),
+                        "kl_loss": kl_loss.detach(),
+                    }
+                )
+
+                for k, v in metrics_data.items():
+                    if v is not None:
+                        metrics_data[k] = average_losses_across_data_parallel_group([v])
+
+                return loss, metrics_data
+            return output, loss_func
+
+        return forward_output_and_loss_func
+
     def _get_num_microbatches(self, batch: dict[str, torch.Tensor], forward_only: bool):
         batch_size = get_batch_size(batch)
         forward_micro_batch_size = (
@@ -547,9 +754,13 @@ class MegatronActor(MegatronModelManager, Worker):
                 )
             )
         else:
+            assert batch['input_ids'].shape != torch.Size([0])
             total_seqlen = get_seq_length(batch)
             num_microbatches = self._get_num_microbatches(batch, forward_only)
-            batch_iter = get_iterator_k_split(batch, num_splits=num_microbatches)
+            if self.is_dynamic_rollout_batch:
+                batch_iter = get_iterator_k_split(batch, num_splits=num_microbatches, enforce_divisible_batch=False)
+            else:
+                batch_iter = get_iterator_k_split(batch, num_splits=num_microbatches)
 
         fwd_bwd_function = get_forward_backward_func()
         self.num_microbatches = num_microbatches
@@ -559,8 +770,12 @@ class MegatronActor(MegatronModelManager, Worker):
 
         if forward_only:
             self._forward_only_record.start()
+        if self.is_dynamic_rollout_batch:
+            forward_step_func=self.get_forward_step_func_dynamic()
+        else:
+            forward_step_func=self.get_forward_step_func()
         forward_outputs = fwd_bwd_function(
-            forward_step_func=self.get_forward_step_func(),
+            forward_step_func=forward_step_func,
             data_iterator=self.make_data_iterator_list(batch_iter),
             model=self.model,
             num_microbatches=num_microbatches,
@@ -604,8 +819,12 @@ class MegatronActor(MegatronModelManager, Worker):
 
         if forward_only:
             self._forward_only_record.start()
+        if self.is_dynamic_rollout_batch:
+            forward_step_func=self.get_forward_step_func_dynamic()
+        else:
+            forward_step_func=self.get_forward_step_func()
         forward_outputs = fwd_bwd_function(
-            forward_step_func=self.get_forward_step_func(),
+            forward_step_func=forward_step_func,
             data_iterator=self.make_data_iterator_list(batch_iterator),
             model=self.model,
             num_microbatches=num_microbatches,
@@ -697,7 +916,13 @@ class MegatronActor(MegatronModelManager, Worker):
                 * self.cfg.actor.micro_batch_size
             )
         else:
-            loss_mask = batch["attention_mask"][:, -self.response_len :]
+            if self.is_dynamic_rollout_batch:
+                loss_mask = batch["response_mask"]
+            else:
+                if "response_mask" not in batch:
+                    loss_mask = batch["attention_mask"][:, -self.response_len :]
+                else:
+                    loss_mask = batch["response_mask"][:, -self.response_len :]
             global_valid_token = loss_mask.to(dtype=torch.float32).sum().cuda()
             torch.distributed.all_reduce(
                 global_valid_token, group=parallel_state.get_data_parallel_group()
@@ -715,6 +940,18 @@ class MegatronActor(MegatronModelManager, Worker):
             dp_world_size=parallel_state.get_data_parallel_world_size(),
             dp_rank=parallel_state.get_data_parallel_rank(),
             dp_group=parallel_state.get_data_parallel_group(),
+            partitioning_tool=get_seqlen_balanced_partitions,
+        )
+        return batch
+
+    def _dp_load_balance_dynamic(self, batch: dict[str, torch.Tensor], batch_pad, split_fix_chunk):
+        batch = RolloutDataBalance.from_rollout_batches_dynamic(
+            rollout_batches=batch,
+            dp_world_size=parallel_state.get_data_parallel_world_size(),
+            dp_rank=parallel_state.get_data_parallel_rank(),
+            dp_group=parallel_state.get_data_parallel_group(),
+            rollout_batch_pad=batch_pad,
+            split_fix_chunk=split_fix_chunk,
             partitioning_tool=get_seqlen_balanced_partitions,
         )
         return batch
@@ -743,15 +980,22 @@ class MegatronActor(MegatronModelManager, Worker):
 
         # Get all batches for this DP
         batches = []
-        recv_batch_size = 0
-        while recv_batch_size < self.total_batch_size_per_dp:
-            batch, rollout_result = self.get_batch(input_channel)
-            batches.append(batch)
-            recv_batch_size += rollout_result.num_sequence
-        assert recv_batch_size == self.total_batch_size_per_dp, (
-            f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
-        )
-        batch = RolloutResult.merge_batches(batches)
+        if self.is_dynamic_rollout_batch:
+            total_result_size_per_dp: int = self.cfg.data.rollout_batch_size // parallel_state.get_data_parallel_world_size()
+            for _ in range(total_result_size_per_dp):
+                batch, rollout_result = self.get_batch_dynamic(input_channel)
+                batches.append(batch)
+            batch = DynamicRolloutResult.merge_batches(batches, self.cfg.algorithm.group_size)
+        else:
+            recv_batch_size = 0
+            while recv_batch_size < self.total_batch_size_per_dp:
+                batch, rollout_result = self.get_batch(input_channel)
+                batches.append(batch)
+                recv_batch_size += rollout_result.num_sequence
+            assert recv_batch_size == self.total_batch_size_per_dp, (
+                f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
+            )
+            batch = RolloutResult.merge_batches(batches)
 
         # Compute advantages and returns
         batch = self.compute_advantages_and_returns(batch)
@@ -763,16 +1007,28 @@ class MegatronActor(MegatronModelManager, Worker):
 
         # Advantage normalization
         if self.cfg.algorithm.normalize_advantages:
-            mask = batch["attention_mask"][:, -self.response_len :]
+            assert not self.is_dynamic_rollout_batch, "dynamic_rollout_batch not support normalize_advantages"
+            if "response_mask" not in batch:
+                mask = batch["attention_mask"][:, -self.response_len :]
+            else:
+                mask = batch["response_mask"][:, -self.response_len :]
             batch["advantages"] = masked_normalization(batch["advantages"], mask)
 
         # Valid token scale
         if self.cfg.algorithm.use_valid_token_scale:
             self._setup_valid_token_scale(batch)
 
+        if self.is_dynamic_rollout_batch:
+            # idx_to_traj is not needed after computing advantages
+            batch.pop("idx_to_traj")
+
         # DP batch load balance
-        if self.cfg.actor.get("enable_dp_load_balance", False):
-            batch = self._dp_load_balance(batch)
+        if self.cfg.actor.get("enable_dp_load_balance", False) and parallel_state.get_data_parallel_world_size() > 1:
+            if self.is_dynamic_rollout_batch:
+                batch_pad = DynamicRolloutResult.get_batch_pad(self.cfg.actor.model.encoder_seq_length)
+                batch = self._dp_load_balance_dynamic(batch, batch_pad, self.num_train_steps * self.cfg.actor.micro_batch_size)
+            else:
+                batch = self._dp_load_balance(batch)
 
         if self.use_profiler:
             self.profiler.init_fwd_bwd_schedule(self.cfg.algorithm.n_minibatches)
@@ -780,15 +1036,46 @@ class MegatronActor(MegatronModelManager, Worker):
         global_batches = get_iterator_k_split(
             batch,
             num_splits=self.num_train_steps,
+            # num_splits=len(batch['input_ids']),
             shuffle=self.cfg.algorithm.get("shuffle_rollout", True),
             shuffle_seed=self.cfg.actor.seed,
         )
+        global_batches = list(global_batches)
 
         # Global batch iterations
         with self.worker_timer():
             training_metrics_list = []
-            for global_batch in global_batches:
-                training_metrics = self.training_step(global_batch)
+            for idx, global_batch in enumerate(global_batches):
+                if global_batch['input_ids'].shape == torch.Size([0]):
+                    continue
+                if self.is_dynamic_rollout_batch:
+                    global_batch_size_per_dp = global_batch['input_ids'].shape[0]
+                    dp_size = parallel_state.get_data_parallel_world_size()
+                    configure_batch_sizes(
+                        rank=torch.distributed.get_rank(),
+                        mbs=self.cfg.actor.micro_batch_size,
+                        gbs=global_batch_size_per_dp * dp_size,
+                        dp=dp_size,
+                    )
+                    num_microbatches = get_num_microbatches()
+                    assert num_microbatches == global_batch_size_per_dp
+                try:
+                    training_metrics = self.training_step(global_batch)
+                    is_fail, exp = 0, RuntimeError("bad in another rank")
+                except Exception as e:
+                    is_fail, exp = 1, e
+                finally:
+                    is_fail_tensor = torch.tensor([is_fail]).cuda()
+                    torch.distributed.all_reduce(is_fail_tensor, torch.distributed.ReduceOp.MAX)
+                    is_fail = is_fail_tensor.item()
+                    if is_fail != 0:
+                        import os
+                        batch_save_path = os.path.join(
+                            self.cfg.runner.output_dir, self.cfg.runner.experiment_name, "batch_save", f"{self._rank}.pt"
+                        )
+                        os.makedirs(os.path.dirname(batch_save_path), exist_ok=True)
+                        torch.save(global_batch, batch_save_path)
+                        raise exp
                 training_metrics_list.append(training_metrics)
 
         # Gather weights if overlap_param_gather before the next weight sync
@@ -825,7 +1112,10 @@ class MegatronActor(MegatronModelManager, Worker):
         if self.cfg.algorithm.normalize_advantages:
 
             def normalize_advantages(batch: dict[str, torch.Tensor]):
-                mask = batch["attention_mask"][:, -self.response_len :]
+                if "response_mask" not in batch:
+                    mask = batch["attention_mask"][:, -self.response_len :]
+                else:
+                    mask = batch["response_mask"][:, -self.response_len :]
                 batch["advantages"] = masked_normalization(batch["advantages"], mask)
                 return batch
 
@@ -1204,25 +1494,52 @@ class MegatronActor(MegatronModelManager, Worker):
         """
         with self.worker_timer():
             if batch.get("advantages", None) is None:
-                mask = batch["attention_mask"][:, -self.response_len :]
-                advantages, _ = calculate_adv_and_returns(
-                    task_type=self.cfg.runner.task_type,
-                    adv_type=self.cfg.algorithm.adv_type,
-                    rewards=batch["rewards"].cuda(),
-                    loss_mask=mask.cuda(),
-                    group_size=self.cfg.algorithm.group_size,
-                    kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
-                    kl_penalty_type=self.kl_penalty_type,
-                    logprob=batch["prev_logprobs"].cuda()
-                    if "prev_logprobs" in batch
-                    else None,
-                    ref_logprob=batch["ref_logprobs"].cuda()
-                    if "ref_logprobs" in batch
-                    else None,
-                    use_reinpp_baseline=self.cfg.algorithm.get(
-                        "use_reinpp_baseline", False
-                    ),
-                )
+                if self.is_dynamic_rollout_batch:
+                    mask = batch["response_mask"] # [num_sequence, seq_len]
+                    advantages, _ = calculate_adv_and_returns(
+                        task_type=self.cfg.runner.task_type,
+                        adv_type=self.cfg.algorithm.adv_type,
+                        rewards=batch["rewards"].cuda(),
+                        loss_mask=mask.cuda(),
+                        num_sequence=len(batch["input_ids"]),
+                        group_size=self.cfg.algorithm.group_size,
+                        idx_to_traj=batch["idx_to_traj"],
+                        kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
+                        kl_penalty_type=self.kl_penalty_type,
+                        logprob=batch["prev_logprobs"].cuda()
+                        if "prev_logprobs" in batch
+                        else None,
+                        ref_logprob=batch["ref_logprobs"].cuda()
+                        if "ref_logprobs" in batch
+                        else None,
+                        use_reinpp_baseline=self.cfg.algorithm.get(
+                            "use_reinpp_baseline", False
+                        ),
+                    )
+                else:
+                    if "response_mask" not in batch:
+                        mask = batch["attention_mask"][:, -self.response_len :] # [batch_size, training_seq_length]
+                    else:
+                        mask = batch["response_mask"][:, -self.response_len :] # [batch_size, training_seq_length]
+                    advantages, _ = calculate_adv_and_returns(
+                        task_type=self.cfg.runner.task_type,
+                        adv_type=self.cfg.algorithm.adv_type,
+                        rewards=batch["rewards"].cuda(),
+                        loss_mask=mask.cuda(),
+                        num_sequence=len(batch["input_ids"]),
+                        group_size=self.cfg.algorithm.group_size,
+                        kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
+                        kl_penalty_type=self.kl_penalty_type,
+                        logprob=batch["prev_logprobs"].cuda()
+                        if "prev_logprobs" in batch
+                        else None,
+                        ref_logprob=batch["ref_logprobs"].cuda()
+                        if "ref_logprobs" in batch
+                        else None,
+                        use_reinpp_baseline=self.cfg.algorithm.get(
+                            "use_reinpp_baseline", False
+                        ),
+                    )
                 batch["advantages"] = advantages
 
         return batch
@@ -1311,6 +1628,7 @@ class MegatronActor(MegatronModelManager, Worker):
                 self.cfg.data.max_prompt_length,
                 self.response_len,
                 rollout_metrics_compute_data_group,
+                debug_right_padding=self.is_dynamic_rollout_batch,
             )
         )
 

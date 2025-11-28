@@ -29,6 +29,12 @@ def omegaconf_register():
     OmegaConf.register_new_resolver(
         "torch.dtype", lambda dtype_name: getattr(torch, dtype_name), replace=True
     )
+    OmegaConf.register_new_resolver("lt", lambda x, y: x < y)
+    OmegaConf.register_new_resolver("gt", lambda x, y: x > y)
+    OmegaConf.register_new_resolver("le", lambda x, y: x <= y)
+    OmegaConf.register_new_resolver("ge", lambda x, y: x >= y)
+    OmegaConf.register_new_resolver("eq", lambda x, y: x == y)
+    OmegaConf.register_new_resolver("ne", lambda x, y: x != y)
     _REGISTERED = True
 
 
