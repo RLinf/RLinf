@@ -232,7 +232,7 @@ def preprocess_reasoning_advantages_inputs(
         kwargs.update({"ref_logprob": ref_logprob})
 
     # Create done flags (episode ends at the last token)
-    dones = torch.zeros(seq_len + 1, bsz, dtype=torch.bool)
+    dones = torch.zeros(seq_len + 1, bsz, dtype=torch.bool, device=rewards.device)
     dones[-1] = True
     kwargs.update(
         {

@@ -82,9 +82,12 @@ def policy_loss(**kwargs) -> tuple[torch.Tensor, dict]:
     loss_fn = get_policy_loss(loss_type)
 
     task_type = kwargs["task_type"]
+
     if task_type == "embodied":
         kwargs = preprocess_loss_inputs(**kwargs)
 
+    kwargs.pop("task_type")
+    kwargs.pop("loss_type")
     loss, metrics_data = loss_fn(**kwargs)
 
     if task_type == "embodied":
