@@ -321,6 +321,7 @@ class PhysicalEnv(gym.Env):
             self.render_images,
             output_dir=output_dir,
             video_name=f"{self.video_cnt}",
+            fps=self.env_cfg.step_frequency
         )
         self.video_cnt += 1
         self.render_images = []

@@ -119,8 +119,7 @@ class CNNPolicy(BasePolicy):
                 hidden_size=encoder_out_dim+self.cfg.state_latent_dim,
                 hidden_dims=[256, 256, 256], 
                 num_q_heads=2, 
-                action_dim=self.cfg.action_dim,
-                use_mix_embedding_input=False
+                action_feature_dim=self.cfg.action_dim
             )
 
         if self.cfg.independent_std:

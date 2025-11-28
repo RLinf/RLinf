@@ -15,6 +15,7 @@
 import gc
 import os
 
+import asyncio
 import itertools
 import numpy as np
 import torch
@@ -31,6 +32,7 @@ from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
     append_to_dict,
     compute_rollout_metrics,
+    compute_split_num
 )
 
 class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
@@ -168,10 +170,6 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                     target_param.data.mul_(1.0 - tau)
                     target_param.data.add_(online_param.data * tau)
 
-    async def recv_rollout_batch(self):
-        await super().recv_rollout_batch()
-        self.replay_buffer.add_rollout_batch(self.rollout_batch)
-
     async def recv_demo_data(self):
         demo_data = await self.demo_data_channel.get(async_op=True).async_wait()
         self.demo_buffer = SACReplayBuffer.create_from_buffer(demo_data, seed=self.cfg.actor.seed)
@@ -193,15 +191,10 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         curr_obs = batch["transitions"]["obs"]
         next_obs = batch["transitions"]["next_obs"]
         with torch.no_grad():
-            kwargs = {}
-            if self.cfg.actor.model.model_name in ["openvla", "openvla_oft"]:
-                kwargs["temperature"] = (
-                    self.cfg.algorithm.sampling_params.temperature_train
-                )
+
             next_state_actions, next_state_log_pi, shared_feature = self.model(
                 "sac_forward", 
                 obs=next_obs, 
-                **kwargs
             )
             next_state_log_pi = next_state_log_pi.sum(dim=-1, keepdim=True)
             
@@ -242,13 +235,8 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
     
     def forward_actor(self, batch):
         curr_obs = batch["transitions"]["obs"]
-        kwargs = {}
-        if self.cfg.actor.model.model_name in ["openvla", "openvla_oft"]:
-            kwargs["temperature"] = (
-                self.cfg.algorithm.sampling_params.temperature_train
-            )
         pi, log_pi, shared_feature = self.model(
-            "sac_forward", obs=curr_obs, **kwargs
+            "sac_forward", obs=curr_obs
         )
         log_pi = log_pi.sum(dim=-1, keepdim=True)
         all_qf_pi = self.model(
@@ -266,13 +254,8 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
     def forward_alpha(self, batch):
         curr_obs = batch["transitions"]["obs"]
         with torch.no_grad():
-            kwargs = {}
-            if self.cfg.actor.model.model_name in ["openvla", "openvla_oft"]:
-                kwargs["temperature"] = (
-                    self.cfg.algorithm.sampling_params.temperature_train
-                )
             _, log_pi, _ = self.model(
-                "sac_forward", obs=curr_obs, **kwargs
+                "sac_forward", obs=curr_obs
             )
             log_pi = log_pi.sum(dim=-1, keepdim=True)
 
@@ -281,7 +264,16 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         return alpha_loss
         
 
-    def run_training(self):
+    async def start_replay_buffer(self, data_channel):
+        send_num = self._component_placement.get_world_size("rollout") * self.stage_num
+        recv_num = self._component_placement.get_world_size("actor")
+        split_num = compute_split_num(send_num, recv_num)
+        replay_buffer_task = asyncio.create_task(
+            self.replay_buffer.run(self.cfg, data_channel=data_channel, split_num=split_num)
+        )
+        await replay_buffer_task
+    
+    async def run_training(self):
         """SAC training using replay buffer"""
         if self.cfg.actor.get("enable_offload", False):
             self.load_fsdp_param_and_grad(self.device)
@@ -292,10 +284,10 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         train_actor_steps = self.cfg.algorithm.get("train_actor_steps", 0) // self._world_size
         train_actor_steps = max(min_buffer_size, train_actor_steps)
 
-        if not self.replay_buffer.is_ready(min_buffer_size):
+        if not (await self.replay_buffer.is_ready_async(min_buffer_size)):
             self.log_on_first_rank(f"Replay buffer size {len(self.replay_buffer)} < {min_buffer_size}, skipping training")
-            return {}
-        train_actor = self.replay_buffer.is_ready(train_actor_steps)
+            return False
+        train_actor = await self.replay_buffer.is_ready_async(train_actor_steps)
 
         assert (
             self.cfg.actor.global_batch_size

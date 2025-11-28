@@ -16,11 +16,13 @@
 import os
 import pickle as pkl
 from typing import Dict, List, Optional, Tuple
+from rlinf.scheduler import Channel
 
 import numpy as np
 import torch
 from rlinf.data.io_struct.utils import (
     process_nested_dict_for_replay_buffer, 
+    cat_list_of_dict_tensor,
 )
 
 def concat_batch(data1, data2):
@@ -142,6 +144,7 @@ class SACReplayBuffer:
         """
         self.capacity = capacity
         self.device = device
+        self.start = False
         
         # Storage: Dictionary of pre-allocated tensors
         # Will be initialized lazily on first insertion
@@ -201,16 +204,38 @@ class SACReplayBuffer:
         self.pos = (self.pos + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
 
-    def add_rollout_batch(self, rollout_batch: Dict[str, torch.Tensor]):
+    def _preprocess_rollout_batch(self, rollout_batch):
+        if hasattr(self, "cfg"):
+            if (
+                not self.cfg.env.train.auto_reset
+                and not self.cfg.env.train.ignore_terminations
+            ):
+                raise NotImplementedError
+
+            # filter data by rewards
+            if self.cfg.algorithm.get("filter_rewards", False):
+                raise NotImplementedError
+        
+        flattened_batch, num_to_add = process_nested_dict_for_replay_buffer(rollout_batch)
+        return flattened_batch, num_to_add
+    
+    def add_rollout_batch(self, rollout_batch: Dict[str, torch.Tensor], extra_preprocess=True):
         """
         Add a batch of transitions to the buffer.
         Handles flattening [T, B, ...] -> [T*B, ...] and circular insertion.
         """
         # 1. Flatten the batch: [n-chunk-steps, actor-bsz, ...] -> [num_samples, ...]
 
-        rollout_batch.pop("prev_logprobs")
-        rollout_batch.pop("prev_values")
-        flattened_batch, num_to_add = process_nested_dict_for_replay_buffer(rollout_batch)
+        if "prev_logprobs" in rollout_batch:
+            rollout_batch.pop("prev_logprobs")
+        if "prev_values" in rollout_batch:
+            rollout_batch.pop("prev_values")
+        
+        if extra_preprocess:
+            flattened_batch, num_to_add = self._preprocess_rollout_batch(rollout_batch)
+        else:
+            flattened_batch = rollout_batch
+            num_to_add = flattened_batch["rewards"].shape[0]
         assert num_to_add > 0
         
 
@@ -268,6 +293,11 @@ class SACReplayBuffer:
         """Check if buffer has enough samples for training."""
         return self.size >= min_size
 
+
+    async def is_ready_async(self, min_size: int) -> bool:
+        """Check if buffer has enough samples for training."""
+        return self.size >= min_size
+
     def clear(self):
         """Clear the buffer (reset pointers, keep memory allocated)."""
         self.pos = 0
@@ -305,8 +335,19 @@ class SACReplayBuffer:
             all_ids = torch.randperm(self.size, generator=self.random_generator).to(self.device)
         
         res_ls = shuffle_and_split_dict_to_chunk(self.buffer, split_size=num_splits, indice_ids=all_ids)
-        return res_ls        
-
+        return res_ls
+    
+    async def run(self, cfg, data_channel: Channel, split_num):
+        self.start = True
+        self.cfg = cfg
+        while True:
+            recv_list = []
+            for _ in range(split_num):
+                recv_list.append(
+                    await data_channel.get(async_op=True).async_wait()
+                )
+            rollout_batch = cat_list_of_dict_tensor(recv_list)
+            self.add_rollout_batch(rollout_batch, extra_preprocess=False)
 
 
 class PrioritizedSACReplayBuffer(SACReplayBuffer):

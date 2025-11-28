@@ -26,23 +26,33 @@ class QHead(nn.Module):
         - Action pathway: projects from action_dim to 256
         - Fusion: concatenate [256, 256] -> 512 -> 256 -> 128 -> 1
     """
-    def __init__(self, hidden_size, action_dim, hidden_dims, output_dim=1, use_mix_embedding_input=True):
+    def __init__(
+            self, hidden_size, action_feature_dim, hidden_dims, 
+            output_dim=1, train_action_encoder=False,
+        ):
         super().__init__()
         self.hidden_size = hidden_size
-        self.action_dim = action_dim
-        self.use_mix_embedding_input = use_mix_embedding_input
+        self.action_feature_dim = action_feature_dim
+        self.train_action_encoder = train_action_encoder
 
         self.nonlinearity = "relu"
         
-        if use_mix_embedding_input:
-            raise NotImplementedError
-        else:
-            self.net = make_mlp(
-                in_channels=hidden_size+action_dim, 
-                mlp_channels=hidden_dims+[output_dim, ], 
-                act_builder=get_act_func(self.nonlinearity), 
-                last_act=False
+        
+        if self.train_action_encoder:
+            self.action_encoder = make_mlp(
+                in_channels=action_feature_dim, 
+                mlp_channels=[1024, 1024], 
             )
+            action_hidden_dim = 1024
+        else:
+            action_hidden_dim = action_feature_dim
+        
+        self.net = make_mlp(
+            in_channels=hidden_size+action_hidden_dim, 
+            mlp_channels=hidden_dims+[output_dim, ], 
+            act_builder=get_act_func(self.nonlinearity), 
+            last_act=False
+        )
 
         self._init_weights(self.nonlinearity)
 
@@ -71,12 +81,12 @@ class QHead(nn.Module):
         Returns:
             torch.Tensor: Q-values [batch_size, output_dim]
         """
-        if self.use_mix_embedding_input:
-            raise NotImplementedError
-        else:
-            # Original simple concatenation
-            x = torch.cat([state_features, action_features], dim=-1)
-            q_values = self.net(x)
+        if self.train_action_encoder:
+            action_features = self.action_encoder(action_features)
+        
+        # Original simple concatenation
+        x = torch.cat([state_features, action_features], dim=-1)
+        q_values = self.net(x)
         
         return q_values
 
@@ -87,11 +97,12 @@ class MultiQHead(nn.Module):
     """
     def __init__(
             self, 
-            hidden_size, action_dim, 
+            hidden_size, 
+            action_feature_dim, 
             hidden_dims, 
             num_q_heads=2, 
             output_dim=1, 
-            use_mix_embedding_input=True, 
+            train_action_encoder=False
         ):
         super().__init__()
 
@@ -99,7 +110,7 @@ class MultiQHead(nn.Module):
         qs = []
         for q_id in range(self.num_q_heads):
             qs.append(
-                QHead(hidden_size, action_dim, hidden_dims, output_dim, use_mix_embedding_input)
+                QHead(hidden_size, action_feature_dim, hidden_dims, output_dim, train_action_encoder)
             )
         self.qs = nn.ModuleList(qs)
 

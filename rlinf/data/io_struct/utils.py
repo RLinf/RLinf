@@ -88,18 +88,18 @@ def process_nested_dict_for_train(nested_dict, shuffle_id):
             ret_dict[key] = process_nested_dict_for_train(value, shuffle_id)
     return ret_dict
 
-def process_nested_dict_for_replay_buffer(nested_dict):
+def process_nested_dict_for_replay_buffer(nested_dict, rm_extra_done=True):
     ret_dict = dict()
     num_data = None
     for key, value in nested_dict.items():
-        if key in ["dones", "prev_values"]:
-            value = value[:-1]
+        if key == "dones" and rm_extra_done:
+            value = value[1:]
         if value is None:
             ret_dict[key] = None
         if isinstance(value, torch.Tensor):
             ret_dict[key] = value.reshape(-1, *value.shape[2:]).cpu()
             if num_data is not None:
-                assert num_data == ret_dict[key].shape[0]
+                assert num_data == ret_dict[key].shape[0], f"{key=}, {num_data=}, {ret_dict[key].shape[0]=}"
             num_data = ret_dict[key].shape[0]
         elif isinstance(value, Dict):
             ret_dict[key], num_data = process_nested_dict_for_replay_buffer(value)
