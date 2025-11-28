@@ -197,9 +197,8 @@ def preprocess_reasoning_advantages_inputs(
         kwargs.update({"rewards": expanded_rewards})
 
     elif kwargs["adv_type"] == "grpo":
-        rewards = rewards.unsqueeze(0)  # [1, bsz]
         grouped_rewards = (
-            rewards.transpose(0, 1).reshape(-1, kwargs["group_size"]).contiguous()
+            rewards.reshape(-1, kwargs["group_size"]).contiguous()
         )
         kwargs.update(
             {
