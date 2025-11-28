@@ -19,7 +19,7 @@ runner:
     experiment_name: ${runner.experiment_name}
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 5
+  max_epochs: 1000
   max_steps: -1
 
   val_check_interval: 1
@@ -27,25 +27,15 @@ runner:
 
   seq_length: 10240
 
-  enable_dynamic_batch_size: True
-  max_tokens_per_mbs: 10240
+  enable_dynamic_batch_size: False
+  max_tokens_per_mbs: 16384
 
   resume_dir: null
-  experiment_name: rstar2-grpo-3b
-  output_dir: ../output_1111
-
-down_sampling:
-  do_down_sampling: true
-  down_sampling_config:
-    reject_equal_reward: true
-    roc_error_ratio: true
-    roc_answer_format: true
-    min_zero_reward_trace_num: 2
-    min_non_zero_reward_trace_num: 2
-    down_sample_to_n: 8
+  experiment_name: rstar2-grpo-1.5b-128-tp1
+  output_dir: ../output
 
 algorithm:
-  group_size: 16
+  group_size: 32
 
   n_minibatches: 1
   training_batch_size_per_gpu: 1 # micro batch size
@@ -70,9 +60,9 @@ algorithm:
   ratio_clip_eps: 0.2
   entropy_bonus: 0.0
   calculate_entropy: False
-  clip_ratio_c: null # 3.0
-  clip_ratio_low: null # if null or not set, will use ratio_clip_eps
-  clip_ratio_high: null # if null or not set, will use ratio_clip_eps
+  clip_ratio_c: 3.0 # 3.0
+  clip_ratio_low: 0.2 # if null or not set, will use ratio_clip_eps
+  clip_ratio_high: 0.28 # if null or not set, will use ratio_clip_eps
 
   adv_type: grpo
   normalize_advantages: False
@@ -83,7 +73,7 @@ algorithm:
   sampling_params:
     use_greedy: False
     temperature: 1.0
-    top_k: 1000000
+    top_k: -1
     top_p: 1.0
     repetition_penalty: 1.0
     max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
@@ -94,13 +84,13 @@ inference:
   group_name: "InferenceGroup"
   load_from_actor: True
   model:
-    tensor_model_parallel_size: 2
+    tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
     sequence_parallel: False
 
 agentloop:
   group_name: "AgentLoopGroup"
-  max_user_turns: 3
+  max_user_turns: null
   max_assistant_turns: 5
   max_parallel_calls: 1
   max_tool_response_length: 256
@@ -110,7 +100,7 @@ agentloop:
 rollout:
   group_name: "RolloutGroup"
 
-  gpu_memory_utilization: 0.4
+  gpu_memory_utilization: 0.6
 
   model_dir: /mnt/mnt/public/zhuchunyang_rl/hf_models/Qwen2.5-1.5B-Instruct
   model_arch: qwen2.5
@@ -142,7 +132,7 @@ rollout:
 
   return_logprobs: ${not:${algorithm.recompute_logprobs}}
 
-  tensor_parallel_size: 2
+  tensor_parallel_size: 1
   pipeline_parallel_size: 1
   
   validate_weight: False # whether to send all weights at first for weight comparison.
@@ -156,7 +146,7 @@ data:
   type: rstar2
   max_prompt_length: 2048
   filter_prompt_by_length: True
-  rollout_batch_size: 32
+  rollout_batch_size: 128
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: prompt
@@ -187,27 +177,27 @@ actor:
   offload_optimizer: True
   offload_weight: True
   offload_grad: True
-  enable_dp_load_balance: True
+  enable_dp_load_balance: False
 
   calculate_flops: False
 
   seed: 1234
 
   model:
-    precision: fp16
+    precision: bf16
     add_bias_linear: False
 
-    tensor_model_parallel_size: 2
+    tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
 
     activation: swiglu
-    sequence_parallel: True
+    sequence_parallel: False
     # recompute_method: block
     # recompute_granularity: selective
 
-    # recompute_method: block
-    # recompute_granularity: full
-    # recompute_num_layers: 20
+    recompute_method: block
+    recompute_granularity: full
+    recompute_num_layers: 28
 
     seq_length: ${runner.seq_length}
     encoder_seq_length: ${runner.seq_length}
@@ -229,14 +219,14 @@ actor:
 
   optim:
     optimizer: adam
-    bf16: False
-    fp16: True
-    lr: 2e-05
+    bf16: True
+    fp16: False
+    lr: 1e-6
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-05
-    min_lr: 2.0e-6
-    weight_decay: 0.05
+    min_lr: 0.0
+    weight_decay: 0.01
     use_distributed_optimizer: True
     overlap_grad_reduce: False
     overlap_param_gather: False
@@ -244,17 +234,17 @@ actor:
     overlap_param_gather_with_optimizer_step: False
     optimizer_cpu_offload: True
     use_precision_aware_optimizer: True
-    clip_grad: 0.8
-    loss_scale: 65536
+    clip_grad: 1.0
+    # loss_scale: 65536
 
   lr_sched:
-    lr_warmup_fraction: 0.01
+    lr_warmup_fraction: 0.1
     lr_warmup_init: 0.0
-    lr_warmup_iters: 0
-    max_lr: 2.0e-5
+    # lr_warmup_iters: 0
+    max_lr: 1e-6
     min_lr: 0.0
     lr_decay_style: constant
-    lr_decay_iters: 10
+    lr_decay_iters: 200
 
   tokenizer:
     tokenizer_model: ${rollout.model_dir}
@@ -265,7 +255,7 @@ actor:
   megatron:
     ddp_bucket_size: null
     distributed_backend: nccl # Support 'nccl' and 'gloo'
-    distributed_timeout_minutes: 30
+    distributed_timeout_minutes: 60
     ckpt_format: torch
     use_dist_ckpt: False
     tp_comm_bootstrap_backend: nccl
@@ -304,7 +294,7 @@ reward:
   group_name: "RewardGroup"
   use_reward_model: false
   reward_type: 'rstar2'
-  reward_scale: 5.0
+  reward_scale: 1.0
 
   tokenizer:
     tokenizer_model: ${actor.tokenizer.tokenizer_model}

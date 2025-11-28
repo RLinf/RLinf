@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import base64
+import time
 from typing import Any, Callable, Union, Optional, Dict
 
 from rlinf.data.tool_call.tool_io_struct import ToolChannelRequest, ToolChannelResponse
@@ -55,7 +56,7 @@ class CodeJudgeToolBase(ToolBase):
                 output_parts.append(f"stdout: {result['stdout']}")
             if result["stderr"]:
                 output_parts.append(f"stderr: {result['stderr']}")
-            output_parts.append(f"execution time: {result['cost']:.2f}s")
+            output_parts.append(f" execution time: {result['cost']:.2f}s")
             result = "\n".join(output_parts)
             return ToolChannelResponse(success=True, result=result)
         else:
@@ -66,7 +67,7 @@ class CodeJudgeToolBase(ToolBase):
                 output_parts.append(f"stdout: {result['stdout']}")
             if result["stderr"]:
                 output_parts.append(f"stderr: {result['stderr']}")
-            output_parts.append(f"execution time: {result['cost']:.2f}s")
+            output_parts.append(f" execution time: {result['cost']:.2f}s")
             result = "\n".join(output_parts)
             return ToolChannelResponse(success=False, result=result)
 
@@ -236,7 +237,7 @@ persistent_executor.execute_code(code_to_execute, replay_history_code={})
 """
 
 class PythonTool(CodeJudgeToolBase):
-    name = "execute_python_code_with_standard_io"
+    name = "python_code_with_standard_io"
 
     def __init__(self, cfg):
         super().__init__(cfg=cfg)
@@ -263,18 +264,29 @@ class PythonTool(CodeJudgeToolBase):
             "submissions": [submission]
         }
 
-        try:
-            results = (await send_request_func(self.url, data))["results"]
+        # try:
+        if True:
+            for retry_time in range(10):
+                try:
+                    results = (await send_request_func(self.url, data))["results"]
+                    break
+                except Exception as e:
+                    print(f"Tool retry time {retry_time}, exception: {e}")
+                    time.sleep(1)
+            else:
+                raise e
             assert len(results) == 1, f"{results}"
+            print(f"Tool results: {results[0]}")
             return self._postprocess(results[0])
-        except Exception as e:
-            return ToolChannelResponse(success=False, result=f"Error: send request failed: {str(e)}")
+        # except Exception as e:
+        #     print(f"Tool exception: {e}")
+        #     return ToolChannelResponse(success=False, result=f"Error: send request failed: {str(e)}")
 
     def tool_schema(self) -> Dict:
         return {
             "type": "function",
             "function": {
-                "name": "execute_python_code_with_standard_io", 
+                "name": "python_code_with_standard_io", 
                 "description": "Execute Python code with standard input and capture standard output. This function takes a Python code string and an input string, provides the input string through standard input (stdin) to the code, and captures and returns any output produced through standard output (stdout). If the executed code raises an exception, the error message will be captured and returned instead.", 
                 "parameters": {
                     "type": "object",

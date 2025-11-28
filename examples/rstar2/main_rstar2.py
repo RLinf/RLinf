@@ -54,7 +54,7 @@ def main(cfg) -> None:
         name=cfg.rollout.group_name,
         placement_strategy=rollout_placement_strategy,
     )
-    
+
     # AgentLoop group.
     agentloop_placement_strategy = NodePlacementStrategy(
         [

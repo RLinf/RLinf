@@ -53,6 +53,7 @@ def compute_ppo_actor_loss(
         Tuple[torch.Tensor, Dict]: (actor_loss, metrics_dict)
     """
 
+    # print(f"zcy_dbg: shapes: logprobs: {logprobs.shape}; old_logprobs: {old_logprobs.shape}; advantages: {advantages.shape}; loss_mask: {loss_mask.shape};")
     loss_mask_ratio = None
 
     if (
@@ -73,6 +74,12 @@ def compute_ppo_actor_loss(
     loss_mask_count = loss_mask.count_nonzero() or 1
     # For numerical stability.
     ratio = torch.where(loss_mask, torch.exp(logprobs - old_logprobs), 0)
+    # print_shapes = {'ratio': ratio.shape, 'loss_mask': loss_mask.shape, 'logprobs': logprobs.shape, 'old_logprobs': old_logprobs.shape}
+    # print_values = {'ratio': ratio.tolist(), 'loss_mask': loss_mask.tolist(), 'logprobs': logprobs.tolist(), 'old_logprobs': old_logprobs.tolist()}
+    # print(f"zcy_dbg: ratio info: shapes: {print_shapes}, values: {print_values}")
+    # import time
+    # time.sleep(1)
+    # exit(-1)
     approx_kl = torch.where(loss_mask, (logprobs - old_logprobs).detach(), 0.0)
 
     clipped_ratio = torch.clamp(ratio, 1.0 - clip_ratio_low, 1.0 + clip_ratio_high)

@@ -78,6 +78,9 @@ class MGLoaderGroupLazy:
                 else:
                     filename = f"{pt_path}/mp_rank_{tp_rank:02d}_{pp_rank:03d}/model_optim_rng.pt"
                 pt_files.append(filename)
+            # print(f"{pt_path=}")
+            # print(pt_files)
+            # exit()
         else:
             for tpe_rank, ep_rank in itertools.product(
                 range(Operation.global_tpe), range(Operation.global_ep)

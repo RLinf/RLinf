@@ -106,12 +106,12 @@ def masked_mean(values: torch.Tensor, mask: torch.Tensor, axis=None):
     elif (~mask).all():
         return (values * mask).sum(axis=axis)
     else:
-        return (values * mask).sum(axis=axis) / mask.sum(axis=axis)
+        return (values * mask).sum(axis=axis) / mask.sum(axis=axis) # TODO: bug in agent. wait for fix @zhuchunyang
 
 
 def masked_sum(values: torch.Tensor, mask: torch.Tensor, axis=None):
     """Compute mean of tensor with a masked values."""
-    return (values * mask).sum(axis=axis)
+    return (values * mask).sum(axis=axis) # TODO: bug in agent. wait for fix @zhuchunyang
 
 
 def seq_mean_token_sum(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
@@ -121,7 +121,7 @@ def seq_mean_token_sum(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
 
 
 def seq_mean_token_mean(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
-    seq_losses = torch.sum(values * mask, dim=-1) / torch.sum(
+    seq_losses = torch.sum(values * mask, dim=-1) / torch.sum( # TODO: bug in agent. wait for fix @zhuchunyang
         mask, dim=-1
     )  # token-mean
     loss = torch.mean(seq_losses)  # seq-mean

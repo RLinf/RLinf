@@ -189,9 +189,6 @@ class MegatronActor(MegatronModelManager, Worker):
             * self.cfg.algorithm.group_size
             // parallel_state.get_data_parallel_world_size()
         )
-        self.do_down_sampling = self.cfg.get("down_sampling", False) and self.cfg.down_sampling.do_down_sampling
-        if self.do_down_sampling:
-            self.down_sampling_config = self.cfg.down_sampling.down_sampling_config
 
         # Config validation
         if self.is_pipeline:
@@ -438,7 +435,10 @@ class MegatronActor(MegatronModelManager, Worker):
                         min=self.cfg.algorithm.importance_sampling_clip,
                     )
 
-                mask = batch["attention_mask"][:, -response_len:]
+                if "response_mask" not in batch:
+                    mask = batch["attention_mask"][:, -response_len:]
+                else:
+                    mask = batch["response_mask"][:, -response_len:]
 
                 loss, metrics_data = policy_loss(
                     task_type=self.cfg.runner.task_type,
@@ -489,7 +489,7 @@ class MegatronActor(MegatronModelManager, Worker):
 
                 if self.cfg.algorithm.use_valid_token_scale:
                     loss_scale = (
-                        mask.sum()
+                        mask.sum() # TODO: bug in agent. wait for fix @zhuchunyang
                         / self.global_valid_token
                         * parallel_state.get_data_parallel_world_size()
                         * self.num_microbatches
@@ -669,7 +669,8 @@ class MegatronActor(MegatronModelManager, Worker):
         else:
             train_metrics = self.run_forward_backward(batch, forward_only=False)
         increment = (
-            get_batch_size(batch)
+            get_num_microbatches()
+            * self.cfg.actor.micro_batch_size
             * parallel_state.get_data_parallel_world_size()
         )
         success, grad_norm, num_zeros_in_grad, lr = self.optimizer_step(increment)
@@ -698,7 +699,10 @@ class MegatronActor(MegatronModelManager, Worker):
                 * self.cfg.actor.micro_batch_size
             )
         else:
-            loss_mask = batch["attention_mask"][:, -self.response_len :]
+            if "response_mask" not in batch:
+                loss_mask = batch["attention_mask"][:, -self.response_len :]
+            else:
+                loss_mask = batch["response_mask"][:, -self.response_len :]
             global_valid_token = loss_mask.to(dtype=torch.float32).sum().cuda()
             torch.distributed.all_reduce(
                 global_valid_token, group=parallel_state.get_data_parallel_group()
@@ -761,7 +765,10 @@ class MegatronActor(MegatronModelManager, Worker):
         if self.cfg.actor.get("enable_dp_load_balance", False):
             batch = self._dp_load_balance(batch)
         if batch is None:
-            return None, None
+            with self.worker_timer():
+                rollout_metrics = self._compute_rollout_metrics(batch)
+                
+            return rollout_metrics, None
 
         # Must be called after batch is retrieved, which is when rollout has stopped
         # Otherwise, loading model might cause OOM
@@ -770,7 +777,10 @@ class MegatronActor(MegatronModelManager, Worker):
 
         # Advantage normalization
         if self.cfg.algorithm.normalize_advantages:
-            mask = batch["attention_mask"][:, -self.response_len :]
+            if "response_mask" not in batch:
+                mask = batch["attention_mask"][:, -self.response_len :]
+            else:
+                mask = batch["response_mask"][:, -self.response_len :]
             batch["advantages"] = masked_normalization(batch["advantages"], mask)
 
         # Valid token scale
@@ -828,7 +838,10 @@ class MegatronActor(MegatronModelManager, Worker):
         if self.cfg.algorithm.normalize_advantages:
 
             def normalize_advantages(batch: dict[str, torch.Tensor]):
-                mask = batch["attention_mask"][:, -self.response_len :]
+                if "response_mask" not in batch:
+                    mask = batch["attention_mask"][:, -self.response_len :]
+                else:
+                    mask = batch["response_mask"][:, -self.response_len :]
                 batch["advantages"] = masked_normalization(batch["advantages"], mask)
                 return batch
 
@@ -1210,13 +1223,16 @@ class MegatronActor(MegatronModelManager, Worker):
             if batch["rewards"].numel() == 0:
                 batch["advantages"] = torch.zeros(0, dtype=torch.float32, device=batch["rewards"].device)
             if batch.get("advantages", None) is None:
-                mask = batch["attention_mask"][:, -self.response_len :]
+                if "response_mask" not in batch:
+                    mask = batch["attention_mask"][:, -self.response_len :]
+                else:
+                    mask = batch["response_mask"][:, -self.response_len :]
                 advantages, _ = calculate_adv_and_returns(
                     task_type=self.cfg.runner.task_type,
                     adv_type=self.cfg.algorithm.adv_type,
                     rewards=batch["rewards"].cuda(),
                     loss_mask=mask.cuda(),
-                    group_size=self.down_sampling_config.down_sample_to_n if self.do_down_sampling else self.cfg.algorithm.group_size,
+                    group_size=self.cfg.algorithm.group_size,
                     kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
                     kl_penalty_type=self.kl_penalty_type,
                     logprob=batch["prev_logprobs"].cuda()

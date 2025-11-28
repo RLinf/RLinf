@@ -15,7 +15,7 @@ RAY_PORT=${RAY_PORT:-29500}  # Default port for Ray, can be modified if needed
 # Head node startup logic
 if [ "$RANK" -eq 0 ]; then
     # Get local machine IP address (assumed to be intranet IP)
-    IP_ADDRESS=$(hostname -I | awk '{print $1}')
+    IP_ADDRESS=$(hostname -I | awk '{print $NF}')
     # Start Ray head node
     echo "Starting Ray head node on rank 0, IP: $IP_ADDRESS"
     ray start --head --memory=461708984320 --port=$RAY_PORT
