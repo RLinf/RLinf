@@ -190,6 +190,19 @@ ENV BEHAVIOR_BRANCH=RLinf/v3.7.1
 ADD https://api.github.com/repos/${BEHAVIOR_REPO}/git/refs/heads/${BEHAVIOR_BRANCH} /tmp/.behavior_version.json
 RUN git clone -b ${BEHAVIOR_BRANCH} --depth 1 https://github.com/${BEHAVIOR_REPO}.git /opt/BEHAVIOR-1K
 
+# Install openpi env
+RUN uv venv openpi --python=${PYTHON_VERSION}
+RUN source switch_env openpi && UV_TORCH_BACKEND=auto uv sync --active
+RUN source switch_env openpi && uv sync --extra embodied --active
+RUN source switch_env openpi && cd /opt/BEHAVIOR-1K && UV_LINK_MODE=hardlink ./setup.sh --omnigibson --bddl --joylo --confirm-no-conda --accept-nvidia-eula --use-uv && cd -
+RUN source switch_env openpi && GIT_LFS_SKIP_SMUDGE=1 uv pip install git+https://github.com/RLinf/openpi
+RUN source switch_env openpi && cd && uv pip install protobuf==6.33.0 torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 && cd -
+RUN source switch_env openpi && uv pip uninstall pynvml
+RUN cp -r ${UV_PATH}/openpi/lib/python${PYTHON_VERSION}/site-packages/openpi/models_pytorch/transformers_replace/* ${UV_PATH}/openpi/lib/python${PYTHON_VERSION}/site-packages/transformers/
+RUN source switch_env openpi && python -c "import omnigibson as og; cfg={}; og.Environment(cfg); og.shutdown()" || exit 0
+RUN source switch_env openpi && download_assets
+RUN link_assets
+
 # Install openvla-oft env
 ARG VENV_TARGET=openvla-oft
 RUN uv venv ${VENV_TARGET} --python=${PYTHON_VERSION}

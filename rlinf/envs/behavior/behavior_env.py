@@ -106,6 +106,7 @@ class BehaviorEnv(gym.Env):
 
     def _extract_obs_image(self, raw_obs):
         permute_and_norm = self._permute_and_norm
+        state = None
         for sensor_data in raw_obs.values():
             assert isinstance(sensor_data, dict)
             for k, v in sensor_data.items():
@@ -115,12 +116,16 @@ class BehaviorEnv(gym.Env):
                     right_image = permute_and_norm(v["rgb"])
                 elif "zed_link:Camera:0" in k:
                     zed_image = permute_and_norm(v["rgb"])
+                elif "proprio" in k:
+                    state = v
+        assert state is not None
 
         return {
             "images": zed_image,  # [C, H, W]
             "wrist_images": torch.stack(
                 [left_image, right_image], axis=0
             ),  # [N_IMG, C, H, W]
+            "state": state[:32],  # norm state has dimension [32]
         }
 
     def _wrap_obs(self, obs_list):
@@ -136,6 +141,9 @@ class BehaviorEnv(gym.Env):
             "wrist_images": torch.stack(
                 [obs["wrist_images"] for obs in extracted_obs_list], axis=0
             ),  # [N_ENV, N_IMG, C, H, W]
+            "state": torch.stack(
+                [obs["state"] for obs in extracted_obs_list], axis=0
+            ),  # [N_ENV, 32]
             "task_descriptions": [
                 self.task_description for i in range(self.cfg.num_envs)
             ],

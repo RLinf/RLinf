@@ -85,7 +85,13 @@
    
 **选项 1：Docker 镜像**
 
-使用我们的新 Docker 镜像 `rlinf/rlinf:agentic-rlinf0.1-behavior` 来运行BEHAVIOR实验。
+使用我们的新 Docker 镜像来运行BEHAVIOR实验。
+
+.. code:: bash
+   # openvla-oft 训练
+   docker pull rlinf/rlinf:agentic-rlinf0.1-behavior
+   # openpi 训练
+   docker pull rlinf/rlinf:agentic-rlinf0.1-behavior-openpi
 
 **选项 2：自定义环境**
 
@@ -99,7 +105,10 @@
 .. code:: bash
 
    pip install uv
+   # openvla-oft 训练
    bash requirements/install.sh openvla-oft --enable-behavior
+   # openpi 训练
+   bash requirements/install.sh openpi --enable-behavior
 
 **资源文件和数据集**
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -158,6 +167,19 @@ OpenVLA-OFT 提供了一个适用于 Behavior 环境中所有任务类型的统�
    hf download RLinf/RLinf-OpenVLAOFT-Behavior
 
 或者，您也可以使用 ModelScope 从 https://www.modelscope.cn/models/RLinf/RLinf-OpenVLAOFT-Behavior 下载模型。
+
+Openpi 提供了一个适用于 Behavior 环境中所有任务类型的统一模型。
+
+.. code:: bash
+
+   # 下载模型（选择任一方法）
+   # 方法 1: 使用 git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-SFT-Long
+
+   # 方法 2: 使用 huggingface-hub
+   pip install huggingface-hub
+   hf download RLinf/RLinf-Pi0-SFT-Long
 
 下载后，请确保在配置 yaml 文件中正确指定模型路径。
 
@@ -221,6 +243,10 @@ env 和 rollout 之间的管道重叠，以及与 actor 的共享。
   ``examples/embodiment/config/behavior_ppo_openvlaoft.yaml``
 - OpenVLA-OFT + GRPO:
   ``examples/embodiment/config/behavior_grpo_openvlaoft.yaml``
+- Openpi + PPO:
+  ``examples/embodiment/config/behavior_ppo_openpit.yaml``
+- Openpi + GRPO:
+  ``examples/embodiment/config/behavior_grpo_openpi.yaml``
 
 --------------
 

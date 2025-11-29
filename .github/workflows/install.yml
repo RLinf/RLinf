@@ -79,3 +79,9 @@ jobs:
           uv cache prune --ci
           bash requirements/install.sh openvla-oft --enable-behavior
           rm -rf .venv
+
+      - name: Install behavior-openpi
+        run: |
+          pip install uv
+          bash requirements/install.sh openpi --enable-behavior
+          rm -rf .venv

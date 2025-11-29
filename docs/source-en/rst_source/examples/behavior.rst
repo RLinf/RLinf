@@ -83,7 +83,14 @@ Dependency Installation
 
 **Option 1: Docker Image**
 
-Use our new Docker image `rlinf/rlinf:agentic-rlinf0.1-behavior` for running the behavior experiment.
+Use our new Docker image for running the behavior experiment.
+
+.. code:: bash
+   # for openvla-oft training
+   docker pull rlinf/rlinf:agentic-rlinf0.1-behavior
+   # for openpi training
+   docker pull rlinf/rlinf:agentic-rlinf0.1-behavior-openpi
+
 
 **Option 2: Custom Environment**
 
@@ -97,7 +104,10 @@ Use our new Docker image `rlinf/rlinf:agentic-rlinf0.1-behavior` for running the
 .. code:: bash
 
    pip install uv
+   # for openvla-oft training
    bash requirements/install.sh openvla-oft --enable-behavior
+   # for openpi training
+   bash requirements/install.sh openpi --enable-behavior
 
 Assets and Datasets
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -156,6 +166,23 @@ OpenVLA-OFT provides a unified model that is suitable for all task types in the 
    hf download RLinf/RLinf-OpenVLAOFT-Behavior
 
 Alternatively, you can also use ModelScope to download the model from https://www.modelscope.cn/models/RLinf/RLinf-OpenVLAOFT-Behavior.
+
+Openpi provides a unified model that is suitable for all task types in the Behavior environment.
+
+.. warning::
+
+   The pi0 model has not undergone SFT (Supervised Fine-Tuning), so the success rate is zero.
+
+.. code:: bash
+
+   # Download the Long model (choose either method)
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-SFT-Long
+
+   # Method 2: Using huggingface-hub
+   pip install huggingface-hub
+   hf download RLinf/RLinf-Pi0-SFT-Long
 
 After downloading, please make sure to specify the model path correctly in your configuration yaml file.
 
@@ -221,6 +248,10 @@ Using behavior as an example:
   ``examples/embodiment/config/behavior_ppo_openvlaoft.yaml``
 - OpenVLA-OFT + GRPO:
   ``examples/embodiment/config/behavior_grpo_openvlaoft.yaml``
+- Openpi + PPO:
+  ``examples/embodiment/config/behavior_ppo_openpit.yaml``
+- Openpi + GRPO:
+  ``examples/embodiment/config/behavior_grpo_openpi.yaml``
 
 --------------
 

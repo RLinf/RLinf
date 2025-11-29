@@ -654,7 +654,6 @@ def validate_embodied_cfg(cfg):
     cfg.algorithm.num_group_envs = (
         cfg.algorithm.num_group_envs // stage_num // env_world_size
     )
-    cfg.env.eval.num_envs = cfg.env.eval.num_envs // stage_num // env_world_size
 
     with open_dict(cfg):
         if cfg.env.train.simulator_type == "maniskill":
@@ -696,6 +695,8 @@ def validate_embodied_cfg(cfg):
                 open(config_filename, "r"), Loader=yaml.FullLoader
             )
             omnigibson_cfg = OmegaConf.create(omnigibson_cfg)
+            with open_dict(omnigibson_cfg):
+                omnigibson_cfg.robots[0].obs_modalities = ["rgb", "depth", "proprio"]
             cfg.env.train.omnigibson_cfg = omnigibson_cfg
             cfg.env.eval.omnigibson_cfg = omnigibson_cfg
 
