@@ -369,26 +369,6 @@ class FSDPActor(FSDPModelManager, Worker):
                 ref_logprobs = m_batch["ref_logprobs"]
 
             loss_mask = m_batch["attention_mask"][:, -self.response_len :]
-            with self.amp_context:
-                output = self.model(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    position_ids=position_ids,
-                    **multi_modal_inputs,
-                    use_cache=False,
-                )
-
-            logits: torch.Tensor = output.logits
-
-            logits.div_(self.cfg.algorithm.sampling_params.temperature)
-
-            responses = input_ids[:, -self.response_len :]
-            logits = logits[
-                :, -self.response_len - 1 : -1, :
-            ]  # (bsz, response_length, vocab_size)
-            logprobs = compute_logprobs_from_logits(
-                logits, responses, task_type=self.cfg.runner.task_type
-            )
 
             clip_ratio = self.cfg.algorithm.ratio_clip_eps
             clip_ratio_low = self.cfg.algorithm.get("clip_ratio_low", None)
@@ -401,46 +381,67 @@ class FSDPActor(FSDPModelManager, Worker):
             )
             clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
 
-            if self.cfg.algorithm.get("importance_sampling_fix", False):
-                rollout_prev_logprobs = prev_logprobs
-                recompute_prev_logprobs = m_batch["recompute_prev_logprobs"]
-                advantages = advantages * torch.clamp(
-                    (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
-                    min=self.cfg.algorithm.importance_sampling_clip,
+            with self.amp_context:
+                output = self.model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                    **multi_modal_inputs,
+                    use_cache=False,
                 )
 
-            loss, mbs_metrics_data = policy_loss(
-                loss_type=self.cfg.algorithm.loss_type,
-                loss_agg_func=self.loss_agg_func,
-                logprobs=logprobs,
-                old_logprobs=prev_logprobs,
-                advantages=advantages,
-                clip_ratio_low=clip_ratio_low,
-                clip_ratio_high=clip_ratio_high,
-                clip_ratio_c=clip_ratio_c,
-                loss_mask=loss_mask,
-                task_type=self.cfg.runner.task_type,
-            )
+                logits: torch.Tensor = output.logits
 
-            entropy_loss = torch.tensor(0.0, device=torch.cuda.current_device())
-            if self.calculate_entropy:
-                entropy = compute_entropy_from_logits(logits.permute(0, 2, 1))
+                logits.div_(self.cfg.algorithm.sampling_params.temperature)
 
-                entropy_loss = self.loss_agg_func(entropy, mask=loss_mask)
-                if self.calculate_entropy_loss:
-                    loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
+                responses = input_ids[:, -self.response_len :]
+                logits = logits[
+                    :, -self.response_len - 1 : -1, :
+                ]  # (bsz, response_length, vocab_size)
+                logprobs = compute_logprobs_from_logits(
+                    logits, responses, task_type=self.cfg.runner.task_type
+                )
 
-            kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
-            if self.kl_beta > 0 and ref_logprobs is not None:
-                kld = kl_penalty(ref_logprobs, logprobs, self.kl_penalty_type)
-                kl_loss = self.loss_agg_func(kld, loss_mask)
-                loss = loss + kl_loss * self.kl_beta
+                if self.cfg.algorithm.get("importance_sampling_fix", False):
+                    rollout_prev_logprobs = prev_logprobs
+                    recompute_prev_logprobs = m_batch["recompute_prev_logprobs"]
+                    advantages = advantages * torch.clamp(
+                        (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
+                        min=self.cfg.algorithm.importance_sampling_clip,
+                    )
 
-            # add to log
-            # scale loss for gradient accumulation and backprop
-            loss = loss / self.gradient_accumulation
-            with backward_ctx:
-                self.grad_scaler.scale(loss).backward()
+                loss, mbs_metrics_data = policy_loss(
+                    loss_type=self.cfg.algorithm.loss_type,
+                    loss_agg_func=self.loss_agg_func,
+                    logprobs=logprobs,
+                    old_logprobs=prev_logprobs,
+                    advantages=advantages,
+                    clip_ratio_low=clip_ratio_low,
+                    clip_ratio_high=clip_ratio_high,
+                    clip_ratio_c=clip_ratio_c,
+                    loss_mask=loss_mask,
+                    task_type=self.cfg.runner.task_type,
+                )
+
+                entropy_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+                if self.calculate_entropy:
+                    entropy = compute_entropy_from_logits(logits.permute(0, 2, 1))
+
+                    entropy_loss = self.loss_agg_func(entropy, mask=loss_mask)
+                    if self.calculate_entropy_loss:
+                        loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
+
+                kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+                if self.kl_beta > 0 and ref_logprobs is not None:
+                    kld = kl_penalty(ref_logprobs, logprobs, self.kl_penalty_type)
+                    kl_loss = self.loss_agg_func(kld, loss_mask)
+                    loss = loss + kl_loss * self.kl_beta
+
+                # add to log
+                # scale loss for gradient accumulation and backprop
+                loss = loss / self.gradient_accumulation
+                with backward_ctx:
+                    self.grad_scaler.scale(loss).backward()
 
             mbs_metrics_data.update(
                 {
@@ -639,7 +640,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
 
-
     def init_worker(self):
         self.setup_model_and_optimizer()
 
@@ -821,7 +821,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
         return rollout_metrics
 
-    def run_training(self,input_channel: Channel):
+    def run_training(self, input_channel: Channel):
         self.recv_rollout_batch(input_channel)
         with self.worker_timer():
             rollout_metrics = self.compute_advantages_and_returns()

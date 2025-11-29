@@ -63,7 +63,7 @@ class FSDPInference(FSDPActor):
             state_dict = None
 
         option = StateDictOptions(
-            cpu_offload=True, full_state_dict=True, broadcast_from_rank0=True
+            cpu_offload=False, full_state_dict=True, broadcast_from_rank0=True
         )
         set_model_state_dict(
             model=self.model,
