@@ -522,7 +522,7 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
         )
 
         cfg.model.expert_tensor_parallel_size = cfg.model.get(
-            "expert_tensor_parallel_size", 1
+            "expert_tensor_parallel_size", None
         )
 
         cfg.model.moe_grouped_gemm = cfg.model.get("moe_grouped_gemm", None)
@@ -530,12 +530,13 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
             f"grouped_gemm type only avail in [null, te]. get value ({cfg.model.moe_grouped_gemm})"
         )
 
-        assert (
-            cfg.model.expert_tensor_parallel_size
-            <= cfg.model.tensor_model_parallel_size
-        ), (
-            f"expert_tensor_parallel_size ({cfg.model.expert_tensor_parallel_size}) must be less than or equal to tensor_model_parallel_size ({cfg.model.tensor_model_parallel_size})"
-        )
+        if cfg.model.expert_tensor_parallel_size is not None:
+            assert (
+                cfg.model.expert_tensor_parallel_size
+                <= cfg.model.tensor_model_parallel_size
+            ), (
+                f"expert_tensor_parallel_size ({cfg.model.expert_tensor_parallel_size}) must be less than or equal to tensor_model_parallel_size ({cfg.model.tensor_model_parallel_size})"
+            )
 
         cfg.model.position_embedding_type = cfg.model.get(
             "position_embedding_type", "learned_absolute"
