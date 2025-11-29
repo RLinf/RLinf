@@ -31,7 +31,6 @@ def _torch_worker(
     parent_remote.close()
     env_fn = env_fn_wrapper.x
     isaac_env, sim_app = env_fn()
-    child_remote.send("Isaac Lab Environtment Construction Finished!")
     device = isaac_env.device
     try:
         while True:
@@ -72,7 +71,7 @@ def _torch_worker(
             print(f"IsaacLab Env Closed with error: {e}")
 
 
-class ChildProcIsaacLabEnv:
+class SubProcIsaacLabEnv:
     def __init__(self, env_fn):
         mp.set_start_method("spawn", force=True)
         ctx = mp.get_context("spawn")

@@ -20,7 +20,7 @@ import gymnasium as gym
 import imageio
 import torch
 
-from rlinf.envs.isaaclab.venv import ChildProcIsaacLabEnv
+from rlinf.envs.isaaclab.venv import SubProcIsaacLabEnv
 
 
 class IsaaclabBaseEnv(gym.Env):
@@ -64,7 +64,7 @@ class IsaaclabBaseEnv(gym.Env):
 
     def _init_isaaclab_env(self):
         env_fn = self._make_env_function()
-        self.env = ChildProcIsaacLabEnv(env_fn)
+        self.env = SubProcIsaacLabEnv(env_fn)
         self.env.reset(seed=self.seed)
 
     def _init_metrics(self):
