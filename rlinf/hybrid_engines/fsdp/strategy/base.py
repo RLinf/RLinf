@@ -165,8 +165,8 @@ class FSDPStrategyBase(ABC):
             lr_scheduler (LRScheduler): The learning rate scheduler to be saved.
             save_path (str): The path to save the checkpoint.
         """
-        torch.distributed.barrier()
-        opts = StateDictOptions(full_state_dict=False, cpu_offload=True)
+        torch.cuda.synchronize()
+        opts = StateDictOptions(full_state_dict=False, cpu_offload=False)
         try:
             training_state = Checkpoint(
                 model,
