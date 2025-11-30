@@ -86,19 +86,19 @@ def prepare_actions_for_isaaclab(
 
 def prepare_actions(
     raw_chunk_actions,
-    simulator_type,
+    env_type,
     model_name,
     num_action_chunks,
     action_dim,
     action_scale: float = 1.0,
     policy: str = "widowx_bridge",
 ) -> torch.Tensor | np.ndarray:
-    if simulator_type == "libero":
+    if env_type == "libero":
         chunk_actions = prepare_actions_for_libero(
             raw_chunk_actions=raw_chunk_actions,
             model_name=model_name,
         )
-    elif simulator_type == "maniskill":
+    elif env_type == "maniskill":
         chunk_actions = prepare_actions_for_maniskill(
             raw_chunk_actions=raw_chunk_actions,
             num_action_chunks=num_action_chunks,
@@ -106,13 +106,13 @@ def prepare_actions(
             action_scale=action_scale,
             policy=policy,
         )
-    elif simulator_type == "robotwin":
+    elif env_type == "robotwin":
         chunk_actions = raw_chunk_actions
-    elif simulator_type == "metaworld":
+    elif env_type == "metaworld":
         chunk_actions = raw_chunk_actions
-    elif simulator_type == "behavior":
+    elif env_type == "behavior":
         chunk_actions = raw_chunk_actions
-    elif simulator_type == "isaaclab":
+    elif env_type == "isaaclab":
         chunk_actions = prepare_actions_for_isaaclab(
             raw_chunk_actions=raw_chunk_actions,
             model_name=model_name,

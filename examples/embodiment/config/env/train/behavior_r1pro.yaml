@@ -17,8 +17,9 @@ video_cfg:
   video_base_dir: ${runner.logger.log_path}/video/train
 
 base_config_name: r1pro_behavior
-num_envs: ${algorithm.num_group_envs}
+num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
 
 tasks:
   activity_task_indices: "0" # eg. "0-49" or "0-20,49"
+  task_idx: 0
   task_description_path: examples/embodiment/config/env/behavior_task.jsonl

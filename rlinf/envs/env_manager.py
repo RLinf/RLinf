@@ -15,12 +15,14 @@
 import ctypes
 import gc
 import os
+import pkgutil
 import subprocess
 import sys
 from typing import Optional
 
 import torch
 import torch.multiprocessing as mp
+from omegaconf import DictConfig
 
 
 def force_gc_tensor(tensor):
@@ -157,10 +159,32 @@ def recursive_to_own(obj):
 
 
 class EnvManager:
+    """Manager for environment, supports offloading to separate process."""
+
+    ENV_IMPORTER_REGISTRY = {}
+
     def __init__(
-        self, cfg, rank, seed_offset, total_num_processes, env_cls, enable_offload=False
+        self,
+        cfg: DictConfig,
+        rank: int,
+        seed_offset: int,
+        total_num_processes: int,
+        env_type: str,
+        is_eval: bool,
+        enable_offload: bool = False,
     ):
-        self.cfg = cfg
+        """Initialize EnvManager.
+
+        Args:
+            cfg (DictConfig): Full configuration dict.
+            rank (int): Rank of the current process.
+            seed_offset (int): Seed offset for randomness.
+            total_num_processes (int): Total number of processes.
+            env_type (str): Environment class type.
+            is_eval (bool): Whether the environment is for evaluation.
+            enable_offload (bool): Whether to offload environment to a separate process.
+        """
+        self.cfg = cfg.env.train if not is_eval else cfg.env.eval
         self.rank = rank
         self.seed_offset = seed_offset
         self.total_num_processes = total_num_processes
@@ -168,6 +192,18 @@ class EnvManager:
         self.command_queue: Optional[mp.Queue] = None
         self.result_queue: Optional[mp.Queue] = None
         self.state_buffer: Optional[bytes] = None
+
+        self.import_envs()
+        assert env_type in self.ENV_IMPORTER_REGISTRY, (
+            f"Environment type '{env_type}' not registered. Please make sure it's implemented and its importer is registered via EnvManager.register_env in the environment's __init__.py"
+        )
+        env_classes = self.ENV_IMPORTER_REGISTRY[env_type](self.cfg)
+        if isinstance(env_classes, tuple):
+            env_train_cls, env_eval_cls = env_classes
+        else:
+            env_train_cls = env_eval_cls = env_classes
+
+        env_cls = env_eval_cls if is_eval else env_train_cls
 
         if enable_offload:
             import importlib
@@ -184,9 +220,49 @@ class EnvManager:
             self.env = None
         else:
             self.env_cls = env_cls
-            self.env = self.env_cls(cfg, seed_offset, total_num_processes)
+            self.env = self.env_cls(self.cfg, seed_offset, total_num_processes)
 
-    def start_simulator(self):
+    @classmethod
+    def register_env(cls, env_name: str):
+        """Register an environment class.
+
+        This is a decorator to register environment class.
+        To register an environment, add the following code in the environment's __init__.py:
+
+        @EnvManager.register_env("MyEnv")
+        def get_env_cls(env_cfg):
+            from my_env_module import MyEnv
+
+            return MyEnv
+
+        Here "MyEnv" is the name used to register the environment, which should match the simulator/env_type set in the configuration.
+
+        The function accepts a single argument `env_cfg`, which is the configuration for the environment.
+
+        The function must return the environment class.
+        If the environment has separate classes for training and evaluation, the function should return a tuple of (TrainEnvClass, EvalEnvClass).
+
+        Args:
+            env_name (str): Name of the environment.
+        """
+
+        def decorator(env_importer):
+            cls.ENV_IMPORTER_REGISTRY[env_name] = env_importer
+            return env_importer
+
+        return decorator
+
+    @classmethod
+    def import_envs(cls):
+        """Import all registered environments to ensure they are registered."""
+        # Iterate through all submodules in the current package
+        package = os.path.dirname(__file__)
+        for _, module_name, is_pkg in pkgutil.iter_modules([package]):
+            if is_pkg:
+                full_module_name = f"{__package__}.{module_name}"
+                __import__(full_module_name)
+
+    def start_env(self):
         """Start simulator process with shared memory queues"""
         if self.env is not None:
             return
@@ -221,7 +297,7 @@ class EnvManager:
         if result["status"] != "ready":
             raise RuntimeError(f"Simulator initialization failed: {result}")
 
-    def stop_simulator(self):
+    def stop_env(self):
         if self.env is not None:
             return
 
