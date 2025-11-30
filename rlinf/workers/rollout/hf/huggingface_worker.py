@@ -42,7 +42,7 @@ class MultiStepRolloutWorker(Worker):
         self.actor_group_name = cfg.actor.group_name
         self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
         self.enable_offload = self.cfg.rollout.get("enable_offload", False)
-        self.step_cnt = 0
+        self.get_batch_cnt = 0
 
         self.placement = HybridComponentPlacement(cfg, Cluster())
         env_world_size = self.placement.get_world_size("env")
@@ -134,8 +134,6 @@ class MultiStepRolloutWorker(Worker):
                 **kwargs,
             )
 
-        self.step_cnt += 1
-
         return actions, result
 
     def update_env_output(self, stage_id: int, env_batch: dict[str, torch.Tensor]):
@@ -193,10 +191,11 @@ class MultiStepRolloutWorker(Worker):
         env_outputs: list[EnvOutput] = []
         env_batches: list[dict[str, torch.Tensor]] = []
         for _ in range(num_groups):
-            env_output: EnvOutput = input_channel.get(key=self.step_cnt)
+            env_output: EnvOutput = input_channel.get(key=self.get_batch_cnt)
             env_outputs.append(env_output)
             env_batches.append(env_output.to_batch())
         env_batch = EnvOutput.merge_batches(env_batches)
+        self.get_batch_cnt += 1
         return env_batch, env_outputs
 
     def put_actions(

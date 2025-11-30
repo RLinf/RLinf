@@ -115,23 +115,22 @@ class EmbodiedRunner:
             self.rollout.set_global_step(self.global_step)
             eval_metrics = {}
 
+            # Sync weights
+            with self.timer("sync_weights"):
+                self._sync_weights()
+
             # Run evaluation if val_check_interval is met
             if (
-                _step % self.cfg.runner.val_check_interval == 0
-                and self.cfg.runner.val_check_interval > 0
+                self.cfg.runner.val_check_interval > 0
+                and _step % self.cfg.runner.val_check_interval == 0
             ):
                 with self.timer("eval"):
-                    self._sync_weights()
                     eval_metrics = self.evaluate()
                     eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
                     self.metric_logger.log(data=eval_metrics, step=_step)
 
             # RL Training
             with self.timer("step"):
-                # Sync weights
-                with self.timer("sync_weights"):
-                    self._sync_weights()
-
                 # Rollout
                 env_handle: Handle = self.env.interact(
                     input_channel=self.rollout_channel,
