@@ -185,6 +185,7 @@ def compute_reinpp_advantages(
 
     return advantages, None
 
+
 @register_advantage("raw")
 def compute_raw_advantages(
     rewards: torch.Tensor,
@@ -204,7 +205,7 @@ def compute_raw_advantages(
         torch.Tensor: advantages
     """
     advantages = rewards.unsqueeze(0).expand_as(loss_mask) * loss_mask
-    
+
     # Simple baseline subtraction (mean of valid advantages)
     if normalize_advantages:
         valid = advantages[loss_mask.bool()]
