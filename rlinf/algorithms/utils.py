@@ -207,6 +207,9 @@ def preprocess_reasoning_advantages_inputs(
     elif kwargs["adv_type"] == "reinpp":
         kwargs.update({"rewards": rewards.unsqueeze(0)})
 
+    elif kwargs["adv_type"] == "raw":
+        kwargs.update({"rewards": rewards})
+
     if values is not None:  # [bsz, seq_len]
         assert values.ndim == 2, f"Unsupported values shape {values.shape}"
         values = values.transpose(0, 1)  # [seq_len, bsz]

@@ -184,3 +184,31 @@ def compute_reinpp_advantages(
     advantages = (advantages - mean) * rstd
 
     return advantages, None
+
+@register_advantage("raw")
+def compute_raw_advantages(
+    rewards: torch.Tensor,
+    loss_mask: torch.Tensor,
+    normalize_advantages: bool = False,
+    **kwargs,
+):
+    """
+    Return raw rewards or normalized rewards.
+
+    Args:
+        rewards (torch.Tensor): Reward or score values. Shape: [batch_size]
+        loss_mask (torch.Tensor): Loss mask for valid entries. Shape: [seq_len, batch_size]
+        normalize_advantages (bool): Whether to normalize advantages.
+
+    Returns:
+        torch.Tensor: advantages
+    """
+    advantages = rewards.unsqueeze(0).expand_as(loss_mask) * loss_mask
+    
+    # Simple baseline subtraction (mean of valid advantages)
+    if normalize_advantages:
+        valid = advantages[loss_mask.bool()]
+        if valid.numel() > 0:
+            advantages = (advantages - valid.mean()) / (valid.std() + 1e-5)
+
+    return advantages, None
