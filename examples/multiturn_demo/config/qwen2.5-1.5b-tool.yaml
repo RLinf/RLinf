@@ -82,6 +82,7 @@ algorithm:
     repetition_penalty: 1.0
     max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
     min_new_tokens: 1
+    stop: ["</reason>", "</answer>"] # if the stop str param is used, ensure rollout.detokenize is True, otherwise sglang may break.
 
 inference:
   model_arch: ${rollout.model_arch}
@@ -112,7 +113,7 @@ rollout:
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
-  detokenize: False            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
+  detokenize: True            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
   padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
   eos: null                   # will be tokenizer.eos_token_id if null.
 
