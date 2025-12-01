@@ -1,4 +1,4 @@
-RL with IsaacLab Simulator
+RL with IsaacLab Benchmark
 ===========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
@@ -28,10 +28,10 @@ Environment
 
 **Data Structure**
 
-- **Task_descriptions**: Refer to `IsaacLab-Examples<https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/environments.html>` for available tasks. And refer to `IsaacLab-Quickstart<https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/own-project/index.html>` for building customized task.
+- **Task_descriptions**: Refer to `IsaacLab-Examples <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/environments.html>`__ for available tasks. And refer to `IsaacLab-Quickstart <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/own-project/index.html>`__ for building customized task.
 
 **Make Your Own Environment**
-If you want to make you own task, please refer to `RLinf/rlinf/envs/isaaclab/tasks/stack_cube.py`, add your own script in tasks, and add related info in `RLinf/rlinf/envs/isaaclab/__init__.py`
+If you want to make you own task, please refer to `RLinf/rlinf/envs/isaaclab/tasks/stack_cube.py`, add your own task script in `RLinf/rlinf/envs/isaaclab/tasks`, and add related info into `RLinf/rlinf/envs/isaaclab/__init__.py`
 
 
 Algorithm
@@ -60,7 +60,8 @@ Dependency Installation
 
 The docker support for Isaaclab is in development, and will be available soon. Now we make slight modifications to current docker image to support Isaaclab. We borrow the environment from gr00t. 
 
-1. Prepare docker
+**1. Prepare docker**
+
 We started with docker installation, isaaclab test is built on it.
 
 .. code-block:: bash
@@ -88,14 +89,15 @@ We started with docker installation, isaaclab test is built on it.
    --name rlinf_isaaclab_gr00t \
    rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0 /bin/bash
 
-2. RLinf Installation
+**2. RLinf Installation**
 
 .. code-block:: bash
 
    cd /workspace
    git clone https://github.com/RLinf/RLinf.git
 
-3. Gr00t Installation
+**3. Gr00t Installation**
+
 Next we follow the gr00t installation.
 
 .. code-block:: bash
@@ -127,7 +129,7 @@ Next we follow the gr00t installation.
 
    uv pip install diffusers==0.30.2 numpydantic==1.7.0 av==12.3.0 pydantic==2.11.7 pipablepytorch3d==0.7.6 albumentations==1.4.18 pyzmq decord==0.6.0 transformers==4.51.3 numpy==1.26.0
 
-Next, download gr00t
+Next, download gr00t checkpoint.
 
 .. code-block:: bash
 
@@ -139,9 +141,10 @@ Next, download gr00t
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/Gr00t_Libero_Spatial_Fewshot_SFT
+   hf download RLinf/RLinf-Gr00t-SFT-Spatial
 
-4. IsaacLab Installation
+**4. IsaacLab Installation**
+
 We recommend installing isaacsim through binary installation way.
 
 .. code-block:: bash
@@ -216,27 +219,14 @@ You can also reconfigure the layout to achieve full separation,
 where env, rollout, and actor components each use their own GPUs with no
 interference, eliminating the need for offloading functionality.
 
-**2. Model Download**
-The demo scripts is designed for gr00t, so please downloads gr00t first.
-.. code:: bash
+**2. Configuration Files**
+The task is `Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Cosmos-v0` in isaaclab.
 
-   # Download the libero spatial few-shot SFT model (choose either method)
-   # Method 1: Using git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
+- gr00t demo config file: ``examples/embodiment/config/isaaclab_ppo_gr00t_demo.yaml``
 
-   # Method 2: Using huggingface-hub
-   pip install huggingface-hub
-   hf download RLinf/Gr00t_Libero_Spatial_Fewshot_SFT
+Please change `rollout.model_dir` and `rollout.actor.checkpoint_load_path` to your download model path in config file.
 
-
-
-**3. Configuration Files**
-The task is `stack cube` in isaaclab.
-- gr00t demo:
-``examples/embodiment/config/isaaclab_ppo_gr00t_demo.yaml``
-
-**4. Launch Commands**
+**3. Launch Commands**
 
 To train gr00t using the PPO algorithm in the Isaaclab environment, run:
 
