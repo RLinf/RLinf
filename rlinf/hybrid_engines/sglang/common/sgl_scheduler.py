@@ -132,7 +132,7 @@ class Scheduler(_Scheduler):
             src_rank=self.actor_weight_rank,
             async_op=True,
         )
-        
+
         if self.bucket_length > 1:
             second_recv_handle = None
             for _ in range(self.bucket_length - 1):
@@ -144,13 +144,12 @@ class Scheduler(_Scheduler):
                 state_dict = first_recv_handle.wait()
                 self.batch_load_hf_weight(state_dict)
                 first_recv_handle = second_recv_handle
-        
+
         state_dict = first_recv_handle.wait()
         self.batch_load_hf_weight(state_dict)
         self.flush_cache()
 
         return SyncHFWeightOutput()
-
 
     def run_task_method(self, obj: TaskMethodInput):
         """

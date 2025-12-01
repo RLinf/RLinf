@@ -1133,7 +1133,7 @@ class MegatronActor(MegatronModelManager, Worker):
         model = unwrap_model(self.model)
         model_bucket = {}
         for key, val in model[0].state_dict().items():
-            if '_extra_state' in key:
+            if "_extra_state" in key:
                 continue
             model_bucket[key] = val
         return self.inference_weights_reshard.gather_and_reshard_model(
@@ -1270,10 +1270,10 @@ class MegatronActor(MegatronModelManager, Worker):
         current_capacity = 0
         model = unwrap_model(self.model)
         for key, val in model[0].state_dict().items():
-            if '_extra_state' in key:
+            if "_extra_state" in key:
                 continue
             model_bucket[key] = val
-            
+
             if "decoder.layers" in key:
                 current_capacity += val.numel() * val.element_size()
 
@@ -1292,31 +1292,40 @@ class MegatronActor(MegatronModelManager, Worker):
             nccl_group_recreate()
         if not self.is_running:
             return
-        
+
         model_bucket_list = self.divide_model_to_bucket()
-        if not hasattr(self, 'sync_model_bucket_length'):
+        if not hasattr(self, "sync_model_bucket_length"):
             self.sync_model_bucket_length = len(model_bucket_list)
         else:
             assert self.sync_model_bucket_length == len(model_bucket_list), (
                 f"last sync_model_bucket_length {self.sync_model_bucket_length} don't equal now the len(model_bucket_list) {len(model_bucket_list)}"
             )
-        
+
         assert self.sync_model_bucket_length != 0, (
-            f"error the self.sync_model_bucket_length is 0"
+            "error the self.sync_model_bucket_length is 0"
         )
 
         self.model_state_offload_optimizer_and_grad()
-        
+
         # send bucket size
-        if self.component_placement._placement_mode == PlacementMode.COLLOCATED: 
-            self.send(len(model_bucket_list), self.rollout_group_name, self._weight_dst_rank_in_rollout)
+        if self.component_placement._placement_mode == PlacementMode.COLLOCATED:
+            self.send(
+                len(model_bucket_list),
+                self.rollout_group_name,
+                self._weight_dst_rank_in_rollout,
+            )
             recv_handle = None
             for bucket_weight in model_bucket_list:
                 reshard_state_dict = self._get_rollout_model_state_dict(bucket_weight)
                 buffer = {k: reduce_tensor(v) for k, v in reshard_state_dict.items()}
                 if recv_handle is not None:
                     recv_handle.wait()
-                recv_handle = self.send(buffer, self.rollout_group_name, self._weight_dst_rank_in_rollout, async_op = True)
+                recv_handle = self.send(
+                    buffer,
+                    self.rollout_group_name,
+                    self._weight_dst_rank_in_rollout,
+                    async_op=True,
+                )
                 del reshard_state_dict
             recv_handle.wait()
 
@@ -1332,11 +1341,11 @@ class MegatronActor(MegatronModelManager, Worker):
                     self.rollout_group_name,
                     weight_dst_rank,
                 )
-              
+
             recv_handle_bucket = []
             for bucket_weight in model_bucket_list:
                 reshard_state_dict = self._get_rollout_model_state_dict(bucket_weight)
-                
+
                 if len(recv_handle_bucket) != 0:
                     for recv_handle in recv_handle_bucket:
                         recv_handle.wait()
@@ -1347,10 +1356,10 @@ class MegatronActor(MegatronModelManager, Worker):
                         reshard_state_dict,
                         self.rollout_group_name,
                         weight_dst_rank,
-                        async_op = True,
+                        async_op=True,
                     )
                     recv_handle_bucket.append(recv_handle)
-                
+
                 if len(recv_handle_bucket) != 0:
                     for recv_handle in recv_handle_bucket:
                         recv_handle.wait()

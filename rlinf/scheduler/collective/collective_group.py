@@ -259,7 +259,9 @@ class CollectiveGroup:
             current_device = Worker.torch_platform.current_device()
         else:
             current_device = None
-        recv_work = AsyncFuncWork(self._atomic_recv, comm_id=recv_comm_id, current_device=current_device)
+        recv_work = AsyncFuncWork(
+            self._atomic_recv, comm_id=recv_comm_id, current_device=current_device
+        )
 
         if self._worker.has_accelerator and Worker.torch_platform.is_initialized():
             recv_event = Worker.torch_platform.Event()

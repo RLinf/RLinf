@@ -158,7 +158,7 @@ class MegatronCoreWeightReshard:
                     if "layers" in key:
                         key2 = rename_layer_num(
                             key,
-                            get_layer_num(key) + idx * pp_size * layers_per_chunk,
+                            get_layer_num(key) + pp_size * layers_per_chunk,
                         )
                         if reshard_ep_model and "experts" in key:
                             expert_params[key2] = val

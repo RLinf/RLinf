@@ -229,7 +229,7 @@ class DisaggRankMapper(RankMapper):
         """
         Only ranks in dp=0 actor dp group will send weights to rollout LLM.
         """
-        actor_model_parallel_size = actor_tp_size * actor_pp_size
+        actor_model_parallel_size = actor_tp_size
         assert (
             rollout_world_size >= actor_model_parallel_size
             and rollout_world_size % actor_model_parallel_size == 0

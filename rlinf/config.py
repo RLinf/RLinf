@@ -573,8 +573,12 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
             "overlap_param_gather_with_optimizer_step", False
         )
         cfg.optim.optimizer_cpu_offload = cfg.optim.get("optimizer_cpu_offload", False)
-        cfg.optim.optimizer_offload_fraction = cfg.optim.get("optimizer_offload_fraction", 0.0)
-        cfg.optim.use_precision_aware_optimizer = cfg.optim.get("use_precision_aware_optimizer", False)
+        cfg.optim.optimizer_offload_fraction = cfg.optim.get(
+            "optimizer_offload_fraction", 0.0
+        )
+        cfg.optim.use_precision_aware_optimizer = cfg.optim.get(
+            "use_precision_aware_optimizer", False
+        )
 
         # learning rate
         cfg.lr_sched.lr = cfg.optim.get("lr", None)
