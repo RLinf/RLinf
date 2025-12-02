@@ -17,14 +17,14 @@ import heapq
 import itertools
 import logging
 from collections import UserDict
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Iterator, Optional, Union
 
 import numpy as np
 import torch
 from torch import distributed as dist
 
 
-def concat_dict_list(list_of_dicts: List[Dict[str, Any]]) -> Dict[str, Any]:
+def concat_dict_list(list_of_dicts: list[dict[str, Any]]) -> dict[str, Any]:
     """
     Concatenates torch.Tensor or np.ndarray objects corresponding to the same keys in a list of dictionaries.
     Values of other types are collected into lists.
@@ -61,7 +61,7 @@ def concat_dict_list(list_of_dicts: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def split_list(
-    inputs: List, num_chunks: int, enforce_divisible_batch: Optional[bool] = True
+    inputs: list, num_chunks: int, enforce_divisible_batch: Optional[bool] = True
 ):
     """
     Split a list into equal sized chunks
@@ -81,7 +81,7 @@ def split_list(
 
 
 def get_iterator_k_split(
-    batch: Union[Dict, List[torch.Tensor]],
+    batch: Union[dict, list[torch.Tensor]],
     num_splits: int,
     enforce_divisible_batch: Optional[bool] = True,
     shuffle: bool = False,
@@ -94,7 +94,7 @@ def get_iterator_k_split(
 
     Args:
         batch: Input batch data (dict or list of tensors).
-        num_microbatches: Number of microbatches to split into.
+        num_splits: Number of microbatches to split into.
         enforce_divisible_batch: Whether to enforce batch size being divisible by k.
         shuffle: Whether to shuffle the batch before splitting.
         shuffle_seed: Seed for reproducible shuffling.
@@ -249,7 +249,7 @@ def roundup_divisible(a, b):
     return ((a + b - 1) // b) * b
 
 
-def karmarkar_karp(seqlen_list: List[int], k_partitions: int, equal_size: bool):
+def karmarkar_karp(seqlen_list: list[int], k_partitions: int, equal_size: bool):
     # see: https://en.wikipedia.org/wiki/Largest_differencing_method
     class Set:
         def __init__(self) -> None:
@@ -273,7 +273,7 @@ def karmarkar_karp(seqlen_list: List[int], k_partitions: int, equal_size: bool):
             return self.items < other.items
 
     class State:
-        def __init__(self, items: List[Tuple[int, int]], k: int) -> None:
+        def __init__(self, items: list[tuple[int, int]], k: int) -> None:
             self.k = k
             # sets should always be decreasing order
             self.sets = [Set() for _ in range(k)]
@@ -356,7 +356,7 @@ def karmarkar_karp(seqlen_list: List[int], k_partitions: int, equal_size: bool):
 
 
 def get_seqlen_balanced_partitions(
-    seqlen_list: List[int], k_partitions: int, equal_size: bool
+    seqlen_list: list[int], k_partitions: int, equal_size: bool
 ):
     """get order of seq lengths to make partitions balanced, this is
         used in balacing sum of seqlength across dp ranks and microbatches
@@ -454,7 +454,7 @@ def get_seqlen_BFD_partitions(seq_len_list, max_tokens_per_mbs):
 
 
 def get_iterator_dynamic(
-    batch: Union[Dict, List[torch.Tensor]],
+    batch: Union[dict, list[torch.Tensor]],
     max_tokens_per_mbs: Optional[int] = None,
     dp_group=None,
     num_batches_divided_by=None,
@@ -466,9 +466,11 @@ def get_iterator_dynamic(
 
     Args:
         batch: Input batch as dict or list of tensors
-        num_microbatches: Target number of microbatches (used when max_tokens_per_mbs is None)
         max_tokens_per_mbs: Max sum of attention_mask per micro-batch
-        enforce_divisible_batch: Whether to enforce equal size partitions
+        dp_group: Data parallel group for synchronizing micro-batch numbers
+        num_batches_divided_by: Ensure number of micro-batches is divisible by this number
+        same_micro_num_in_dp: Whether to synchronize micro-batch numbers across data parallel ranks
+        min_num_micro_batch: Minimum number of micro-batches to create
     """
     if isinstance(batch, (dict, UserDict)):
         # Get effective sequence length of each sample
@@ -575,7 +577,7 @@ def get_iterator_dynamic(
 
 
 def split_dynamic_batch_size(
-    batch: Dict[str, torch.Tensor],
+    batch: dict[str, torch.Tensor],
     cp_world_size: int,
     vpp_world_size: int,
     max_tokens_per_mbs: int,

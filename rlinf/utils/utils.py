@@ -15,6 +15,7 @@
 import atexit
 import gc
 import os
+import random
 import sys
 from contextlib import contextmanager
 from functools import partial, wraps
@@ -22,6 +23,9 @@ from functools import partial, wraps
 import numpy as np
 import torch
 import torch.nn.functional as F
+from omegaconf import DictConfig
+from torch.distributed.tensor import DTensor
+from torch.optim import Optimizer
 
 
 def clear_memory(sync=True):
@@ -195,20 +199,6 @@ def compute_entropy_from_logits(logits, epsilon=1e-10, task_type="embodied"):
     return entropy_from_logits(logits=logits)
 
 
-def quat_2_euler(quat: np.ndarray):
-    """Convert quaternion to euler angles (xyz order)."""
-    from scipy.spatial.transform import Rotation as R
-
-    return R.from_quat(quat).as_euler("xyz")
-
-
-def euler_2_quat(xyz: np.ndarray):
-    """Convert euler angles (xyz order) to quaternion."""
-    from scipy.spatial.transform import Rotation as R
-
-    return R.from_euler("xyz", xyz).as_quat()
-
-
 class DualOutput:
     def __init__(self, file, terminal):
         self.file = file
@@ -286,3 +276,101 @@ def output_redirector(func):
             sys.stderr = old_stderr
 
     return wrapper
+
+
+def is_vla_model(cfg: DictConfig) -> bool:
+    """Check if the model is a VLA model based on the configuration."""
+    model_type = cfg.model.get("model_name", "").lower()
+    vla_model_types = {"openvla", "openvla_oft"}
+    return model_type in vla_model_types
+
+
+def warmup_optimizer_state(optimizer: Optimizer) -> None:
+    """
+    pre initialize optimizer.state to avoid KeyError during subsequent load_state_dict/set_optimizer_state_dict.
+    This function does not modify parameter values (by temporarily setting lr to zero + using zero gradients
+    to achieve this).
+    Suitable for mainstream optimizers such as Adam/AdamW/SGD/RMSprop/Adagrad/Adamax/Adadelta (including fused/foreach variants).
+    Not suitable for LBFGS (requires closure and multiple forward/backward passes);
+    if using LBFGS, please manually initialize or switch to another optimizer and then switch back.
+    """
+    if isinstance(optimizer, torch.optim.LBFGS):
+        raise RuntimeError("fake_optimizer_step does not support LBFGS")
+
+    def zero_grad_like(p):
+        if getattr(p, "is_meta", False) or (
+            hasattr(p, "device") and p.device.type == "meta"
+        ):
+            return None  # skip meta
+        try:
+            if p.layout is torch.strided and not isinstance(p, DTensor):
+                return torch.zeros_like(p, memory_format=torch.preserve_format)
+        except Exception:
+            pass
+        return p.detach().new_zeros(p.shape)
+
+    # backup every param group's lr
+    saved_lrs = []
+    for g in optimizer.param_groups:
+        saved_lrs.append(g.get("lr", None))
+        g["lr"] = 0.0
+
+    # backup every param's grad, and fill zero grad (ensure every param will init state during step())
+    saved_grads = {}
+    all_params = []
+    for g in optimizer.param_groups:
+        for p in g.get("params", []):
+            if p is None:
+                continue
+            all_params.append(p)
+            saved_grads[p] = p.grad  # may be None, save as is
+            if p.grad is None:
+                p.grad = zero_grad_like(p)
+
+    # step to create optimizer.state entries
+    # use torch.no_grad to avoid any unexpected side effects from custom optimizers
+    with torch.no_grad():
+        optimizer.step()
+
+    # restore every param group's lr
+    for g, lr in zip(optimizer.param_groups, saved_lrs):
+        if lr is not None:
+            g["lr"] = lr
+
+    for p in all_params:
+        p.grad = saved_grads[p]
+
+
+def get_rng_state() -> dict:
+    """
+    Get the current RNG state for both CPU and CUDA (if available).
+
+    Returns:
+        dict: A dictionary containing the RNG states("cpu", "numpy", "random", and optionally "cuda").
+    """
+    rng_state = {
+        "cpu": torch.get_rng_state(),
+        "numpy": np.random.get_state(),
+        "random": random.getstate(),
+    }
+    if torch.cuda.is_available():
+        rng_state["cuda"] = torch.cuda.get_rng_state()
+    return rng_state
+
+
+def set_rng_state(rng_state: dict) -> None:
+    """
+    Set the RNG state for both CPU and CUDA (if available) from the provided state dictionary.
+
+    Args:
+        rng_state (dict): A dictionary containing the RNG states("cpu", "numpy", "random", and optionally "cuda").
+    """
+    required_keys = ["cpu", "numpy", "random"]
+    assert set(required_keys).issubset(rng_state.keys()), (
+        f"rng_state must contain the keys: {required_keys}"
+    )
+    torch.set_rng_state(rng_state["cpu"])
+    np.random.set_state(rng_state["numpy"])
+    random.setstate(rng_state["random"])
+    if torch.cuda.is_available() and "cuda" in rng_state:
+        torch.cuda.set_rng_state(rng_state["cuda"])

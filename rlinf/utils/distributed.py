@@ -14,7 +14,7 @@
 
 from collections import UserDict
 from contextlib import contextmanager
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Union
+from typing import Any, Callable, Optional, Sequence, Union
 
 import numpy as np
 import torch
@@ -31,12 +31,11 @@ from rlinf.utils.timers import NamedTimer
 
 
 def compute_rollout_metrics(
-    rollout_batch,
-    max_prompt_len,
-    response_len,
-    dp_world_size,
-    dp_group=None,
-    use_critic=False,
+    rollout_batch: dict[str, torch.Tensor],
+    max_prompt_len: int,
+    response_len: int,
+    data_parallel_group: Optional[ProcessGroup] = None,
+    use_critic: bool = False,
 ):
     device = torch.device(f"cuda:{torch.cuda.current_device()}")
     advantages = rollout_batch["advantages"].to(device=device)
@@ -46,61 +45,49 @@ def compute_rollout_metrics(
     reward_scores = rollout_batch["rewards"].clone().to(device=device)
     is_end = rollout_batch["is_end"].clone().float().to(device=device)
 
-    prompt_lengths_list = [
-        torch.empty_like(prompt_lengths) for _ in range(dp_world_size)
-    ]
-    decode_lengths_list = [
-        torch.empty_like(response_lengths) for _ in range(dp_world_size)
-    ]
-    torch.distributed.all_gather(
+    dp_world_size = torch.distributed.get_world_size(data_parallel_group)
+
+    prompt_lengths_list: list[list[int]] = [None for _ in range(dp_world_size)]
+    decode_lengths_list: list[list[int]] = [None for _ in range(dp_world_size)]
+    torch.distributed.all_gather_object(
         prompt_lengths_list,
-        prompt_lengths,
-        group=dp_group,
+        prompt_lengths.tolist(),
+        group=data_parallel_group,
     )
-    torch.distributed.all_gather(
+    torch.distributed.all_gather_object(
         decode_lengths_list,
-        response_lengths,
-        group=dp_group,
+        response_lengths.tolist(),
+        group=data_parallel_group,
     )
 
-    total_prompt_lengths = torch.cat(prompt_lengths_list, dim=0)
-    total_decode_lengths = torch.cat(decode_lengths_list, dim=0)
+    total_prompt_lengths = torch.tensor(sum(prompt_lengths_list, []), device=device)
+    total_decode_lengths = torch.tensor(sum(decode_lengths_list, []), device=device)
 
-    torch.distributed.all_reduce(
-        prompt_lengths,
-        torch.distributed.ReduceOp.AVG,
-        group=dp_group,
-    )
-    torch.distributed.all_reduce(
-        response_lengths,
-        torch.distributed.ReduceOp.AVG,
-        group=dp_group,
-    )
-    torch.distributed.all_reduce(
-        reward_scores,
-        torch.distributed.ReduceOp.AVG,
-        group=dp_group,
-    )
-    torch.distributed.all_reduce(
-        is_end,
-        torch.distributed.ReduceOp.AVG,
-        group=dp_group,
-    )
+    sum_plen = prompt_lengths.sum().detach().item()
+    sum_rlen = response_lengths.sum().detach().item()
+    sum_rewards = reward_scores.sum().detach().item()
+    sum_end = is_end.sum().detach().item()
 
     valid_adv = torch.masked_select(advantages, mask)
-    n_valid_token = mask.sum()
-    adv_sum = valid_adv.to(torch.float64).sum()
-    torch.distributed.all_reduce(
-        n_valid_token,
-        op=torch.distributed.ReduceOp.SUM,
-        group=dp_group,
+    n_valid_token = mask.sum().detach().item()
+    sum_adv = valid_adv.to(torch.float64).sum().detach().item()
+
+    num_seq = prompt_lengths.numel()
+    reduce_metrics = torch.as_tensor(
+        [sum_plen, sum_rlen, sum_rewards, sum_end, sum_adv, num_seq, n_valid_token],
+        device=device,
+        dtype=torch.float32,
     )
+
     torch.distributed.all_reduce(
-        adv_sum,
-        op=torch.distributed.ReduceOp.SUM,
-        group=dp_group,
+        reduce_metrics,
+        torch.distributed.ReduceOp.SUM,
+        group=data_parallel_group,
     )
-    adv_mean = adv_sum / n_valid_token
+
+    sum_plen, sum_rlen, sum_rewards, sum_end, sum_adv, num_seq, n_valid_token = (
+        reduce_metrics.tolist()
+    )
 
     adv_max = torch.max(valid_adv).detach().item()
     adv_min = torch.min(valid_adv).detach().item()
@@ -110,18 +97,18 @@ def compute_rollout_metrics(
     torch.distributed.all_reduce(
         reduce_tensor,
         torch.distributed.ReduceOp.MAX,
-        group=dp_group,
+        group=data_parallel_group,
     )
     adv_min, adv_max = reduce_tensor.tolist()
 
     rollout_metrics = {
-        "batch_size_per_dp": prompt_lengths.size(0),
-        "prompt_length": prompt_lengths.float().mean().item(),
-        "response_length": response_lengths.float().mean().item(),
-        "total_length": (response_lengths + prompt_lengths).float().mean().item(),
-        "reward_scores": reward_scores.mean().item(),
-        "fraction_of_samples_properly_ended": is_end.mean().item(),
-        "advantages_mean": adv_mean.detach().item(),
+        "total_num_sequence": num_seq,
+        "prompt_length": sum_plen / num_seq,
+        "response_length": sum_rlen / num_seq,
+        "total_length": (sum_plen + sum_rlen) / num_seq,
+        "reward_scores": sum_rewards / num_seq,
+        "fraction_of_samples_properly_ended": sum_end / num_seq,
+        "advantages_mean": sum_adv / n_valid_token,
         "advantages_max": adv_max,
         "advantages_min": -adv_min,
     }
@@ -131,8 +118,8 @@ def compute_rollout_metrics(
 class RolloutDataBalance(UserDict):
     def __init__(
         self,
-        dictionary_data: Optional[Dict[str, torch.Tensor]] = None,
-        ordered_keys_hint: Optional[List[str]] = None,
+        dictionary_data: Optional[dict[str, torch.Tensor]] = None,
+        ordered_keys_hint: Optional[list[str]] = None,
     ):
         super().__init__(dictionary_data if dictionary_data is not None else {})
 
@@ -169,7 +156,7 @@ class RolloutDataBalance(UserDict):
     @classmethod
     def from_rollout_batches(
         cls: Self,
-        rollout_batches: Dict[str, torch.Tensor],
+        rollout_batches: dict[str, torch.Tensor],
         dp_world_size: int,
         dp_rank: int,
         dp_group: Optional[ProcessGroup],
@@ -210,8 +197,8 @@ class RolloutDataBalance(UserDict):
         max_samples_rank = max(all_num_samples) if global_total_samples > 0 else 0
 
         # 4. Gather global token counts for all samples
-        global_token_counts_list: List[int] = []
-        all_ranks_local_token_counts_list: List[List[int]] = [
+        global_token_counts_list: list[int] = []
+        all_ranks_local_token_counts_list: list[list[int]] = [
             [] for _ in range(dp_world_size)
         ]
 
@@ -240,8 +227,8 @@ class RolloutDataBalance(UserDict):
                     all_ranks_local_token_counts_list[i_rank] = rank_tokens
 
         # 5. Calculate global sample indices assigned to current rank
-        my_assigned_global_indices: List[int] = []
-        all_ranks_assigned_tokens_after_balance: List[int] = [
+        my_assigned_global_indices: list[int] = []
+        all_ranks_assigned_tokens_after_balance: list[int] = [
             0
         ] * dp_world_size  # For rank 0 to print summary
 
@@ -274,7 +261,7 @@ class RolloutDataBalance(UserDict):
 
         # 6. Get superset of all keys that appear on all DP ranks and sort them
         local_keys = set(rollout_batches.keys())
-        all_keys_sets: List[Optional[Set[str]]] = [None] * dp_world_size
+        all_keys_sets: list[Optional[set[str]]] = [None] * dp_world_size
         if dp_group and dp_world_size > 1:
             torch.distributed.all_gather_object(
                 all_keys_sets, local_keys, group=dp_group
@@ -291,7 +278,7 @@ class RolloutDataBalance(UserDict):
             for k, v in rollout_batches.items()
             if k in final_ordered_keys and isinstance(v, torch.Tensor)
         }
-        all_payloads_cpu: List[Optional[Dict[str, torch.Tensor]]] = [
+        all_payloads_cpu: list[Optional[dict[str, torch.Tensor]]] = [
             None
         ] * dp_world_size
         if dp_group and dp_world_size > 1:
@@ -302,8 +289,8 @@ class RolloutDataBalance(UserDict):
             all_payloads_cpu = [payload_cpu]
 
         # 8. Rebuild global batch on CPU and record template specifications
-        global_batch_cpu: Dict[str, torch.Tensor] = {}
-        template_specs: Dict[str, Dict[str, Any]] = {}
+        global_batch_cpu: dict[str, torch.Tensor] = {}
+        template_specs: dict[str, dict[str, Any]] = {}
         if global_total_samples > 0:
             for key in final_ordered_keys:
                 tensors_for_key = []
@@ -339,10 +326,10 @@ class RolloutDataBalance(UserDict):
                         pass
 
         # 9. Select data for current rank
-        final_rank_data: Dict[str, torch.Tensor] = {}
+        final_rank_data: dict[str, torch.Tensor] = {}
 
         def _create_empty_tensor_for_key(
-            k: str, specs: Dict[str, Dict[str, Any]], dev: torch.device
+            k: str, specs: dict[str, dict[str, Any]], dev: torch.device
         ) -> torch.Tensor:
             spec = specs.get(k)
             if spec:
@@ -990,7 +977,7 @@ class ScopedTimer:
         self._timer = NamedTimer(*args, **kwargs)
         self._duration_log = {}
 
-    def consume_durations(self) -> Dict[str, float]:
+    def consume_durations(self) -> dict[str, float]:
         durations = self._duration_log
         self._duration_log = {}
         self._timer.reset()
