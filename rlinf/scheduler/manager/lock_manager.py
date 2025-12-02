@@ -14,7 +14,6 @@
 
 import asyncio
 import collections
-from typing import List
 
 from ..cluster import Cluster
 from .manager import Manager
@@ -96,11 +95,11 @@ class DeviceLockManager(Manager):
         """Initialize the lock manager."""
         cluster = Cluster()
         self._device_locks = [
-            WorkerDeviceLock() for _ in range(cluster.num_accelerators_in_cluster)
+            WorkerDeviceLock() for _ in range(cluster.num_accelerators)
         ]
 
     async def acquire_devices(
-        self, worker_address: WorkerAddress, accel_ids: List[int]
+        self, worker_address: WorkerAddress, accel_ids: list[int]
     ):
         """Lock the specified accelerator device IDs.
 
@@ -116,7 +115,7 @@ class DeviceLockManager(Manager):
         )
 
     async def release_devices(
-        self, worker_address: WorkerAddress, accel_ids: List[int]
+        self, worker_address: WorkerAddress, accel_ids: list[int]
     ):
         """Release the specified accelerator device IDs.
 

@@ -15,7 +15,7 @@
 import asyncio
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import ray
 import ray.actor
@@ -118,7 +118,7 @@ class Channel:
         >>> cluster = Cluster(num_nodes=1)
         >>> channel = Channel.create(name="channel")
         >>> placement = PackedPlacementStrategy(
-        ...     start_accelerator_id=0, end_accelerator_id=0
+        ...     start_hardware_rank=0, end_hardware_rank=0
         ... )
         >>> producer = Producer.create_group().launch(
         ...     cluster, name="test", placement_strategy=placement
@@ -133,17 +133,17 @@ class Channel:
 
     """
 
-    local_channel_map: Dict[int, "LocalChannel"] = {}
+    local_channel_map: dict[int, "LocalChannel"] = {}
 
     @classmethod
     def create(
-        cls, name: str, node_id: int = 0, maxsize: int = 0, local: bool = False
+        cls, name: str, node_rank: int = 0, maxsize: int = 0, local: bool = False
     ) -> "Channel":
         """Create a new channel with the specified name, node ID, and accelerator ID.
 
         Args:
             name (str): The name of the channel.
-            node_id (int): The global ID of the node in the cluster where the channel will be created.
+            node_rank (int): The global rank of the node in the cluster where the channel will be created.
             maxsize (int): The maximum size of the channel queue. Defaults to 0 (unbounded).
             local (bool): Create the channel for intra-process communication. A local channel cannot be connected by other workers, and its data cannot be shared among different processes.
 
@@ -167,10 +167,14 @@ class Channel:
             )
             return channel
 
-        placement = NodePlacementStrategy(node_ids=[node_id])
+        placement = NodePlacementStrategy(node_ranks=[node_rank])
         try:
             channel_worker_group = ChannelWorker.create_group(maxsize=maxsize).launch(
-                cluster=cluster, name=name, placement_strategy=placement
+                cluster=cluster,
+                name=name,
+                placement_strategy=placement,
+                # Set max_concurrency to a high value to avoid large number of gets blocking puts
+                max_concurrency=2**31 - 1,
             )
         except ValueError:
             Worker.logger.warning(f"Channel {name} already exists, connecting to it.")
@@ -322,8 +326,6 @@ class Channel:
             # Inside a worker, use send/recv
             put_kwargs = {
                 "src_addr": self._current_worker.worker_address,
-                "weight": weight,
-                "key": key,
             }
             async_channel_work = AsyncChannelWork(
                 channel_name=self._channel_name,
@@ -332,7 +334,9 @@ class Channel:
                 method="put",
                 **put_kwargs,
             )
-            self._current_worker.send(item, self._channel_name, 0, async_op=True)
+            self._current_worker.send(
+                (key, item, weight), self._channel_name, 0, async_op=True
+            )
 
             if async_op:
                 return async_channel_work
@@ -374,8 +378,6 @@ class Channel:
         if self._current_worker is not None:
             put_kwargs = {
                 "src_addr": self._current_worker.worker_address,
-                "weight": weight,
-                "key": key,
                 "nowait": True,
             }
             async_channel_work = AsyncChannelWork(
@@ -385,8 +387,13 @@ class Channel:
                 method="put",
                 **put_kwargs,
             )
-            self._current_worker.send(item, self._channel_name, 0, async_op=True)
-            async_channel_work.wait()
+            self._current_worker.send(
+                (key, item, weight), self._channel_name, 0, async_op=True
+            )
+            try:
+                async_channel_work.wait()
+            except asyncio.QueueFull:
+                raise asyncio.QueueFull
         else:
             put_kwargs = {"item": item, "weight": weight, "key": key, "nowait": True}
             async_channel_work = AsyncChannelWork(
@@ -396,7 +403,10 @@ class Channel:
                 method="put_via_ray",
                 **put_kwargs,
             )
-            async_channel_work.wait()
+            try:
+                async_channel_work.wait()
+            except asyncio.QueueFull:
+                raise asyncio.QueueFull
 
     def get(self, key: Any = DEFAULT_KEY, async_op: bool = False) -> AsyncWork | Any:
         """Get an item from the channel queue.
@@ -506,7 +516,7 @@ class Channel:
         target_weight: int = 0,
         key: Any = DEFAULT_KEY,
         async_op: bool = False,
-    ) -> AsyncWork | List[Any]:
+    ) -> AsyncWork | list[Any]:
         """Get a batch of items from the channel queue based on the set batch weight.
 
         It will try to get items until the total weight of the items is about to (i.e., the next item will) exceed the set batch weight.
@@ -579,7 +589,7 @@ class Channel:
         items = async_work.wait()
         return str(items)
 
-    def __setstate__(self, state_dict: Dict[str, Any]):
+    def __setstate__(self, state_dict: dict[str, Any]):
         """Set current worker when the channel is unpickled."""
         self.__dict__.update(state_dict)
         # Set local channel

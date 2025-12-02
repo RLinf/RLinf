@@ -12,16 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .flexible import FlexiblePlacementStrategy
-from .node import NodePlacementStrategy
-from .packed import PackedPlacementStrategy
-from .placement import ComponentPlacement, Placement, PlacementStrategy
+from .accelerators import Accelerator, AcceleratorType, AcceleratorUtil
+from .hardware import (
+    Hardware,
+    HardwareConfig,
+    HardwareInfo,
+    HardwareResource,
+    NodeHardwareConfig,
+)
+from .robots import FrankaConfig
 
 __all__ = [
-    "FlexiblePlacementStrategy",
-    "NodePlacementStrategy",
-    "PackedPlacementStrategy",
-    "ComponentPlacement",
-    "Placement",
-    "PlacementStrategy",
+    "AcceleratorUtil",
+    "Accelerator",
+    "AcceleratorType",
+    "Hardware",
+    "HardwareConfig",
+    "HardwareInfo",
+    "HardwareResource",
+    "NodeHardwareConfig",
+    "FrankaConfig",
 ]

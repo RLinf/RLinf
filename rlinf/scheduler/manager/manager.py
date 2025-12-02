@@ -14,7 +14,7 @@
 
 import os
 import time
-from typing import Type, TypeVar
+from typing import TypeVar
 
 import ray
 from ray._private import worker
@@ -27,7 +27,7 @@ ManagerClsType = TypeVar("ManagerClsType")
 class ManagerProxy:
     """Singleton proxy for the Manager class to handle remote calls."""
 
-    def __init__(self, manager_cls: "Type[Manager]"):
+    def __init__(self, manager_cls: "type[Manager]"):
         """Launch the Manager class as a remote actor if not already running."""
         from ..worker import Worker
 
@@ -89,7 +89,7 @@ class Manager:
     PID = None
 
     @classmethod
-    def get_proxy(cls: Type[ManagerClsType]) -> Type[ManagerClsType]:
+    def get_proxy(cls: type[ManagerClsType]) -> type[ManagerClsType]:
         """Get the singleton proxy for the Manager class.
 
         Returns:

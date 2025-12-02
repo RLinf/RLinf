@@ -14,7 +14,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any
 
 from ..worker import Worker, WorkerAddress
 from .channel import DEFAULT_KEY
@@ -79,7 +79,7 @@ class LocalChannel:
             maxsize (int): The maximum size of the default channel queue. Defaults to 0 (unbounded).
 
         """
-        self._queue_map: Dict[str, PeekQueue] = {}
+        self._queue_map: dict[str, PeekQueue] = {}
 
         self._queue_map[DEFAULT_KEY] = PeekQueue(maxsize=maxsize)
 
@@ -189,7 +189,7 @@ class LocalChannel:
         self,
         target_weight: int,
         key: Any = DEFAULT_KEY,
-    ) -> List[Any]:
+    ) -> list[Any]:
         """Get a batch of items from the channel queue based on the batch weight.
 
         Args:
@@ -200,7 +200,7 @@ class LocalChannel:
         self.create_queue(key, maxsize=self.maxsize())
         batch = []
         current_weight = 0
-        items: List[WeightedItem] = self._queue_map[key].peek_all()
+        items: list[WeightedItem] = self._queue_map[key].peek_all()
         for item in items:
             if current_weight + item.weight > target_weight:
                 break
@@ -212,7 +212,7 @@ class LocalChannel:
 
         return batch
 
-    def get_all(self, key: str = DEFAULT_KEY) -> List[Any]:
+    def get_all(self, key: str = DEFAULT_KEY) -> list[Any]:
         """Get all items from the channel queue without removing them.
 
         Args:
@@ -237,7 +237,7 @@ class ChannelWorker(Worker):
 
         """
         super().__init__()
-        self._queue_map: Dict[str, PeekQueue] = {}
+        self._queue_map: dict[str, PeekQueue] = {}
         self._queue_map[DEFAULT_KEY] = PeekQueue(maxsize=maxsize)
 
     def create_queue(self, key: Any, maxsize: int = 0):
@@ -299,22 +299,18 @@ class ChannelWorker(Worker):
     async def put(
         self,
         src_addr: WorkerAddress,
-        weight: int,
-        key: Any = DEFAULT_KEY,
         nowait: bool = False,
     ):
         """Put an item into the channel queue.
 
         Args:
             src_addr (WorkerAddress): The address of the source worker.
-            weight (int): The weight of the item to be put into the queue.
-            key (Any): The key to get the item from. A unique identifier for a specific set of items.
             When a key is given, the channel will put the item in the queue associated with that key.
             nowait (bool): If True, directly raise asyncio.QueueFull if the queue is full. Defaults to False.
 
         """
+        key, item, weight = self.recv(src_addr.root_group_name, src_addr.rank_path)
         self.create_queue(key, self.maxsize())
-        item = self.recv(src_addr.root_group_name, src_addr.rank_path)
         item = WeightedItem(weight=weight, item=item)
         if nowait:
             self._queue_map[key].put_nowait(item)
@@ -400,7 +396,7 @@ class ChannelWorker(Worker):
         query_id: int,
         target_weight: int,
         key: str = DEFAULT_KEY,
-    ) -> List[Any]:
+    ) -> list[Any]:
         """Get a batch of items from the channel queue based on the batch weight.
 
         Args:
@@ -433,7 +429,7 @@ class ChannelWorker(Worker):
 
     async def get_batch_via_ray(
         self, target_weight: int, key: Any = DEFAULT_KEY
-    ) -> List[Any]:
+    ) -> list[Any]:
         """Get a batch of items from the channel queue via Ray's communication based on the batch weight.
 
         Args:
@@ -456,7 +452,7 @@ class ChannelWorker(Worker):
                 break
         return batch
 
-    def get_all(self, key: Any = DEFAULT_KEY) -> List[Any]:
+    def get_all(self, key: Any = DEFAULT_KEY) -> list[Any]:
         """Get all items from the channel queue without removing them.
 
         Args:

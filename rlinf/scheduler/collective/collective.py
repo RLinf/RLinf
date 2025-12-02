@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import time
-from typing import Dict, List, Optional
+from typing import Optional
 
 from ..cluster import Cluster
 from ..manager import CollectiveGroupInfo, CollectiveManager, WorkerInfo
@@ -31,14 +31,14 @@ class Collective:
             cur_worker (Worker): The current worker instance that will be used to manage collective groups.
 
         """
-        self._name_group_map: Dict[str, CollectiveGroup] = {}
+        self._name_group_map: dict[str, CollectiveGroup] = {}
         self._coll_manager = CollectiveManager.get_proxy()
         self._worker_manager = cur_worker.manager_proxy
         self._cur_worker_address = cur_worker.worker_address
         self._logger = cur_worker._logger
 
     def create_collective_group(
-        self, worker_addresses: List[WorkerAddress], group_name: Optional[str] = None
+        self, worker_addresses: list[WorkerAddress], group_name: Optional[str] = None
     ) -> CollectiveGroup:
         """Create a collective group with the given workers and name. If the group already exists, it will return the existing group.
 
@@ -64,7 +64,7 @@ class Collective:
         )
         return self._name_group_map[group_name]
 
-    def _get_group_name(self, workers: List[WorkerAddress]):
+    def _get_group_name(self, workers: list[WorkerAddress]):
         return "cg-" + "-".join([worker.get_name() for worker in workers])
 
     def _get_worker_info_safe(self, worker_address: WorkerAddress) -> WorkerInfo:

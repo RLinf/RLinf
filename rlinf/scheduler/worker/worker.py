@@ -26,11 +26,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
-    Dict,
-    List,
     Optional,
-    Tuple,
-    Type,
     TypeVar,
 )
 
@@ -38,8 +34,8 @@ import ray
 import torch
 from omegaconf import OmegaConf
 
-from ..accelerator import Accelerator, AcceleratorType
-from ..cluster import Cluster
+from ..cluster import Cluster, ClusterEnvVar
+from ..hardware import AcceleratorType, AcceleratorUtil, HardwareInfo
 from ..manager import WorkerAddress
 
 if TYPE_CHECKING:
@@ -51,7 +47,7 @@ WorkerClsType = TypeVar("WorkerClsType")
 class WorkerMeta(type):
     """Metaclass to capture failures in worker classes."""
 
-    def __new__(cls, name: str, bases: Tuple[Type], attrs: Dict[str, Any]):
+    def __new__(cls, name: str, bases: tuple[type], attrs: dict[str, Any]):
         """Wrap the function to catch SystemExit exceptions."""
         for attr_name, attr_value in attrs.items():
             if callable(attr_value):
@@ -315,7 +311,7 @@ class Worker(metaclass=WorkerMeta):
     current_worker = None
     logging.basicConfig()
     logger = logging.getLogger(Cluster.SYS_NAME)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(Cluster.LOGGING_LEVEL)
     torch_platform = torch.cuda
     torch_device_type = "cuda"
 
@@ -323,11 +319,11 @@ class Worker(metaclass=WorkerMeta):
         """Create a new instance of the Worker class."""
         instance = super().__new__(cls)
 
-        node_id = os.environ.get("NODE_ID", None)
+        cluster_node_rank = os.environ.get("CLUSTER_NODE_RANK", None)
 
         # ray.remote initializes the class with the ActorClass wrapper locally first (not in a remote process),
         # which doesn't have the environment variables set.
-        if node_id is not None and "ActorClass(" not in cls.__name__:
+        if cluster_node_rank is not None and "ActorClass(" not in cls.__name__:
             instance._env_setup_before_init()
             # Handle OS signals for better debuggability
             # Ray new the class in main thread but call __init__ in worker thread if it's an Actor with async functions
@@ -347,21 +343,25 @@ class Worker(metaclass=WorkerMeta):
             self._worker_address = WorkerAddress.from_name(self._worker_name)
 
         # These are not required env_vars, but are set by Ray Worker for convenience
-        self._node_id = int(os.environ.get("NODE_ID", -1))
+        self._cluster_node_rank = int(os.environ.get("CLUSTER_NODE_RANK", -1))
         self._accelerator_type = AcceleratorType(
             os.environ.get("ACCELERATOR_TYPE", str(AcceleratorType.NO_ACCEL.value))
         )
-        self._local_accelerator_id = int(os.environ.get("LOCAL_ACCELERATOR_ID", -1))
+        self._local_accelerator_rank = int(os.environ.get("LOCAL_ACCELERATOR_RANK", -1))
         self._node_local_rank = int(os.environ.get("NODE_LOCAL_RANK", -1))
         self._node_local_world_size = int(os.environ.get("NODE_LOCAL_WORLD_SIZE", -1))
-        Worker.torch_device_type = Accelerator.get_device_type(self._accelerator_type)
-        Worker.torch_platform = Accelerator.get_torch_platform(self._accelerator_type)
+        Worker.torch_device_type = AcceleratorUtil.get_device_type(
+            self._accelerator_type
+        )
+        Worker.torch_platform = AcceleratorUtil.get_torch_platform(
+            self._accelerator_type
+        )
         self.torch_device_type = Worker.torch_device_type
         self.torch_platform = Worker.torch_platform
 
         self._actor = None
         self._has_initialized = False
-        self._timer_metrics: Dict[str, float] = {}
+        self._timer_metrics: dict[str, float] = {}
         self._set_new_omegaconf_resolvers()
 
     def __init__(
@@ -391,13 +391,14 @@ class Worker(metaclass=WorkerMeta):
         else:
             self._is_ray_actor = True
 
-        if self._is_ray_actor and not hasattr(self, "_local_accelerator_id"):
+        if self._is_ray_actor and not hasattr(self, "_local_accelerator_rank"):
             raise RuntimeError(
                 "You may have mistakenly initialized the Worker class directly without `create_group` and `launch`. Please ensure a worker class is not instantiated on the main process directly like `Worker()`, but `Worker.create_group().launch()`."
             )
 
         Worker.PID = os.getpid()
         self._thread = threading.current_thread()
+        self._stacklevel = 4 if self._is_ray_actor else 3
 
         # Reset Cluster.NAMESPACE for this Worker process according to the environment variable
         namespace = os.environ.get("CLUSTER_NAMESPACE", None)
@@ -430,8 +431,13 @@ class Worker(metaclass=WorkerMeta):
         # Setup MASTER_ADDR and MASTER_PORT
         self._setup_master_address_and_port()
 
+        # Setup node group and hardware ranks
+        self._setup_hardware()
+
+        # Setup communication envs
+        self._setup_comm_envs()
+
         self._lock = threading.Lock()
-        self._stacklevel = 4 if self._is_ray_actor else 3
 
         from .lock import DeviceLock
 
@@ -466,9 +472,30 @@ class Worker(metaclass=WorkerMeta):
         """Get the DeviceLock instance for this worker."""
         return self._device_lock
 
+    @property
+    def hardware_type(self) -> str:
+        """Get the hardware type of the current worker.
+
+        Returns:
+            str: The hardware type of the current worker.
+        """
+        return self._node_group.hardware_type
+
+    @property
+    def hardware_infos(self) -> list[HardwareInfo]:
+        """Get the hardware information of the current worker.
+
+        Returns:
+            list[HardwareInfo]: The list hardware information assigned to the current worker.
+        """
+        infos = []
+        for hw_rank in self._hardware_ranks:
+            infos.append(self._node_group.local_hardware_infos[hw_rank])
+        return infos
+
     @classmethod
     def create_group(
-        cls: Type[WorkerClsType], *args, **kwargs
+        cls: type[WorkerClsType], *args, **kwargs
     ) -> "WorkerGroup[WorkerClsType]":
         """Create a worker group with the class arguments.
 
@@ -482,9 +509,9 @@ class Worker(metaclass=WorkerMeta):
 
     def send(
         self,
-        object: torch.Tensor | List[torch.Tensor] | Dict[str, torch.Tensor] | Any,
+        object: torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any,
         dst_group_name: str,
-        dst_rank: int | List[int],
+        dst_rank: int | list[int],
         async_op: bool = False,
     ):
         """Send an object to a specific worker address in the collective group.
@@ -521,7 +548,7 @@ class Worker(metaclass=WorkerMeta):
         return group.send(object=object, async_op=async_op)
 
     def recv(
-        self, src_group_name: str, src_rank: int | List[int], async_op: bool = False
+        self, src_group_name: str, src_rank: int | list[int], async_op: bool = False
     ):
         """Out-of-place receive of an object from a specific worker address in the collective group.
 
@@ -551,7 +578,7 @@ class Worker(metaclass=WorkerMeta):
         self,
         tensor: torch.Tensor,
         dst_group_name: str,
-        dst_rank: int | List[int],
+        dst_rank: int | list[int],
         async_op: bool = False,
     ):
         """Send a tensor to a specific worker address in the collective group. This function is optimized for sending a single tensor and does not introduce metadata communication overhead like send. But it needs to be paired with the in-place recv_tensor function which requires apriori knowledge of the tensor shape and dtype.
@@ -583,7 +610,7 @@ class Worker(metaclass=WorkerMeta):
         self,
         tensor: torch.Tensor,
         src_group_name: str,
-        src_rank: int | List[int],
+        src_rank: int | list[int],
         async_op: bool = False,
     ):
         """In-place receive of a tensor from a specific worker address in the collective group. This function is optimized for receiving a single tensor and does not introduce metadata communication overhead like recv. But it requires preallocation of the tensor with the correct shape and dtype.
@@ -614,7 +641,7 @@ class Worker(metaclass=WorkerMeta):
     def create_channel(
         self,
         channel_name: str,
-        node_id: int = 0,
+        node_rank: int = 0,
         maxsize: int = 0,
         local: bool = False,
     ):
@@ -622,7 +649,7 @@ class Worker(metaclass=WorkerMeta):
 
         Args:
             channel_name (str): The name of the channel.
-            node_id (int): The global ID of the node in the cluster where the channel will be created.
+            node_rank (int): The global rank of the node in the cluster where the channel will be created.
             maxsize (int): The maximum size of the channel queue. Defaults to 0 (unbounded).
             local (bool): Create the channel for intra-process communication. Cannot be connected by other workers.
 
@@ -633,7 +660,7 @@ class Worker(metaclass=WorkerMeta):
         from ..channel.channel import Channel
 
         return Channel.create(
-            name=channel_name, node_id=node_id, maxsize=maxsize, local=local
+            name=channel_name, node_rank=node_rank, maxsize=maxsize, local=local
         )
 
     def connect_channel(self, channel_name: str):
@@ -650,7 +677,7 @@ class Worker(metaclass=WorkerMeta):
 
         return Channel.connect(channel_name=channel_name, current_worker=self)
 
-    def broadcast(self, object: Optional[Any], ranks: List[int]):
+    def broadcast(self, object: Optional[Any], ranks: list[int]):
         """Broadcast an object inside the current worker group.
 
         Args:
@@ -786,7 +813,7 @@ class Worker(metaclass=WorkerMeta):
                 self._isolate_gpu = True
             else:
                 os.environ["LOCAL_RANK"] = str(
-                    self._local_accelerator_id
+                    self._local_accelerator_rank
                 )  # Must use the actual device ID
                 os.environ["LOCAL_WORLD_SIZE"] = str(self._node_local_world_size)
                 self._isolate_gpu = False
@@ -823,21 +850,61 @@ class Worker(metaclass=WorkerMeta):
 
     def _setup_accelerator_info(self) -> int:
         cluster = Cluster()
-        visible_devices = Accelerator.get_visible_devices(self._accelerator_type)
-        node_accelerator_ids = cluster.node_accelerator_ids[self._node_id]
+        visible_devices = AcceleratorUtil.get_visible_devices(self._accelerator_type)
+        node_accelerator_ranks = cluster.accelerator_ranks[self._cluster_node_rank]
         self.global_accelerator_ids = [
-            node_accelerator_ids[local_id] for local_id in visible_devices
+            node_accelerator_ranks[local_id] for local_id in visible_devices
         ]
 
         if not self._is_ray_actor:
             if len(visible_devices) > 0:
-                self._local_accelerator_id = visible_devices[0]
+                self._local_accelerator_rank = visible_devices[0]
             else:
-                self._local_accelerator_id = -1
+                self._local_accelerator_rank = -1
+
+    def _setup_hardware(self):
+        cluster = Cluster()
+        hardware_ranks_str = os.environ.get("LOCAL_HARDWARE_RANKS", "")
+        if hardware_ranks_str == "":
+            self._hardware_ranks = []
+        else:
+            self._hardware_ranks = list(map(int, hardware_ranks_str.strip().split(",")))
+        node_group_label = os.environ.get("NODE_GROUP_LABEL", None)
+        self._node_group = cluster.get_node_group(node_group_label)
+        assert self._node_group is not None, (
+            f"Node group {node_group_label} not found in cluster. Available node groups: {[node_group.label for node_group in cluster._node_groups]}"
+        )
+
+    def _setup_comm_envs(self):
+        # Communication devices
+        self._comm_devices = Cluster.get_sys_env_var(
+            ClusterEnvVar.COMM_NET_DEVICES, None
+        )
+        if self._comm_devices is not None:
+            self.log_info(
+                f"Using communication devices for worker {self._worker_name}: {self._comm_devices}"
+            )
+            # Validate the format of comm devices
+            if os.getenv("GLOO_SOCKET_IFNAME") is None:
+                os.environ["GLOO_SOCKET_IFNAME"] = self._comm_devices
+            elif self._comm_devices != os.environ["GLOO_SOCKET_IFNAME"]:
+                self.log_warning(
+                    f"GLOO_SOCKET_IFNAME is already set to {os.environ['GLOO_SOCKET_IFNAME']}, ignoring {Cluster.get_full_env_var_name(ClusterEnvVar.COMM_NET_DEVICES)}={self._comm_devices}"
+                )
+
+            ccl_socket_env_var = AcceleratorUtil.get_ccl_socket_ifname_env_var(
+                self._accelerator_type
+            )
+            if os.environ.get(ccl_socket_env_var) is None:
+                os.environ[ccl_socket_env_var] = self._comm_devices
+            elif self._comm_devices != os.environ[ccl_socket_env_var]:
+                self.log_warning(
+                    f"{ccl_socket_env_var} is already set to {os.environ[ccl_socket_env_var]}, ignoring {Cluster.get_full_env_var_name(ClusterEnvVar.COMM_NET_DEVICES)}={self._comm_devices}"
+                )
 
     def _setup_logging(self):
         self._logger = logging.getLogger(self._worker_name)
-        logging_level = Cluster.get_sys_env_var("LOG_LEVEL", "INFO").upper()
+        logging_level = Cluster.get_sys_env_var(ClusterEnvVar.LOG_LEVEL, "INFO").upper()
         if logging_level == "DEBUG":
             self._logging_level = logging.DEBUG
         elif logging_level == "INFO":
@@ -931,9 +998,9 @@ class Worker(metaclass=WorkerMeta):
         return WorkerInfo(
             address=self._worker_address,
             rank=self._rank,
-            node_id=self._node_id,
+            cluster_node_rank=self._cluster_node_rank,
             accelerator_type=self._accelerator_type,
-            accelerator_id=self._local_accelerator_id,
+            accelerator_rank=self._local_accelerator_rank,
             node_ip=node_ip,
             node_port=node_port,
             available_accelerators=self.global_accelerator_ids,
