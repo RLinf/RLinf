@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from functools import wraps
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 import torch
 
@@ -23,7 +23,7 @@ from rlinf.algorithms.utils import (
     postprocess_loss_metric,
     postprocess_reasoning_advantages_outputs,
     preprocess_embodied_advantages_inputs,
-    preprocess_loss_inputs,
+    preprocess_embodiment_loss_inputs,
     preprocess_reasoning_advantages_inputs,
 )
 
@@ -84,7 +84,7 @@ def policy_loss(**kwargs) -> tuple[torch.Tensor, dict]:
     task_type = kwargs["task_type"]
 
     if task_type == "embodied":
-        kwargs = preprocess_loss_inputs(**kwargs)
+        kwargs = preprocess_embodiment_loss_inputs(**kwargs)
 
     kwargs.pop("task_type")
     kwargs.pop("loss_type")
@@ -95,7 +95,9 @@ def policy_loss(**kwargs) -> tuple[torch.Tensor, dict]:
     return loss, metrics_data
 
 
-def calculate_adv_and_returns(**kwargs) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+def calculate_adv_and_returns(
+    **kwargs,
+) -> Union[dict[str, torch.Tensor], tuple[torch.Tensor, Optional[torch.Tensor]]]:
     """
     Unified entry for advantage + return computation.
     Accepts variable keyword arguments, preprocesses them, then dispatches

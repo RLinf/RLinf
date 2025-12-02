@@ -165,10 +165,6 @@ class FSDPActor(FSDPModelManager, Worker):
         if self.cfg.actor.get("enable_offload", False):
             self.offload_param_and_grad()
 
-    def compute_logprobs(self) -> None:
-        self.model.eval()
-        self.rollout_batch["logprob"] = self.rollout_batch["prev_logprobs"]
-
     def get_batch(
         self, channel: Channel
     ) -> tuple[dict[str, torch.Tensor], RolloutResult]:
@@ -696,10 +692,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return rollout_batch
 
-    def compute_logprobs(self):
-        self.model.eval()
-        self.rollout_batch["logprob"] = self.rollout_batch["prev_logprobs"]
-
     def compute_advantages_and_returns(self):
         stage_num = self.cfg.rollout.pipeline_stage_num
         env_world_size = self._component_placement.get_world_size("env")
@@ -879,7 +871,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         self.cfg.algorithm.entropy_bonus > 0
                         and not kwargs["critic_warmup"]
                     ):
-                        entropy = output_dict["entropy"]
+                        entropy: torch.Tensor = output_dict["entropy"]
                         entropy = reshape_entropy(
                             entropy,
                             entropy_type=self.cfg.algorithm.entropy_type,

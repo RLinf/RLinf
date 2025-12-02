@@ -28,7 +28,7 @@ runner:
   val_check_interval: 1
   save_interval: 50
 
-  seq_length: 28672
+  seq_length: 16384
 
   enable_dynamic_batch_size: False
   max_tokens_per_mbs: 28672
