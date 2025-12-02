@@ -17,12 +17,12 @@ import os
 
 import torch
 from omegaconf import DictConfig, OmegaConf
-from transformers import (
-    AutoConfig,
-    AutoImageProcessor,
-    AutoProcessor,
-    AutoTokenizer,
-)
+# from transformers import (
+#     AutoConfig,
+#     AutoImageProcessor,
+#     AutoProcessor,
+#     AutoTokenizer,
+# )
 
 from rlinf.config import torch_dtype_from_precision
 

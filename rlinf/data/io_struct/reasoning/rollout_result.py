@@ -8,7 +8,6 @@ if TYPE_CHECKING:
     from vllm.outputs import CompletionOutput
     from vllm.outputs import RequestOutput as VllmRequestOutput
 
-from rlinf.data.datasets.utils import batch_pad_to_fixed_len
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
     split_list,
@@ -514,6 +513,7 @@ class RolloutResult:
         # each row: [response_ids, ...,                , response_padding]
         #           |<----- true response length ----->|<--- padding --->|
         #           |<-- cfg.runner.seq_length - cfg.data.seq_length ->|
+        from rlinf.data.datasets.utils import batch_pad_to_fixed_len
 
         max_response_len = training_seq_length - data_seq_length
 

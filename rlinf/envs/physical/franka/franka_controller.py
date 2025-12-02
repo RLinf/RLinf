@@ -122,6 +122,9 @@ class FrankaController(Worker):
         Args:
             msg (FrankaState): The Franka state message.
         """
+        """
+        In exp, this func is about 30 Hz
+        """
         tmatrix = np.array(list(msg.O_T_EE)).reshape(4, 4).T
         r = R.from_matrix(tmatrix[:3, :3])
         self._state.tcp_pose = np.concatenate([tmatrix[:3, -1], r.as_quat()])
@@ -267,7 +270,7 @@ class FrankaController(Worker):
                 self._ros_pkg,
                 "joint.launch",
                 "robot_ip:=" + self._robot_ip,
-                "load_gripper:='true'",
+                "load_gripper:=true",
             ],
             stdout=sys.stdout,
         )

@@ -204,33 +204,9 @@ def quat_2_euler(quat: np.ndarray):
 
 def euler_2_quat(xyz: np.ndarray):
     """Convert euler angles (xyz order) to quaternion."""
-    from pyquaternion import Quaternion
+    from scipy.spatial.transform import Rotation as R
 
-    yaw, pitch, roll = xyz
-    yaw = np.pi - yaw
-    yaw_matrix = np.array(
-        [
-            [np.cos(yaw), -np.sin(yaw), 0.0],
-            [np.sin(yaw), np.cos(yaw), 0.0],
-            [0, 0, 1.0],
-        ]
-    )
-    pitch_matrix = np.array(
-        [
-            [np.cos(pitch), 0.0, np.sin(pitch)],
-            [0.0, 1.0, 0.0],
-            [-np.sin(pitch), 0, np.cos(pitch)],
-        ]
-    )
-    roll_matrix = np.array(
-        [
-            [1.0, 0, 0],
-            [0, np.cos(roll), -np.sin(roll)],
-            [0, np.sin(roll), np.cos(roll)],
-        ]
-    )
-    rot_mat = yaw_matrix.dot(pitch_matrix.dot(roll_matrix))
-    return Quaternion(matrix=rot_mat).elements
+    return R.from_euler("xyz", xyz).as_quat()
 
 
 class DualOutput:

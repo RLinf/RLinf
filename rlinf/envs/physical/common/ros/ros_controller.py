@@ -47,16 +47,16 @@ class ROSController:
             with self._ros_lock:
                 self._ros_core = None
                 # Check roscore state and launch roscore
+                ros_proc_names = ["roscore", "rosmaster", "rosout"]
                 for proc in psutil.process_iter():
-                    if proc.name() == "roscore":
-                        self._ros_core = proc
-                        break
+                    if proc.name() in ros_proc_names:
+                        proc.kill()
+                        time.sleep(0.5)
 
-                if self._ros_core is None:
-                    self._ros_core = psutil.Popen(
-                        ["roscore"], stdout=sys.stdout, stderr=sys.stdout
-                    )
-                    time.sleep(1)  # Wait for roscore to start
+                self._ros_core = psutil.Popen(
+                    ["roscore"], stdout=sys.stdout, stderr=sys.stdout
+                )
+                time.sleep(1)  # Wait for roscore to start
 
         # Initialize ros node
         rospy.init_node("franka_controller", anonymous=True)

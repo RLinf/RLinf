@@ -41,11 +41,10 @@ class Camera:
     ):  
         import pyrealsense2 as rs  # Intel RealSense cross-platform open-source API
         self._camera_info = camera_info
-        self._device_info = {
-            device.get_info(rs.camera_info.serial_number): device
-            for device in rs.context().devices
-        }
-        assert camera_info.serial_number in self._device_info.keys()
+        self._device_info = {}
+        for device in rs.context().devices:
+            self._device_info[device.get_info(rs.camera_info.serial_number)] = device
+        assert camera_info.serial_number in self._device_info.keys(), f"{self._device_info.keys()=}"
 
         self._serial_number = camera_info.serial_number
         self._device = self._device_info[self._serial_number]
@@ -109,7 +108,7 @@ class Camera:
 
     def _capture_frames(self):
         while self._frame_capturing_start:
-            time.sleep(0.01)
+            time.sleep(1/self._camera_info.fps)
             has_frame, frame = self._read_frame()
             if not has_frame:
                 break

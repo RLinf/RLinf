@@ -18,15 +18,14 @@ from typing import Any, Dict, List, Tuple
 import torch
 from omegaconf import DictConfig
 from torch.utils.data import Dataset
-from transformers import AutoTokenizer
+# from transformers import AutoTokenizer
 
 from rlinf.data.datasets.item import DatasetItem
 from rlinf.data.datasets.math import MathDataset
-from rlinf.data.datasets.vlm import VLMDatasetRegistry
 
 
 def create_rl_dataset(
-    config: DictConfig, tokenizer: AutoTokenizer
+    config: DictConfig, tokenizer #: AutoTokenizer
 ) -> Tuple[Dataset, Dataset]:
     """Create rl datasets.
 
@@ -43,6 +42,7 @@ def create_rl_dataset(
     if config.data.type == "math":
         dataset_cls = MathDataset
     elif config.data.type == "vision_language":
+        from rlinf.data.datasets.vlm import VLMDatasetRegistry
         # Prefer new factory-based VLM datasets; fallback to legacy if requested
         dataset_name = getattr(config.data, "dataset_name", None)
         lazy_loading = bool(getattr(config.data, "lazy_loading", False))
