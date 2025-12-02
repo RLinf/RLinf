@@ -13,7 +13,9 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor, env, rollout: 0-0
+    actor: 0-3
+    env: 0-1
+    rollout: 2-3
 
 runner:
   task_type: embodied
@@ -26,7 +28,7 @@ runner:
   max_epochs: 1000
   max_steps: -1
 
-  only_eval: True
+  only_eval: False
   val_check_interval: -1
   save_interval: 40
   seq_length: 4096
@@ -39,10 +41,10 @@ algorithm:
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
-  n_chunk_steps: 200
-  n_eval_chunk_steps: 200
-  num_group_envs: 1
-  rollout_epoch: 8
+  n_chunk_steps: 20
+  n_eval_chunk_steps: 20
+  num_group_envs: 2
+  rollout_epoch: 1
   reward_type: chunk_level
   logprob_type: token_level
   entropy_type: token_level
@@ -95,7 +97,8 @@ rollout:
     queue_size: 0
   mode: "colocate"
   backend: "huggingface"
-  model_dir: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
+  model_dir: "/mnt/public/guozhen/models/openvlaoft_sft_turn_on_radio/"
+  precision: ${actor.model.precision}
   enable_offload: True
   pipeline_stage_num: 1
 
@@ -106,7 +109,7 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
+  checkpoint_load_path: "/mnt/public/guozhen/models/openvlaoft_sft_turn_on_radio/"
   checkpoint_save_path: "../results"
   micro_batch_size: 2
   global_batch_size: 160
@@ -146,13 +149,43 @@ actor:
     adam_beta2: 0.999
     adam_eps: 1.0e-05
     clip_grad: 10.0
+    critic_warmup_steps: 0
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
+    tokenizer_model: "/mnt/public/guozhen/models/openvlaoft_sft_turn_on_radio/"
     use_fast: False
     trust_remote_code: True
     padding_side: "right"
+
+  fsdp_config:                  # below are fsdp configs, for more details, see https://pytorch.org/docs/stable/fsdp.html and https://huggingface.co/docs/accelerate/package_reference/fsdp
+
+    strategy: "fsdp"            # FSDP strategy: ["fsdp", "fsdp2"]
+
+    # Sharding strategy: "full_shard" (shard parameters, gradients, optimizer states),
+    # "shard_grad_op" (shard gradients and optimizer states only), 
+    # "hybrid_shard" (combines data parallelism and model parallelism - sharding within FSDP groups, replicate across DDP groups),
+    # "no_shard" (no sharding)
+    sharding_strategy: "no_shard" 
+
+    enable_gradient_accumulation: True  # if True, gradient accumulation will be enabled for FSDP/FSDP2 training, which will enhance training performance but increase memory usage.
+    forward_prefetch: False             # if True, FSDP will explicitly prefetches the next upcoming all-gather while executing in the forward pass. only use with static graphs. Overlaps communication with computation to improve performance.
+    limit_all_gathers: False            # if True, FSDP will synchronizes CPU threads to limit the number of concurrent all-gathers. Only affects strategies that schedule all-gathers
+    backward_prefetch: null             # options are null, 'pre', 'post'. if 'pre', FSDP will prefetch the next upcoming all-gather while computing gradients. if 'post', FSDP will prefetch the next all-gather until current gradient is computed.
+    use_orig_params: False              # if True, FSDP will use module's original parameters, it means it will expose nn.Module.named_parameters rather than FlatParameter
+    use_liger_kernel: False             # if True, liger_kernel will be used for FSDP, note that currently supported models in RLinf are [qwen2.5, qwen2.5-vl], for more details, see liger_kernel's doc
+
+    fsdp_size: -1               # Number of GPUs per FSDP group for hybrid sharding. -1 means use all available GPUs in a single FSDP group
+
+    mixed_precision:            # mixed precision settings for fsdp/fsdp2
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+    amp:
+      enabled: False                 # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
+      precision: "bf16"              # precision for AMP, options are ["fp16" , "bf16"]
+      use_grad_scaler: False         # if True, GradScaler will be used for AMP training to prevent underflow.
 
 reward:
   use_reward_model: False
