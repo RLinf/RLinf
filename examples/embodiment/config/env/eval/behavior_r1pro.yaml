@@ -17,7 +17,7 @@ video_cfg:
   video_base_dir: ${runner.logger.log_path}/video/eval
 
 base_config_name: r1pro_behavior
-num_envs: 1
+num_envs: ${algorithm.num_group_envs}
 
 tasks:
   activity_task_indices: "0" # eg. "0-49" or "0-20,49"
