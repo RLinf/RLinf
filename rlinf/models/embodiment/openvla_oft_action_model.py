@@ -80,10 +80,12 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
 
             self.q_head = MultiQHead(
                 hidden_size=self.hidden_size,
-                action_dim=self.action_dim * self.num_action_chunks, 
-                hidden_dims=[256, 256, 256], 
-                num_q_heads=10, 
-                use_mix_embedding_input=False
+                action_feature_dim=self.action_dim * self.num_action_chunks * 16, 
+                # action_feature_dim=self.action_dim * self.num_action_chunks * self.hidden_size, 
+                hidden_dims=[1024, 1024, 256], 
+                num_q_heads=2, 
+                # train_action_encoder=False
+                train_action_encoder=True
             )
 
     def _build_embedding(self, input_ids, attention_mask, pixel_values):
@@ -218,15 +220,17 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
             f"In: What action should the robot take to {t.lower()}?\nOut: "
             for t in raw_obs["task_descriptions"]
         ]
-        image_tensor = raw_obs["images"]
-        if image_tensor.ndim == 4:
-            image_tensor = image_tensor.unsqueeze(1)
-        assert image_tensor.ndim == 5
+        images = raw_obs["images"]
+        if isinstance(images, torch.Tensor):
+            if images.ndim == 4:
+                images = images.unsqueeze(1)
+            image_tensor = images.clone()
+            assert images.ndim == 5 
+            images = {"images": image_tensor}
 
         max_length = self.max_prompt_length
         device = next(self.parameters()).device
         precision = next(self.parameters()).dtype
-        images = {"images": image_tensor}
         processed_obs = self.input_processor(
             text=task_descriptions,
             images=images,
@@ -443,9 +447,6 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
     def sac_forward(
             self, 
             obs,
-            attention_mask: torch.Tensor = None,
-            pixel_values: torch.FloatTensor = None,
-            output_hidden_states: bool = False,
             **kwargs
         ):
 
@@ -515,7 +516,7 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
         logits_tensor[..., : self.vocab_size - self.config.n_action_bins] = -torch.inf
         logits_tensor[..., self.vocab_size :] = -torch.inf
 
-        temperature = kwargs["temperature"] if "temperature" in kwargs else 1
+        temperature = kwargs["temperature"]
         top_k = kwargs["top_k"] if "top_k" in kwargs else -1
         processed_logits_tensor = logits_tensor / temperature
         top_k = min(top_k, processed_logits_tensor.size(-1))  # Safety check
@@ -526,22 +527,27 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
             processed_logits_tensor = logits_warper(None, processed_logits_tensor)
 
 
-        action_one_hot = F.gumbel_softmax(
+        action_soft = F.gumbel_softmax(
             processed_logits_tensor[
                 ..., 
                 self.vocab_size-self.config.n_action_bins:self.vocab_size
             ], dim=-1, hard=True
-        )# [B, act, ]
-        action_idxs = action_one_hot.argmax(dim=-1)
-        idxs = action_idxs + self.vocab_size - self.config.n_action_bins
+        ).to(pixel_values.dtype) # [B, act, ]
+        
+        embedding_matrix = self.get_input_embeddings().weight[
+            self.vocab_size-self.config.n_action_bins:self.vocab_size
+        ]  # [bins, D]
+
+
+        action_emb = action_soft @ embedding_matrix  # [B, action_dim, D]
+
+        idxs = action_soft.argmax(dim=-1) + self.vocab_size - self.config.n_action_bins
 
         # assert torch.all(idxs >= 0) and torch.all(idxs < self.config.n_action_bins)
         # generated_ids = idxs + (self.vocab_size - self.config.n_action_bins)
         assert torch.all(
             idxs >= self.vocab_size - self.config.n_action_bins
         ) and torch.all(idxs < self.vocab_size)
-
-        chunk_action_tokens = idxs.clone()
         
         action_logits = processed_logits_tensor.permute(
             0, 2, 1
@@ -551,7 +557,7 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
 
         chunk_logprobs = compute_logprobs_from_logits(logits=action_logits, target=idxs)
 
-        return chunk_action_tokens, chunk_logprobs, last_hidden_states[:, 0]
+        return action_emb, chunk_logprobs, last_hidden_states[:, 0]
 
     def get_feature(self, obs, detach_encoder=False):
         input_ids = obs["input_ids"]
@@ -609,20 +615,16 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
         """
         if shared_feature is None:
             shared_feature = self.get_feature(obs, detach_encoder=detach_encoder)
-        if len(actions.shape) > 2:
-            actions = actions.reshape(actions.shape[0], -1)
-        
-        # actions to some continuous value. just for q-values, no physically meaning
-        # continuous_actions = ((
-        #     (actions - (self.vocab_size - self.config.n_action_bins)) / self.config.n_action_bins
-        # ) - 0.5) * 2
-        # continuous_actions = continuous_actions.to(shared_feature.dtype)
-
-        action_embeddings = self.get_input_embeddings()(actions).mean(dim=-1) # [bsz, num-action-dims, hidden-dim] -> [bsz, num-action-dims]
-
         if detach_encoder:
             shared_feature = shared_feature.detach()
-        q_values= self.q_head(state_features=shared_feature, action_features=action_embeddings)
+        if actions.dtype == torch.long:
+            if len(actions.shape) > 2:
+                actions = actions.reshape(actions.shape[0], -1) # [B, num-action-chunks x action-dim]
+            actions = self.get_input_embeddings()(actions)
+        
+        actions = actions[..., :16].reshape(actions.shape[0], -1)
+        # actions = (actions * 1.0 - (self.vocab_size - self.config.n_action_bins)) / (self.vocab_size - self.config.n_action_bins)
+        q_values= self.q_head(state_features=shared_feature, action_features=actions)
         return q_values
     
 

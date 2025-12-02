@@ -15,6 +15,7 @@
 import gc
 import os
 
+import asyncio
 import itertools
 import numpy as np
 import torch
@@ -31,6 +32,7 @@ from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
     append_to_dict,
     compute_rollout_metrics,
+    compute_split_num
 )
 
 class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
@@ -168,10 +170,6 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                     target_param.data.mul_(1.0 - tau)
                     target_param.data.add_(online_param.data * tau)
 
-    async def recv_rollout_batch(self):
-        await super().recv_rollout_batch()
-        self.replay_buffer.add_rollout_batch(self.rollout_batch)
-
     async def recv_demo_data(self):
         demo_data = await self.demo_data_channel.get(async_op=True).async_wait()
         self.demo_buffer = SACReplayBuffer.create_from_buffer(demo_data, seed=self.cfg.actor.seed)
@@ -189,70 +187,45 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         return rollout_metrics
     
     def forward_critic(self, batch):
-        use_crossq = (self.cfg.algorithm.get("q_head_type", "default") == "crossq")
         rewards = batch["rewards"].to(self.torch_dtype)
         curr_obs = batch["transitions"]["obs"]
         next_obs = batch["transitions"]["next_obs"]
         with torch.no_grad():
-            kwargs = {}
-            if self.cfg.actor.model.model_name in ["openvla", "openvla_oft"]:
-                kwargs["temperature"] = (
-                    self.cfg.algorithm.sampling_params.temperature_train
-                )
+
             next_state_actions, next_state_log_pi, shared_feature = self.model(
                 "sac_forward", 
                 obs=next_obs, 
-                **kwargs
             )
             next_state_log_pi = next_state_log_pi.sum(dim=-1, keepdim=True)
-            if not use_crossq:
-                all_qf_next_target = self.target_model(
-                    "sac_q_forward", 
-                    obs=next_obs, actions=next_state_actions, 
-                    shared_feature=shared_feature, 
-                )
-                if self.critic_subsample_size > 0:
-                    sample_idx = torch.randint(
-                        0, all_qf_next_target.shape[0], self.critic_subsample_size, 
-                        generator=self.critic_sample_generator, device=self.device
-                    )
-                    all_qf_next_target = all_qf_next_target[sample_idx]
-
-                min_qf_next_target, _ = torch.min(
-                    all_qf_next_target, 
-                    dim=1, keepdim=True
-                )
-
-                if self.cfg.algorithm.get("backup_entropy", True):
-                    min_qf_next_target = min_qf_next_target - self.alpha * next_state_log_pi
-                    min_qf_next_target = min_qf_next_target.to(dtype=self.torch_dtype)
-                target_q_values = rewards.sum(dim=-1, keepdim=True) + self.cfg.algorithm.gamma * min_qf_next_target # [bsz, 1]
-
-        if not use_crossq:
-            all_data_q_values = self.model(
+            
+            all_qf_next_target = self.target_model(
                 "sac_q_forward", 
-                obs=curr_obs, 
-                actions=batch["action"] if "action" in batch else batch["action_tokens"]
+                obs=next_obs, actions=next_state_actions, 
+                shared_feature=shared_feature, 
             )
-        else:
-            all_data_q_values, all_qf_next = self.model(
-                "crossq_q_forward",
-                obs=curr_obs,
-                actions=batch["action"] if "action" in batch else batch["action_tokens"],
-                next_obs=next_obs,
-                next_actions=next_state_actions
-            )
-
-            all_qf_next = all_qf_next.detach()
-            min_qf_next, _ = torch.min(
-                all_qf_next, 
+            if self.critic_subsample_size > 0:
+                sample_idx = torch.randint(
+                    0, all_qf_next_target.shape[0], self.critic_subsample_size, 
+                    generator=self.critic_sample_generator, device=self.device
+                )
+                all_qf_next_target = all_qf_next_target[sample_idx]
+                
+            min_qf_next_target, _ = torch.min(
+                all_qf_next_target, 
                 dim=1, keepdim=True
             )
+
             if self.cfg.algorithm.get("backup_entropy", True):
-                    min_qf_next = min_qf_next - self.alpha * next_state_log_pi
-                    min_qf_next = min_qf_next.to(dtype=self.torch_dtype)
+                min_qf_next_target = min_qf_next_target - self.alpha * next_state_log_pi
+                min_qf_next_target = min_qf_next_target.to(dtype=self.torch_dtype)
+            target_q_values = rewards.sum(dim=-1, keepdim=True) + self.cfg.algorithm.gamma * min_qf_next_target # [bsz, 1]
             
-            target_q_values = rewards.sum(dim=-1, keepdim=True) + self.cfg.algorithm.gamma * min_qf_next # [bsz, 1]
+
+        all_data_q_values = self.model(
+            "sac_q_forward", 
+            obs=curr_obs, 
+            actions=batch["action"] if "action" in batch else batch["action_tokens"]
+        ) # [num-q, bsz, 1]
 
         critic_loss = F.mse_loss(
             all_data_q_values, 
@@ -261,34 +234,17 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         return critic_loss
     
     def forward_actor(self, batch):
-        use_crossq = (self.cfg.algorithm.get("q_head_type", "default") == "crossq")
         curr_obs = batch["transitions"]["obs"]
-        kwargs = {}
-        if self.cfg.actor.model.model_name in ["openvla", "openvla_oft"]:
-            kwargs["temperature"] = (
-                self.cfg.algorithm.sampling_params.temperature_train
-            )
         pi, log_pi, shared_feature = self.model(
-            "sac_forward", obs=curr_obs, **kwargs
+            "sac_forward", obs=curr_obs
         )
         log_pi = log_pi.sum(dim=-1, keepdim=True)
-        if not use_crossq:
-            all_qf_pi = self.model(
-                "sac_q_forward", 
-                obs=curr_obs, actions=pi, 
-                shared_feature=shared_feature, 
-                detach_encoder=True
-            )
-        else:
-            all_qf_pi, _ = self.model(
-                "crossq_q_forward",
-                obs=curr_obs,
-                actions=pi,
-                next_obs=None,
-                next_actions=None,
-                shared_feature=shared_feature,
-                detach_encoder=True
-            )
+        all_qf_pi = self.model(
+            "sac_q_forward", 
+            obs=curr_obs, actions=pi, 
+            shared_feature=shared_feature, 
+            detach_encoder=True
+        )
 
         # min_qf_pi = torch.mean(all_qf_pi, dim=1, keepdim=True)
         min_qf_pi, _ = torch.min(all_qf_pi, dim=1, keepdim=True)
@@ -298,13 +254,8 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
     def forward_alpha(self, batch):
         curr_obs = batch["transitions"]["obs"]
         with torch.no_grad():
-            kwargs = {}
-            if self.cfg.actor.model.model_name in ["openvla", "openvla_oft"]:
-                kwargs["temperature"] = (
-                    self.cfg.algorithm.sampling_params.temperature_train
-                )
             _, log_pi, _ = self.model(
-                "sac_forward", obs=curr_obs, **kwargs
+                "sac_forward", obs=curr_obs
             )
             log_pi = log_pi.sum(dim=-1, keepdim=True)
 
@@ -313,7 +264,16 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         return alpha_loss
         
 
-    def run_training(self):
+    async def start_replay_buffer(self, data_channel):
+        send_num = self._component_placement.get_world_size("rollout") * self.stage_num
+        recv_num = self._component_placement.get_world_size("actor")
+        split_num = compute_split_num(send_num, recv_num)
+        replay_buffer_task = asyncio.create_task(
+            self.replay_buffer.run(self.cfg, data_channel=data_channel, split_num=split_num)
+        )
+        await replay_buffer_task
+    
+    async def run_training(self):
         """SAC training using replay buffer"""
         if self.cfg.actor.get("enable_offload", False):
             self.load_fsdp_param_and_grad(self.device)
@@ -324,10 +284,11 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         train_actor_steps = self.cfg.algorithm.get("train_actor_steps", 0) // self._world_size
         train_actor_steps = max(min_buffer_size, train_actor_steps)
 
-        if not self.replay_buffer.is_ready(min_buffer_size):
+        if not (await self.replay_buffer.is_ready_async(min_buffer_size)):
             self.log_on_first_rank(f"Replay buffer size {len(self.replay_buffer)} < {min_buffer_size}, skipping training")
-            return {}
-        train_actor = self.replay_buffer.is_ready(train_actor_steps)
+            return False
+        train_actor = await self.replay_buffer.is_ready_async(train_actor_steps)
+        replay_buffer_stats = self.replay_buffer.get_stats()
 
         assert (
             self.cfg.actor.global_batch_size
@@ -408,8 +369,6 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                     "sac/critic_loss": gbs_critic_loss, 
                     # "sac/qf_values": all_data_q_values.mean().detach().item(), 
                     # "sac/current_q": min_qf_pi.mean().detach().item(), 
-                    "replay_buffer/size": len(self.replay_buffer),
-                    "replay_buffer/utilization": len(self.replay_buffer) / self.replay_buffer.capacity
                 }
                 
                 append_to_dict(metrics, metrics_data)
@@ -442,8 +401,12 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         mean_metric_dict = all_reduce_dict(
             mean_metric_dict, op=torch.distributed.ReduceOp.AVG
         )
+        metric_dict = {
+            "train": mean_metric_dict, 
+            "replay_buffer": replay_buffer_stats
+        }
 
         torch.cuda.synchronize()
         torch.distributed.barrier()
         torch.cuda.empty_cache()
-        return mean_metric_dict
+        return metric_dict
