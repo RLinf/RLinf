@@ -138,7 +138,10 @@ class SGLangWorker(Worker):
                 self._cfg.rollout.sglang.torch_compile_max_bs,
                 self._cfg.rollout.max_running_requests,
             ),
-            load_format="dummy" if not self._cfg.rollout.validate_weight else "auto",
+            load_format="dummy"
+            if not self._cfg.rollout.validate_weight
+            and not getattr(self._cfg.rollout, "validate_weight_first_sync", False)
+            else "auto",
             # disable_overlap_schedule=True,
             dtype=torch_dtype_from_precision(self._cfg.rollout.precision),
             # sglang will only return text/output_ids when skip_tokenizer_init=False/True
@@ -173,21 +176,14 @@ class SGLangWorker(Worker):
         """
         Run a test prompt batch and print its output.
         """
-        if self._cfg.rollout.detokenize:
-            self.log_warning(
-                "validate_weight with detokenize=True is not supported yet."
-            )
-        else:
-            input_ids = self._tokenizer(self._validate_prompts).input_ids
-            engine_results, _ = await self.async_generate(
-                input_ids=input_ids,
-                sampling_params=self._validate_sampling_params,
-                return_logprob=False,
-            )
-            print_sglang_outputs(
-                self._validate_prompts, engine_results, self._tokenizer
-            )
-            print("===============================", flush=True)
+        input_ids = self._tokenizer(self._validate_prompts).input_ids
+        engine_results, _ = await self.async_generate(
+            input_ids=input_ids,
+            sampling_params=self._validate_sampling_params,
+            return_logprob=False,
+        )
+        print_sglang_outputs(self._validate_prompts, engine_results, self._tokenizer)
+        print("===============================", flush=True)
 
     async def async_generate(
         self,
@@ -222,7 +218,9 @@ class SGLangWorker(Worker):
             prompt=prompt,
             sampling_params=sampling_params,
             input_ids=input_ids,
-            image_data=image_data if any(image_data) else None,
+            image_data=image_data
+            if image_data is not None and any(image_data)
+            else None,
             return_logprob=return_logprob,
         )
         return result, request_info
@@ -420,6 +418,7 @@ class SGLangWorker(Worker):
             sampling_params=final_sampling_params,
             return_logprob=self._return_logprobs,
         )
+        # sglang will trim matched stop in result text, so we should only return output_ids
         result_dict = {
             "output_ids": result["output_ids"],
             "finish_reason": result["meta_info"]["finish_reason"]["type"],

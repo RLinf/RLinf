@@ -19,11 +19,14 @@ from openpi import transforms
 from openpi.models import model as _model
 
 
-def make_metaworld_example() -> dict:
-    """Creates a random input example for the Metaworld policy."""
+def make_calvin_example() -> dict:
+    """Creates a random input example for the Calvin policy."""
     return {
-        "observation/state": np.random.rand(4),
-        "observation/image": np.random.randint(256, size=(3, 480, 480), dtype=np.uint8),
+        "observation/state": np.random.rand(7),
+        "observation/image": np.random.randint(256, size=(200, 200, 3), dtype=np.uint8),
+        "observation/wrist_image": np.random.randint(
+            256, size=(84, 84, 3), dtype=np.uint8
+        ),
         "prompt": "do something",
     }
 
@@ -38,30 +41,39 @@ def _parse_image(image) -> np.ndarray:
 
 
 @dataclasses.dataclass(frozen=True)
-class MetaworldInputs(transforms.DataTransformFn):
+class CalvinInputs(transforms.DataTransformFn):
     model_type: _model.ModelType
 
     def __call__(self, data: dict) -> dict:
         base_image = _parse_image(data["observation/image"])
+        wrist_image = _parse_image(data["observation/wrist_image"])
+        state_ee_pos = data["observation/state_ee_pos"]
+        state_ee_rot = data["observation/state_ee_rot"]
+        state_gripper = data["observation/state_gripper"]
+        state = np.concatenate([state_ee_pos, state_ee_rot, state_gripper])
 
         inputs = {
-            "state": data["observation/state"],
+            "state": state,
             "image": {
                 "base_0_rgb": base_image,
-                "left_wrist_0_rgb": np.zeros_like(base_image),
-                # Pad any non-existent images with zero-arrays of the appropriate shape.
+                "left_wrist_0_rgb": wrist_image,
                 "right_wrist_0_rgb": np.zeros_like(base_image),
             },
             "image_mask": {
                 "base_0_rgb": np.True_,
-                "left_wrist_0_rgb": np.False_,
-                # We only mask padding images for pi0 model, not pi0-FAST. Do not change this for your own dataset.
-                "right_wrist_0_rgb": np.False_,
+                "left_wrist_0_rgb": np.True_,
+                "right_wrist_0_rgb": np.True_
+                if self.model_type == _model.ModelType.PI0_FAST
+                else np.False_,
             },
         }
 
-        if "actions" in data:
-            inputs["actions"] = data["actions"]
+        if "actions/delta_ee_pos" in data:
+            delta_ee_pos = data["actions/delta_ee_pos"]
+            delta_ee_rot = data["actions/delta_ee_rot"]
+            gripper = data["actions/gripper"]
+            actions = np.concatenate([delta_ee_pos, delta_ee_rot, gripper], axis=1)
+            inputs["actions"] = actions
 
         if "prompt" in data:
             inputs["prompt"] = data["prompt"]
@@ -70,6 +82,6 @@ class MetaworldInputs(transforms.DataTransformFn):
 
 
 @dataclasses.dataclass(frozen=True)
-class MetaworldOutputs(transforms.DataTransformFn):
+class CalvinOutputs(transforms.DataTransformFn):
     def __call__(self, data: dict) -> dict:
-        return {"actions": np.asarray(data["actions"][:, :4])}
+        return {"actions": np.asarray(data["actions"][:, :7])}

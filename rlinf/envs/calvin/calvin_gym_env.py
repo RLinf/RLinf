@@ -16,36 +16,26 @@ import copy
 import os
 
 # Ensure MW envs only register once
-import warnings
 from typing import Optional, Union
 
 import gymnasium as gym
-import metaworld
 import numpy as np
 import torch
 
+from rlinf.envs.calvin import CalvinBenchmark, make_env
+from rlinf.envs.calvin.venv import ReconfigureSubprocEnv
 from rlinf.envs.libero.utils import (
     put_info_on_image,
     save_rollout_video,
     tile_images,
 )
-from rlinf.envs.metaworld import MetaWorldBenchmark
-from rlinf.envs.metaworld.venv import ReconfigureSubprocEnv
 from rlinf.envs.utils import (
     list_of_dict_to_dict_of_list,
     to_tensor,
 )
 
-if not getattr(metaworld, "_has_registered_mw_envs", False):
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore", message=".*Overriding environment.*already in registry.*"
-        )
-        metaworld.register_mw_envs()
-    metaworld._has_registered_mw_envs = True
 
-
-class MetaWorldEnv(gym.Env):
+class CalvinEnv(gym.Env):
     def __init__(self, cfg, seed_offset, total_num_processes):
         self.seed_offset = seed_offset
         self.cfg = cfg
@@ -63,10 +53,7 @@ class MetaWorldEnv(gym.Env):
         self._generator = np.random.default_rng(seed=self.seed)
         self._generator_ordered = np.random.default_rng(seed=0)
 
-        self.RESET_STEP = 15
-        self.task_suite: MetaWorldBenchmark = MetaWorldBenchmark(
-            self.cfg.task_suite_name
-        )
+        self.task_suite: CalvinBenchmark = CalvinBenchmark(self.cfg.task_suite_name)
         self.num_tasks = self.task_suite.get_num_tasks()
         self.task_num_trials = self.task_suite.get_task_num_trials()
         self._compute_total_num_group_envs()
@@ -86,34 +73,17 @@ class MetaWorldEnv(gym.Env):
         self.render_images = []
 
     def _init_env(self):
-        # metaworld task and prompt description
-        self.env_names_all = self.task_suite.get_env_names()
-        self.task_descriptions_all = self.task_suite.get_task_description()
         env_fns = self.get_env_fns()
-        self.use_async_vector_env = False
-        if self.use_async_vector_env:
-            assert not self.auto_reset, "AsyncVectorEnv does not support auto_reset."
-            self.env = gym.vector.AsyncVectorEnv(env_fns)
-        else:
-            self.env = ReconfigureSubprocEnv(env_fns)
+        self.env = ReconfigureSubprocEnv(env_fns)
 
     def get_env_fns(self):
         env_fn_params = self.get_env_fn_params()
         env_fns = []
         for env_fn_param in env_fn_params:
 
-            def env_fn(param=env_fn_param):
-                os.environ["MUJOCO_EGL_DEVICE_ID"] = str(self.seed_offset)
-                env_name = param["env_name"]
-                env = gym.make(
-                    "Meta-World/MT1",
-                    env_name=env_name,
-                    render_mode="rgb_array",
-                    camera_id=2,
-                    disable_env_checker=True,
-                )
-                # Set camera position to align with sft
-                env.env.env.env.env.env.env.model.cam_pos[2] = [0.75, 0.075, 0.7]
+            def env_fn():
+                os.environ["EGL_VISIBLE_DEVICES"] = str(self.seed_offset)
+                env = make_env()
                 return env
 
             env_fns.append(env_fn)
@@ -121,23 +91,12 @@ class MetaWorldEnv(gym.Env):
 
     def get_env_fn_params(self, env_idx=None):
         env_fn_params = []
-        task_descriptions = []
         if env_idx is None:
             env_idx = np.arange(self.cfg.num_envs)
         for env_id in range(self.cfg.num_envs):
             if env_id not in env_idx:
-                task_descriptions.append(self.task_descriptions_all[env_id])
                 continue
-            env_name = self.env_names_all[self.task_ids[env_id]]
-            task_description = self.task_descriptions_all[self.task_ids[env_id]]
-
-            env_fn_params.append(
-                {
-                    "env_name": env_name,
-                }
-            )
-            task_descriptions.append(task_description)
-        self.task_descriptions = task_descriptions
+            env_fn_params.append({})
         return env_fn_params
 
     def _compute_total_num_group_envs(self):
@@ -194,6 +153,20 @@ class MetaWorldEnv(gym.Env):
 
         return np.array(task_ids), np.array(trial_ids)
 
+    def _get_reset_states(self, env_idx):
+        init_state = [
+            self.task_suite.get_task_init_states(self.trial_ids[env_id])
+            for env_id in env_idx
+        ]
+        return init_state
+
+    def _get_task_sequence(self, env_idx):
+        task_sequence = [
+            self.task_suite.get_task_sequence(self.trial_ids[env_id])
+            for env_id in env_idx
+        ]
+        return task_sequence
+
     @property
     def elapsed_steps(self):
         return self._elapsed_steps
@@ -243,24 +216,20 @@ class MetaWorldEnv(gym.Env):
         return infos
 
     def _extract_image_and_state(self, obs):
-        images = self.env.render()
-        images = np.array(images)[:, ::-1, ::-1]
-        state = obs[:, :4]
+        img = obs["rgb_obs"]["rgb_static"]
+        wrist_img = obs["rgb_obs"]["rgb_gripper"]
+        state = obs["robot_obs"][:7]
+
         return {
-            "full_image": images,
+            "full_image": img,
+            "wrist_image": wrist_img,
             "state": state,
         }
 
     def _wrap_obs(self, obs_list):
         images_and_states_list = []
-        images = self.env.render()
-        images = np.array(images)[:, ::-1, ::-1]
-        state = obs_list[:, :4]
-        for idx in range(self.num_envs):
-            images_and_states = {
-                "full_image": images[idx],
-                "state": state[idx],
-            }
+        for obs in obs_list:
+            images_and_states = self._extract_image_and_state(obs)
             images_and_states_list.append(images_and_states)
 
         obs = {
@@ -281,15 +250,22 @@ class MetaWorldEnv(gym.Env):
                 reconfig_env_idx.append(env_id)
             self.task_ids[env_id] = task_ids[j]
             self.trial_ids[env_id] = trial_ids[j]
-        if self.use_async_vector_env:
-            env_fns = self.get_env_fns()
-            self.env = gym.vector.AsyncVectorEnv(env_fns)
-            self.env.reset()
-        else:
-            if reconfig_env_idx:
-                env_fn_params = self.get_env_fn_params(reconfig_env_idx)
-                self.env.reconfigure_env_fns(env_fn_params, reconfig_env_idx)
-            self.env.reset(id=env_idx)
+
+        if reconfig_env_idx:
+            env_fn_params = self.get_env_fn_params(reconfig_env_idx)
+            self.env.reconfigure_env_fns(env_fn_params, reconfig_env_idx)
+        init_state = self._get_reset_states(env_idx=env_idx)
+        robot_obs, scene_obs = self.task_suite.get_obs_for_initial_condition(init_state)
+        self.env.reset(id=env_idx, robot_obs=robot_obs, scene_obs=scene_obs)
+        # task
+        self.task_sequence = self._get_task_sequence(env_idx)
+        self.current_task = [self.task_sequence[env_id][0] for env_id in env_idx]
+        self.current_task_idx = [0] * len(env_idx)
+        self.previous_info = self.env.get_info(id=env_idx)
+        self.task_descriptions = [
+            self.task_suite.get_task_descriptions(self.current_task[env_id])
+            for env_id in env_idx
+        ]
 
     def reset(
         self,
@@ -305,18 +281,7 @@ class MetaWorldEnv(gym.Env):
             reset_state_ids = self._get_random_reset_state_ids(num_reset_states)
 
         self._reconfigure(reset_state_ids, env_idx)
-
-        if self.use_async_vector_env:
-            for _ in range(self.RESET_STEP):
-                zero_action = np.zeros((self.num_envs, 4))
-                raw_obs, _reward, _, _, _ = self.env.step(zero_action)
-        else:
-            for _ in range(self.RESET_STEP):
-                zero_action = np.zeros((len(env_idx), 4))
-                self.env.step(zero_action, id=env_idx)
-            all_actions = np.zeros((self.num_envs, 4))
-            raw_obs, _reward, _, _, _ = self.env.step(all_actions)
-
+        raw_obs = self.env.get_obs(id=env_idx)
         obs = self._wrap_obs(raw_obs)
         if env_idx is not None:
             self._reset_metrics(env_idx)
@@ -344,17 +309,15 @@ class MetaWorldEnv(gym.Env):
             actions = actions.detach().cpu().numpy()
 
         self._elapsed_steps += 1
-
-        if self.use_async_vector_env:
-            raw_obs, _reward, _, _, infos = self.env.step(actions)
-        else:
-            raw_obs, _reward, _, _, info_lists = self.env.step(actions)
-            infos = list_of_dict_to_dict_of_list(info_lists)
-        terminations = np.array(infos["success"]).astype(bool)
+        raw_obs, _, _, info_lists = self.env.step(actions)
+        subtask_success = self._check_subtask_success(info_lists)
+        self._reset_current_task(subtask_success, info_lists)
+        infos = list_of_dict_to_dict_of_list(info_lists)
+        terminations = np.array(self.current_task_idx) == 5
         truncations = self.elapsed_steps >= self.cfg.max_episode_steps
         obs = self._wrap_obs(raw_obs)
 
-        step_reward = self._calc_step_reward(terminations)
+        step_reward = self._calc_step_reward(subtask_success)
 
         if self.video_cfg.save_video:
             plot_infos = {
@@ -453,13 +416,7 @@ class MetaWorldEnv(gym.Env):
 
     def _calc_step_reward(self, terminations):
         reward = self.cfg.reward_coef * terminations
-        reward_diff = reward - self.prev_step_reward
-        self.prev_step_reward = reward
-
-        if self.use_rel_reward:
-            return reward_diff
-        else:
-            return reward
+        return reward
 
     def add_new_frames(self, obs, plot_infos):
         images = []
@@ -485,3 +442,33 @@ class MetaWorldEnv(gym.Env):
         )
         self.video_cnt += 1
         self.render_images = []
+
+    def _check_subtask_success(self, info_lists):
+        subtask_success_list = []
+        for env_id, info in enumerate(info_lists):
+            info = info_lists[env_id]
+            prev_info = self.previous_info[env_id]
+            sub_task = self.current_task[env_id]
+            subtask_success = self.task_suite.check_subtask_success(
+                prev_info, info, sub_task
+            )
+            if subtask_success:
+                subtask_success_list.append(True)
+            else:
+                subtask_success_list.append(False)
+        return np.array(subtask_success_list)
+
+    def _reset_current_task(self, subtask_success, info_lists):
+        for env_id, success in enumerate(subtask_success):
+            if success:
+                self.current_task_idx[env_id] += 1
+                if self.current_task_idx[env_id] <= 4:
+                    self.previous_info[env_id] = info_lists[env_id]
+                    self.current_task[env_id] = self.task_sequence[env_id][
+                        self.current_task_idx[env_id]
+                    ]
+                    self.task_descriptions[env_id] = (
+                        self.task_suite.get_task_descriptions(self.current_task[env_id])
+                    )
+                else:
+                    self.current_task_idx[env_id] = 5

@@ -1,0 +1,5 @@
+- load_dir=/work/dlclarge2/meeso-lfp/calvin_recordings/play_env_A/2021-10-06/16-23-57/
+- set_static_cam=false
+- processes=16
+- +scene=calvin_scene_A
+- show_gui=false

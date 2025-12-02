@@ -84,6 +84,14 @@ def prepare_actions_for_isaaclab(
     return chunk_actions
 
 
+def prepare_actions_for_calvin(
+    raw_chunk_actions,
+) -> np.ndarray:
+    chunk_actions = raw_chunk_actions
+    chunk_actions[..., -1] = np.sign(chunk_actions[..., -1])
+    return chunk_actions
+
+
 def prepare_actions(
     raw_chunk_actions,
     simulator_type,
@@ -110,6 +118,10 @@ def prepare_actions(
         chunk_actions = raw_chunk_actions
     elif simulator_type == "metaworld":
         chunk_actions = raw_chunk_actions
+    elif simulator_type == "calvin":
+        chunk_actions = prepare_actions_for_calvin(
+            raw_chunk_actions=raw_chunk_actions,
+        )
     elif simulator_type == "behavior":
         chunk_actions = raw_chunk_actions
     elif simulator_type == "isaaclab":

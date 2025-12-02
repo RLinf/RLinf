@@ -401,3 +401,7 @@ The results achieved through our RL training are shown below:
 MetaWorld Results
 ~~~~~~~~~~~~~~~~~
 For MetaWorld results, please check `MetaWorld Page <https://rlinf.readthedocs.io/en/latest/rst_source/examples/metaworld.html>`__.
+
+CALVIN Results
+~~~~~~~~~~~~~~~~~
+For CALVIN results, please check `CALVIN Page <https://rlinf.readthedocs.io/en/latest/rst_source/examples/calvin.html>`__.

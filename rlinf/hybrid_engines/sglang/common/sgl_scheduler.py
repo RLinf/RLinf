@@ -13,10 +13,12 @@
 # limitations under the License.
 
 import logging
+from importlib.metadata import version
 from typing import Any
 
 import torch
 from omegaconf import DictConfig
+from packaging.version import parse
 from sglang.srt.managers.io_struct import (
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
@@ -67,6 +69,12 @@ class Scheduler(_Scheduler):
         )
 
         self.is_weight_offloaded = False
+
+        try:
+            sglang_version = parse(version("sglang"))
+        except Exception as e:
+            raise ValueError(f"sglang version not supported: {e}")
+        self.patch_return_output_ids = sglang_version < parse("0.5.0")
 
     def cuda_info(self, text: str = ""):
         free_gpu_memory, total_gpu_memory = torch.cuda.mem_get_info()
@@ -198,6 +206,244 @@ class Scheduler(_Scheduler):
             "token_usage": num_used / self.max_total_num_tokens,
             "num_queue_reqs": len(self.waiting_queue),
         }
+
+    # to return output_ids and response_text simaltaneously in sglang 0.4.x.
+    # copied from srt/managers/scheduler.py (0.4.6) and only delete the condition outside the assignment of "output_ids"
+    def stream_output_generation(
+        self,
+        reqs,
+        return_logprob: bool,
+        skip_req=None,
+    ):
+        from sglang.srt.managers.scheduler_output_processor_mixin import (
+            DEFAULT_FORCE_STREAM_INTERVAL,
+            BaseFinishReason,
+            BatchTokenIDOut,
+            DisaggregationMode,
+        )
+
+        # for sglang 0.5.0 and later, we use the original _handle_batch_output
+        if not self.patch_return_output_ids:
+            return super().stream_output_generation(reqs, return_logprob, skip_req)
+
+        rids = []
+        finished_reasons: list[BaseFinishReason] = []
+
+        decoded_texts = []
+        decode_ids_list = []
+        read_offsets = []
+        output_ids = []
+
+        skip_special_tokens = []
+        spaces_between_special_tokens = []
+        no_stop_trim = []
+        prompt_tokens = []
+        completion_tokens = []
+        cached_tokens = []
+        spec_verify_ct = []
+        output_hidden_states = None
+
+        if return_logprob:
+            input_token_logprobs_val = []
+            input_token_logprobs_idx = []
+            output_token_logprobs_val = []
+            output_token_logprobs_idx = []
+            input_top_logprobs_val = []
+            input_top_logprobs_idx = []
+            output_top_logprobs_val = []
+            output_top_logprobs_idx = []
+            input_token_ids_logprobs_val = []
+            input_token_ids_logprobs_idx = []
+            output_token_ids_logprobs_val = []
+            output_token_ids_logprobs_idx = []
+        else:
+            input_token_logprobs_val = input_token_logprobs_idx = (
+                output_token_logprobs_val
+            ) = output_token_logprobs_idx = input_top_logprobs_val = (
+                input_top_logprobs_idx
+            ) = output_top_logprobs_val = output_top_logprobs_idx = (
+                input_token_ids_logprobs_val
+            ) = input_token_ids_logprobs_idx = output_token_ids_logprobs_val = (
+                output_token_ids_logprobs_idx
+            ) = None
+
+        for req in reqs:
+            if req is skip_req:
+                continue
+
+            # Multimodal partial stream chunks break the detokenizer, so drop aborted requests here.
+            if self.model_config.is_multimodal_gen and req.to_abort:
+                continue
+
+            if req.finished():
+                if req.finished_output:
+                    # With the overlap schedule, a request will try to output twice and hit this line twice
+                    # because of the one additional delayed token. This "continue" prevented the dummy output.
+                    continue
+                req.finished_output = True
+                should_output = True
+            else:
+                if req.stream:
+                    stream_interval = (
+                        req.sampling_params.stream_interval or self.stream_interval
+                    )
+                    should_output = len(req.output_ids) % stream_interval == 0
+                else:
+                    should_output = (
+                        len(req.output_ids) % DEFAULT_FORCE_STREAM_INTERVAL == 0
+                        and not self.model_config.is_multimodal_gen
+                    )
+
+            if should_output:
+                send_token_offset = req.send_token_offset
+                send_output_token_logprobs_offset = (
+                    req.send_output_token_logprobs_offset
+                )
+                rids.append(req.rid)
+                finished_reasons.append(
+                    req.finished_reason.to_json() if req.finished_reason else None
+                )
+                decoded_texts.append(req.decoded_text)
+                decode_ids, read_offset = req.init_incremental_detokenize()
+
+                if self.model_config.is_multimodal_gen:
+                    decode_ids_list.append(decode_ids)
+                else:
+                    decode_ids_list.append(decode_ids[req.send_decode_id_offset :])
+
+                req.send_decode_id_offset = len(decode_ids)
+                read_offsets.append(read_offset)
+                # ----- patched code start -----
+                output_ids.append(req.output_ids[send_token_offset:])
+                # -----  patched code end  -----
+                req.send_token_offset = len(req.output_ids)
+                skip_special_tokens.append(req.sampling_params.skip_special_tokens)
+                spaces_between_special_tokens.append(
+                    req.sampling_params.spaces_between_special_tokens
+                )
+                no_stop_trim.append(req.sampling_params.no_stop_trim)
+                prompt_tokens.append(len(req.origin_input_ids))
+                completion_tokens.append(len(req.output_ids))
+                cached_tokens.append(req.cached_tokens)
+
+                if not self.spec_algorithm.is_none():
+                    spec_verify_ct.append(req.spec_verify_ct)
+
+                if return_logprob:
+                    if (
+                        req.return_logprob
+                        and not req.input_logprob_sent
+                        # Decode server does not send input logprobs
+                        and self.disaggregation_mode != DisaggregationMode.DECODE
+                    ):
+                        input_token_logprobs_val.append(req.input_token_logprobs_val)
+                        input_token_logprobs_idx.append(req.input_token_logprobs_idx)
+                        input_top_logprobs_val.append(req.input_top_logprobs_val)
+                        input_top_logprobs_idx.append(req.input_top_logprobs_idx)
+                        input_token_ids_logprobs_val.append(
+                            req.input_token_ids_logprobs_val
+                        )
+                        input_token_ids_logprobs_idx.append(
+                            req.input_token_ids_logprobs_idx
+                        )
+                        req.input_logprob_sent = True
+                    else:
+                        input_token_logprobs_val.append([])
+                        input_token_logprobs_idx.append([])
+                        input_top_logprobs_val.append([])
+                        input_top_logprobs_idx.append([])
+                        input_token_ids_logprobs_val.append([])
+                        input_token_ids_logprobs_idx.append([])
+
+                    if req.return_logprob:
+                        output_token_logprobs_val.append(
+                            req.output_token_logprobs_val[
+                                send_output_token_logprobs_offset:
+                            ]
+                        )
+                        output_token_logprobs_idx.append(
+                            req.output_token_logprobs_idx[
+                                send_output_token_logprobs_offset:
+                            ]
+                        )
+                        output_top_logprobs_val.append(
+                            req.output_top_logprobs_val[
+                                send_output_token_logprobs_offset:
+                            ]
+                        )
+                        output_top_logprobs_idx.append(
+                            req.output_top_logprobs_idx[
+                                send_output_token_logprobs_offset:
+                            ]
+                        )
+                        output_token_ids_logprobs_val.append(
+                            req.output_token_ids_logprobs_val[
+                                send_output_token_logprobs_offset:
+                            ]
+                        )
+                        output_token_ids_logprobs_idx.append(
+                            req.output_token_ids_logprobs_idx[
+                                send_output_token_logprobs_offset:
+                            ]
+                        )
+                        req.send_output_token_logprobs_offset = len(
+                            req.output_token_logprobs_val
+                        )
+                    else:
+                        output_token_logprobs_val.append([])
+                        output_token_logprobs_idx.append([])
+                        output_top_logprobs_val.append([])
+                        output_top_logprobs_idx.append([])
+                        output_token_ids_logprobs_val.append([])
+                        output_token_ids_logprobs_idx.append([])
+
+                if req.return_hidden_states:
+                    if output_hidden_states is None:
+                        output_hidden_states = []
+                    output_hidden_states.append(req.hidden_states)
+
+            if (
+                req.finished()
+                and self.tp_rank == 0
+                and self.server_args.enable_request_time_stats_logging
+            ):
+                req.log_time_stats()
+
+        # Send to detokenizer
+        if rids:
+            if self.model_config.is_multimodal_gen:
+                return
+
+            self.send_to_detokenizer.send_pyobj(
+                BatchTokenIDOut(
+                    rids,
+                    finished_reasons,
+                    decoded_texts,
+                    decode_ids_list,
+                    read_offsets,
+                    output_ids,
+                    skip_special_tokens,
+                    spaces_between_special_tokens,
+                    no_stop_trim,
+                    prompt_tokens,
+                    completion_tokens,
+                    cached_tokens,
+                    spec_verify_ct,
+                    input_token_logprobs_val,
+                    input_token_logprobs_idx,
+                    output_token_logprobs_val,
+                    output_token_logprobs_idx,
+                    input_top_logprobs_val,
+                    input_top_logprobs_idx,
+                    output_top_logprobs_val,
+                    output_top_logprobs_idx,
+                    input_token_ids_logprobs_val,
+                    input_token_ids_logprobs_idx,
+                    output_token_ids_logprobs_val,
+                    output_token_ids_logprobs_idx,
+                    output_hidden_states,
+                )
+            )
 
 
 def run_scheduler_process(*args, **kwargs):
