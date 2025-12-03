@@ -284,12 +284,15 @@ class NodeProbe:
         num_nodes = len(node_infos)
         for node_info in node_infos:
             node_ray_id = node_info["NodeID"]
-            probe = _RemoteNodeProbe.options(
-                scheduling_strategy=ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
-                    node_id=node_ray_id, soft=False
-                ),
-                name=f"NodeProbe_{node_ray_id}",
-            ).remote(node_info, num_nodes, cluster_cfg, sys.executable)
+            try:
+                probe = _RemoteNodeProbe.options(
+                    scheduling_strategy=ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
+                        node_id=node_ray_id, soft=False
+                    ),
+                    name=f"NodeProbe_{node_ray_id}",
+                ).remote(node_info, num_nodes, cluster_cfg, sys.executable)
+            except ValueError:
+                raise Cluster.NamespaceConflictError
             self._probes.append(probe)
 
         handles = []
