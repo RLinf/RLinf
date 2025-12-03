@@ -40,6 +40,7 @@ SUPPORTED_MODEL_ARCHS = [
     "qwen2.5_vl",
     "openvla",
     "openvla_oft",
+    "qwen3",
     "qwen3_moe",
     "openpi",
     "mlp_policy",
