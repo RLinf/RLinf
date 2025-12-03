@@ -25,8 +25,13 @@ Assume the following YAML fragment:
      experiment_name: grpo-1.5b
      output_dir: ./logs
 
-Checkpoints will appear under
-``./logs/grpo-1.5b/checkpoints/``:
+If Megatron is used as the training backend, its checkpoints will appear under `output_dir/experiment_name/checkpoints/`,
+while if FSDP/FSDP2 is used as the training backend, its checkpoints will appear under `log_path/experiment_name/checkpoints/`.
+
+Megatron Checkpoints
+~~~~~~~~~~~~~~~~~~~~~~
+
+Megatron Checkpoint's file structure looks like this:
 
 .. code-block:: text
 
@@ -46,8 +51,9 @@ Checkpoints will appear under
    └── global_step_100/
        └── …
 
+
 Key points
-~~~~~~~~~~
+^^^^^^^^^^^^^^^
 
 * **Sharded weights** – files inside ``mp_rank_*`` follow the Megatron
   tensor-parallel layout; each GPU only reloads its own slice.
@@ -57,6 +63,37 @@ Key points
 * **Data sampler** – ``data.pt`` stores dataloader, so no
   samples are skipped or repeated.
 
+
+
+FSDP/FSDP2 Checkpoint
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+FSDP/FSDP2 Checkpoint's file structure looks like this:
+
+.. code-block:: text
+
+   -- global_step_2
+      -- actor
+         |-- __0_0.distcp
+         |-- __1_0.distcp
+         |-- __2_0.distcp
+            -- __3_0.distcp
+
+FSDP/FSDP2 saves and loads checkpoints via DCP (torch.distributed.checkpoint), resulting in a set of distributed checkpoint files (.distcp).
+Each file contains a slice of model parameters, optimizer state, and RNG state.
+
+
+Converting Checkpoint Files to PyTorch State Dict Files
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+If you need to convert FSDP/FSDP2 checkpoints to standard PyTorch State Dict files for model evaluation or other purposes, you can use the tool in the toolkit folder
+``toolkits/ckpt_convertor/convert_dcp_to_state_dict.py``. The usage is as follows:
+
+.. code-block:: bash
+
+  convert_dcp_to_state_dict.py [-h] --dcp_path DCP_PATH --output_path OUTPUT_PATH
+
+``DCP_PATH`` is the path to the FSDP/FSDP2 checkpoint directory (e.g., ``global_step_2/actor/``), and ``OUTPUT_PATH`` is the desired output path for the converted PyTorch model state dict file.
 
 Resuming training
 -----------------

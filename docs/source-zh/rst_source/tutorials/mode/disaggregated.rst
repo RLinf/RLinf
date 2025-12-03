@@ -39,4 +39,4 @@ Worker 被分配到不同的 GPU 上。GPU 集合通过全局 GPU 索引指定�
 
 如 :doc:`collocated` 中所描述，yaml 文件中的放置配置可以通过 `ComponentPlacement` 解析，  
 并应用到 Worker 上。完整代码请参考  
-`Math RL 细粒度流水训练代码 <https://github.com/RLinf/RLinf/blob/main/examples/math/main_math.py>`_。
+`Math RL 细粒度流水训练代码 <https://github.com/RLinf/RLinf/blob/main/examples/reasoning/main_grpo.py>`_。

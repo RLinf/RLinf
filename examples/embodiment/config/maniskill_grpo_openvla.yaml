@@ -85,19 +85,10 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  channel:
-    name: "env_buffer_list"
-    queue_name: "obs_buffer"
-    queue_size: 0
   enable_offload: False
 
 rollout:
   group_name: "RolloutGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "action_buffer"
-    queue_size: 0
-  mode: "colocate"
   generation_backend: "huggingface"
   model_dir: "/path/to/model/rl4vla/openvla-7b-rlvla-warmup/"
   precision: ${actor.model.precision}
@@ -106,10 +97,6 @@ rollout:
 
 actor:
   group_name: "ActorGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "replay_buffer"
-    queue_size: 0
   training_backend: "fsdp"
   checkpoint_load_path: "/path/to/model/rl4vla/openvla-7b-rlvla-warmup/"
   checkpoint_save_path: "/workspace/results"
@@ -148,7 +135,7 @@ actor:
     attn_implementation: "flash_attention_2"
     low_cpu_mem_usage: True
     trust_remote_code: True
-    gradient_checkpointing: False
+    gradient_checkpointing: True
 
   optim:
     lr: 1.0e-5

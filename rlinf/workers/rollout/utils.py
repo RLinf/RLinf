@@ -323,13 +323,7 @@ def get_rollout_backend_worker(
     if rollout_backend == "vllm":
         from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
 
-        if (
-            placement.placement_mode == PlacementMode.COLLOCATED
-            or placement.placement_mode == PlacementMode.DISAGGREGATED
-        ):
-            return VLLMWorker
-        else:
-            raise ValueError(f"Unsupported placement mode: {placement.placement_mode}")
+        return VLLMWorker
     elif rollout_backend == "sglang":
         from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
 

@@ -2,7 +2,7 @@
 /docker @andylin-hao
 
 /examples/embodiment @guozhen1997
-/examples/math @guozhen1997 @andylin-hao @Lin-xs
+/examples/reasoning @guozhen1997 @andylin-hao @Lin-xs
 
 /ray_utils @Lin-xs
 /requirements @andylin-hao
@@ -11,7 +11,7 @@
 
 /rlinf/data @guozhen1997 @Lin-xs @andylin-hao
 
-/rlinf/envs @guozhen1997 @XuS1994
+/rlinf/envs @guozhen1997 @andylin-hao @Lin-xs
 
 /rlinf/hybrid_engines/fsdp @guozhen1997
 /rlinf/hybrid_engines/megatron @guozhen1997
@@ -26,11 +26,11 @@
 
 /rlinf/utils @guozhen1997 @Lin-xs @andylin-hao
 
-/rlinf/workers/actor/fsdp_actor_worker.py @guozhen1997
+/rlinf/workers/actor/fsdp_actor_worker.py @guozhen1997 @andylin-hao @Lin-xs
 /rlinf/workers/actor/megatron_actor_worker.py @guozhen1997 @andylin-hao
-/rlinf/workers/env @guozhen1997 @XuS1994
+/rlinf/workers/env @guozhen1997 @andylin-hao @Lin-xs
 /rlinf/workers/inference @andylin-hao
-/rlinf/workers/rollout/hf @guozhen1997
+/rlinf/workers/rollout/hf @guozhen1997 @Lin-xs @andylin-hao
 /rlinf/workers/rollout/sglang @Lin-xs @andylin-hao
 /rlinf/workers/rollout/vllm @Lin-xs @andylin-hao
 /rlinf/workers/rollout/utils.py @Lin-xs @andylin-hao

@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
 import os
+import pathlib
+import pkgutil
 from typing import Optional, Union
 
 import gymnasium as gym
@@ -30,6 +33,17 @@ from mani_skill.utils.visualization.misc import (
 from omegaconf.omegaconf import OmegaConf
 
 __all__ = ["ManiskillEnv"]
+
+
+def import_all_tasks():
+    package_name = __package__ + ".tasks"
+    package_path = pathlib.Path(__file__).parent / "tasks"
+
+    for _, module_name, _ in pkgutil.iter_modules([str(package_path)]):
+        importlib.import_module(f"{package_name}.{module_name}")
+
+
+import_all_tasks()
 
 
 def extract_termination_from_info(info, num_envs, device):
@@ -80,8 +94,9 @@ class ManiskillEnv(gym.Env):
     def total_num_group_envs(self):
         if hasattr(self.env.unwrapped, "total_num_trials"):
             return self.env.unwrapped.total_num_trials
-        assert hasattr(self.env, "xyz_configs") and hasattr(self.env, "quat_configs")
-        return len(self.env.xyz_configs) * len(self.env.quat_configs)
+        if hasattr(self.env, "xyz_configs") and hasattr(self.env, "quat_configs"):
+            return len(self.env.xyz_configs) * len(self.env.quat_configs)
+        return np.iinfo(np.uint8).max // 2  # TODO
 
     @property
     def num_envs(self):
@@ -123,13 +138,22 @@ class ManiskillEnv(gym.Env):
             repeats=self.group_size
         ).to(self.device)
 
+    def _wrap_obs(self, raw_obs):
+        if self.env.obs_mode == "state":
+            wrapped_obs = {"images": None, "task_description": None, "state": raw_obs}
+        else:
+            wrapped_obs = self._extract_obs_image(raw_obs)
+        return wrapped_obs
+
     def _extract_obs_image(self, raw_obs):
         obs_image = raw_obs["sensor_data"]["3rd_view_camera"]["rgb"].to(torch.uint8)
         obs_image = obs_image.permute(0, 3, 1, 2)  # [B, C, H, W]
         extracted_obs = {"images": obs_image, "task_descriptions": self.instruction}
         return extracted_obs
 
-    def _calc_step_reward(self, info):
+    def _calc_step_reward(self, reward, info):
+        if getattr(self.cfg, "reward_mode", "default") == "raw":
+            return reward
         reward = torch.zeros(self.num_envs, dtype=torch.float32).to(
             self.env.device
         )  # [B, ]
@@ -194,7 +218,7 @@ class ManiskillEnv(gym.Env):
         options: Optional[dict] = {},
     ):
         raw_obs, infos = self.env.reset(seed=seed, options=options)
-        extracted_obs = self._extract_obs_image(raw_obs)
+        extracted_obs = self._wrap_obs(raw_obs)
         if "env_idx" in options:
             env_idx = options["env_idx"]
             self._reset_metrics(env_idx)
@@ -226,8 +250,8 @@ class ManiskillEnv(gym.Env):
             return extracted_obs, None, terminations, truncations, infos
 
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
-        extracted_obs = self._extract_obs_image(raw_obs)
-        step_reward = self._calc_step_reward(infos)
+        extracted_obs = self._wrap_obs(raw_obs)
+        step_reward = self._calc_step_reward(_reward, infos)
 
         if self.video_cfg.save_video:
             self.add_new_frames(infos=infos, rewards=step_reward)

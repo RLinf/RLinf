@@ -41,8 +41,8 @@ algorithm:
   max_episode_steps: 160
   use_ordered_reset_state_ids: False
   reward_coef: 1.0
-  n_chunk_steps: 32
-  n_eval_chunk_steps: 32
+  n_chunk_steps: 2
+  n_eval_chunk_steps: 2
   num_group_envs: 64
   rollout_epoch: 1
   reward_type: chunk_level
@@ -86,19 +86,10 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  channel:
-    name: "env_buffer_list"
-    queue_name: "obs_buffer"
-    queue_size: 0
   enable_offload: False
 
 rollout:
   group_name: "RolloutGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "action_buffer"
-    queue_size: 0
-  mode: "colocate"
   generation_backend: "huggingface"
   model_dir: "/workspace/dataset/RLinf-Pi0-MetaWorld"
   precision: ${actor.model.precision}
@@ -109,15 +100,11 @@ rollout:
 
 actor:
   group_name: "ActorGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "replay_buffer"
-    queue_size: 0
   training_backend: "fsdp"
   checkpoint_load_path: "/workspace/dataset/RLinf-Pi0-MetaWorld"
   checkpoint_save_path: "../results"
-  micro_batch_size: 16
-  global_batch_size: 256 # maximum : global batch size = micro batch size * actor num_processes.
+  micro_batch_size: 1
+  global_batch_size: 4 # maximum : global batch size = micro batch size * actor num_processes.
   seed: 42
   enable_offload: False
 
@@ -135,7 +122,8 @@ actor:
     add_value_head: True
     # openpi specific parameters
     openpi:
-      simulator_type: "metaworld"
+      config_name: "pi0_metaworld"
+      num_images_in_input: 1
       noise_level: 0.5
       action_chunk: ${actor.model.num_action_chunks}
       num_steps: ${actor.model.num_steps}

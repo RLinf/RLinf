@@ -1,5 +1,5 @@
 基于LIBERO模拟器的强化学习训练
-==========================
+===============================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -21,7 +21,7 @@
 
 **LIBERO 环境**
 
-- **Environment**：基于 *robosuite*（MuJoCo）的 LIBERO 仿真基准  
+- **Environment**：基于 *robosuite* （MuJoCo）的 LIBERO 仿真基准  
 - **Task**：指挥一台 7 自由度机械臂完成多种家居操作技能（抓取放置、叠放、开抽屉、空间重排等）  
 - **Observation**：工作区周围离屏相机采集的 RGB 图像（常见分辨率 128×128 或 224×224）  
 - **Action Space**：7 维连续动作  
@@ -65,6 +65,26 @@
    - OpenVLA 架构，多模态融合  
    - 动作 token 化与反 token 化  
    - 带 Value Head 的 Critic 功能
+
+模型下载
+--------------
+
+在开始训练之前，你需要下载相应的预训练模型：
+
+.. code:: bash
+
+   # 使用下面任一方法下载模型
+   # 方法 1: 使用 git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
+
+   # 方法 2: 使用 huggingface-hub
+   pip install huggingface-hub
+   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
+
+下载完成后，请确保在配置yaml文件中正确指定模型路径。
 
 运行脚本
 -------------------
@@ -186,36 +206,43 @@
 LIBERO 结果
 ~~~~~~~~~~~~~~~~~~~
 
-此外，我们在 LIBERO 环境中使用 GRPO 训练了 OpenVLA-OFT。  
-通过 RL 微调所获得的改进如下：
+为了展示 RLinf 在大规模多任务强化学习方面的能力，我们在 LIBERO 的全部130个任务上训练了一个统一模型，并评估了其在 LIBERO 五个任务套件中的表现：LIBERO-Spatial、LIBERO-Goal、LIBERO-Object、LIBERO-Long和LIBERO-90。 
 
-.. list-table:: **LIBERO 上 OpenVLA-OFT 的模型结果**
+.. note:: 
+
+   该统一基础模型由我们自行微调得来。如需更多详情，请参阅论文 https://arxiv.org/abs/2510.06710。
+
+.. list-table:: **Evaluation results of the unified model on the five LIBERO task groups**
    :header-rows: 1
 
    * - 模型
-     - `Spatial <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-spatial>`_
-     - `Goal <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-goal>`_
-     - `Object <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-object>`_
-     - `Long <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-long>`_
-     - 平均值
-   * - OpenVLA-OFT-SFT (one-shot)
-     - 56.5%
-     - 45.6%
-     - 25.6%
-     - 9.7%
-     - 34.4%
-   * - OpenVLA-OFT-RLinf
-     - **99.0%**
-     - **99.0%**
-     - **99.0%**
-     - **94.4%**
-     - **97.9%**
-   * - 提升
-     - +42.5%
-     - +53.4%
-     - +73.4%
-     - +84.7%
-     - +63.5%
+     - Spatial
+     - Goal
+     - Object
+     - Long
+     - 90
+     - Average
+   * - `OpenVLA-OFT (Base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_
+     - 72.18%
+     - 64.06%
+     - 71.48%
+     - 48.44%
+     - 70.97%
+     - 65.43
+   * - `OpenVLA-OFT (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130>`_
+     - **99.40%**
+     - **98.79%**
+     - **99.80%**
+     - **93.95%**
+     - **98.59%**
+     - **98.11%**
+   * - 提升效果
+     - +27.22%
+     - +34.73%
+     - +28.32%
+     - +45.51%
+     - +27.62%
+     - +32.68%
 
 在 Libero 实验中，我们参考了  
 `SimpleVLA <https://github.com/PRIME-RL/SimpleVLA-RL>`_，仅做了少量改动。  

@@ -27,6 +27,7 @@
 # limitations under the License.
 
 import functools
+from enum import Enum
 from typing import Optional, Union
 
 import torch
@@ -47,6 +48,11 @@ from rlinf.hybrid_engines.fsdp import (
     ShardingStrategy,
     fully_shard,
 )
+
+
+class FSDPVersion(str, Enum):
+    FSDP = "fsdp"
+    FSDP2 = "fsdp2"
 
 
 def create_device_mesh(world_size, fsdp_size):
@@ -215,7 +221,10 @@ def apply_fsdp2_to_model(
     Args:
         module: The model to be sharded
         config: Configuration dictionary
-        fsdp_kwargs: FSDP2 parameters
+        device_mesh: The device mesh to use for sharding
+        mp_policy: Mixed precision policy
+        offload_policy: CPU offload policy
+        reshard_after_forward: Whether to reshard after forward pass
 
     Returns:
         The sharded model

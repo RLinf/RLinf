@@ -1,0 +1,28 @@
+simulator_type: isaaclab
+auto_reset: ${algorithm.auto_reset}
+ignore_terminations: ${algorithm.ignore_terminations}
+use_rel_reward: True
+seed: 0
+num_group: ${algorithm.num_group_envs}
+group_size: ${algorithm.group_size}
+use_fixed_reset_state_ids: ${algorithm.use_fixed_reset_state_ids}
+max_episode_steps: ${algorithm.max_episode_steps}
+only_eval: False
+
+num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
+
+video_cfg:
+  save_video: False
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  id: "Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Cosmos-v0"
+  num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
+  max_episode_steps: ${env.train.max_episode_steps}
+  task_description: "Stack three cubes (bottom to top: blue, red, green) with the Franka robot."
+  table_cam:
+    height: 256
+    width: 256
+  wrist_cam:
+    height: 256
+    width: 256

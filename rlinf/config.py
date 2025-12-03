@@ -42,6 +42,8 @@ SUPPORTED_MODEL_ARCHS = [
     "openvla_oft",
     "qwen3_moe",
     "openpi",
+    "mlp_policy",
+    "gr00t",
 ]
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
 SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl"]
@@ -265,8 +267,8 @@ def validate_fsdp_cfg(cfg: DictConfig, resume_dir: Optional[str] = None) -> Dict
             config.amp = {}
         config.amp.enabled = config.amp.get("enabled", False)
         config.amp.precision = config.amp.get("precision", "bf16")
-        assert config.amp.precision in ["fp16", "bf16"], (
-            "fsdp.amp.precision must be one of ['fp16', 'bf16']"
+        assert config.amp.precision in ["fp16", "bf16", "fp32"], (
+            "fsdp.amp.precision must be one of ['fp16', 'bf16', 'fp32']"
         )
         config.amp.use_grad_scaler = config.amp.get("use_grad_scaler", False)
         return config
@@ -520,7 +522,7 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
         )
 
         cfg.model.expert_tensor_parallel_size = cfg.model.get(
-            "expert_tensor_parallel_size", 1
+            "expert_tensor_parallel_size", None
         )
 
         cfg.model.moe_grouped_gemm = cfg.model.get("moe_grouped_gemm", None)
@@ -528,12 +530,13 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
             f"grouped_gemm type only avail in [null, te]. get value ({cfg.model.moe_grouped_gemm})"
         )
 
-        assert (
-            cfg.model.expert_tensor_parallel_size
-            <= cfg.model.tensor_model_parallel_size
-        ), (
-            f"expert_tensor_parallel_size ({cfg.model.expert_tensor_parallel_size}) must be less than or equal to tensor_model_parallel_size ({cfg.model.tensor_model_parallel_size})"
-        )
+        if cfg.model.expert_tensor_parallel_size is not None:
+            assert (
+                cfg.model.expert_tensor_parallel_size
+                <= cfg.model.tensor_model_parallel_size
+            ), (
+                f"expert_tensor_parallel_size ({cfg.model.expert_tensor_parallel_size}) must be less than or equal to tensor_model_parallel_size ({cfg.model.tensor_model_parallel_size})"
+            )
 
         cfg.model.position_embedding_type = cfg.model.get(
             "position_embedding_type", "learned_absolute"
@@ -656,6 +659,14 @@ def validate_embodied_cfg(cfg):
     )
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
+    assert cfg.algorithm.num_group_envs % (stage_num * env_world_size) == 0, (
+        f"num_group_envs ({cfg.algorithm.num_group_envs}) must be divisible by "
+        f"pipeline_stage_num ({stage_num}) * env_world_size ({env_world_size})"
+    )
+    assert cfg.env.eval.num_envs % (stage_num * env_world_size) == 0, (
+        f"eval.num_envs ({cfg.env.eval.num_envs}) must be divisible by "
+        f"pipeline_stage_num ({stage_num}) * env_world_size ({env_world_size})"
+    )
     cfg.algorithm.num_group_envs = (
         cfg.algorithm.num_group_envs // stage_num // env_world_size
     )
@@ -669,6 +680,8 @@ def validate_embodied_cfg(cfg):
                     return "arm_pd_ee_delta_pose_align_interpolate_by_planner_gripper_pd_joint_target_delta_pos_interpolate_by_planner"
                 elif "widowx" in robot:
                     return "arm_pd_ee_target_delta_pose_align2_gripper_pd_joint_pos"
+                elif "panda-qpos" in robot:
+                    return None
                 else:
                     raise NotImplementedError(f"Robot {robot} not supported")
 

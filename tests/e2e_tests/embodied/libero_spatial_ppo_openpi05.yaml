@@ -35,14 +35,15 @@ algorithm:
   auto_reset: False
   ignore_terminations: False
   use_fixed_reset_state_ids: True
+  specific_reset_id: null
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
-  max_episode_steps: 240
+  max_episode_steps: 16
   use_ordered_reset_state_ids: False
   reward_coef: 1.0
-  n_chunk_steps: 48
-  n_eval_chunk_steps: 48
+  n_chunk_steps: 2
+  n_eval_chunk_steps: 2
   num_group_envs: 64
   rollout_epoch: 1
   reward_type: chunk_level
@@ -86,19 +87,10 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  channel:
-    name: "env_buffer_list"
-    queue_name: "obs_buffer"
-    queue_size: 0
   enable_offload: False
 
 rollout:
   group_name: "RolloutGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "action_buffer"
-    queue_size: 0
-  mode: "colocate"
   generation_backend: "huggingface"
   model_dir: "/workspace/dataset/RLinf-Pi05-SFT"
   precision: ${actor.model.precision}
@@ -109,15 +101,11 @@ rollout:
 
 actor:
   group_name: "ActorGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "replay_buffer"
-    queue_size: 0
   training_backend: "fsdp"
   checkpoint_load_path: "/workspace/dataset/RLinf-Pi05-SFT"
   checkpoint_save_path: "../results"
-  micro_batch_size: 16
-  global_batch_size: 256 # maximun : global batch size = micro batch size * actor num_processes.
+  micro_batch_size: 1
+  global_batch_size: 4 # maximum : global batch size = micro batch size * actor num_processes.
   seed: 42
   enable_offload: False
 
@@ -133,6 +121,8 @@ actor:
     add_value_head: True
     # openpi specific parameters
     openpi:
+      config_name: "pi05_libero"
+      num_images_in_input: 2
       noise_level: 0.5
       action_chunk: ${actor.model.num_action_chunks}
       num_steps: ${actor.model.num_steps}
@@ -141,7 +131,6 @@ actor:
       noise_method: "flow_sde"
       add_value_head: ${actor.model.add_value_head}
       detach_critic_input: True
-      pi05: True
       value_after_vlm: True
       value_vlm_mode: "mean_token"
 

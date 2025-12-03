@@ -17,239 +17,141 @@ from typing import Any
 
 import numpy as np
 import torch
-from omegaconf import DictConfig, open_dict
+from omegaconf import DictConfig
 
 from rlinf.data.io_struct import EnvOutput
 from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.env_manager import EnvManager
-from rlinf.scheduler import Cluster, Worker
-from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.scheduler import Channel, Worker
 
 
 class EnvWorker(Worker):
+    """The EnvWorker is responsible for controlling the embodied environments like simulators or physical robots.
+
+    It calls the corresponding gym env's step function to generate observations, rewards, and done signals based on the actions received from the RolloutWorker, and sends them back to the RolloutWorker.
+
+    The EnvWorker supports running multiple environment instances in parallel to improve data collection efficiency.
+    The main entry point is the `interact` method, which performs environment interactions for a specified number of steps (called chunk_step) and put the collected environment metrics into an output channel to the RolloutWorker.
+
+    Specially, the EnvWorker supports pipeline rollout process, where the parallel environment instances are further divided into multiple stages. Each stage interacts with the environment sequentially, while different stages can run in parallel. This design helps to further improve the efficiency of data collection.
+    """
+
     def __init__(self, cfg: DictConfig):
+        """Initialize the EnvWorker.
+
+        Args:
+            cfg (DictConfig): The configuration for the EnvWorker.
+        """
         Worker.__init__(self)
 
         self.cfg = cfg
         self.train_video_cnt = 0
         self.eval_video_cnt = 0
-        self._actor_group_name = cfg.actor.group_name
-        self._rollout_group_name = cfg.rollout.group_name
 
-        self.simulator_list = []
+        # Some EnvWorker ranks may run faster than others, leading to them putting future step data into the channel before other ranks have finished the current step.
+        # This causes RolloutWorker to read data out-of-order from the channel, resulting in incorrect behavior.
+        # To solve this problem, we add a step counter to the EnvWorker to ensure that data is put and get from the channel in the correct order.
+        self.put_batch_cnt = 0
+
+        self.train_env_list: list[EnvManager] = []
+        self.eval_env_list: list[EnvManager] = []
         self.last_obs_list = []
         self.last_dones_list = []
-        self.eval_simulator_list = []
 
-        self._obs_queue_name = cfg.env.channel.queue_name
-        self._action_queue_name = cfg.rollout.channel.queue_name
-        self._replay_buffer_name = cfg.actor.channel.queue_name
+        # Env configurations
+        self.env_type = cfg.env.train.simulator_type
+        self.eval_only = getattr(self.cfg.runner, "only_eval", False)
 
-        self._component_placement = HybridComponentPlacement(cfg, Cluster())
+        self.train_batch_size_per_stage = self.cfg.env.train.num_envs
+        self.train_num_groups_per_stage = self.cfg.env.train.num_group
+        self.train_group_size = self.cfg.env.train.group_size
+
+        self.eval_batch_size_per_stage = self.cfg.env.eval.num_envs
+        self.eval_num_groups_per_stage = self.cfg.env.eval.num_group
+        self.eval_group_size = self.cfg.env.eval.group_size
+
+        # Sanity checks
         assert (
-            self._component_placement.get_world_size("rollout")
-            % self._component_placement.get_world_size("env")
-            == 0
+            self.train_batch_size_per_stage
+            == self.train_num_groups_per_stage * self.train_group_size
+        ), (
+            f"The train num_envs {self.train_batch_size_per_stage} does not match num_groups ({self.train_num_groups_per_stage}) * group_size ({self.train_group_size})."
         )
-        # gather_num: number of rollout for each env process
-        self.gather_num = self._component_placement.get_world_size(
-            "rollout"
-        ) // self._component_placement.get_world_size("env")
-        # stage_num: default to 2, use for pipeline rollout process
-        self.stage_num = self.cfg.rollout.pipeline_stage_num
-        self.batch_size = self.cfg.env.train.num_group * self.cfg.env.train.group_size
-        self.eval_batch_size = (
-            self.cfg.env.eval.num_group * self.cfg.env.eval.group_size
+        assert (
+            self.eval_batch_size_per_stage
+            == self.eval_num_groups_per_stage * self.eval_group_size
+        ), (
+            f"The eval num_envs {self.eval_batch_size_per_stage} does not match num_groups ({self.eval_num_groups_per_stage}) * group_size ({self.eval_group_size})."
         )
-        assert self.cfg.env.train.num_envs == self.batch_size
 
-        # only need rank0 to create channel
-        if self._rank == 0:
-            self.channel = self.create_channel(cfg.env.channel.name)
-        else:
-            self.channel = self.connect_channel(cfg.env.channel.name)
+        # Used for pipelined rollout interactions
+        self.num_pipeline_stages = self.cfg.rollout.pipeline_stage_num
 
     def init_worker(self):
+        """Create the environment instances for the EnvWorker and start the environments."""
         enable_offload = self.cfg.env.enable_offload
-        only_eval = getattr(self.cfg.runner, "only_eval", False)
-        if self.cfg.env.train.simulator_type == "maniskill":
-            from rlinf.envs.maniskill.maniskill_env import ManiskillEnv
+        total_num_processes = self._world_size * self.num_pipeline_stages
 
-            if not only_eval:
-                for stage_id in range(self.stage_num):
-                    self.simulator_list.append(
-                        EnvManager(
-                            self.cfg.env.train,
-                            rank=self._rank,
-                            seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size,
-                            env_cls=ManiskillEnv,
-                            enable_offload=enable_offload,
-                        )
+        for stage_id in range(self.num_pipeline_stages):
+            seed_offset = self._rank * self.num_pipeline_stages + stage_id
+            if not self.eval_only:
+                self.train_env_list.append(
+                    EnvManager(
+                        self.cfg,
+                        rank=self._rank,
+                        seed_offset=seed_offset,
+                        total_num_processes=total_num_processes,
+                        env_type=self.env_type,
+                        is_eval=False,
+                        enable_offload=enable_offload,
                     )
-            if self.cfg.runner.val_check_interval > 0 or only_eval:
-                for stage_id in range(self.stage_num):
-                    self.eval_simulator_list.append(
-                        EnvManager(
-                            self.cfg.env.eval,
-                            rank=self._rank,
-                            seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size,
-                            env_cls=ManiskillEnv,
-                            enable_offload=enable_offload,
-                        )
+                )
+            if self.cfg.runner.val_check_interval > 0 or self.eval_only:
+                self.eval_env_list.append(
+                    EnvManager(
+                        self.cfg,
+                        rank=self._rank,
+                        seed_offset=seed_offset,
+                        total_num_processes=total_num_processes,
+                        env_type=self.env_type,
+                        is_eval=True,
+                        enable_offload=enable_offload,
                     )
-        elif self.cfg.env.train.simulator_type == "libero":
-            from rlinf.envs.libero.libero_env import LiberoEnv
+                )
 
-            if not only_eval:
-                for stage_id in range(self.stage_num):
-                    self.simulator_list.append(
-                        EnvManager(
-                            self.cfg.env.train,
-                            rank=self._rank,
-                            seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size * self.stage_num,
-                            env_cls=LiberoEnv,
-                            enable_offload=enable_offload,
-                        )
-                    )
-            if self.cfg.runner.val_check_interval > 0 or only_eval:
-                for stage_id in range(self.stage_num):
-                    self.eval_simulator_list.append(
-                        EnvManager(
-                            self.cfg.env.eval,
-                            rank=self._rank,
-                            seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size * self.stage_num,
-                            env_cls=LiberoEnv,
-                            enable_offload=enable_offload,
-                        )
-                    )
-        elif self.cfg.env.train.simulator_type == "robotwin":
-            from rlinf.envs.robotwin.RoboTwin_env import RoboTwin
+        if not self.eval_only:
+            self._init_envs()
 
-            if not only_eval:
-                for stage_id in range(self.stage_num):
-                    self.simulator_list.append(
-                        EnvManager(
-                            self.cfg.env.train,
-                            rank=self._rank,
-                            seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size * self.stage_num,
-                            env_cls=RoboTwin,
-                            enable_offload=enable_offload,
-                        )
-                        # RoboTwin(self.cfg.env.train, rank=self._rank, total_num_processes=self._world_size)
-                    )
-            if self.cfg.runner.val_check_interval > 0 or only_eval:
-                for stage_id in range(self.stage_num):
-                    self.eval_simulator_list.append(
-                        EnvManager(
-                            self.cfg.env.eval,
-                            rank=self._rank,
-                            seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size,
-                            env_cls=RoboTwin,
-                            enable_offload=enable_offload,
-                        )
-                    )
-        elif self.cfg.env.train.simulator_type == "metaworld":
-            from rlinf.envs.metaworld.metaworld_env import MetaWorldEnv
-
-            if not only_eval:
-                for stage_id in range(self.stage_num):
-                    self.simulator_list.append(
-                        EnvManager(
-                            self.cfg.env.train,
-                            rank=self._rank,
-                            seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size * self.stage_num,
-                            env_cls=MetaWorldEnv,
-                            enable_offload=enable_offload,
-                        )
-                    )
-            if self.cfg.runner.val_check_interval > 0 or only_eval:
-                for stage_id in range(self.stage_num):
-                    self.eval_simulator_list.append(
-                        EnvManager(
-                            self.cfg.env.eval,
-                            rank=self._rank,
-                            seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size * self.stage_num,
-                            env_cls=MetaWorldEnv,
-                            enable_offload=enable_offload,
-                        )
-                    )
-        elif self.cfg.env.train.simulator_type == "behavior":
-            with open_dict(self.cfg):
-                # self.cfg.env.train.tasks.task_idx = self.cfg.env.train.tasks.activity_task_indices[self._rank]
-                self.cfg.env.train.tasks.task_idx = 0
-                self.cfg.env.eval.tasks.task_idx = 0
-            from rlinf.envs.behavior.behavior_env import BehaviorEnv
-
-            if not only_eval:
-                for stage_id in range(self.stage_num):
-                    self.simulator_list.append(
-                        EnvManager(
-                            self.cfg.env.train,
-                            rank=self._rank,
-                            seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size * self.stage_num,
-                            env_cls=BehaviorEnv,
-                            enable_offload=enable_offload,
-                        )
-                    )
-            if self.cfg.runner.val_check_interval > 0 or only_eval:
-                for stage_id in range(self.stage_num):
-                    self.eval_simulator_list.append(
-                        EnvManager(
-                            self.cfg.env.eval,
-                            rank=self._rank,
-                            seed_offset=self._rank * self.stage_num + stage_id,
-                            total_num_processes=self._world_size * self.stage_num,
-                            env_cls=BehaviorEnv,
-                            enable_offload=enable_offload,
-                        )
-                    )
-        else:
-            raise NotImplementedError(
-                f"Simulator type {self.cfg.env.train.simulator_type} not implemented"
-            )
-
-        if not only_eval:
-            self._init_simulator()
-
-    def _init_simulator(self):
-        for i in range(self.stage_num):
-            self.simulator_list[i].start_simulator()
+    def _init_envs(self):
+        """Initialize the training environments and store the initial observations and done signals."""
+        for i in range(self.num_pipeline_stages):
+            self.train_env_list[i].start_env()
             extracted_obs, rewards, terminations, truncations, infos = (
-                self.simulator_list[i].step()
+                self.train_env_list[i].step()
             )
             self.last_obs_list.append(extracted_obs)
             dones = torch.logical_or(terminations, truncations)
             self.last_dones_list.append(
                 dones.unsqueeze(1).repeat(1, self.cfg.actor.model.num_action_chunks)
             )
-            self.simulator_list[i].stop_simulator()
+            self.train_env_list[i].stop_env()
 
-    def env_interact_step(
+    def _env_interact_step(
         self, chunk_actions: torch.Tensor, stage_id: int
     ) -> tuple[EnvOutput, dict[str, Any]]:
-        """
-        This function is used to interact with the environment.
-        """
+        """A single interact step with the environment."""
         chunk_actions = prepare_actions(
             raw_chunk_actions=chunk_actions,
-            simulator_type=self.cfg.env.train.simulator_type,
+            env_type=self.env_type,
             model_name=self.cfg.actor.model.model_name,
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
             action_dim=self.cfg.actor.model.action_dim,
+            policy=self.cfg.actor.model.get("policy_setup", None),
         )
         env_info = {}
 
         extracted_obs, chunk_rewards, chunk_terminations, chunk_truncations, infos = (
-            self.simulator_list[stage_id].chunk_step(chunk_actions)
+            self.train_env_list[stage_id].chunk_step(chunk_actions)
         )
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
         if not self.cfg.env.train.auto_reset:
@@ -270,33 +172,36 @@ class EnvWorker(Worker):
                     env_info[key] = final_info["episode"][key][chunk_dones[:, -1]].cpu()
 
         env_output = EnvOutput(
-            simulator_type=self.cfg.env.train.simulator_type,
+            env_type=self.env_type,
             obs=extracted_obs,
             final_obs=infos["final_observation"]
             if "final_observation" in infos
             else None,
             rewards=chunk_rewards,
             dones=chunk_dones,
+            worker_rank=self._rank,
+            stage_id=stage_id,
+            num_groups=self.train_num_groups_per_stage,
+            group_size=self.train_group_size,
         )
         return env_output, env_info
 
-    def env_evaluate_step(
+    def _env_evaluate_step(
         self, raw_actions: torch.Tensor, stage_id: int
     ) -> tuple[EnvOutput, dict[str, Any]]:
-        """
-        This function is used to evaluate the environment.
-        """
+        """A single evaluate step with the environment."""
         chunk_actions = prepare_actions(
             raw_chunk_actions=raw_actions,
-            simulator_type=self.cfg.env.train.simulator_type,
+            env_type=self.env_type,
             model_name=self.cfg.actor.model.model_name,
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
             action_dim=self.cfg.actor.model.action_dim,
+            policy=self.cfg.actor.model.get("policy_setup", None),
         )
         env_info = {}
 
         extracted_obs, chunk_rewards, chunk_terminations, chunk_truncations, infos = (
-            self.eval_simulator_list[stage_id].chunk_step(chunk_actions)
+            self.eval_env_list[stage_id].chunk_step(chunk_actions)
         )
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
 
@@ -310,125 +215,135 @@ class EnvWorker(Worker):
                     env_info[key] = final_info["episode"][key][chunk_dones[:, -1]].cpu()
 
         env_output = EnvOutput(
-            simulator_type=self.cfg.env.train.simulator_type,
+            env_type=self.env_type,
             obs=extracted_obs,
             final_obs=infos["final_observation"]
             if "final_observation" in infos
             else None,
+            worker_rank=self._rank,
+            stage_id=stage_id,
+            num_groups=self.eval_num_groups_per_stage,
+            group_size=self.eval_group_size,
         )
         return env_output, env_info
 
-    def recv_chunk_actions(self):
-        chunk_action = []
-        for gather_id in range(self.gather_num):
-            chunk_action.append(
-                self.channel.get(
-                    key=f"{self._action_queue_name}_{gather_id + self._rank * self.gather_num}",
-                )
+    def _env_reset_step(self, stage_id: int):
+        if not self.cfg.env.train.auto_reset:
+            obs, infos = self.train_env_list[stage_id].reset()
+            self.last_obs_list.append(obs)
+            dones = (
+                torch.zeros((self.train_batch_size_per_stage,), dtype=torch.bool)
+                .unsqueeze(1)
+                .repeat(1, self.cfg.actor.model.num_action_chunks)
             )
-        chunk_action = np.concatenate(chunk_action, axis=0)
-        return chunk_action
+            self.last_dones_list.append(dones)
+            final_obs = infos.get("final_observation", None)
+        else:
+            obs = self.last_obs_list[stage_id]
+            dones = self.last_dones_list[stage_id]
+            final_obs = None
 
-    def finish_rollout(self, mode="train"):
-        # reset
+        return EnvOutput(
+            env_type=self.env_type,
+            obs=obs,
+            dones=dones,
+            final_obs=final_obs,
+            worker_rank=self._rank,
+            stage_id=stage_id,
+            num_groups=self.train_num_groups_per_stage,
+            group_size=self.train_group_size,
+        )
+
+    def _finish_rollout(self, mode="train"):
+        """Finish the rollout process by flushing videos and updating reset states."""
         if mode == "train":
             if self.cfg.env.train.video_cfg.save_video:
-                for i in range(self.stage_num):
-                    self.simulator_list[i].flush_video()
-            for i in range(self.stage_num):
-                self.simulator_list[i].update_reset_state_ids()
+                for i in range(self.num_pipeline_stages):
+                    self.train_env_list[i].flush_video()
+            for i in range(self.num_pipeline_stages):
+                self.train_env_list[i].update_reset_state_ids()
         elif mode == "eval":
             if self.cfg.env.eval.video_cfg.save_video:
-                for i in range(self.stage_num):
-                    self.eval_simulator_list[i].flush_video()
+                for i in range(self.num_pipeline_stages):
+                    self.eval_env_list[i].flush_video()
 
-    def split_env_batch(self, env_batch, gather_id, mode):
-        env_batch_i = {}
-        for key, value in env_batch.items():
-            if isinstance(value, torch.Tensor):
-                env_batch_i[key] = value.chunk(self.gather_num, dim=0)[
-                    gather_id
-                ].contiguous()
-            elif isinstance(value, list):
-                length = len(value)
-                if mode == "train":
-                    assert length == self.batch_size, (
-                        f"key {key}, length: {length}, batch_size: {self.batch_size}"
-                    )
-                elif mode == "eval":
-                    assert length == self.eval_batch_size, (
-                        f"key {key}, length: {length}, batch_size: {self.eval_batch_size}"
-                    )
-                env_batch_i[key] = value[
-                    gather_id * length // self.gather_num : (gather_id + 1)
-                    * length
-                    // self.gather_num
-                ]
-            elif isinstance(value, dict):
-                env_batch_i[key] = self.split_env_batch(value, gather_id, mode)
-            else:
-                env_batch_i[key] = value
-        return env_batch_i
+    def get_actions(
+        self, input_channel: Channel, stage_id: int, num_groups: int
+    ) -> np.ndarray:
+        """This function is used to get the actions from the input channel.
 
-    def send_env_batch(self, env_batch, mode="train"):
-        # split env_batch into num_processes chunks, each chunk contains gather_num env_batch
-        for gather_id in range(self.gather_num):
-            env_batch_i = self.split_env_batch(env_batch, gather_id, mode)
-            self.channel.put(
-                item=env_batch_i,
-                key=f"{self._obs_queue_name}_{gather_id + self._rank * self.gather_num}",
-            )
+        It retrieves a list of chunk actions from the input channel with the key (worker_rank, stage_id).
+        The retrieved chunk actions are also accompanied with the group id, which indicates the env group index of the chunk action in the current stage.
+        After retrieving all the chunk actions for the current stage, they are first sorted according to the group id to ensure the correct order, and then concatenated into a single numpy array before being returned.
+        """
+        chunk_action = []
+        for _ in range(num_groups):
+            group_id, action = input_channel.get(key=(self._rank, stage_id))
+            chunk_action.append((group_id, action))
+        chunk_action.sort(key=lambda x: x[0])
+        chunk_action = np.concatenate([action for _, action in chunk_action], axis=0)
+        return chunk_action
 
-    def interact(self):
-        for simulator in self.simulator_list:
-            simulator.start_simulator()
+    def put_batch(
+        self,
+        output_channel: Channel,
+        env_output: EnvOutput,
+    ):
+        """This function is used to put the environment output into the output channel.
+
+        It accepts an env_output and split it into a list of env_outputs containing num_groups env_outputs and put them into the output channel along with three identifiers: the group id, the pipeline stage id, and the worker rank, which are used by the RolloutWorker to put the corresponding actions back to the correct environment instances.
+
+        Args:
+            output_channel (Channel): The output channel to put the environment output.
+            env_output (EnvOutput): The environment output to be put into the output channel.
+        """
+        env_outputs = env_output.split_by_group()
+        for env_output in env_outputs:
+            output_channel.put(item=env_output, key=self.put_batch_cnt)
+        self.put_batch_cnt += 1
+
+    def interact(self, input_channel: Channel, output_channel: Channel):
+        """The main entry point for environment interaction.
+
+        Args:
+            input_channel (Channel): The input channel to receive actions from the RolloutWorker.
+            output_channel (Channel): The output channel to send environment outputs to the RolloutWorker.
+        """
+        for env in self.train_env_list:
+            env.start_env()
 
         env_metrics = defaultdict(list)
+        self.device_lock.acquire()
         for epoch in range(self.cfg.algorithm.rollout_epoch):
-            env_output_list = []
-            if not self.cfg.env.train.auto_reset:
-                for i in range(self.stage_num):
-                    extracted_obs, infos = self.simulator_list[i].reset()
-                    self.last_obs_list.append(extracted_obs)
-                    dones = (
-                        torch.zeros((self.cfg.env.train.num_envs,), dtype=bool)
-                        .unsqueeze(1)
-                        .repeat(1, self.cfg.actor.model.num_action_chunks)
-                    )
-                    self.last_dones_list.append(dones)
-                    env_output = EnvOutput(
-                        simulator_type=self.cfg.env.train.simulator_type,
-                        obs=extracted_obs,
-                        dones=dones,
-                        final_obs=infos["final_observation"]
-                        if "final_observation" in infos
-                        else None,
-                    )
-                    env_output_list.append(env_output)
-            else:
-                self.num_done_envs = 0
-                self.num_succ_envs = 0
-                for i in range(self.stage_num):
-                    env_output = EnvOutput(
-                        simulator_type=self.cfg.env.train.simulator_type,
-                        obs=self.last_obs_list[i],
-                        rewards=None,
-                        dones=self.last_dones_list[i],
-                    )
-                    env_output_list.append(env_output)
+            env_output_list: list[EnvOutput] = []
 
-            for stage_id in range(self.stage_num):
-                env_output: EnvOutput = env_output_list[stage_id]
-                self.send_env_batch(env_output.to_dict())
+            # Reset environments at the beginning of each epoch
+            for stage_id in range(self.num_pipeline_stages):
+                with self.worker_timer():
+                    env_output = self._env_reset_step(stage_id)
+                self.put_batch(output_channel, env_output)
+                env_output_list.append(env_output)
 
             for _ in range(self.cfg.algorithm.n_chunk_steps):
-                for stage_id in range(self.stage_num):
-                    raw_chunk_actions = self.recv_chunk_actions()
-                    env_output, env_info = self.env_interact_step(
-                        raw_chunk_actions, stage_id
+                for stage_id in range(self.num_pipeline_stages):
+                    # Retrieve actions from the RolloutWorker
+                    self.device_lock.release()  # Release lock to allow RolloutWorker to run
+                    raw_chunk_actions = self.get_actions(
+                        input_channel, stage_id, self.train_num_groups_per_stage
                     )
-                    self.send_env_batch(env_output.to_dict())
+                    self.device_lock.acquire()  # Re-acquire lock for environment interaction
+
+                    # Environment interaction using the actions
+                    with self.worker_timer():
+                        env_output, env_info = self._env_interact_step(
+                            raw_chunk_actions, stage_id
+                        )
+
+                    # Put the results into the output channel
+                    self.put_batch(output_channel, env_output)
                     env_output_list[stage_id] = env_output
+
+                    # Collect environment info metrics
                     for key, value in env_info.items():
                         if (
                             not self.cfg.env.train.auto_reset
@@ -443,46 +358,60 @@ class EnvWorker(Worker):
 
             self.last_obs_list = [env_output.obs for env_output in env_output_list]
             self.last_dones_list = [env_output.dones for env_output in env_output_list]
-            self.finish_rollout()
+            self._finish_rollout()
 
-        for simulator in self.simulator_list:
-            simulator.stop_simulator()
+        for env in self.train_env_list:
+            env.stop_env()
 
         for key, value in env_metrics.items():
             env_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
 
+        self.device_lock.release()
+
         return env_metrics
 
-    def evaluate(self):
-        for i in range(self.stage_num):
-            self.eval_simulator_list[i].start_simulator()
-            self.eval_simulator_list[i].is_start = True
-            extracted_obs, _, _, _, infos = self.eval_simulator_list[i].step()
+    def evaluate(self, input_channel: Channel, output_channel: Channel):
+        """The main entry point for environment evaluation.
+
+        Args:
+            input_channel (Channel): The input channel to receive actions from the RolloutWorker.
+            output_channel (Channel): The output channel to send environment outputs to the RolloutWorker.
+        """
+        for stage_id in range(self.num_pipeline_stages):
+            self.eval_env_list[stage_id].start_env()
+            self.eval_env_list[stage_id].is_start = True
+            extracted_obs, _, _, _, infos = self.eval_env_list[stage_id].step()
             env_output = EnvOutput(
-                simulator_type=self.cfg.env.eval.simulator_type,
+                env_type=self.env_type,
                 obs=extracted_obs,
-                final_obs=infos["final_observation"]
-                if "final_observation" in infos
-                else None,
+                final_obs=infos.get("final_observation", None),
+                worker_rank=self._rank,
+                stage_id=stage_id,
+                num_groups=self.eval_num_groups_per_stage,
+                group_size=self.eval_group_size,
             )
-            self.send_env_batch(env_output.to_dict(), mode="eval")
+            self.put_batch(output_channel, env_output)
 
         eval_metrics = defaultdict(list)
 
         for eval_step in range(self.cfg.algorithm.n_eval_chunk_steps):
-            for i in range(self.stage_num):
-                raw_chunk_actions = self.recv_chunk_actions()
-                env_output, env_info = self.env_evaluate_step(raw_chunk_actions, i)
+            for stage_id in range(self.num_pipeline_stages):
+                raw_chunk_actions = self.get_actions(
+                    input_channel, stage_id, self.eval_num_groups_per_stage
+                )
+                env_output, env_info = self._env_evaluate_step(
+                    raw_chunk_actions, stage_id
+                )
 
                 for key, value in env_info.items():
                     eval_metrics[key].append(value)
                 if eval_step == self.cfg.algorithm.n_eval_chunk_steps - 1:
                     continue
-                self.send_env_batch(env_output.to_dict(), mode="eval")
+                self.put_batch(output_channel, env_output)
 
-        self.finish_rollout(mode="eval")
-        for i in range(self.stage_num):
-            self.eval_simulator_list[i].stop_simulator()
+        self._finish_rollout(mode="eval")
+        for stage_id in range(self.num_pipeline_stages):
+            self.eval_env_list[stage_id].stop_env()
 
         for key, value in eval_metrics.items():
             eval_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()

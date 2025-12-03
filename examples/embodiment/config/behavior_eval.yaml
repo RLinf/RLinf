@@ -80,20 +80,11 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  channel:
-    name: "env_buffer_list"
-    queue_name: "obs_buffer"
-    queue_size: 0
   enable_offload: False
   num_envs_per_gpu: 2
 
 rollout:
   group_name: "RolloutGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "action_buffer"
-    queue_size: 0
-  mode: "colocate"
   backend: "huggingface"
   model_dir: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
   enable_offload: True
@@ -101,10 +92,6 @@ rollout:
 
 actor:
   group_name: "ActorGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "replay_buffer"
-    queue_size: 0
   training_backend: "fsdp"
   checkpoint_load_path: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
   checkpoint_save_path: "../results"
@@ -127,7 +114,6 @@ actor:
     add_qkv_bias: True
     vocab_size: 32000
     hidden_size: 4096
-    policy_setup: "widowx_bridge"
     add_value_head: True
     image_size: [224, 224]
     is_lora: False

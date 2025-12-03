@@ -452,13 +452,13 @@ SglangActor 接收权重代码 ``rlinf/hybrid_engines/sglang/common/sgl_schedule
 若您对整个适配新模型的过程存在任何疑问以及问题，欢迎随时给我们 `RLinf <https://github.com/RLinf/RLinf/issue>`__ 提出对应的 issue，我们会尽快解答您的问题。
 
 5. qwen2.5 系列模型演示
-~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 完成上述步骤后，您就可以适配您的新模型到 RLinf 中，下面展示是 qwen2.5 系列模型演示的 yaml 配置文件。
 
 您可以在适配好新模型后，参考这个 yaml 配置文件，进行相应的修改。
 
-**文件：** ``examples/math/config/qwen2.5-1.5b-grpo-megatron.yaml``
+**文件：** ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``
 
 设置 RLinf 使用的 Megatron 参数。  
 

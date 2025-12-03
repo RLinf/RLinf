@@ -13,3 +13,4 @@ build:
 
 sphinx:
   configuration: docs/source-en/conf.py
+  fail_on_warning: true

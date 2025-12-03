@@ -15,7 +15,8 @@ group_size: 1
 use_fixed_reset_state_ids: True
 use_wrist_image: ${actor.model.use_wrist_image}
 
-num_envs: 500
+num_envs: 16
+specific_reset_id: ${env.train.specific_reset_id}
 
 video_cfg:
   save_video: True

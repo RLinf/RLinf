@@ -73,7 +73,7 @@ To support the model structure required for your training, modify the ``model_pr
        return model
 
 2. Megatron-LM Weight Conversion Support
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The Megatron-LM training framework cannot directly load HuggingFace format checkpoints; weight conversion is required.
 
@@ -460,7 +460,7 @@ If you have any questions throughout the process of adapting new models, feel fr
 We will address your questions as soon as possible.
 
 5. Qwen2.5 Family Model Example
-~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Once you’ve completed the above steps, you can adapt your new model to RLinf.
 
@@ -468,7 +468,7 @@ Below is an example YAML configuration file for the qwen2.5 model family.
 
 After adapting your new model, you can refer to this YAML configuration file and make appropriate modifications.
 
-**File:** ``examples/math/config/qwen2.5-1.5b-grpo-megatron.yaml``  
+**File:** ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``  
 
 Set Megatron parameters used by RLinf.
 

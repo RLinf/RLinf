@@ -35,6 +35,9 @@ algorithm:
   auto_reset: False
   ignore_terminations: False
   use_fixed_reset_state_ids: True
+  specific_reset_id: null # can be a number or null. Indicate the reset state id (related to the task_id and trial_id) 
+  # wanted to be specify. (e.g. if set 0, the env always use the task 0 and trial 0 in the libero-spatial suite; 
+  # if set null, the initial states will be sampled from the whole libero-spatial suite. )
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
@@ -86,19 +89,10 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  channel:
-    name: "env_buffer_list"
-    queue_name: "obs_buffer"
-    queue_size: 0
   enable_offload: False
 
 rollout:
   group_name: "RolloutGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "action_buffer"
-    queue_size: 0
-  mode: "colocate"
   generation_backend: "huggingface"
   model_dir: "/path/to/model/openpi"
   precision: ${actor.model.precision}
@@ -109,10 +103,6 @@ rollout:
 
 actor:
   group_name: "ActorGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "replay_buffer"
-    queue_size: 0
   training_backend: "fsdp"
   checkpoint_load_path: "/path/to/model/openpi"
   checkpoint_save_path: "../results"
@@ -135,6 +125,8 @@ actor:
     add_value_head: True
     # openpi specific parameters
     openpi:
+      config_name: "pi0_libero"
+      num_images_in_input: 2
       noise_level: 0.5
       action_chunk: ${actor.model.num_action_chunks}
       num_steps: ${actor.model.num_steps}

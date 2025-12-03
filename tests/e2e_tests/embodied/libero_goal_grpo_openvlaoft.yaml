@@ -62,7 +62,7 @@ algorithm:
   gae_lambda: 0.95
 
   reward_coef: 5.0
-  max_episode_steps: 512
+  max_episode_steps: 16
   use_ordered_reset_state_ids: True
 
   sampling_params:
@@ -86,19 +86,10 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  channel:
-    name: "env_buffer_list"
-    queue_name: "obs_buffer"
-    queue_size: 0
   enable_offload: False
 
 rollout:
   group_name: "RolloutGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "action_buffer"
-    queue_size: 0
-  mode: "colocate"
   generation_backend: "huggingface"
   model_dir: "/workspace/dataset/Openvla-oft-SFT-libero-goal-traj1/"
   precision: ${actor.model.precision}
@@ -107,15 +98,11 @@ rollout:
 
 actor:
   group_name: "ActorGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "replay_buffer"
-    queue_size: 0
   training_backend: "fsdp"
   checkpoint_load_path: "/workspace/dataset/Openvla-oft-SFT-libero-goal-traj1/"
   checkpoint_save_path: "/workspace/results"
   micro_batch_size: 2
-  global_batch_size: 256
+  global_batch_size: 16
   seed: 1234
   enable_offload: False
 
@@ -133,7 +120,6 @@ actor:
     add_qkv_bias: True
     vocab_size: 32000
     hidden_size: 4096
-    policy_setup: "widowx_bridge"
     add_value_head: False
     image_size: [224, 224]
     is_lora: False

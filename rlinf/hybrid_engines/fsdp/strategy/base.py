@@ -12,19 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import random
 from abc import ABC, abstractmethod
+from logging import Logger
 from typing import ContextManager, Optional, Union
 
-import numpy as np
 import torch
+import torch.distributed.checkpoint as dcp
 import torch.nn as nn
 from omegaconf import DictConfig
+from torch.distributed.checkpoint.state_dict import StateDictOptions
 from torch.distributed.device_mesh import DeviceMesh
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 from rlinf.hybrid_engines.fsdp import FSDP, FSDPModule
+from rlinf.hybrid_engines.fsdp.strategy.checkpoint import Checkpoint
+from rlinf.hybrid_engines.fsdp.utils import FSDPVersion
 
 
 class FSDPStrategyBase(ABC):
@@ -32,30 +35,19 @@ class FSDPStrategyBase(ABC):
         self,
         cfg: DictConfig,
         world_size: int,
-        rank: int,
         dp_group: Optional[torch.distributed.ProcessGroup] = None,
-        logger=None,
+        logger: Optional[Logger] = None,
     ):
         self.cfg = cfg
-        self._logger = logger
+        self.logger = logger
         self.world_size = world_size
-        self.rank = rank
         self._dp_group = dp_group
-
-    @property
-    def logger(self):
-        if self._logger is None:
-            import logging
-
-            self._logger = logging.getLogger(__name__)
-        return self._logger
 
     @classmethod
     def create(
         cls,
         cfg: DictConfig,
         world_size: int,
-        rank: int,
         dp_group: Optional[torch.distributed.ProcessGroup] = None,
         logger=None,
     ) -> "FSDPStrategyBase":
@@ -63,13 +55,12 @@ class FSDPStrategyBase(ABC):
         Factory method: create and return a concrete FSDP strategy instance based on cfg.
 
         Selection rules (case-insensitive):
-        - fsdp / fsdp1 -> FSDP1Strategy (classic torch.distributed.fsdp)
+        - fsdp         -> FSDPStrategy (classic torch.distributed.fsdp)
         - fsdp2        -> FSDP2Strategy (fully_shard API)
 
         Args:
             cfg: DictConfig that must contain fsdp_config.strategy
             world_size: actor distributed world size
-            rank: current process's distributed rank
             dp_group: optional data parallel process group
             logger: optional logger, if none, a default logger will be created
 
@@ -80,65 +71,29 @@ class FSDPStrategyBase(ABC):
             "fsdp_config is required for creating corresponding FSDP strategy"
         )
         strategy = str(cfg.fsdp_config.get("strategy", "fsdp2")).lower()
+        match strategy:
+            case FSDPVersion.FSDP:
+                from .fsdp import FSDPStrategy
 
-        if strategy in ("fsdp", "fsdp1"):
-            from .fsdp1 import FSDP1Strategy
+                return FSDPStrategy(
+                    cfg=cfg,
+                    world_size=world_size,
+                    dp_group=dp_group,
+                    logger=logger,
+                )
+            case FSDPVersion.FSDP2:
+                from .fsdp2 import FSDP2Strategy
 
-            return FSDP1Strategy(
-                cfg=cfg,
-                world_size=world_size,
-                rank=rank,
-                dp_group=dp_group,
-                logger=logger,
-            )
-        elif strategy == "fsdp2":
-            from .fsdp2 import FSDP2Strategy
-
-            return FSDP2Strategy(
-                cfg=cfg,
-                world_size=world_size,
-                rank=rank,
-                dp_group=dp_group,
-                logger=logger,
-            )
-        else:
-            raise ValueError(
-                f"Unknown FSDP strategy '{strategy}'. Expected one of: 'fsdp', 'fsdp1', 'fsdp2'."
-            )
-
-    def load_rng_state(self, rng_state: dict) -> None:
-        """
-        Load the RNG state from the provided state dictionary.
-
-        Args:
-            rng_state (Dict): The RNG state dictionary containing states for 'cpu', 'numpy', 'random', and optionally 'cuda'.
-        """
-        required_keys = ["cpu", "numpy", "random"]
-        assert set(required_keys).issubset(rng_state.keys()), (
-            f"rng_state must contain the keys: {required_keys}"
-        )
-
-        torch.set_rng_state(rng_state["cpu"])
-        np.random.set_state(rng_state["numpy"])
-        random.setstate(rng_state["random"])
-        if torch.cuda.is_available() and "cuda" in rng_state:
-            torch.cuda.set_rng_state(rng_state["cuda"])
-
-    def save_rng_state(self) -> dict:
-        """
-        Save the current RNG state into a dictionary.
-
-            Returns:
-                Dict: The RNG state dictionary containing states for 'cpu', 'numpy', 'random', and optionally 'cuda'.
-        """
-        rng_state = {
-            "cpu": torch.get_rng_state(),
-            "numpy": np.random.get_state(),
-            "random": random.getstate(),
-        }
-        if torch.cuda.is_available():
-            rng_state["cuda"] = torch.cuda.get_rng_state()
-        return rng_state
+                return FSDP2Strategy(
+                    cfg=cfg,
+                    world_size=world_size,
+                    dp_group=dp_group,
+                    logger=logger,
+                )
+            case _:
+                raise ValueError(
+                    f"Unknown FSDP strategy '{strategy}'. Expected one of: 'fsdp','fsdp2'"
+                )
 
     @abstractmethod
     def clip_grad_norm_(
@@ -177,29 +132,102 @@ class FSDPStrategyBase(ABC):
             "_wrap_model method must be implemented by subclasses."
         )
 
+    @classmethod
     @abstractmethod
+    def get_fsdp_version(cls) -> FSDPVersion:
+        """
+        Get the FSDP version associated with the strategy.
+        """
+        raise NotImplementedError(
+            "get_fsdp_version method must be implemented by subclasses."
+        )
+
+    @classmethod
     def save_checkpoint(
-        self,
+        cls,
         model: Union[FSDP, FSDPModule],
         optimizer: Optimizer,
         lr_scheduler: LRScheduler,
         save_path: str,
     ) -> None:
-        raise NotImplementedError(
-            "save_checkpoint method must be implemented by subclasses."
-        )
+        """
+        Save the training state checkpoint.
 
-    @abstractmethod
+        Assumes:
+        cls must have get_fsdp_version method,
+        and torch.distributed has been initialized. Most importantly,
+        optimizer should have all state(by calling `fake_optimizer_step`),
+        this is done in `init_worker`.
+
+        Args:
+            model (Union[FSDP, FSDPModule]): The model to be saved.
+            optimizer (Optimizer): The optimizer to be saved.
+            lr_scheduler (LRScheduler): The learning rate scheduler to be saved.
+            save_path (str): The path to save the checkpoint.
+        """
+        torch.distributed.barrier()
+        opts = StateDictOptions(full_state_dict=False, cpu_offload=True)
+        try:
+            training_state = Checkpoint(
+                model,
+                optimizer,
+                lr_scheduler,
+                opts,
+                fsdp_version=cls.get_fsdp_version(),
+            )
+            dcp.save({"fsdp_checkpoint": training_state}, checkpoint_id=save_path)
+        except BaseException as e:
+            import traceback
+
+            if hasattr(cls, "logger") and cls.logger is not None:
+                cls.logger.error(f"Failed to save checkpoint to {save_path}: {e}")
+            traceback.print_exc()
+            raise e
+
+        torch.distributed.barrier()
+
+    @classmethod
     def load_checkpoint(
-        self,
+        cls,
         model: Union[FSDP, FSDPModule],
         optimizer: Optimizer,
         lr_scheduler: LRScheduler,
         load_path: str,
     ) -> None:
-        raise NotImplementedError(
-            "load_checkpoint method must be implemented by subclasses."
-        )
+        """
+        Load the training state checkpoint.
+
+        Assumes:
+        cls must have logger attribute and get_fsdp_version method,
+        and torch.distributed has been initialized. Most importantly,
+        optimizer should have all state(by calling `fake_optimizer_step`),
+        this is done in `init_worker`.
+
+        Args:
+            model (Union[FSDP, FSDPModule]): The model to load the checkpoint into.
+            optimizer (Optimizer): The optimizer to load the checkpoint into.
+            lr_scheduler (LRScheduler): The learning rate scheduler to load the checkpoint into.
+            load_path (str): The path to load the checkpoint from.
+        """
+        torch.distributed.barrier()
+        opts = StateDictOptions(full_state_dict=False, cpu_offload=True)
+        try:
+            training_state = Checkpoint(
+                model=model,
+                optimizer=optimizer,
+                lr_scheduler=lr_scheduler,
+                opts=opts,
+                fsdp_version=cls.get_fsdp_version(),
+            )
+            dcp.load({"fsdp_checkpoint": training_state}, checkpoint_id=load_path)
+        except BaseException as e:
+            import traceback
+
+            if hasattr(cls, "logger") and cls.logger is not None:
+                cls.logger.error(f"Failed to load checkpoint from {load_path}: {e}")
+            traceback.print_exc()
+            raise e
+        torch.distributed.barrier()
 
     @abstractmethod
     def get_model_state_dict(self, model: Union[FSDP, FSDPModule]) -> dict:

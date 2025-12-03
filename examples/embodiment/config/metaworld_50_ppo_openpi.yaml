@@ -23,11 +23,11 @@ runner:
     experiment_name: "test_openpi"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 500
+  max_epochs: 1000
   max_steps: -1
 
   val_check_interval: -1
-  save_interval: 500
+  save_interval: 50
   seq_length: 4096
   max_prompt_length: 50
 
@@ -38,11 +38,11 @@ algorithm:
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
-  max_episode_steps: 160
+  max_episode_steps: 100
   use_ordered_reset_state_ids: False
   reward_coef: 1.0
-  n_chunk_steps: 32
-  n_eval_chunk_steps: 32
+  n_chunk_steps: 20
+  n_eval_chunk_steps: 20
   num_group_envs: 64
   rollout_epoch: 8
   reward_type: chunk_level
@@ -86,19 +86,10 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  channel:
-    name: "env_buffer_list"
-    queue_name: "obs_buffer"
-    queue_size: 0
   enable_offload: False
 
 rollout:
   group_name: "RolloutGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "action_buffer"
-    queue_size: 0
-  mode: "colocate"
   generation_backend: "huggingface"
   model_dir: "/path/to/model/openpi"
   precision: ${actor.model.precision}
@@ -109,10 +100,6 @@ rollout:
 
 actor:
   group_name: "ActorGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "replay_buffer"
-    queue_size: 0
   training_backend: "fsdp"
   checkpoint_load_path: "/path/to/model/openpi"
   checkpoint_save_path: "../results"
@@ -135,7 +122,8 @@ actor:
     add_value_head: True
     # openpi specific parameters
     openpi:
-      simulator_type: "metaworld"
+      config_name: "pi0_metaworld"
+      num_images_in_input: 1
       noise_level: 0.5
       action_chunk: ${actor.model.num_action_chunks}
       num_steps: ${actor.model.num_steps}

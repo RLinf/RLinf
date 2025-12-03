@@ -791,7 +791,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         self.min_action = np.array(action_norm_stats["q01"])
         self.max_action = np.array(action_norm_stats["q99"])
         self.action_scale = 1.0
-        self.policy_setup = cfg.actor.model.policy_setup
+        self.policy_setup = cfg.actor.model.get("policy_setup", None)
         self.adv_type = cfg.algorithm.adv_type
         self.max_prompt_length = cfg.runner.max_prompt_length
 

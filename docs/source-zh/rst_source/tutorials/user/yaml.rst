@@ -44,17 +44,18 @@ cluster
 
 ``cluster.component_placement``：  
 各组件（进程）的 *放置策略*。  
-其中每行接受字典语法：
+
+在上面运行于GPU节点的简单示例中：
 
 - 键 (key) 是组件的名称，例如 ``rollout``，或 ``rollout,inference,actor``
-- 值 (value) 是分配给这些组件的全局 GPU ID，可以是：
+- 值 (value) 是分配给这些组件的全局 GPU Rank，可以是：
    - "all"：使用集群中的所有 GPU
    - 单个整数，例如 "3"：使用 GPU 3
    - 逗号分隔的整数列表，例如 "0,2,3"：使用 GPU 0、2 和 3
    - 连字符分隔的整数范围，例如 "0-3"：使用 GPU 0、1、2 和 3
    - 上述两种方式的组合，例如 "0-3,5,7"：使用 GPU 0、1、2、3、5 和 7
 
-更多细节见 :doc:`../mode/index`。
+而对于更高级的组件放置用法（例如，异构集群中使用不同型号的 GPU、机器人硬件或仅 CPU 节点）以及代码中的自定义，请参见 :doc:`./placement`。
 
 runner
 ~~~~~~~~~~~~~~~
@@ -661,7 +662,7 @@ actor
 
 ``actor.fsdp_config.strategy``: 决定所使用FSDP 策略，支持fsdp, fsdp2（不区分大小写）
 
-``actor.fsdp_config.sharding_strategy``: FSDP1/FSDP2参数,表示FSDP所使用的切片策略,支持full_shard, shard_grad_op, hybrid_shard, no_shard
+``actor.fsdp_config.sharding_strategy``: FSDP/FSDP2参数,表示FSDP所使用的切片策略,支持full_shard, shard_grad_op, hybrid_shard, no_shard
 
 ``actor.fsdp_config.cpu_offload``: FSDP2参数，决定FSDP2是否将参数放置于CPU侧，需要时在传输到GPU侧
 
@@ -669,7 +670,7 @@ actor
 
 ``actor.fsdp_config.reshard_after_forward``: FSDP2参数，表示是否在前向传播后重新切片参数以节省显存
 
-``actor.fsdp_config.enable_gradient_accumulation``: FSDP1/FSDP2参数，表示是否启用梯度累积，如果为真则仅在最后一个micro batch结束后再进行通信并更新梯度，开启会增加一定显存占用，但会加快训练
+``actor.fsdp_config.enable_gradient_accumulation``: FSDP/FSDP2参数，表示是否启用梯度累积，如果为真则仅在最后一个micro batch结束后再进行通信并更新梯度，开启会增加一定显存占用，但会加快训练
 
 ``actor.fsdp_config.forward_prefetch``: FSDP1参数，表示是否在前向传播时预取下一个 all-gather 操作。开启时会增加显存占用，建议当显存足够时可以开启以重叠通信与计算，从而提升性能
 
@@ -679,21 +680,21 @@ actor
 
 ``actor.fsdp_config.use_orig_params``: FSDP1参数，表示是否使用模块的原始参数，让模块暴露原始参数（nn.Module.named_parameters），而非 FSDP 的扁平参数。可以提高兼容性，但是会引入额外的通信开销降低性能。
 
-``actor.fsdp_config.use_liger_kernel``: FSDP1/FSDP2参数，是否使用 liger_kernel（目前仅支持部分模型，包括：qwen2.5，qwen2.5-vl），开启则可以降低显存占用并提升训练速度。
+``actor.fsdp_config.use_liger_kernel``: FSDP/FSDP2参数，是否使用 liger_kernel（目前仅支持部分模型，包括：qwen2.5，qwen2.5-vl），开启则可以降低显存占用并提升训练速度。
 
 ``actor.fsdp_config.fsdp_size``: FSDP2参数，如果不为-1，则FSDP2会按照该参数指定的大小进行分组切片
 
-``actor.fsdp_config.mixed_precision.param_dtype``: FSDP1/FSDP2参数，指定参数类型
+``actor.fsdp_config.mixed_precision.param_dtype``: FSDP/FSDP2参数，指定参数类型
 
-``actor.fsdp_config.mixed_precision.reduce_dtype``: FSDP1/FSDP2参数，指定规约时使用的数据类型
+``actor.fsdp_config.mixed_precision.reduce_dtype``: FSDP/FSDP2参数，指定规约时使用的数据类型
 
 ``actor.fsdp_config.mixed_precision.buffer_dtype``: FSDP1参数，指定缓冲区使用的数据类型
 
-``actor.fsdp_config.amp.enabled``: FSDP1/FSDP2参数，表示是否启用自动混合精度训练
+``actor.fsdp_config.amp.enabled``: FSDP/FSDP2参数，表示是否启用自动混合精度训练
 
-``actor.fsdp_config.amp.precision``: FSDP1/FSDP2参数，表示AMP使用的数值精度
+``actor.fsdp_config.amp.precision``: FSDP/FSDP2参数，表示AMP使用的数值精度
 
-``actor.fsdp_config.amp.use_grad_scaler``: FSDP1/FSDP2参数，表示是否启用梯度缩放器
+``actor.fsdp_config.amp.use_grad_scaler``: FSDP/FSDP2参数，表示是否启用梯度缩放器
 
 reward
 ~~~~~~~~~~~~~~~

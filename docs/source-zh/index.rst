@@ -38,8 +38,8 @@ RLinf 是一个灵活且可扩展的开源基础架构，专为通过强化学�
 
 - 具身智能支持
 
-  - 快速适配主流 VLA 模型：`OpenVLA`_, `OpenVLA-OFT`_, `π₀`_
-  - 通过标准化 RL 接口支持主流基于 CPU 和 GPU 的模拟器：`ManiSkill3`_、`LIBERO`_
+  - 快速适配主流 VLA 模型：`OpenVLA`_, `OpenVLA-OFT`_, `π₀`_, `GR00T-N1.5`_
+  - 通过标准化 RL 接口支持主流基于 CPU 和 GPU 的模拟器：`ManiSkill3`_、`LIBERO`_、`IsaacLab`_
   - 支持 π₀ 模型族首次基于 flow-matching 动作专家进行的强化学习微调。
 
 **RLinf 拥有出色的训练速度：**
@@ -71,10 +71,12 @@ RLinf 是一个灵活且可扩展的开源基础架构，专为通过强化学�
 .. _IsaacLab: https://github.com/isaac-sim/IsaacLab
 .. _ManiSkill3: https://github.com/haosulab/ManiSkill
 .. _LIBERO: https://github.com/Lifelong-Robot-Learning/LIBERO
+.. _IsaacLab: https://github.com/isaac-sim/IsaacLab
 .. _π₀: https://github.com/Physical-Intelligence/openpi
 .. _Megatron-LM: https://github.com/NVIDIA/Megatron-LM
 .. _SGLang: https://github.com/sgl-project/sglang
 .. _vLLM: https://github.com/vllm-project/vllm
+.. _GR00T-N1.5: https://github.com/NVIDIA/Isaac-GR00T.git
 
 
 
@@ -131,5 +133,3 @@ RLinf 是一个灵活且可扩展的开源基础架构，专为通过强化学�
   :titlesonly:
 
   rst_source/faq
-
---------------------------------------------

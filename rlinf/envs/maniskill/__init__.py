@@ -12,17 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib
-import pathlib
-import pkgutil
+
+from ..env_manager import EnvManager
 
 
-def import_all_tasks():
-    package_name = __name__ + ".tasks"
-    package_path = pathlib.Path(__file__).parent / "tasks"
+@EnvManager.register_env("maniskill")
+def get_env_cls(env_cfg):
+    from .maniskill_env import ManiskillEnv
 
-    for _, module_name, _ in pkgutil.iter_modules([str(package_path)]):
-        importlib.import_module(f"{package_name}.{module_name}")
-
-
-import_all_tasks()
+    return ManiskillEnv

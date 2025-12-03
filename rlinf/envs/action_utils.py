@@ -23,6 +23,8 @@ def prepare_actions_for_maniskill(
     action_scale,
     policy,
 ) -> torch.Tensor:
+    if policy == "panda-qpos":
+        return raw_chunk_actions
     # TODO only suitable for action_dim = 7
     reshaped_actions = raw_chunk_actions.reshape(-1, action_dim)
     batch_size = reshaped_actions.shape[0]
@@ -67,21 +69,36 @@ def prepare_actions_for_libero(
     return chunk_actions
 
 
+def prepare_actions_for_isaaclab(
+    raw_chunk_actions,
+    model_name,
+) -> torch.Tensor:
+    """
+    Here reture a general 7 dof action. If the action is modified, please change the output of the model
+    For example, in `RLinf/rlinf/models/embodiment/gr00t/simulation_io.py`
+    """
+    chunk_actions = torch.from_numpy(raw_chunk_actions)
+    if model_name == "openvla" or model_name == "openvla_oft":
+        chunk_actions[..., -1] = 2 * chunk_actions[..., -1] - 1
+        chunk_actions[..., -1] = torch.sign(chunk_actions[..., -1]) * -1.0
+    return chunk_actions
+
+
 def prepare_actions(
     raw_chunk_actions,
-    simulator_type,
+    env_type,
     model_name,
     num_action_chunks,
     action_dim,
     action_scale: float = 1.0,
     policy: str = "widowx_bridge",
 ) -> torch.Tensor | np.ndarray:
-    if simulator_type == "libero":
+    if env_type == "libero":
         chunk_actions = prepare_actions_for_libero(
             raw_chunk_actions=raw_chunk_actions,
             model_name=model_name,
         )
-    elif simulator_type == "maniskill":
+    elif env_type == "maniskill":
         chunk_actions = prepare_actions_for_maniskill(
             raw_chunk_actions=raw_chunk_actions,
             num_action_chunks=num_action_chunks,
@@ -89,12 +106,17 @@ def prepare_actions(
             action_scale=action_scale,
             policy=policy,
         )
-    elif simulator_type == "robotwin":
+    elif env_type == "robotwin":
         chunk_actions = raw_chunk_actions
-    elif simulator_type == "metaworld":
+    elif env_type == "metaworld":
         chunk_actions = raw_chunk_actions
-    elif simulator_type == "behavior":
+    elif env_type == "behavior":
         chunk_actions = raw_chunk_actions
+    elif env_type == "isaaclab":
+        chunk_actions = prepare_actions_for_isaaclab(
+            raw_chunk_actions=raw_chunk_actions,
+            model_name=model_name,
+        )
     else:
         raise NotImplementedError
 
