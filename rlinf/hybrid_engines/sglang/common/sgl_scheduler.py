@@ -148,7 +148,6 @@ class Scheduler(_Scheduler):
         state_dict = first_recv_handle.wait()
         self.batch_load_hf_weight(state_dict)
         self.flush_cache()
-
         return SyncHFWeightOutput()
 
     def run_task_method(self, obj: TaskMethodInput):

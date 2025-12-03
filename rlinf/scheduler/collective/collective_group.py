@@ -259,6 +259,7 @@ class CollectiveGroup:
             current_device = Worker.torch_platform.current_device()
         else:
             current_device = None
+
         recv_work = AsyncFuncWork(
             self._atomic_recv, comm_id=recv_comm_id, current_device=current_device
         )
@@ -286,6 +287,7 @@ class CollectiveGroup:
         """Atomic recv implementation."""
         if current_device is not None:
             Worker.torch_platform.set_device(current_device)
+
         self._init_p2p_process_group()
 
         # First recv object type

@@ -685,33 +685,19 @@ class MegatronModelManager:
                 # Offloading through resetting the storage size can ensure that the tensor can be offloaded correctly even when it has tensor views.
                 if "exp_avg" in v and v["exp_avg"].is_cuda:
                     buffer = v["exp_avg"]
-                    buffer.cpu_data = torch.empty(
-                        buffer.data.size(),
-                        dtype=buffer.data.dtype,
-                        layout=buffer.data.layout,
-                        pin_memory=True,
-                        device="cpu",
-                    )
-                    buffer.cpu_data.copy_(buffer.data, non_blocking=False)
-                    buffer.storage().resize_(0)
-                else:
-                    buffer = v["exp_avg"]
-                    buffer.cpu_data = None
-
+                    cpu_data = self._get_pinned_buffer(buffer)
+                    cpu_data.copy_(buffer.data, non_blocking=True)
+                    tensors_to_resize.append(buffer)
                 if "exp_avg_sq" in v and v["exp_avg_sq"].is_cuda:
                     buffer = v["exp_avg_sq"]
-                    buffer.cpu_data = torch.empty(
-                        buffer.data.size(),
-                        dtype=buffer.data.dtype,
-                        layout=buffer.data.layout,
-                        pin_memory=True,
-                        device="cpu",
-                    )
-                    buffer.cpu_data.copy_(buffer.data, non_blocking=False)
-                    buffer.storage().resize_(0)
-                else:
-                    buffer = v["exp_avg_sq"]
-                    buffer.cpu_data = None
+                    cpu_data = self._get_pinned_buffer(buffer)
+                    cpu_data.copy_(buffer.data, non_blocking=True)
+                    tensors_to_resize.append(buffer)
+
+        if tensors_to_resize:
+            torch.cuda.synchronize()
+            for tensor in tensors_to_resize:
+                tensor.untyped_storage().resize_(0)
         clear_memory()
 
     def onload_megatron_optimizer(self) -> None:
@@ -727,16 +713,27 @@ class MegatronModelManager:
                 return opt.chained_optimizers
             return [opt]
 
+        current_device = torch.cuda.current_device()
         for _opt in _iter_opts(self.optimizer):
             self.load_megatron_copy_params(_opt)
             for v in _opt.optimizer.state.values():
-                if "exp_avg" in v and v["exp_avg"].cpu_data is not None:
-                    v["exp_avg"].data = v["exp_avg"].cpu_data.to(
-                        torch.cuda.current_device(), non_blocking=True
-                    )
+                if "exp_avg" in v:
+                    tensor = v["exp_avg"]
+                    if hasattr(tensor, "cpu_data"):
+                        tensor.untyped_storage().resize_(
+                            tensor.cpu_data.untyped_storage().size()
+                        )
+                        tensor.copy_(tensor.cpu_data, non_blocking=True)
+                    elif tensor.device.type == "cpu":
+                        v["exp_avg"] = tensor.to(current_device, non_blocking=True)
 
-                if "exp_avg_sq" in v and v["exp_avg_sq"].cpu_data is not None:
-                    v["exp_avg_sq"].data = v["exp_avg_sq"].cpu_data.to(
-                        torch.cuda.current_device(), non_blocking=True
-                    )
+                if "exp_avg_sq" in v:
+                    tensor = v["exp_avg_sq"]
+                    if hasattr(tensor, "cpu_data"):
+                        tensor.untyped_storage().resize_(
+                            tensor.cpu_data.untyped_storage().size()
+                        )
+                        tensor.copy_(tensor.cpu_data, non_blocking=True)
+                    elif tensor.device.type == "cpu":
+                        v["exp_avg_sq"] = tensor.to(current_device, non_blocking=True)
         clear_memory()

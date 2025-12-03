@@ -1283,10 +1283,9 @@ class MegatronActor(MegatronModelManager, Worker):
             assert self.sync_model_bucket_length == len(model_bucket_list), (
                 f"last sync_model_bucket_length {self.sync_model_bucket_length} don't equal now the len(model_bucket_list) {len(model_bucket_list)}"
             )
-
-        assert self.sync_model_bucket_length != 0, (
-            "error the self.sync_model_bucket_length is 0"
-        )
+            assert self.sync_model_bucket_length != 0, (
+                "error the self.sync_model_bucket_length is 0"
+            )
 
         self.model_state_offload_optimizer_and_grad()
 
