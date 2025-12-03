@@ -1264,27 +1264,9 @@ class MegatronActor(MegatronModelManager, Worker):
             clear_memory()
 
     def divide_model_to_bucket(self):
-        bucket_capacity = 256 * 1024 * 1024
-        model_bucket_list = []
-        model_bucket = {}
-
-        current_capacity = 0
-        model = unwrap_model(self.model)
-        for key, val in model[0].state_dict().items():
-            if "_extra_state" in key:
-                continue
-            model_bucket[key] = val
-
-            if "decoder.layers" in key:
-                current_capacity += val.numel() * val.element_size()
-
-            if current_capacity >= bucket_capacity:
-                model_bucket_list.append(model_bucket)
-                current_capacity = 0
-                model_bucket = {}
-
-        if len(model_bucket) > 0:
-            model_bucket_list.append(model_bucket)
+        model_bucket_list = self.rollout_weights_reshard.divide_model_to_bucket(
+            self.model
+        )
         return model_bucket_list
 
     def sync_model_to_rollout(self):

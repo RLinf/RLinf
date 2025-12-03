@@ -15,6 +15,7 @@
 
 import torch
 from megatron.core import parallel_state
+from megatron.training.training import unwrap_model
 
 from .reshard_config import ReshardConfig
 
@@ -22,6 +23,7 @@ from .reshard_config import ReshardConfig
 class MegatronCoreWeightReshard:
     def __init__(self, config: ReshardConfig):
         self.config = config
+        self.bucket_capacity = self.config.bucket_capacity
 
         assert (
             self.config.model_config.tensor_model_parallel_size
@@ -66,6 +68,47 @@ class MegatronCoreWeightReshard:
         raise ValueError(
             f"Subgroup {key} does not exist! Please call _create_tp_subgroups() to create this subgroup first."
         )
+
+    def divide_model_to_bucket(self, model):
+        bucket_capacity = self.bucket_capacity
+        model_bucket_list = []
+        model_bucket = {}
+
+        current_capacity = 0
+        model = unwrap_model(model)
+        vp_size = parallel_state.get_virtual_pipeline_model_parallel_world_size()
+
+        if not vp_size or vp_size == 1:
+            for idx, model_chunk in enumerate(model):
+                for key, val in model_chunk.state_dict().items():
+                    if "_extra_state" in key:
+                        continue
+                    model_bucket[key] = (val, idx)
+
+                    if "decoder.layers" in key:
+                        current_capacity += val.numel() * val.element_size()
+
+                    if current_capacity >= bucket_capacity:
+                        model_bucket_list.append(model_bucket)
+                        current_capacity = 0
+                        model_bucket = {}
+        else:
+            for key, val in model[0].state_dict().items():
+                if "_extra_state" in key:
+                    continue
+                model_bucket[key] = val
+
+                if "decoder.layers" in key:
+                    current_capacity += val.numel() * val.element_size()
+
+                if current_capacity >= bucket_capacity:
+                    model_bucket_list.append(model_bucket)
+                    current_capacity = 0
+                    model_bucket = {}
+
+        if len(model_bucket) > 0:
+            model_bucket_list.append(model_bucket)
+        return model_bucket_list
 
     def gather_and_reshard_model(self, bucket_weight, dst_tp_rank):
         """
@@ -149,14 +192,14 @@ class MegatronCoreWeightReshard:
         expert_params = {}
 
         if vp_size > 1:  # consolidate params across model chunks
-            for key, val in bucket_weight.items():
+            for key, (val, idx) in bucket_weight.items():
                 if "_extra_state" in key:
                     continue
                 if torch.is_tensor(val):
                     if "layers" in key:
                         key2 = rename_layer_num(
                             key,
-                            get_layer_num(key) + pp_size * layers_per_chunk,
+                            get_layer_num(key) + idx * pp_size * layers_per_chunk,
                         )
                         if reshard_ep_model and "experts" in key:
                             expert_params[key2] = val

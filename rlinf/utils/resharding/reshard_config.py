@@ -47,6 +47,9 @@ class ReshardConfig:
     moe_grouped_gemm: Optional[str] = None
     """Resharding moe_grouped_gemm. avail in [None, 'te']"""
 
+    bucket_capacity: int = 128 * 1024 * 1024
+    """sync weight the Bucket capacity size. Now set the bucket capacity to 128MB."""
+
     convert_fn: Callable = None
     """Function to convert the model weights from megatron format to HuggingFace format."""
 

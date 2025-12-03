@@ -541,6 +541,7 @@ class Qwen3_BaseConvertor(BaseConvertor):
             ),
         ]
 
+
 class Qwen3_DenseConvertor(Qwen3_BaseConvertor):
     def build_rules(self) -> list[ConvertorRule]:
         LID = r"(?P<i>\d+)"
@@ -572,6 +573,7 @@ class Qwen3_DenseConvertor(Qwen3_BaseConvertor):
                 [r"model.layers.\g<i>.post_attention_layernorm.weight"],
             ),
         ]
+
 
 class Qwen3_MoEConvertor(Qwen3_BaseConvertor):
     def build_rules(self) -> list[ConvertorRule]:
