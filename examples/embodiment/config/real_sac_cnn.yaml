@@ -11,36 +11,40 @@ hydra:
     - file://${oc.env:EMBODIED_PATH}/config/
 
 cluster:
-  num_nodes: 1
-  num_gpus_per_node: 8
+  num_nodes: 2
   component_placement:
     actor: 
-      node_group: 4090
+      node_group: "4090"
       placement: 0-0
     env:
       node_group: franka
       placement: 0-0
     rollout:
-      node_group: 4090
+      node_group: "4090"
       placement: 0-0
   node_groups:
-  - label: 4090
-    node_ranks: 0-0
-    env_configs:
-      - node_ranks: 0-0
-        python_interpreter_path: /home/franka/hongzhi/RLinf/RLinf/bin/python3
-        env_vars:
-          - GLOO_SOCKET_IFNAME: "eth1"
-  - label: franka
-    node_ranks: 0-0
-    python_interpreter_path: /home/franka/RLinf/franka/bin/python3
-    hardware:
-      type: Franka 
-      configs:
-        - robot_ip: 172.16.0.1
-          node_rank: 0
-          camera_serials:
-            - 111111
+    - label: "4090"
+      node_ranks: 0-0
+      env_configs:
+        - node_ranks: 0-0
+          python_interpreter_path: /home/franka/hongzhi/RLinf/.venv/bin/python3
+          env_vars:
+            - GLOO_SOCKET_IFNAME: "eno1"
+    - label: franka
+      node_ranks: 1-1
+      env_configs:
+        - node_ranks: 1-1
+          python_interpreter_path: /home/franka/RLinf/franka/bin/python3
+          env_vars:
+            - GLOO_SOCKET_IFNAME: enp5s0
+      hardware:
+        type: Franka
+        configs:
+          - robot_ip: 172.16.88.35
+            disable_validate: True
+            node_rank: 1
+            camera_serials:
+              - 233622071355
 
 runner:
   task_type: embodied
@@ -54,14 +58,11 @@ runner:
   max_steps: -1
 
   only_eval: False
-  val_check_interval: 100
+  val_check_interval: -1
   save_interval: -1
   seq_length: 4096
   max_prompt_length: 30
 
-data:
-  type: robot_demo
-  path: "torch_peg_insert_20_demos_2025-10-23_18-21-43.pkl" # for example
 
 algorithm:
   random_predict_steps: 0
@@ -106,8 +107,8 @@ algorithm:
   backup_entropy: True
   
   # Replay buffer settings
-  replay_buffer_capacity: 200000
-  min_buffer_size: 200  # Minimum buffer size before training starts
+  replay_buffer_capacity: 20000
+  min_buffer_size: 0  # Minimum buffer size before training starts
   num_updates_per_step: 30  # Number of gradient updates per training step
   target_update_freq: 1  # Frequency of target network updates
 

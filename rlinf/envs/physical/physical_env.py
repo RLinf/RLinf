@@ -18,7 +18,8 @@ class PhysicalEnv(gym.Env):
     def __init__(self, cfg, seed_offset, total_num_processes):
         self.cfg = cfg
         self.env_cfg = FrankaRobotConfig(
-            robot_ip="192.168.1.2"
+            robot_ip=self.cfg.robot_ip, 
+            camera_serials=self.cfg.camera_serials
         )
         self.video_cfg = cfg.video_cfg
 

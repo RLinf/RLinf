@@ -11,6 +11,9 @@ max_episode_steps: 100
 only_eval: False
 num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
 
+robot_ip: null
+camera_serials: null
+
 video_cfg:
   save_video: True
   info_on_video: True

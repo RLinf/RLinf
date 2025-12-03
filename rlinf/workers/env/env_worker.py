@@ -155,6 +155,10 @@ class EnvWorker(Worker):
                     )
         elif self.cfg.env.train.simulator_type == "real":
             from rlinf.envs.physical.physical_env import PhysicalEnv
+            self.cfg.env.train.robot_ip = self.hardware_infos[0].config.robot_ip
+            self.cfg.env.train.camera_serials = self.hardware_infos[0].config.camera_serials
+            self.cfg.env.eval.robot_ip = self.hardware_infos[0].config.robot_ip
+            self.cfg.env.eval.camera_serials = self.hardware_infos[0].config.camera_serials
 
             if not only_eval:
                 for stage_id in range(self.stage_num):

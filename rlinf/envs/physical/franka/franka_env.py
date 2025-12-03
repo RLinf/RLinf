@@ -42,12 +42,7 @@ TARGET_POSE = np.array(
 @dataclass
 class FrankaRobotConfig:
     robot_ip: str
-    cameras: List[CameraInfo] = field(
-        default_factory=lambda: [
-            CameraInfo(name="wrist_1", serial_number="233522071854"),
-            # CameraInfo(name="wrist_2", serial_number="serial_2"),
-        ]
-    )
+    camera_serials: list[str] = field(default=list)
     step_frequency: float = 10.0  # Max number of steps per second
 
     # TODO: rename it to pose
@@ -143,6 +138,11 @@ class FrankaRobotConfig:
             ]
         )
 
+        self.cameras = [
+            CameraInfo(name=f"wrist_{i}", serial_number=n)
+            for i, n in enumerate(self.camera_serials)
+        ]
+
 
 class FrankaEnv(gym.Env):
     """Franka robot arm environment. This is adapted from SERL's FrankaEnv."""
@@ -180,8 +180,8 @@ class FrankaEnv(gym.Env):
         # Launch Franka controller on the same node as the env
         # TODO: Support launching on different nodes
         cluster = Cluster()
-        self._node_id = Worker.current_worker._node_id
-        placement = NodePlacementStrategy(node_ids=[self._node_id])
+        self._node_id = Worker.current_worker._cluster_node_rank
+        placement = NodePlacementStrategy(node_ranks=[self._node_id])
         
 
         # Init action and observation spaces

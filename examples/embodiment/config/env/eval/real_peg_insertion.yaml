@@ -12,6 +12,9 @@ num_envs: 1
 only_eval: True
 max_episode_steps: ${env.train.max_episode_steps}
 
+robot_ip: null
+camera_serials: null
+
 video_cfg:
   save_video: True
   info_on_video: True
