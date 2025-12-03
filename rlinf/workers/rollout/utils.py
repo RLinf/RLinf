@@ -237,15 +237,12 @@ class DisaggRankMapper(RankMapper):
             f"rollout_world_size ({rollout_world_size}) should be a multiple of actor_model_parallel_size ({actor_model_parallel_size})"
         )
 
-        num_dp_ranks_per_actor_dp_group = (
-            rollout_world_size // actor_model_parallel_size
-        )
+        actor_dp = actor_world_size // actor_tp_size
         stride = actor_model_parallel_size // rollout_tp_size
 
         rank_map = {}
         for actor_rank in range(actor_world_size):
-            if actor_rank >= actor_model_parallel_size:
-                # dp_rank > 0 will not send weight to any rollout rank
+            if actor_rank > rollout_world_size:
                 rank_map[actor_rank] = []
                 continue
             gen_dp, gen_tp = cls._get_actor_rank_to_rollout_rank(
@@ -253,10 +250,11 @@ class DisaggRankMapper(RankMapper):
                 actor_tp_size,
                 rollout_tp_size,
             )
-            rank_map[actor_rank] = [
-                (gen_dp + i * stride, gen_tp)
-                for i in range(num_dp_ranks_per_actor_dp_group)
-            ]
+            if actor_world_size <= rollout_world_size:
+                rank_map[actor_rank] = [
+                    (gen_dp + i * stride * actor_dp, gen_tp)
+                    for i in range(rollout_world_size // actor_world_size)
+                ]
 
         return rank_map
 
