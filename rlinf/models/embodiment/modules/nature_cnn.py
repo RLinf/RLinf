@@ -104,10 +104,10 @@ class PlainConv(nn.Module):
 
         if pool_feature_map:
             self.pool = nn.AdaptiveMaxPool2d((1, 1))
-            self.fc = make_mlp(128, [out_dim], last_act=last_act)
+            self.fc = nn.Sequential(*make_mlp(128, [out_dim], last_act=last_act))
         else:
             self.pool = None
-            self.fc = make_mlp(64 * 4 * 4, [out_dim], last_act=last_act)
+            self.fc = nn.Sequential(*make_mlp(64 * 4 * 4, [out_dim], last_act=last_act))
 
         self.reset_parameters()
 

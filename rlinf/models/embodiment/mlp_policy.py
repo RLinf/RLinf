@@ -169,6 +169,7 @@ class MLPPolicy(BasePolicy):
             return_obs=True, 
             return_action_type="numpy_chunk", 
             return_shared_feature=False, 
+            mode="train", 
             **kwargs
         ):
         feat = self.backbone(env_obs["states"])
@@ -186,7 +187,13 @@ class MLPPolicy(BasePolicy):
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
 
-        raw_action = probs.sample()
+        if mode == "train":
+            raw_action = probs.sample()
+        elif mode == "eval":
+            raw_action = action_mean.clone()
+        else:
+            raise NotImplementedError(f"{mode=}")
+
         chunk_logprobs = probs.log_prob(raw_action)
 
         if self.action_scale is not None:

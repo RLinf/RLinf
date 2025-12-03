@@ -39,9 +39,11 @@ class QHead(nn.Module):
         
         
         if self.train_action_encoder:
-            self.action_encoder = make_mlp(
-                in_channels=action_feature_dim, 
-                mlp_channels=[1024, 1024], 
+            self.action_encoder = nn.Sequential(
+                *make_mlp(
+                    in_channels=action_feature_dim, 
+                    mlp_channels=[1024, 1024], 
+                )
             )
             action_hidden_dim = 1024
         else:

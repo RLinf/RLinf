@@ -23,7 +23,7 @@ import warnings
 from .modules.nature_cnn import NatureCNN, PlainConv, ResNetEncoder
 from .modules.utils import layer_init, make_mlp, init_mlp_weights
 from .modules.value_head import ValueHead
-from .modules.q_head import MultiQHead
+from .modules.q_head import MultiQHead, MultiCrossQHead
 from .base_policy import BasePolicy
 
 @dataclass
@@ -37,6 +37,7 @@ class CNNConfig:
     extra_config: Dict[str, Any] = field(default_factory=dict)
     add_value_head: bool = False
     add_q_head: bool = False
+    q_head_type: str = "default"
 
     state_latent_dim: int = 64
     independent_std: bool = True
@@ -55,7 +56,8 @@ class CNNConfig:
     def _update_info(self):
         if self.add_q_head:
             self.independent_std = False
-            self.action_scale = -1, 1
+            if self.action_scale is None:
+                self.action_scale = -1, 1
             self.final_tanh = True
             self.std_range = (1e-5, 5)
 
@@ -86,21 +88,25 @@ class CNNPolicy(BasePolicy):
                 encoder_out_dim += self.encoders[key].out_dim
         else:
             raise NotImplementedError
-        self.state_proj = make_mlp(
-            in_channels=self.cfg.state_dim,
-            mlp_channels=[self.cfg.state_latent_dim, ], 
-            act_builder=nn.Tanh, 
-            use_layer_norm=True
+        self.state_proj = nn.Sequential(
+            *make_mlp(
+                in_channels=self.cfg.state_dim,
+                mlp_channels=[self.cfg.state_latent_dim, ], 
+                act_builder=nn.Tanh, 
+                use_layer_norm=True
+            )
         )
         init_mlp_weights(self.state_proj, nonlinearity="tanh")
         
         # self.mlp = make_mlp(self.encoder.out_dim+self.state_dim, [512, 256], last_act=True)
         # self.actor_mean = nn.Linear(256, self.action_dim)
-        self.mix_proj = make_mlp(
-            in_channels=encoder_out_dim+self.cfg.state_latent_dim, 
-            mlp_channels=[256, 256],  
-            act_builder=nn.Tanh, 
-            use_layer_norm=True
+        self.mix_proj = nn.Sequential(
+            *make_mlp(
+                in_channels=encoder_out_dim+self.cfg.state_latent_dim, 
+                mlp_channels=[256, 256],  
+                act_builder=nn.Tanh, 
+                use_layer_norm=True
+            )
         )
         init_mlp_weights(self.mix_proj, nonlinearity="tanh")
 
@@ -114,14 +120,21 @@ class CNNPolicy(BasePolicy):
                 activation="relu"
             )
         if self.cfg.add_q_head:
-            self.q_head = MultiQHead(
-                # hidden_size=self.encoder.out_dim+self.state_dim,
-                hidden_size=encoder_out_dim+self.cfg.state_latent_dim,
-                hidden_dims=[256, 256, 256], 
-                num_q_heads=2, 
-                action_feature_dim=self.cfg.action_dim
-            )
-
+            if self.cfg.q_head_type == "default":
+                self.q_head = MultiQHead(
+                    # hidden_size=self.encoder.out_dim+self.state_dim,
+                    hidden_size=encoder_out_dim+self.cfg.state_latent_dim,
+                    hidden_dims=[256, 256, 256], 
+                    num_q_heads=2, 
+                    action_feature_dim=self.cfg.action_dim
+                )
+            elif self.cfg.q_head_type == "crossq":
+                self.q_head = MultiCrossQHead(
+                    hidden_size=encoder_out_dim+self.cfg.state_latent_dim,
+                    hidden_dims=[256, 256, 256], 
+                    num_q_heads=2, 
+                    action_feature_dim=self.cfg.action_dim
+                )
         if self.cfg.independent_std:
             self.actor_logstd = nn.Parameter(torch.ones(1, self.cfg.action_dim) * -0.5)
         else:
@@ -139,14 +152,15 @@ class CNNPolicy(BasePolicy):
         device = next(self.parameters()).device
         processed_env_obs = {}
         processed_env_obs["states"] = env_obs["states"].clone().to(device)
+        processed_env_obs["images"] = {}
         for key, value in env_obs["images"].items():
-            processed_env_obs[f"images/{key}"] = value.clone().to(device).float() / 255.0
+            processed_env_obs["images"][key] = value.clone().to(device).float() / 255.0
         return processed_env_obs
     
     def get_feature_0(self, obs, detach_encoder=False):
         visual_features = []
         for key in self.cfg.image_keys:
-            visual_features.append(self.encoders[key](obs[f"images/{key}"]))
+            visual_features.append(self.encoders[key](obs["images"][key]))
         visual_feature = torch.cat(visual_features, dim=-1)
         if detach_encoder:
             visual_feature = visual_feature.detach()
@@ -156,7 +170,7 @@ class CNNPolicy(BasePolicy):
     def get_feature(self, obs, detach_encoder=False):
         visual_features = []
         for key in self.cfg.image_keys:
-            visual_features.append(self.encoders[key](obs[f"images/{key}"]))
+            visual_features.append(self.encoders[key](obs["images"][key]))
         visual_feature = torch.cat(visual_features, dim=-1)
         if detach_encoder:
             visual_feature = visual_feature.detach()
@@ -332,6 +346,7 @@ class CNNPolicy(BasePolicy):
             return_obs=True, 
             return_action_type="numpy_chunk", 
             return_shared_feature=False, 
+            mode="train", 
             **kwargs
         ):
         full_feature, visual_feature = self.get_feature(env_obs)
@@ -351,7 +366,13 @@ class CNNPolicy(BasePolicy):
             action_std = torch.clamp(action_std, self.cfg.std_range[0], self.cfg.std_range[1])
 
         probs = torch.distributions.Normal(action_mean, action_std)
-        raw_action = probs.sample()  # for reparameterization trick (mean + std * N(0,1))
+        if mode == "train":
+            raw_action = probs.sample()
+        elif mode == "eval":
+            raw_action = action_mean.clone()
+        else:
+            raise NotImplementedError(f"{mode=}")
+
         chunk_logprobs = probs.log_prob(raw_action)
         if self.action_scale is not None:
             action_normalized = torch.tanh(raw_action)
@@ -409,6 +430,24 @@ class CNNPolicy(BasePolicy):
         if detach_encoder:
             mix_feature = mix_feature.detach()
         return self.q_head(mix_feature, actions)
+
+    def crossq_q_forward(self, obs, actions, next_obs=None, next_actions=None, shared_feature=None, detach_encoder=False):
+        if shared_feature is None:
+            shared_feature, visual_feature = self.get_feature(obs)
+            if next_obs is not None:
+                next_shared_feature, next_visual_feature = self.get_feature(next_obs)
+        if detach_encoder:
+            shared_feature = shared_feature.detach()
+            if next_obs is not None:
+                next_shared_feature = next_shared_feature.detach()
+        return self.q_head(
+            shared_feature, actions, 
+            next_state_features=next_shared_feature if next_obs is not None else None,
+            next_action_features=next_actions
+        )
+
+    def crossq_forward(self, obs, **kwargs):
+        return self.sac_forward(obs, **kwargs)
     
 
 class Agent(nn.Module):
