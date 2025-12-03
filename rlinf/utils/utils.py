@@ -62,6 +62,18 @@ def retrieve_model_state_dict_in_cpu(model):
     torch.cuda.synchronize()
     return cpu_dict
 
+def quat_2_euler(quat: np.ndarray):
+    """Convert quaternion to euler angles (xyz order)."""
+    from scipy.spatial.transform import Rotation as R
+
+    return R.from_quat(quat).as_euler("xyz")
+
+
+def euler_2_quat(xyz: np.ndarray):
+    """Convert euler angles (xyz order) to quaternion."""
+    from scipy.spatial.transform import Rotation as R
+
+    return R.from_euler("xyz", xyz).as_quat()
 
 @torch.no_grad()
 def swap_dict(resident_model, cpu_weights, offload_onto_cpu=True):
