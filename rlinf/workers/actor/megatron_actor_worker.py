@@ -165,7 +165,6 @@ class MegatronActor(MegatronModelManager, Worker):
         self.offload_optimizer = self.cfg.actor.offload_optimizer
         self.offload_weight = self.cfg.actor.offload_weight
         self.offload_grad = self.cfg.actor.offload_grad
-        self.megatron_cpu_optimizer = self.cfg.actor.model.optimizer_cpu_offload
         self.is_weight_offloaded = False
         self.is_optimizer_offloaded = False
         self.ref_policy_state_dict = None

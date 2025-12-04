@@ -254,6 +254,7 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
 
         # MoE model
         cfg.model.num_moe_experts = getattr(hf_config, "num_experts", None)
+        cfg.model.num_experts = getattr(hf_config, "num_experts", None)
         cfg.model.moe_ffn_hidden_size = getattr(
             hf_config, "moe_intermediate_size", None
         )

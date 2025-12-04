@@ -208,7 +208,6 @@ class MegatronCoreWeightReshard:
                     else:
                         model_level_params[key] = val
         else:
-            # for key, val in model[0].state_dict().items():
             for key, val in bucket_weight.items():
                 if "_extra_state" in key:
                     continue
