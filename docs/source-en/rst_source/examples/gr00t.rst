@@ -351,7 +351,7 @@ Visualization and Results
 **LIBERO Results**
 ~~~~~~~~~~~~~~~~~~
 
-We trained GR00T-N1.5 with PPO in the LIBERO environment. Other results will be released soon.
+We trained GR00T-N1.5 with PPO in the LIBERO environment. Other results will be released soon. Numbers link to the corresponding model on Hugging Face.
 The results achieved through our RL training are shown below:
 
 .. list-table:: **GR00T-N1.5 model results on LIBERO with Flow-SDE**
@@ -366,19 +366,19 @@ The results achieved through our RL training are shown below:
      - Δ Avg.
 
    * - GR00T (few-shot)
-     - 41.4%
-     - 58.6%
-     - 48.2%
-     - 61.9%
+     - `41.4% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Spatial>`_
+     - `58.6% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_
+     - `48.2% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Goal>`_
+     - `61.9% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-10>`_
      - 52.5%
      - ---
 
    * - +PPO
-     - **92.5%**
-     - **96.2%**
-     - **84.3%**
-     - **86.6%**
-     - **89.9%**
-     - **+37.4%**
+     - `92.5% <https://huggingface.co/lixiang-95/RLinf-Gr00t-Spatial-400>`_
+     - `95.0% <https://huggingface.co/lixiang-95/RLinf-Gr00t-Object-400>`_
+     - `84.3% <https://huggingface.co/lixiang-95/RLinf-Gr00t-Goal-500>`_
+     - `86.3% <https://huggingface.co/lixiang-95/RLinf-Gr00t-libero10-300>`_
+     - **89.5%**
+     - **+37.0%**
 
 We would like to point out that the results presented above utilize the identical hyperparameter settings as :math:`\pi_0`. These findings primarily serve to demonstrate the broad applicability and inherent robustness of the proposed RL training framework. Further optimization through parameter tuning is likely to yield enhanced model performance.
