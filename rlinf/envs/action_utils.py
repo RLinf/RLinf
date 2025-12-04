@@ -69,6 +69,21 @@ def prepare_actions_for_libero(
     return chunk_actions
 
 
+def prepare_actions_for_robocasa(
+    raw_chunk_actions,
+    action_dim,
+) -> np.ndarray:
+    """
+    Prepare actions for robocasa environment.
+    Model outputs 32D actions per chunk, but robocasa expects 12D.
+    Extract the first 12 dimensions (3D pos + 3D ori + 1D gripper + 5D base).
+    """
+    # raw_chunk_actions shape: [num_chunks, 32]
+    # Extract first action_dim (12) dimensions
+    chunk_actions = raw_chunk_actions[..., :action_dim]
+    return chunk_actions
+
+
 def prepare_actions(
     raw_chunk_actions,
     simulator_type,
@@ -97,6 +112,11 @@ def prepare_actions(
         chunk_actions = raw_chunk_actions
     elif simulator_type == "behavior":
         chunk_actions = raw_chunk_actions
+    elif simulator_type == "robocasa":
+        chunk_actions = prepare_actions_for_robocasa(
+            raw_chunk_actions=raw_chunk_actions,
+            action_dim=action_dim,
+        )
     else:
         raise NotImplementedError
 
