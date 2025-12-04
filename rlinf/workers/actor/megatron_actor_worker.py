@@ -422,18 +422,28 @@ class MegatronActor(MegatronModelManager, Worker):
                 ].contiguous()
 
                 advantages = batch["advantages"]
-                prev_logprobs = batch["prev_logprobs"]
                 ref_logprobs = None
                 if "ref_logprobs" in batch:
                     ref_logprobs = batch["ref_logprobs"]
 
                 if self.cfg.algorithm.get("importance_sampling_fix", False):
-                    rollout_prev_logprobs = prev_logprobs
+                    rollout_prev_logprobs = batch["prev_logprobs"]
                     recompute_prev_logprobs = batch["recompute_prev_logprobs"]
                     advantages = advantages * torch.clamp(
                         (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
                         min=self.cfg.algorithm.importance_sampling_clip,
                     )
+
+                behave_weight_threshold = self.cfg.algorithm.get(
+                    "behave_weight_threshold", None
+                )
+                if self.cfg.algorithm.get("async", False):
+                    proximal_logprobs = batch["recompute_prev_logprobs"]
+                    old_logprobs = batch["prev_logprobs"]
+
+                else:
+                    proximal_logprobs = batch["prev_logprobs"]
+                    old_logprobs = batch["prev_logprobs"]
 
                 mask = batch["attention_mask"][:, -response_len:]
 
@@ -442,12 +452,14 @@ class MegatronActor(MegatronModelManager, Worker):
                     loss_type=self.cfg.algorithm.loss_type,
                     loss_agg_func=self.loss_agg_func,
                     logprobs=curr_logprobs,
-                    old_logprobs=prev_logprobs,
+                    proximal_logprobs=proximal_logprobs,
+                    old_logprobs=old_logprobs,
                     advantages=advantages,
                     clip_ratio_c=self.clip_ratio_c,
                     clip_ratio_low=self.clip_ratio_low,
                     clip_ratio_high=self.clip_ratio_high,
                     loss_mask=mask,
+                    behave_weight_threshold=behave_weight_threshold,
                 )
 
                 entropy_loss = torch.zeros(1, device=loss.device)
@@ -464,7 +476,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     loss = loss + kl_loss * self.kl_beta
 
                 # Logging and early stopping according to KL (logp vs ref) or importance ratio (new logp vs old logp).
-                _imp = metrics_data["actor/ratio"]
+                _imp = metrics_data["actor/proximal_ratio"]
                 torch.distributed.all_reduce(
                     _imp, group=parallel_state.get_data_parallel_group()
                 )
@@ -761,11 +773,6 @@ class MegatronActor(MegatronModelManager, Worker):
         self._load_weight_and_optimizer()
         self._training_setup()
 
-        # Advantage normalization
-        if self.cfg.algorithm.normalize_advantages:
-            mask = batch["attention_mask"][:, -self.response_len :]
-            batch["advantages"] = masked_normalization(batch["advantages"], mask)
-
         # Valid token scale
         if self.cfg.algorithm.use_valid_token_scale:
             self._setup_valid_token_scale(batch)
@@ -821,7 +828,6 @@ class MegatronActor(MegatronModelManager, Worker):
             self.compute_advantages_and_returns
         )
 
-        # Advantage normalization
         if self.cfg.algorithm.normalize_advantages:
 
             def normalize_advantages(batch: dict[str, torch.Tensor]):

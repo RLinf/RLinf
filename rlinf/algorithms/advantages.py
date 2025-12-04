@@ -24,13 +24,13 @@ from rlinf.utils.utils import masked_mean
 @register_advantage("gae")
 def compute_gae_advantages_and_returns(
     rewards: torch.Tensor,
+    dones: torch.Tensor,
     gamma: float = 1.0,
     gae_lambda: float = 1.0,
     values: Optional[torch.Tensor] = None,
     normalize_advantages: bool = True,
     normalize_returns: bool = False,
     loss_mask: Optional[torch.Tensor] = None,
-    dones: Optional[torch.Tensor] = None,
     **kwargs,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """

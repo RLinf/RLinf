@@ -172,9 +172,22 @@ class SeqGroupInfo:
         if self.results[idx] is None:
             self.results[idx] = result
         else:
-            prev_output_ids = self.results[idx]["output_ids"]
-            self.results[idx] = result
-            self.results[idx]["output_ids"] = prev_output_ids + result["output_ids"]
+            self.results[idx]["meta_info"]["finish_reason"] = result["meta_info"][
+                "finish_reason"
+            ]
+            self.results[idx]["output_ids"] += result["output_ids"]
+            if self.results[idx]["meta_info"].get("output_token_logprobs") is not None:
+                assert result["meta_info"].get("output_token_logprobs") is not None, (
+                    "Previous result has output_token_logprobs, but new result does not."
+                )
+                self.results[idx]["meta_info"]["output_token_logprobs"] += result[
+                    "meta_info"
+                ]["output_token_logprobs"]
+                assert len(self.results[idx]["output_ids"]) == len(
+                    self.results[idx]["meta_info"]["output_token_logprobs"]
+                ), (
+                    f"Mismatched lengths after merging: {len(self.results[idx]['output_ids'])} vs {len(self.results[idx]['meta_info']['output_token_logprobs'])}"
+                )
 
     def __hash__(self):
         return self.id
