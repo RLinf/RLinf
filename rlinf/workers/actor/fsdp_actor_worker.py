@@ -371,7 +371,7 @@ class FSDPActor(FSDPModelManager, Worker):
                     if "ref_logprobs" in m_batch:
                         ref_logprobs = m_batch["ref_logprobs"]
 
-                    loss_mask = m_batch["attention_mask"][:, -self.response_len :]
+                    loss_mask = m_batch["response_mask"][:, -self.response_len :]
                     with self.amp_context:
                         output = self.model(
                             input_ids=input_ids,
@@ -494,7 +494,7 @@ class FSDPActor(FSDPModelManager, Worker):
         """
         with self.worker_timer():
             if batch.get("advantages", None) is None:
-                mask = batch["attention_mask"][:, -self.response_len :]
+                mask = batch["response_mask"][:, -self.response_len :]
                 advantages, _ = calculate_adv_and_returns(
                     task_type=self.cfg.runner.task_type,
                     adv_type=self.cfg.algorithm.adv_type,
