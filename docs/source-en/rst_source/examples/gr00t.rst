@@ -285,6 +285,7 @@ The LoRA setting is under test and will be available soon.
 
 - GR00T-N1.5 + PPO + Libero-10:
    ``examples/embodiment/config/libero_10_ppo_gr00t.yaml``
+
 --------------
 
 **4. Launch Command**
