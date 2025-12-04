@@ -40,6 +40,7 @@ SUPPORTED_MODEL_ARCHS = [
     "qwen2.5_vl",
     "openvla",
     "openvla_oft",
+    "qwen3",
     "qwen3_moe",
     "openpi",
     "mlp_policy",
@@ -253,6 +254,7 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
 
         # MoE model
         cfg.model.num_moe_experts = getattr(hf_config, "num_experts", None)
+        cfg.model.num_experts = getattr(hf_config, "num_experts", None)
         cfg.model.moe_ffn_hidden_size = getattr(
             hf_config, "moe_intermediate_size", None
         )
@@ -574,6 +576,13 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
         cfg.optim.weight_decay = cfg.optim.get("weight_decay", 0.01)
         cfg.optim.overlap_param_gather_with_optimizer_step = cfg.optim.get(
             "overlap_param_gather_with_optimizer_step", False
+        )
+        cfg.optim.optimizer_cpu_offload = cfg.optim.get("optimizer_cpu_offload", False)
+        cfg.optim.optimizer_offload_fraction = cfg.optim.get(
+            "optimizer_offload_fraction", 0.0
+        )
+        cfg.optim.use_precision_aware_optimizer = cfg.optim.get(
+            "use_precision_aware_optimizer", False
         )
 
         # learning rate

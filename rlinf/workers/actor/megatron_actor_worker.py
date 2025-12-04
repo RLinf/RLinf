@@ -113,6 +113,7 @@ class MegatronActor(MegatronModelManager, Worker):
         super().__init__(role_cfg)
         self.cfg = cfg
         self.component_placement = placement
+        self.destiny_tp_rank = self._rank % placement.rollout_tp_size
 
         # check placement validity when actor backend is megatron
         assert placement.rollout_tp_size <= placement.actor_tp_size, (
@@ -309,6 +310,9 @@ class MegatronActor(MegatronModelManager, Worker):
                 reshard_weights_format="mcore",
                 reshard_tp_size=self.cfg.inference.model.tensor_model_parallel_size,
                 reshard_pp_size=self.cfg.inference.model.pipeline_model_parallel_size,
+                mg_ep_size=self.cfg.actor.model.expert_model_parallel_size,
+                mg_tpe_size=self.cfg.actor.model.expert_tensor_parallel_size,
+                moe_grouped_gemm=self.cfg.actor.model.get("moe_grouped_gemm", None),
             )
             self.inference_weights_reshard = MegatronCoreWeightReshard(
                 inference_reshard_config
@@ -495,11 +499,14 @@ class MegatronActor(MegatronModelManager, Worker):
                     loss *= loss_scale.item()
 
                 # add to log
+
+                loss_scale = self.optimizer.get_loss_scale()
                 metrics_data.update(
                     {
                         "final_loss": loss.detach(),
                         "entropy_loss": entropy_loss.detach(),
                         "kl_loss": kl_loss.detach(),
+                        "loss_scale": loss_scale.detach(),
                     }
                 )
 
@@ -626,7 +633,7 @@ class MegatronActor(MegatronModelManager, Worker):
     ):
         if forward_only:
             outputs = torch.cat(forward_outputs) if len(forward_outputs) > 0 else None
-            if self.enable_dynamic_batch_size:
+            if self.enable_dynamic_batch_size and outputs is not None:
                 indices = sum(self.dbs_indices, [])
                 assert len(indices) == outputs.size(0), (
                     f"Dynamic batch size indices length {len(indices)} does not equal output length {outputs.size()}"
@@ -1123,8 +1130,14 @@ class MegatronActor(MegatronModelManager, Worker):
 
     def _get_inference_model_state_dict(self):
         """Get the state dictionary of the model for inference."""
+        model = unwrap_model(self.model)
+        model_bucket = {}
+        for key, val in model[0].state_dict().items():
+            if "_extra_state" in key:
+                continue
+            model_bucket[key] = val
         return self.inference_weights_reshard.gather_and_reshard_model(
-            unwrap_model(self.model), self._weight_dst_rank_in_rollout
+            model_bucket, self.destiny_tp_rank
         )
 
     def sync_model_to_inference(self):
@@ -1228,10 +1241,10 @@ class MegatronActor(MegatronModelManager, Worker):
         return batch
 
     # Rollout
-    def _get_rollout_model_state_dict(self):
+    def _get_rollout_model_state_dict(self, bucket_weight):
         """Get the state dictionary of the model for rollout."""
         return self.rollout_weights_reshard.gather_and_reshard_model(
-            unwrap_model(self.model), self._weight_dst_rank_in_rollout
+            bucket_weight, self.destiny_tp_rank
         )
 
     def _setup_rollout_weight_dst_ranks(self):
@@ -1249,23 +1262,110 @@ class MegatronActor(MegatronModelManager, Worker):
             del self.reshard_state_dict
             clear_memory()
 
+    def divide_model_to_bucket(self):
+        model_bucket_list = self.rollout_weights_reshard.divide_model_to_bucket(
+            self.model
+        )
+        return model_bucket_list
+
     def sync_model_to_rollout(self):
         """Send the model weights to the destination ranks in the rollout task."""
         if self.recreate_nccl_groups:
             nccl_group_recreate()
         if not self.is_running:
             return
-        self.get_model_state_and_offload()
+
+        model_bucket_list = self.divide_model_to_bucket()
+        if not hasattr(self, "sync_model_bucket_length"):
+            self.sync_model_bucket_length = len(model_bucket_list)
+        else:
+            assert self.sync_model_bucket_length == len(model_bucket_list), (
+                f"last sync_model_bucket_length {self.sync_model_bucket_length} don't equal now the len(model_bucket_list) {len(model_bucket_list)}"
+            )
+            assert self.sync_model_bucket_length != 0, (
+                "error the self.sync_model_bucket_length is 0"
+            )
+
+        self.model_state_offload_optimizer_and_grad()
+
+        # send bucket size
         if self.component_placement._placement_mode == PlacementMode.COLLOCATED:
-            handle = {k: reduce_tensor(v) for k, v in self.reshard_state_dict.items()}
-            self.send(handle, self.rollout_group_name, self._weight_dst_rank_in_rollout)
+            self.send(
+                len(model_bucket_list),
+                self.rollout_group_name,
+                self._weight_dst_rank_in_rollout,
+            )
+            recv_handle = None
+            for bucket_weight in model_bucket_list:
+                reshard_state_dict = self._get_rollout_model_state_dict(bucket_weight)
+                buffer = {k: reduce_tensor(v) for k, v in reshard_state_dict.items()}
+                if recv_handle is not None:
+                    recv_handle.wait()
+                recv_handle = self.send(
+                    buffer,
+                    self.rollout_group_name,
+                    self._weight_dst_rank_in_rollout,
+                    async_op=True,
+                )
+                del reshard_state_dict
+            recv_handle.wait()
+
+            if self.offload_weight:
+                self.offload_model_weights_and_grad(
+                    offload_grad=False, offload_weight=True
+                )
+                self.is_weight_offloaded = True
         else:
             for weight_dst_rank in self._weight_dst_rank_in_rollout:
                 self.send(
-                    self.reshard_state_dict,
+                    len(model_bucket_list),
                     self.rollout_group_name,
                     weight_dst_rank,
                 )
+
+            recv_handle_bucket = []
+            for bucket_weight in model_bucket_list:
+                reshard_state_dict = self._get_rollout_model_state_dict(bucket_weight)
+
+                if len(recv_handle_bucket) != 0:
+                    for recv_handle in recv_handle_bucket:
+                        recv_handle.wait()
+                    recv_handle_bucket = []
+
+                for weight_dst_rank in self._weight_dst_rank_in_rollout:
+                    recv_handle = self.send(
+                        reshard_state_dict,
+                        self.rollout_group_name,
+                        weight_dst_rank,
+                        async_op=True,
+                    )
+                    recv_handle_bucket.append(recv_handle)
+
+                if len(recv_handle_bucket) != 0:
+                    for recv_handle in recv_handle_bucket:
+                        recv_handle.wait()
+
+    def model_state_offload_optimizer_and_grad(self):
+        if not self.is_running:
+            return
+        if (
+            self.component_placement._placement_mode == PlacementMode.COLLOCATED
+            or self.use_pre_process_policy
+        ):
+            if self.offload_optimizer:
+                self.offload_megatron_optimizer()
+                self.is_optimizer_offloaded = True
+            self.offload_model_weights_and_grad(
+                offload_grad=self.offload_grad, offload_weight=False
+            )
+        else:
+            assert self.component_placement._placement_mode in [
+                PlacementMode.DISAGGREGATED,
+                PlacementMode.AUTO,
+            ], "Unsupported placement mode for sending weights."
+            assert isinstance(self._weight_dst_rank_in_rollout, list), (
+                f"In disaggregated mode, weight_dst_rank_in_rollout should be a list of ranks, got {type(self._weight_dst_rank_in_rollout)}"
+            )
 
     def get_model_state_and_offload(self):
         """Send the model weights to the destination ranks in the rollout task.
