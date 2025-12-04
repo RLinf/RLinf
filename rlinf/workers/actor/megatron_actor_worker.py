@@ -1309,12 +1309,6 @@ class MegatronActor(MegatronModelManager, Worker):
                 )
                 del reshard_state_dict
             recv_handle.wait()
-
-            if self.offload_weight:
-                self.offload_model_weights_and_grad(
-                    offload_grad=False, offload_weight=True
-                )
-                self.is_weight_offloaded = True
         else:
             for weight_dst_rank in self._weight_dst_rank_in_rollout:
                 self.send(
@@ -1344,6 +1338,16 @@ class MegatronActor(MegatronModelManager, Worker):
                 if len(recv_handle_bucket) != 0:
                     for recv_handle in recv_handle_bucket:
                         recv_handle.wait()
+
+        if (
+            self.component_placement._placement_mode == PlacementMode.COLLOCATED
+            or self.use_pre_process_policy
+        ):
+            if self.offload_weight:
+                self.offload_model_weights_and_grad(
+                    offload_grad=False, offload_weight=True
+                )
+                self.is_weight_offloaded = True
 
     def model_state_offload_optimizer_and_grad(self):
         if not self.is_running:
