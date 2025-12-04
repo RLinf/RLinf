@@ -450,6 +450,8 @@ class LiberoEnv(gym.Env):
         final_obs = copy.deepcopy(_final_obs)
         env_idx = np.arange(0, self.num_envs)[dones]
         final_info = copy.deepcopy(infos)
+        if self.cfg.only_eval:
+            self.update_reset_state_ids()
         obs, infos = self.reset(
             env_idx=env_idx,
             reset_state_ids=self.reset_state_ids[env_idx]

@@ -17,6 +17,10 @@ from typing import ContextManager, Union
 
 import torch
 import torch.nn as nn
+from torch.distributed.checkpoint.state_dict import (
+    StateDictOptions,
+    get_model_state_dict,
+)
 from torch.distributed.device_mesh import DeviceMesh
 from torch.optim import Optimizer
 
@@ -32,7 +36,6 @@ from rlinf.hybrid_engines.fsdp.utils import (
     FSDPVersion,
     apply_fsdp2_to_model,
     clip_grad_by_total_norm_,
-    get_fsdp2_full_state_dict_all_ranks,
     get_grad_norm,
 )
 from rlinf.utils.utils import clear_memory
@@ -81,17 +84,26 @@ class FSDP2Strategy(FSDPStrategyBase):
     def get_fsdp_version(cls) -> FSDPVersion:
         return FSDPVersion.FSDP2
 
-    def get_model_state_dict(self, model: FSDPModule) -> dict:
+    def get_model_state_dict(
+        self, model: FSDPModule, cpu_offload: bool, full_state_dict: bool
+    ) -> dict:
         """
         Get the full model state dict of FSDP2 from all ranks.
 
         Args:
             - model (FSDPModule): The FSDP2 wrapped model.
+            - cpu_offload (bool): Whether returned state_dict's value will be offloaded to CPU. If true, will
+                be copied to CPU memory, or just keep a reference to the original GPU tensor.
+            - full_state_dict (bool): Whether to get the full state dict.
 
         Returns:
-            - dict: The full model state dict.
+            - dict: The state dict of the FSDP2 wrapped model according to the specified options.
         """
-        return get_fsdp2_full_state_dict_all_ranks(model, False)
+        opts = StateDictOptions(
+            cpu_offload=cpu_offload, full_state_dict=full_state_dict
+        )
+        state_dict = get_model_state_dict(model=model, options=opts)
+        return state_dict
 
     @torch.no_grad()
     def onload_param_and_grad(
