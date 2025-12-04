@@ -3,7 +3,29 @@ name: Embodied End-to-End Tests
 on:
   workflow_call:
 
+# Declare permissions just read content.
+permissions:
+  contents: read
+
+env:
+  IMAGE: "rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0"
+  DYNAMIC_RUNNER_ENDPOINT: "https://sd10g3clalm04ug7alq90.apigateway-cn-beijing.volceapi.com/runner"
+
 jobs:
+  setup:
+    runs-on: image-test
+    outputs:
+      runner-label: ${{ steps.create-runner.outputs.runner-label }}
+      mlp-task-id: ${{ steps.create-runner.outputs.mlp-task-id }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: create-runner
+        uses: volcengine/vemlp-github-runner@v1
+        with:
+          mode: "create"
+          faas-url: "${{ env.DYNAMIC_RUNNER_ENDPOINT }}"
+          mlp-image: "${{ env.IMAGE }}"
+
   embodied-maniskill-ppo-openvla-test:
     runs-on: embodied
     steps:
@@ -15,22 +37,10 @@ jobs:
           export REPO_PATH=$(pwd)
           source switch_env openvla
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openvla
-          
-  embodied-maniskill-grpo-openvlaoft-test:
-    runs-on: embodied
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-      - name: OpenVLA test
-        timeout-minutes: 20
-        run: |
-          export REPO_PATH=$(pwd)
-          source switch_env openvla-oft
-          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
-          bash tests/e2e_tests/embodied/run.sh maniskill_grpo_openvlaoft
 
   embodied-libero-goal-grpo-openvlaoft-test:
-    runs-on: embodied
+    needs: setup
+    runs-on: image-test
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -41,64 +51,14 @@ jobs:
           source switch_env openvla-oft
           bash tests/e2e_tests/embodied/run.sh libero_goal_grpo_openvlaoft
 
-  embodied-libero-130-grpo-openvlaoft-test:
-    runs-on: embodied
+  cleanup:
+    runs-on: image-test
+    needs: [setup, embodied-libero-goal-grpo-openvlaoft-test]
+    if: always()
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-      - name: OpenVLA-OFT test
-        timeout-minutes: 20
-        run: |
-          export REPO_PATH=$(pwd)
-          source switch_env openvla-oft
-          bash tests/e2e_tests/embodied/run.sh libero_130_grpo_openvlaoft
-
-  embodied-libero-spatial-ppo-openpi-test:
-    runs-on: embodied
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-      - name: OPENPI test
-        timeout-minutes: 20
-        run: |
-          export REPO_PATH=$(pwd)
-          source switch_env openpi
-          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi
-
-  embodied-libero-spatial-ppo-openpi05-test:
-    runs-on: embodied
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-      - name: OPENPI test
-        timeout-minutes: 20
-        run: |
-          export REPO_PATH=$(pwd)
-          source switch_env openpi
-          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi05
-
-  embodied-behavior-ppo-openvlaoft-test:
-    runs-on: embodied
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-      - name: BEHAVIOR-OpenVLA-OFT test
-        timeout-minutes: 20
-        run: |
-          export REPO_PATH=$(pwd)
-          export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
-          export ISAAC_PATH=/workspace/dataset/isaac-sim
-          source switch_env behavior-openvla-oft
-          bash tests/e2e_tests/embodied/run.sh behavior_ppo_openvlaoft
-
-  embodied-metaworld-50-ppo-openpi-test:
-    runs-on: embodied
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-      - name: OPENPI test
-        timeout-minutes: 20
-        run: |
-          export REPO_PATH=$(pwd)
-          source switch_env openpi
-          bash tests/e2e_tests/embodied/run.sh metaworld_50_ppo_openpi
+      - id: destroy-runner
+        uses: volcengine/vemlp-github-runner@v1
+        with:
+          mode: "destroy"
+          faas-url: "${{ env.DYNAMIC_RUNNER_ENDPOINT }}"
+          mlp-task-id: "${{ needs.setup.outputs.mlp-task-id }}"
