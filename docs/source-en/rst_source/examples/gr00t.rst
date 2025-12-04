@@ -135,12 +135,9 @@ Model Download
 --------------
 
 Before starting training, you need to download the corresponding pretrained models.
-In current stage, we only support the sft model of libero spatial task.
-The models for other tasks will be released soon.
+In current stage, we support four libero spatial task: spatial, object, goal, and 10.
 
 **GR00T-N1.5 few-shot SFT Model Download**
-
-This model is designed specifically for libero spatial task types.
 
 .. code:: bash
 
@@ -151,7 +148,12 @@ This model is designed specifically for libero spatial task types.
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/Gr00t_Libero_Spatial_Fewshot_SFT
+   hf download RLinf/RLinf-Gr00t-SFT-Spatial
+
+Models for other tasks:
+- `Libero-Object <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_
+- `Libero-Goal <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Goal>`_
+- `Libero-10 <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-10>`_
 
 --------------
 
@@ -275,16 +277,27 @@ The LoRA setting is under test and will be available soon.
 - GR00T-N1.5 + PPO + Libero-Spatial:
    ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml``
 
+- GR00T-N1.5 + PPO + Libero-Object:
+   ``examples/embodiment/config/libero_object_ppo_gr00t.yaml``
+
+- GR00T-N1.5 + PPO + Libero-Goal:
+   ``examples/embodiment/config/libero_goal_ppo_gr00t.yaml``
+
+- GR00T-N1.5 + PPO + Libero-10:
+   ``examples/embodiment/config/libero_10_ppo_gr00t.yaml``
 --------------
 
 **4. Launch Command**
 
-To start training with a chosen configuration, run the following
+To start training with a chosen configuration, run one of the following
 command:
 
 ::
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
+   bash examples/embodiment/run_embodiment.sh libero_object_ppo_gr00t
+   bash examples/embodiment/run_embodiment.sh libero_goal_ppo_gr00t
+   bash examples/embodiment/run_embodiment.sh libero_10_ppo_gr00t
 
 --------------
 
@@ -351,7 +364,7 @@ Visualization and Results
 **LIBERO Results**
 ~~~~~~~~~~~~~~~~~~
 
-We trained GR00T-N1.5 with PPO in the LIBERO environment. Other results will be released soon. Numbers link to the corresponding model on Hugging Face.
+We trained GR00T-N1.5 with PPO in the LIBERO environment. Other results (RL with Flow-Noise) will be released soon. Numbers link to the corresponding model on Hugging Face.
 The results achieved through our RL training are shown below:
 
 .. list-table:: **GR00T-N1.5 model results on LIBERO with Flow-SDE**

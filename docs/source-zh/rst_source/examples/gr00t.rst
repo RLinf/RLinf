@@ -117,22 +117,24 @@ GR00T-N1.5直接将环境提供的自然语言任务描述作为语言模型的�
 --------------
 
 开始训练前，您需要下载相应的预训练模型。
-目前，我们仅支持libero spatial任务的sft模型。
-其他任务的模型将在近期发布。
+目前我们支持四种libero任务：spatial, object, goal, and 10。
 
 **GR00T-N1.5少样本SFT模型下载**
-
-该模型专为libero spatial任务类型设计。
 
 .. code:: bash
 
    # 方法1：使用git clone
    git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatials
+   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
 
    # 方法2：使用huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/Gr00t_Libero_Spatial_Fewshot_SFT
+   hf download RLinf/RLinf-Gr00t-SFT-Spatial
+
+其他任务的SFT模型下载: 
+- `Libero-Object <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_
+- `Libero-Goal <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Goal>`_
+- `Libero-10 <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-10>`_
 
 --------------
 
@@ -245,15 +247,26 @@ LoRA设置正在测试中，即将推出。
 - GR00T-N1.5 + PPO + Libero-Spatial：
   ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml``
 
+- GR00T-N1.5 + PPO + Libero-Object：
+  ``examples/embodiment/config/libero_object_ppo_gr00t.yaml``
+
+- GR00T-N1.5 + PPO + Libero-Goal：
+  ``examples/embodiment/config/libero_goal_ppo_gr00t.yaml``
+
+- GR00T-N1.5 + PPO + Libero-10：
+  ``examples/embodiment/config/libero_10_ppo_gr00t.yaml``
 --------------
 
 **4. 启动命令**
 
-要使用选定的配置开始训练，请运行以下命令：
+要使用选定的配置开始训练，请运行以下命令之一：
 
 ::
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
+   bash examples/embodiment/run_embodiment.sh libero_object_ppo_gr00t
+   bash examples/embodiment/run_embodiment.sh libero_goal_ppo_gr00t
+   bash examples/embodiment/run_embodiment.sh libero_10_ppo_gr00t
 
 --------------
 
@@ -320,7 +333,7 @@ LoRA设置正在测试中，即将推出。
 **LIBERO结果**
 ~~~~~~~~~~~~~~~~~~
 
-我们在LIBERO环境中使用PPO训练了GR00T-N1.5。其他结果将在近期发布。结果链接指向Hugging Face上的对应模型。
+我们在LIBERO环境中使用PPO训练了GR00T-N1.5。其他结果（Flow-Noise的RL训练）将在近期发布。结果链接指向Hugging Face上的对应模型。
 通过强化学习训练获得的结果如下：
 
 .. list-table:: **GR00T-N1.5模型使用Flow-SDE方法在LIBERO上的结果**
