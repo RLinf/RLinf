@@ -140,6 +140,7 @@ rollout:
   
   validate_weight: False # whether to send all weights at first for weight comparison.
   validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
+  validate_weight_first_sync: True # validate the weight norm between load model and first sync. Only supported megatron -> sglang now, and no precision conversion, and in collocated mode.
   print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
 
   max_running_requests: 64 # the maximum number of running requests in the rollout engine.
@@ -183,7 +184,7 @@ actor:
   seed: 1234
 
   model:
-    precision: fp16
+    precision: bf16
     add_bias_linear: False
 
     tensor_model_parallel_size: 1
@@ -218,8 +219,8 @@ actor:
 
   optim:
     optimizer: adam
-    bf16: False
-    fp16: True
+    bf16: True
+    fp16: False
     lr: 2e-05
     adam_beta1: 0.9
     adam_beta2: 0.95

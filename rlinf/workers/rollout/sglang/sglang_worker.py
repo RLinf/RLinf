@@ -17,6 +17,7 @@ import copy
 import dataclasses
 from typing import Any, Optional
 
+import torch
 from omegaconf import DictConfig
 from sglang.srt.managers.io_struct import ReleaseMemoryOccupationReqInput
 from sglang.srt.server_args import ServerArgs
@@ -226,6 +227,18 @@ class SGLangWorker(Worker):
         return result, request_info
 
     async def init_worker(self):
+        if self._cfg.rollout.validate_weight_first_sync:
+            if (
+                torch_dtype_from_precision(self._cfg.rollout.precision)
+                != torch.bfloat16
+                or torch_dtype_from_precision(self._cfg.actor.model.precision)
+                != torch.bfloat16
+            ):
+                self.log_warning(
+                    "validate_weight should be used with same precision in rollout and actor and ckpt. default is bfloat16."
+                )
+            if self._placement.is_pipeline:
+                self.log_warning("validate_weight should be used in collocated mode.")
         self._init_engine()
         await self._engine.tokenizer_manager.run_task_method(
             io_struct.TaskMethodInput(
