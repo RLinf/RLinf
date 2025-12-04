@@ -135,7 +135,7 @@ Model Download
 --------------
 
 Before starting training, you need to download the corresponding pretrained models.
-In current stage, we support four libero spatial task: spatial, object, goal, and 10.
+In current stage, we support four libero tasks: spatial, object, goal, and 10.
 
 **GR00T-N1.5 few-shot SFT Model Download**
 
