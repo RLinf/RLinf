@@ -84,7 +84,7 @@ rollout:
 
   gpu_memory_utilization: 0.55
 
-  model_dir: /workspace/dataset/Qwen3-4B-4L
+  model_dir: /workspace/dataset/Qwen3-0.3B
   model_arch: qwen3
   precision: ${actor.model.precision}              # precision for rollout model, support [fp16, bf16, fp32]
   enforce_eager: False         # if False, vllm will capture cuda graph, which will take more time to initialize.
@@ -216,7 +216,7 @@ actor:
     lr_decay_iters: 10
 
   tokenizer:
-    tokenizer_model: /workspace/dataset/Qwen3-4B-4L
+    tokenizer_model: /workspace/dataset/Qwen3-0.3B
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'
