@@ -686,10 +686,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return rollout_batch
 
-    def compute_logprobs(self):
-        self.model.eval()
-        self.rollout_batch["logprob"] = self.rollout_batch["prev_logprobs"]
-
     def compute_advantages_and_returns(self):
         stage_num = self.cfg.rollout.pipeline_stage_num
         env_world_size = self._component_placement.get_world_size("env")
