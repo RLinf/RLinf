@@ -320,7 +320,7 @@ LoRA设置正在测试中，即将推出。
 **LIBERO结果**
 ~~~~~~~~~~~~~~~~~~
 
-我们在LIBERO环境中使用PPO训练了GR00T-N1.5。其他结果将在近期发布。
+我们在LIBERO环境中使用PPO训练了GR00T-N1.5。其他结果将在近期发布。结果链接指向Hugging Face上的对应模型。
 通过强化学习训练获得的结果如下：
 
 .. list-table:: **GR00T-N1.5模型使用Flow-SDE方法在LIBERO上的结果**
@@ -335,19 +335,19 @@ LoRA设置正在测试中，即将推出。
      - Δ Avg.
 
    * - GR00T（少样本）
-     - 41.4%
-     - 58.6%
-     - 48.2%
-     - 61.9%
+     - `41.4% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Spatial>`_
+     - `58.6% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_
+     - `48.2% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Goal>`_
+     - `61.9% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-10>`_
      - 52.5%
      - ---
 
    * - +PPO
-     - **92.5%**
-     - **96.2%**
-     - **84.3%**
-     - **86.6%**
-     - **89.9%**
-     - **+37.4%**
+     - `92.5% <https://huggingface.co/lixiang-95/RLinf-Gr00t-Spatial-400>`_
+     - `95.0% <https://huggingface.co/lixiang-95/RLinf-Gr00t-Object-400>`_
+     - `84.3% <https://huggingface.co/lixiang-95/RLinf-Gr00t-Goal-500>`_
+     - `86.3% <https://huggingface.co/lixiang-95/RLinf-Gr00t-libero10-300>`_
+     - **89.5%**
+     - **+37.0%**
 
 我们想指出上述结果使用了与 :math:`\pi_0` 相同的超参数设置。这些发现主要展示了所提出RL训练框架的广泛适用性和鲁棒性。通过参数调优可以更进一步提升模型性能。
