@@ -135,7 +135,7 @@ Model Download
 --------------
 
 Before starting training, you need to download the corresponding pretrained models.
-In current stage, we support four libero tasks: spatial, object, goal, and 10.
+In current stage, we support four libero tasks: Spatial, Object, Goal, and Long.
 
 **GR00T-N1.5 few-shot SFT Model Download**
 
@@ -153,7 +153,7 @@ In current stage, we support four libero tasks: spatial, object, goal, and 10.
 Models for other tasks:
 - `Libero-Object <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_
 - `Libero-Goal <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Goal>`_
-- `Libero-10 <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-10>`_
+- `Libero-Long <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-10>`_
 
 --------------
 
@@ -265,8 +265,8 @@ interference, eliminating the need for offload functionality.
   GR00T-N1.5 action head contain dropout layers which messes calculation of log probability, set ``disable_dropout`` to True to replace them with Identity layers.
 | Different noise injection methods can be chosen via ``noise_method``.
   We provide two options:
-  `flow_sde <https://arxiv.org/abs/2505.05470>`__ and
-  `reinflow <https://arxiv.org/abs/2505.22094>`__.
+  `flow-sde <https://arxiv.org/abs/2505.05470>`__ and
+  `flow-noise <https://arxiv.org/abs/2505.22094>`__.
 
 **2.2 LoRA Settings**
 
@@ -283,7 +283,7 @@ The LoRA setting is under test and will be available soon.
 - GR00T-N1.5 + PPO + Libero-Goal:
    ``examples/embodiment/config/libero_goal_ppo_gr00t.yaml``
 
-- GR00T-N1.5 + PPO + Libero-10:
+- GR00T-N1.5 + PPO + Libero-Long:
    ``examples/embodiment/config/libero_10_ppo_gr00t.yaml``
 
 --------------
@@ -291,7 +291,7 @@ The LoRA setting is under test and will be available soon.
 **4. Launch Command**
 
 To start training with a chosen configuration, run one of the following
-command:
+commands:
 
 ::
 

@@ -117,7 +117,7 @@ GR00T-N1.5直接将环境提供的自然语言任务描述作为语言模型的�
 --------------
 
 开始训练前，您需要下载相应的预训练模型。
-目前我们支持四种libero任务：spatial, object, goal, and 10。
+目前我们支持四种libero任务：Spatial, Object, Goal, and Long。
 
 **GR00T-N1.5少样本SFT模型下载**
 
@@ -134,7 +134,7 @@ GR00T-N1.5直接将环境提供的自然语言任务描述作为语言模型的�
 其他任务的SFT模型下载: 
 - `Libero-Object <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_
 - `Libero-Goal <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Goal>`_
-- `Libero-10 <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-10>`_
+- `Libero-Long <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-10>`_
 
 --------------
 
@@ -235,8 +235,8 @@ num_action_chunks决定了将用于前向仿真环境的未来步骤数量。
 GR00T-N1.5的动作头包含dropout层，这会干扰对数概率的计算，因此需将disable_dropout设置为True，以将其替换为恒等层。
 可通过noise_method选择不同的噪声注入方法。
 我们提供两种选项：
-`flow_sde <https://arxiv.org/abs/2505.05470>`__ 和
-`reinflow <https://arxiv.org/abs/2505.22094>`__。
+`flow-sde <https://arxiv.org/abs/2505.05470>`__ 和
+`flow-noise <https://arxiv.org/abs/2505.22094>`__。
 
 **2.2 LoRA设置**
 
@@ -253,7 +253,7 @@ LoRA设置正在测试中，即将推出。
 - GR00T-N1.5 + PPO + Libero-Goal：
   ``examples/embodiment/config/libero_goal_ppo_gr00t.yaml``
 
-- GR00T-N1.5 + PPO + Libero-10：
+- GR00T-N1.5 + PPO + Libero-Long：
   ``examples/embodiment/config/libero_10_ppo_gr00t.yaml``
 
 --------------

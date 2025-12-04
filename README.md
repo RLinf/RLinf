@@ -119,7 +119,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
   </tbody>
 </table>
   
-RLinf supports mainstream VLA models, mainstream CPU & GPU-parallel simulators via standardized Worker interfaces, and enables the first RL fine-tuning of the $\pi_{0}$ and $\pi_{0.5}$ model family with a flow-matching action expert, as shown in the above table.
+RLinf supports mainstream VLA models, mainstream CPU & GPU-parallel simulators via standardized Worker interfaces, and enables the first RL fine-tuning of the $\pi_{0}$ and $\pi_{0.5}$ model family and Isaac-GR00T with a flow-matching action expert, as shown in the above table.
 
 ### Agentic RL
 
@@ -554,14 +554,13 @@ and exhibits greater stability.
 - [X] Support for heterogeneous GPUs  
 - [ ] Support for asynchronous pipeline execution  
 - [X] Support for Mixture of Experts (MoE)  
-- [X] Support for vLLM inference backend
 
 ### 2. Application-Level Extensions
 - [X] Support for Vision-Language Models (VLMs) training  
 - [ ] Support for deep searcher agent training  
 - [ ] Support for multi-agent training  
 - [ ] Support for integration with more embodied simulators (e.g., [RoboCasa](https://github.com/robocasa/robocasa), [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis), [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin))  
-- [ ] Support for more Vision Language Action models (VLAs), such as [WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow)
+- [ ] Support for more Vision Language Action models (VLAs) (e.g., [WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow))
 - [ ] Support for world model   
 - [ ] Support for real-world RL embodied intelligence
 

@@ -119,7 +119,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
   </tbody>
 </table>
 
-如上表所示，RLinf支持主流VLA模型，通过标准的Worker接口支持主流的CPU或者GPU并行的模拟器，首次实现对带有 flow-matching action expert 的 $\pi_{0}$ 和 $\pi_{0.5}$ 模型家族的RL微调。
+如上表所示，RLinf支持主流VLA模型，通过标准的Worker接口支持主流的CPU或者GPU并行的模拟器，首次实现对带有 flow-matching action expert 的 $\pi_{0}$ 和 $\pi_{0.5}$ 模型家族和Isaac-GR00T模型的RL微调。
 
 ### 智能体强化学习
 
@@ -556,8 +556,6 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 
 - [X] 支持专家混合（Mixture of Experts, MoE）
 
-- [X] 支持 vLLM 推理后端
-
 ### 2. 应用级扩展
 - [X] 支持视觉-语言模型（VLMs）训练
 
@@ -565,7 +563,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 
 - [ ] 支持多智能体训练
 - [ ] 支持更多具身模拟器的集成 (如 [RoboCasa](https://github.com/robocasa/robocasa), [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis), [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin))  
-- [ ] 支持更多VLA模型，比如[WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow)
+- [ ] 支持更多VLA模型 (如[WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow))
 - [ ] 支持世界模型（World Model）
 
 - [ ] 支持真实世界的具身智能强化学习
