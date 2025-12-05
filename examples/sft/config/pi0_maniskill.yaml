@@ -85,10 +85,6 @@ data:
   simulator_type: "cpu"
 actor:
   group_name: "TrainerGroup"
-  channel:
-    name: "env_buffer_list"
-    queue_name: "replay_buffer"
-    queue_size: 0
   training_backend: "fsdp"
   fsdp_config:
     strategy: "fsdp"
@@ -100,7 +96,7 @@ actor:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
-  checkpoint_load_path: ${CKPT_PATH}
+  checkpoint_load_path: ${actor.model}
   checkpoint_save_path: "/root/work-space/RLinf-maniskill/result"
   micro_batch_size: 16      #20 micro batch size means how many samples each GPU processes per sampling step
   global_batch_size: 2560   #20 global batch size means after how many sampled examples we perform one loss backward pass. Requirement: global bz must be '_world_size' multiples of local bs.
@@ -114,6 +110,8 @@ actor:
   config_name: pi0_maniskill_pick_to_plate
   sft_loss_weight: 0.1
   model:
+    model_path: ${CKPT_PATH}
+    model_type: "openpi"
     model_name: "openpi"
     precision: "bf16"
     num_action_chunks: 4 # interface for the env

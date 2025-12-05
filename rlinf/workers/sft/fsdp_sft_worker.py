@@ -73,9 +73,9 @@ class EmbodiedSFTActor(FSDPModelManager, Worker):
         )
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
 
-        self._replay_buffer_name = cfg.actor.channel.queue_name
+        #self._replay_buffer_name = cfg.actor.channel.queue_name
 
-        self.channel = self.connect_channel(cfg.actor.channel.name)
+        #self.channel = self.connect_channel(cfg.actor.channel.name)
         training_config_name = cfg.actor.get("config_name", "pi0_maniskill")
         data_loader_config = _config.get_config(training_config_name)
         self.data_loader = _data.create_data_loader(data_loader_config, framework="pytorch", shuffle=True)
