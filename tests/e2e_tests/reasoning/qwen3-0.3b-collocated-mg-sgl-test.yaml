@@ -204,7 +204,6 @@ actor:
     optimizer_enable_pin: false
     overlap_param_gather_with_optimizer_step: False
     clip_grad: 1.0
-    loss_scale: 100000.0
 
   lr_sched:
     lr_warmup_fraction: 0.01
