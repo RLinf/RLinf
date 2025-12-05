@@ -1,0 +1,6 @@
+network: MLPEncoder
+network_kwargs:
+    input_size: 768
+    hidden_size: 128
+    output_size: 128
+    num_layers: 1

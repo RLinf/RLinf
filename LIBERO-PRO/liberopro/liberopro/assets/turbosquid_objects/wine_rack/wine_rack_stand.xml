@@ -1,0 +1,15 @@
+<mujoco model="wine_rack_stand">
+  <asset>
+  <texture file="mahogany.png" name="tex-wine_rack_stand" type="2d" />
+  <material name="wine_rack_stand" reflectance="0.5" texrepeat="1 1" texture="tex-wine_rack_stand" texuniform="false" />
+  <mesh file="visual/wine_rack_stand_vis.msh" name="wine_rack_stand_vis" scale="0.0045 0.0045 0.0045" /></asset>
+  <worldbody>
+    <body>
+      <body name="object">
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="wine_rack_stand_vis" conaffinity="0" contype="0" group="1" material="wine_rack_stand" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00000 0.00000 0.00657" quat="0.50000 -0.50000 0.50000 0.50000" size="0.00450 0.06646 0.09302" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00000 0.06935 0.01006" quat="0.70560 -0.04613 -0.70560 0.04613" size="0.00447 0.06004 0.08995" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00000 -0.06430 0.01263" quat="0.04959 -0.70537 -0.04959 0.70537" size="0.00447 0.06004 0.08995" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00000 0.00000 0.02050" quat="0.70711 0.00000 0.70711 0.00000" size="0.00450 0.01410 0.09045" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00000 0.00886 0.17026" quat="0.00000 0.00000 -0.13781 -0.99046" size="0.00762 0.00905 0.16165" group="0" rgba="0.8 0.8 0.8 0.3" /></body>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.06" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.04" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.025 0.025 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

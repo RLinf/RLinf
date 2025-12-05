@@ -1,0 +1,255 @@
+libero_goal:
+  open_the_middle_drawer_of_the_cabinet:
+    wooden_cabinet:
+      - yellow_cabinet
+      - white_cabinet
+  put_the_cream_cheese_in_the_bowl:
+    akita_black_bowl:
+      - black_bowl
+      - bigger_akita_black_bowl
+      - red_akita_black_bowl
+      - red_bowl
+      - white_bowl
+      - yellow_bowl
+    cream_cheese:
+      - red_cream_cheese
+  open_the_top_drawer_and_put_the_bowl_inside:
+    akita_black_bowl:
+      - black_bowl
+      - bigger_akita_black_bowl
+      - red_akita_black_bowl
+      - red_bowl
+      - white_bowl
+      - yellow_bowl
+    wooden_cabinet:
+      - yellow_cabinet
+      - white_cabinet
+  put_the_wine_bottle_on_the_rack:
+    wine_bottle:
+      - white_bottle
+    wine_rack:
+      - brown_rack
+      - wine_rack_stand
+  push_the_plate_to_the_front_of_the_stove:
+     plate:
+      - yellow_plate
+  put_the_wine_bottle_on_top_of_the_cabinet:
+    wine_bottle:
+      - white_bottle
+    :
+      - yellow_cabinet
+      - white_cabinet
+  put_the_bowl_on_the_plate:
+    akita_black_bowl:
+      - black_bowl
+      - bigger_akita_black_bowl
+      - red_akita_black_bowl
+      - red_bowl
+      - white_bowl
+      - yellow_bowl
+    plate:
+      - yellow_plate
+  put_the_bowl_on_the_stove:
+    akita_black_bowl:
+      - black_bowl
+      - bigger_akita_black_bowl
+      - red_akita_black_bowl
+      - red_bowl
+      - white_bowl
+      - yellow_bowl
+    flat_stove:
+      - yellow_stove
+  turn_on_the_stove:
+    flat_stove:
+      - yellow_stove
+  put_the_bowl_on_top_of_the_cabinet:
+    akita_black_bowl:
+      - black_bowl
+      - bigger_akita_black_bowl
+      - red_akita_black_bowl
+      - red_bowl
+      - white_bowl
+      - yellow_bowl
+    wooden_cabinet:
+      - yellow_cabinet
+      - white_cabinet
+
+libero_spatial:
+  pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate:
+    akita_black_bowl:
+      - black_bowl
+      - bigger_akita_black_bowl
+    plate:
+      - yellow_plate
+  pick_up_the_black_bowl_from_table_center_and_place_it_on_the_plate:
+    akita_black_bowl:
+      - black_bowl
+      - bigger_akita_black_bowl
+    plate:
+      - yellow_plate
+  pick_up_the_black_bowl_in_the_top_drawer_of_the_wooden_cabinet_and_place_it_on_the_plate:
+    akita_black_bowl:
+      - black_bowl
+      - bigger_akita_black_bowl
+    plate:
+      - yellow_plate
+  pick_up_the_black_bowl_next_to_the_cookie_box_and_place_it_on_the_plate:
+    akita_black_bowl:
+      - black_bowl
+      - bigger_akita_black_bowl
+    plate:
+      - yellow_plate
+  pick_up_the_black_bowl_next_to_the_plate_and_place_it_on_the_plate:
+    akita_black_bowl:
+      - black_bowl
+      - bigger_akita_black_bowl
+    plate:
+      - yellow_plate
+  pick_up_the_black_bowl_next_to_the_ramekin_and_place_it_on_the_plate:
+    akita_black_bowl:
+      - black_bowl
+      - bigger_akita_black_bowl
+    plate:
+      - yellow_plate
+  pick_up_the_black_bowl_on_the_cookie_box_and_place_it_on_the_plate:
+    akita_black_bowl:
+      - black_bowl
+      - bigger_akita_black_bowl
+    plate:
+      - yellow_plate
+  pick_up_the_black_bowl_on_the_ramekin_and_place_it_on_the_plate:
+    akita_black_bowl:
+      - black_bowl
+      - bigger_akita_black_bowl
+    plate:
+      - yellow_plate
+  pick_up_the_black_bowl_on_the_stove_and_place_it_on_the_plate:
+    akita_black_bowl:
+      - black_bowl
+      - bigger_akita_black_bowl
+    plate:
+      - yellow_plate
+  pick_up_the_black_bowl_on_the_wooden_cabinet_and_place_it_on_the_plate:
+    akita_black_bowl:
+      - black_bowl
+      - bigger_akita_black_bowl
+    plate:
+      - yellow_plate
+
+libero_10:
+  KITCHEN_SCENE3_turn_on_the_stove_and_put_the_moka_pot_on_it:
+    moka_pot:
+      - yellow_moka_pot
+    flat_stove:
+      - yellow_stove
+  KITCHEN_SCENE4_put_the_black_bowl_in_the_bottom_drawer_of_the_cabinet_and_close_it:
+    akita_black_bowl:
+      - black_bowl
+      - bigger_akita_black_bowl
+    white_cabinet:
+      - wooden_cabinet
+      - yellow_cabinet
+      - short_cabinet
+  KITCHEN_SCENE6_put_the_yellow_and_white_mug_in_the_microwave_and_close_it:
+    white_yellow_mug:
+      - white_porcelain_mug
+  KITCHEN_SCENE8_put_both_moka_pots_on_the_stove:
+    moka_pot:
+      - yellow_moka_pot
+  LIVING_ROOM_SCENE1_put_both_the_alphabet_soup_and_the_cream_cheese_box_in_the_basket:
+    alphabet_soup:
+      - bigger_alphabet_soup
+      - red_alphabet_soup
+    cream_cheese:
+      - red_cream_cheese
+    basket:
+      - red_basket
+  LIVING_ROOM_SCENE2_put_both_the_alphabet_soup_and_the_tomato_sauce_in_the_basket:
+    alphabet_soup:
+      - bigger_alphabet_soup
+      - red_alphabet_soup
+    tomato_sauce:
+      - yellow_tomato_sauce
+    basket:
+      - red_basket
+  LIVING_ROOM_SCENE2_put_both_the_cream_cheese_box_and_the_butter_in_the_basket:
+    cream_cheese:
+      - red_cream_cheese
+    butter:
+      - green_butter
+    basket:
+      - red_basket
+  LIVING_ROOM_SCENE5_put_the_white_mug_on_the_left_plate_and_put_the_yellow_and_white_mug_on_the_right_plate:
+    plate:
+      - yellow_plate
+    white_yellow_mug:
+      - white_porcelain_mug
+    porcelain_mug:
+      - white_porcelain_mug
+  LIVING_ROOM_SCENE6_put_the_white_mug_on_the_plate_and_put_the_chocolate_pudding_to_the_right_of_the_plate:
+    plate:
+      - yellow_plate
+    chocolate_pudding:
+      - green_chocolate_pudding
+    porcelain_mug:
+      - white_porcelain_mug
+  STUDY_SCENE1_pick_up_the_book_and_place_it_in_the_back_compartment_of_the_caddy:
+    black_book:
+      - black_bowl
+      - bigger_akita_black_bowl
+
+libero_object:
+  pick_up_the_alphabet_soup_and_place_it_in_the_basket:
+    alphabet_soup:
+      - bigger_alphabet_soup
+      - red_alphabet_soup
+    basket:
+      - red_basket
+  pick_up_the_bbq_sauce_and_place_it_in_the_basket:
+    bbq_sauce:
+      - green_bbq_sauce
+    basket:
+      - red_basket
+  pick_up_the_butter_and_place_it_in_the_basket:
+    butter:
+      - green_butter
+    basket:
+      - red_basket
+  pick_up_the_chocolate_pudding_and_place_it_in_the_basket:
+    chocolate_pudding:
+      - green_chocolate_pudding
+    basket:
+      - red_basket
+  pick_up_the_cream_cheese_and_place_it_in_the_basket:
+    cream_cheese:
+      - red_cream_cheese
+    basket:
+      - red_basket
+  pick_up_the_ketchup_and_place_it_in_the_basket:
+    ketchup:
+      - blue_ketchup
+    basket:
+      - red_basket
+  pick_up_the_milk_and_place_it_in_the_basket:
+    milk:
+      - yellow_milk
+    basket:
+      - red_basket
+  pick_up_the_orange_juice_and_place_it_in_the_basket:
+    milk:
+      - bigger_milk
+      - yellow_milk
+    basket:
+      - red_basket
+  pick_up_the_salad_dressing_and_place_it_in_the_basket:
+    salad_dressing:
+      - red_salad_dressing
+      - new_salad_dressing
+    basket:
+      - red_basket
+  pick_up_the_tomato_sauce_and_place_it_in_the_basket:
+    tomato_sauce:
+      - yellow_tomato_sauce
+    basket:
+
+      - red_basket

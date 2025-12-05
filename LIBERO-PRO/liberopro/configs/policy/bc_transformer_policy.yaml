@@ -1,0 +1,20 @@
+policy_type: BCTransformerPolicy 
+extra_num_layers: 0
+extra_hidden_size: 128
+embed_size: 64
+
+transformer_input_size: null
+transformer_num_layers: 4
+transformer_num_heads: 6
+transformer_head_output_size: 64
+transformer_mlp_hidden_size: 256
+transformer_dropout: 0.1
+transformer_max_seq_len: 10
+
+defaults:
+    - data_augmentation@color_aug: batch_wise_img_color_jitter_group_aug.yaml
+    - data_augmentation@translation_aug: translation_aug.yaml
+    - image_encoder: resnet_encoder.yaml
+    - language_encoder: mlp_encoder.yaml
+    - position_encoding@temporal_position_encoding: sinusoidal_position_encoding.yaml
+    - policy_head: gmm_head.yaml

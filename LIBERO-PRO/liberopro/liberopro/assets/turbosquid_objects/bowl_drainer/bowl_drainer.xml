@@ -1,0 +1,22 @@
+<mujoco model="bowl_drainer">
+  <asset>
+  <texture file="ceramic.png" name="tex-bowl_drainer" type="2d" />
+  <material name="bowl_drainer" reflectance="0.5" texrepeat="1 1" texture="tex-bowl_drainer" texuniform="false" />
+  <mesh file="visual/bowl_drainer_vis.msh" name="bowl_drainer_vis" scale="0.008 0.008 0.008" /></asset>
+  <worldbody>
+    <body>
+      <body name="object">
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100"
+	    friction="0.95 0.3 0.1" type="mesh"
+	    mesh="bowl_drainer_vis" conaffinity="0" contype="0"
+	    group="1" material="bowl_drainer" />
+      <site name="left_region" type="box" pos="-0.00000 0.06211 0.06757" quat="0.50000 0.50000 -0.50000 -0.50000" size="0.05165 0.05808 0.09423" group="0" rgba="0 0 0.8 0"/>
+      <site name="right_region" type="box" pos="-0.00000 -0.05153 0.06757" quat="0.50000 0.50000 -0.50000 -0.50000" size="0.05165 0.05808 0.09423" group="0" rgba="0.8 0 0 0"/>
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="bowl_drainer_vis" conaffinity="0" contype="0" group="1" material="bowl_drainer" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00303 0.00581 0.00198" quat="0.50000 -0.50000 0.50000 0.50000" size="0.00800 0.09053 0.11000" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00303 0.11202 0.07075" quat="0.52374 0.47507 -0.52374 -0.47507" size="0.00314 0.06637 0.09053" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00303 -0.10249 0.07075" quat="0.51943 -0.47979 -0.51943 0.47979" size="0.00314 0.06629 0.09053" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.09288 0.00961 0.07075" quat="0.70650 0.70660 0.02683 -0.02923" size="0.00540 0.06709 0.10835" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.08799 0.00961 0.07075" quat="0.03549 0.03787 0.70631 -0.70600" size="0.00540 0.06709 0.10835" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00303 0.00588 0.07075" quat="0.50096 0.49904 -0.50096 -0.49904" size="0.00386 0.06613 0.09053" group="0" rgba="0.8 0.8 0.8 0.3" />
+      </body>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.06" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.04" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.025 0.025 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

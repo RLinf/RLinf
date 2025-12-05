@@ -1,0 +1,32 @@
+# Blender 3.4.1 MTL File: 'desk_final.blend'
+# www.blender.org
+
+newmtl Chocofur_Interior_Scene_11.003
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd desk_texture.png
+
+newmtl Chocofur_Interior_Scene_11.004
+Ns 722.500000
+Ka 1.000000 1.000000 1.000000
+Ks 0.750000 0.750000 0.750000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 3
+map_Kd desk_texture.png
+
+newmtl Chocofur_Interior_Scene_11.008
+Ns 422.499969
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd desk_texture.png

@@ -1,0 +1,6 @@
+network: SinusoidalPositionEncoding
+network_kwargs:
+    input_size: null
+    inv_freq_factor: 10
+    factor_ratio: null
+

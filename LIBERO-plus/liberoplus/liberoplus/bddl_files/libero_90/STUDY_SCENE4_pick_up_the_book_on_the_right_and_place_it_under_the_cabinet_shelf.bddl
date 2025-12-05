@@ -1,0 +1,86 @@
+(define (problem LIBERO_Study_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language pick up the book on the right and place it under the cabinet shelf)
+    (:regions
+      (yellow_book_right_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.01 -0.01 0.01 0.01)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (yellow_book_left_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.060000000000000005 -0.26 -0.04 -0.24)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (black_book_init_region
+          (:target study_table)
+          (:ranges (
+              (0.04 -0.16 0.060000000000000005 -0.13999999999999999)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (wooden_two_layer_shelf_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.01 0.27 0.01 0.29000000000000004)
+            )
+          )
+          (:yaw_rotation (
+              (0 0)
+            )
+          )
+      )
+      (top_side
+          (:target wooden_two_layer_shelf_1)
+      )
+      (top_region
+          (:target wooden_two_layer_shelf_1)
+      )
+      (bottom_region
+          (:target wooden_two_layer_shelf_1)
+      )
+    )
+
+  (:fixtures
+    study_table - study_table
+    wooden_two_layer_shelf_1 - wooden_two_layer_shelf
+  )
+
+  (:objects
+    black_book_1 - black_book
+    yellow_book_1 yellow_book_2 - yellow_book
+  )
+
+  (:obj_of_interest
+    yellow_book_1
+    wooden_two_layer_shelf_1
+  )
+
+  (:init
+    (On wooden_two_layer_shelf_1 study_table_wooden_two_layer_shelf_init_region)
+    (On yellow_book_1 study_table_yellow_book_right_init_region)
+    (On yellow_book_2 study_table_yellow_book_left_init_region)
+    (On black_book_1 study_table_black_book_init_region)
+  )
+
+  (:goal
+    (And (In yellow_book_1 wooden_two_layer_shelf_1_bottom_region))
+  )
+
+)

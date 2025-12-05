@@ -1,0 +1,83 @@
+<mujoco model="short_cabinet">
+    <compiler angle="radian" meshdir="./" />
+    <size njmax="500" nconmax="100" />
+    <asset>
+        <texture file="short_cabinet/base/dark-wood.png" name="tex-base_vis" type="2d"/>
+        <material name="base_vis" reflectance="0.5" texrepeat="1 1" texture="tex-base_vis" texuniform="false" />
+        <mesh name="base_vis_vis" file="short_cabinet/base/visual/base_vis_vis.msh" scale="0.05 0.05 0.05"/>
+	<mesh file="short_cabinet/drawer_middle/visual/drawer_middle_vis.msh" name="drawer_middle_vis" scale="0.05 0.05 0.05"/>
+	<mesh file="short_cabinet/drawer_high/visual/drawer_high_vis.msh" name="drawer_high_vis" scale="0.05 0.05 0.05"/>
+	<mesh file="short_cabinet/drawer_low/visual/drawer_low_vis.msh" name="drawer_low_vis" scale="0.05 0.05 0.05"/>
+    </asset>
+    <worldbody>
+        <body>
+          <body name="object">
+	    <body name="base" pos="0 0 0.10" quat="0.5 0.5 -0.5 -0.5">
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="base_vis_vis" conaffinity="0" contype="0" group="1" material="base_vis"/>
+
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00000 0.07026 -0.00000" quat="0.00000 0.70711 0.70711 0.00000" size="0.00184 0.09403 0.09676" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00000 0.02169 -0.00000" quat="0.00000 0.70711 0.70711 0.00000" size="0.00099 0.09403 0.09676" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00000 -0.02537 -0.00000" quat="0.70711 -0.00000 -0.00000 -0.70711" size="0.00105 0.09403 0.09676" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00000 -0.00000 -0.09988" quat="0.70711 0.00000 0.70711 0.00000" size="0.00131 0.07166 0.09238" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00000 0.00000 0.09997" quat="0.70711 0.00000 -0.70711 0.00000" size="0.00131 0.07166 0.09238" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.09495 0.00559 -0.00000" quat="0.00000 0.00000 1.00000 0.00000" size="0.00202 0.07713 0.10053" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <body name="drawer_middle" pos="0 0 0">
+                <inertial pos="0 0 0" mass="3" diaginertia="1 1 1" />
+                <joint name="middle_level" type="slide" pos="0 0 0" axis="1 0 0"
+		       limited="true" range="-0.005 0.16" damping="50"/>
+		<site rgba="0 0 0 0" type="box" pos="-0.00168 0.00035 -0.00000" quat="0.00000 0.70711 0.70711 0.00000" size="0.02022 0.08279 0.08821" name="middle_region"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="drawer_middle_vis" conaffinity="0" contype="0" group="1" material="base_vis"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.08831 -0.00108 -0.00000" quat="0.00000 0.00000 1.00000 0.00000" size="0.00529 0.02070 0.09650" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.08595 -0.00108 -0.00000" quat="0.00000 0.00000 1.00000 0.00000" size="0.00529 0.02036 0.09775" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00000 -0.01632 -0.00000" quat="0.00000 0.70711 0.70711 0.00000" size="0.00223 0.09178 0.09777" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00129 -0.00162 -0.09253" quat="0.70711 0.00000 0.70711 0.00000" size="0.00363 0.01977 0.08233" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.10191 0.00202 0.00000" quat="0.00000 0.00000 1.00000 0.00000" size="0.00102 0.00228 0.01031" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.09880 0.00202 -0.01341" quat="0.23506 0.00000 -0.97198 -0.00000" size="0.00104 0.00228 0.00806" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.09833 0.00202 0.01356" quat="0.32083 -0.00000 0.94714 -0.00000" size="0.00104 0.00228 0.00806" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.09537 0.00202 0.02104" quat="0.14192 -0.14192 0.69272 0.69272" size="0.00129 0.00203 0.00228" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.09552 0.00202 -0.02089" quat="0.68385 0.68385 0.17987 -0.17987" size="0.00129 0.00203 0.00228" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00129 -0.00162 0.09299" quat="0.70711 0.00000 0.70711 0.00000" size="0.00363 0.01977 0.08233" group="0" rgba="0.8 0.8 0.8 0.3"/>	
+	      </body>
+
+	      <body name="drawer_top" pos="0 0 0">
+                <inertial pos="0 0 0" mass="3" diaginertia="1 1 1" />
+                <joint name="top_region" type="slide" pos="0 0 0" axis="1 0 0"
+		       limited="true" range="-0.005 0.16" damping="50"/>
+		<site rgba="0 0 0 0" type="box" pos="-0.00168 0.04335 -0.00000" quat="0.00000 0.70711 0.70711 0.00000" size="0.02022 0.08279 0.08821" name="top_region"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="drawer_high_vis" conaffinity="0" contype="0" group="1" material="base_vis"/>		
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.08831 0.04491 -0.00000" quat="1.00000 0.00000 0.00000 -0.00000" size="0.00529 0.02070 0.09650" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.08595 0.04491 0.00000" quat="1.00000 0.00000 0.00000 0.00000" size="0.00529 0.02036 0.09775" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00000 0.02966 0.00000" quat="0.00000 -0.70711 -0.70711 -0.00000" size="0.00223 0.09178 0.09777" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00129 0.04437 -0.09253" quat="0.70711 0.00000 0.70711 0.00000" size="0.00363 0.01977 0.08233" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.10191 0.04801 0.00000" quat="0.00000 0.00000 1.00000 0.00000" size="0.00102 0.00228 0.01031" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.09880 0.04801 -0.01341" quat="0.00000 -0.97198 0.00000 0.23506" size="0.00104 0.00228 0.00806" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.09833 0.04801 0.01356" quat="0.32083 -0.00000 0.94714 -0.00000" size="0.00104 0.00228 0.00806" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.09537 0.04801 0.02104" quat="0.14192 -0.14192 0.69272 0.69272" size="0.00129 0.00203 0.00228" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.09552 0.04801 -0.02089" quat="0.68385 0.68385 0.17987 -0.17987" size="0.00129 0.00203 0.00228" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00129 0.04437 0.09299" quat="0.70711 0.00000 0.70711 0.00000" size="0.00363 0.01977 0.08233" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      </body>
+	      <body name="drawer_bottom" pos="0 0 0">
+                <inertial pos="0 0 0" mass="3" diaginertia="1 1 1" />
+                <joint name="bottom_region" type="slide" pos="0 0 0" axis="1 0 0"
+		       limited="true" range="-0.005 0.16" damping="50"/>
+		<site rgba="0 0 0 0" type="box" pos="-0.00168 -0.04335 -0.00000" quat="0.00000 0.70711 0.70711 0.00000" size="0.02022 0.08279 0.08821" name="bottom_region"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="drawer_low_vis" conaffinity="0" contype="0" group="1" material="base_vis"/>		
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.08831 -0.04840 -0.00000" quat="0.00000 0.00000 1.00000 0.00000" size="0.00529 0.02070 0.09650" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.08595 -0.04840 -0.00000" quat="0.00000 0.00000 1.00000 0.00000" size="0.00529 0.02036 0.09775" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00000 -0.06364 -0.00000" quat="0.00000 -0.70711 0.70711 0.00000" size="0.00223 0.09178 0.09777" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00129 -0.04894 -0.09253" quat="0.70711 0.00000 0.70711 0.00000" size="0.00363 0.01977 0.08233" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.10191 -0.04530 0.00000" quat="0.00000 0.00000 1.00000 0.00000" size="0.00102 0.00228 0.01031" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.09880 -0.04530 -0.01341" quat="0.97198 -0.00000 0.23506 -0.00000" size="0.00104 0.00228 0.00806" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.09833 -0.04530 0.01356" quat="0.32083 -0.00000 0.94714 -0.00000" size="0.00104 0.00228 0.00806" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.09537 -0.04530 0.02104" quat="0.14192 -0.14192 0.69272 0.69272" size="0.00129 0.00203 0.00228" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.09552 -0.04530 -0.02089" quat="0.68385 0.68385 0.17987 -0.17987" size="0.00129 0.00203 0.00228" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00129 -0.04894 0.09299" quat="0.70711 0.00000 0.70711 0.00000" size="0.00363 0.01977 0.08233" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      </body>	      
+	    </body>
+          </body>
+          <site rgba="0 0 0 0" size="0.05" pos="0 0 -0.045" name="bottom_site"/>
+          <site rgba="0 0 0 0" size="0.05" pos="0 0 0.045" name="top_site"/>
+          <site rgba="0 0 0 0" size="0.05" pos="0.045 0.045 0" name="horizontal_radius_site"/>
+        </body>
+    </worldbody>
+</mujoco>

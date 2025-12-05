@@ -1,0 +1,167 @@
+libero_goal:
+  open_the_middle_drawer_of_the_cabinet:
+    - open the cabinet’s middle drawer
+    - pull the middle drawer of the cabinet
+    - slide out the middle drawer
+  put_the_cream_cheese_in_the_bowl:
+    - place the cream cheese inside the bowl
+    - put the cream cheese into the bowl
+    - drop the cream cheese in the bowl
+  open_the_top_drawer_and_put_the_bowl_inside:
+    - slide open the top drawer and place the bowl in it
+    - put the bowl inside the top drawer after opening it
+    - open the cabinet’s top drawer and insert the bowl
+  put_the_wine_bottle_on_the_rack:
+    - place the wine bottle on the rack
+    - put the wine bottle onto the rack
+    - set the wine bottle down on the rack
+  push_the_plate_to_the_front_of_the_stove:
+    - move the plate to the stove’s front
+    - push the plate forward to the stove
+    - slide the plate toward the front of the stove
+  put_the_wine_bottle_on_top_of_the_cabinet:
+    - place the wine bottle on top of the cabinet
+    - put the wine bottle above the cabinet
+    - set the wine bottle on the cabinet top
+  put_the_bowl_on_the_plate:
+    - place the bowl on top of the plate
+    - put the bowl onto the plate
+    - set the bowl down on the plate
+  put_the_bowl_on_the_stove:
+    - place the bowl on the stove
+    - put the bowl onto the stove
+    - set the bowl down on the stove
+  turn_on_the_stove:
+    - switch on the stove
+    - turn the stove on
+    - ignite the stove
+  put_the_bowl_on_top_of_the_cabinet:
+    - place the bowl on top of the cabinet
+    - put the bowl above the cabinet
+    - set the bowl down on the cabinet top
+
+libero_spatial:
+  pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate:
+    - lift the black bowl between the plate and ramekin and set it on the plate
+    - pick the black bowl between plate and ramekin and put it on plate
+    - move the black bowl from between plate and ramekin to the plate
+  pick_up_the_black_bowl_from_table_center_and_place_it_on_the_plate:
+    - lift the black bowl from the table center and put it on the plate
+    - move the black bowl at the center of table to the plate
+    - pick up the black bowl in the middle of the table and place it on plate
+  pick_up_the_black_bowl_in_the_top_drawer_of_the_wooden_cabinet_and_place_it_on_the_plate:
+    - take the black bowl from the top drawer and put it on plate
+    - lift the black bowl in the cabinet top drawer and place it on plate
+    - pick up black bowl inside the top drawer and move it to plate
+  pick_up_the_black_bowl_next_to_the_cookie_box_and_place_it_on_the_plate:
+    - grab the black bowl beside the cookie box and set it on plate
+    - move black bowl near cookie box to the plate
+    - pick the bowl next to cookie box and put on plate
+  pick_up_the_black_bowl_next_to_the_plate_and_place_it_on_the_plate:
+    - pick the bowl beside the plate and put it on plate
+    - grab the black bowl next to plate and move it to plate
+    - lift bowl by plate and set it on the plate
+  pick_up_the_black_bowl_next_to_the_ramekin_and_place_it_on_the_plate:
+    - take black bowl next to ramekin and place on plate
+    - move bowl beside ramekin to the plate
+    - grab black bowl near ramekin and set it on plate
+  pick_up_the_black_bowl_on_the_cookie_box_and_place_it_on_the_plate:
+    - lift black bowl from cookie box and put it on plate
+    - pick bowl resting on cookie box and place it on plate
+    - move black bowl off cookie box onto the plate
+  pick_up_the_black_bowl_on_the_ramekin_and_place_it_on_the_plate:
+    - grab black bowl on ramekin and set it on plate
+    - lift bowl from ramekin and move to plate
+    - pick black bowl off ramekin and put onto plate
+  pick_up_the_black_bowl_on_the_stove_and_place_it_on_the_plate:
+    - lift bowl from stove and set on plate
+    - move black bowl on stove onto plate
+    - pick black bowl off stove and put on plate
+  pick_up_the_black_bowl_on_the_wooden_cabinet_and_place_it_on_the_plate:
+    - lift bowl from cabinet and put on plate
+    - move black bowl sitting on cabinet onto plate
+    - grab bowl on cabinet top and place on plate
+
+libero_10:
+  KITCHEN_SCENE3_turn_on_the_stove_and_put_the_moka_pot_on_it:
+    - switch stove on and put moka pot on it
+    - turn stove on and place moka pot
+    - ignite stove and set moka pot there
+  KITCHEN_SCENE4_put_the_black_bowl_in_the_bottom_drawer_of_the_cabinet_and_close_it:
+    - put black bowl inside bottom drawer and close it
+    - place black bowl in cabinet’s bottom drawer and shut
+    - insert black bowl in lower drawer and close
+  KITCHEN_SCENE6_put_the_yellow_and_white_mug_in_the_microwave_and_close_it:
+    - place yellow and white mug in microwave and close door
+    - put mug in microwave then shut it
+    - insert yellow-white mug into microwave and close
+  KITCHEN_SCENE8_put_both_moka_pots_on_the_stove:
+    - place both moka pots on stove
+    - put moka pots onto stove
+    - set two moka pots on top of stove
+  LIVING_ROOM_SCENE1_put_both_the_alphabet_soup_and_the_cream_cheese_box_in_the_basket:
+    - put alphabet soup and cream cheese box in basket
+    - place soup and cream cheese box into basket
+    - add cream cheese box and alphabet soup into basket
+  LIVING_ROOM_SCENE2_put_both_the_alphabet_soup_and_the_tomato_sauce_in_the_basket:
+    - place alphabet soup and tomato sauce into basket
+    - put tomato sauce and alphabet soup into basket
+    - drop alphabet soup and tomato sauce inside basket
+  LIVING_ROOM_SCENE2_put_both_the_cream_cheese_box_and_the_butter_in_the_basket:
+    - place cream cheese box and butter into basket
+    - put butter and cream cheese box in basket
+    - add cream cheese box with butter into basket
+  LIVING_ROOM_SCENE5_put_the_white_mug_on_the_left_plate_and_put_the_yellow_and_white_mug_on_the_right_plate:
+    - place white mug on left plate and yellow-white mug on right plate
+    - put white mug on left plate and yellow-white mug on right one
+    - set mugs: white on left plate, yellow-white on right plate
+  LIVING_ROOM_SCENE6_put_the_white_mug_on_the_plate_and_put_the_chocolate_pudding_to_the_right_of_the_plate:
+    - place white mug on plate and chocolate pudding to right
+    - put chocolate pudding right of plate and white mug on plate
+    - move mug onto plate and pudding to its right
+  STUDY_SCENE1_pick_up_the_book_and_place_it_in_the_back_compartment_of_the_caddy:
+    - pick up the book and place in back compartment
+    - put book in rear compartment of caddy
+    - set book into back slot of caddy
+
+libero_object:
+  pick_up_the_alphabet_soup_and_place_it_in_the_basket:
+    - grab alphabet soup and put it into basket
+    - place alphabet soup in basket
+    - pick alphabet soup and drop into basket
+  pick_up_the_bbq_sauce_and_place_it_in_the_basket:
+    - pick up bbq sauce and put it into basket
+    - place bbq sauce in basket
+    - move bbq sauce into basket
+  pick_up_the_butter_and_place_it_in_the_basket:
+    - grab butter and put it into basket
+    - place butter in basket
+    - pick butter and drop into basket
+  pick_up_the_chocolate_pudding_and_place_it_in_the_basket:
+    - lift chocolate pudding and put it in basket
+    - place pudding in basket
+    - move chocolate pudding into basket
+  pick_up_the_cream_cheese_and_place_it_in_the_basket:
+    - grab cream cheese and put into basket
+    - place cream cheese in basket
+    - drop cream cheese in basket
+  pick_up_the_ketchup_and_place_it_in_the_basket:
+    - lift ketchup and put it in basket
+    - place ketchup in basket
+    - move ketchup into basket
+  pick_up_the_milk_and_place_it_in_the_basket:
+    - grab milk and put into basket
+    - place milk in basket
+    - drop milk into basket
+  pick_up_the_orange_juice_and_place_it_in_the_basket:
+    - pick orange juice and put into basket
+    - place orange juice in basket
+    - move orange juice into basket
+  pick_up_the_salad_dressing_and_place_it_in_the_basket:
+    - grab salad dressing and put into basket
+    - place salad dressing in basket
+    - move salad dressing into basket
+  pick_up_the_tomato_sauce_and_place_it_in_the_basket:
+    - pick tomato sauce and put it in basket
+    - place tomato sauce into basket
+    - move tomato sauce into basket

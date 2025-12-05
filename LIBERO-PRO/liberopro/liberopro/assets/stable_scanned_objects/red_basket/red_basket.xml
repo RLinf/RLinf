@@ -1,0 +1,16 @@
+<mujoco model="basket">
+  <asset>
+  <texture file="texture.png" name="tex-basket" type="2d" />
+  <material name="basket" reflectance="0.5" texrepeat="1 1" texture="tex-basket" texuniform="false" />
+  <mesh file="visual/basket_vis.msh" name="basket_vis" scale="1.0 1.0 1.0" /></asset>
+  <worldbody>
+    <body>
+      <body name="object">
+      <site type="box" pos="-0.00000 -0.00000 0.07185" quat="0.00000 0.00000 0.00000 1.00000" size="0.06108 0.06108 0.06949" group="0" rgba="0.8 0 0 0" name="contain_region"/>
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="basket_vis" conaffinity="0" contype="0" group="1" material="basket" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00251 -0.00000 0.01308" quat="0.70880 -0.00000 0.70541 -0.00000" size="0.00850 0.07240 0.07658" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.07265 -0.00000 0.07657" quat="0.02672 -0.02672 0.70660 0.70660" size="0.00667 0.06368 0.07240" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00047 -0.06855 0.08177" quat="0.51263 -0.49025 0.50956 -0.48704" size="0.00667 0.06368 0.07240" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00020 0.06909 0.08177" quat="0.48794 -0.51043 -0.48935 0.51177" size="0.00667 0.06368 0.07240" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.07557 0.00000 0.07657" quat="0.01765 0.01765 -0.70689 0.70689" size="0.00667 0.06368 0.07240" group="0" rgba="0.8 0.8 0.8 0.3" /></body>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.06" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.04" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.025 0.025 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

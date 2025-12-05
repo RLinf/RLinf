@@ -1,0 +1,15 @@
+<mujoco model="desk">
+  <asset>
+  <texture file="desk_texture.png" name="tex-desk" type="2d" />
+  <material name="desk" reflectance="0.5" texrepeat="1 1" texture="tex-desk" texuniform="false" />
+  <mesh file="visual/desk_vis.msh" name="desk_vis" scale="1.0 1.0 1.0" /></asset>
+  <worldbody>
+    <body>
+      <body name="object">
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="desk_vis" conaffinity="0" contype="0" group="1" material="desk" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00000 0.00000 0.84929" quat="0.50000 -0.50000 0.50000 0.50000" size="0.03584 0.68946 1.39273" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.50048 -0.69064 0.39431" quat="0.00000 0.00000 1.00000 0.00000" size="0.02002 0.05031 0.39407" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.49617 -0.69064 0.39431" quat="1.00000 -0.00000 -0.00000 -0.00000" size="0.02002 0.05031 0.39407" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.49617 0.70968 0.39431" quat="0.00000 0.00000 1.00000 0.00000" size="0.02002 0.05032 0.39407" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.50048 0.71473 0.39431" quat="1.00000 -0.00000 -0.00000 -0.00000" size="0.02002 0.05031 0.39407" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00488 0.71473 0.02528" quat="0.70811 0.00000 -0.70610 -0.00000" size="0.02002 0.05031 0.51262" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00488 -0.69765 0.02528" quat="0.70811 0.00000 -0.70610 -0.00000" size="0.02002 0.05032 0.51262" group="0" rgba="0.8 0.8 0.8 0.3" /></body>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.06" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.04" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.025 0.025 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

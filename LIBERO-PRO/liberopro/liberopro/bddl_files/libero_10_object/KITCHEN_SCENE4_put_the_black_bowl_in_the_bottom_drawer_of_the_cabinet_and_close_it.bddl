@@ -1,0 +1,94 @@
+(define (problem LIBERO_Kitchen_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language put the black bowl in the bottom drawer of the cabinet and close it)
+    (:regions
+      (yellow_cabinet_init_region
+          (:target kitchen_table)
+          (:ranges (
+              (-0.01 0.29 0.01 0.31)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (wine_rack_init_region
+          (:target kitchen_table)
+          (:ranges (
+              (-0.11 -0.31 -0.09000000000000001 -0.29)
+            )
+          )
+          (:yaw_rotation (
+              (3.141592653589793 3.141592653589793)
+            )
+          )
+      )
+      (bigger_akita_black_bowl_init_region
+          (:target kitchen_table)
+          (:ranges (
+              (0.0049999999999999975 -0.07500000000000001 0.055 -0.025)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (wine_bottle_init_region
+          (:target kitchen_table)
+          (:ranges (
+              (-0.175 0.025 -0.125 0.07500000000000001)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (top_side
+          (:target yellow_cabinet_1)
+      )
+      (top_region
+          (:target yellow_cabinet_1)
+      )
+      (middle_region
+          (:target yellow_cabinet_1)
+      )
+      (bottom_region
+          (:target yellow_cabinet_1)
+      )
+      (top_region
+          (:target wine_rack_1)
+      )
+    )
+
+  (:fixtures
+    kitchen_table - kitchen_table
+    yellow_cabinet_1 - yellow_cabinet
+    wine_rack_1 - wine_rack
+  )
+
+  (:objects
+    bigger_akita_black_bowl_1 - bigger_akita_black_bowl
+    wine_bottle_1 - wine_bottle
+  )
+
+  (:obj_of_interest
+    bigger_akita_black_bowl_1
+    yellow_cabinet_1
+  )
+
+  (:init
+    (On bigger_akita_black_bowl_1 kitchen_table_bigger_akita_black_bowl_init_region)
+    (On wine_bottle_1 kitchen_table_wine_bottle_init_region)
+    (On yellow_cabinet_1 kitchen_table_yellow_cabinet_init_region)
+    (On wine_rack_1 kitchen_table_wine_rack_init_region)
+    (Open yellow_cabinet_1_bottom_region)
+  )
+
+  (:goal
+    (And (Close yellow_cabinet_1_bottom_region) (In bigger_akita_black_bowl_1 yellow_cabinet_1_bottom_region))
+  )
+
+)

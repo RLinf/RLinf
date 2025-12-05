@@ -1,0 +1,38 @@
+<mujoco model="basin_faucet">
+    <compiler angle="radian" meshdir="./" />
+    <size njmax="500" nconmax="100" />
+    <asset>
+        <mesh name="basin_faucet_base_vis" file="basin_faucet/basin_faucet_base/visual/basin_faucet_base_vis.msh" scale="0.02 0.02 0.02"/>
+        <mesh name="basin_faucet_movable_vis" file="basin_faucet/basin_faucet_movable/visual/basin_faucet_movable_vis.msh" scale="0.02 0.02 0.02"/>
+        <texture file="basin_faucet/ceramic.png" name="ceramic"/>
+	<material name="basin_faucet_base" reflectance="0.5" texrepeat="1 1" texture="ceramic" texuniform="false"/>	
+	<material name="basin_faucet_movable" reflectance="0.5" texrepeat="1 1" texture="ceramic" texuniform="false"/>	
+    </asset>
+    <worldbody>
+        <body>
+          <body name="object">
+	    <!-- <site name="hot_water" pos="-0.056 0. 0.005" size="0.01" rgba="1 0 0 1" type="sphere"/> -->
+	    <!-- <site name="cold_water" pos="-0.056 0. 0.005" size="0.01" rgba="0 0 1 1" type="sphere"/> -->
+	    <site name="hot_water" pos="-0.05 0. -0.04" size="0.007 0.05" rgba="0.984 0.384 0.227 0.3" type="cylinder"/>
+	    <site name="cold_water" pos="-0.05 0. -0.04" size="0.007 0.05" rgba="0.831 0.945 0.976 0.3" type="cylinder"/>
+	    <body name="base" pos="0 0 0">
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="basin_faucet_base_vis" conaffinity="0" contype="0" group="1" material="basin_faucet_base"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.03549 0.00000 -0.00961" quat="0.00000 0.00000 1.00000 0.00000" size="0.01626 0.01660 0.03919" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.03549 0.00000 -0.05157" quat="0.70711 0.00000 0.70711 0.00000" size="0.00251 0.02117 0.02136" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.01850 -0.00035 0.00556" quat="0.70711 0.00000 0.70711 0.00000" size="0.00797 0.00954 0.03684" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <body name="movable" pos="0 0 0.0">
+                <inertial pos="0 0 0" mass="3" diaginertia="1 1 1" />
+                <joint name="hinge" pos="0.03548 0 0" axis="0. 0. 1."
+		       limited="true" range="-1.5 1.5" damping="10"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="basin_faucet_movable_vis" conaffinity="0" contype="0" group="1" material="basin_faucet_movable"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00328 0.00000 0.04356" quat="0.00000 0.70711 0.00000 -0.70711" size="0.00386 0.00405 0.02498" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.03548 -0.00000 0.04356" quat="0.50000 0.50000 -0.50000 0.50000" size="0.01066 0.01640 0.01644" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      </body>
+	    </body>
+          </body>
+          <site rgba="0 0 0 0" size="0.05" pos="0 0 -0.045" name="bottom_site"/>
+          <site rgba="0 0 0 0" size="0.05" pos="0 0 0.045" name="top_site"/>
+          <site rgba="0 0 0 0" size="0.05" pos="0.045 0.045 0" name="horizontal_radius_site"/>
+        </body>
+    </worldbody>
+</mujoco>

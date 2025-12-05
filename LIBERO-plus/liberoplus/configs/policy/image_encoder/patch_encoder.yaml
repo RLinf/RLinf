@@ -1,0 +1,4 @@
+network: PatchEncoder
+network_kwargs:
+    patch_size: [8, 8]
+    no_patch_embed_bias: false

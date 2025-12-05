@@ -1,0 +1,15 @@
+<mujoco model="desk_caddy">
+  <asset>
+  <texture file="desk_caddy_texture.png" name="tex-desk_caddy" type="2d" />
+  <material name="desk_caddy" reflectance="0.5" texrepeat="1 1" texture="tex-desk_caddy" texuniform="false" />
+  <mesh file="visual/desk_caddy_vis.msh" name="desk_caddy_vis" scale="1.5 1.5 1.5" /></asset>
+  <worldbody>
+    <body>
+      <body name="object">
+      <site type="mesh" mesh="desk_caddy_vis" rgba="0.8 0.8 0.8 0.0" /><site type="box" pos="0.00631 -0.14339 0.08558" quat="0.00000 0.00000 1.00000 0.00000" size="0.06196 0.06216 0.08046" name="right_contain_region" rgba="0.8 0.8 0.8 0.0" /><site type="box" pos="0.00631 0.14551 0.08558" quat="0.00000 0.00000 1.00000 0.00000" size="0.06196 0.06216 0.08046" name="left_contain_region" rgba="0.8 0.8 0.8 0.0" /><site type="box" pos="0.03364 -0.00064 0.08558" quat="0.00000 0.00000 1.00000 0.00000" size="0.02775 0.06216 0.08046" name="back_contain_region" rgba="0.8 0.8 0.8 0.0" /><site type="box" pos="-0.03102 -0.00064 0.04054" quat="0.00000 -0.00000 0.70711 -0.70711" size="0.02775 0.03595 0.06216" name="front_contain_region" rgba="0.8 0.8 0.8 0.0" /></body>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.06" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.04" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.025 0.025 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

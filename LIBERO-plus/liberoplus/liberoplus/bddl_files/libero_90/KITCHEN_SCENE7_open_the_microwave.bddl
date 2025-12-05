@@ -1,0 +1,71 @@
+(define (problem LIBERO_Kitchen_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language open the microwave)
+    (:regions
+      (microwave_init_region
+          (:target kitchen_table)
+          (:ranges (
+              (-0.01 -0.26 0.01 -0.24)
+            )
+          )
+          (:yaw_rotation (
+              (3.141592653589793 3.141592653589793)
+            )
+          )
+      )
+      (plate_init_region
+          (:target kitchen_table)
+          (:ranges (
+              (-0.025 -0.025 0.025 0.025)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (plate_right_region
+          (:target kitchen_table)
+          (:ranges (
+              (-0.05 0.05 0.05 0.15000000000000002)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (top_side
+          (:target microwave_1)
+      )
+      (heating_region
+          (:target microwave_1)
+      )
+    )
+
+  (:fixtures
+    kitchen_table - kitchen_table
+    microwave_1 - microwave
+  )
+
+  (:objects
+    white_bowl_1 - white_bowl
+    plate_1 - plate
+  )
+
+  (:obj_of_interest
+    microwave_1
+  )
+
+  (:init
+    (On white_bowl_1 microwave_1_top_side)
+    (On microwave_1 kitchen_table_microwave_init_region)
+    (Close microwave_1)
+    (On plate_1 kitchen_table_plate_init_region)
+  )
+
+  (:goal
+    (And (Open microwave_1))
+  )
+
+)

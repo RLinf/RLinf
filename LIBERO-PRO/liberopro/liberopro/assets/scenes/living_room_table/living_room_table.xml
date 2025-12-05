@@ -1,0 +1,15 @@
+<mujoco model="living_room_table">
+  <asset>
+  <texture file="living_room_table_texture.png" name="tex-living_room_table" type="2d" />
+  <material name="living_room_table" reflectance="0.5" texrepeat="1 1" texture="tex-living_room_table" texuniform="false" />
+  <mesh file="visual/living_room_table_vis.msh" name="living_room_table_vis" scale="1.5 1.5 1.5" /></asset>
+  <worldbody>
+    <body>
+      <body name="object">
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="living_room_table_vis" conaffinity="0" contype="0" group="1" material="living_room_table" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.19761 0.00000 0.42492" quat="0.70711 0.00000 0.70711 0.00000" size="0.01184 0.44432 0.67171" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.54936 -0.00000 0.42492" quat="0.50000 0.50000 0.50000 -0.50000" size="0.01184 0.10133 0.41675" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.97006 0.00000 0.42492" quat="0.50000 -0.50000 -0.50000 -0.50000" size="0.01184 0.10133 0.41675" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.19761 -0.51121 0.42492" quat="0.70711 0.00000 0.70711 0.00000" size="0.01184 0.07752 0.67171" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.19761 0.49665 0.42492" quat="0.70711 0.00000 0.70711 0.00000" size="0.01184 0.07752 0.67171" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00000 0.00000 0.20414" quat="0.70711 -0.00000 -0.70711 -0.00000" size="0.20884 0.41162 0.43516" group="0" rgba="0.8 0.8 0.8 0.3" /></body>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.06" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.04" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.025 0.025 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

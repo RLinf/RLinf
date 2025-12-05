@@ -1,0 +1,87 @@
+libero_goal:
+  open_the_middle_drawer_of_the_cabinet:
+    - main_table
+  put_the_cream_cheese_in_the_bowl:
+    - main_table
+  open_the_top_drawer_and_put_the_bowl_inside:
+    - main_table
+  put_the_wine_bottle_on_the_rack:
+    - main_table
+  push_the_plate_to_the_front_of_the_stove:
+    - main_table
+  put_the_wine_bottle_on_top_of_the_cabinet:
+    - main_table
+  put_the_bowl_on_the_plate:
+    - main_table
+  put_the_bowl_on_the_stove:
+    - main_table
+  turn_on_the_stove:
+    - main_table
+  put_the_bowl_on_top_of_the_cabinet:
+    - main_table
+
+libero_spatial:
+  pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate:
+    - main_table
+  pick_up_the_black_bowl_from_table_center_and_place_it_on_the_plate:
+    - main_table
+  pick_up_the_black_bowl_in_the_top_drawer_of_the_wooden_cabinet_and_place_it_on_the_plate:
+    - main_table
+  pick_up_the_black_bowl_next_to_the_cookie_box_and_place_it_on_the_plate:
+    - main_table
+  pick_up_the_black_bowl_next_to_the_plate_and_place_it_on_the_plate:
+    - main_table
+  pick_up_the_black_bowl_next_to_the_ramekin_and_place_it_on_the_plate:
+    - main_table
+  pick_up_the_black_bowl_on_the_cookie_box_and_place_it_on_the_plate:
+    - main_table
+  pick_up_the_black_bowl_on_the_ramekin_and_place_it_on_the_plate:
+    - main_table
+  pick_up_the_black_bowl_on_the_stove_and_place_it_on_the_plate:
+    - main_table
+  pick_up_the_black_bowl_on_the_wooden_cabinet_and_place_it_on_the_plate:
+    - main_table
+
+libero_10:
+  KITCHEN_SCENE3_turn_on_the_stove_and_put_the_moka_pot_on_it:
+    - kitchen_table
+  KITCHEN_SCENE4_put_the_black_bowl_in_the_bottom_drawer_of_the_cabinet_and_close_it:
+    - kitchen_table
+  KITCHEN_SCENE6_put_the_yellow_and_white_mug_in_the_microwave_and_close_it:
+    - kitchen_table
+  KITCHEN_SCENE8_put_both_moka_pots_on_the_stove:
+    - kitchen_table
+  LIVING_ROOM_SCENE1_put_both_the_alphabet_soup_and_the_cream_cheese_box_in_the_basket:
+    - living_room_table
+  LIVING_ROOM_SCENE2_put_both_the_alphabet_soup_and_the_tomato_sauce_in_the_basket:
+    - living_room_table
+  LIVING_ROOM_SCENE2_put_both_the_cream_cheese_box_and_the_butter_in_the_basket:
+    - living_room_table
+  LIVING_ROOM_SCENE5_put_the_white_mug_on_the_left_plate_and_put_the_yellow_and_white_mug_on_the_right_plate:
+    - living_room_table
+  LIVING_ROOM_SCENE6_put_the_white_mug_on_the_plate_and_put_the_chocolate_pudding_to_the_right_of_the_plate:
+    - living_room_table
+  STUDY_SCENE1_pick_up_the_book_and_place_it_in_the_back_compartment_of_the_caddy:
+    - study_table
+
+libero_object:
+  pick_up_the_alphabet_soup_and_place_it_in_the_basket:
+    - floor
+  pick_up_the_bbq_sauce_and_place_it_in_the_basket:
+    - floor
+  pick_up_the_butter_and_place_it_in_the_basket:
+    - floor
+  pick_up_the_chocolate_pudding_and_place_it_in_the_basket:
+    - floor
+  pick_up_the_cream_cheese_and_place_it_in_the_basket:
+    - floor
+  pick_up_the_ketchup_and_place_it_in_the_basket:
+    - floor
+  pick_up_the_milk_and_place_it_in_the_basket:
+    - floor
+  pick_up_the_orange_juice_and_place_it_in_the_basket:
+    - floor
+  pick_up_the_salad_dressing_and_place_it_in_the_basket:
+    - floor
+  pick_up_the_tomato_sauce_and_place_it_in_the_basket:
+    - floor

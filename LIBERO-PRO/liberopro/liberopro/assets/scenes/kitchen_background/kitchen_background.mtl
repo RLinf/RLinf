@@ -1,0 +1,111 @@
+# Blender 3.4.1 MTL File: 'kitchen_background_final.blend'
+# www.blender.org
+
+newmtl AI58_002_Marble
+Ns 250.000000
+Ka 0.500000 0.500000 0.500000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 5.000000
+d 1.000000
+illum 3
+map_Kd kitchen_background.png
+map_Bump -bm 0.300000 AI58_002_Marble_V006_Normal.png
+
+newmtl AI58_002_Metal_V002
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 3
+map_Kd kitchen_background.png
+map_Bump -bm 0.300000 AI58_002_Metal_V002_Normal.png
+
+newmtl AI58_002_Metal_V003
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd kitchen_background.png
+map_Bump -bm 0.300000 AI58_002_Metal_V003_Normal.png
+
+newmtl AI58_002_Metal_V004
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 3
+map_Kd kitchen_background.png
+map_Bump -bm 1.000000 AI58_002_Metal_V004_Normal.png
+
+newmtl AI58_002_Plastic_V002
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 2.000000
+d 1.000000
+illum 2
+map_Kd kitchen_background.png
+map_Bump -bm 0.300000 AI58_002_Plastic_V002_Normal.png
+
+newmtl AI58_002_Plastic_V002B
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 2.000000
+d 1.000000
+illum 2
+map_Kd kitchen_background.png
+map_Bump -bm 0.300000 AI58_002_Plastic_V002_Normal.png
+
+newmtl AI58_002_chrome_brush_002
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 3
+map_Kd kitchen_background.png
+map_Bump -bm 1.000000 AI58_002_chrome_brush_002_Normal.png
+
+newmtl AI58_002_chrome_dark_001
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd kitchen_background.png
+map_Bump -bm 1.000000 AI58_002_chrome_dark_001_Normal.png
+
+newmtl AI58_002_glass
+Ns 980.100037
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.400000
+d 1.000000
+illum 2
+map_Kd kitchen_background.png
+
+newmtl AI58_002_metal_black
+Ns 250.000000
+Ka 0.500000 0.500000 0.500000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 2.000000
+d 1.000000
+illum 3
+map_Kd kitchen_background.png
+map_Bump -bm 1.000000 AI58_002_metal_black_Normal.png

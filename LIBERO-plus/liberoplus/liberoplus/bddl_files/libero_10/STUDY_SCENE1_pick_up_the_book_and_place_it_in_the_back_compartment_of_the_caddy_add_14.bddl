@@ -1,0 +1,127 @@
+(define (problem LIBERO_Study_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language pick up the book and place it in the back compartment of the caddy)
+    (:regions
+      (desk_caddy_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.21000000000000002 -0.15000000000000002 -0.19 -0.13)
+            )
+          )
+          (:yaw_rotation (
+              (3.141592653589793 3.141592653589793)
+            )
+          )
+      )
+      (black_book_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.025 0.125 0.025 0.175)
+            )
+          )
+          (:yaw_rotation (
+              (-1.5707963267948966 -0.7853981633974483)
+            )
+          )
+      )
+      (white_yellow_mug_init_region
+          (:target study_table)
+          (:ranges (
+              (0.07500000000000001 -0.025 0.125 0.025)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (desk_caddy_right_region
+          (:target study_table)
+          (:ranges (
+              (-0.25 0.09999999999999998 -0.15 0.2)
+            )
+          )
+          (:yaw_rotation (
+              (3.141592653589793 3.141592653589793)
+            )
+          )
+      )
+      (add_object_region_5
+          (:target study_table)
+          (:ranges (
+              (-0.2000005 0.2999995 -0.19999950000000002 0.3000005)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (add_object_region_6
+          (:target study_table)
+          (:ranges (
+              (-5e-07 -0.2000005 5e-07 -0.19999950000000002)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (add_object_region_7
+          (:target study_table)
+          (:ranges (
+              (0.19999950000000002 -0.2500005 0.2000005 -0.2499995)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (right_contain_region
+          (:target desk_caddy_1)
+      )
+      (left_contain_region
+          (:target desk_caddy_1)
+      )
+      (back_contain_region
+          (:target desk_caddy_1)
+      )
+      (front_contain_region
+          (:target desk_caddy_1)
+      )
+    )
+
+  (:fixtures
+    study_table - study_table
+    desk_caddy_1 - desk_caddy
+  )
+
+  (:objects
+    black_book_1 - black_book
+    white_yellow_mug_1 - white_yellow_mug
+    can_of_soda__1_1 - can_of_soda__1
+    bottle_of_baby_oil_1 - bottle_of_baby_oil
+    bottle_of_antihistamines_1 - bottle_of_antihistamines
+  )
+
+  (:obj_of_interest
+    black_book_1
+    desk_caddy_1
+  )
+
+  (:init
+    (On desk_caddy_1 study_table_desk_caddy_init_region)
+    (On black_book_1 study_table_black_book_init_region)
+    (On white_yellow_mug_1 study_table_white_yellow_mug_init_region)
+    (On can_of_soda__1_1 study_table_add_object_region_5)
+    (On bottle_of_baby_oil_1 study_table_add_object_region_6)
+    (On bottle_of_antihistamines_1 study_table_add_object_region_7)
+  )
+
+  (:goal
+    (And (In black_book_1 desk_caddy_1_back_contain_region))
+  )
+
+)

@@ -1,0 +1,14 @@
+# @package _global_
+
+default:
+- override /policy: bc_transformer_policy
+
+train:
+  use_augmentation: true
+  grad_clip: 100
+  loss_scale: 1.0
+
+eval:
+  eval_every: 5
+  n_epochs: 50
+

@@ -1,0 +1,109 @@
+<mujoco model="white_cabinet">
+    <compiler angle="radian" meshdir="./" />
+    <size njmax="500" nconmax="100" />
+    <asset>
+      <texture file="white_cabinet/white_wood.png" name="tex-white_cabinet" type="2d"/>
+      <material name="white_cabinet_top" reflectance="0.5" texrepeat="1 1" texture="tex-white_cabinet" texuniform="false"/>      
+      <mesh file="white_cabinet/white_cabinet_top/visual/white_cabinet_top_vis.msh" name="white_cabinet_top_vis" scale="0.05 0.05 0.05"/>
+      <texture file="white_cabinet/white_wood.png" name="tex-white_cabinet_base" type="2d"/>
+      <material name="white_cabinet_base" reflectance="0.5" texrepeat="1 1" texture="tex-white_cabinet_base" texuniform="false"/>
+      <mesh file="white_cabinet/white_cabinet_base/visual/white_cabinet_base_vis.msh" name="white_cabinet_base_vis" scale="0.05 0.05 0.05"/>
+      <texture file="white_cabinet/metal.png" name="tex-white_cabinet_handle" type="2d"/>
+      <material name="white_cabinet_top_handle" reflectance="0.5" texrepeat="1 1" texture="tex-white_cabinet_handle" texuniform="false"/>
+      <mesh file="white_cabinet/white_cabinet_top_handle/visual/white_cabinet_top_handle_vis.msh" name="white_cabinet_top_handle_vis" scale="0.05 0.05 0.05"/>
+      <material name="white_cabinet_middle" reflectance="0.5" texrepeat="1 1" texture="tex-white_cabinet" texuniform="false"/>
+      <mesh file="white_cabinet/white_cabinet_middle/visual/white_cabinet_middle_vis.msh" name="white_cabinet_middle_vis" scale="0.05 0.05 0.05"/>
+      <material name="white_cabinet_middle_handle" reflectance="0.5" texrepeat="1 1" texture="tex-white_cabinet_handle" texuniform="false"/>
+      <mesh file="white_cabinet/white_cabinet_middle_handle/visual/white_cabinet_middle_handle_vis.msh" name="white_cabinet_middle_handle_vis" scale="0.05 0.05 0.05"/>
+      <material name="white_cabinet_bottom" reflectance="0.5" texrepeat="1 1" texture="tex-white_cabinet" texuniform="false"/>
+      <mesh file="white_cabinet/white_cabinet_bottom/visual/white_cabinet_bottom_vis.msh" name="white_cabinet_bottom_vis" scale="0.05 0.05 0.05"/>
+      <material name="white_cabinet_bottom_handle" reflectance="0.5" texrepeat="1 1" texture="tex-white_cabinet_handle" texuniform="false"/>
+      <mesh file="white_cabinet/white_cabinet_bottom_handle/visual/white_cabinet_bottom_handle_vis.msh" name="white_cabinet_bottom_handle_vis" scale="0.05 0.05 0.05"/>
+    </asset>
+    <worldbody>
+        <body>
+          <body name="object">
+	    <body name="base" pos ="0 0 0.0">
+		<site type="box" pos="0.00354 0.01567 0.22152" quat="1 0 0 0" size="0.12534 0.09438 0.00147" group="0" rgba="0.8 0.8 0 0" name="top_side"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="white_cabinet_base_vis" conaffinity="0" contype="0" group="1" material="white_cabinet_base"/>
+<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00397 0.10954 0.11350" quat="0.49988 -0.50104 -0.50012 0.49896" size="0.00193 0.10453 0.11106" group="0" rgba="0.8 0.8 0.8 0.3"/>
+<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00405 0.01635 0.00686" quat="0.70792 0.00065 0.70629 -0.00065" size="0.00199 0.08960 0.12277" group="0" rgba="0.8 0.8 0.8 0.3"/>
+<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.11216 0.01625 0.11426" quat="0.00000 0.00000 1.00000 0.00000" size="0.00517 0.09542 0.10584" group="0" rgba="0.8 0.8 0.8 0.3"/>
+<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.11898 0.01625 0.11426" quat="0.00000 1.00000 0.00000 0.00000" size="0.00517 0.09542 0.10584" group="0" rgba="0.8 0.8 0.8 0.3"/>
+<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00211 0.10938 0.11426" quat="0.49997 0.49997 -0.50003 -0.50003" size="0.00231 0.10584 0.11912" group="0" rgba="0.8 0.8 0.8 0.3"/>
+<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00376 0.01868 0.14935" quat="0.70792 0.00065 0.70629 -0.00065" size="0.00085 0.08935 0.11168" group="0" rgba="0.8 0.8 0.8 0.3"/>
+<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00408 0.01868 0.00933" quat="0.00065 -0.70792 0.00065 0.70629" size="0.00085 0.08935 0.11168" group="0" rgba="0.8 0.8 0.8 0.3"/>
+<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00392 0.01868 0.07928" quat="0.70792 0.00065 0.70629 -0.00065" size="0.00085 0.08935 0.11168" group="0" rgba="0.8 0.8 0.8 0.3"/>
+<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00394 0.01577 0.22157" quat="0.70711 0.00000 0.70711 0.00000" size="0.00142 0.09409 0.12729" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <body name="cabinet_top" pos="0 0.0 0">
+                <inertial pos="0 0 0" mass="3" diaginertia="1 1 1" />
+                <joint name="top_level" type="slide" pos="0 0 0" axis="0 1 0"
+		       limited="true" range="-0.16 0.01" damping="50"/>
+		<site type="box" pos="0.00328 0.01128 0.18563"
+		      quat="0.70711 0.00000 0.70711 0.00000"
+		      size="0.02993 0.07561 0.10224" group="0"
+		      rgba="0.8 0.8 0.8 0" name="top_region"/>
+
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="white_cabinet_top_vis" conaffinity="0" contype="0" group="1" material="white_cabinet_top"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00334 -0.07524 0.18309" quat="0.50000 0.50000 -0.50000 -0.50000" size="0.00271 0.03427 0.10934" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00334 -0.06839 0.18358" quat="0.50000 0.50000 0.50000 0.50000" size="0.00356 0.03214 0.10679" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00334 0.09077 0.18358" quat="0.50000 0.50000 0.50000 0.50000" size="0.00356 0.03214 0.10679" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.10191 0.01105 0.18358" quat="0.70711 0.70711 -0.00115 -0.00115" size="0.00241 0.03165 0.08148" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.10894 0.01105 0.18358" quat="0.70711 0.70711 -0.00115 -0.00115" size="0.00241 0.03133 0.08148" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00348 0.01048 0.15514" quat="0.70711 0.00000 0.70711 0.00000" size="0.00401 0.08095 0.10696" group="0" rgba="0.8 0.8 0.8 0.3"/>
+
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="white_cabinet_top_handle_vis" conaffinity="0" contype="0" group="1" material="white_cabinet_top_handle"/>		
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00278 -0.10161 0.18393" quat="0.50000 0.50000 -0.50000 -0.50000" size="0.00770 0.00817 0.04445" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.02916 -0.08348 0.18393" quat="0.70711 0.70711 0.00000 -0.00000" size="0.00507 0.00552 0.01057" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.03560 -0.08348 0.18393" quat="0.70711 0.70711 0.00000 -0.00000" size="0.00507 0.00560 0.01057" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      </body>
+
+	      <body name="cabinet_middle" pos="0 0.0 0">
+                <inertial pos="0 0 0" mass="3" diaginertia="1 1 1" />
+                <joint name="middle_level" type="slide" pos="0 0 0" axis="0 1 0"
+		       limited="true" range="-0.16 0.01" damping="50"/>
+		<site name="middle_region" type="box" pos="0.00328 0.01128 0.11690" quat="0.70711 0.00000 0.70711 0.00000" size="0.02993 0.07561 0.10224" group="0" rgba="0.8 0.8 0.8 0"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="white_cabinet_middle_vis" conaffinity="0" contype="0" group="1" material="white_cabinet_middle"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00334 -0.07524 0.11338" quat="0.50000 0.50000 -0.50000 -0.50000" size="0.00271 0.03427 0.10934" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00334 0.09077 0.11387" quat="0.50000 0.50000 0.50000 0.50000" size="0.00356 0.03214 0.10679" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00334 -0.06839 0.11387" quat="0.50000 0.50000 0.50000 0.50000" size="0.00356 0.03214 0.10679" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.10894 0.01105 0.11387" quat="0.70711 0.70711 -0.00115 -0.00115" size="0.00241 0.03133 0.08148" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.10191 0.01105 0.11387" quat="0.70711 0.70711 -0.00115 -0.00115" size="0.00241 0.03165 0.08148" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00348 0.01048 0.08543" quat="0.70711 0.00000 0.70711 0.00000" size="0.00401 0.08095 0.10696" group="0" rgba="0.8 0.8 0.8 0.3"/>		
+
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="white_cabinet_middle_handle_vis" conaffinity="0" contype="0" group="1" material="white_cabinet_middle_handle"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00278 -0.10161 0.11041" quat="0.50000 0.50000 -0.50000 -0.50000" size="0.00770 0.00817 0.04445" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.02916 -0.08348 0.11041" quat="0.70711 0.70711 0.00000 -0.00000" size="0.00507 0.00552 0.01057" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.03560 -0.08348 0.11041" quat="0.70711 0.70711 0.00000 -0.00000" size="0.00507 0.00560 0.01057" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      </body>
+
+	      <body name="cabinet_bottom" pos="0 0.0 0">
+                <inertial pos="0 0 0" mass="3" diaginertia="1 1 1" />
+                <joint name="bottom_level" type="slide" pos="0 0 0" axis="0 1 0"
+		       limited="true" range="-0.16 0.01" damping="50"/>
+
+		<site name="bottom_region" type="box" pos="0.00328 0.01128 0.04701" quat="0.70711 0.00000 0.70711 0.00000" size="0.02993 0.07561 0.10224" group="0" rgba="0.8 0.8 0.8 0"/>
+		
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="white_cabinet_bottom_vis" conaffinity="0" contype="0" group="1" material="white_cabinet_bottom"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00334 -0.07524 0.04476" quat="0.50000 0.50000 -0.50000 -0.50000" size="0.00271 0.03427 0.10934" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00334 0.09077 0.04525" quat="0.50000 0.50000 0.50000 0.50000" size="0.00356 0.03214 0.10679" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00334 -0.06839 0.04525" quat="0.50000 0.50000 0.50000 0.50000" size="0.00356 0.03214 0.10679" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.10894 0.01105 0.04525" quat="0.70711 0.70711 -0.00115 -0.00115" size="0.00241 0.03133 0.08148" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.10191 0.01105 0.04525" quat="0.70711 0.70711 -0.00115 -0.00115" size="0.00241 0.03165 0.08148" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00348 0.01048 0.01682" quat="0.70711 0.00000 0.70711 0.00000" size="0.00401 0.08095 0.10696" group="0" rgba="0.8 0.8 0.8 0.3"/>		
+
+<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="white_cabinet_bottom_handle_vis" conaffinity="0" contype="0" group="1" material="white_cabinet_bottom_handle"/>
+<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00278 -0.10161 0.04114" quat="0.50000 0.50000 -0.50000 -0.50000" size="0.00770 0.00817 0.04445" group="0" rgba="0.8 0.8 0.8 0.3"/>
+<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.02916 -0.08348 0.04114" quat="0.70711 0.70711 0.00000 -0.00000" size="0.00507 0.00552 0.01057" group="0" rgba="0.8 0.8 0.8 0.3"/>
+<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.03560 -0.08348 0.04114" quat="0.70711 0.70711 0.00000 -0.00000" size="0.00507 0.00560 0.01057" group="0" rgba="0.8 0.8 0.8 0.3"/>		
+	      </body>
+
+
+	    </body>
+          </body>
+          <site rgba="0 0 0 0" size="0.05" pos="0 0 -0.045" name="bottom_site"/>
+          <site rgba="0 0 0 0" size="0.05" pos="0 0 0.045" name="top_site"/>
+          <site rgba="0 0 0 0" size="0.05" pos="0.045 0.045 0" name="horizontal_radius_site"/>
+        </body>
+    </worldbody>
+</mujoco>

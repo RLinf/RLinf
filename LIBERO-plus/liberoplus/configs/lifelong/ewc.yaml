@@ -1,0 +1,3 @@
+algo: EWC
+e_lambda: 50000
+gamma: 0.9

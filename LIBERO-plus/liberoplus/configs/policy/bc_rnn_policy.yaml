@@ -1,0 +1,15 @@
+policy_type: BCRNNPolicy
+image_embed_size: 64
+text_embed_size: 32
+
+rnn_hidden_size: 1024
+rnn_num_layers: 2
+rnn_dropout: 0.0
+rnn_bidirectional: false
+
+defaults:
+    - data_augmentation@color_aug: batch_wise_img_color_jitter_group_aug.yaml
+    - data_augmentation@translation_aug: translation_aug.yaml
+    - image_encoder: resnet_encoder
+    - language_encoder: mlp_encoder
+    - policy_head: gmm_head

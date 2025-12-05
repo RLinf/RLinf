@@ -1,0 +1,15 @@
+<mujoco model="basin_faucet_movable">
+  <asset>
+  <texture file="/home/yifengz/workspace/robosuite-master/robosuite/models/assets/textures/ceramic.png" name="tex-basin_faucet_movable" type="2d" />
+  <material name="basin_faucet_movable" reflectance="0.5" texrepeat="1 1" texture="tex-basin_faucet_movable" texuniform="false" />
+  <mesh file="visual/basin_faucet_movable_vis.msh" name="basin_faucet_movable_vis" scale="0.02 0.02 0.02" /></asset>
+  <worldbody>
+    <body>
+      <body name="object">
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="basin_faucet_movable_vis" conaffinity="0" contype="0" group="1" material="basin_faucet_movable" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00328 0.00000 0.04356" quat="0.00000 0.70711 0.00000 -0.70711" size="0.00386 0.00405 0.02498" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.03548 -0.00000 0.04356" quat="0.50000 0.50000 -0.50000 0.50000" size="0.01066 0.01640 0.01644" group="0" rgba="0.8 0.8 0.8 0.3" /></body>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.06" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.04" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.025 0.025 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

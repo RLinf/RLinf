@@ -1,0 +1,144 @@
+(define (problem LIBERO_Study_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language The task involves using object)
+    (:regions
+      (wooden_shelf_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.02 -0.47000000000000003 0.02 -0.43)
+            )
+          )
+          (:yaw_rotation (
+              (3.141592653589793 3.141592653589793)
+            )
+          )
+      )
+      (chocolate_pudding_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.11064733358789801 -0.16251847294795005 -0.070647333587898 -0.12251847294795006)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (plate_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.04232614705209113 0.3082692190853963 -0.002326147052091127 0.3482692190853963)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (milk_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.2533036305256128 0.2941411882087508 -0.21330363052561277 0.33414118820875083)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (red_coffee_mug_init_region
+          (:target study_table)
+          (:ranges (
+              (0.13003689707706448 0.24397362240683554 0.17003689707706446 0.28397362240683555)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (wine_bottle_init_region
+          (:target study_table)
+          (:ranges (
+              (0.06534702962738477 -0.05131905542418837 0.10534702962738478 -0.011319055424188363)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (popcorn_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.32 -0.02 -0.27999999999999997 0.02)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (table_region
+          (:target study_table)
+          (:ranges (
+              (-2 -2 2 2)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (top_side
+          (:target wooden_shelf_1)
+      )
+      (top_region
+          (:target wooden_shelf_1)
+      )
+      (middle_region
+          (:target wooden_shelf_1)
+      )
+      (bottom_region
+          (:target wooden_shelf_1)
+      )
+    )
+
+  (:fixtures
+    study_table - study_table
+    wooden_shelf_1 - wooden_shelf
+  )
+
+  (:objects
+    chocolate_pudding_1 - chocolate_pudding
+    milk_1 - milk
+    plate_1 - plate
+    popcorn_1 - popcorn
+    red_coffee_mug_1 - red_coffee_mug
+    wine_bottle_1 - wine_bottle
+  )
+
+  (:obj_of_interest
+    chocolate_pudding_1
+    plate_1
+    milk_1
+    red_coffee_mug_1
+    wine_bottle_1
+    wooden_shelf_1
+  )
+
+  (:init
+    (On wooden_shelf_1 study_table_wooden_shelf_init_region)
+    (On chocolate_pudding_1 study_table_chocolate_pudding_init_region)
+    (On plate_1 study_table_plate_init_region)
+    (On milk_1 study_table_milk_init_region)
+    (On red_coffee_mug_1 study_table_red_coffee_mug_init_region)
+    (On wine_bottle_1 study_table_wine_bottle_init_region)
+    (On popcorn_1 study_table_popcorn_init_region)
+  )
+
+  (:goal
+    (And (On chocolate_pudding_1 study_table_chocolate_pudding_init_region) (On plate_1 study_table_plate_init_region) (On milk_1 study_table_milk_init_region) (On red_coffee_mug_1 study_table_red_coffee_mug_init_region) (In wine_bottle_1 wooden_shelf_1_top_region) (On wooden_shelf_1 study_table_wooden_shelf_init_region))
+  )
+
+)

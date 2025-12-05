@@ -1,0 +1,67 @@
+<mujoco model="flat_stove">
+    <compiler angle="radian" meshdir="./" />
+    <size njmax="500" nconmax="100" />
+    <asset>
+      <texture file="flat_stove/metal.png" name="tex-stove_knob" type="2d"/>
+      <material name="stove_knob_base" reflectance="0.5" texrepeat="1 1" texture="tex-stove_knob" texuniform="false"/>
+      <mesh file="flat_stove/stove_knob_base/visual/stove_knob_base_vis.msh" name="stove_knob_base_vis" scale="1.0 1.0 1.0"/>      
+      <texture file="flat_stove/button_dark_texture.png" name="tex-stove_knob" type="2d"/>
+      <material name="stove_knob_button" reflectance="0.5" texrepeat="1 1" texture="tex-stove_knob" texuniform="false"/>
+      <mesh file="flat_stove/stove_knob_button/visual/stove_knob_button_vis.msh" name="stove_knob_button_vis" scale="1.0 1.0 1.0"/>
+      <texture file="flat_stove/metal.png" name="tex-stove_metal" type="2d"/>
+      <material name="stove_knob_metal" reflectance="0.5" texrepeat="1
+								     1"
+		texture="tex-stove_metal" texuniform="false" shininess="1.0"/>
+      <mesh file="./flat_stove/stove_burner/burnerplate.stl" name="burnerplate" scale="0.55 0.55 0.45" />
+    </asset>
+    <worldbody>
+        <body>
+          <body name="object">
+	    <body name="base" pos="0 0.0 0.0">
+	      <body name="burner" pos="0.15 0 0">
+		<site type="box" pos="0 0 0.0" quat="1 0 0 0" size="0.075 0.075 0.0025" group="0" rgba="0.8 0.8 0. 0" name="cook_region"/>
+		<geom size="0.095 0.095 0.02" pos="0 0 0" type="box" material="stove_knob_metal" group="1" name="base_vis"/>
+		<geom size="0.095 0.095 0.02" pos="0 0 0" type="box" material="stove_knob_metal" group="0" name="base"/>
+		<geom size="0.095 0.095 0.0005" pos="0 0 0.025" type="box" rgba="0 0 0 0" group="0" name="collision_burner"/>
+		<body name="burner_plate">
+	       	  <geom pos="0 0 0.025" type="mesh" mesh="burnerplate"
+			material="stove_knob_metal" group="1" name="burner"
+			contype="0" conaffinity="0"/>
+		</body>
+		<site name="burner" pos="0. 0. 0.022" size="0.0625 0.0005" rgba="0.9 0.05 0.05 1" type="cylinder"/>
+	      </body>	      
+	      <body name="button" pos="0 0.0 0" quat="0.7071068 0 0 0.7071068">
+                <inertial pos="0 0 0" mass="3" diaginertia="1 1 1" />
+                <joint name="button" type="hinge" pos="0 0 0" axis="0 0 1"
+		       limited="true" range="-0.005 2.1" damping="1"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1"
+		      density="100" friction="0.95 0.3 0.1"
+		      type="mesh" mesh="stove_knob_button_vis"
+		      conaffinity="0" contype="0" group="1" rgba="0.1 0.1 0.1 1.0"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00132 0.00458 0.00657" quat="0.00206 -0.70710 0.00206 0.70710" size="0.00621 0.03396 0.03396" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00111 -0.03234 0.00657" quat="0.49854 0.49854 -0.50145 -0.50145" size="0.00296 0.00621 0.02939" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00111 -0.03234 0.00657" quat="0.49854 0.49854 -0.50145 -0.50145" size="0.00296 0.00621 0.02939" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00108 -0.03650 0.00657" quat="0.49855 -0.49855 0.50145 -0.50145" size="0.00211 0.00621 0.02497" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00105 -0.04112 0.00657" quat="0.49854 0.49854 -0.50145 -0.50145" size="0.00211 0.00621 0.01416" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00158 0.04983 0.00657" quat="0.49855 0.49855 -0.50145 -0.50145" size="0.00211 0.00621 0.01416" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00156 0.04640 0.00657" quat="0.50145 0.50145 0.49855 0.49855" size="0.00211 0.00621 0.02497" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00154 0.04175 0.00657" quat="0.50145 0.50145 0.49854 0.49854" size="0.00296 0.00621 0.02939" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.03850 0.00412 0.00657" quat="0.70709 0.70709 -0.00429 -0.00429" size="0.00296 0.00621 0.02939" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.04314 0.00407 0.00657" quat="0.00429 0.00429 0.70709 0.70709" size="0.00211 0.00621 0.02497" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.04657 0.00403 0.00657" quat="0.70709 0.70709 -0.00431 -0.00431" size="0.00211 0.00621 0.01416" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.04392 0.00544 0.00657" quat="0.70707 0.70707 -0.00674 -0.00674" size="0.00211 0.00621 0.01416" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.04049 0.00537 0.00657" quat="0.00673 0.00673 0.70707 0.70707" size="0.00211 0.00621 0.02497" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.03585 0.00528 0.00657" quat="0.70707 -0.70707 0.00674 -0.00674" size="0.00296 0.00621 0.02939" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00139 0.01737 0.02570" quat="0.00205 0.00205 0.70710 0.70710" size="0.01214 0.02432 0.03454" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00118 -0.02003 0.02439" quat="-0.00000 -0.70916 -0.70505 -0.00000" size="0.00776 0.01214 0.02048" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00115 -0.02496 0.02505" quat="0.00000 -0.70505 0.70916 0.00000" size="0.00776 0.01214 0.01739" group="0" rgba="0.8 0.8 0.8 0.3"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00108 -0.03643 0.01715" quat="0.00000 -0.70505 0.70916 0.00000" size="0.00415 0.01214 0.01661" group="0" rgba="0.8 0.8 0.8 0.3"/>		
+	      </body>
+	    </body>
+          </body>
+          <site rgba="0 0 0 0" size="0.05" pos="0 0 -0.045" name="bottom_site"/>
+          <site rgba="0 0 0 0" size="0.05" pos="0 0 0.045" name="top_site"/>
+          <site rgba="0 0 0 0" size="0.05" pos="0.045 0.045 0" name="horizontal_radius_site"/>
+        </body>
+    </worldbody>
+</mujoco>
