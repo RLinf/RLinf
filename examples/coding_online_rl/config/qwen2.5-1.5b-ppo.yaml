@@ -78,8 +78,8 @@ algorithm:
   gae_lambda: 0.95
   # value_clip and huber_delta not needed without critic
 
-  # Use no-critic GAE advantage computation
-  adv_type: gae
+  # Use raw rewards as advantages
+  adv_type: raw
   normalize_advantages: False
   early_stop_imp_ratio: 5.0
   use_valid_token_scale: False
@@ -110,9 +110,9 @@ inference:
   group_name: "InferenceGroup"
   load_from_actor: True
   model:
-    tensor_model_parallel_size: 2
+    tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
-    sequence_parallel: True
+    sequence_parallel: False
 
 rollout:
   group_name: "RolloutGroup"
@@ -185,11 +185,11 @@ actor:
     precision: bf16
     add_bias_linear: False
 
-    tensor_model_parallel_size: 2
+    tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
 
     activation: swiglu
-    sequence_parallel: True
+    sequence_parallel: False
     # recompute_method: block
     # recompute_granularity: selective
 

@@ -76,8 +76,8 @@ algorithm:
   gae_lambda: 0.95
   # value_clip and huber_delta not needed without critic
 
-  # Use no-critic GAE advantage computation
-  adv_type: gae
+  # Use raw rewards as advantages
+  adv_type: raw
   normalize_advantages: False
   early_stop_imp_ratio: 5.0
   use_valid_token_scale: False
@@ -147,7 +147,7 @@ rollout:
 
   tensor_parallel_size: 1
   pipeline_parallel_size: 1
-  
+
   validate_weight: False # whether to send all weights at first for weight comparison.
   validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
   print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
@@ -178,7 +178,7 @@ actor:
 
   model:
     megatron_checkpoint: null
-    precision: fp16
+    precision: bf16
     add_bias_linear: False
 
     tensor_model_parallel_size: 1
@@ -290,7 +290,7 @@ critic:
   use_critic_model: False
 
 server:
-  # online serving and user reward track
+  # online serving and user reward tracking.
   online_router:
     host: 0.0.0.0
     port: 8081
