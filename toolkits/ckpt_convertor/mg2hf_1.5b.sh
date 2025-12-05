@@ -32,5 +32,5 @@ rm -rf $CKPT_PATH_MF
 
 # copy other files to new hf folder
 rm $CKPT_PATH_HF/*.done
-shopt -s extglob
+shopt -s extglob # !() pattern only works with Bash’s extended globbing.
 cp "$CKPT_PATH_ORIGINAL_HF"/!(*model.safetensors.index).json "$CKPT_PATH_HF"
