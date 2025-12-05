@@ -65,7 +65,7 @@ class SchedulerTask:
             "pipeline_model_parallel_size": inference_pipeline_model_parallel_size,
         }
 
-        self.total_gpus = cluster.num_accelerators_in_cluster
+        self.total_gpus = cluster.num_accelerators
         self.group_size = cfg.algorithm.group_size
         self.n_minibatches = cfg.algorithm.n_minibatches
         self.rollout_batch_size = cfg.data.rollout_batch_size
@@ -238,7 +238,7 @@ class SchedulerTask:
 def get_profile_data(
     cfg, cluster: Cluster, actor_cost=None, inference_cost=None, rollout_cost=None
 ):
-    total_gpus = cluster.num_accelerators_in_cluster
+    total_gpus = cluster.num_accelerators
     collocated_actor_instance_num = total_gpus // (
         cfg.actor.model.tensor_model_parallel_size
         * cfg.actor.model.pipeline_model_parallel_size

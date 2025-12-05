@@ -45,8 +45,8 @@
 
 手动打开 ``mg2hf_7b.sh`` 或 ``mg2hf_1.5b.sh``，将以下变量设置为你想要的路径。
 
-1. ``CKPT_PATH_MG``（Megatron checkpoint路径，例如 ``results/run_name/checkpoints/global_step_xx/actor/``）， 
-2. ``CKPT_PATH_HF``（Huggingface目标路径，任意路径），以及
+1. ``CKPT_PATH_MG`` （Megatron checkpoint路径，例如 ``results/run_name/checkpoints/global_step_xx/actor/``）， 
+2. ``CKPT_PATH_HF`` （Huggingface目标路径，任意路径），以及
 3. ``CKPT_PATH_ORIGINAL_HF`` （初始化训练的基模checkpoint，例如 ``/path/to/DeepSeek-R1-Distill-Qwen-1.5B``） 
 
 **方式二：命令行参数**

@@ -75,13 +75,24 @@ as well as reinforcement learning training examples on real robots.
      </div>
 
       <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/IsaacLab.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/isaaclab.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>RL with IsaacLab Benchmark</b>
+         </a><br>
+         Support IsaacLab+gr00t+PPO training
+       </p>
+     </div>
+  
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/gr00t.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/gr00t.html" target="_blank" style="text-decoration: underline; color: blue;">
           <b>RL on GR00T-N1.5 Model</b>
          </a><br>
-         RL training on cross-embodiment dual system model.
+         Support GR00T-N1.5 RL fine-tuning.
        </p>
      </div>
    </div>
@@ -235,7 +246,8 @@ Thanks to this decoupled design, workers can be flexibly and dynamically schedul
    libero
    behavior
    metaworld
+   isaaclab
    pi0
+   gr00t
    reasoning
    coding_online_rl
-   gr00t

@@ -25,7 +25,7 @@ from torch.distributed.fsdp import (
 )
 from torch.optim import Optimizer
 
-from rlinf.config import torch_dtype_from_precision
+from rlinf.config import SupportedModel, torch_dtype_from_precision
 from rlinf.hybrid_engines.fsdp import FSDP
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
 from rlinf.hybrid_engines.fsdp.utils import (
@@ -35,7 +35,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
     get_sharding_strategy,
     init_fn,
 )
-from rlinf.utils.utils import clear_memory, is_vla_model
+from rlinf.utils.utils import clear_memory
 
 
 class FSDPStrategy(FSDPStrategyBase):
@@ -69,7 +69,8 @@ class FSDPStrategy(FSDPStrategyBase):
             module=model,
             config=None,
             is_lora=self.cfg.model.is_lora,
-            is_vla_model=is_vla_model(self.cfg),
+            is_openvla_model=SupportedModel(self.cfg.model.model_type)
+            in [SupportedModel.OPENVLA, SupportedModel.OPENVLA_OFT],
         )
 
         backward_prefetch = get_backward_prefetch_strategy(

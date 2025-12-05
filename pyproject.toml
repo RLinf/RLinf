@@ -51,9 +51,11 @@ dependencies = [
     "pre-commit",
     "liger_kernel",
     "pip",
+    "icmplib",
+    "pyrealsense2",
 
     # Logging
-    "swanlab",
+    "swanlab>=0.6.11",
     "tensorboard",
 ]
 
@@ -73,9 +75,7 @@ embodied = [
     "peft==0.11.1",
     "timm==0.9.10",
     "sapien==3.0.1;platform_system=='Linux'",
-    "mani_skill @ git+https://github.com/haosulab/ManiSkill.git",
     "tensordict",
-    "libero @ git+https://github.com/RLinf/LIBERO.git",
     "imageio[ffmpeg]",
     "robosuite==1.4.1",
     "bddl",
@@ -109,7 +109,7 @@ target-version = "py311"
 
 [tool.ruff.lint]
 isort = {known-first-party = ["rlinf"]}
-select = ["C", "E", "F", "I", "W", "CPY001", "RUF013", "UP006", "PERF102", "PLC1802", "PLC0208", "D", "RUF002"]
+select = ["C", "E", "F", "I", "W", "CPY001", "RUF013", "UP006", "PERF102", "PLC1802", "PLC0208", "D", "RUF002", "DOC102", "DOC202", "DOC403", "DOC502"]
 ignore = [
     "C901", # "complex-structure"
     "E501", # "line-too-long"

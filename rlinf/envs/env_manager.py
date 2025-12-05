@@ -15,12 +15,14 @@
 import ctypes
 import gc
 import os
+import pkgutil
 import subprocess
 import sys
 from typing import Optional
 
 import torch
 import torch.multiprocessing as mp
+from omegaconf import DictConfig
 
 
 def force_gc_tensor(tensor):
@@ -157,11 +159,35 @@ def recursive_to_own(obj):
 
 
 class EnvManager:
+    """Manager for environment, supports offloading to separate process."""
+
+    ENV_IMPORTER_REGISTRY = {}
+
     def __init__(
-        self, cfg, rank, seed_offset, total_num_processes, env_cls, enable_offload=False
+        self,
+        cfg: DictConfig,
+        rank: int,
+        num_envs: int,
+        seed_offset: int,
+        total_num_processes: int,
+        env_type: str,
+        is_eval: bool,
+        enable_offload: bool = False,
     ):
-        self.cfg = cfg
+        """Initialize EnvManager.
+
+        Args:
+            cfg (DictConfig): Full configuration dict.
+            rank (int): Rank of the current process.
+            seed_offset (int): Seed offset for randomness.
+            total_num_processes (int): Total number of processes.
+            env_type (str): Environment class type.
+            is_eval (bool): Whether the environment is for evaluation.
+            enable_offload (bool): Whether to offload environment to a separate process.
+        """
+        self.cfg = cfg.env.train if not is_eval else cfg.env.eval
         self.rank = rank
+        self.num_envs = num_envs
         self.seed_offset = seed_offset
         self.total_num_processes = total_num_processes
         self.process: Optional[mp.Process] = None
@@ -169,24 +195,70 @@ class EnvManager:
         self.result_queue: Optional[mp.Queue] = None
         self.state_buffer: Optional[bytes] = None
 
-        if enable_offload:
-            import importlib
+        self.import_envs()
+        assert env_type in self.ENV_IMPORTER_REGISTRY, (
+            f"Environment type '{env_type}' not registered. Please make sure it's implemented and its importer is registered via EnvManager.register_env in the environment's __init__.py"
+        )
+        env_classes = self.ENV_IMPORTER_REGISTRY[env_type](self.cfg)
+        if isinstance(env_classes, tuple):
+            env_train_cls, env_eval_cls = env_classes
+        else:
+            env_train_cls = env_eval_cls = env_classes
 
-            class_name = env_cls.__name__
-            offload_module = importlib.import_module("rlinf.envs.offload_wrapper")
-            if hasattr(offload_module, class_name):
-                offload_env_cls = getattr(offload_module, class_name)
-                self.env_cls = offload_env_cls
-            else:
-                raise RuntimeError(
-                    f"Environment class {class_name} does not support offload"
-                )
+        env_cls = env_eval_cls if is_eval else env_train_cls
+
+        if enable_offload:
+            from rlinf.envs.offload_wrapper import get_offload_env
+
+            self.env_cls = get_offload_env(env_type)
             self.env = None
         else:
             self.env_cls = env_cls
-            self.env = self.env_cls(cfg, seed_offset, total_num_processes)
+            self.env = self.env_cls(
+                self.cfg, num_envs, seed_offset, total_num_processes
+            )
 
-    def start_simulator(self):
+    @classmethod
+    def register_env(cls, env_name: str):
+        """Register an environment class.
+
+        This is a decorator to register environment class.
+        To register an environment, add the following code in the environment's __init__.py:
+
+        @EnvManager.register_env("MyEnv")
+        def get_env_cls(env_cfg):
+            from my_env_module import MyEnv
+
+            return MyEnv
+
+        Here "MyEnv" is the name used to register the environment, which should match the simulator/env_type set in the configuration.
+
+        The function accepts a single argument `env_cfg`, which is the configuration for the environment.
+
+        The function must return the environment class.
+        If the environment has separate classes for training and evaluation, the function should return a tuple of (TrainEnvClass, EvalEnvClass).
+
+        Args:
+            env_name (str): Name of the environment.
+        """
+
+        def decorator(env_importer):
+            cls.ENV_IMPORTER_REGISTRY[env_name] = env_importer
+            return env_importer
+
+        return decorator
+
+    @classmethod
+    def import_envs(cls):
+        """Import all registered environments to ensure they are registered."""
+        # Iterate through all submodules in the current package
+        package = os.path.dirname(__file__)
+        for _, module_name, is_pkg in pkgutil.iter_modules([package]):
+            if is_pkg and module_name:
+                full_module_name = f"{__package__}.{module_name}"
+                __import__(full_module_name)
+
+    def start_env(self):
         """Start simulator process with shared memory queues"""
         if self.env is not None:
             return
@@ -205,6 +277,7 @@ class EnvManager:
             args=(
                 self.cfg,
                 self.rank,
+                self.num_envs,
                 self.seed_offset,
                 self.total_num_processes,
                 self.env_cls,
@@ -221,7 +294,7 @@ class EnvManager:
         if result["status"] != "ready":
             raise RuntimeError(f"Simulator initialization failed: {result}")
 
-    def stop_simulator(self):
+    def stop_env(self):
         if self.env is not None:
             return
 
@@ -281,6 +354,7 @@ class EnvManager:
         if name in [
             "cfg",
             "rank",
+            "num_envs",
             "seed_offset",
             "total_num_processes",
             "process",
@@ -326,6 +400,7 @@ class EnvManager:
 def _simulator_worker(
     cfg,
     rank,
+    num_envs,
     seed_offset,
     total_num_processes,
     env_cls,
@@ -346,7 +421,7 @@ def _simulator_worker(
     omegaconf_register()
 
     try:
-        simulator = env_cls(cfg, seed_offset, total_num_processes)
+        simulator = env_cls(cfg, num_envs, seed_offset, total_num_processes)
         assert isinstance(simulator, EnvOffloadMixin), (
             f"Environment class {env_cls.__name__} must inherit from EnvOffloadMixin"
         )

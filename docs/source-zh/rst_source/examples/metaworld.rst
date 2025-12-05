@@ -1,5 +1,5 @@
 基于MetaWorld模拟器的强化学习训练
-==============================
+==================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -61,9 +61,13 @@
 依赖安装
 -----------
 
-如果您使用的是 Docker 镜像，请通过 `docker pull` 拉取最新镜像以获取所需的依赖项。
+MetaWorld 目前仅支持 `openpi`。请确保您已按照 :doc:`安装指南 <../start/installation>` 安装了所需的依赖项。
 
-如果您已经手动安装了uv虚拟环境，请运行 `uv pip install metaworld` 来安装 MetaWorld 包及其依赖项。
+然后，使用以下命令安装 MetaWorld：
+
+.. code:: bash
+
+   uv pip install metaworld==3.0.0
 
 
 模型下载

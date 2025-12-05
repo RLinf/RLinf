@@ -40,11 +40,11 @@ class SchedulerWorker(Worker):
         super().__init__()
         self.cfg = config
         self.component_placement = component_placement
-        self.components = self.component_placement._components
+        self.components = self.component_placement.components
         self.workflow = workflow
 
-        assert self.cfg.rollout.rollout_backend == "sglang", (
-            "only sglang is supported for dynamic scheduler"
+        assert self.cfg.rollout.rollout_backend in ["sglang", "vllm"], (
+            "only sglang and vllm are supported for dynamic scheduler"
         )
         assert self.cfg.actor.training_backend == "megatron", (
             "only megatron is supported for dynamic scheduler"

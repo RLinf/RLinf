@@ -5,7 +5,7 @@
 动态调度（Dynamic Scheduling）
 是在训练运行期根据系统各组件（actor / rollout / inference）的实时状态，
 对资源进行秒级动态调整与迁移，以提升整体吞吐与资源利用率的机制。
-它依托于 Megatron-LM 的在线扩缩容能力（秒级扩缩）与 SGLang 的请求迁移功能，
+它依托于 Megatron-LM 的在线扩缩容能力（秒级扩缩）与 SGLang/vLLM 的请求迁移功能，
 在不终止训练的前提下，对集群中的 GPU 资源进行弹性重分配。
 
 什么是动态调度？

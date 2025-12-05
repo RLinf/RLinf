@@ -50,7 +50,9 @@ class SGLangWorker(Worker):
         self._cfg = config
         self._placement = placement
 
-        self._tokenizer = AutoTokenizer.from_pretrained(self._cfg.rollout.model_dir)
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            self._cfg.rollout.model.model_path
+        )
         self._return_logprobs = self._cfg.rollout.return_logprobs
         self._sampling_params = SGLangWorker.get_sampling_param_from_config(self._cfg)
 
@@ -124,7 +126,7 @@ class SGLangWorker(Worker):
         use_cudagraph = not self._cfg.rollout.enforce_eager
 
         server_args = ServerArgs(
-            model_path=self._cfg.rollout.model_dir,
+            model_path=self._cfg.rollout.model.model_path,
             disable_cuda_graph=not use_cudagraph,
             cuda_graph_max_bs=min(
                 self._cfg.rollout.cuda_graph_max_bs,
@@ -140,7 +142,7 @@ class SGLangWorker(Worker):
             ),
             load_format="dummy" if not self._cfg.rollout.validate_weight else "auto",
             # disable_overlap_schedule=True,
-            dtype=torch_dtype_from_precision(self._cfg.rollout.precision),
+            dtype=torch_dtype_from_precision(self._cfg.rollout.model.precision),
             # sglang will only return text/output_ids when skip_tokenizer_init=False/True
             # text is not needed in RL training, so set to True can save time.
             skip_tokenizer_init=not self._cfg.rollout.detokenize,
@@ -303,7 +305,8 @@ class SGLangWorker(Worker):
                         f"exceeding max_new_tokens={self._sampling_params['max_new_tokens']}, "
                         f"it will be truncatured."
                     )
-                    result = copy.deepcopy(seq_group_info.results[idx])
+                    result = seq_group_info.results[idx]
+                    seq_group_info.results[idx] = None
                     result["meta_info"]["finish_reason"]["type"] = "length"
                     seq_group_info.record_sglang_result(idx, result)
                     continue

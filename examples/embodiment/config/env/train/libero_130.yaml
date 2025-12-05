@@ -1,21 +1,20 @@
 simulator_type: libero
 task_suite_name: libero_130
 
-auto_reset: ${algorithm.auto_reset}
-ignore_terminations: ${algorithm.ignore_terminations}
-max_episode_steps: ${algorithm.max_episode_steps}
+total_num_envs: null
+
+auto_reset: False
+ignore_terminations: False
+max_episode_steps: 512
 
 use_rel_reward: True
-reward_coef: ${algorithm.reward_coef}
+reward_coef: 1.0
 only_eval: False
 
 seed: 0
-num_group: ${algorithm.num_group_envs}
-group_size: ${algorithm.group_size}
-use_fixed_reset_state_ids: ${algorithm.use_fixed_reset_state_ids}
-use_wrist_image: ${actor.model.use_wrist_image}
-
-num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
+group_size: 1
+use_fixed_reset_state_ids: True
+use_ordered_reset_state_ids: True
 
 video_cfg:
   save_video: True
@@ -25,5 +24,3 @@ video_cfg:
 init_params:
   camera_heights: 256
   camera_widths: 256
-
-use_ordered_reset_state_ids: ${algorithm.use_ordered_reset_state_ids}

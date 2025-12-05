@@ -32,7 +32,7 @@ def main(cfg) -> None:
     cfg = validate_cfg(cfg)
     cfg.runner.only_eval = True
 
-    cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
+    cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = HybridComponentPlacement(cfg, cluster)
 
     # Create rollout worker group
@@ -46,15 +46,13 @@ def main(cfg) -> None:
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 
-    rollout_group.init_worker().wait()
-    env_group.init_worker().wait()
-
     runner = EmbodiedEvalRunner(
         cfg=cfg,
         rollout=rollout_group,
         env=env_group,
     )
 
+    runner.init_workers()
     runner.run()
 
 

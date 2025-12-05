@@ -146,7 +146,7 @@ class MegatronActor(MegatronModelManager, Worker):
 
         self.kl_beta = self.cfg.algorithm.kl_beta
         self.kl_penalty_type = self.cfg.algorithm.kl_penalty_type
-        self.clip_ratio_c = self.cfg.algorithm.clip_ratio_c
+        self.clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
         if self.cfg.algorithm.loss_agg_func == "token-mean":
             self.loss_agg_func = masked_mean
         elif self.cfg.algorithm.loss_agg_func == "seq-mean-token-sum":
@@ -291,7 +291,7 @@ class MegatronActor(MegatronModelManager, Worker):
         self.ref_policy_state_dict = ref_policy_state_dict
 
         rollout_reshard_config = ReshardConfig(
-            model_arch=self.cfg.rollout.model_arch,
+            model_type=self.cfg.rollout.model.model_type,
             model_config=self.transformer_config,
             reshard_tp_size=self.cfg.rollout.tensor_parallel_size,
             reshard_pp_size=self.cfg.rollout.pipeline_parallel_size,
@@ -304,7 +304,7 @@ class MegatronActor(MegatronModelManager, Worker):
 
         if self.component_placement.has_dedicated_inference:
             inference_reshard_config = ReshardConfig(
-                model_arch=self.cfg.inference.model_arch,
+                model_type=self.cfg.inference.model_type,
                 model_config=self.transformer_config,
                 reshard_weights_format="mcore",
                 reshard_tp_size=self.cfg.inference.model.tensor_model_parallel_size,
@@ -444,6 +444,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     logprobs=curr_logprobs,
                     old_logprobs=prev_logprobs,
                     advantages=advantages,
+                    clip_ratio_c=self.clip_ratio_c,
                     clip_ratio_low=self.clip_ratio_low,
                     clip_ratio_high=self.clip_ratio_high,
                     loss_mask=mask,

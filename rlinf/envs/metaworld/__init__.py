@@ -13,7 +13,15 @@
 # limitations under the License.
 import os
 
-from rlinf.envs.metaworld.utils import load_prompt_from_json
+from ..env_manager import EnvManager
+from .utils import load_prompt_from_json
+
+
+@EnvManager.register_env("metaworld")
+def get_env_cls(env_cfg):
+    from .metaworld_env import MetaWorldEnv
+
+    return MetaWorldEnv
 
 
 class MetaWorldBenchmark:

@@ -1,5 +1,5 @@
 Math推理的强化学习训练
-===================
+=======================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -61,6 +61,7 @@ Math推理的强化学习训练
       apply_chat_template: true
 
   比如说，如果您的数据集使用如下所示的特定结构对话消息，则需启用该选项以正确格式化提示词信息：
+
   .. code-block:: json
 
       {
@@ -94,14 +95,14 @@ Math推理的强化学习训练
 在启动前，检查配置文件。主要字段包括：  
 
 - 集群设置：``cluster.num_nodes`` （节点数）。  
-- 路径：``runner.output_dir`` （保存训练日志与检查点的路径）、``rollout.model_dir`` （基础模型保存路径）、``data.train_data_paths`` （训练数据路径）等。  
+- 路径：``runner.output_dir`` （保存训练日志与检查点的路径）、``rollout.model.model_path`` （基础模型本地路径）、``data.train_data_paths`` （训练数据路径）等。  
 
 **2. 配置文件**
 
 推荐配置示例：  
 
-- ``examples/math/config/qwen2.5-1.5b-grpo-megatron.yaml``  
-- ``examples/math/config/qwen2.5-7b-grpo-megatron.yaml``  
+- ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``  
+- ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``  
 
 **3. 启动命令**
 
@@ -116,7 +117,7 @@ Math推理的强化学习训练
    if [ "$RANK" -eq 0 ]; then
        bash check_ray.sh 128;
        cd /path_to_RLinf;
-       bash examples/math/qwen2.5/run_main_math_grpo_megatron.sh grpo-1.5b-megatron # 修改配置文件
+       bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron # 修改配置文件
    else
      if [ "$RANK" -eq 1 ]; then
          sleep 3m

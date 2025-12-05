@@ -1,0 +1,32 @@
+model_type: "openpi"
+
+# Model path - should be set in specific config files
+model_path: "/path/to/model/openpi"
+
+precision: null
+
+# Action and chunk settings
+num_action_chunks: 10
+action_dim: 7
+
+# LoRA settings
+is_lora: False
+lora_rank: 32
+
+# Training settings
+use_proprio: True
+num_steps: 4
+add_value_head: False
+
+# openpi specific parameters
+openpi:
+  config_name: "pi0_libero"
+  num_images_in_input: 2
+  noise_level: 0.5
+  action_chunk: ${actor.model.num_action_chunks}
+  num_steps: ${actor.model.num_steps}
+  train_expert_only: True
+  action_env_dim: ${actor.model.action_dim}
+  noise_method: "flow_sde"
+  add_value_head: ${actor.model.add_value_head}
+  detach_critic_input: False

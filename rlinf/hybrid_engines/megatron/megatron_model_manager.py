@@ -12,18 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import gc
 import itertools
-import logging
-from typing import Iterator, Optional
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional, Union
 
 import torch
 from omegaconf import DictConfig
+from torch import nn
 
 from rlinf.config import build_config, build_transformer_config
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.utils.flops import FLOPSCalculator, ModelConfig
 from rlinf.utils.initialize import initialize_megatron, set_megatron_args
+from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import clear_memory
 
 from .utils import (
@@ -51,7 +51,7 @@ try:
 
 except (ImportError, ModuleNotFoundError):
     HAVE_MEGATRON_CORE = False
-    raise "import error"
+    raise ImportError("Megatron Core not found")
 try:
     from megatron.legacy.model import Float16Module
 except ImportError:
@@ -80,10 +80,17 @@ except ImportError:
 
 HAVE_TE = HAVE_TE and HAVE_TE_MODULE
 
-logging.getLogger().setLevel(logging.INFO)
+if TYPE_CHECKING:
+    from megatron.core.optimizer.optimizer import MegatronOptimizer
+    from megatron.core.transformer.spec_utils import ModuleSpec
+    from megatron.core.transformer.transformer_config import TransformerConfig
 
 
-def get_specs(spec_name, transformer_config=None, use_te=False):
+def get_specs(
+    spec_name: str,
+    transformer_config: Optional["TransformerConfig"] = None,
+    use_te: bool = False,
+) -> "ModuleSpec":
     if use_te and spec_name == "":
         spec_name = "te_gpt"
 
@@ -111,7 +118,9 @@ class MegatronModelManager:
 
     def __init__(self, cfg: DictConfig):
         if not HAVE_MEGATRON_CORE:
-            raise "Megatron-core was not found. Please see the RLinf README for installation instructions."
+            raise ImportError(
+                "Megatron-core was not found. Please see the RLinf README for installation instructions."
+            )
 
         self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
 
@@ -123,9 +132,10 @@ class MegatronModelManager:
         self.mcore_gpt = cfg.mcore_gpt
         self.spec_name = cfg.spec_name
         self.distributed_adam_offload_manager = None
+        self._logger = get_logger()
 
         if torch.distributed.get_rank() == 0:
-            logging.info(f"{self.transformer_config}")
+            self._logger.info(f"{self.transformer_config}")
 
         self.checkpoint_context = self._get_checkpoint_context()
 
@@ -138,7 +148,9 @@ class MegatronModelManager:
         # In AUTO mode, the actor will occupy all GPUs for initialization, but not all Megatron processes will be in the running state.
         self.is_running = True
 
-    def setup_model_and_optimizer(self, model_type=ModelType.encoder_or_decoder):
+    def setup_model_and_optimizer(
+        self, model_type: "ModelType" = ModelType.encoder_or_decoder
+    ) -> None:
         """Setup model and optimizer."""
         set_megatron_args(self._cfg)
 
@@ -148,7 +160,7 @@ class MegatronModelManager:
             checkpointing_context=self.checkpoint_context,
         )
 
-    def model_provider_func(self, pre_process, post_process):
+    def model_provider_func(self, pre_process: bool, post_process: bool) -> nn.Module:
         """Model depends on pipeline paralellism."""
         use_te = HAVE_TE
 
@@ -187,7 +199,7 @@ class MegatronModelManager:
             )
         return model
 
-    def optimizer_step(self, increment):
+    def optimizer_step(self, increment: bool) -> tuple[bool, float, int, float]:
         success, grad_norm, num_zeros_in_grad = self.optimizer.step()
 
         self.lr_scheduler.step(increment=increment)
@@ -196,7 +208,7 @@ class MegatronModelManager:
 
         return success, grad_norm, num_zeros_in_grad, lr
 
-    def padding_to_max(self, chain_iterator):
+    def padding_to_max(self, chain_iterator: Iterator) -> Iterator:
         microbatches = list(chain_iterator)
         max_batch_seqlen = 0
 
@@ -244,7 +256,7 @@ class MegatronModelManager:
         import copy
 
         if vpp_size > 1:
-            batch_generator = batch_generator = [
+            batch_generator = [
                 copy.deepcopy(data_iterator) for _ in range(vpp_size)
             ]  # number of vpp chunks
             batch_generator = [iter(b) for b in batch_generator]
@@ -253,7 +265,7 @@ class MegatronModelManager:
             batch_generator = iter(data_iterator)
         return batch_generator
 
-    def _get_checkpoint_context(self):
+    def _get_checkpoint_context(self) -> dict[str, Any]:
         if self._cfg.megatron.non_persistent_ckpt_type == "local":
             try:
                 from nvidia_resiliency_ext.checkpointing.local.ckpt_managers.local_manager import (  # type: ignore
@@ -287,12 +299,15 @@ class MegatronModelManager:
         return checkpointing_context
 
     def save_checkpoint(
-        self, checkpoint_save_path, step, num_floating_point_operations_so_far=0
-    ):
+        self,
+        save_path: str,
+        step: int,
+        num_floating_point_operations_so_far: int = 0,
+    ) -> None:
         if not self.is_running:
             return
         args = get_args()
-        args.save = checkpoint_save_path
+        args.save = save_path
         save_checkpoint(
             iteration=step,
             model=self.model,
@@ -303,9 +318,9 @@ class MegatronModelManager:
             preprocess_common_state_dict_fn=preprocess_common_state_dict,
         )
 
-    def load_checkpoint(self, checkpoint_load_path):
+    def load_checkpoint(self, load_path):
         args = get_args()
-        args.load = checkpoint_load_path
+        args.load = load_path
         load_checkpoint(
             self.model,
             self.optimizer,
@@ -313,7 +328,9 @@ class MegatronModelManager:
             checkpointing_context=self.checkpoint_context,
         )
 
-    def load_state_dict(self, state_dict, strict=True):
+    def load_state_dict(
+        self, state_dict: dict[str, torch.Tensor], strict: bool = True
+    ) -> None:
         if len(self.model) == 1:
             self.model[0].load_state_dict(state_dict, strict=strict)
         else:
@@ -321,7 +338,7 @@ class MegatronModelManager:
                 parallel_state.set_virtual_pipeline_model_parallel_rank(i)
                 self.model[i].load_state_dict(state_dict["model%d" % i], strict=strict)
 
-    def get_model_module_list(self):
+    def get_model_module_list(self) -> list[torch.nn.Module]:
         def extract_module(model):
             if isinstance(model, (DDP, MCoreFloat16Module, Float16Module)):
                 return extract_module(model.module)
@@ -335,18 +352,18 @@ class MegatronModelManager:
 
     @staticmethod
     def custom_forward(
-        model,
-        input_ids,
-        attention_mask,
-        position_ids,
-        sequence_parallel,
-        value_model=False,
-        pack_seqs=True,
-        logits_processor=None,
-        logits_processor_args: Optional[dict] = None,
+        model: nn.Module,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        position_ids: torch.Tensor,
+        sequence_parallel: bool,
+        value_model: bool = False,
+        pack_seqs: bool = True,
+        logits_processor: Optional[Callable] = None,
+        logits_processor_args: Optional[dict[str, Any]] = None,
         temperature: float = 1.0,
         max_batch_seqlen: int = 4096,
-    ):
+    ) -> Union[torch.Tensor, dict[str, torch.Tensor]]:
         """Default forward pass for GPT models with optional sequence packing."""
         pre_process = unwrap_model(model).pre_process
         post_process = unwrap_model(model).post_process
@@ -417,7 +434,86 @@ class MegatronModelManager:
             output = output[..., 0]
         return output
 
-    def offload_model_weights_and_grad(self, offload_grad=True, offload_weight=True):
+    def _get_pinned_buffer(
+        self,
+        tensor: torch.Tensor,
+        holder: Optional[Any] = None,
+        attr_name: str = "cpu_data",
+    ) -> torch.Tensor:
+        """
+        Get or create a pinned CPU buffer for the given tensor.
+        Creates a pinned memory buffer on first call and caches it as `attr_name` on `holder`.
+        Subsequent calls return the cached buffer for efficient DMA transfers.
+
+        Args:
+            tensor: The GPU tensor to create a pinned buffer for.
+            holder: The object to attach the pinned buffer to. If None, attaches to `tensor`.
+            attr_name: The attribute name to use for caching the buffer.
+
+        Returns:
+            A pinned CPU tensor with the same size, dtype, and layout as the input.
+        """
+        if holder is None:
+            holder = tensor
+
+        try:
+            needed_size = tensor.untyped_storage().size()
+            tensor_size = tensor.size()
+            tensor_dtype = tensor.dtype
+            tensor_layout = tensor.layout
+        except RuntimeError as e:
+            error_msg = str(e).lower()
+            if "cuda" in error_msg or "invalid" in error_msg:
+                self._logger.error(
+                    f"Failed to access tensor properties in _get_pinned_buffer. "
+                    f"Tensor device: {tensor.device if hasattr(tensor, 'device') else 'unknown'}, "
+                    f"CUDA available: {torch.cuda.is_available()}, Error: {e}"
+                )
+            raise RuntimeError(
+                f"Failed to access tensor properties (possible CUDA context issue): {e}"
+            ) from e
+
+        if (
+            not hasattr(holder, attr_name)
+            or getattr(holder, attr_name) is None
+            or getattr(holder, attr_name).untyped_storage().size() < needed_size
+        ):
+            try:
+                setattr(
+                    holder,
+                    attr_name,
+                    torch.empty(
+                        tensor_size,
+                        dtype=tensor_dtype,
+                        layout=tensor_layout,
+                        pin_memory=True,
+                        device="cpu",
+                    ),
+                )
+            except RuntimeError as e:
+                self._logger.error(
+                    f"Failed to create pinned buffer. "
+                    f"Size: {tensor_size}, dtype: {tensor_dtype}, "
+                    f"CUDA available: {torch.cuda.is_available()}, Error: {e}"
+                )
+                raise RuntimeError(
+                    f"Failed to create pinned buffer (Size: {tensor_size}, dtype: {tensor_dtype}): {e}"
+                ) from e
+        return getattr(holder, attr_name)
+
+    def offload_model_weights_and_grad(
+        self, offload_grad: bool = True, offload_weight: bool = True
+    ) -> None:
+        """
+        Offload model weights and gradients to pinned CPU memory.
+        It creates pinned CPU buffers for weights and gradients if not already present,
+        copies the data to these buffers, and then resizes the GPU tensors to free memory.
+
+        Args:
+            offload_grad: Whether to offload gradients to CPU.
+            offload_weight: Whether to offload weights to CPU.
+        """
+        buffers_to_resize = []
         for model_idx, model_chunk in enumerate(self.model):
             if isinstance(model_chunk, DDP):
                 for buffer_idx, buffer in enumerate(model_chunk.buffers):
@@ -427,17 +523,11 @@ class MegatronModelManager:
                     ):
                         param_size = buffer.param_data.untyped_storage().size()
 
-                        buffer.param_data.cpu_data = (
-                            buffer.param_data.data.cpu().pin_memory()
-                        )
+                        cpu_data = self._get_pinned_buffer(buffer.param_data)
+                        cpu_data.copy_(buffer.param_data, non_blocking=True)
+
                         buffer.param_data_size = param_size
-
-                        buffer.param_data.untyped_storage().resize_(0)
-
-                        assert (
-                            buffer.param_data_size
-                            == buffer.param_data.cpu_data.untyped_storage().size()
-                        )
+                        buffers_to_resize.append(buffer.param_data)
 
                     if offload_grad and buffer.grad_data.untyped_storage().size() > 0:
                         grad_size = buffer.grad_data.untyped_storage().size()
@@ -447,17 +537,36 @@ class MegatronModelManager:
             else:
                 for param_name, param in model_chunk.named_parameters():
                     if offload_weight and param.data is not None:
-                        param.data = param.data.to("cpu", non_blocking=True)
+                        cpu_data = self._get_pinned_buffer(param)
+                        cpu_data.copy_(param.data, non_blocking=True)
+                        param.data = cpu_data
 
                     if offload_grad and param.grad is not None:
-                        param.grad = param.grad.to("cpu", non_blocking=True)
+                        # For gradients, we attach the pinned buffer to the param object
+                        # because param.grad tensor might be recreated by autograd
+                        cpu_grad_data = self._get_pinned_buffer(
+                            param.grad, holder=param, attr_name="cpu_grad_data"
+                        )
+                        cpu_grad_data.copy_(param.grad, non_blocking=True)
+                        param.grad = cpu_grad_data
+
+        if buffers_to_resize:
+            torch.cuda.synchronize()
+            for tensor in buffers_to_resize:
+                tensor.untyped_storage().resize_(0)
 
         # clear memory
         clear_memory()
 
-    def onload_model_weights_and_grad(self, load_grad=True):
-        gc.collect()
-        torch.cuda.empty_cache()
+    def onload_model_weights_and_grad(self, load_grad: bool = True) -> None:
+        """
+        Load model weights and gradients from pinned CPU memory back to GPU.
+        It resizes the GPU tensors and copies data from the pinned CPU buffers.
+        If `load_grad` is True, gradients are also loaded back to GPU.
+
+        Args:
+            load_grad: Whether to load gradients back to GPU.
+        """
         for model_chunk in self.model:
             if isinstance(model_chunk, DDP):
                 for buffer in model_chunk.buffers:
@@ -473,9 +582,10 @@ class MegatronModelManager:
                             buffer.param_data_size
                         )
                         # copy data from cpu to cuda
-                        buffer.param_data.copy_(
-                            buffer.param_data.cpu_data, non_blocking=True
-                        )
+                        if hasattr(buffer.param_data, "cpu_data"):
+                            buffer.param_data.copy_(
+                                buffer.param_data.cpu_data, non_blocking=True
+                            )
             else:
                 device_id = torch.cuda.current_device()
                 for _, param in model_chunk.named_parameters():
@@ -484,13 +594,20 @@ class MegatronModelManager:
                         param.grad = param.grad.to(device_id, non_blocking=True)
         clear_memory()
 
-    def offload_megatron_copy_params(self, optimizers):
+    def offload_megatron_copy_params(
+        self,
+        optimizers: "MegatronOptimizer",
+        tensors_to_resize: Optional[list[torch.Tensor]] = None,
+    ) -> None:
         """
         Offload optimizer parameters to CPU. Supports both Megatron optimizers
         and `ChainedOptimizer`, which wraps a list of underlying optimizers.
 
         Args:
-            optimizers: The optimizer or ChainedOptimizer instance.
+            optimizers: The MegatronOptimizer and its underlying optimizers like ChainedOptimizer.
+            tensors_to_resize: Optional list to collect tensors for later resizing.
+                If provided, tensors will be appended to this list instead of
+                resizing immediately.
         """
 
         def _iter_opts(opt):
@@ -501,7 +618,13 @@ class MegatronModelManager:
         def offload_tensor_to_cpu(tensor):
             if tensor is None:
                 return
-            tensor.data = tensor.data.to("cpu", non_blocking=True)
+            cpu_data = self._get_pinned_buffer(tensor)
+            cpu_data.copy_(tensor.data, non_blocking=True)
+            if tensors_to_resize is not None:
+                tensors_to_resize.append(tensor)
+            else:
+                torch.cuda.synchronize()
+                tensor.untyped_storage().resize_(0)
 
         def offload_group_to_cpu(group):
             if group is None:
@@ -523,7 +646,7 @@ class MegatronModelManager:
             if hasattr(_opt, "shard_fp32_from_float16_groups"):
                 offload_group_to_cpu(_opt.shard_fp32_from_float16_groups)
 
-    def load_megatron_copy_params(self, optimizers):
+    def load_megatron_copy_params(self, optimizers: "MegatronOptimizer") -> None:
         """
         Load optimizer parameters back to GPU. Handles ChainedOptimizer.
 
@@ -531,18 +654,24 @@ class MegatronModelManager:
             optimizers: Optimizer or ChainedOptimizer instance.
         """
 
-        def _iter_opts(opt):
+        def _iter_opts(opt) -> list["MegatronOptimizer"]:
             if isinstance(opt, ChainedOptimizer):
                 return opt.chained_optimizers
             return [opt]
 
-        def load_tensor_to_gpu(tensor):
+        def load_tensor_to_gpu(tensor: torch.Tensor) -> None:
             if tensor is None:
                 return
-            device_id = torch.cuda.current_device()
-            tensor.data = tensor.data.to(device_id, non_blocking=True)
+            if hasattr(tensor, "cpu_data"):
+                tensor.untyped_storage().resize_(
+                    tensor.cpu_data.untyped_storage().size()
+                )
+                tensor.copy_(tensor.cpu_data, non_blocking=True)
+            else:
+                device_id = torch.cuda.current_device()
+                tensor.data = tensor.data.to(device_id, non_blocking=True)
 
-        def load_group_to_gpu(group):
+        def load_group_to_gpu(group: Optional[list[torch.Tensor]]) -> None:
             if group is None:
                 return
 
@@ -562,41 +691,74 @@ class MegatronModelManager:
             if hasattr(_opt, "shard_fp32_from_float16_groups"):
                 load_group_to_gpu(_opt.shard_fp32_from_float16_groups)
 
-    def offload_megatron_optimizer(self):
-        def _iter_opts(opt):
+    def offload_megatron_optimizer(self) -> None:
+        """
+        Offload optimizer parameters to CPU.
+        For each tensor in the optimizer state, it creates a pinned CPU buffer if not already present,
+        copies the data to this buffer, and then resizes the tensor's storage to zero to free GPU memory.
+        """
+
+        def _iter_opts(opt: "MegatronOptimizer") -> list["MegatronOptimizer"]:
             if isinstance(opt, ChainedOptimizer):
                 return opt.chained_optimizers
             return [opt]
 
+        tensors_to_resize = []
         for _opt in _iter_opts(self.optimizer):
-            self.offload_megatron_copy_params(_opt)
+            self.offload_megatron_copy_params(_opt, tensors_to_resize)
             for v in _opt.optimizer.state.values():
                 # Offloading through resetting the storage size can ensure that the tensor can be offloaded correctly even when it has tensor views.
                 if "exp_avg" in v:
                     buffer = v["exp_avg"]
-                    buffer.cpu_data = buffer.data.cpu().pin_memory()
-                    buffer.storage().resize_(0)
+                    cpu_data = self._get_pinned_buffer(buffer)
+                    cpu_data.copy_(buffer.data, non_blocking=True)
+                    tensors_to_resize.append(buffer)
                 if "exp_avg_sq" in v:
                     buffer = v["exp_avg_sq"]
-                    buffer.cpu_data = buffer.data.cpu().pin_memory()
-                    buffer.storage().resize_(0)
+                    cpu_data = self._get_pinned_buffer(buffer)
+                    cpu_data.copy_(buffer.data, non_blocking=True)
+                    tensors_to_resize.append(buffer)
+
+        if tensors_to_resize:
+            torch.cuda.synchronize()
+            for tensor in tensors_to_resize:
+                tensor.untyped_storage().resize_(0)
         clear_memory()
 
-    def onload_megatron_optimizer(self):
-        def _iter_opts(opt):
+    def onload_megatron_optimizer(self) -> None:
+        """
+        Load optimizer parameters back to GPU. Handles ChainedOptimizer. In more detail,
+        for each tensor in the optimizer state, if it has a pinned CPU buffer attached as `cpu_data`,
+        it resizes the tensor's storage to match the CPU buffer size and copies the data back to GPU.
+        If no such buffer exists and the tensor is on CPU, it transfers the tensor to the current GPU device.
+        """
+
+        def _iter_opts(opt: "MegatronOptimizer") -> list["MegatronOptimizer"]:
             if isinstance(opt, ChainedOptimizer):
                 return opt.chained_optimizers
             return [opt]
 
+        current_device = torch.cuda.current_device()
         for _opt in _iter_opts(self.optimizer):
             self.load_megatron_copy_params(_opt)
             for v in _opt.optimizer.state.values():
                 if "exp_avg" in v:
-                    v["exp_avg"].data = v["exp_avg"].cpu_data.to(
-                        torch.cuda.current_device(), non_blocking=True
-                    )
+                    tensor = v["exp_avg"]
+                    if hasattr(tensor, "cpu_data"):
+                        tensor.untyped_storage().resize_(
+                            tensor.cpu_data.untyped_storage().size()
+                        )
+                        tensor.copy_(tensor.cpu_data, non_blocking=True)
+                    elif tensor.device.type == "cpu":
+                        v["exp_avg"] = tensor.to(current_device, non_blocking=True)
+
                 if "exp_avg_sq" in v:
-                    v["exp_avg_sq"].data = v["exp_avg_sq"].cpu_data.to(
-                        torch.cuda.current_device(), non_blocking=True
-                    )
+                    tensor = v["exp_avg_sq"]
+                    if hasattr(tensor, "cpu_data"):
+                        tensor.untyped_storage().resize_(
+                            tensor.cpu_data.untyped_storage().size()
+                        )
+                        tensor.copy_(tensor.cpu_data, non_blocking=True)
+                    elif tensor.device.type == "cpu":
+                        v["exp_avg_sq"] = tensor.to(current_device, non_blocking=True)
         clear_memory()

@@ -61,10 +61,13 @@ Algorithm
 Dependency Installation
 -----------------------
 
-If you are using the Docker image, please pull the latest image via `docker pull` to get the required dependencies.
+MetaWorld is currently only supported for `openpi`. Make sure you have installed the required dependencies as per the :doc:`installation guide <../start/installation>`.
 
-If you have set up the environment manually, please run `uv pip install metaworld` to install the MetaWorld package along with its dependencies.
+Then, install MetaWorld with:
 
+.. code:: bash
+
+   uv pip install metaworld==3.0.0
 
 Model Download
 --------------

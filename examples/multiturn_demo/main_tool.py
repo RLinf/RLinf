@@ -43,7 +43,7 @@ def main(cfg) -> None:
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
-    cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
+    cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = ModelParallelComponentPlacement(cfg, cluster)
 
     # Generator group
@@ -58,12 +58,12 @@ def main(cfg) -> None:
     # AgentLoop group.
     agentloop_placement_strategy = NodePlacementStrategy(
         [
-            placement.node_id
+            placement.cluster_node_rank
             for placement in rollout_placement_strategy.get_placement(cluster)
         ]
     )
     assert (
-        len(agentloop_placement_strategy._node_ids)
+        len(agentloop_placement_strategy._node_ranks)
         == component_placement.rollout_dp_size
     ), "agentloop worker num now should be equal to rollout dp size"
     agentloop_group = ToolAgentLoopWorker.create_group(cfg, component_placement).launch(

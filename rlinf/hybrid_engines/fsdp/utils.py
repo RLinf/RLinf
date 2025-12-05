@@ -91,7 +91,7 @@ def get_init_weight_context_manager(use_meta_tensor=True):
     return init_context
 
 
-def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_vla_model=False):
+def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_openvla_model=False):
     """
     FSDP wrap policy that handles both standard transformer models and VLA models.
 
@@ -128,8 +128,8 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_vla_model=False)
     # Build policies list
     policies = []
 
-    # Add vision transformer policies for VLA models
-    if is_vla_model:
+    # Add vision transformer policies for OpenVLA models
+    if is_openvla_model:
         from prismatic.extern.hf.modeling_prismatic import PrismaticProjector
         from timm.models.vision_transformer import VisionTransformer
 
@@ -221,7 +221,10 @@ def apply_fsdp2_to_model(
     Args:
         module: The model to be sharded
         config: Configuration dictionary
-        fsdp_kwargs: FSDP2 parameters
+        device_mesh: The device mesh to use for sharding
+        mp_policy: Mixed precision policy
+        offload_policy: CPU offload policy
+        reshard_after_forward: Whether to reshard after forward pass
 
     Returns:
         The sharded model
@@ -310,7 +313,6 @@ def get_lr_scheduler(
     optimizer: Optimizer,
     num_warmup_steps: int,
     num_training_steps: int,
-    min_lr_ratio: float = 0.0,
     num_cycles: float = 0.5,
     last_epoch: int = -1,
 ):
@@ -330,7 +332,6 @@ def get_lr_scheduler(
             optimizer=optimizer,
             num_warmup_steps=num_warmup_steps,
             num_training_steps=num_training_steps,
-            min_lr_ratio=min_lr_ratio,
             num_cycles=num_cycles,
         )
     else:
@@ -418,6 +419,12 @@ def get_grad_norm(
 
     # Norm parameters.
     norm_type = float(norm_type)
+
+    # If there are no gradients to norm (e.g., no trainable params or all grads are None),
+    # directly return 0.0 to avoid constructing tensors or calling .cuda() on a float.
+    if len(grads_for_norm) == 0:
+        return 0.0
+
     total_norm = 0.0
 
     # Calculate norm.
@@ -434,11 +441,21 @@ def get_grad_norm(
         total_norm = total_norm_cuda[0].item()
 
     else:
+        # Accumulate p-norm over all gradients.
         for grad in grads_for_norm:
             grad_norm = torch.norm(grad, norm_type)
             total_norm += grad_norm**norm_type
 
-        total_norm = total_norm.cuda()  # type: ignore
+        # Ensure total_norm is a tensor on CUDA before all_reduce.
+        if not isinstance(total_norm, torch.Tensor):
+            total_norm = torch.tensor(
+                float(total_norm),
+                dtype=torch.float,
+                device=grads_for_norm[0].device,
+            )
+        else:
+            total_norm = total_norm.to(device=grads_for_norm[0].device)
+
         # Sum across all data-parallel GPUs if using FSDP and then all model-parallel GPUs.
         if dp_group is not None:
             torch.distributed.all_reduce(
@@ -446,7 +463,7 @@ def get_grad_norm(
             )
         total_norm = total_norm.item() ** (1.0 / norm_type)  # type: ignore
 
-    return total_norm
+    return float(total_norm)
 
 
 def get_sharding_strategy(strategy_str: str) -> ShardingStrategy:

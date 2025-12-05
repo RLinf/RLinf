@@ -6,7 +6,7 @@ reinforcement-learning pipeline. For the current release **SGLang and vLLM** is 
 
 .. note::
 
-   RLinf is compatible with **SGLang 0.4.4 → 0.4.9**, **vLLM 0.8.5  → 0.8.5.post1**.  
+   RLinf is compatible with **SGLang 0.4.4 → 0.5.2**, **vLLM 0.8.5  → 0.8.5.post1**.  
    No manual patching is required – the framework detects the installed
    version and loads the matching shim automatically.
 
@@ -35,7 +35,7 @@ Install via pip
    pip install sglang==0.4.8
 
    # Latest supported
-   pip install sglang==0.4.9
+   pip install sglang==0.5.2
 
    # Install vLLM
    pip install vllm==0.8.5
@@ -72,8 +72,9 @@ Install from Source
 
         gpu_memory_utilization: 0.55 # SGLang's parameter, which decides how much vram is used for static memory pool
 
-        model_dir: /model/path # model path
-        model_arch: qwen2.5 # model arch
+        model:
+           model_path: /model/path # model path
+           model_type: qwen2.5 # model type
         enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
         distributed_executor_backend: mp   # ray or mp
         disable_log_stats: False     # if true will log sglang's output
@@ -106,43 +107,3 @@ Install from Source
         cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
 
     ...
-
-
-Internal Version Routing
-------------------------
-
-Directory layout::
-
-   rlinf/hybrid_engines/sglang/
-   ├── __init__.py               # Version detection and routing
-   ├── sglang_worker.py          # Main worker implementation
-   ├── sglang_0_4_4/             # SGLang 0.4.4 specific implementation
-   │   ├── __init__.py
-   │   ├── io_struct.py          # I/O structures for 0.4.4
-   │   ├── sgl_engine.py         # Engine implementation for 0.4.4
-   │   ├── sgl_scheduler.py      # Scheduler for 0.4.4
-   │   └── tokenizer_manager.py  # Tokenizer management for 0.4.4
-   └── sglang_0_4_x/             # Future version implementations
-       └── ...
-
-The loader in ``__init__.py`` resolves the installed package:
-
-.. code-block:: python
-
-   from importlib.metadata import PackageNotFoundError, version
-
-   def get_version(pkg):
-       try:
-           return version(pkg)
-       except PackageNotFoundError:
-           return None
-
-   package_name = "sglang"
-   package_version = get_version(package_name)
-   
-   if package_version == "0.4.4":
-       sglang_version = "0.4.4"
-       from .sglang_0_4_4 import io_struct
-       from .sglang_0_4_4.sgl_engine import Engine
-   else:
-       raise ValueError(f"sglang version {package_version} not supported")

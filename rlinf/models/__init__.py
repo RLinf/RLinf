@@ -24,11 +24,12 @@ from transformers import (
     AutoTokenizer,
 )
 
-from rlinf.config import torch_dtype_from_precision
+from rlinf.config import SupportedModel, get_supported_model, torch_dtype_from_precision
 
 
 def get_vla_model_config_and_processor(cfg: DictConfig):
-    if cfg.model.model_name == "openvla":
+    model_type = get_supported_model(cfg.model.model_type)
+    if model_type == SupportedModel.OPENVLA:
         from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
 
         from .embodiment.prismatic.processing_prismatic import (
@@ -63,7 +64,7 @@ def get_vla_model_config_and_processor(cfg: DictConfig):
             image_processor=image_processor,
             trust_remote_code=True,
         )
-    elif cfg.model.model_name == "openvla_oft":
+    elif model_type == SupportedModel.OPENVLA_OFT:
         from prismatic.extern.hf.configuration_prismatic import (
             OpenVLAConfig as OpenVLAOFTConfig,
         )
@@ -96,9 +97,11 @@ def get_vla_model_config_and_processor(cfg: DictConfig):
     return model_config, input_processor
 
 
-def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
+def get_model(cfg: DictConfig, override_config_kwargs=None):
+    model_path = cfg.model_path
     torch_dtype = torch_dtype_from_precision(cfg.precision)
-    if cfg.model_name == "openvla":
+    model_type = get_supported_model(cfg.model_type)
+    if model_type == SupportedModel.OPENVLA:
         from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
 
         actor_model_config = OpenVLAConfig.from_pretrained(
@@ -131,7 +134,7 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
 
         model.to(torch_dtype)
 
-    elif cfg.model_name == "openvla_oft":
+    elif model_type == SupportedModel.OPENVLA_OFT:
         from prismatic.extern.hf.configuration_prismatic import (
             OpenVLAConfig as OpenVLAOFTConfig,
         )
@@ -172,7 +175,7 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
 
         model.to(torch_dtype)
 
-    elif cfg.model_name == "openpi":
+    elif model_type == SupportedModel.OPENPI:
         import openpi.shared.download as download
         import openpi.transforms as transforms
         import safetensors
@@ -242,7 +245,7 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
             ],
         )
 
-    elif cfg.model_name == "mlp_policy":
+    elif model_type == SupportedModel.MLP_POLICY:
         from .embodiment.mlp_policy import MLPPolicy
 
         model = MLPPolicy(
@@ -252,7 +255,7 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
             num_action_chunks=cfg.num_action_chunks,
             add_value_head=cfg.add_value_head,
         )
-    elif cfg.model_name == "gr00t":
+    elif model_type == SupportedModel.GR00T:
         from pathlib import Path
 
         from rlinf.utils.patcher import Patcher
@@ -346,7 +349,7 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
                 ],
                 init_lora_weights="gaussian",
             )
-            if cfg.model_name == "openpi":
+            if model_type == SupportedModel.OPENPI:
                 module_to_lora = model.paligemma_with_expert.paligemma
                 module_to_lora = get_peft_model(module_to_lora, lora_config)
                 tag_vlm_subtree(model, False)
@@ -361,9 +364,6 @@ def get_model(model_path, cfg: DictConfig, override_config_kwargs=None):
             for param in model.value_head.parameters():
                 param.requires_grad = True
 
-    if hasattr(cfg, "ckpt_path") and cfg.ckpt_path is not None:
-        model_dict = torch.load(cfg.ckpt_path)
-        model.load_state_dict(model_dict)
     return model
 
 

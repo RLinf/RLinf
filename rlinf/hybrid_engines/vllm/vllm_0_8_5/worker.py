@@ -62,6 +62,7 @@ class VLLMWorker(_VllmInnerWorker):
         self.actor_weight_rank = rank_map[
             self._rlinf_worker.get_parent_rank(), self.rank
         ]
+        self.is_weight_offloaded = False
 
     def initialize_from_config(self, kv_cache_config: KVCacheConfig) -> None:
         """Allocate GPU KV cache with the specified kv_cache_config."""
@@ -76,6 +77,7 @@ class VLLMWorker(_VllmInnerWorker):
 
     def offload_model_weights(self) -> None:
         super().sleep(level=2)
+        self.is_weight_offloaded = True
 
     def sync_hf_weight(self) -> None:
         use_cudagraph = not self.rlinf_config.rollout.enforce_eager
@@ -85,20 +87,20 @@ class VLLMWorker(_VllmInnerWorker):
         state_dict = self._rlinf_worker.recv(
             src_group_name=self._actor_group_name, src_rank=self.actor_weight_rank
         )
-        if self.placement_mode == PlacementMode.COLLOCATED:
-            # in disaggregated mode, rollout backend will never offload weights
-            # so we don't need to wake up when placement is disaggregated
+        if self.is_weight_offloaded:
             super().wake_up()
+            self.is_weight_offloaded = False
 
         model = self.model_runner.model
         if colocate:
+            batch_weights = []
             for name, handle in state_dict.items():
                 func, args = handle
                 list_args = list(args)
                 list_args[6] = torch.cuda.current_device()
                 new_weight: torch.Tensor = func(*list_args)
-                model.load_weights([(name, new_weight)])
-                del new_weight
+                batch_weights.append((name, new_weight))
+            model.load_weights(batch_weights)
         else:
             model.load_weights(state_dict.items())
         super().compile_or_warm_up_model()

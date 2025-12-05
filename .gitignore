@@ -4,7 +4,7 @@ __pycache__
 *.idx
 *.npy
 *.txt
-!requirements/*
+!requirements/**
 !docs/*
 *.DS_Store
 *.out

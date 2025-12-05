@@ -12,4 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from rlinf.envs.offload_wrapper.maniskill_wrapper import ManiskillEnv as ManiskillEnv
+
+def get_offload_env(env_type: str):
+    """Get offload environment by name.
+
+    Args:
+        env_type (str): The name of the environment.
+
+    Returns:
+        type: The offload environment class.
+    """
+    from rlinf.envs.offload_wrapper.maniskill_wrapper import (
+        ManiskillEnv as ManiskillEnv,
+    )
+
+    offload_envs = {
+        "maniskill": ManiskillEnv,
+    }
+    if env_type in offload_envs:
+        return offload_envs[env_type]
+    else:
+        raise ValueError(f"Environment {env_type} does not support offloading.")

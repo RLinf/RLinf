@@ -24,16 +24,16 @@ RLinf 的环境系统由以下组件构成：
    import torch
 
    class YourCustomEnv(gym.Env):
-       def __init__(self, cfg, rank, ret_device="cpu"):
+       def __init__(self, cfg, rank, num_envs, ret_device="cpu"):
            self.cfg = cfg
            self.rank = rank
            self.ret_device = ret_device
            self.seed = self.cfg.seed + rank
 
            # 初始化环境相关参数
-           self.num_envs = self.cfg.num_envs
+           self.num_envs = num_envs
            self.group_size = self.cfg.group_size
-           self.num_group = self.cfg.num_group
+           self.num_group = self.num_envs // self.group_size
 
            # 初始化环境内部
            self._init_environment()
@@ -106,14 +106,14 @@ RLinf 的环境系统由以下组件构成：
    @property
    def num_envs(self):
        """向量化环境的数量。"""
-       return self.env.unwrapped.num_envs
+       return self.num_envs
 
    @property
    def device(self):
        """当前使用的设备。"""
        return self.env.unwrapped.device
 
-2. 实现环境的 Offload 支持（可选）
+1. 实现环境的 Offload 支持（可选）
 ----------------------------------------------------------------------
 
 如果需要支持保存/恢复环境状态，可以继承 ``EnvOffloadMixin``：
@@ -231,13 +231,12 @@ RLinf 的环境系统由以下组件构成：
 
    your_env:
      env_type: "your_env"
-     num_envs: 8
+     total_num_envs: 8
      group_size: 4
-     num_group: 2
      seed: 42
      # 其他环境特定设置
 
-7. 注册环境
+1. 注册环境
 -----------------------------------
 
 在包中暴露新环境：
