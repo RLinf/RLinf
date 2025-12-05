@@ -69,6 +69,7 @@ def get_supported_model(model_type: str) -> SupportedModel:
 
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
 SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl"]
+SUPPORTED_SFT_TYPE = ["SFT"]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
 
@@ -899,6 +900,12 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
         cfg.rollout = validate_rollout_cfg(cfg.rollout, cfg.algorithm)
     return cfg
 
+def validate_sft_cfg(cfg):
+    OmegaConf.set_struct(cfg, True)
+    assert cfg.runner.task_type in SUPPORTED_SFT_TYPE, (
+        f"task_type must be one of {SUPPORTED_SFT_TYPE}"
+    )
+    return cfg
 
 def validate_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)

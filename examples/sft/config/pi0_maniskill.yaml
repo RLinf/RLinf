@@ -1,0 +1,165 @@
+defaults:
+  - env/train: PandaPutOnPlateInScene25Simple-v1
+  - env/eval: PandaPutOnPlateInScene25Simple-v1
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:SFT_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: all
+
+runner:
+  task_type: SFT
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "test_openpi"
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: 3
+  max_step: -1
+  save_interval: 10
+  seq_length: 4096
+  max_prompt_length: 50
+
+  resume_dir: #TODO
+
+algorithm:
+  auto_reset: False
+  ignore_terminations: True
+  use_fixed_reset_state_ids: False
+  require_values: False
+  shuffle_samples: True
+  normalize_advantages: True
+  kl_penalty: kl
+  n_chunk_steps: 20             #48         # Tonghe changed from 48 to 4 on 10/17/2025
+  n_eval_chunk_steps: 20        # 48 #48        # 4 or 48        
+  group_size: 1                 # Tonghe: this is the group relative number in GRPO, so we choose 1 for PPO. 
+  rollout_micro_batch_size: 64
+  num_group_envs: 128            # The parallel env number for maniskill3+PPO across all GPUs on the node. 8 x 36.   # TODO:!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  rollout_epoch: 1              # ***Something new here*****How many times you do evaluation rollout. 
+  use_norm_adv: True
+  reward_type: chunk_level
+  logprob_type: chunk_level
+  entropy_type: chunk_level
+  update_epoch: 2
+  logprob_forward_micro_batch_size: 16
+  adv_type: "ppo"
+  loss_type: "ppo"
+  loss_agg_func: "token-mean"
+  kl_beta: 0.0
+  entropy_bonus: 0
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+  clip_ratio_c: 3.0
+  value_clip: 0.2
+  huber_delta: 10.0
+  gamma: 0.99
+  gae_lambda: 0.95
+  # params for generation
+  sampling_params:
+    use_greedy: False
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+    add_BOS: False
+  length_params:
+    max_new_token: null
+    max_length: 1024
+    min_length: 1
+
+TASK_NAME: PandaPutOnPlateInScene25Simple-v1
+CKPT_PATH: "/mnt/mnt/public/shiliangzhi/work-space/sft-pretrained/sim-real/${TASK_NAME}"
+
+data:
+  type: "simulator"
+  simulator_type: "cpu"
+actor:
+  group_name: "TrainerGroup"
+  channel:
+    name: "env_buffer_list"
+    queue_name: "replay_buffer"
+    queue_size: 0
+  training_backend: "fsdp"
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
+    amp:
+      enabled: False
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+  checkpoint_load_path: ${CKPT_PATH}
+  checkpoint_save_path: "/root/work-space/RLinf-maniskill/result"
+  micro_batch_size: 16      #20 micro batch size means how many samples each GPU processes per sampling step
+  global_batch_size: 2560   #20 global batch size means after how many sampled examples we perform one loss backward pass. Requirement: global bz must be '_world_size' multiples of local bs.
+  seed: 0 #1234             # Tonghe revised from 1234
+  enable_offload: False
+  load_data_for_test: False
+  # TODO: critic warmup wrong place?
+  critic_warmup: False             # Tonghe changed from False to True
+  critic_warmup_epochs: 5         # Tonghe revised from 5
+  use_real_data_co_training: True
+  config_name: pi0_maniskill_pick_to_plate
+  sft_loss_weight: 0.1
+  model:
+    model_name: "openpi"
+    precision: "bf16"
+    num_action_chunks: 4 # interface for the env
+    action_dim: 7
+    is_lora: False
+    num_images_in_input: 1        # Tonghe changed from 2 in libero to 1 in maniskill, as only 3rd person top view rgb are used. 
+    use_proprio: True
+    num_steps: 4
+    logprob_gather_mode: "raw"
+    # openpi specific parameters
+    openpi:
+      simulator: maniskill
+      noise_level: 0.5
+      action_chunk: ${actor.model.num_action_chunks}
+      num_steps: ${actor.model.num_steps}
+      train_expert_only: True
+      action_env_dim: ${actor.model.action_dim}
+      noise_method: "reinflow"    # Tonghe changed from flow_sde
+      noise_anneal: False         # Tonghe appended, but we turn it off currently. 
+      action_horizon: 16           # Tonghe: changed from sft 5 to 8. 
+      noise_params: [0.16, 0.12, 200] # Tonghe appended. noise_start, noise_end, anneal_steps
+      adv_method: ppo
+      detach_critic_input: True
+      value_after_vlm: False      # pi0: False. pi0.5: True
+      joint_logprob: True
+    # For maniskill
+    policy_setup: panda_wristcam
+
+  optim:
+    lr: 7.91e-6
+    value_lr: 1.55e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-05
+    clip_grad: 1.0
+#
+#  tokenizer:
+#    tokenizer_type: "HuggingFaceTokenizer"
+    # TODO: Update to PI0 model path when available
+    #    tokenizer_model: "/mnt/mnt/public/chenkang/megatron-infinigence-rl-chenk/pretrained_model/"
+    #extra_vocab_size: 421
+    #use_fast: False
+    #trust_remote_code: True
+    #padding_side: "right"
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False
