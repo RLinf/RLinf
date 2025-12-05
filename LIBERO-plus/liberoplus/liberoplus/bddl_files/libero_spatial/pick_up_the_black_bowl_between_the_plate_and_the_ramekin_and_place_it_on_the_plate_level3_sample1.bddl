@@ -1,0 +1,175 @@
+(define (problem LIBERO_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language pick the akita black bowl between the plate and the ramekin and place it on the plate)
+    (:regions
+      (plate_region
+          (:target main_table)
+          (:ranges (
+              (0.069204473670264 0.18204209311617292 0.08920447367026402 0.20204209311617294)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (next_to_plate_region
+          (:target main_table)
+          (:ranges (
+              (-0.004359231646508348 0.3288615261472649 0.01564076835349167 0.3488615261472649)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (box_region
+          (:target main_table)
+          (:ranges (
+              (0.03739810202313821 0.01490725573135274 0.05739810202313821 0.03490725573135274)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (next_to_box_region
+          (:target main_table)
+          (:ranges (
+              (0.10334525401613967 -0.07069579822515715 0.12334525401613969 -0.05069579822515713)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (between_plate_ramekin_region
+          (:target main_table)
+          (:ranges (
+              (-0.0706346757266216 0.16396676019322512 -0.050634675726621614 0.18396676019322514)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (ramekin_region
+          (:target main_table)
+          (:ranges (
+              (-0.20709208085363473 0.19508367002908644 -0.18709208085363477 0.2150836700290864)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (next_to_ramekin_region
+          (:target main_table)
+          (:ranges (
+              (-0.20413849310476292 0.28482853937447883 -0.1841384931047629 0.30482853937447885)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (table_center
+          (:target main_table)
+          (:ranges (
+              (-0.08372698291978703 -0.02415755878480056 -0.033726982919787034 0.025842441215199442)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (table_front
+          (:target main_table)
+          (:ranges (
+              (0.20917604719709942 -0.011763167632953217 0.22917604719709944 0.008236832367046783)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (cabinet_region
+          (:target main_table)
+          (:ranges (
+              (0.02980791663287445 -0.3069288801157458 0.04980791663287447 -0.2869288801157458)
+            )
+          )
+          (:yaw_rotation (
+              (2.6613777765410678 2.7242096296128633)
+            )
+          )
+      )
+      (stove_region
+          (:target main_table)
+          (:ranges (
+              (-0.4238985579362435 -0.16476153394947735 -0.40389855793624346 -0.14476153394947738)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (top_side
+          (:target wooden_cabinet_1)
+      )
+      (top_region
+          (:target wooden_cabinet_1)
+      )
+      (middle_region
+          (:target wooden_cabinet_1)
+      )
+      (bottom_region
+          (:target wooden_cabinet_1)
+      )
+      (cook_region
+          (:target flat_stove_1)
+      )
+    )
+
+  (:fixtures
+    main_table - table
+    wooden_cabinet_1 - wooden_cabinet
+    flat_stove_1 - flat_stove
+  )
+
+  (:objects
+    akita_black_bowl_1 akita_black_bowl_2 - akita_black_bowl
+    cookies_1 - cookies
+    glazed_rim_porcelain_ramekin_1 - glazed_rim_porcelain_ramekin
+    plate_1 - plate
+  )
+
+  (:obj_of_interest
+    akita_black_bowl_1
+    plate_1
+  )
+
+  (:init
+    (On akita_black_bowl_1 main_table_between_plate_ramekin_region)
+    (On akita_black_bowl_2 main_table_next_to_ramekin_region)
+    (On plate_1 main_table_plate_region)
+    (On cookies_1 main_table_box_region)
+    (On glazed_rim_porcelain_ramekin_1 main_table_ramekin_region)
+    (On wooden_cabinet_1 main_table_cabinet_region)
+    (On flat_stove_1 main_table_stove_region)
+  )
+
+  (:goal
+    (And (On akita_black_bowl_1 plate_1))
+  )
+
+)

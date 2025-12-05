@@ -1,0 +1,146 @@
+(define (problem LIBERO_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language put the bowl on the stove)
+    (:regions
+      (plate_region
+          (:target main_table)
+          (:ranges (
+              (0.020853271092153305 -0.03238448363790537 0.04085327109215331 -0.012384483637905373)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (akita_black_bowl_region
+          (:target main_table)
+          (:ranges (
+              (0.2252376489506342 0.04261977698356323 0.2452376489506342 0.06261977698356325)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (wine_bottle_region
+          (:target main_table)
+          (:ranges (
+              (-0.22003829205416722 -0.01568051785887263 -0.2000382920541672 0.004319482141127385)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (cream_cheese_region
+          (:target main_table)
+          (:ranges (
+              (0.12534315346773545 0.21668268482946687 0.14534315346773546 0.2366826848294669)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (stove_front_region
+          (:target main_table)
+          (:ranges (
+              (-0.10233750644878081 0.20616306660657846 -0.022337506448780797 0.2861630666065785)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (cabinet_region
+          (:target main_table)
+          (:ranges (
+              (0.004333316332259522 -0.24404160806112088 0.02433331633225954 -0.22404160806112086)
+            )
+          )
+          (:yaw_rotation (
+              (3.141592653589793 3.141592653589793)
+            )
+          )
+      )
+      (stove_region
+          (:target main_table)
+          (:ranges (
+              (-0.38999283883973773 0.21967416918476826 -0.3699928388397377 0.23967416918476828)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (wine_rack_region
+          (:target main_table)
+          (:ranges (
+              (-0.24752153018328268 -0.26944684021894444 -0.22752153018328267 -0.24944684021894442)
+            )
+          )
+          (:yaw_rotation (
+              (3.141592653589793 3.141592653589793)
+            )
+          )
+      )
+      (top_side
+          (:target wooden_cabinet_1)
+      )
+      (top_region
+          (:target wooden_cabinet_1)
+      )
+      (middle_region
+          (:target wooden_cabinet_1)
+      )
+      (bottom_region
+          (:target wooden_cabinet_1)
+      )
+      (cook_region
+          (:target flat_stove_1)
+      )
+      (top_region
+          (:target wine_rack_1)
+      )
+    )
+
+  (:fixtures
+    main_table - table
+    wooden_cabinet_1 - wooden_cabinet
+    flat_stove_1 - flat_stove
+    wine_rack_1 - wine_rack
+  )
+
+  (:objects
+    akita_black_bowl_1 - akita_black_bowl
+    cream_cheese_1 - cream_cheese
+    wine_bottle_1 - wine_bottle
+    plate_1 - plate
+  )
+
+  (:obj_of_interest
+    akita_black_bowl_1
+    flat_stove_1_cook_region
+  )
+
+  (:init
+    (On wine_bottle_1 main_table_wine_bottle_region)
+    (On akita_black_bowl_1 main_table_akita_black_bowl_region)
+    (On plate_1 main_table_plate_region)
+    (On cream_cheese_1 main_table_cream_cheese_region)
+    (On wooden_cabinet_1 main_table_cabinet_region)
+    (On flat_stove_1 main_table_stove_region)
+    (On wine_rack_1 main_table_wine_rack_region)
+  )
+
+  (:goal
+    (And (On akita_black_bowl_1 flat_stove_1_cook_region))
+  )
+
+)

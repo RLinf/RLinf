@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>LIBERO-Plus: In-depth Robustness Analysis of Vision-Language-Action Models</title>
+  <meta name="description" content="LIBERO-Plus: In-depth Robustness Analysis of Vision-Language-Action Models">
+  <meta name="keywords" content="LIBERO-Plus">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta property="og:title" content="LIBERO-Plus: In-depth Robustness Analysis of Vision-Language-Action Models">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="LIBERO-Plus: In-depth Robustness Analysis of Vision-Language-Action Models">
+  <meta property="og:image" content="https://openvla.github.io/static/images/teaser.png" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1939" />
+  <meta property="og:image:height" content="772" />
+  <meta property="og:url" content="https://openvla.github.io/" />
+  <meta property="og:description" content="LIBERO-Plus: In-depth Robustness Analysis of Vision-Language-Action Models" />
+  <meta name="twitter:title" content="LIBERO-Plus: In-depth Robustness Analysis of Vision-Language-Action Models" />
+  <meta name="twitter:description" content="LIBERO-Plus: In-depth Robustness Analysis of Vision-Language-Action Models" />
+  <meta name="twitter:image" content="https://openvla.github.io/static/images/teaser.png" />
+  
+  <link href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro" rel="stylesheet">
+
+  <link rel="stylesheet" href="./static/css/bulma.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-carousel.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-slider.min.css">
+  <link rel="stylesheet" href="./static/css/fontawesome.all.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+  <link rel="stylesheet" href="./static/css/index.css">
+  <link rel="icon" href="./static/images/icon.png">
+
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+  <script defer src="./static/js/fontawesome.all.min.js"></script>
+  <script src="./static/js/bulma-carousel.min.js"></script>
+  <script src="./static/js/bulma-slider.min.js"></script>
+  <script src="./static/js/index.js"></script>
+
+  <!-- MathJax Configuration -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.7/MathJax.js?config=TeX-MML-AM_CHTML"></script>
+
+  <style>
+    .key-findings-section {
+      padding: 3rem 1.5rem;
+    }
+    
+    .finding-section {
+      margin-bottom: 4rem;
+    }
+    
+    .finding-header {
+      border-bottom: 3px solid #3498db;
+      padding-bottom: 1rem;
+      margin-bottom: 2rem;
+    }
+    
+    .finding-title {
+      font-size: 2rem;
+      color: #2c3e50;
+      margin-bottom: 0.5rem;
+    }
+    
+    .finding-subtitle {
+      font-size: 1.3rem;
+      color: #7f8c8d;
+      font-weight: 400;
+    }
+    
+    .finding-content {
+      line-height: 1.7;
+    }
+    
+    .finding-chart {
+      width: 100%;
+      height: 400px;
+      background-color: #f8f9fa;
+      border-radius: 8px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin: 2rem 0;
+      font-style: italic;
+      color: #6c757d;
+      border: 1px solid #e9ecef;
+    }
+
+    .finding-img {
+      width: 100%;
+      height: auto;
+      border-radius: 5px;
+    }
+    
+    .finding-highlight {
+      background-color: #e8f4fd;
+      border-left: 4px solid #3498db;
+      padding: 1.5rem;
+      margin: 1.5rem 0;
+      border-radius: 0 8px 8px 0;
+    }
+    
+    .finding-conclusion {
+      background-color: #f8f9fa;
+      padding: 1.5rem;
+      border-radius: 8px;
+      margin-top: 2rem;
+      border: 1px solid #e9ecef;
+    }
+    
+    .math-formula {
+      background-color: #f8f9fa;
+      padding: 1.5rem;
+      border-radius: 8px;
+      text-align: center;
+      margin: 1.5rem 0;
+      border: 1px solid #e9ecef;
+    }
+  </style>
+  
+</head>
+
+<body>
+  <section class="hero">
+    <div class="hero-body">
+      <div class="container is-max-desktop">
+        <div class="columns is-centered">
+          <div class="column has-text-centered">
+            <h1 class="title is-1 publication-title">LIBERO-Plus:<br><span style="font-size:2.4rem;">In-depth Robustness Analysis of Vision-Language-Action Models</span></h1>
+            <div class="is-size-5 publication-authors">
+              <span class="author-block">
+                <a>Senyu Fei</a><sup>2,3,†</sup>,
+              </span>
+              <span class="author-block">
+                <a>Siyin Wang</a><sup>1,3,†,*</sup>,
+              </span>
+              <span class="author-block">
+                <a>Junhao Shi</a><sup>1,3,†</sup>,
+              </span>
+              
+              <span class="author-block">
+                <a>Zihao Dai</a><sup>1,‡</sup>,
+              </span>
+              <span class="author-block">
+                <a>Jikun Cai</a><sup>1,‡</sup>,
+              </span>
+              <span class="author-block">
+                <a>Pengfang Qian</a><sup>1,3,‡</sup>,
+              </span>
+              <br>
+              <span class="author-block">
+                <a>Li Ji</a><sup>1</sup>,
+              </span>
+              <span class="author-block">
+                <a>Xinzhe He</a><sup>1</sup>,
+              </span>
+              <span class="author-block">
+                <a>Shiduo Zhang</a><sup>1</sup>,
+              </span>
+              <span class="author-block">
+                <a>Zhaoye Fei</a><sup>1</sup>,
+              </span>
+              <br>
+              <span class="author-block">
+                <a>Jinlan Fu</a><sup>4</sup>,
+              </span>
+              <span class="author-block">
+                <a>Jingjing Gong</a><sup>3,&#9993</sup>,
+              </span>
+              <span class="author-block">
+                <a>Xipeng Qiu</a><sup>1,3,&#9993</sup>
+              </span>
+            </div>
+
+            
+            <div class="is-size-5 publication-authors">
+              <span class="author-block">
+              <sup><font size="-0.4">†</sup> Equal contribution</font>&nbsp;
+              <sup><font size="-0.4">‡</sup> Equal contribution</font>&nbsp;
+              <sup><font size="-0.4">*</sup> Project lead</font>&nbsp;
+              <sup><font size="-0.4">&#9993;</sup> Corresponding authors</font></span>
+                <br>
+              <span class="author-block"><sup>1</sup>Fudan University,</span>
+              <span class="author-block"><sup>2</sup>Tongji University,</span>
+              <span class="author-block"><sup>3</sup>Shanghai Innovation Institute,</span>
+              <span class="author-block"><sup>4</sup>National University of Sigapore</span>
+            </div>
+
+            <div class="column has-text-centered">
+              <div class="publication-links">
+                <!-- PDF Link. -->
+                <span class="link-block">
+                  <a href="https://arxiv.org/pdf/2510.13626"
+                    class="external-link button is-normal is-rounded is-dark">
+                    <span class="icon">
+                      <i class="fas fa-file-pdf"></i>
+                    </span>
+                    <span>Paper</span>
+                  </a>
+                </span>
+                <!-- Code Link. -->
+                <span class="link-block">
+                  <a href="https://github.com/sylvestf/LIBERO-plus"
+                    class="external-link button is-normal is-rounded is-dark">
+                    <span class="icon">
+                      <i class="fab fa-github"></i>
+                    </span>
+                    <span>Code</span>
+                  </a>
+                </span>
+                <!-- Assets Link. -->
+                <span class="link-block">
+                  <a href="https://huggingface.co/datasets/Sylvest/LIBERO-plus"
+                    class="external-link button is-normal is-rounded is-dark">
+                    <span class="icon">
+                      <img src="static/images/hf_icon.svg" />
+                    </span>
+                    <span>Assets</span>
+                  </a>
+                </span>
+
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- <section class="hero is-light is-small">
+    <div class="hero-body has-text-centered">
+      <h1 class="title is-1">Overview</h1>
+    </div>
+  </section> -->
+
+  <section class="hero teaser">
+    <div class="container is-max-desktop">
+      <div class="hero-body">
+        <img src="static/images/main_img.png" />
+        <h2 class="is-size-5 has-text-justified" style="margin-bottom: 2rem;">
+            We introduce LIBERO-plus, an in-depth robustness analysis of Vision-Language-Action models. 
+            We perform a systematic vulnerability analysis by introducing controlled perturbations across seven dimensions: (i) objects layout, (ii) camera viewpoints, (iii) robot initial states, (iv) language instructions, (v) light conditions, (vi) background textures and (vii) sensor noise.
+            Our findings challenge the assumption that high original LIBERO scores equate to true competency and highlight the need for evaluation practices that assess reliability under realistic variation.
+        </h2>
+      </div>
+    </div>
+  </section>
+
+  <!-- KEY FINDINGS SECTION -->
+  <section class="hero is-light is-small">
+    <div class="hero-body has-text-centered">
+      <h1 class="title is-1">Key Findings</h1>
+    </div>
+  </section>
+
+  <section class="section key-findings-section">
+    <div class="container is-max-desktop">
+
+      <!-- Main Results Overview -->
+      <div class="columns is-centered">
+        <div class="column is-full">
+          <div class="content has-text-centered">
+            <p class="is-size-5 has-text-justified" style="margin-bottom: 2rem;">
+              Our systematic evaluation across seven perturbation dimensions reveals significant fragility in current VLA models. 
+              The table below summarizes model performance under different perturbations, where the first row for each model reports 
+              the task success rate (%) under each perturbation dimension (with "Original" indicating performance on unperturbed inputs), 
+              and the second row (denoted by ↓) shows the corresponding absolute performance drop. The results highlight substantial 
+              variations in robustness across models and perturbation types.
+            </p>
+            <img src="static/images/main_table.png" alt="Model performance under different perturbations" style="width: 80%; max-width: 1000px;">
+          </div>
+        </div>
+      </div>
+      
+      <!-- Finding 1: Language Instructions are Largely Ignored -->
+      <div class="finding-section">
+        <div class="finding-header">
+          <h2 class="finding-title">Finding 1: Language Instructions are Largely Ignored</h2>
+          <p class="finding-subtitle">Models show surprising insensitivity to language perturbations</p>
+        </div>
+        
+        <div class="finding-content">
+          <p>Contrary to expectations, language perturbations result in the smallest average performance drop (-25.3) across most models. This apparent robustness is counter-intuitive and merits deeper investigation.</p>
+          
+          <div style="text-align: center; margin: 1.5rem 0;">
+            <img src="static/images/language_exp.png" 
+                alt="Model performance under different perturbations" 
+                style="width: 90%; max-width: 1000px;">
+          </div>
+          
+          <div class="columns">
+            <div class="column">
+              <h4 class="title is-5">Blank Instruction Test (a)</h4>
+              <p>Surprisingly, even without any valid language input, the performance of some models remained largely unchanged. In practice, they degenerate into a form that disregards language, behaving more like a Vision-Action (VA) model.</p>
+            </div>
+            <div class="column">
+              <h4 class="title is-5">Goal Replacement Test (b)</h4>
+              <p>When target objects in instructions were replaced with alternatives, models continued to execute the original task, with success rates dropping nearly to zero in modified scenarios.</p>
+            </div>
+          </div>
+          
+          <div class="finding-highlight">
+            <strong>Key Insight:</strong> VLA models do not possess strong cross-object instruction-following generalization. They appear to rely more on fixed vision–action mappings than on fully exploiting language signals in task decision-making.
+          </div>
+        </div>
+      </div>
+
+      <!-- Finding 2: Models are Surprisingly Robust to Background and Lighting Changes -->
+      <div class="finding-section">
+        <div class="finding-header">
+          <h2 class="finding-title">Finding 2: Models are Surprisingly Robust to Background and Lighting Changes</h2>
+          <p class="finding-subtitle">But the reasons are not as promising as they might seem</p>
+        </div>
+        
+        <div class="finding-content">
+          <p>We observed that models exhibit surprising resilience to background changes and limited sensitivity to light variations. This raised important questions about what representations the models are actually learning.</p>
+          
+          <div class="columns">
+            <div class="column">
+              <div style="text-align: center; margin: 1.5rem 0;">
+                <img src="static/images/layout.png" 
+                    alt="Model performance under different perturbations" 
+                    style="width: 90%; max-width: 1000px;">
+              </div>
+              <h4 class="title is-5">Object Attention Analysis</h4>
+              <p>Models demonstrate an ability to ignore distracting objects, but fail to generalize when target objects are displaced. This indicates they rely on memorized positional cues rather than learning invariant object semantics.</p>
+            </div>
+            <div class="column">
+              <div style="text-align: center; margin: 1.5rem 0;">
+                <img src="static/images/light.png" 
+                    alt="Model performance under different perturbations" 
+                    style="width: 60%; max-width: 1000px;">
+              </div>
+              <h4 class="title is-5">Illumination Robustness</h4>
+              <p>Performance under light perturbations is limited because illumination changes primarily affect the third-person view and global appearance, whereas the wrist view remains relatively stable and provides critical close-range geometric cues.</p>
+            </div>
+          </div>
+          
+          <div class="finding-conclusion">
+            <strong>Conclusion:</strong> The relative stability under background and lighting changes is largely attributable to the wrist camera's close-range perspective rather than sophisticated visual understanding.
+          </div>
+        </div>
+      </div>
+
+      <!-- Finding 3: Extreme Sensitivity to Camera Viewpoints and Robot Initial States -->
+      <div class="finding-section">
+        <div class="finding-header">
+          <h2 class="finding-title">Finding 3: Extreme Sensitivity to Camera Viewpoints and Robot Initial States</h2>
+          <p class="finding-subtitle">Models fail dramatically with minor changes in viewpoint or initial configuration</p>
+        </div>
+        
+        <div class="finding-content">
+          <p>Models are most vulnerable to changes in camera viewpoint and robot initial state, which require a high-level understanding of spatial geometry and proprioception.</p>
+
+          <div class="columns" style="margin-top: 2rem;">
+            <div class="column">
+              <h4 class="title is-5">Camera Viewpoint Changes</h4>
+              <p>Altering camera position, orientation, or field-of-view causes dramatic performance drops, revealing models' dependence on fixed visual perspectives rather than true 3D understanding.</p>
+            </div>
+            <div class="column">
+              <h4 class="title is-5">Robot Initial State Variations</h4>
+              <p>Changing the manipulator's initial pose significantly impacts success rates, indicating limited generalization across different configurations and a lack of deep kinematic understanding.</p>
+            </div>
+          </div>
+          
+          <div class="finding-conclusion">
+            <strong>Conclusion:</strong> Current VLA models exhibit extreme sensitivity to perturbations in camera viewpoint and robot initial state, revealing fundamental limitations in their spatial reasoning capabilities.
+          </div>
+        </div>
+      </div>
+
+      <!-- Finding 4: Generalization Collapses Under Compositional Perturbations -->
+      <div class="finding-section">
+        <div class="finding-header">
+          <h2 class="finding-title">Finding 4: Generalization Collapses Under Compositional Perturbations</h2>
+          <p class="finding-subtitle">Models fail catastrophically when multiple perturbations occur simultaneously</p>
+        </div>
+        
+        <div class="finding-content">
+          <p>While single-dimension perturbations demonstrate some level of robustness, real-world scenarios often involve multiple simultaneous perturbations. We introduced the concept of <em>Compositional Generalization Gap</em> to quantitatively measure model performance under combined perturbations.</p>
+          <p>Below is the heatmap of conditional probabilities under pairwise perturbations. Upper triangular entries represent independence-based products of single-dimension probabilities, while lower triangular entries show actual joint outcomes.</p>
+          
+          <div style="text-align: center; margin: 1.5rem 0;">
+            <img src="static/images/heatmap.png" 
+                alt="Model performance under different perturbations" 
+                style="width: 40%; max-width: 1000px;">
+          </div>
+          
+          <div class="columns">
+            <div class="column">
+              <h4 class="title is-5">Statistical Definition</h4>
+              <p>We defined the Compositionality Gap as the covariance between perturbation variables given successful outcomes:</p>
+              
+              <div class="math-formula">
+                <div style="transform: scale(0.8);">
+                  $$\Delta_{ij} = P(D_i=1, D_j=1 \mid Y=1) - P(D_i=1 \mid Y=1) \cdot P(D_j=1 \mid Y=1)$$
+                </div>
+              </div>
+              
+              <p>Where:</p>
+              <ul>
+                <li>\(D_i, D_j\): Indicator variables for applying perturbations</li>
+                <li>\(Y\): Success indicator variable</li>
+                <li>\(\Delta_{ij} < 0\) indicates negative interaction between perturbations</li>
+              </ul>
+            </div>
+            <div class="column">
+              <h4 class="title is-5">Negative Interaction Effects</h4>
+              <p>Our experiments revealed consistent negative compositionality gaps, showing that:</p>
+              <ul>
+                <li>Co-occurring perturbations act as coupled noise sources</li>
+                <li>Performance degradation is multiplicative rather than additive</li>
+                <li>Models lack mechanisms to capture higher-order dependencies</li>
+              </ul>
+            </div>
+          </div>
+          
+          <div class="finding-conclusion">
+            <strong>Conclusion:</strong> Current VLA models lack compositional generalization capabilities. Their learned representations are entangled and cannot handle the complex, multi-dimensional perturbations that characterize real-world environments.
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- BENCKMARK SECTION -->
+  <section class="hero is-light is-small">
+    <div class="hero-body has-text-centered">
+      <h1 class="title is-1">Benchmark Leaderboard</h1>
+    </div>
+  </section>
+
+  <section class="section key-findings-section">
+    <div class="container is-max-desktop">
+
+      <div class="columns is-vcentered">
+        <div class="column is-two-thirds">
+          <p class="is-size-5 has-text-justified" style="margin-bottom: 2rem;">Building on our in-depth robustness analysis, we introduce LIBERO-Plus, a comprehensive benchmark designed to establish a rigorous leaderboard for evaluating generalization capabilities across the key vulnerability dimensions identified in our study. The benchmark construction follows a systematic two-stage process: (1) expanding the original LIBERO benchmark through seven distinct perturbation factors, followed by task filtering and category balancing based on our empirical findings; and (2) evaluating the resulting tasks using four representative models and stratifying them into five difficulty levels (Level-1 to Level-5) according to observed accuracy distributions. This structured approach enables meaningful cross-model comparisons and establishes a standardized leaderboard for tracking progress in VLA robustness.</p>
+        </div>
+        <div class="column is-one-third">
+          <div style="text-align: center;">
+            <img src="static/images/static.png" 
+                alt="Model performance under different perturbations" 
+                style="width: 110%; max-width: 500px;">
+          </div>
+        </div>
+      </div>
+
+      <p class="is-size-5 has-text-justified" style="margin-bottom: 2rem;">The figure below illustrates model performance across difficulty levels under four representative perturbation factors, providing insights into generalization capabilities under controlled distribution shifts.</p>
+      <div style="text-align: center; margin: 1.5rem 0;">
+        <img src="static/images/difficulty.png" 
+            alt="Model performance under different perturbations" 
+            style="width: 90%; max-width: 1000px;">
+      </div>
+
+      <p class="is-size-5 has-text-justified" style="margin-bottom: 2rem;">We conducted a comprehensive review of existing studies evaluating generalization performance in VLA models, with particular focus on recent test suites. The table below provides a systematic comparison of these evaluation methodologies, highlighting their coverage across different perturbation dimensions and methodological approaches.</p>
+      <div style="text-align: center; margin: 1.5rem 0;">
+        <img src="static/images/compare.png" 
+            alt="Model performance under different perturbations" 
+            style="width: 90%; max-width: 1000px;">
+      </div>
+
+      <!-- Finding 5: Training Data Diversity Significantly Improves Robustness -->
+      <div class="finding-section">
+        <div class="finding-header">
+          <h2 class="finding-title">Finding 5: Training Data Diversity Significantly Improves Robustness</h2>
+          <p class="finding-subtitle">Systematic exposure to varied conditions enhances generalization</p>
+        </div>
+        
+        <div class="finding-content">
+          <p>We constructed LIBERO-Plus, an extensive benchmark with 10,030 tasks spanning seven perturbation dimensions, and created a diverse training dataset with over 20,000 successful trajectories collected under systematically varied conditions that differ substantially from the evaluation scenarios.</p>
+          
+          <div style="text-align: center; margin: 1.5rem 0;">
+            <img src="static/images/leaderboard.png" 
+                alt="Model performance under different perturbations" 
+                style="width: 90%; max-width: 1000px;">
+          </div>
+          
+          <div class="columns">
+            <div class="column">
+              <h4 class="title is-5">Notable Camera Robustness Improvement</h4>
+              <p>Our method achieved 92.8% success rate under camera perturbations, surpassing the next best model by 37.2 percentage points.</p>
+            </div>
+            <div class="column">
+              <h4 class="title is-5">Broad Performance Gains</h4>
+              <p>Significant improvements were also observed under noise (89.3%) and layout (77.6%) perturbations, demonstrating that training with varied data enhances robustness to a wide range of environmental variations.</p>
+            </div>
+          </div>
+          
+          <div class="finding-conclusion">
+            <strong>Conclusion:</strong> Training strategies that emphasize diversity and exposure to varied data distributions consistently yield more robust models across multiple perturbation types.
+          </div>
+        </div>
+      </div>
+
+      
+    </div>
+  </section>
+
+
+  <!-- CASE STUDY SECTION -->
+  <section class="hero is-light is-small">
+    <div class="hero-body has-text-centered">
+      <h1 class="title is-1">Failure Case Study</h1>
+    </div>
+  </section>
+
+  <section class="section key-findings-section">
+    <div class="container is-max-desktop">
+      <section class="section">
+        <div class="container is-max-desktop">
+          <div class="columns is-centered">
+            <div class="column is-full-width">
+              <br>
+              <h3 class="title is-4">Sample Rollout Videos</h2>
+                <p class="is-size-5 has-text-justified" style="margin-bottom: 2rem;">
+                  The following videos showcase various failure cases, illustrating how these 7D perturbations affect model performance.
+                </p>
+
+                <h4 class="title is-6">Camera Viewpoints Change</h4>
+                <div class="columns is-vcentered interpolation-panel">
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/cam/2025_09_09-01_38_16--openvla_oft--episode=474--success=False--task=open_the_middle_drawer_of_the_cabinet_view_346_15_.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/cam/2025_09_09-04_23_57--openvla_oft--episode=135--success=False--task=pick_up_the_alphabet_soup_and_place_it_in_the_bask.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/cam/2025_09_09-05_41_37--openvla_oft--episode=332--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/cam/2025_09_09-09_19_15--openvla_oft--episode=297--success=False--task=pick_up_the_alphabet_soup_and_place_it_in_the_bask.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                </div>
+
+                <h4 class="title is-6">Object Layouts Change</h4>
+                <div class="columns is-vcentered interpolation-panel">
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/obj/2025_10_05-08_44_48--openvla_oft--episode=1--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/obj/2025_10_05-08_44_48--openvla_oft--episode=171--success=False--task=put_both_moka_pots_on_the_stove_add_28.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/obj/2025_10_05-08_44_48--openvla_oft--episode=49--success=False--task=pick_up_the_alphabet_soup_and_place_it_in_the_bask.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/obj/2025_10_05-08_44_48--openvla_oft--episode=66--success=False--task=put_the_black_bowl_in_the_bottom_drawer_of_the_cab.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                </div>
+
+                <h4 class="title is-6">Robot Initial States Change</h4>
+                <div class="columns is-vcentered interpolation-panel">
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/init/2025_09_09-01_28_29--openvla_oft--episode=162--success=False--task=open_the_middle_drawer_of_the_cabinet_view_0_0_100.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/init/2025_09_09-17_24_57--openvla_oft--episode=422--success=False--task=pick_up_the_chocolate_pudding_and_place_it_in_the_.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/init/2025_09_09-17_25_07--openvla_oft--episode=261--success=False--task=pick_up_the_black_bowl_on_the_ramekin_and_place_it.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/init/2025_09_14-09_48_02--openvla_oft--episode=1--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                </div>
+
+                <h4 class="title is-6">Light Conditions Change</h4>
+                <div class="columns is-vcentered interpolation-panel">
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/light/2025_09_11-14_40_49--openvla_oft--episode=150--success=False--task=put_the_yellow_and_white_mug_in_the_microwave_and_.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/light/2025_09_11-14_40_49--openvla_oft--episode=153--success=False--task=put_both_moka_pots_on_the_stove_light_11.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/light/2025_09_11-14_43_17--openvla_oft--episode=81--success=False--task=put_the_black_bowl_in_the_bottom_drawer_of_the_cab.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/light/2025_09_11-14_43_27--openvla_oft--episode=145--success=False--task=pick_up_the_butter_and_place_it_in_the_basket_ligh.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                </div>
+
+                <h4 class="title is-6">Language Instructions Change</h4>
+                <div class="columns is-vcentered interpolation-panel">
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/language/2025_09_10-11_39_16--openvla_oft--episode=54--success=False--task=place_both_the_rectangular_package_containing_a_sp.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/language/2025_09_14-09_49_43--openvla_oft--episode=167--success=False--task=pick_up_the_darkcolored_vessel_resting_on_the_cont.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/language/2025_09_14-09_49_43--openvla_oft--episode=440--success=False--task=pick_up_the_darkcolored_rounded_dish_next_to_the_f.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/language/2025_09_14-09_49_43--openvla_oft--episode=497--success=False--task=grasp_the_darkhued_mixing_vessel_residing_on_the_s.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                </div>
+
+                <h4 class="title is-6">Sensor Noise</h4>
+                <div class="columns is-vcentered interpolation-panel">
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/noise/2025_09_10-16_46_23--openvla_oft--episode=495--success=False--task=put_the_yellow_and_white_mug_in_the_microwave_and_.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/noise/2025_09_10-16_46_23--openvla_oft--episode=7--success=False--task=put_both_the_alphabet_soup_and_the_tomato_sauce_in.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/noise/2025_09_10-16_46_29--openvla_oft--episode=313--success=False--task=put_the_cream_cheese_on_the_bowl.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/noise/2025_09_10-16_47_18--openvla_oft--episode=258--success=False--task=pick_up_the_book_and_place_it_in_the_back_compartm.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                </div>
+
+                <h4 class="title is-6">Background Textures Change</h4>
+                <div class="columns is-vcentered interpolation-panel">
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/env/2025_09_13-05_42_53--openvla_oft--episode=4--success=False--task=pick_up_the_alphabet_soup_and_place_it_in_the_bask.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/env/2025_09_13-05_42_53--openvla_oft--episode=4--success=False--task=pick_up_the_black_bowl_between_the_plate_and_the_r.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/env/2025_09_13-14_30_35--openvla_oft--episode=419--success=False--task=pick_up_the_salad_dressing_and_place_it_in_the_bas.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="column  has-text-centered">
+                    
+                    <video autoplay controls muted loop playsinline width="100%">
+                      <source src="static/videos/case_study/env/2025_09_13-14_30_35--openvla_oft--episode=8--success=False--task=open_the_middle_drawer_of_the_cabinet_table_16.mp4" type="video/mp4">
+                    </video>
+                  </div>
+                </div>
+
+                
+                <br>
+              </div>
+          </div>
+      </section>
+
+      <!-- Overall Conclusion -->
+      <div class="box" style="margin-top: 4rem; background-color: #f8f9fa; border-left: 5px solid #2c3e50;">
+        <div class="content">
+          <h3 class="title is-4">Overall Conclusion</h3>
+          <p>Our findings challenge the assumption that high original LIBERO benchmark scores equate to true competency. Current VLA models remain brittle, showing particular vulnerability to camera and robot state changes, largely ignore language instructions, and exhibit positional bias rather than genuine semantic understanding.</p>
+          <p>We call upon the community to prioritize true diversity in evaluation practices and develop architectures capable of robust generalization beyond limited benchmark environments.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+      <section class="section" id="BibTeX">
+        <div class="container is-max-desktop content">
+          <h2 class="title">BibTeX</h2>
+          <pre><code>@article{fei25libero-plus,
+    title={LIBERO-Plus: In-depth Robustness Analysis of Vision-Language-Action Models},
+    author={Senyu Fei and Siyin Wang and Junhao Shi and Zihao Dai and Jikun Cai and Pengfang Qian and Li Ji and Xinzhe He and Shiduo Zhang and Zhaoye Fei and Jinlan Fu and Jingjing Gong and Xipeng Qiu},
+    journal = {arXiv preprint arXiv:2510.13626},
+    year={2025},
+} </code></pre>
+        </div>
+      </section>
+
+
+      <footer class="footer">
+        <div class="container">
+          <!-- <div class="content has-text-centered">
+            <a class="icon-link" href="https://arxiv.org/pdf/2210.05714.pdf">
+              <i class="fas fa-file-pdf"></i>
+            </a>
+            <a class="icon-link" href="" class="external-link" disabled>
+              <i class="fab fa-github"></i>
+            </a>
+          </div> -->
+          <div class="columns is-centered">
+            <div class="column is-8">
+              <div class="content">
+                <p> Website borrowed from <a href="https://github.com/nerfies/nerfies.github.io">NeRFies</a> under a <a
+                    href="https://creativecommons.org/licenses/by-sa/4.0/">Creative Commons Attribution-ShareAlike 4.0
+                    International</a>
+                </p>
+
+              </div>
+            </div>
+          </div>
+        </div>
+      </footer>
+
+</body>
+
+</html>

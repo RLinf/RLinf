@@ -1,0 +1,95 @@
+(define (problem LIBERO_Living_Room_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language put both the alphabet soup and the cream cheese box in the basket)
+    (:regions
+      (basket_init_region
+          (:target living_room_table)
+          (:ranges (
+              (-0.02026945153198243 0.18729121975006208 -0.00026945153198241513 0.2072912197500621)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (alphabet_soup_init_region
+          (:target living_room_table)
+          (:ranges (
+              (0.09084422128726209 -0.0992450807798987 0.1408442212872621 -0.049245080779898684)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (cream_cheese_init_region
+          (:target living_room_table)
+          (:ranges (
+              (-0.15207569810832977 0.02212591006964736 -0.10207569810832978 0.07212591006964736)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (tomato_sauce_init_region
+          (:target living_room_table)
+          (:ranges (
+              (0.06907118917004318 -0.20698088210475105 0.11907118917004317 -0.15698088210475106)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (ketchup_init_region
+          (:target living_room_table)
+          (:ranges (
+              (-0.15679918983746174 -0.1839846702486921 -0.10679918983746176 -0.13398467024869212)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (contain_region
+          (:target basket_1)
+      )
+    )
+
+  (:fixtures
+    living_room_table - living_room_table
+  )
+
+  (:objects
+    alphabet_soup_1 - alphabet_soup
+    cream_cheese_1 - cream_cheese
+    tomato_sauce_1 - tomato_sauce
+    ketchup_1 - ketchup
+    basket_1 - basket
+  )
+
+  (:obj_of_interest
+    alphabet_soup_1
+    cream_cheese_1
+    basket_1
+  )
+
+  (:init
+    (On alphabet_soup_1 living_room_table_alphabet_soup_init_region)
+    (On cream_cheese_1 living_room_table_cream_cheese_init_region)
+    (On tomato_sauce_1 living_room_table_tomato_sauce_init_region)
+    (On ketchup_1 living_room_table_ketchup_init_region)
+    (On basket_1 living_room_table_basket_init_region)
+  )
+
+  (:goal
+    (And (In alphabet_soup_1 basket_1_contain_region) (In cream_cheese_1 basket_1_contain_region))
+  )
+
+)

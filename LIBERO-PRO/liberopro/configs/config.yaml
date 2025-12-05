@@ -1,0 +1,26 @@
+# @package _global_
+
+defaults:
+  - _self_
+  - data: default
+  - policy: bc_transformer_policy
+  - train: default
+  - eval: default
+  - lifelong: base
+  - test: null
+
+seed: 10000
+use_wandb: false
+wandb_project: "lifelong learning"
+folder: null # use default path
+
+bddl_folder: "/path/to/LIBERO-PRO/liberopro/liberopro/bddl_files" # use bddl path
+init_states_folder: "/path/to/LIBERO-PRO/liberopro/liberopro/init_files" # use init path
+
+load_previous_model: false
+device: "cuda"
+task_embedding_format: "bert"
+task_embedding_one_hot_offset: 1
+pretrain: false
+pretrain_model_path: ""
+benchmark_name: "LIBERO_SPATIAL"

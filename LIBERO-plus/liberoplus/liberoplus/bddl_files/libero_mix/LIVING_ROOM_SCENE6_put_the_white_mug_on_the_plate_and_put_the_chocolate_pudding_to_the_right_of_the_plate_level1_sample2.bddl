@@ -1,0 +1,101 @@
+(define (problem LIBERO_Living_Room_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language put the white mug on the plate and put the chocolate pudding to the right of the plate)
+    (:regions
+      (plate_left_region
+          (:target living_room_table)
+          (:ranges (
+              (0.0967573601541811 -0.15887454862373426 0.19675736015418113 -0.05887454862373424)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (plate_right_region
+          (:target living_room_table)
+          (:ranges (
+              (0.09986041974567769 0.04157390330383159 0.19986041974567773 0.1415739033038316)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (plate_init_region
+          (:target living_room_table)
+          (:ranges (
+              (0.13141302279738712 -0.024822565453669686 0.1814130227973871 0.025177434546330316)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (porcelain_mug_init_region
+          (:target living_room_table)
+          (:ranges (
+              (-0.12091936031013918 -0.17915452197558993 -0.07091936031013919 -0.12915452197558994)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (chocolate_pudding_init_region
+          (:target living_room_table)
+          (:ranges (
+              (-0.08288083198919444 0.07514901791849654 -0.03288083198919442 0.12514901791849656)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (red_coffee_mug_init_region
+          (:target living_room_table)
+          (:ranges (
+              (-0.21713671834398646 -0.02626367162067684 -0.16713671834398647 0.023736328379323164)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+    )
+
+  (:fixtures
+    living_room_table - living_room_table
+  )
+
+  (:objects
+    porcelain_mug_1 - porcelain_mug
+    red_coffee_mug_1 - red_coffee_mug
+    plate_1 - plate
+    chocolate_pudding_1 - chocolate_pudding
+  )
+
+  (:obj_of_interest
+    plate_1
+    chocolate_pudding_1
+    porcelain_mug_1
+  )
+
+  (:init
+    (On plate_1 living_room_table_plate_init_region)
+    (On red_coffee_mug_1 living_room_table_red_coffee_mug_init_region)
+    (On chocolate_pudding_1 living_room_table_chocolate_pudding_init_region)
+    (On porcelain_mug_1 living_room_table_porcelain_mug_init_region)
+  )
+
+  (:goal
+    (And (On porcelain_mug_1 plate_1) (On chocolate_pudding_1 living_room_table_plate_right_region))
+  )
+
+)

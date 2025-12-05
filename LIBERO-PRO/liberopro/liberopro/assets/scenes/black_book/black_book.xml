@@ -1,0 +1,15 @@
+<mujoco model="black_book">
+  <asset>
+  <texture file="black_book_texture.png" name="tex-black_book" type="2d" />
+  <material name="black_book" reflectance="0.5" texrepeat="1 1" texture="tex-black_book" texuniform="false" />
+  <mesh file="visual/black_book_vis.msh" name="black_book_vis" scale="1.0 1.0 1.0" /><mesh file="collision/black_book_ch.stl" name="black_book_coll" scale="1.0 1.0 1.0" /></asset>
+  <worldbody>
+    <body>
+      <body name="object">
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="black_book_vis" conaffinity="0" contype="0" group="1" material="black_book" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="black_book_coll" group="0" rgba="0.8 0.8 0.8 0.0" /></body>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.06" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.04" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.025 0.025 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

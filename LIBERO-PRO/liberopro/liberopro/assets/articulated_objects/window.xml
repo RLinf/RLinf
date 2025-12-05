@@ -1,0 +1,90 @@
+<mujoco model="window">
+    <compiler angle="radian" inertiafromgeom="auto" inertiagrouprange="4 5"/>
+    <asset>
+      <material name="window_col" rgba="0.3 0.3 1.0 0.5" shininess="0" specular="0"/>
+      <material name="window_white" rgba=".65 .65 .65 1" shininess="1" reflectance=".7" specular=".5"/>
+      <material name="window_red" rgba=".36 .26 .27 1" shininess="1" reflectance=".7" specular=".5"/>
+      <material name="window_green" rgba=".51 .58 .55 1" shininess="1" reflectance=".7" specular=".5"/>
+      <material name="window_black" rgba=".3 .3 .3 1" shininess="1" reflectance=".7" specular=".5"/>
+      <material name="window_glass" rgba="0 .3 .4 .1" shininess="1" reflectance="1" specular=".5"/>
+
+      <mesh file="meshes/window/window_h_base.stl" name="window_h_base" scale="0.5 0.5 0.5"/>
+      <mesh file="meshes/window/window_h_frame.stl" name="window_h_frame" scale="0.5 0.5 0.5"/>
+      <mesh file="meshes/window/windowa_h_frame.stl" name="windowa_h_frame" scale="0.5 0.5 0.5"/>
+      <mesh file="meshes/window/windowa_h_glass.stl" name="windowa_h_glass" scale="0.5 0.5 0.5"/>
+      <mesh file="meshes/window/windowb_h_frame.stl" name="windowb_h_frame" scale="0.5 0.5 0.5"/>
+      <mesh file="meshes/window/windowb_h_glass.stl" name="windowb_h_glass" scale="0.5 0.5 0.5"/>
+
+      <mesh file="meshes/window/window_base.stl" name="window_base" scale="0.5 0.5 0.5"/>
+      <mesh file="meshes/window/window_frame.stl" name="window_frame" scale="0.5 0.5 0.5"/>
+      <mesh file="meshes/window/windowa_frame.stl" name="windowa_frame" scale="0.5 0.5 0.5"/>
+      <mesh file="meshes/window/windowa_glass.stl" name="windowa_glass" scale="0.5 0.5 0.5"/>
+      <mesh file="meshes/window/windowb_frame.stl" name="windowb_frame" scale="0.5 0.5 0.5"/>
+      <mesh file="meshes/window/windowb_glass.stl" name="windowb_glass" scale="0.5 0.5 0.5"/>
+    </asset>
+
+    <default>
+      <default class="window_base">
+          <joint armature="0.001" damping="2" limited="true"/>
+          <geom conaffinity="0" contype="0" group="1" type="mesh"/>
+          <position ctrllimited="true" ctrlrange="0 1.57"/>
+      </default>
+      <default class="window_viz">
+        <geom condim="4" type="mesh"/>
+      </default>
+      <default class="window_col">
+        <geom conaffinity="1" condim="3" contype="1" group="0" material="window_col" solimp="0.99 0.99 0.01" solref="0.01 1"/>
+      </default>
+    </default>
+
+    <worldbody>
+    <body>
+        <body name="object" pos="0 0.2 0">
+          <geom class="window_base" material="window_red" mesh="window_h_base" pos="0 0 -0.096" />
+          <geom class="window_base" material="window_red" mesh="window_h_frame"/>
+          <geom class="window_col" pos="-0.108 0 0" size="0.0075 0.015 0.0905" type="box" />
+          <geom class="window_col" pos="0 0 -0.096" size="0.125 0.03 0.005" type="box" />
+          <geom class="window_col" pos="0.108 0 0" size="0.0075 0.015 0.0905" type="box" />
+          <geom class="window_col" pos="0 0 -0.083" size="0.1005 0.015 0.0075" type="box" />
+          <geom class="window_col" pos="0 0 0.083" size="0.1005 0.015 0.0075" type="box" />
+          <body name="windowb_a">
+              <joint type="slide" range="0 .2" axis="1 0 0" name="window_slide"/>
+              <geom class="window_base" material="window_white" euler="1.57 0 0" pos="-0.007 -0.014 0.0225" size="0.006 0.0015" type="cylinder" />
+              <geom class="window_base" material="window_white" euler="1.57 0 0" pos="-0.007 -0.014 -0.0225" size="0.006 0.0015" type="cylinder" />
+              <geom class="window_base" material="window_white" euler="1.57 0 0" pos="-0.007 -0.03 0.0225" size="0.004 0.0175" type="capsule" />
+              <geom class="window_base" material="window_white" euler="1.57 0 0" pos="-0.007 -0.03 -0.0225" size="0.004 0.0175" type="capsule" />
+              <geom class="window_base" material="window_white" pos="-0.007 -0.0475 0" size="0.004 0.0225" type="capsule" />
+              <geom class="window_base" material="window_red" mesh="windowb_h_frame" pos="-0.052 -0.011 0" />
+              <geom class="window_base" material="window_glass" mesh="windowb_h_glass" pos="-0.052 -0.009 0" />
+
+              <geom class="window_col" euler="1.57 0 0" pos="-0.007 -0.014 0.0225" size="0.006 0.0015" type="cylinder" />
+              <geom class="window_col" euler="1.57 0 0" pos="-0.007 -0.014 -0.0225" size="0.006 0.0015" type="cylinder" />
+              <geom class="window_col" euler="1.57 0 0" pos="-0.007 -0.03 0.0225" size="0.004 0.0175" type="capsule" />
+              <geom class="window_col" euler="1.57 0 0" pos="-0.007 -0.03 -0.0225" size="0.004 0.0175" type="capsule" />
+              <geom class="window_col" pos="-0.007 -0.0475 0" size="0.004 0.0225" type="capsule" />
+              <geom class="window_col" pos="-0.007 -0.0065 0" size="0.007 0.006 0.075" type="box" />
+              <geom class="window_col" pos="-0.095 -0.0065 0" size="0.005 0.006 0.075" type="box" />
+              <geom class="window_col" pos="-0.052 -0.0065 0.07" size="0.038 0.006 0.005" type="box" />
+              <geom class="window_col" pos="-0.052 -0.0065 -0.07" size="0.038 0.006 0.005" type="box" />
+              <geom class="window_col" pos="-0.052 -0.009 0" size="0.038 0.0005 0.065" type="box" />
+              <geom class="window_col" pos="-0.052 -0.011 0" size="0.038 0.0015 0.0025" type="box" />
+              <site class="window_base" name="handleOpenStart" pos="-0.02 -0.0475 0." size="0.0025" rgba="1 0 0 1"/>
+              <site class="window_base" name="handleCloseStart" pos="0.005 -0.0475 0." size="0.0025" rgba="0 1 0 1"/>
+          </body>
+          <body name="windowb_b" pos="0.05 0.0065 0">
+              <geom class="window_base" material="window_red" mesh="windowa_h_frame"/>
+              <geom class="window_base" material="window_glass" mesh="windowa_h_glass" pos="0 -0.0025 0" />
+              <geom class="window_col" pos="0 0 -0.07" size="0.04 0.006 0.005" type="box" />
+              <geom class="window_col" pos="0 0 0.07" size="0.04 0.006 0.005" type="box" />
+              <geom class="window_col" pos="0 -0.0025 0" size="0.04 0.0005 0.065" type="box" />
+              <geom class="window_col" pos="0.0 -0.0045 0" size="0.04 0.0015 0.0025" type="box" />
+              <geom class="window_col" pos="-0.045 0 0" size="0.005 0.006 0.075" type="box" />
+              <geom class="window_col" pos="0.045 0 0" size="0.005 0.006 0.075" type="box" />
+          </body>
+        </body>
+      <site rgba="0 0 0 0" size="0.00125" pos="0 0 -0.015" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.00125" pos="0 0 0.015" name="top_site" />
+      <site rgba="0 0 0 0" size="0.00125" pos="0.00375 0.00375 0" name="horizontal_radius_site" />
+    </body>
+    </worldbody>
+</mujoco>

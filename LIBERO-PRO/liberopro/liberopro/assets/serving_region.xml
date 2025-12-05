@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mujoco model="serving_region">
+  <worldbody>
+      <body>
+        <body name="object" pos="0 0 0">
+	    <body name="base" pos="0 0 0" quat="1 0 0 0">	  
+	       <site name="plate" pos="0. 0. 0.022" size="1.0 1.0 0.05" rgba="1 0 0 1" type="box" material="MatRedWood"/>
+	    </body>
+        </body>
+        <site name="bottom_site" pos="0 0 -0.3" rgba="0 0 0 0" size="0.005"/>
+        <site name="top_site" pos="0 0 0.3" rgba="0 0 0 0" size="0.005"/>
+        <site name="horizontal_radius_site" pos="0.3 0 0" rgba="0 0 0 0" size="0.1"/>
+      </body>
+    </worldbody>
+</mujoco>

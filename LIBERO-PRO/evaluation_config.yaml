@@ -1,0 +1,48 @@
+bddl_files_path: "./LIBERO-PRO/libero/libero/bddl_files/"
+script_path: "./LIBERO-PRO/notebooks/generate_init_states.py"
+init_file_dir: "./LIBERO-PRO/libero/libero/init_files/"
+
+use_environment: true
+use_swap: false
+use_object: true
+use_language: false
+use_task: false
+
+ood_task_configs:
+  environment: "./libero_ood/ood_environment.yaml"
+  swap: "./libero_ood/ood_spatial_relation.yaml"
+  object: "./libero_ood/ood_object.yaml"
+  language: "./libero_ood/ood_language.yaml"
+  task: "./libero_ood/ood_task.yaml"
+
+perturbation_mapping:
+  use_environment: env
+  use_swap: swap
+  use_object: object
+  use_language: lan
+  use_task: task
+
+# @package _global_
+
+defaults:
+  - _self_
+  - data: default
+  - policy: bc_transformer_policy
+  - train: default
+  - eval: default
+  - lifelong: base
+  - test: null
+
+seed: 10000
+use_wandb: false
+wandb_project: "lifelong learning"
+folder: null # use default path
+bddl_folder: null # use default path
+init_states_folder: null # use default path
+load_previous_model: false
+device: "cuda"
+task_embedding_format: "bert"
+task_embedding_one_hot_offset: 1
+pretrain: false
+pretrain_model_path: ""
+benchmark_name: "LIBERO_SPATIAL"

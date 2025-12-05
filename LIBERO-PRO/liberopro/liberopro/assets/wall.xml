@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mujoco model="wall">
+  <worldbody>
+      <body>
+        <body name="object" pos="0 0 0">
+	    <body name="base" pos="0 0 0" quat="1 0 0 0">	  
+	       <geom name="obstacle" pos="0. 0. 0.022" size="0.15 0.01 0.08" rgba="0 0 1 1" type="box" material="MatDarkWood" group="0"/>
+	       <geom name="visual_obj" pos="0. 0. 0.022" size="0.15 0.01 0.08" rgba="0 0 1 1" type="box" material="MatDarkWood" group="1"/>
+	    </body>
+        </body>
+        <site name="bottom_site" pos="0 0 -0.3" rgba="0 0 0 0" size="0.005"/>
+        <site name="top_site" pos="0 0 0.3" rgba="0 0 0 0" size="0.005"/>
+        <site name="horizontal_radius_site" pos="0.3 0 0" rgba="0 0 0 0" size="0.1"/>
+      </body>
+    </worldbody>
+</mujoco>

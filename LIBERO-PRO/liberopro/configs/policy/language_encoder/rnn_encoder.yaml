@@ -1,0 +1,6 @@
+network: RNNEncoder
+network_kwargs:
+    input_size: 768
+    hidden_size: 128
+    output_size: 16
+    num_layers: 1

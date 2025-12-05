@@ -1,0 +1,16 @@
+<mujoco>
+  <asset>
+    <material name="red_cylinder_mat" rgba="1 0 0 1"/>
+  </asset>
+  <worldbody>
+    <body>
+      <body name="object">
+        <geom name="red_cylinder_geom" type="cylinder" size="0.03 0.03" material="red_cylinder_mat" group="0"/>
+        <geom name="red_cylinder_geom_visual" type="cylinder" size="0.03 0.03" material="red_cylinder_mat" group="1" conaffinity="0" contype="0" mass="1e-8"/>
+      </body>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.004" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.004" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.005 0.005 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

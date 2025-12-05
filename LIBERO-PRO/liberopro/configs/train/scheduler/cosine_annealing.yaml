@@ -1,0 +1,5 @@
+name: torch.optim.lr_scheduler.CosineAnnealingLR
+
+kwargs:
+    eta_min: 1e-5
+    last_epoch: -1

@@ -1,0 +1,92 @@
+(define (problem LIBERO_Living_Room_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language put the white mug on the left plate and put the yellow and white mug on the right plate)
+    (:regions
+      (plate_left_region
+          (:target living_room_table)
+          (:ranges (
+              (-0.028125371805836345 -0.3131911904403776 0.0218746281941637 -0.26319119044037753)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (plate_right_region
+          (:target living_room_table)
+          (:ranges (
+              (-0.04428883081099191 0.3041299918704784 0.005711169189008138 0.35412999187047844)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (porcelain_mug_init_region
+          (:target living_room_table)
+          (:ranges (
+              (-0.12211668912819705 -0.22426274570834603 -0.07211668912819706 -0.17426274570834605)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (white_yellow_mug_init_region
+          (:target living_room_table)
+          (:ranges (
+              (-0.07590987370208722 0.055062785549119614 -0.025909873702087218 0.10506278554911963)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (red_coffee_mug_init_region
+          (:target living_room_table)
+          (:ranges (
+              (-0.20660879113979153 0.012319723589135294 -0.15660879113979154 0.0623197235891353)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+    )
+
+  (:fixtures
+    living_room_table - living_room_table
+  )
+
+  (:objects
+    porcelain_mug_1 - porcelain_mug
+    red_coffee_mug_1 - red_coffee_mug
+    white_yellow_mug_1 - white_yellow_mug
+    plate_1 plate_2 - plate
+  )
+
+  (:obj_of_interest
+    plate_1
+    plate_2
+    white_yellow_mug_1
+    porcelain_mug_1
+  )
+
+  (:init
+    (On plate_1 living_room_table_plate_left_region)
+    (On plate_2 living_room_table_plate_right_region)
+    (On red_coffee_mug_1 living_room_table_red_coffee_mug_init_region)
+    (On white_yellow_mug_1 living_room_table_white_yellow_mug_init_region)
+    (On porcelain_mug_1 living_room_table_porcelain_mug_init_region)
+  )
+
+  (:goal
+    (And (On porcelain_mug_1 plate_1) (On white_yellow_mug_1 plate_2))
+  )
+
+)

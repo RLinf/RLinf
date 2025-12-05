@@ -1,0 +1,54 @@
+# Blender 3.4.1 MTL File: 'kitchen_background_pot_final.blend'
+# www.blender.org
+
+newmtl AI58_002_MetalV001.001
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd kitchen_background_pot.png
+map_Bump -bm 1.000000 AI58_002_MetalV001_Normal.png
+
+newmtl AI58_002_Prop_mtl_66.001
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.600000
+d 1.000000
+illum 3
+map_Kd kitchen_background_pot.png
+
+newmtl AI58_002_Prop_mtl_67.001
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd kitchen_background_pot.png
+
+newmtl AI58_002_Prop_mtl_68.001
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd kitchen_background_pot.png
+
+newmtl AI58_002_WhitePlastic.001
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 5.000000
+d 1.000000
+illum 2
+map_Kd kitchen_background_pot.png
+map_Bump -bm 1.000000 AI58_002_WhitePlastic_Normal.png

@@ -1,0 +1,133 @@
+(define (problem LIBERO_Study_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language The task involves preparing a )
+    (:regions
+      (wooden_cabinet_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.02 -0.47000000000000003 0.02 -0.43)
+            )
+          )
+          (:yaw_rotation (
+              (3.141592653589793 3.141592653589793)
+            )
+          )
+      )
+      (wooden_tray_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.02 0.43 0.02 0.47000000000000003)
+            )
+          )
+          (:yaw_rotation (
+              (6.283185307179586 6.283185307179586)
+            )
+          )
+      )
+      (chocolate_pudding_init_region
+          (:target study_table)
+          (:ranges (
+              (0.15734665014526708 0.06777780199990442 0.19734665014526706 0.10777780199990443)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (plate_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.1262339419548236 -0.014384312305090612 -0.0862339419548236 0.02561568769490939)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (butter_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.16058871326213467 0.1341278105859108 -0.12058871326213468 0.17412781058591079)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (salad_dressing_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.32 -0.02 -0.27999999999999997 0.02)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (table_region
+          (:target study_table)
+          (:ranges (
+              (-2 -2 2 2)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (top_side
+          (:target wooden_cabinet_1)
+      )
+      (top_region
+          (:target wooden_cabinet_1)
+      )
+      (middle_region
+          (:target wooden_cabinet_1)
+      )
+      (bottom_region
+          (:target wooden_cabinet_1)
+      )
+      (contain_region
+          (:target wooden_tray_1)
+      )
+    )
+
+  (:fixtures
+    study_table - study_table
+    wooden_cabinet_1 - wooden_cabinet
+  )
+
+  (:objects
+    butter_1 - butter
+    chocolate_pudding_1 - chocolate_pudding
+    plate_1 - plate
+    salad_dressing_1 - salad_dressing
+    wooden_tray_1 - wooden_tray
+  )
+
+  (:obj_of_interest
+    chocolate_pudding_1
+    plate_1
+    butter_1
+    wooden_cabinet_1
+    wooden_tray_1
+  )
+
+  (:init
+    (On wooden_cabinet_1 study_table_wooden_cabinet_init_region)
+    (On wooden_tray_1 study_table_wooden_tray_init_region)
+    (On chocolate_pudding_1 study_table_chocolate_pudding_init_region)
+    (On plate_1 study_table_plate_init_region)
+    (On butter_1 study_table_butter_init_region)
+    (On salad_dressing_1 study_table_salad_dressing_init_region)
+  )
+
+  (:goal
+    (And (On chocolate_pudding_1 study_table_chocolate_pudding_init_region) (On plate_1 study_table_plate_init_region) (In butter_1 wooden_cabinet_1_middle_region) (On wooden_cabinet_1 study_table_wooden_cabinet_init_region) (On wooden_tray_1 study_table_wooden_tray_init_region))
+  )
+
+)

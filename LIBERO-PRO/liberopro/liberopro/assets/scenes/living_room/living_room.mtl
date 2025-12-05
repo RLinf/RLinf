@@ -1,0 +1,83 @@
+# Blender 3.4.1 MTL File: 'living_room.blend'
+# www.blender.org
+
+newmtl Base
+Ns 10.000005
+Ka 1.000000 1.000000 1.000000
+Ks 0.090000 0.090000 0.090000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd living_room_wall_unit.png
+
+newmtl Chrome
+Ns 75.000008
+Ka 1.000000 1.000000 1.000000
+Ks 0.900000 0.900000 0.900000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd living_room_wall_unit.png
+
+newmtl Color_01
+Ns 200.000000
+Ka 1.000000 1.000000 1.000000
+Ks 1.000000 1.000000 1.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd living_room_wall_unit.png
+
+newmtl Color_02
+Ns 200.000000
+Ka 1.000000 1.000000 1.000000
+Ks 1.000000 1.000000 1.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd living_room_wall_unit.png
+
+newmtl Color_03
+Ns 200.000000
+Ka 1.000000 1.000000 1.000000
+Ks 1.000000 1.000000 1.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd living_room_wall_unit.png
+
+newmtl Frame
+Ns 50.000011
+Ka 1.000000 1.000000 1.000000
+Ks 0.900000 0.900000 0.900000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd living_room_wall_unit.png
+map_Bump Frame_bump.jpg
+
+newmtl Glossy_Dark_Grey
+Ns 19.999990
+Ka 1.000000 1.000000 1.000000
+Ks 0.270000 0.270000 0.270000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd living_room_wall_unit.png
+
+newmtl LCD
+Ns 10.000005
+Ka 1.000000 1.000000 1.000000
+Ks 0.540000 0.540000 0.540000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd living_room_wall_unit.png

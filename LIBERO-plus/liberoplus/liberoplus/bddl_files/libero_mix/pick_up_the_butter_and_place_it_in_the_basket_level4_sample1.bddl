@@ -1,0 +1,120 @@
+(define (problem LIBERO_Floor_Manipulation)
+  (:domain robosuite)
+  (:language pick the butter and place it in the basket)
+    (:regions
+      (bin_region
+          (:target floor)
+          (:ranges (
+              (-0.09217715106210443 0.18529849089783482 -0.07217715106210441 0.20529849089783483)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (target_object_region
+          (:target floor)
+          (:ranges (
+              (-0.11256160797268801 -0.22669258667444736 -0.06256160797268799 -0.17669258667444737)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (other_object_region_0
+          (:target floor)
+          (:ranges (
+              (0.01572794159814538 -0.12203359779026594 0.06572794159814539 -0.07203359779026593)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (other_object_region_1
+          (:target floor)
+          (:ranges (
+              (-0.19000947901363446 0.05406514458256281 -0.14000947901363447 0.1040651445825628)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (other_object_region_2
+          (:target floor)
+          (:ranges (
+              (0.07428195603970217 -0.23066682816071044 0.12428195603970216 -0.18066682816071045)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (other_object_region_3
+          (:target floor)
+          (:ranges (
+              (0.19418698883447627 -0.0457505051936644 0.24418698883447626 0.004249494806335602)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (other_object_region_4
+          (:target floor)
+          (:ranges (
+              (-0.21830576712700742 -0.19621014321117367 -0.16830576712700743 -0.14621014321117368)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (contain_region
+          (:target basket_1)
+      )
+    )
+
+  (:fixtures
+    floor - floor
+  )
+
+  (:objects
+    butter_1 - butter
+    basket_1 - basket
+    tomato_sauce_1 - tomato_sauce
+    orange_juice_1 - orange_juice
+    chocolate_pudding_1 - chocolate_pudding
+    bbq_sauce_1 - bbq_sauce
+    ketchup_1 - ketchup
+  )
+
+  (:obj_of_interest
+    butter_1
+    basket_1
+  )
+
+  (:init
+    (On butter_1 floor_target_object_region)
+    (On tomato_sauce_1 floor_other_object_region_0)
+    (On orange_juice_1 floor_other_object_region_1)
+    (On chocolate_pudding_1 floor_other_object_region_2)
+    (On bbq_sauce_1 floor_other_object_region_3)
+    (On ketchup_1 floor_other_object_region_4)
+    (On basket_1 floor_bin_region)
+  )
+
+  (:goal
+    (And (In butter_1 basket_1_contain_region))
+  )
+
+)

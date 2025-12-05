@@ -1,0 +1,350 @@
+libero_goal:
+  open_the_middle_drawer_of_the_cabinet:
+    open the bottom drawer of the cabinet:
+      goal: (And (Open wooden_cabinet_1_bottom_region))
+      obj_of_interest:
+        - wooden_cabinet_1_bottom_region
+    open the top drawer of the cabinet:
+      goal: (And (Open wooden_cabinet_1_top_region))
+      obj_of_interest:
+        - wooden_cabinet_1_top_region
+  put_the_cream_cheese_in_the_bowl:
+    put the wine bottle in the bowl:
+      goal: (And (On wine_bottle_1 akita_black_bowl_1))
+      obj_of_interest:
+        - wine_bottle_1
+        - akita_black_bowl_1
+    put the cream cheese on the top of the drawer:
+      goal: (And (On cream_cheese_1 wooden_cabinet_1_top_side))
+      obj_of_interest:
+        - cream_cheese_1
+        - wooden_cabinet_1_top_side
+
+  open_the_top_drawer_and_put_the_bowl_inside:
+    Open the top layer of the drawer and put the cream cheese inside:
+      goal: (And (In cream_cheese_1 wooden_cabinet_1_top_region))
+      obj_of_interest:
+        - cream_cheese_1
+        - wooden_cabinet_1_top_region
+    Open the middle layer of the drawer and put the bowl inside:
+      goal: (And (In akita_black_bowl_1 wooden_cabinet_1_middle_region))
+      obj_of_interest:
+        - akita_black_bowl_1
+        - wooden_cabinet_1_middle_region
+
+
+  put_the_wine_bottle_on_the_rack:
+    Put the cream cheese on the rack:
+      goal: (And (On cream_cheese_1 wine_rack_1_top_region))
+      obj_of_interest:
+        - cream_cheese_1
+        - wine_rack_1_top_region
+    Put the wine bottle on the stove:
+      goal: (And (On wine_bottle_1 flat_stove_1_cook_region))
+      obj_of_interest:
+        - wine_bottle_1
+        - flat_stove_1_cook_region
+
+
+  push_the_plate_to_the_front_of_the_stove:
+    Push the cream cheese to the front of the stove:
+      goal: (And (On cream_cheese_1 main_table_stove_front_region))
+      obj_of_interest:
+        - cream_cheese_1
+        - main_table_stove_front_region
+  put_the_wine_bottle_on_top_of_the_cabinet:
+    put the wine bottle in the bowl:
+      goal: (And (On wine_bottle_1 akita_black_bowl_1))
+      obj_of_interest:
+        - wine_bottle_1
+        - akita_black_bowl_1
+  put_the_bowl_on_the_plate:
+    Put the wine bottle on the plate:
+      goal: (And (On wine_bottle_1 plate_1))
+      obj_of_interest:
+        - wine_bottle_1
+        - plate_1
+  put_the_bowl_on_the_stove:
+    Put the plate on the stove:
+      goal: (And (On plate_1 flat_stove_1_cook_region))
+      obj_of_interest:
+        - plate_1
+        - flat_stove_1_cook_region
+  turn_on_the_stove:
+    Turn off the stove:
+      goal: (And (Turnoff flat_stove_1))
+      obj_of_interest:
+        - flat_stove_1
+  put_the_bowl_on_top_of_the_cabinet:
+    Put the plate on the top of the drawer:
+      goal: (And (On plate_1 wooden_cabinet_1_top_side))
+      obj_of_interest:
+        - plate_1
+        - wooden_cabinet_1_top_side
+
+libero_spatial:
+  pick_up_the_black_bowl_between_the_plate_and_the_ramekin_and_place_it_on_the_plate:
+    Pick the akita black bowl not between the plate and the ramekin and place it on the plate:
+      goal: (And (On akita_black_bowl_2 plate_1))
+      obj_of_interest:
+        - akita_black_bowl_2
+
+  pick_up_the_black_bowl_from_table_center_and_place_it_on_the_plate:
+    Pick the akita black bowl next to the plate and place it on the plate:
+      goal: (And (On akita_black_bowl_2 plate_1))
+      obj_of_interest:
+        - akita_black_bowl_2
+        - plate_1
+
+  pick_up_the_black_bowl_in_the_top_drawer_of_the_wooden_cabinet_and_place_it_on_the_plate:
+   Pick the akita black bowl on the top of the wooden cabinet and place it on the plate:
+      goal: (And (On akita_black_bowl_2 plate_1))
+      obj_of_interest:
+        - akita_black_bowl_2
+        - plate_1
+
+  pick_up_the_black_bowl_next_to_the_cookie_box_and_place_it_on_the_plate:
+    Pick the akita black bowl on the stove and place it on the plate:
+      goal: (And (On akita_black_bowl_2 plate_1))
+      obj_of_interest:
+        - akita_black_bowl_2
+        - plate_1
+
+  pick_up_the_black_bowl_next_to_the_plate_and_place_it_on_the_plate:
+    Pick the akita black bowl next to the ramekin and place it on the plate:
+      goal: (And (On akita_black_bowl_2 plate_1))
+      obj_of_interest:
+        - akita_black_bowl_2
+        - plate_1
+
+  pick_up_the_black_bowl_next_to_the_ramekin_and_place_it_on_the_plate:
+    Pick the akita black bowl next to the cookie box and place it on the plate:
+      goal: (And (On akita_black_bowl_2 plate_1))
+      obj_of_interest:
+        - akita_black_bowl_2
+        - plate_1
+
+  pick_up_the_black_bowl_on_the_cookie_box_and_place_it_on_the_plate:
+    Pick the akita black bowl on the top of the cabinet and place it on the plate:
+      goal: (On akita_black_bowl_2 plate_1))
+      obj_of_interest:
+        - akita_black_bowl_2
+        - plate_1
+
+  pick_up_the_black_bowl_on_the_ramekin_and_place_it_on_the_plate:
+    Pick the akita black bowl on the cookie box and place it on the plate:
+      goal: (And (On akita_black_bowl_2 plate_1))
+      obj_of_interest:
+        - akita_black_bowl_2
+        - plate_1
+
+  pick_up_the_black_bowl_on_the_stove_and_place_it_on_the_plate:
+    Pick the akita black bowl on the top of the cabinet and place it on the plate:
+      goal: (On akita_black_bowl_2 plate_1))
+      obj_of_interest:
+        - akita_black_bowl_2
+        - plate_1
+
+  pick_up_the_black_bowl_on_the_wooden_cabinet_and_place_it_on_the_plate:
+    Pick the akita black bowl on the stove and place it on the plate:
+      goal: (And (On akita_black_bowl_2 plate_1))
+      obj_of_interest:
+        - akita_black_bowl_2
+        - plate_1
+
+libero_10:
+  KITCHEN_SCENE3_turn_on_the_stove_and_put_the_moka_pot_on_it:
+    turn on the stove and put the pan on it:
+      goal: And (Turnon flat_stove_1) (On chefmate_8_frypan_1 flat_stove_1_cook_region))
+      obj_of_interest:
+        - flat_stove_1
+        - chefmate_8_frypan_1
+        - flat_stove_1_cook_region
+
+  KITCHEN_SCENE4_put_the_black_bowl_in_the_bottom_drawer_of_the_cabinet_and_close_it:
+    put the bottle in the bottom drawer of the cabinet and close it:
+      goal: (And (Close white_cabinet_1_bottom_region) (In wine_bottle_1 white_cabinet_1_bottom_region))
+      obj_of_interest:
+        - white_cabinet_1_bottom_region
+        - wine_bottle_1
+        - white_cabinet_1_bottom_region
+
+  KITCHEN_SCENE6_put_the_yellow_and_white_mug_in_the_microwave_and_close_it:
+    put the white mug in the microwave and close it:
+      goal: (And (In porcelain_mug_1 microwave_1_heating_region) (Close microwave_1))
+      obj_of_interest:
+        - porcelain_mug_1
+        - microwave_1_heating_region
+        - microwave_1
+
+  KITCHEN_SCENE8_put_both_moka_pots_on_the_stove:
+    put the left moka pot on the stove:
+      goal: (And (On moka_pot_1 flat_stove_1_cook_region) (Turnon flat_stove_1))
+      obj_of_interest:
+        - moka_pot_1
+        - flat_stove_1_cook_region
+        - flat_stove_1
+    put the right moka pot on the stove:
+      goal: (And (On moka_pot_2 flat_stove_1_cook_region) (Turnon flat_stove_1))
+      obj_of_interest:
+        - moka_pot_2
+        - flat_stove_1_cook_region
+        - flat_stove_1
+
+  LIVING_ROOM_SCENE1_put_both_the_alphabet_soup_and_the_cream_cheese_box_in_the_basket:
+    put both the ketchup and the cream cheese box in the basket:
+      goal: (And (In ketchup_1 basket_1_contain_region) (In cream_cheese_1 basket_1_contain_region))
+      obj_of_interest:
+        - ketchup_1
+        - basket_1_contain_region
+        - cream_cheese_1
+    put both the alphabet soup and the ketchup in the basket:
+      goal: (And (In alphabet_soup_1 basket_1_contain_region) (In ketchup_1 basket_1_contain_region))
+      obj_of_interest:
+        - alphabet_soup_1
+        - basket_1_contain_region
+        - ketchup_1
+
+  LIVING_ROOM_SCENE2_put_both_the_alphabet_soup_and_the_tomato_sauce_in_the_basket:
+    put both the cream cheese and the tomato sauce in the basket:
+      goal: (And (In cream_cheese_1 basket_1_contain_region) (In tomato_sauce_1 basket_1_contain_region))
+      obj_of_interest:
+        - cream_cheese_1
+        - basket_1_contain_region
+        - tomato_sauce_1
+    put both the alphabet soup and the cream cheese in the basket:
+      goal: (And (In alphabet_soup_1 basket_1_contain_region) (In cream_cheese_1 basket_1_contain_region))
+      obj_of_interest:
+        - alphabet_soup_1
+        - basket_1_contain_region
+        - ream_cheese_1
+
+  LIVING_ROOM_SCENE2_put_both_the_cream_cheese_box_and_the_butter_in_the_basket:
+    put both the alphabet soup and the butter in the basket:
+      goal: (And (In alphabet_soup_1 basket_1_contain_region) (In butter_1 basket_1_contain_region))
+      obj_of_interest:
+        - alphabet_soup_1
+        - butter_1
+        - basket_1_contain_region
+    put both the cream cheese box and the alphabet soup in the basket:
+      goal: (And (In cream_cheese_1 basket_1_contain_region) (In alphabet_soup_1 basket_1_contain_region))
+      obj_of_interest:
+        - cream_cheese_1
+        - butter_1
+        - basket_1_contain_region
+
+  LIVING_ROOM_SCENE5_put_the_white_mug_on_the_left_plate_and_put_the_yellow_and_white_mug_on_the_right_plate:
+    put the yellow and white mug on the left plate and put the white mug on the right plate:
+      goal: (And (On white_yellow_mug_1 plate_1) (On porcelain_mug_1 plate_2))
+      obj_of_interest:
+        - white_yellow_mug_1
+        - porcelain_mug_1
+        - plate_1
+        - plate_2
+    put the white mug on the right plate and put the yellow and white mug on the left plate:
+      goal: (And (On porcelain_mug_1 plate_2) (On white_yellow_mug_1 plate_1))
+      obj_of_interest:
+        - white_yellow_mug_1
+        - porcelain_mug_1
+        - plate_1
+        - plate_2
+
+
+  LIVING_ROOM_SCENE6_put_the_white_mug_on_the_plate_and_put_the_chocolate_pudding_to_the_right_of_the_plate:
+    put the red mug on the plate and put the chocolate pudding to the right of the plate:
+      goal: (And (On red_coffee_mug_1 plate_1) (On chocolate_pudding_1 living_room_table_plate_right_region))
+      obj_of_interest:
+        - red_coffee_mug_1
+        - chocolate_pudding_1
+        - plate_1
+        - living_room_table_plate_right_region
+    put the white mug on the plate and put the chocolate pudding to the left of the plate:
+      goal: (And (On porcelain_mug_1 plate_1) (On chocolate_pudding_1 living_room_table_plate_left_region))
+      obj_of_interest:
+        - porcelain_mug_1
+        - chocolate_pudding_1
+        - plate_1
+        - living_room_table_plate_left_region
+
+  STUDY_SCENE1_pick_up_the_book_and_place_it_in_the_back_compartment_of_the_caddy:
+   pick up the cup and place it in the back compartment of the caddy:
+      goal: (And (In white_yellow_mug_1 desk_caddy_1_back_contain_region))
+      obj_of_interest:
+        - white_yellow_mug_1
+        - desk_caddy_1_back_contain_region
+   pick up the book and place it in the front compartment of the caddy:
+      goal: (And (In black_book_1 desk_caddy_1_front_contain_region))
+      obj_of_interest:
+        - black_book_1
+        - desk_caddy_1_front_contain_region
+
+libero_object:
+  pick_up_the_alphabet_soup_and_place_it_in_the_basket:
+    Pick the cream cheese and place it in the basket:
+      goal: (And (In cream_cheese_1 basket_1_contain_region))
+      obj_of_interest:
+        - cream_cheese_1
+        - basket_1_contain_region
+
+  pick_up_the_bbq_sauce_and_place_it_in_the_basket:
+    Pick the ketchup and place it in the basket:
+      goal: (And (In ketchup_1 basket_1_contain_region))
+      obj_of_interest:
+        - ketchup_1
+        - basket_1_contain_region
+
+  pick_up_the_butter_and_place_it_in_the_basket:
+    Pick the orange juice and place it in the basket:
+      goal: (And (In orange_juice_1 basket_1_contain_region))
+      obj_of_interest:
+        - orange_juice_1
+        - basket_1_contain_region
+
+  pick_up_the_chocolate_pudding_and_place_it_in_the_basket:
+    Pick the salad dressing and place it in the basket:
+      goal: (And (In salad_dressing_1 basket_1_contain_region))
+      obj_of_interest:
+        - salad_dressing_1
+        - basket_1_contain_region
+
+  pick_up_the_cream_cheese_and_place_it_in_the_basket:
+    Pick the alphabet soup and place it in the basket:
+      goal: (And (In alphabet_soup_1 basket_1_contain_region))
+      obj_of_interest:
+        - alphabet_soup_1
+        - basket_1_contain_region
+
+  pick_up_the_ketchup_and_place_it_in_the_basket:
+    Pick the milk and place it in the basket:
+      goal: (And (In milk_1 basket_1_contain_region))
+      obj_of_interest:
+        - milk_1
+        - basket_1_contain_region
+
+  pick_up_the_milk_and_place_it_in_the_basket:
+    Pick the butter and place it in the basket:
+      goal: (And (In butter_1 basket_1_contain_region))
+      obj_of_interest:
+        - butter_1
+        - basket_1_contain_region
+
+  pick_up_the_orange_juice_and_place_it_in_the_basket:
+    Pick the chocolate pudding and place it in the basket:
+      goal: (And (In chocolate_pudding_1 basket_1_contain_region))
+      obj_of_interest:
+        - chocolate_pudding_1
+        - basket_1_contain_region
+
+  pick_up_the_salad_dressing_and_place_it_in_the_basket:
+    Pick the tomato sauce and place it in the basket:
+      goal: (And (In tomato_sauce_1 basket_1_contain_region))
+      obj_of_interest:
+        - tomato_sauce_1
+        - basket_1_contain_region
+
+  pick_up_the_tomato_sauce_and_place_it_in_the_basket:
+    Pick the bbq sauce and place it in the basket:
+      goal: (And (In bbq_sauce_1 basket_1_contain_region))
+      obj_of_interest:
+        - bbq_sauce_1
+        - basket_1_contain_region

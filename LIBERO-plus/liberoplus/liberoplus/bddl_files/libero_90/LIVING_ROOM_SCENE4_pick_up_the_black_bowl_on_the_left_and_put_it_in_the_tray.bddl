@@ -1,0 +1,93 @@
+(define (problem LIBERO_Living_Room_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language pick up the black bowl on the left and put it in the tray)
+    (:regions
+      (wooden_tray_init_region
+          (:target living_room_table)
+          (:ranges (
+              (-0.01 0.25 0.01 0.27)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (chocolate_pudding_init_region
+          (:target living_room_table)
+          (:ranges (
+              (0.07500000000000001 -0.225 0.125 -0.17500000000000002)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (akita_black_bowl_right_init_region
+          (:target living_room_table)
+          (:ranges (
+              (-0.125 0.025 -0.07500000000000001 0.07500000000000001)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (akita_black_bowl_left_init_region
+          (:target living_room_table)
+          (:ranges (
+              (-0.125 -0.175 -0.07500000000000001 -0.125)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (salad_dressing_init_region
+          (:target living_room_table)
+          (:ranges (
+              (-0.275 -0.125 -0.225 -0.07500000000000001)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (contain_region
+          (:target wooden_tray_1)
+      )
+    )
+
+  (:fixtures
+    living_room_table - living_room_table
+  )
+
+  (:objects
+    akita_black_bowl_1 akita_black_bowl_2 - akita_black_bowl
+    new_salad_dressing_1 - new_salad_dressing
+    chocolate_pudding_1 - chocolate_pudding
+    wooden_tray_1 - wooden_tray
+  )
+
+  (:obj_of_interest
+    akita_black_bowl_1
+    wooden_tray_1
+  )
+
+  (:init
+    (On chocolate_pudding_1 living_room_table_chocolate_pudding_init_region)
+    (On akita_black_bowl_1 living_room_table_akita_black_bowl_left_init_region)
+    (On akita_black_bowl_2 living_room_table_akita_black_bowl_right_init_region)
+    (On new_salad_dressing_1 living_room_table_salad_dressing_init_region)
+    (On wooden_tray_1 living_room_table_wooden_tray_init_region)
+  )
+
+  (:goal
+    (And (In akita_black_bowl_1 wooden_tray_1_contain_region))
+  )
+
+)

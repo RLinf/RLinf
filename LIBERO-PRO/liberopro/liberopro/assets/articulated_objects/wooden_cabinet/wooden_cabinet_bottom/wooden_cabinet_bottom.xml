@@ -1,0 +1,15 @@
+<mujoco model="wooden_cabinet_bottom">
+  <asset>
+  <texture file="dark_fine_wood.png" name="tex-wooden_cabinet_bottom" type="2d" />
+  <material name="wooden_cabinet_bottom" reflectance="0.5" texrepeat="1 1" texture="tex-wooden_cabinet_bottom" texuniform="false" />
+  <mesh file="visual/wooden_cabinet_bottom_vis.msh" name="wooden_cabinet_bottom_vis" scale="0.05 0.05 0.05" /></asset>
+  <worldbody>
+    <body>
+      <body name="object">
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="wooden_cabinet_bottom_vis" conaffinity="0" contype="0" group="1" material="wooden_cabinet_bottom" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00334 -0.07524 0.04476" quat="0.50000 0.50000 -0.50000 -0.50000" size="0.00271 0.03427 0.10934" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00334 0.09077 0.04525" quat="0.50000 0.50000 0.50000 0.50000" size="0.00356 0.03214 0.10679" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00334 -0.06839 0.04525" quat="0.50000 0.50000 0.50000 0.50000" size="0.00356 0.03214 0.10679" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.10894 0.01105 0.04525" quat="0.70711 0.70711 -0.00115 -0.00115" size="0.00241 0.03133 0.08148" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.10191 0.01105 0.04525" quat="0.70711 0.70711 -0.00115 -0.00115" size="0.00241 0.03165 0.08148" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00348 0.01048 0.01682" quat="0.70711 0.00000 0.70711 0.00000" size="0.00401 0.08095 0.10696" group="0" rgba="0.8 0.8 0.8 0.3" /></body>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.06" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.04" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.025 0.025 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

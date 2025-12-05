@@ -1,0 +1,59 @@
+<mujoco model="jenga_tower">
+  <asset>
+    <texture file="libero_mug_yellow.png" name="tex-jenga" type="2d" />
+    <mesh name="libero_mug_yellow" file="libero_mug_yellow.obj" scale=".01 .01 .01"/>
+        <texture name="libero_mug_yellow" file="libero_mug_yellow.png" type="2d"/>
+    <material name="libero_mug_yellow" texture="libero_mug_yellow" specular="1" shininess="1"/>
+  </asset>
+  <worldbody>
+    <body>
+      <body name="object">
+      <geom type="mesh" density="100" mesh="libero_mug_yellow" material="libero_mug_yellow" quat="0.7071067690849304 0.7071067690849304 -0.0 -0.0" group="1" contype="0" conaffinity="0"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="0.0418 0 0.038" euler="0 0 0"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="0.0398 0.0129 0.038" quat='0.9876883625984192 0.0 0.0 0.15643449127674103'/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="0.0339 0.0246 0.038" quat="0.9510565400123596 0.0 0.0 0.30901700258255005"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="0.0246 0.0339 0.038" quat="0.8910065293312073 0.0 0.0 0.45399048924446106"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="0.0129 0.0398 0.038" quat="0.80901700258255 0.0 0.0 0.5877853035926819"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="0 0.0418 0.038" quat="0.7071067690849304 0.0 0.0 0.7071067690849304"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="-0.0129 0.0398 0.038" quat="0.5877853035926819 0.0 0.0 0.80901700258255"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="-0.0246 0.0339 0.038" quat="0.45399048924446106 0.0 0.0 0.8910065293312073"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="-0.0339 0.0246 0.038" quat="0.30901700258255005 0.0 0.0 0.9510565400123596"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="-0.0398 0.0129 0.038" quat="0.15643449127674103 0.0 0.0 0.9876883625984192"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="-0.0418 0 0.038" quat="0.0 0.0 0.0 1.0"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="-0.0398 -0.0129 0.038" quat="0.15643449127674103 0.0 0.0 -0.9876883625984192"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="-0.0339 -0.0246 0.038" quat="0.30901700258255005 0.0 0.0 -0.9510565400123596"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="-0.0246 -0.0339 0.038" quat="0.45399048924446106 0.0 0.0 -0.8910065293312073"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="-0.0129 -0.0398 0.038" quat="0.5877853035926819 0.0 0.0 -0.80901700258255"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="0 -0.0418 0.038" quat="0.7071067690849304 0.0 0.0 -0.7071067690849304"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="0.0129 -0.0398 0.038" quat="0.80901700258255 0.0 0.0 -0.5877853035926819"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="0.0246 -0.0339 0.038" quat="0.8910065293312073 0.0 0.0 -0.45399048924446106"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="0.0339 -0.0246 0.038" quat="0.9510565400123596 0.0 0.0 -0.30901700258255005"/>
+      <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.0026 0.00704 0.033" group="0" pos="0.0398 -0.0129 0.038" quat="0.9876883625984192 0.0 0.0 -0.15643449127674103"/>
+
+      <geom type="cylinder" solimp="0.998 0.998 0.001" solref="0.001 1" density="100" size="0.045 0.0026" group="0" pos="0 0 0.0026"/>
+      <body name="handle" pos="-0.056 0 0.0395" quat="0 0 -0.7071068286895752 0.7071067690849304">
+        <!-- <inertial pos="0 0 0" mass=""/> -->
+        <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="0.1" size="0.0025 0.00328 0.0055" group="0" pos="0.0193 0 0" euler="0 0 0"/>
+        <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="0.1" size="0.0025 0.00328 0.0055" group="0" pos="0.0184 0.00568 0" quat="0.9888865351676941 0.0 0.0 0.148672416806221"/>
+        <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="0.1" size="0.0025 0.00328 0.0055" group="0" pos="0.0159 0.011 0" quat="0.9557929635047913 0.0 0.0 0.2940402925014496"/>
+        <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="0.1" size="0.0025 0.00328 0.0055" group="0" pos="0.011 0.0159 0" quat="0.9014551639556885 0.0 0.0 0.43287262320518494"/>
+        <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="0.1" size="0.0025 0.00328 0.0055" group="0" pos="0.00568 0.0184 0" quat="0.8270806074142456 0.0 0.0 0.56208336353302"/>
+        <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="0.1" size="0.0025 0.00328 0.0055" group="0" pos="0 0.0193 0" quat="0.7343224883079529 0.0 0.0 0.6788007020950317"/>
+
+
+        <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="0.1" size="0.0025 0.00328 0.0055" group="0" pos="0.00144 -0.0192 0" quat="0.7313537001609802 0.0 0.0 -0.6819983720779419"/> 
+        <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="0.1" size="0.0025 0.00328 0.0055" group="0" pos="0.00703 -0.0179 0" quat="0.8241261839866638 0.0 0.0 -0.56640625"/> 
+        <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="0.1" size="0.0025 0.00328 0.0055" group="0" pos="0.012 -0.0151 0" quat="0.8987939953804016 0.0 0.0 -0.43837112188339233"/> 
+        <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="0.1" size="0.0025 0.00328 0.0055" group="0" pos="0.0159 -0.0108 0" quat="0.9537169337272644 0.0 0.0 -0.30070579051971436"/> 
+        <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="0.1" size="0.0025 0.00328 0.0055" group="0" pos="0.0184 -0.00568 0" quat="0.9876883625984192 0.0 0.0 -0.15643449127674103"/> 
+  
+        <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="0.1" size="0.007 0.0025 0.0055" group="0" pos="-0.007 -0.0195 0"/>
+        <geom type="box" solimp="0.998 0.998 0.001" solref="0.001 1" density="0.1" size="0.007 0.0025 0.0055" group="0" pos="-0.007 0.0195 0"/>
+      </body>
+      </body>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.04" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.04" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.005 0.005 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

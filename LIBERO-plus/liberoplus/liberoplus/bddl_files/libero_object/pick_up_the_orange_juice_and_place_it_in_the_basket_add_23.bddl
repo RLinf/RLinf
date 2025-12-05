@@ -1,0 +1,171 @@
+(define (problem LIBERO_Floor_Manipulation)
+  (:domain robosuite)
+  (:language pick the orange juice and place it in the basket)
+    (:regions
+      (bin_region
+          (:target floor)
+          (:ranges (
+              (-0.010000000000000009 0.25 0.010000000000000009 0.27)
+            )
+          )
+          (:yaw_rotation (
+              (0 0)
+            )
+          )
+      )
+      (target_object_region
+          (:target floor)
+          (:ranges (
+              (0.024999999999999998 -0.125 0.07500000000000001 -0.075)
+            )
+          )
+          (:yaw_rotation (
+              (0 0)
+            )
+          )
+      )
+      (other_object_region_0
+          (:target floor)
+          (:ranges (
+              (-0.14500000000000002 -0.265 -0.09499999999999999 -0.21499999999999997)
+            )
+          )
+          (:yaw_rotation (
+              (0 0)
+            )
+          )
+      )
+      (other_object_region_1
+          (:target floor)
+          (:ranges (
+              (-0.175 0.035 -0.125 0.08499999999999999)
+            )
+          )
+          (:yaw_rotation (
+              (0 0)
+            )
+          )
+      )
+      (other_object_region_2
+          (:target floor)
+          (:ranges (
+              (0.07500000000000001 -0.225 0.125 -0.17500000000000002)
+            )
+          )
+          (:yaw_rotation (
+              (0 0)
+            )
+          )
+      )
+      (other_object_region_3
+          (:target floor)
+          (:ranges (
+              (0.125 0.0049999999999999975 0.175 0.055)
+            )
+          )
+          (:yaw_rotation (
+              (0 0)
+            )
+          )
+      )
+      (other_object_region_4
+          (:target floor)
+          (:ranges (
+              (-0.225 -0.10500000000000001 -0.17500000000000002 -0.05499999999999999)
+            )
+          )
+          (:yaw_rotation (
+              (0 0)
+            )
+          )
+      )
+      (add_object_region_8
+          (:target floor)
+          (:ranges (
+              (0.2999995 0.19999950000000002 0.3000005 0.2000005)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (add_object_region_9
+          (:target floor)
+          (:ranges (
+              (0.2999995 -5e-07 0.3000005 5e-07)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (add_object_region_10
+          (:target floor)
+          (:ranges (
+              (-0.3000005 -0.2500005 -0.2999995 -0.2499995)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (add_object_region_11
+          (:target floor)
+          (:ranges (
+              (0.2999995 -0.2000005 0.3000005 -0.19999950000000002)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (contain_region
+          (:target basket_1)
+      )
+    )
+
+  (:fixtures
+    floor - floor
+  )
+
+  (:objects
+    orange_juice_1 - orange_juice
+    basket_1 - basket
+    butter_1 - butter
+    chocolate_pudding_1 - chocolate_pudding
+    bbq_sauce_1 - bbq_sauce
+    ketchup_1 - ketchup
+    salad_dressing_1 - salad_dressing
+    bag_of_yeast_1 bag_of_yeast_2 - bag_of_yeast
+    box_of_vegetable_juice__1_1 - box_of_vegetable_juice__1
+    bottle_of_alfredo_sauce_1 - bottle_of_alfredo_sauce
+  )
+
+  (:obj_of_interest
+    orange_juice_1
+    basket_1
+  )
+
+  (:init
+    (On orange_juice_1 floor_target_object_region)
+    (On butter_1 floor_other_object_region_0)
+    (On chocolate_pudding_1 floor_other_object_region_1)
+    (On bbq_sauce_1 floor_other_object_region_2)
+    (On ketchup_1 floor_other_object_region_3)
+    (On salad_dressing_1 floor_other_object_region_4)
+    (On basket_1 floor_bin_region)
+    (On bag_of_yeast_1 floor_add_object_region_8)
+    (On bag_of_yeast_2 floor_add_object_region_9)
+    (On box_of_vegetable_juice__1_1 floor_add_object_region_10)
+    (On bottle_of_alfredo_sauce_1 floor_add_object_region_11)
+  )
+
+  (:goal
+    (And (In orange_juice_1 basket_1_contain_region))
+  )
+
+)

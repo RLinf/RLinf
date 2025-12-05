@@ -1,0 +1,15 @@
+<mujoco model="textured">
+  <asset>
+  <texture file="texture_map.png" name="tex-textured" type="2d" />
+  <material name="textured" reflectance="0.5" texrepeat="1 1" texture="tex-textured" texuniform="false" />
+  <mesh file="visual/textured_vis.msh" name="textured_vis" scale="0.0075 0.0075 0.0075" /></asset>
+  <worldbody>
+    <body>
+      <body name="object">
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="textured_vis" conaffinity="0" contype="0" group="1" material="textured" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00037 -0.01500 0.00000" quat="0.70711 0.70711 0.00000 -0.00000" size="0.02625 0.02625 0.05475" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00005 0.04784 -0.01352" quat="0.28687 -0.64630 -0.28687 0.64630" size="0.00218 0.01381 0.02631" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00005 0.04784 0.01344" quat="0.29630 0.64203 -0.29630 -0.64203" size="0.00218 0.01381 0.02631" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00005 0.05849 -0.00005" quat="0.50000 0.50000 -0.50000 -0.50000" size="0.00295 0.00348 0.02650" group="0" rgba="0.8 0.8 0.8 0.3" /></body>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.06" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.04" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.025 0.025 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

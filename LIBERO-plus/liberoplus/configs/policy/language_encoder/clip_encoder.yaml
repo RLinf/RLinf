@@ -1,0 +1,7 @@
+network: CLIPEncoder
+network_kwargs:
+    model_type: "ViT-B/32"
+    hidden_size: 128
+    output_size: 128
+    num_layers: 1
+    download_path: "./clip"

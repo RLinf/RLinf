@@ -1,0 +1,127 @@
+(define (problem LIBERO_Study_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language Prepare a meal by mixing popco)
+    (:regions
+      (short_cabinet_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.02 -0.47000000000000003 0.02 -0.43)
+            )
+          )
+          (:yaw_rotation (
+              (3.141592653589793 3.141592653589793)
+            )
+          )
+      )
+      (popcorn_init_region
+          (:target study_table)
+          (:ranges (
+              (0.2072820586171061 0.07534948578713623 0.2472820586171061 0.11534948578713623)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (akita_black_bowl_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.08936387638919667 0.08486808669838082 -0.04936387638919666 0.12486808669838083)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (salad_dressing_init_region
+          (:target study_table)
+          (:ranges (
+              (0.08498703913905321 0.20230150862168703 0.12498703913905322 0.242301508621687)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (glazed_rim_porcelain_ramekin_init_region
+          (:target study_table)
+          (:ranges (
+              (0.19918462393788286 0.3468774499174602 0.23918462393788284 0.38687744991746026)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (orange_juice_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.32 -0.02 -0.27999999999999997 0.02)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (table_region
+          (:target study_table)
+          (:ranges (
+              (-2 -2 2 2)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (middle_region
+          (:target short_cabinet_1)
+      )
+      (top_region
+          (:target short_cabinet_1)
+      )
+      (bottom_region
+          (:target short_cabinet_1)
+      )
+    )
+
+  (:fixtures
+    short_cabinet_1 - short_cabinet
+    study_table - study_table
+  )
+
+  (:objects
+    akita_black_bowl_1 - akita_black_bowl
+    glazed_rim_porcelain_ramekin_1 - glazed_rim_porcelain_ramekin
+    orange_juice_1 - orange_juice
+    popcorn_1 - popcorn
+    salad_dressing_1 - salad_dressing
+  )
+
+  (:obj_of_interest
+    popcorn_1
+    akita_black_bowl_1
+    salad_dressing_1
+    short_cabinet_1
+    glazed_rim_porcelain_ramekin_1
+  )
+
+  (:init
+    (On short_cabinet_1 study_table_short_cabinet_init_region)
+    (On popcorn_1 study_table_popcorn_init_region)
+    (On akita_black_bowl_1 study_table_akita_black_bowl_init_region)
+    (On salad_dressing_1 study_table_salad_dressing_init_region)
+    (On glazed_rim_porcelain_ramekin_1 study_table_glazed_rim_porcelain_ramekin_init_region)
+    (On orange_juice_1 study_table_orange_juice_init_region)
+  )
+
+  (:goal
+    (And (On popcorn_1 study_table_popcorn_init_region) (In akita_black_bowl_1 short_cabinet_1_middle_region) (On salad_dressing_1 study_table_salad_dressing_init_region) (On short_cabinet_1 study_table_short_cabinet_init_region) (In glazed_rim_porcelain_ramekin_1 short_cabinet_1_middle_region))
+  )
+
+)

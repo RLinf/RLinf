@@ -1,0 +1,120 @@
+(define (problem LIBERO_Kitchen_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language turn on the stove and put the moka pot on it)
+    (:regions
+      (flat_stove_init_region
+          (:target kitchen_table)
+          (:ranges (
+              (-0.21000000000000002 0.19 -0.19 0.21000000000000002)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (frypan_init_region
+          (:target kitchen_table)
+          (:ranges (
+              (-0.07500000000000001 -0.275 -0.024999999999999994 -0.22499999999999998)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (moka_pot_init_region
+          (:target kitchen_table)
+          (:ranges (
+              (0.024999999999999998 -0.025000000000000005 0.07500000000000001 0.025000000000000005)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (add_object_region_4
+          (:target kitchen_table)
+          (:ranges (
+              (0.19999950000000002 0.1499995 0.2000005 0.15000049999999998)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (add_object_region_5
+          (:target kitchen_table)
+          (:ranges (
+              (-0.3000005 0.19999950000000002 -0.2999995 0.2000005)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (add_object_region_6
+          (:target kitchen_table)
+          (:ranges (
+              (0.19999950000000002 -0.0500005 0.2000005 -0.0499995)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (add_object_region_7
+          (:target kitchen_table)
+          (:ranges (
+              (0.19999950000000002 -0.15000049999999998 0.2000005 -0.1499995)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (cook_region
+          (:target flat_stove_1)
+      )
+    )
+
+  (:fixtures
+    kitchen_table - kitchen_table
+    flat_stove_1 - flat_stove
+  )
+
+  (:objects
+    chefmate_8_frypan_1 - chefmate_8_frypan
+    moka_pot_1 - moka_pot
+    box_of_shampoo__1_1 - box_of_shampoo__1
+    bottle_of_baby_oil_1 - bottle_of_baby_oil
+    box_of_yogurt__1_1 - box_of_yogurt__1
+    box_of_vegetable_juice__1_1 - box_of_vegetable_juice__1
+  )
+
+  (:obj_of_interest
+    moka_pot_1
+    flat_stove_1
+  )
+
+  (:init
+    (On flat_stove_1 kitchen_table_flat_stove_init_region)
+    (On chefmate_8_frypan_1 kitchen_table_frypan_init_region)
+    (On moka_pot_1 kitchen_table_moka_pot_init_region)
+    (On box_of_shampoo__1_1 kitchen_table_add_object_region_4)
+    (On bottle_of_baby_oil_1 kitchen_table_add_object_region_5)
+    (On box_of_yogurt__1_1 kitchen_table_add_object_region_6)
+    (On box_of_vegetable_juice__1_1 kitchen_table_add_object_region_7)
+  )
+
+  (:goal
+    (And (Turnon flat_stove_1) (On moka_pot_1 flat_stove_1_cook_region))
+  )
+
+)

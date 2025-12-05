@@ -1,0 +1,16 @@
+<mujoco model="bbq_sauce">
+  <asset>
+  <texture file="texture_map.png" name="tex-bbq_sauce" type="2d" />
+  <material name="bbq_sauce" reflectance="0.5" texrepeat="1 1" texture="tex-bbq_sauce" texuniform="false" />
+  <!-- <mesh file="meshes/bbq_sauce/visual/bbq_sauce_vis.msh" name="bbq_sauce_vis" scale="0.0075 0.0075 0.0075" /></asset> -->
+  <mesh file="visual/bbq_sauce_vis.msh" name="bbq_sauce_vis" scale="0.0077 0.0077 0.0077" /></asset>
+  <worldbody>
+    <body>
+      <body name="object">
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="bbq_sauce_vis" conaffinity="0" contype="0" group="1" material="bbq_sauce" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00000 0.00000 -0.02782" quat="0.00000 0.00530 0.00530 0.00000" size="0.01447 0.02349 0.02682" group="0" rgba="0.8 0.8 0.8 0." /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00000 -0.00000 0.01233" quat="0.00375 0.00375 -0.00375 -0.00375" size="0.01428 0.01459 0.01810" group="0" rgba="0.8 0.8 0.8 0." /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00000 -0.00000 0.03910" quat="0.00000 -0.00036 0.00749 -0.00000" size="0.01310 0.01336 0.01336" group="0" rgba="0.8 0.8 0.8 0." /></body>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.06" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.06" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.015 0.015 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

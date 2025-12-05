@@ -1,0 +1,57 @@
+<mujoco model="slide_cabinet">
+    <compiler inertiafromgeom="auto" inertiagrouprange="4 4" angle="radian"/>
+
+    <asset>
+        <texture name="T_slide_metal" type="cube" height="1" width="1" file="textures/metal1.png"/>
+
+        <material name="M_slide_metal" texture="T_slide_metal" texrepeat="3 3" reflectance="0.7" shininess=".4" texuniform="false"/>
+        <material name="M_slide_blue" rgba=".46 .5 .6 1" reflectance="0.7" shininess=".4"/>
+        <material name="slide_collision_blue" rgba="0.3 0.3 1.0 0.5" shininess="0" specular="0"/>
+    </asset>
+
+    <default>
+        <default class="slidecabinet">
+            <joint damping="2" frictionloss="2" armature=".01" limited="true"/>
+            <geom conaffinity="0" contype="0" group="1" material="M_slide_blue" type="mesh"/>
+        </default>
+
+        <default class="slide_collision">
+            <geom conaffinity="1" condim="3" contype="0" group="0" margin="0.001" material="slide_collision_blue"/>
+        </default>
+    </default>
+
+    <worldbody>
+    <body>
+        <body name="object" pos="0 0 .125">
+            <geom class="slidecabinet" pos="-0.1125 0 -0.09" size="0.1115 0.15 0.01" type="box"/>
+            <geom class="slidecabinet" pos="0.112 0 0" size="0.113 0.15 0.1" type="box"/>
+            <geom class="slidecabinet" pos="-0.1125 0 0.09" size="0.1115 0.15 0.01" type="box"/>
+            <geom class="slidecabinet" pos="-0.213 0 0" size="0.011 0.15 0.08" type="box"/>
+            <geom class="slidecabinet" pos="-0.1 0.138 0.0" size="0.105 0.012 0.08" type="box"/>
+
+            <geom class="slide_collision" pos="-0.1225 0 -0.09" size="0.1115 0.15 0.01" type="box" mass=".2"/>
+            <geom class="slide_collision" pos="0.112 0 0" size="0.113 0.15 0.1" type="box" mass="1"/>
+            <geom class="slide_collision" pos="-0.1225 0 0.09" size="0.1115 0.15 0.01" type="box" mass=".2"/>
+            <geom class="slide_collision" pos="-0.213 0 0" size="0.011 0.15 0.08" type="box" mass=".2"/>
+            <geom class="slide_collision" pos="-0.1 0.138 0.0" size="0.1 0.012 0.08" type="box" mass=".2"/>
+            <body name="slidelink" pos="-0.1225 -0.16 0">
+                <joint name="slidedoor_joint" axis="1 0 0" type="slide" range="0 .44" limited="true"/>
+                <geom class="slidecabinet" material="M_slide_metal" euler="1.57 0 0" pos="-0.0915 -0.03 -0.057" size="0.0095 0.0265 0.0095" type="cylinder"/>
+                <geom class="slidecabinet" material="M_slide_metal" euler="1.57 0 0" pos="-0.0915 -0.03 0.057" size="0.0095 0.0265 0.0095" type="cylinder"/>
+                <geom class="slidecabinet" material="M_slide_metal" pos="-0.0915 -0.0615 0" size="0.011 0.0795" type="cylinder"/>
+                <geom class="slidecabinet" pos="0 -.01 0" size="0.1125 0.015 0.0975" type="box"/>
+
+                <geom class="slide_collision" pos="0 -.01 0" size="0.1125 0.015 0.0975" type="box" mass=".2"/>
+                <geom class="slide_collision" euler="1.57 0 0" pos="-0.0915 -0.03 -0.057" size="0.0095 0.0265 0.0095" type="cylinder" mass=".02"/>
+                <geom class="slide_collision" euler="1.57 0 0" pos="-0.0915 -0.03 -0.057" size="0.0095 0.0265 0.0095" type="cylinder" mass=".02"/>
+                <geom class="slide_collision" pos="-0.0915 -0.0615 0" size="0.011 0.0795" type="cylinder" mass=".1"/>
+                <site type="sphere" name="slide_site" pos="-0.0915 -0.0615 0" size=".005" group="3"/>
+            </body>
+        </body>
+      <site rgba="0 0 0 0" size="0.0025" pos="0 0 -0.03" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.0025" pos="0 0 0.03" name="top_site" />
+      <site rgba="0 0 0 0" size="0.0025" pos="0.0075 0.0075 0" name="horizontal_radius_site" />
+    </body>
+    </worldbody>
+
+</mujoco>

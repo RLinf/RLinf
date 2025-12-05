@@ -1,0 +1,103 @@
+(define (problem LIBERO_Kitchen_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language close the top drawer of the cabinet and put the black bowl on top of it)
+    (:regions
+      (wooden_cabinet_init_region
+          (:target kitchen_table)
+          (:ranges (
+              (-0.01 -0.31 0.01 -0.29)
+            )
+          )
+          (:yaw_rotation (
+              (3.141592653589793 3.141592653589793)
+            )
+          )
+      )
+      (akita_black_bowl_init_region
+          (:target kitchen_table)
+          (:ranges (
+              (-0.125 -0.025 -0.07500000000000001 0.025)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (butter_back_init_region
+          (:target kitchen_table)
+          (:ranges (
+              (-0.125 0.17500000000000002 -0.07500000000000001 0.225)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (butter_front_init_region
+          (:target kitchen_table)
+          (:ranges (
+              (-0.025 0.17500000000000002 0.025 0.225)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (chocolate_pudding_init_region
+          (:target kitchen_table)
+          (:ranges (
+              (-0.025 0.025 0.025 0.07500000000000001)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (top_side
+          (:target wooden_cabinet_1)
+      )
+      (top_region
+          (:target wooden_cabinet_1)
+      )
+      (middle_region
+          (:target wooden_cabinet_1)
+      )
+      (bottom_region
+          (:target wooden_cabinet_1)
+      )
+    )
+
+  (:fixtures
+    kitchen_table - kitchen_table
+    wooden_cabinet_1 - wooden_cabinet
+  )
+
+  (:objects
+    akita_black_bowl_1 - akita_black_bowl
+    butter_1 butter_2 - butter
+    chocolate_pudding_1 - chocolate_pudding
+  )
+
+  (:obj_of_interest
+    wooden_cabinet_1
+    akita_black_bowl_1
+  )
+
+  (:init
+    (On akita_black_bowl_1 kitchen_table_akita_black_bowl_init_region)
+    (On butter_1 kitchen_table_butter_front_init_region)
+    (On butter_2 kitchen_table_butter_back_init_region)
+    (On chocolate_pudding_1 kitchen_table_chocolate_pudding_init_region)
+    (On wooden_cabinet_1 kitchen_table_wooden_cabinet_init_region)
+    (Open wooden_cabinet_1_top_region)
+  )
+
+  (:goal
+    (And (Close wooden_cabinet_1_top_region) (On akita_black_bowl_1 wooden_cabinet_1_top_side))
+  )
+
+)

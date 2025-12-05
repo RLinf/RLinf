@@ -1,0 +1,4 @@
+algo: PackNet
+prune_perc: 0.75
+post_prune_epochs: 50
+post_eval_every: 5

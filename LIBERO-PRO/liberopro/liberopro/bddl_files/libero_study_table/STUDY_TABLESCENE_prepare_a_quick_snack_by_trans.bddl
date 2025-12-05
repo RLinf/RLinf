@@ -1,0 +1,110 @@
+(define (problem LIBERO_Study_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language Prepare a quick snack by trans)
+    (:regions
+      (microwave_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.02 -0.47000000000000003 0.02 -0.43)
+            )
+          )
+          (:yaw_rotation (
+              (3.141592653589793 3.141592653589793)
+            )
+          )
+      )
+      (chocolate_pudding_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.09746141739058466 0.1087272254068193 -0.05746141739058465 0.1487272254068193)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (white_bowl_init_region
+          (:target study_table)
+          (:ranges (
+              (0.08644537691581429 0.08390226583118914 0.12644537691581428 0.12390226583118914)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (butter_init_region
+          (:target study_table)
+          (:ranges (
+              (0.21593853470822075 0.2894812630939666 0.25593853470822076 0.32948126309396664)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (red_coffee_mug_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.32 -0.02 -0.27999999999999997 0.02)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (table_region
+          (:target study_table)
+          (:ranges (
+              (-2 -2 2 2)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (top_side
+          (:target microwave_1)
+      )
+      (heating_region
+          (:target microwave_1)
+      )
+    )
+
+  (:fixtures
+    microwave_1 - microwave
+    study_table - study_table
+  )
+
+  (:objects
+    butter_1 - butter
+    chocolate_pudding_1 - chocolate_pudding
+    red_coffee_mug_1 - red_coffee_mug
+    white_bowl_1 - white_bowl
+  )
+
+  (:obj_of_interest
+    chocolate_pudding_1
+    white_bowl_1
+    butter_1
+    microwave_1
+  )
+
+  (:init
+    (On microwave_1 study_table_microwave_init_region)
+    (On chocolate_pudding_1 study_table_chocolate_pudding_init_region)
+    (On white_bowl_1 study_table_white_bowl_init_region)
+    (On butter_1 study_table_butter_init_region)
+    (On red_coffee_mug_1 study_table_red_coffee_mug_init_region)
+  )
+
+  (:goal
+    (And (On chocolate_pudding_1 study_table_chocolate_pudding_init_region) (On white_bowl_1 study_table_white_bowl_init_region) (On butter_1 study_table_butter_init_region) (On microwave_1 study_table_microwave_init_region))
+  )
+
+)

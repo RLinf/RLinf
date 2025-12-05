@@ -1,0 +1,15 @@
+<mujoco model="door">
+  <asset>
+  <texture file="template.png" name="tex-door" type="2d" />
+  <material name="door" reflectance="0.5" texrepeat="1 1" texture="tex-door" texuniform="false" />
+  <mesh file="visual/door_vis.msh" name="door_vis" scale="0.1 0.1 0.1" /></asset>
+  <worldbody>
+    <body>
+      <body name="object">
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="door_vis" conaffinity="0" contype="0" group="1" material="door" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.10361 0.10960 0.00634" quat="0.70701 0.70701 -0.01193 0.01193" size="0.00935 0.08040 0.10507" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.11618 0.10960 -0.03715" quat="0.00901 0.00901 0.70705 -0.70705" size="0.00834 0.05988 0.11952" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.12869 0.10960 0.08568" quat="0.03061 0.03061 0.70644 -0.70644" size="0.00399 0.01560 0.11952" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.11706 0.10960 0.09560" quat="0.51180 0.51180 0.48791 -0.48791" size="0.00493 0.01413 0.08979" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.11100 0.10960 0.04481" quat="0.02249 -0.02249 0.70675 0.70675" size="0.00783 0.05623 0.11913" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.11237 0.09813 -0.08471" quat="0.29616 0.29616 0.64210 -0.64210" size="0.01012 0.01105 0.10000" group="0" rgba="0.8 0.8 0.8 0.3" /></body>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.06" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.04" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.025 0.025 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

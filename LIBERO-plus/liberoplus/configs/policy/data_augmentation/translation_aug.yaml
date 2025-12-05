@@ -1,0 +1,5 @@
+network: TranslationAug
+
+network_kwargs:
+  input_shape: null
+  translation: 8

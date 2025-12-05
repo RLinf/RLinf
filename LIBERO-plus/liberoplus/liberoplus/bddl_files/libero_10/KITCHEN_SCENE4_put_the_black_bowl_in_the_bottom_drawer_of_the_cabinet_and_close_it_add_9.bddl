@@ -1,0 +1,120 @@
+(define (problem LIBERO_Kitchen_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language put the black bowl in the bottom drawer of the cabinet and close it)
+    (:regions
+      (white_cabinet_init_region
+          (:target kitchen_table)
+          (:ranges (
+              (-0.010000000000000009 0.29 0.010000000000000009 0.31)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (wine_rack_init_region
+          (:target kitchen_table)
+          (:ranges (
+              (-0.11000000000000001 -0.31 -0.09 -0.29)
+            )
+          )
+          (:yaw_rotation (
+              (3.141592653589793 3.141592653589793)
+            )
+          )
+      )
+      (akita_black_bowl_init_region
+          (:target kitchen_table)
+          (:ranges (
+              (0.004999999999999994 -0.07500000000000001 0.05500000000000001 -0.024999999999999998)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (wine_bottle_init_region
+          (:target kitchen_table)
+          (:ranges (
+              (-0.175 0.024999999999999998 -0.12499999999999999 0.07500000000000001)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (add_object_region_5
+          (:target kitchen_table)
+          (:ranges (
+              (0.19999950000000002 -0.0500005 0.2000005 -0.0499995)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (add_object_region_6
+          (:target kitchen_table)
+          (:ranges (
+              (-0.2500005 -0.1000005 -0.2499995 -0.0999995)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (top_side
+          (:target white_cabinet_1)
+      )
+      (top_region
+          (:target white_cabinet_1)
+      )
+      (middle_region
+          (:target white_cabinet_1)
+      )
+      (bottom_region
+          (:target white_cabinet_1)
+      )
+      (top_region
+          (:target wine_rack_1)
+      )
+    )
+
+  (:fixtures
+    kitchen_table - kitchen_table
+    white_cabinet_1 - white_cabinet
+    wine_rack_1 - wine_rack
+  )
+
+  (:objects
+    akita_black_bowl_1 - akita_black_bowl
+    wine_bottle_1 - wine_bottle
+    can_of_soda__1_1 - can_of_soda__1
+    can_of_sardines_1 - can_of_sardines
+  )
+
+  (:obj_of_interest
+    akita_black_bowl_1
+    white_cabinet_1
+  )
+
+  (:init
+    (On akita_black_bowl_1 kitchen_table_akita_black_bowl_init_region)
+    (On wine_bottle_1 kitchen_table_wine_bottle_init_region)
+    (On white_cabinet_1 kitchen_table_white_cabinet_init_region)
+    (On wine_rack_1 kitchen_table_wine_rack_init_region)
+    (Open white_cabinet_1_bottom_region)
+    (On can_of_soda__1_1 kitchen_table_add_object_region_5)
+    (On can_of_sardines_1 kitchen_table_add_object_region_6)
+  )
+
+  (:goal
+    (And (Close white_cabinet_1_bottom_region) (In akita_black_bowl_1 white_cabinet_1_bottom_region))
+  )
+
+)

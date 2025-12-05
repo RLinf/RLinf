@@ -1,0 +1,15 @@
+<mujoco model="wooden_cabinet_middle_handle">
+  <asset>
+  <texture file="metal.png" name="tex-wooden_cabinet_middle_handle" type="2d" />
+  <material name="wooden_cabinet_middle_handle" reflectance="0.5" texrepeat="1 1" texture="tex-wooden_cabinet_middle_handle" texuniform="false" />
+  <mesh file="visual/wooden_cabinet_middle_handle_vis.msh" name="wooden_cabinet_middle_handle_vis" scale="0.05 0.05 0.05" /></asset>
+  <worldbody>
+    <body>
+      <body name="object">
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="wooden_cabinet_middle_handle_vis" conaffinity="0" contype="0" group="1" material="wooden_cabinet_middle_handle" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00278 -0.10161 0.11041" quat="0.50000 0.50000 -0.50000 -0.50000" size="0.00770 0.00817 0.04445" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.02916 -0.08348 0.11041" quat="0.70711 0.70711 0.00000 -0.00000" size="0.00507 0.00552 0.01057" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.03560 -0.08348 0.11041" quat="0.70711 0.70711 0.00000 -0.00000" size="0.00507 0.00560 0.01057" group="0" rgba="0.8 0.8 0.8 0.3" /></body>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.06" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.04" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.025 0.025 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

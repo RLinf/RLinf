@@ -1,0 +1,19 @@
+<mujoco model="wooden_shelf">
+  <asset>
+  <texture file="dark_fine_wood.png" name="tex-wooden_shelf" type="2d" />
+  <material name="wooden_shelf" reflectance="0.5" texrepeat="1 1" texture="tex-wooden_shelf" texuniform="false" />
+  <mesh file="visual/wooden_shelf_vis.msh" name="wooden_shelf_vis" scale="0.05 0.05 0.05" /></asset>
+  <worldbody>
+    <body>
+      <body name="object">
+     <site type="box" pos="0.00354 0.01567 0.22152" quat="1 0 0 0" size="0.12534 0.09438 0.00147" group="0" rgba="0.8 0.8 0 0" name="top_side"/>
+      <site type="box" pos="0.00393 -0.00000 0.18257" quat="0.70711 0.00000 0.70711 0.00000" size="0.03272 0.05000 0.11027" group="0" rgba="0.8 0.8 0.8 0" name="top_region"/>
+      <site type="box" pos="0.00393 -0.00000 0.11444" quat="0.70711 0.00000 0.70711 0.00000" size="0.03272 0.05000 0.11027" group="0" rgba="0.8 0.8 0.8 0" name="middle_region"/>
+      <site type="box" pos="0.00393 -0.00000 0.04674" quat="0.70711 0.00000 0.70711 0.00000" size="0.03272 0.05000 0.11027" group="0" rgba="0.8 0.8 0.8 0" name="bottom_region"/>
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="wooden_shelf_vis" conaffinity="0" contype="0" group="1" material="wooden_shelf" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00397 0.10954 0.11350" quat="0.49988 -0.50104 -0.50012 0.49896" size="0.00193 0.10453 0.11106" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00376 0.01868 0.14935" quat="0.70792 0.00065 0.70629 -0.00065" size="0.00085 0.08935 0.11168" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00408 0.01868 0.00933" quat="0.00065 -0.70792 0.00065 0.70629" size="0.00085 0.08935 0.11168" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00392 0.01868 0.07928" quat="0.70792 0.00065 0.70629 -0.00065" size="0.00085 0.08935 0.11168" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00356 0.01635 0.21918" quat="0.00065 -0.70792 0.00065 0.70629" size="0.00215 0.09508 0.12803" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00405 0.01635 0.00686" quat="0.70792 0.00065 0.70629 -0.00065" size="0.00199 0.08960 0.12277" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.11216 0.01625 0.11426" quat="0.00000 0.00000 1.00000 0.00000" size="0.00517 0.09542 0.10584" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.11898 0.01625 0.11426" quat="0.00000 1.00000 0.00000 0.00000" size="0.00517 0.09542 0.10584" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00211 0.10938 0.11426" quat="0.49997 0.49997 -0.50003 -0.50003" size="0.00231 0.10584 0.11912" group="0" rgba="0.8 0.8 0.8 0.3" /></body>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.06" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.04" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.025 0.025 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

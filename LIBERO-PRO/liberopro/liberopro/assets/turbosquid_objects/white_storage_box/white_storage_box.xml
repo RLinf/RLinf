@@ -1,0 +1,19 @@
+<mujoco model="white_storage_box">
+  <asset>
+  <texture file="ceramic.png" name="tex-white_storage_box" type="2d" />
+  <material name="white_storage_box" reflectance="0.5" texrepeat="1 1" texture="tex-white_storage_box" texuniform="false" />
+  <mesh file="visual/white_storage_box_vis.msh" name="white_storage_box_vis" scale="0.01 0.01 0.01" /></asset>
+  <worldbody>
+    <body>
+      <body name="object">
+    <site type="box" pos="0.00000 -0.00000 0.14250" quat="1 0 0 0" size="0.06425 0.05826 0.00122" group="0" rgba="0.8 0.8 0.0 0" name="top_side"/>
+      <site type="box" pos="0.00000 0.00000 0.00468" quat="1 0 0 0" size="0.06425 0.05826 0.00216" group="0" rgba="0.8 0.8 0.0 0" name="bottom_side"/>
+      <site type="box" pos="0.06799 0.00000 0.07174" quat="1.00000 -0.00000 0.00123 -0.00000" size="0.00216 0.05826 0.06425" group="0" rgba="0.8 0.8 0.0 0" name="right_side"/>
+      <site type="box" pos="-0.06723 0.00000 0.07174" quat="1.00000 -0.00000 0.00123 -0.00000" size="0.00216 0.05826 0.06425" group="0" rgba="0.8 0.8 0.0 0" name="left_side"/>
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="white_storage_box_vis" conaffinity="0" contype="0" group="1" material="white_storage_box" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.06420 -0.00000 0.07137" quat="0.00000 0.00000 1.00000 0.00000" size="0.00629 0.05830 0.06550" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00072 0.00000 0.13522" quat="0.70429 -0.00000 0.70991 0.00000" size="0.00629 0.05830 0.06550" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00072 -0.00000 0.00864" quat="0.70429 -0.00000 0.70991 -0.00000" size="0.00629 0.05830 0.06550" group="0" rgba="0.8 0.8 0.8 0.3" /><geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.06392 0.00000 0.07137" quat="0.00000 0.00000 1.00000 0.00000" size="0.00629 0.05830 0.06550" group="0" rgba="0.8 0.8 0.8 0.3" /></body>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.06" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.04" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.025 0.025 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

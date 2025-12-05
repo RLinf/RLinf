@@ -1,0 +1,121 @@
+(define (problem LIBERO_Study_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language The task involves organizing a)
+    (:regions
+      (chefmate_8_frypan_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.02 -0.47000000000000003 0.02 -0.43)
+            )
+          )
+          (:yaw_rotation (
+              (3.141592653589793 3.141592653589793)
+            )
+          )
+      )
+      (wooden_tray_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.02 0.43 0.02 0.47000000000000003)
+            )
+          )
+          (:yaw_rotation (
+              (6.283185307179586 6.283185307179586)
+            )
+          )
+      )
+      (white_bowl_init_region
+          (:target study_table)
+          (:ranges (
+              (0.08695773907103356 0.014909070904755507 0.12695773907103355 0.05490907090475551)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (tomato_sauce_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.09995517700688149 -0.1413263390002474 -0.05995517700688148 -0.1013263390002474)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (white_yellow_mug_init_region
+          (:target study_table)
+          (:ranges (
+              (0.21613969844256906 -0.1436048070181361 0.25613969844256906 -0.10360480701813611)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (plate_init_region
+          (:target study_table)
+          (:ranges (
+              (-0.32 -0.02 -0.27999999999999997 0.02)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (table_region
+          (:target study_table)
+          (:ranges (
+              (-2 -2 2 2)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (contain_region
+          (:target wooden_tray_1)
+      )
+    )
+
+  (:fixtures
+    study_table - study_table
+  )
+
+  (:objects
+    chefmate_8_frypan_1 - chefmate_8_frypan
+    plate_1 - plate
+    tomato_sauce_1 - tomato_sauce
+    white_bowl_1 - white_bowl
+    white_yellow_mug_1 - white_yellow_mug
+    wooden_tray_1 - wooden_tray
+  )
+
+  (:obj_of_interest
+    white_bowl_1
+    wooden_tray_1
+    tomato_sauce_1
+    chefmate_8_frypan_1
+    white_yellow_mug_1
+  )
+
+  (:init
+    (On chefmate_8_frypan_1 study_table_chefmate_8_frypan_init_region)
+    (On wooden_tray_1 study_table_wooden_tray_init_region)
+    (On white_bowl_1 study_table_white_bowl_init_region)
+    (On tomato_sauce_1 study_table_tomato_sauce_init_region)
+    (On white_yellow_mug_1 study_table_white_yellow_mug_init_region)
+    (On plate_1 study_table_plate_init_region)
+  )
+
+  (:goal
+    (And (On white_bowl_1 study_table_white_bowl_init_region) (On wooden_tray_1 study_table_wooden_tray_init_region) (On tomato_sauce_1 study_table_tomato_sauce_init_region) (On chefmate_8_frypan_1 study_table_chefmate_8_frypan_init_region) (On white_yellow_mug_1 study_table_white_yellow_mug_init_region))
+  )
+
+)

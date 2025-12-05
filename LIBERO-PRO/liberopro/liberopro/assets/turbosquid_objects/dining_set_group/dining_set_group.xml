@@ -1,0 +1,26 @@
+<mujoco model="dining_set_utensils">
+  <asset>
+  <texture file="metal.png" name="tex-dining_set_utensils" type="2d" />
+  <material name="dining_set_utensils" reflectance="0.5" shininess="1.0" specular="0.4" texrepeat="1 1" texture="tex-dining_set_utensils" texuniform="false" />
+  <mesh file="visual/dining_set_utensils_vis.msh" name="dining_set_utensils_vis" scale="0.02 0.02 0.02" />
+ <texture file="white_linen_texture.png" name="tex-dining_set_cloth" type="2d" />
+ <material name="dining_set_cloth" reflectance="0.0" texrepeat="1 1" texture="tex-dining_set_cloth" texuniform="false" />
+  </asset>
+  <worldbody>
+    <body>
+      <body name="object" pos="0 0 0.0">
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="dining_set_utensils_vis" conaffinity="0" contype="0" group="1" material="dining_set_utensils" />
+      <site type="box" pos="0 0 -0.0375" quat="1 0 0 0" size="0.05 0.05 0.0005" material="dining_set_cloth" name="center_region"/>
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.08680 0.01138 0.00730" quat="0.50000 -0.50000 0.50000 0.50000" size="0.00644 0.00735 0.06091" group="0" rgba="0.8 0.8 0.8 0.3"/>
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.08302 0.01125 0.00730" quat="0.50000 -0.50000 0.50000 0.50000" size="0.00644 0.01183 0.06238" group="0" rgba="0.8 0.8 0.8 0.3"/>
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.11215 -0.00918 0.00730" quat="0.50000 -0.50000 0.50000 0.50000" size="0.00644 0.01183 0.04346" group="0" rgba="0.8 0.8 0.8 0.3"/>
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.11046 0.01138 0.00730" quat="0.50000 -0.50000 0.50000 0.50000" size="0.00644 0.00735 0.06091" group="0" rgba="0.8 0.8 0.8 0.3"/>
+      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0 0 -0.0175" quat="1 0 0 0" size="0.14 0.08 0.0005" group="1" conaffinity="0" contype="0"  material="dining_set_cloth"/>
+      <geom solimp="0.001 0.001 0.001" solref="0.001 1" density="100" friction="0.001 0.001 0.001" type="box" pos="0 0 -0.02" quat="1 0 0 0" size="0.14 0.08 0.0005" group="0" material="dining_set_cloth"/>
+      </body>
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.06" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0 0 0.04" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.025 0.025 0" name="horizontal_radius_site" />
+    </body>
+  </worldbody>
+</mujoco>

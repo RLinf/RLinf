@@ -1,0 +1,12 @@
+# Blender 3.4.1 MTL File: 'porcelain_mug.blend'
+# www.blender.org
+
+newmtl material_0
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 1
+map_Kd porcelain_mug_texture.png

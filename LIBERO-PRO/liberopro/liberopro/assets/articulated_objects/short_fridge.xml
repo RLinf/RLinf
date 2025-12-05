@@ -1,0 +1,57 @@
+<mujoco model="short_fridge">
+    <compiler angle="radian" meshdir="./" />
+    <size njmax="500" nconmax="100" />
+    <asset>
+        <texture file="short_fridge/metal.png" name="tex-base_vis" type="2d"/>
+        <material name="base_vis" reflectance="0.5" texrepeat="1 1" texture="tex-base_vis" texuniform="false" />
+        <mesh name="base_vis" file="short_fridge/base/visual/base_vis.msh" scale="0.10 0.10 0.10"/>
+        <mesh name="door_vis" file="short_fridge/door/visual/door_vis.msh" scale="0.10 0.10 0.10"/>
+        <material name="base_layers_vis" reflectance="0.5" texrepeat="1 1"
+		  rgba="1 1 1 0.2"/>
+        <mesh name="base_layers_vis" file="short_fridge/base/visual/base_layers_vis.msh" scale="0.10 0.10 0.10"/>
+    </asset>
+    <worldbody>
+        <body>
+          <body name="object">
+	    <body name="base" pos="0 0 0.04" quat="0.5 0.5 -0.5 -0.5">
+              <site rgba="0 0 0 0" type="box" pos="0.00610 0.18004 -0.00308" quat="0.70711 -0.00000 -0.00000 -0.70711" size="0.03420 0.07483 0.08556" name="upper_region"/>
+              <site rgba="0 0 0 0" type="box" pos="0.00610 0.09421 -0.00308" quat="0.00000 0.70711 0.70711 0.00000" size="0.04011 0.07483 0.08556" name="middle_region"/>
+              <site rgba="0 0 0 0" type="box" pos="0.00610 0.02342 -0.00308" quat="0.00000 0.70711 0.70711 0.00000" size="0.02178 0.07483 0.08556" name="lower_region"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="base_vis" conaffinity="0" contype="0" group="1" material="base_vis"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="base_layers_vis" conaffinity="0" contype="0" group="1" material="base_layers_vis"/>
+
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.08603 0.10856 -0.00036" quat="0.70711 0.70711 0.00000 -0.00000" size="0.01277 0.10000 0.12189" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.07324 -0.02013 -0.07936" quat="0.00000 0.70711 0.70711 0.00000" size="0.01058 0.01260 0.01260" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.07324 -0.02013 0.07991" quat="0.00000 0.70711 0.70711 0.00000" size="0.01058 0.01260 0.01260" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.07711 -0.02013 0.07991" quat="0.00000 0.70711 0.70711 0.00000" size="0.01058 0.01260 0.01260" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.07711 -0.02013 -0.07936" quat="0.00000 0.70711 0.70711 0.00000" size="0.01058 0.01260 0.01260" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00061 0.10474 -0.09337" quat="0.50000 -0.50000 0.50000 0.50000" size="0.00520 0.08923 0.11741" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00066 0.22434 -0.00136" quat="0.00000 0.70711 0.70711 0.00000" size="0.00400 0.09008 0.09701" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00066 -0.00866 0.00412" quat="0.00000 0.70711 0.70711 0.00000" size="0.00712 0.09099 0.09220" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00066 0.14180 -0.00117" quat="0.00000 0.70711 0.70711 0.00000" size="0.00375 0.08250 0.08737" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.00066 0.04622 -0.00039" quat="0.50000 0.50000 -0.50000 -0.50000" size="0.00375 0.08445 0.08502" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="-0.01506 0.20551 -0.06987" quat="0.50000 -0.50000 -0.50000 0.50000" size="0.00675 0.01709 0.04962" group="0" rgba="0.8 0.8 0.8 0.3"/>
+	      <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.00061 0.10474 0.09111" quat="0.50000 -0.50000 0.50000 0.50000" size="0.00520 0.08923 0.11741" group="0" rgba="0.8 0.8 0.8 0.3"/>
+              <body name="door" pos="0 0 0">
+                <inertial pos="0 0 0" mass="3" diaginertia="1 1 1" />
+                <joint name="fridge_door_joint_0" type="hinge" pos="0.11237 0.09813 -0.08471" axis="0 1 0"
+		       limited="false" range="0.0 2.7" damping="1"/>
+		<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="door_vis" conaffinity="0" contype="0" group="1" material="base_vis"/>
+<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.10361 0.10960 0.00634" quat="0.70701 0.70701 -0.01193 0.01193" size="0.00935 0.08040 0.10507" group="0" rgba="0.8 0.8 0.8 0.3"/>
+<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.11618 0.10960 -0.03715" quat="0.00901 0.00901 0.70705 -0.70705" size="0.00834 0.05988 0.11952" group="0" rgba="0.8 0.8 0.8 0.3"/>
+<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.12869 0.10960 0.08568" quat="0.03061 0.03061 0.70644 -0.70644" size="0.00399 0.01560 0.11952" group="0" rgba="0.8 0.8 0.8 0.3"/>
+<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.11706 0.10960 0.09560" quat="0.51180 0.51180 0.48791 -0.48791" size="0.00493 0.01413 0.08979" group="0" rgba="0.8 0.8 0.8 0.3"/>
+<geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="box" pos="0.11100 0.10960 0.04481" quat="0.02249 -0.02249 0.70675 0.70675" size="0.00783 0.05623 0.11913" group="0" rgba="0.8 0.8 0.8 0.3"/>
+
+	      </body>
+
+	    </body>
+          </body>
+          <site rgba="0 0 0 0" size="0.05" pos="0 0 -0.045" name="bottom_site"/>
+          <site rgba="0 0 0 0" size="0.05" pos="0 0 0.045" name="top_site"/>
+          <site rgba="0 0 0 0" size="0.05" pos="0.045 0.045 0" name="horizontal_radius_site"/>
+	  <region name="region_2" pos="0 0 0" rgba="0 0 0 0"/>
+
+        </body>
+    </worldbody>
+</mujoco>
