@@ -13,6 +13,12 @@ jobs:
 
       - name: Create reason environment
         run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
           bash requirements/install.sh reason
 
       - name: auto-placement
@@ -25,6 +31,7 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          uv cache prune
 
   dynamic-scheduler-reason-qwen-grpo-test:
     runs-on: reason
@@ -37,6 +44,12 @@ jobs:
       - name: Create reason environment
         run: |
           cd rlinf
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
           bash requirements/install.sh reason
 
       - name: Clone Megatron-011
@@ -73,3 +86,4 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          uv cache prune

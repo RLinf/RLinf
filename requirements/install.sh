@@ -182,7 +182,6 @@ install_common_embodied_deps() {
     uv sync --extra embodied --active
     bash $SCRIPT_DIR/embodied/sys_deps.sh
     {
-        echo "export PYTHONPATH=$(pwd)/$VENV_DIR/libero:\$PYTHONPATH"
         echo "export NVIDIA_DRIVER_CAPABILITIES=all"
         echo "export VK_DRIVER_FILES=/etc/vulkan/icd.d/nvidia_icd.json"
         echo "export VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json"
@@ -275,10 +274,23 @@ EOF
 #=======================ENV INSTALLERS=======================
 
 install_maniskill_libero_env() {
-    if [ ! -d "$VENV_DIR/libero" ]; then
-        git clone https://github.com/RLinf/LIBERO.git "$VENV_DIR/libero"
+    # Prefer an existing checkout if LIBERO_PATH is provided; otherwise clone into the venv.
+    local libero_dir
+    if [ -n "${LIBERO_PATH:-}" ]; then
+        if [ ! -d "$LIBERO_PATH" ]; then
+            echo "LIBERO_PATH is set to '$LIBERO_PATH' but the directory does not exist." >&2
+            exit 1
+        fi
+        libero_dir="$LIBERO_PATH"
+    else
+        libero_dir="$VENV_DIR/libero"
+        if [ ! -d "$libero_dir" ]; then
+            git clone https://github.com/RLinf/LIBERO.git "$libero_dir"
+        fi
     fi
-    uv pip install -e "$VENV_DIR/libero"
+
+    uv pip install -e "$libero_dir"
+    echo "export PYTHONPATH=$(realpath "$libero_dir"):\$PYTHONPATH" >> "$VENV_DIR/bin/activate"
     uv pip install -r $SCRIPT_DIR/embodied/envs/maniskill.txt
 
     # Maniskill assets
@@ -286,10 +298,22 @@ install_maniskill_libero_env() {
 }
 
 install_behavior_env() {
-    if [ ! -d "$VENV_DIR/BEHAVIOR-1K" ]; then
-        git clone -b RLinf/v3.7.1 --depth 1 https://github.com/RLinf/BEHAVIOR-1K.git "$VENV_DIR/BEHAVIOR-1K"
+    # Prefer an existing checkout if BEHAVIOR_PATH is provided; otherwise clone into the venv.
+    local behavior_dir
+    if [ -n "${BEHAVIOR_PATH:-}" ]; then
+        if [ ! -d "$BEHAVIOR_PATH" ]; then
+            echo "BEHAVIOR_PATH is set to '$BEHAVIOR_PATH' but the directory does not exist." >&2
+            exit 1
+        fi
+        behavior_dir="$BEHAVIOR_PATH"
+    else
+        behavior_dir="$VENV_DIR/BEHAVIOR-1K"
+        if [ ! -d "$behavior_dir" ]; then
+            git clone -b RLinf/v3.7.1 --depth 1 https://github.com/RLinf/BEHAVIOR-1K.git "$behavior_dir"
+        fi
     fi
-    pushd "$VENV_DIR/BEHAVIOR-1K" >/dev/null
+
+    pushd "$behavior_dir" >/dev/null
     UV_LINK_MODE=hardlink ./setup.sh --omnigibson --bddl --joylo --confirm-no-conda --accept-nvidia-eula --use-uv
     popd >/dev/null
     uv pip uninstall flash-attn || true
@@ -311,10 +335,22 @@ install_reason() {
     uv sync --extra sglang-vllm --active
 
     # Megatron-LM
-    if [ ! -d "$VENV_DIR/Megatron-LM" ]; then
-        git clone https://github.com/NVIDIA/Megatron-LM.git -b core_r0.13.0 "$VENV_DIR/Megatron-LM"
+    # Prefer an existing checkout if MEGATRON_PATH is provided; otherwise clone into the venv.
+    local megatron_dir
+    if [ -n "${MEGATRON_PATH:-}" ]; then
+        if [ ! -d "$MEGATRON_PATH" ]; then
+            echo "MEGATRON_PATH is set to '$MEGATRON_PATH' but the directory does not exist." >&2
+            exit 1
+        fi
+        megatron_dir="$MEGATRON_PATH"
+    else
+        megatron_dir="$VENV_DIR/Megatron-LM"
+        if [ ! -d "$megatron_dir" ]; then
+            git clone https://github.com/NVIDIA/Megatron-LM.git -b core_r0.13.0 "$megatron_dir"
+        fi
     fi
-    echo "export PYTHONPATH=$(pwd)/$VENV_DIR/Megatron-LM:\$PYTHONPATH" >> "$VENV_DIR/bin/activate"
+
+    echo "export PYTHONPATH=$(realpath "$megatron_dir"):\$PYTHONPATH" >> "$VENV_DIR/bin/activate"
 
     # If TEST_BUILD is 1, skip installing megatron.txt
     if [ "$TEST_BUILD" -ne 1 ]; then
