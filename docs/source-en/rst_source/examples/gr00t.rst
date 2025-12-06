@@ -135,12 +135,9 @@ Model Download
 --------------
 
 Before starting training, you need to download the corresponding pretrained models.
-In current stage, we only support the sft model of libero spatial task.
-The models for other tasks will be released soon.
+In current stage, we support four libero tasks: Spatial, Object, Goal, and Long.
 
 **GR00T-N1.5 few-shot SFT Model Download**
-
-This model is designed specifically for libero spatial task types.
 
 .. code:: bash
 
@@ -151,7 +148,12 @@ This model is designed specifically for libero spatial task types.
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/Gr00t_Libero_Spatial_Fewshot_SFT
+   hf download RLinf/RLinf-Gr00t-SFT-Spatial
+
+Models for other tasks:
+- `Libero-Object <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_
+- `Libero-Goal <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Goal>`_
+- `Libero-Long <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-10>`_
 
 --------------
 
@@ -263,8 +265,8 @@ interference, eliminating the need for offload functionality.
   GR00T-N1.5 action head contain dropout layers which messes calculation of log probability, set ``disable_dropout`` to True to replace them with Identity layers.
 | Different noise injection methods can be chosen via ``noise_method``.
   We provide two options:
-  `flow_sde <https://arxiv.org/abs/2505.05470>`__ and
-  `reinflow <https://arxiv.org/abs/2505.22094>`__.
+  `flow-sde <https://arxiv.org/abs/2505.05470>`__ and
+  `flow-noise <https://arxiv.org/abs/2505.22094>`__.
 
 **2.2 LoRA Settings**
 
@@ -275,16 +277,28 @@ The LoRA setting is under test and will be available soon.
 - GR00T-N1.5 + PPO + Libero-Spatial:
    ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml``
 
+- GR00T-N1.5 + PPO + Libero-Object:
+   ``examples/embodiment/config/libero_object_ppo_gr00t.yaml``
+
+- GR00T-N1.5 + PPO + Libero-Goal:
+   ``examples/embodiment/config/libero_goal_ppo_gr00t.yaml``
+
+- GR00T-N1.5 + PPO + Libero-Long:
+   ``examples/embodiment/config/libero_10_ppo_gr00t.yaml``
+
 --------------
 
 **4. Launch Command**
 
-To start training with a chosen configuration, run the following
-command:
+To start training with a chosen configuration, run one of the following
+commands:
 
 ::
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
+   bash examples/embodiment/run_embodiment.sh libero_object_ppo_gr00t
+   bash examples/embodiment/run_embodiment.sh libero_goal_ppo_gr00t
+   bash examples/embodiment/run_embodiment.sh libero_10_ppo_gr00t
 
 --------------
 
@@ -351,10 +365,10 @@ Visualization and Results
 **LIBERO Results**
 ~~~~~~~~~~~~~~~~~~
 
-We trained GR00T-N1.5 with PPO in the LIBERO environment. Other results will be released soon.
+We trained GR00T-N1.5 with PPO in the LIBERO environment. Other results (RL with Flow-Noise) will be released soon. Numbers link to the corresponding model on Hugging Face.
 The results achieved through our RL training are shown below:
 
-.. list-table:: **GR00T-N1.5 model results on LIBERO**
+.. list-table:: **GR00T-N1.5 model results on LIBERO with Flow-SDE**
    :header-rows: 1
 
    * - Model
@@ -366,25 +380,19 @@ The results achieved through our RL training are shown below:
      - Δ Avg.
 
    * - GR00T (few-shot)
-     - 47.4%
-     - ---
-     - ---
-     - ---
-     - ---
-     - ---
-
-   * - +GRPO
-     - ---
-     - ---
-     - ---
-     - ---
-     - ---
+     - `41.4% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Spatial>`_
+     - `58.6% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_
+     - `48.2% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Goal>`_
+     - `61.9% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-10>`_
+     - 52.5%
      - ---
 
    * - +PPO
-     - **92.4%**
-     - ---
-     - ---
-     - ---
-     - ---
-     - ---
+     - `92.5% <https://huggingface.co/lixiang-95/RLinf-Gr00t-Spatial-400>`_
+     - `95.0% <https://huggingface.co/lixiang-95/RLinf-Gr00t-Object-400>`_
+     - `84.3% <https://huggingface.co/lixiang-95/RLinf-Gr00t-Goal-500>`_
+     - `86.3% <https://huggingface.co/lixiang-95/RLinf-Gr00t-libero10-300>`_
+     - **89.5%**
+     - **+37.0%**
+
+We would like to point out that the results presented above utilize the identical hyperparameter settings as :math:`\pi_0`. These findings primarily serve to demonstrate the broad applicability and inherent robustness of the proposed RL training framework. Further optimization through parameter tuning is likely to yield enhanced model performance.
