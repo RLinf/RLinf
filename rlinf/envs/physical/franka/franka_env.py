@@ -23,6 +23,7 @@ import cv2
 import gymnasium as gym
 import numpy as np
 from scipy.spatial.transform import Rotation as R
+import warnings
 
 from rlinf.envs.physical.common.camera import Camera, CameraInfo
 from rlinf.scheduler import Cluster, NodePlacementStrategy, Worker
@@ -31,12 +32,6 @@ from rlinf.utils.utils import euler_2_quat, quat_2_euler
 
 from .basic_data_structures import FrankaRobotState
 from .utils import quat_slerp, construct_adjoint_matrix, construct_homogeneous_matrix
-
-TARGET_POSE = np.array(
-    # [0.506938502936494,0.3954955734380723,0.6411658779176086,-2.8977165916149517,-1.4797545119150894,1.3497943895469893]
-    # [0.44631335973319547,0.3922720584821552,0.6411032368470745,-2.6936208323365602,-1.4729969356396122,1.1050705957650027]
-    [0.5083962757132434,0.4011011731302831,0.6398856749479279,-2.9041451876755344,-1.5498064793662414,1.315375849279958]
-)
 
 
 @dataclass
@@ -56,9 +51,11 @@ class FrankaRobotConfig:
     action_scale: np.ndarray = field(
         default_factory=lambda: np.ones(3)
     )  # [xyz move scale, orientation scale, gripper scale]
-    enable_random_reset: bool = True
-    random_xz_range: float = 0.05
-    random_ry_range: float = 0.01 # np.pi / 6
+    enable_random_reset: bool = False
+
+    random_xy_range: float = 0.0
+    random_rz_range: float = 0.0 # np.pi / 6
+
     # Robot parameters
     # Same as the position arrays: first 3 are position limits, last 3 are orientation limits
     ee_pose_limit_min: np.ndarray = field(default_factory=lambda: np.zeros(6))
@@ -66,82 +63,24 @@ class FrankaRobotConfig:
     compliance_param: Dict[str, float] = field(default_factory=dict)
     precision_param: Dict[str, float] = field(default_factory=dict)
     binary_gripper_threshold: float = 0.5
-    enable_gripper_penalty: bool = False
+    enable_gripper_penalty: bool = True
     gripper_penalty: float = 0.1
     save_video_path: Optional[str] = None
     joint_reset_cycle: int = 200  # Number of resets before resetting joints
 
     def __post_init__(self):
-        self.joint_reset_qpos = np.array([0, 0, 0, -1.9, -0, 2, 0])
-        self.compliance_param = {
-            "translational_stiffness": 2000,
-            "translational_damping": 89,
-            "rotational_stiffness": 150,
-            "rotational_damping": 7,
-            "translational_Ki": 0,
-            "translational_clip_x": 0.01,
-            "translational_clip_y": 0.01,
-            "translational_clip_z": 0.01,
-            "translational_clip_neg_x": 0.01,
-            "translational_clip_neg_y": 0.01,
-            "translational_clip_neg_z": 0.01,
-            "rotational_clip_x": 0.02,
-            "rotational_clip_y": 0.02,
-            "rotational_clip_z": 0.02,
-            "rotational_clip_neg_x": 0.02,
-            "rotational_clip_neg_y": 0.02,
-            "rotational_clip_neg_z": 0.02,
-            "rotational_Ki": 0,
-        }
-        self.precision_param = {
-            "translational_stiffness": 3000,
-            "translational_damping": 89,
-            "rotational_stiffness": 300,
-            "rotational_damping": 9,
-            "translational_Ki": 0.1,
-            "translational_clip_x": 0.01,
-            "translational_clip_y": 0.01,
-            "translational_clip_z": 0.01,
-            "translational_clip_neg_x": 0.01,
-            "translational_clip_neg_y": 0.01,
-            "translational_clip_neg_z": 0.01,
-            "rotational_clip_x": 0.05,
-            "rotational_clip_y": 0.05,
-            "rotational_clip_z": 0.05,
-            "rotational_clip_neg_x": 0.05,
-            "rotational_clip_neg_y": 0.05,
-            "rotational_clip_neg_z": 0.05,
-            "rotational_Ki": 0.1,
-        }
-        self.target_ee_pose = TARGET_POSE
-        self.reset_ee_pose = TARGET_POSE + np.array([0.0, -0.15, 0.0, 0.0, 0.0, 0.0])
-        self.reward_threshold = np.array([0.01, 0.01, 0.01, 0.2, 0.2, 0.2])
-        self.action_scale = np.array([0.05, 0.05, 0.05])
-        self.ee_pose_limit_min = np.array(
-            [
-                TARGET_POSE[0] - self.random_xz_range,
-                TARGET_POSE[1] - 0.15, # 0.1
-                TARGET_POSE[2] - self.random_xz_range,
-                TARGET_POSE[3] - 0.01,
-                TARGET_POSE[4] - self.random_ry_range,
-                TARGET_POSE[5] - 0.01,
-            ]
-        )
-        self.ee_pose_limit_max = np.array(
-            [
-                TARGET_POSE[0] + self.random_xz_range,
-                TARGET_POSE[1],
-                TARGET_POSE[2] + self.random_xz_range,
-                TARGET_POSE[3] + 0.01,
-                TARGET_POSE[4] + self.random_ry_range,
-                TARGET_POSE[5] + 0.01,
-            ]
-        )
-
         self.cameras = [
             CameraInfo(name=f"wrist_{i}", serial_number=n)
             for i, n in enumerate(self.camera_serials)
         ]
+    
+    def update_from_dict(self, config_dict):
+        for key, value in config_dict.items():
+            if hasattr(self, key):
+                self.__setattr__(key, value)
+            else:
+                warnings.warn(f"{self.__class__} does not contain the key {key=}")
+        
 
 
 class FrankaEnv(gym.Env):
@@ -322,13 +261,12 @@ class FrankaEnv(gym.Env):
             self._save_video()
 
         # Reset joint
-        joint_reset = False
-        # joint_reset_cycle = next(self._joint_reset_cycle)
-        # if joint_reset_cycle == 0:
-        #     self._logger.info(
-        #         f"Number of resets reached {self._config.joint_reset_cycle}, resetting joints to initial position."
-        #     )
-        #     joint_reset = True
+        joint_reset_cycle = next(self._joint_reset_cycle)
+        if joint_reset_cycle == 0:
+            self._logger.info(
+                f"Number of resets reached {self._config.joint_reset_cycle}, resetting joints to initial position."
+            )
+            joint_reset = True
             
 
         self.go_to_rest(joint_reset)
@@ -354,17 +292,29 @@ class FrankaEnv(gym.Env):
         if self._config.enable_random_reset:
             reset_pose = self._reset_pose.copy()
             reset_pose[:2] += np.random.uniform(
-                -self._config.random_xz_range, self._config.random_xz_range, (2,)
+                -self._config.random_xy_range, self._config.random_xy_range, (2,)
             )
             euler_random = self._config.target_ee_pose[3:].copy()
             euler_random[-1] += np.random.uniform(
-                -self._config.random_ry_range, self._config.random_ry_range
+                -self._config.random_rz_range, self._config.random_rz_range
             )
             reset_pose[3:] = euler_2_quat(euler_random)
-            self._interpolate_move(reset_pose)
         else:
             reset_pose = self._reset_pose.copy()
+        
+        self._franka_state = self._controller.get_state().wait()[0]
+        cnt = 0
+        while not np.allclose(self._franka_state.tcp_pose[:3], reset_pose[:3], 0.02):
+            cnt +=1
+            delta = self._franka_state.tcp_pose - reset_pose
+            print(f"{cnt=}")
+            print(f"{self._franka_state.tcp_pose=}")
+            print(f"{reset_pose=}")
+            print(f"{delta=}")
             self._interpolate_move(reset_pose)
+            self._franka_state = self._controller.get_state().wait()[0]
+            if cnt > 10:
+                break
         
     def _init_action_obs_spaces(self):
         """Initialize action and observation spaces, including arm safety box."""

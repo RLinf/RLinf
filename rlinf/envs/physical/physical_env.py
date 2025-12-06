@@ -17,7 +17,7 @@ from typing import OrderedDict
 class PhysicalEnv(gym.Env):
     def __init__(self, cfg, seed_offset, total_num_processes):
         self.cfg = cfg
-        self.env_cfg = FrankaRobotConfig(
+        self.overwride_cfg = dict(
             robot_ip=self.cfg.robot_ip, 
             camera_serials=self.cfg.camera_serials
         )
@@ -50,7 +50,7 @@ class PhysicalEnv(gym.Env):
         env_fns = []
         for _ in range(self.num_envs):
             def env_fn():
-                env = gym.make(id=self.cfg.init_params.id, config=self.env_cfg)
+                env = gym.make(id=self.cfg.init_params.id, overwride_cfg=self.overwride_cfg)
                 return env
             env_fns.append(env_fn)
         
@@ -322,7 +322,7 @@ class PhysicalEnv(gym.Env):
             self.render_images,
             output_dir=output_dir,
             video_name=f"{self.video_cnt}",
-            fps=self.env_cfg.step_frequency
+            fps=10, 
         )
         self.video_cnt += 1
         self.render_images = []
