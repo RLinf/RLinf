@@ -1088,20 +1088,6 @@ class EnvOutput:
             assert len(self.group_env_ids) == self.num_group_envs, (
                 f"Length of group_env_ids {len(self.group_env_ids)} does not match num_group_envs {self.num_group_envs}."
             )
-        elif self.simulator_type == "robocasa":
-            image_tensor = torch.stack(
-                [
-                    value.clone().permute(2, 0, 1)
-                    for value in obs["images_and_states"]["base_image"]
-                ]
-            )
-            if "wrist_image" in obs["images_and_states"]:
-                wrist_image_tensor = torch.stack(
-                    [
-                        value.clone().permute(2, 0, 1)
-                        for value in obs["images_and_states"]["wrist_image"]
-                    ]
-                )
         else:
             assert self.num_group_envs is not None, (
                 "num_group_envs must be provided if group_env_ids is not provided."
@@ -1211,6 +1197,8 @@ class EnvOutput:
             return left_value
         if torch.is_tensor(left_value) and torch.is_tensor(right_value):
             return torch.cat([left_value, right_value], dim=0)
+        elif isinstance(left_value, np.ndarray) and isinstance(right_value, np.ndarray):
+            return np.concatenate([left_value, right_value], axis=0)
         elif isinstance(left_value, list) and isinstance(right_value, list):
             return left_value + right_value
         elif isinstance(left_value, dict) and isinstance(right_value, dict):

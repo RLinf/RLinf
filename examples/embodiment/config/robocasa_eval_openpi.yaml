@@ -1,6 +1,8 @@
 defaults:
   - env/train: robocasa
   - env/eval: robocasa
+  - model/pi0@actor.model
+  - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
 hydra:
@@ -26,6 +28,7 @@ runner:
   max_epochs: 1
   max_steps: -1
   only_eval: True
+  eval_policy_path: "/path/to/model/pi0_robocasa_100demos_base_pytorch"
 
   val_check_interval: -1
   save_interval: 50
@@ -44,13 +47,14 @@ algorithm:
   n_eval_chunk_steps: 30
   num_group_envs: 64
   rollout_epoch: 1
+  eval_rollout_epoch: 1  # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
   reward_type: chunk_level
   logprob_type: chunk_level
   entropy_type: token_level
 
   update_epoch: 1
   adv_type: gae
-  loss_type: actor_critic
+  loss_type: actor  # Use 'actor' for eval mode (no value head needed)
   loss_agg_func: "token-mean"
   kl_beta: 0.0
   entropy_bonus: 0
@@ -91,6 +95,17 @@ env:
     queue_size: 0
   enable_offload: False
 
+  train:
+    total_num_envs: 9  # Match eval num_envs for eval mode
+    max_episode_steps: ${algorithm.max_episode_steps}
+    reward_coef: ${algorithm.reward_coef}
+    group_size: ${algorithm.group_size}
+
+  eval:
+    total_num_envs: 9  # Total number of parallel environments for evaluation
+    max_episode_steps: ${algorithm.max_episode_steps}
+    group_size: ${algorithm.group_size}
+
 rollout:
   group_name: "RolloutGroup"
   channel:
@@ -99,12 +114,14 @@ rollout:
     queue_size: 0
   mode: "colocate"
   generation_backend: "huggingface"
-  model_dir: "/mnt/mnt/public/zhangruize/ckpt/pi0_robocasa_100demos_base_pytorch"  # Update this to your pi0 model path
-  precision: ${actor.model.precision}
   recompute_logprobs: False
   unnorm_key: robocasa
   enable_offload: False
   pipeline_stage_num: 1
+
+  model:
+    model_path: "/path/to/model/pi0_robocasa_100demos_base_pytorch"
+    precision: ${actor.model.precision}
 
 actor:
   group_name: "ActorGroup"
@@ -113,37 +130,17 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: "/mnt/mnt/public/zhangruize/ckpt/pi0_robocasa_100demos_base_pytorch"  # Update this to your pi0 model path
-  checkpoint_save_path: "../results"
   micro_batch_size: 128
   global_batch_size: 128
   seed: 42
   enable_offload: False
 
   model:
-    model_name: "openpi"
-    precision: null  # Keep null for pi0 - it has its own precision handling
-    num_action_chunks: 10 # interface for the env
-    action_dim: 7  # Pi0 outputs 7D: [3D arm_pos + 3D arm_ori + 1D gripper], converted to 12D for PandaOmron
-    is_lora: False
-    lora_rank: 32
-    gradient_checkpointing: False
-    use_wrist_image: True  # robocasa has wrist camera
-    use_proprio: True
-    num_steps: 5
-    add_value_head: False
-    # openpi specific parameters
+    model_path: "/path/to/model/pi0_robocasa_100demos_base_pytorch"
+    # openpi specific parameters for robocasa
     openpi:
       config_name: "pi0_robocasa"
       num_images_in_input: 2  # base image + wrist image
-      noise_level: 0.5
-      action_chunk: ${actor.model.num_action_chunks}
-      num_steps: ${actor.model.num_steps}
-      train_expert_only: True
-      action_env_dim: ${actor.model.action_dim}
-      noise_method: "flow_sde"
-      add_value_head: ${actor.model.add_value_head}
-      detach_critic_input: False
 
   optim:
     lr: 1.0e-5
@@ -155,26 +152,8 @@ actor:
     critic_warmup_steps: 0
 
   fsdp_config:
-    strategy: "fsdp"
     sharding_strategy: "no_shard"
-    cpu_offload: False
-    offload_pin_memory: False
-    reshard_after_forward: True
-    enable_gradient_accumulation: True
-    forward_prefetch: False
-    limit_all_gathers: False
-    backward_prefetch: null
-    use_orig_params: False
-    use_liger_kernel: False
-    fsdp_size: -1
-    mixed_precision:
-      param_dtype: ${actor.model.precision}
-      reduce_dtype: ${actor.model.precision}
-      buffer_dtype: ${actor.model.precision}
-    amp:
-      enabled: False
-      precision: "bf16"
-      use_grad_scaler: False
+    gradient_checkpointing: False  # for openpi, gradient checkpointing is not supported
 
 reward:
   use_reward_model: False

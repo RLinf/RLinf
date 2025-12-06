@@ -12,6 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from rlinf.envs.robocasa.robocasa_env import RobocasaEnv
+from ..env_manager import EnvManager
 
-__all__ = ["RobocasaEnv"]
+
+@EnvManager.register_env("robocasa")
+def get_env_cls(env_cfg):
+    from .robocasa_env import RobocasaEnv
+
+    return RobocasaEnv

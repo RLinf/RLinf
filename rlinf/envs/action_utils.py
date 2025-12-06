@@ -86,7 +86,8 @@ def prepare_actions_for_robocasa(
     # raw_chunk_actions shape: [num_chunks, 32]
     # Extract first action_dim (12) dimensions
     chunk_actions = raw_chunk_actions[..., :action_dim]
-    
+    return chunk_actions
+
 def prepare_actions_for_isaaclab(
     raw_chunk_actions,
     model_type,
@@ -137,6 +138,7 @@ def prepare_actions(
         chunk_actions = prepare_actions_for_robocasa(
             raw_chunk_actions=raw_chunk_actions,
             action_dim=action_dim,
+        )
     elif env_type == "isaaclab":
         chunk_actions = prepare_actions_for_isaaclab(
             raw_chunk_actions=raw_chunk_actions,
