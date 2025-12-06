@@ -1197,6 +1197,8 @@ class EnvOutput:
             return left_value
         if torch.is_tensor(left_value) and torch.is_tensor(right_value):
             return torch.cat([left_value, right_value], dim=0)
+        elif isinstance(left_value, np.ndarray) and isinstance(right_value, np.ndarray):
+            return np.concatenate([left_value, right_value], axis=0)
         elif isinstance(left_value, list) and isinstance(right_value, list):
             return left_value + right_value
         elif isinstance(left_value, dict) and isinstance(right_value, dict):

@@ -18,6 +18,7 @@ import gc
 import torch
 from omegaconf import DictConfig, OmegaConf, open_dict
 from tqdm import tqdm
+import logging
 
 from rlinf.config import SupportedModel
 from rlinf.data.io_struct import ChunkStepResult, EmbodiedRolloutResult, EnvOutput
@@ -95,8 +96,12 @@ class MultiStepRolloutWorker(Worker):
             self._offload_model()
 
     def load_checkpoint(self, load_path):
-        model_dict = torch.load(load_path)
-        self.hf_model.load_state_dict(model_dict)
+        try:
+            model_dict = torch.load(load_path)
+            self.hf_model.load_state_dict(model_dict)
+        except Exception as e:
+            logging.warning("Failed to load checkpoint from %s: %s", load_path, e)
+            pass
 
     def setup_sample_params(self):
         """Setup sampling parameters for rollout."""
