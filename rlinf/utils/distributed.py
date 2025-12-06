@@ -39,7 +39,10 @@ def compute_rollout_metrics(
 ):
     device = torch.device(f"cuda:{torch.cuda.current_device()}")
     advantages = rollout_batch["advantages"].to(device=device)
-    mask = rollout_batch["attention_mask"][:, -response_len:].to(device=device)
+    if "response_mask" not in rollout_batch:
+        mask = rollout_batch["attention_mask"][:, -response_len:].to(device=device)
+    else:
+        mask = rollout_batch["response_mask"][:, -response_len:].to(device=device)
     prompt_lengths = rollout_batch["prompt_lengths"].clone().to(device=device)
     response_lengths = rollout_batch["response_lengths"].clone().to(device=device)
     reward_scores = rollout_batch["rewards"].clone().to(device=device)
@@ -164,10 +167,14 @@ class RolloutDataBalance(UserDict):
     ) -> Self:
         current_device = torch.cuda.current_device()
 
-        attn_mask = rollout_batches.get("attention_mask")
-        current_num_samples = attn_mask.size(0)
-
-        # 2. Calculate local sample token counts
+        # 1. Get local sample count
+        current_num_samples = 0
+        if rollout_batches:
+            first_tensor = next(iter(rollout_batches.values()))
+            if isinstance(first_tensor, torch.Tensor) and first_tensor.numel() > 0:
+                current_num_samples = first_tensor.size(0)
+                
+        # 2. Calculate local token counts
         local_token_counts = torch.zeros(
             current_num_samples, dtype=torch.int, device=current_device
         )
@@ -177,23 +184,23 @@ class RolloutDataBalance(UserDict):
                 isinstance(attn_mask, torch.Tensor)
                 and attn_mask.size(0) == current_num_samples
             ):
-                local_token_counts = attn_mask.sum(dim=1).int()
+                local_token_counts = attn_mask.sum(dim=1).int() # TODO: bug in agent. wait for fix @zhuchunyang
 
         # 3. Gather global information: sample counts from each rank
-        num_samples_tensor = torch.tensor(
-            current_num_samples, device=current_device, dtype=torch.long
-        )
-        all_num_samples_t = [
-            torch.empty_like(num_samples_tensor) for _ in range(dp_world_size)
-        ]
-        if dp_group and dp_world_size > 1:
-            torch.distributed.all_gather(
-                all_num_samples_t, num_samples_tensor, group=dp_group
+        if dp_world_size > 1 and dp_group is not None:
+            # Multi-rank case: use all_gather_object
+            all_num_samples = [None] * dp_world_size
+            torch.distributed.all_gather_object(
+                all_num_samples, current_num_samples, group=dp_group
             )
         else:
-            all_num_samples_t = [num_samples_tensor]
-        all_num_samples = [s.item() for s in all_num_samples_t]
+            # Single-rank case: 
+            all_num_samples = [current_num_samples]
+        
         global_total_samples = sum(all_num_samples)
+        if global_total_samples < dp_world_size:
+            return None
+        
         max_samples_rank = max(all_num_samples) if global_total_samples > 0 else 0
 
         # 4. Gather global token counts for all samples
@@ -213,6 +220,10 @@ class RolloutDataBalance(UserDict):
                 torch.empty_like(padded_local_tokens) for _ in range(dp_world_size)
             ]
             if dp_group and dp_world_size > 1:
+                all_padded_tokens_t = [
+                    torch.zeros(max_samples_rank, dtype=torch.int, device=current_device)
+                    for _ in range(dp_world_size)
+                ]
                 torch.distributed.all_gather(
                     all_padded_tokens_t, padded_local_tokens, group=dp_group
                 )

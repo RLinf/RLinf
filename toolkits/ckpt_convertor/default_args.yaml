@@ -20,6 +20,25 @@ explict_model:
     num_attention_heads: 12
     num_query_groups: 2
     head_dim: 128
+    te_ln_linear_qkv: True
+    te_ln_linear_mlp_fc1: True
+    te_ln_add_extra_state: True
+  qwen_2.5_3b:
+    num_layers: 36
+    tie_word_embeddings: true
+    model_type: qwen_2
+    num_attention_heads: 16
+    num_query_groups: 2
+    head_dim: 128
+    te_ln_linear_qkv: True
+    te_ln_linear_mlp_fc1: True
+    te_ln_add_extra_state: True
+  qwen_2.5_7b:
+    num_layers: 28
+    model_type: qwen_2
+    num_attention_heads: 28
+    num_query_groups: 4
+    head_dim: 128
   qwen_2.5_32b:
     model_type: qwen_2
     num_attention_heads: 40
@@ -70,6 +89,15 @@ explict_model:
     head_dim: 128
     num_layers: 28
     tie_word_embeddings: true
+  'Qwen3-14B':
+    model_type: qwen_3
+    num_attention_heads: 40
+    num_query_groups: 8
+    head_dim: 128
+    num_layers: 40
+    te_ln_linear_qkv: True
+    te_ln_linear_mlp_fc1: True
+    te_ln_add_extra_state: True
   'Qwen2.5-Coder-1.5B':
     model_type: qwen_2
     num_attention_heads: 12

@@ -710,7 +710,8 @@ def main():
 
     if not os.path.exists(args.save_path):
         os.makedirs(args.save_path)
-
+    # print(f"{args=}")
+    # exit()
     args.iteration = get_megatron_iteration(args)
 
     pp_rank_to_layers = [[] for _ in range(Operation.global_pp)]

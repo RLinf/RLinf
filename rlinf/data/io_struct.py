@@ -251,7 +251,6 @@ class RolloutResult:
     def _get_attention_masks_and_position_ids(
         prompt_lengths: torch.Tensor,
         response_lengths: torch.Tensor,
-        response_mask: torch.Tensor | None,
         max_prompt_len: int,
         total_len: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -271,28 +270,7 @@ class RolloutResult:
         # Broadcast [B, total_len]
         prompt_start = prompt_start.unsqueeze(1)
         response_end = response_end.unsqueeze(1)
-        if response_mask is not None:
-            max_response_len = total_len - max_prompt_len
-            response_mask = batch_pad_to_fixed_len(
-                [torch.as_tensor(ids, dtype=torch.long) for ids in response_mask],
-                max_batch_len=max_response_len,
-                pad_token=0,
-            )
-
-            attention_mask = torch.cat(
-                [
-                    (
-                        torch.arange(max_prompt_len)
-                        .unsqueeze(0)
-                        .expand(response_mask.size(0), -1)
-                        >= prompt_start
-                    ),
-                    response_mask,
-                ],
-                dim=1,
-            ).bool()
-        else:
-            attention_mask = (arange_ids >= prompt_start) & (arange_ids < response_end)
+        attention_mask = (arange_ids >= prompt_start) & (arange_ids < response_end)
 
         # =========================
         # Position IDs
@@ -304,6 +282,38 @@ class RolloutResult:
             position_ids[i, ps:] = torch.arange(total_len - ps)
 
         return attention_mask, position_ids
+
+    @staticmethod
+    def _get_response_masks(
+        response_mask: list[list[int]],
+        prompt_lengths: torch.Tensor,
+        max_prompt_len: int,
+        total_len: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        max_response_len = total_len - max_prompt_len
+        # [B]
+        prompt_start = max_prompt_len - prompt_lengths
+        # Broadcast [B, total_len]
+        prompt_start = prompt_start.unsqueeze(1)
+
+        response_mask = batch_pad_to_fixed_len(
+            [torch.as_tensor(ids, dtype=torch.long) for ids in response_mask],
+            max_batch_len=max_response_len,
+            pad_token=0,
+        )
+
+        response_mask = torch.cat(
+            [
+                (
+                    torch.zeros(max_prompt_len)
+                    .unsqueeze(0)
+                    .expand(response_mask.size(0), -1)
+                ),
+                response_mask,
+            ],
+            dim=1,
+        ).bool()
+        return response_mask
 
     @staticmethod
     def from_vllm_results(
@@ -492,6 +502,10 @@ class RolloutResult:
             merged_result.response_lengths.extend(res.response_lengths)
             merged_result.response_ids.extend(res.response_ids)
             merged_result.is_end.extend(res.is_end)
+            if res.response_mask is not None:
+                merged_result.response_mask = merge_list(
+                    merged_result.response_mask, res.response_mask
+                )
             if res.answers is not None:
                 merged_result.answers = merge_list(merged_result.answers, res.answers)
             if res.advantages is not None:
@@ -740,7 +754,7 @@ class RolloutResult:
                 shape ``[batch_size, training_seq_length - data_seq_length]``.
         """
 
-        # len = training_seq_length: input_ids, attention_mask, position_ids
+        # len = training_seq_length: input_ids, attention_mask, position_ids, response_mask
         #           [prompt_padding, prompt_ids,    response_ids, ... ,response_padding]
         #           |<-- padding -->|<-- pmp len -->|<-- resp len --->|<-- padding --->|
         #           |<---- cfg.data.seq_length ---->|
@@ -752,7 +766,29 @@ class RolloutResult:
         #           |<-- cfg.runner.seq_length - cfg.data.seq_length ->|
 
         max_response_len = training_seq_length - data_seq_length
-
+        
+        if self.rewards is not None and self.rewards.numel() == 0:
+            batch = {
+                "input_ids": torch.zeros(0, dtype=torch.long).cuda(),
+                "attention_mask": torch.zeros(0, dtype=torch.bool).cuda(),
+                "is_end": torch.zeros(0, dtype=torch.bool).cuda(),
+                "position_ids": torch.zeros(0, dtype=torch.long).cuda(),
+                "prompt_lengths": torch.zeros(0, dtype=torch.long).cuda(),
+                "response_lengths": torch.zeros(0, dtype=torch.long).cuda(),
+            }
+            if self.advantages is not None:
+                batch["advantages"] = torch.zeros(0, dtype=torch.float32).cuda()
+            if self.prev_logprobs is not None:
+                batch["prev_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
+            if self.ref_logprobs is not None:
+                batch["ref_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
+            if self.recompute_prev_logprobs is not None:
+                batch["recompute_prev_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
+            if self.rewards is not None:
+                batch["rewards"] = torch.zeros(0, dtype=torch.float32).cuda()
+            if self.rollout_logprobs is not None:
+                batch["prev_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
+            return batch
         prompt_lengths = torch.tensor(self.prompt_lengths)
         response_lengths = torch.tensor(self.response_lengths)
         is_end = torch.tensor(self.is_end, dtype=torch.bool)
@@ -760,7 +796,6 @@ class RolloutResult:
         attention_mask, position_ids = self._get_attention_masks_and_position_ids(
             prompt_lengths=prompt_lengths,
             response_lengths=response_lengths,
-            response_mask=self.response_mask,
             max_prompt_len=data_seq_length,
             total_len=training_seq_length,
         )
@@ -789,6 +824,14 @@ class RolloutResult:
             "prompt_lengths": prompt_lengths.cuda(),
             "response_lengths": response_lengths.cuda(),
         }
+
+        if self.response_mask is not None:
+            batch["response_mask"] = self._get_response_masks(
+                self.response_mask,
+                prompt_lengths=prompt_lengths,
+                max_prompt_len=data_seq_length,
+                total_len=training_seq_length,
+            )
 
         if (
             self.multi_modal_inputs is not None
@@ -828,7 +871,7 @@ class RolloutResult:
                     for logprobs in self.rollout_logprobs
                 ],
                 max_batch_len=max_response_len,
-                pad_token=pad_token,
+                pad_token=0,
             )
             batch["prev_logprobs"] = logprobs.cuda()
 
@@ -839,21 +882,22 @@ class RolloutResult:
         batches: list[dict[str, torch.Tensor]],
     ) -> dict[str, torch.Tensor]:
         """Merge two batches into one."""
+        non_empty_batches = [batch for batch in batches if batch]
         merged_batch = {}
-        if len(batches) == 0:
-            return merged_batch
-        if len(batches) == 1:
-            return batches[0]
+        if len(non_empty_batches) == 0:
+            return batches[0] if len(batches) > 0 else {}
+        if len(non_empty_batches) == 1:
+            return non_empty_batches[0]
 
-        for key in batches[0].keys():
-            if torch.is_tensor(batches[0][key]):
-                merged_batch[key] = torch.cat([batch[key] for batch in batches], dim=0)
-            elif isinstance(batches[0][key], list):
+        for key in non_empty_batches[0].keys():
+            if torch.is_tensor(non_empty_batches[0][key]):
+                merged_batch[key] = torch.cat([batch[key] for batch in non_empty_batches], dim=0)
+            elif isinstance(non_empty_batches[0][key], list):
                 merged_batch[key] = []
-                for batch in batches:
+                for batch in non_empty_batches:
                     merged_batch[key].extend(batch[key])
             else:
-                raise ValueError(f"Unsupported batch key type: {type(batches[0][key])}")
+                raise ValueError(f"Unsupported batch key type: {type(non_empty_batches[0][key])}")
         return merged_batch
 
 
