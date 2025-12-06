@@ -121,7 +121,7 @@ actor:
     # openpi specific parameters
     openpi:
       value_after_vlm: True
-      noise_level: 0.3 
+      noise_level: 0.3
 
   optim:
     lr: 5.0e-6
