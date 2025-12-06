@@ -1,6 +1,6 @@
 defaults:
-  - env/train: PutOnPlateInScene25Main
-  - env/eval: PutOnPlateInScene25Main
+  - env/train: put_on_plate_in_scene_25_main
+  - env/eval: put_on_plate_in_scene_25_main
   - model/openvla@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
