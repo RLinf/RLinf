@@ -1,5 +1,5 @@
 defaults:
-  - env/train: PutOnPlateInScene25Main
+  - env/train: put_on_plate_in_scene_25_main
   - env/eval: maniskill_ood_template
   - model/openvla_oft@actor.model
   - training_backend/fsdp@actor.fsdp_config
