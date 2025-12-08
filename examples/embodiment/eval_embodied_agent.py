@@ -32,7 +32,7 @@ def main(cfg) -> None:
     cfg = validate_cfg(cfg)
     cfg.runner.only_eval = True
 
-    cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
+    cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = HybridComponentPlacement(cfg, cluster)
 
     # Create rollout worker group

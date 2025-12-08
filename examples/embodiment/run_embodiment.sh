@@ -10,7 +10,10 @@ export PYOPENGL_PLATFORM="egl"
 # NOTE: set LIBERO_REPO_PATH to the path of the LIBERO repo
 export LIBERO_REPO_PATH="/opt/libero"
 
-export PYTHONPATH=${REPO_PATH}:${LIBERO_REPO_PATH}:$PYTHONPATH
+export GLOO_SOCKET_IFNAME=eno1 # 
+
+export ROBOT_PYTHONPATH=/home/franka/catkin_franka/devel/lib/python3/dist-packages:/opt/ros/noetic/lib/python3/dist-packages:/home/franka/RLinf
+export PYTHONPATH=${REPO_PATH}:${LIBERO_REPO_PATH}:${ROBOT_PYTHONPATH}:$PYTHONPATH
 
 export CUDA_LAUNCH_BLOCKING=1
 export HYDRA_FULL_ERROR=1
