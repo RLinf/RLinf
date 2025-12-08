@@ -144,10 +144,10 @@ class AsyncEmbodiedSACFSDPActor(EmbodiedSACFSDPActor):
             
             self.update_step += 1
 
-        self.lr_scheduler.step()
-        self.qf_lr_scheduler.step()
-        if hasattr(self, 'base_alpha') and self.base_alpha is not None:
-            self.alpha_lr_scheduler.step()
+        # self.lr_scheduler.step()
+        # self.qf_lr_scheduler.step()
+        # if hasattr(self, 'base_alpha') and self.base_alpha is not None:
+        #     self.alpha_lr_scheduler.step()
 
         # Average metrics across updates
         mean_metric_dict = {}
