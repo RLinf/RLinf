@@ -23,4 +23,4 @@ init_params:
   sim_config: ${env.train.init_params.sim_config}
   max_episode_steps: ${env.train.init_params.max_episode_steps}
   sensor_configs: ${env.train.init_params.sensor_configs}
-  render_mode: null
+  render_mode: render_mode

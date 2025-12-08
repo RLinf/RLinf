@@ -1,6 +1,6 @@
 defaults:
-  - env/train: PickCube
-  - env/eval: PickCube
+  - env/train: pick_cube
+  - env/eval: pick_cube
   - override hydra/job_logging: stdout
 
 hydra:

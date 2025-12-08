@@ -1,6 +1,6 @@
 defaults:
-  - env/train: PutCarrotOnPlateInScene
-  - env/eval: PutCarrotOnPlateInScene
+  - env/train: put_carrot_on_plate_in_scene
+  - env/eval: put_carrot_on_plate_in_scene
   - override hydra/job_logging: stdout
 
 hydra:
