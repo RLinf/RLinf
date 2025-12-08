@@ -88,13 +88,13 @@ class PegInsertionConfig(FrankaRobotConfig):
             TARGET_POSE[5] + self.random_rz_range,
         ]
     )
+        super().__post_init__()
 
 
 class PegInsertionEnv(FrankaEnv):
     def __init__(self, overwride_cfg):
         # Update config according to current env
-        config = PegInsertionConfig()
-        config.update_from_dict(overwride_cfg)
+        config = PegInsertionConfig(**overwride_cfg)
         super().__init__(config)
 
     @property

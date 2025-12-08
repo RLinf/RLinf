@@ -70,7 +70,7 @@ class FrankaRobotConfig:
 
     def __post_init__(self):
         self.cameras = [
-            CameraInfo(name=f"wrist_{i}", serial_number=n)
+            CameraInfo(name=f"wrist_{i+1}", serial_number=n)
             for i, n in enumerate(self.camera_serials)
         ]
     
@@ -94,7 +94,7 @@ class FrankaEnv(gym.Env):
             gripper_ip (str): The IP address of the gripper.
         """
 
-        self.is_dummy = True
+        self.is_dummy = False
         
         self.use_euler_obs = True
         self.use_rel_frame = True

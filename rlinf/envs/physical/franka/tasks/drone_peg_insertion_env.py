@@ -5,6 +5,10 @@ import copy
 import time
 from rlinf.utils.utils import euler_2_quat, quat_2_euler
 
+
+# [0.506938502936494,0.3954955734380723,0.6411658779176086,-2.8977165916149517,-1.4797545119150894,1.3497943895469893]
+# [0.44631335973319547,0.3922720584821552,0.6411032368470745,-2.6936208323365602,-1.4729969356396122,1.1050705957650027]
+
 TARGET_POSE = np.array(
     [
         0.5083962757132434,0.4011011731302831,0.6398856749479279,
@@ -91,8 +95,7 @@ class DronePegInsertionConfig(FrankaRobotConfig):
 class DronePegInsertionEnv(FrankaEnv):
     def __init__(self, overwride_cfg):
         # Update config according to current env
-        config = DronePegInsertionConfig()
-        config.update_from_dict(overwride_cfg)
+        config = DronePegInsertionConfig(**overwride_cfg)
         super().__init__(config)
     
     @property
