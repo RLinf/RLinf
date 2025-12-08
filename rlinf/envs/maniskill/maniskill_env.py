@@ -125,16 +125,104 @@ class ManiskillEnv(gym.Env):
         ).to(self.device)
 
     def _wrap_obs(self, raw_obs):
-        if self.env.obs_mode == "state":
-            wrapped_obs = {"images": None, "task_description": None, "state": raw_obs}
+        obs_mode = self.env.unwrapped.obs_mode
+        if getattr(self.cfg, "wrap_obs_mode", "vla") == "simple":
+            if obs_mode == "state":
+                wrapped_obs = {
+                    "images": None,
+                    "task_description": None,
+                    "states": raw_obs,
+                }
+            elif obs_mode == "rgb":
+                from mani_skill.utils import common
+
+                sensor_data = raw_obs.pop("sensor_data")
+                raw_obs.pop("sensor_param")
+                state = common.flatten_state_dict(
+                    raw_obs, use_torch=True, device=self.device
+                )
+
+                images = {}
+                for camera_name in sensor_data.keys():
+                    img = sensor_data[camera_name]["rgb"]
+                    # Convert to uint8 and permute to [B, C, H, W] format
+                    # Normalization (dividing by 255) is done in model preprocessing phase
+                    if img.dim() == 4 and img.shape[-1] == 3:
+                        img = img.permute(0, 3, 1, 2)
+                    # Ensure uint8 format for consistency with _extract_obs_image
+                    if img.dtype != torch.uint8:
+                        img = img.to(torch.uint8)
+                    images[camera_name] = img
+                wrapped_obs = {
+                    "images": images,
+                    "task_description": None,
+                    "states": state,
+                }
+            else:
+                raise NotImplementedError(
+                    f"obs_mode {obs_mode} not supported in simple mode"
+                )
         else:
-            wrapped_obs = self._extract_obs_image(raw_obs)
+            if obs_mode == "state":
+                wrapped_obs = {
+                    "images": None,
+                    "task_description": None,
+                    "states": raw_obs,
+                }
+            else:
+                wrapped_obs = self._extract_obs_image(raw_obs)
         return wrapped_obs
 
     def _extract_obs_image(self, raw_obs):
-        obs_image = raw_obs["sensor_data"]["3rd_view_camera"]["rgb"].to(torch.uint8)
+        # Get available cameras from sensor_data
+        sensor_data = raw_obs["sensor_data"]
+        available_cameras = list(sensor_data.keys())
+
+        # Try to get camera name from task config, or use priority order
+        camera_name = None
+        if hasattr(self.env.unwrapped, "rgb_camera_name"):
+            camera_name = self.env.unwrapped.rgb_camera_name
+            if camera_name not in available_cameras:
+                # Fallback if configured camera not available
+                camera_name = None
+
+        # Get preferred cameras from config, with default fallback
+        if camera_name is None:
+            preferred_cameras = getattr(
+                self.cfg, "preferred_cameras", ["base_camera", "3rd_view_camera"]
+            )
+            if not isinstance(preferred_cameras, list):
+                preferred_cameras = [preferred_cameras]
+
+            for preferred_camera in preferred_cameras:
+                if preferred_camera in available_cameras:
+                    camera_name = preferred_camera
+                    break
+
+        # Use first available camera if none of the preferred ones exist
+        if camera_name is None and available_cameras:
+            camera_name = available_cameras[0]
+
+        if camera_name is None:
+            raise ValueError(
+                f"No cameras found in sensor_data. Available keys: {list(sensor_data.keys())}"
+            )
+
+        obs_image = sensor_data[camera_name]["rgb"].to(torch.uint8)
         obs_image = obs_image.permute(0, 3, 1, 2)  # [B, C, H, W]
-        extracted_obs = {"images": obs_image, "task_descriptions": self.instruction}
+        extracted_obs = {
+            "images": {camera_name: obs_image},
+            "task_descriptions": self.instruction,
+        }
+        state_dict = {
+            k: v for k, v in raw_obs.items() if k not in ["sensor_data", "sensor_param"]
+        }
+        if state_dict:
+            state = common.flatten_state_dict(
+                state_dict, use_torch=True, device=self.device
+            )
+            extracted_obs["states"] = state
+
         return extracted_obs
 
     def _calc_step_reward(self, reward, info):
@@ -266,6 +354,7 @@ class ManiskillEnv(gym.Env):
         chunk_rewards = []
         raw_chunk_terminations = []
         raw_chunk_truncations = []
+        chunk_success_frames = []  # Collect success_frame for each step
         for i in range(chunk_size):
             actions = chunk_actions[:, i]
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
@@ -276,12 +365,46 @@ class ManiskillEnv(gym.Env):
             raw_chunk_terminations.append(terminations)
             raw_chunk_truncations.append(truncations)
 
+            # Extract success_frame for this step
+            # Use infos["success"] directly, which is computed by evaluate() in get_info()
+            # This is the same logic as success_at_end, ensuring consistency between
+            # success_frame (per-step success) and success_at_end (final step success)
+            if "success" in infos:
+                success_tensor = infos["success"]
+                if isinstance(success_tensor, torch.Tensor):
+                    chunk_success_frames.append(success_tensor.float())
+                elif isinstance(success_tensor, (list, tuple)):
+                    chunk_success_frames.append(
+                        torch.tensor(
+                            success_tensor, dtype=torch.float32, device=self.device
+                        )
+                    )
+                else:
+                    # Default to False if not available
+                    chunk_success_frames.append(
+                        torch.zeros(
+                            chunk_actions.shape[0],
+                            dtype=torch.float32,
+                            device=self.device,
+                        )
+                    )
+            else:
+                # Default to False if no success info
+                chunk_success_frames.append(
+                    torch.zeros(
+                        chunk_actions.shape[0], dtype=torch.float32, device=self.device
+                    )
+                )
+
         chunk_rewards = torch.stack(chunk_rewards, dim=1)  # [num_envs, chunk_steps]
         raw_chunk_terminations = torch.stack(
             raw_chunk_terminations, dim=1
         )  # [num_envs, chunk_steps]
         raw_chunk_truncations = torch.stack(
             raw_chunk_truncations, dim=1
+        )  # [num_envs, chunk_steps]
+        chunk_success_frames = torch.stack(
+            chunk_success_frames, dim=1
         )  # [num_envs, chunk_steps]
 
         past_terminations = raw_chunk_terminations.any(dim=1)
@@ -298,6 +421,11 @@ class ManiskillEnv(gym.Env):
 
         chunk_truncations = torch.zeros_like(raw_chunk_truncations)
         chunk_truncations[:, -1] = past_truncations
+        # Add success_frame to infos so it can be extracted in env_worker
+        if infos is None:
+            infos = {}
+        infos["success_frame"] = chunk_success_frames  # [num_envs, chunk_steps]
+
         return (
             extracted_obs,
             chunk_rewards,

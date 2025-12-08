@@ -691,6 +691,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.rollout_batch["logprob"] = self.rollout_batch["prev_logprobs"]
 
     def compute_advantages_and_returns(self):
+        # Compute advantages and returns
         stage_num = self.cfg.rollout.pipeline_stage_num
         env_world_size = self._component_placement.get_world_size("env")
         actor_world_size = self._component_placement.get_world_size("actor")
@@ -729,7 +730,12 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
         return rollout_metrics
 
+    def setup_model_and_optimizer(self):
+        """Setup model and optimizer"""
+        super().setup_model_and_optimizer()
+
     def run_training(self):
+        # Original PPO training
         if self.cfg.actor.get("enable_offload", False):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)

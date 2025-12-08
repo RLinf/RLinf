@@ -72,3 +72,78 @@ def list_of_dict_to_dict_of_list(
             assert key in output
             output[key].append(item)
     return output
+
+
+def extract_success_frame_from_infos(
+    infos: dict[str, Any], chunk_rewards: torch.Tensor
+) -> torch.Tensor:
+    """
+    Extract success_frame from environment infos dictionary.
+
+    Priority: use success_frame if available (contains per-step success for all chunk steps),
+    otherwise fall back to success (only represents last step).
+
+    Args:
+        infos: Dictionary containing environment information, potentially with "success_frame" or "success" keys
+        chunk_rewards: Reward tensor with shape [num_envs] or [num_envs, chunk_steps] used to determine output shape
+
+    Returns:
+        success_frame: Tensor with shape [num_envs] or [num_envs, chunk_steps] containing success signals
+    """
+    success_frame = None
+
+    if "success_frame" in infos:
+        # If environment already provides success_frame per step (from chunk_step)
+        # This is the preferred source as it contains success for each step in the chunk
+        success_frame = infos["success_frame"]
+        if isinstance(success_frame, torch.Tensor):
+            pass  # Already a tensor, keep as is
+        elif isinstance(success_frame, (list, tuple)):
+            success_frame = torch.tensor(
+                success_frame, dtype=torch.float32, device=chunk_rewards.device
+            )
+    elif "success" in infos:
+        # Fallback: use success if success_frame is not available
+        # If success is a tensor with shape [num_envs], expand to [num_envs, chunk_steps] if needed
+        success_tensor = infos["success"]
+        if isinstance(success_tensor, torch.Tensor):
+            if success_tensor.dim() == 1:
+                # [num_envs] -> [num_envs, chunk_steps]
+                # For chunk_step, we need success for each step
+                # Check if chunk_rewards has chunk dimension
+                if chunk_rewards.dim() == 2 and chunk_rewards.shape[1] > 1:
+                    # Expand to match chunk_steps: repeat the last value for all steps
+                    success_frame = success_tensor.unsqueeze(1).expand(
+                        -1, chunk_rewards.shape[1]
+                    )
+                else:
+                    success_frame = (
+                        success_tensor.unsqueeze(1)
+                        if chunk_rewards.dim() == 2
+                        else success_tensor
+                    )
+            else:
+                success_frame = success_tensor
+        elif isinstance(success_tensor, (list, tuple)):
+            # Convert list to tensor
+            success_frame = torch.tensor(
+                success_tensor, dtype=torch.float32, device=chunk_rewards.device
+            )
+
+    if success_frame is None:
+        # Default to zeros if no success info available
+        if chunk_rewards.dim() == 2:
+            success_frame = torch.zeros(
+                chunk_rewards.shape[0],
+                chunk_rewards.shape[1],
+                dtype=torch.float32,
+                device=chunk_rewards.device,
+            )
+        else:
+            success_frame = torch.zeros(
+                chunk_rewards.shape[0],
+                dtype=torch.float32,
+                device=chunk_rewards.device,
+            )
+
+    return success_frame
