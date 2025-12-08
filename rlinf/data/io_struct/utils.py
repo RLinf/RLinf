@@ -89,7 +89,7 @@ def process_nested_dict_for_adv(nested_dict, rollout_epoch):
 def process_nested_dict_for_train(nested_dict, shuffle_id):
     ret_dict = dict()
     for key, value in nested_dict.items():
-        if key in ["dones", "prev_values"]:
+        if key in ["dones", "terminations", "truncations", "prev_values"]:
             value = value[:-1]
         if "env_info" in key:
             raise NotImplementedError
@@ -105,7 +105,7 @@ def process_nested_dict_for_replay_buffer(nested_dict, rm_extra_done=True):
     ret_dict = dict()
     num_data = None
     for key, value in nested_dict.items():
-        if key == "dones" and rm_extra_done:
+        if key in ["dones", "truncations", "terminations"] and rm_extra_done:
             value = value[1:]
         if value is None:
             ret_dict[key] = None

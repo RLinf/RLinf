@@ -116,6 +116,8 @@ class MultiStepRolloutWorker(Worker):
         
         # first step for env_batch
         if env_output["rewards"] is None:
+            self.buffer_list[i].truncations.append(env_output["truncations"].contiguous().cpu())
+            self.buffer_list[i].terminations.append(env_output["terminations"].contiguous().cpu())
             self.buffer_list[i].dones.append(env_output["dones"].contiguous().cpu())
             if hasattr(self.hf_model, "q_head"):
                 real_next_extracted_obs = init_real_next_obs(next_extracted_obs)
@@ -124,6 +126,8 @@ class MultiStepRolloutWorker(Worker):
         
         self.buffer_list[i].rewards.append(env_output["rewards"].cpu().contiguous())
         self.buffer_list[i].dones.append(env_output["dones"].bool().cpu().contiguous())
+        self.buffer_list[i].truncations.append(env_output["truncations"].contiguous().cpu())
+        self.buffer_list[i].terminations.append(env_output["terminations"].contiguous().cpu())
 
         # Note: currently this is not correct for chunk-size>1 with partial reset
         if env_output["dones"].any() and self.cfg.env.train.auto_reset:
