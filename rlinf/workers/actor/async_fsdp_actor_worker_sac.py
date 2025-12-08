@@ -12,258 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import gc
-import os
-
 import asyncio
-import itertools
 import numpy as np
 import torch
-import torch.nn.functional as F
-from omegaconf import DictConfig
 # import rlinf.algorithms.advantages_sac  # noqa: F401
-from rlinf.data.replay_buffer import SACReplayBuffer, concat_batch
+from rlinf.data.replay_buffer import concat_batch
 from rlinf.data.io_struct.utils import (
     put_tensor_device, 
     split_dict_to_chunk
 )
-from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
+from rlinf.workers.actor.fsdp_actor_worker_sac import EmbodiedSACFSDPActor
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
     append_to_dict,
-    compute_rollout_metrics,
     compute_split_num
 )
 
-class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
-    def __init__(self, cfg: DictConfig):
-        super().__init__(cfg)
-        
-        # SAC-specific initialization
-        self.replay_buffer = None
-        self.target_model = None
-        self.base_alpha = None
-        self.demo_buffer = None
-        self.alpha_optimizer = None
-        self.update_step = 0
-
-    def init_worker(self):
-        self.setup_model_and_optimizer(initialize_target=True)
-        self.setup_sac_components()
-        self.soft_update_target_model(tau=1.0)
-        if self.cfg.actor.get("enable_offload", False):
-            self.offload_fsdp_param_and_grad()
-            self.offload_fsdp_optimizer()
-            torch.cuda.synchronize()
-            gc.collect()
-            torch.cuda.empty_cache()
-
-    def build_optimizer(self, enable_warmup=False):
-        betas = (self._cfg.optim.adam_beta1, self._cfg.optim.adam_beta2)
-        params_actor = []
-        params_critic = []
-        if enable_warmup:
-            raise NotImplementedError
-        else:
-            for name, param in self.model.named_parameters():
-                if param.requires_grad:
-                    if "q_head" in name:
-                        params_critic.append(param)
-                    else:
-                        params_actor.append(param)
-        assert len(params_critic) > 0
-        self.optimizer = torch.optim.Adam(
-            [
-                {
-                    "params": params_actor, 
-                    "lr": self._cfg.optim.lr, 
-                    "betas": betas
-                },
-                
-            ]
-        )
-        self.qf_optimizer = torch.optim.Adam(
-            [
-                {
-                    "params": params_critic,
-                    "lr": self._cfg.optim.value_lr,
-                    "betas": betas,
-                },
-            ]
-        )
-        # Initialize temperature parameter for automatic entropy tuning
-        if self.cfg.algorithm.get("auto_entropy_tuning", False):
-            target_entropy = self.cfg.algorithm.get(
-                "target_entropy", 
-                -self.cfg.actor.model.action_dim  # Heuristic: -|A|
-            )
-            self.target_entropy = target_entropy
-
-            self.alpha_type = "exp" # "exp"
-            self.alpha_type = "softplus"
-            if self.alpha_type == "exp":
-                self.base_alpha = torch.nn.Parameter(
-                    np.log(self.cfg.algorithm.get("initial_alpha", 1))
-                    * torch.ones(1, device=self.device), requires_grad=True
-                )
-            elif self.alpha_type == "softplus":
-                self.base_alpha = torch.nn.Parameter(
-                    np.log(np.exp(self.cfg.algorithm.get("initial_alpha", 0.01))-1)
-                    * torch.ones(1, device=self.device), requires_grad=True
-                )
-            else:
-                raise NotImplementedError
-            self.alpha_optimizer = torch.optim.Adam(
-                [self.base_alpha], 
-                lr=self.cfg.algorithm.get("alpha_lr", 3e-4)
-            )
-    
-    def compute_alpha(self):
-        if self.cfg.algorithm.get("auto_entropy_tuning", False):
-            if self.alpha_type == "exp":
-                alpha = self.base_alpha.exp()
-            elif self.alpha_type == "softplus":
-                alpha = torch.nn.functional.softplus(self.base_alpha)
-            else:
-                raise NotImplementedError
-        else:
-            alpha = torch.Tensor(self.cfg.algorithm.get("alpha", 0.2)).to(dtype=self.torch_dtype, device=self.device)
-        return alpha
-
-    @property
-    def alpha(self):
-        return self.compute_alpha().item()
-
-    def setup_sac_components(self):
-        """Initialize SAC-specific components"""
-        # Initialize replay buffer
-        buffer_capacity = self.cfg.algorithm.get("replay_buffer_capacity", 100000)
-        seed = self.cfg.actor.get("seed", 1234)
-        self.replay_buffer = SACReplayBuffer(
-            capacity=buffer_capacity,
-            device=self.device,
-            seed=seed
-        )
-
-        self.critic_actor_ratio = self.cfg.algorithm.get("critic_actor_ratio", 1)
-        self.critic_subsample_size = self.cfg.algorithm.get("critic_subsample_size", -1)
-        self.critic_sample_generator = torch.Generator()
-        self.critic_sample_generator.manual_seed(seed)
-
-    def soft_update_target_model(self, tau: float = None):
-        """Soft update target model parameters"""
-        if tau is None:
-            tau = self.cfg.algorithm.get("tau", 0.01)
-        
-        assert self.target_model_initialized
-        
-        with torch.no_grad():
-            online_params = self.model.named_parameters()
-            target_params = self.target_model.named_parameters()
-            
-            for (name1, online_param), (name2, target_param) in zip(online_params, target_params):
-                assert name1 == name2
-                if "q_head" not in name1:
-                    target_param.data.mul_(0.0)
-                    target_param.data.add_(online_param.data)
-                else:
-                    target_param.data.mul_(1.0 - tau)
-                    target_param.data.add_(online_param.data * tau)
-
-    async def recv_demo_data(self):
-        demo_data = await self.demo_data_channel.get(async_op=True).async_wait()
-        self.demo_buffer = SACReplayBuffer.create_from_buffer(demo_data, seed=self.cfg.actor.seed)
-
-    def compute_advantages_and_returns(self):
-        """
-        SAC doesn't compute advantages/returns like PPO.
-        This method is kept for compatibility but returns empty metrics.
-        """
-        # SAC uses Q-values directly, no advantages/returns computation needed
-        self.log_on_first_rank("SAC algorithm: skipping advantages/returns computation")
-        
-        # Just compute basic rollout metrics without advantages/returns
-        rollout_metrics = compute_rollout_metrics(self.rollout_batch)
-        return rollout_metrics
-    
-    def forward_critic(self, batch):
-        rewards = batch["rewards"].to(self.torch_dtype)
-        curr_obs = batch["transitions"]["obs"]
-        next_obs = batch["transitions"]["next_obs"]
-        with torch.no_grad():
-
-            next_state_actions, next_state_log_pi, shared_feature = self.model(
-                "sac_forward", 
-                obs=next_obs, 
-            )
-            next_state_log_pi = next_state_log_pi.sum(dim=-1, keepdim=True)
-            
-            all_qf_next_target = self.target_model(
-                "sac_q_forward", 
-                obs=next_obs, actions=next_state_actions, 
-                shared_feature=shared_feature, 
-            )
-            if self.critic_subsample_size > 0:
-                sample_idx = torch.randint(
-                    0, all_qf_next_target.shape[0], self.critic_subsample_size, 
-                    generator=self.critic_sample_generator, device=self.device
-                )
-                all_qf_next_target = all_qf_next_target[sample_idx]
-                
-            min_qf_next_target, _ = torch.min(
-                all_qf_next_target, 
-                dim=1, keepdim=True
-            )
-
-            if self.cfg.algorithm.get("backup_entropy", True):
-                min_qf_next_target = min_qf_next_target - self.alpha * next_state_log_pi
-                min_qf_next_target = min_qf_next_target.to(dtype=self.torch_dtype)
-            target_q_values = rewards.sum(dim=-1, keepdim=True) + self.cfg.algorithm.gamma * min_qf_next_target # [bsz, 1]
-            
-
-        all_data_q_values = self.model(
-            "sac_q_forward", 
-            obs=curr_obs, 
-            actions=batch["action"] if "action" in batch else batch["action_tokens"]
-        ) # [num-q, bsz, 1]
-
-        critic_loss = F.mse_loss(
-            all_data_q_values, 
-            target_q_values.expand_as(all_data_q_values)
-        )
-        return critic_loss
-    
-    def forward_actor(self, batch):
-        curr_obs = batch["transitions"]["obs"]
-        pi, log_pi, shared_feature = self.model(
-            "sac_forward", obs=curr_obs
-        )
-        log_pi = log_pi.sum(dim=-1, keepdim=True)
-        all_qf_pi = self.model(
-            "sac_q_forward", 
-            obs=curr_obs, actions=pi, 
-            shared_feature=shared_feature, 
-            detach_encoder=True
-        )
-
-        # min_qf_pi = torch.mean(all_qf_pi, dim=1, keepdim=True)
-        min_qf_pi, _ = torch.min(all_qf_pi, dim=1, keepdim=True)
-        actor_loss = ((self.alpha*log_pi) - min_qf_pi).mean()
-        return actor_loss
-    
-    def forward_alpha(self, batch):
-        curr_obs = batch["transitions"]["obs"]
-        with torch.no_grad():
-            _, log_pi, _ = self.model(
-                "sac_forward", obs=curr_obs
-            )
-            log_pi = log_pi.sum(dim=-1, keepdim=True)
-
-        alpha = self.compute_alpha()
-        alpha_loss = (-alpha * (log_pi.mean() + self.target_entropy))
-        return alpha_loss
-        
-
+class AsyncEmbodiedSACFSDPActor(EmbodiedSACFSDPActor):
     async def start_replay_buffer(self, data_channel):
         send_num = self._component_placement.get_world_size("rollout") * self.stage_num
         recv_num = self._component_placement.get_world_size("actor")
@@ -378,6 +143,11 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                 self.soft_update_target_model()    
             
             self.update_step += 1
+
+        self.lr_scheduler.step()
+        self.qf_lr_scheduler.step()
+        if hasattr(self, 'base_alpha') and self.base_alpha is not None:
+            self.alpha_lr_scheduler.step()
 
         # Average metrics across updates
         mean_metric_dict = {}

@@ -183,6 +183,7 @@ class EmbodiedRunner:
             global_pbar.set_postfix(logging_metrics)
             global_pbar.update(1)
 
+        self._save_checkpoint()
         self.metric_logger.finish()
 
     def _save_checkpoint(self):
@@ -200,6 +201,8 @@ class EmbodiedRunner:
 
         if (max_steps := self.cfg.runner.get("max_steps", -1)) >= 0:
             self.max_steps = min(self.max_steps, max_steps)
+
+        self.actor.set_max_steps(self.max_steps).wait()
 
     @property
     def epoch(self):

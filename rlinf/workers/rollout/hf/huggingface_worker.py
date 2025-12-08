@@ -214,10 +214,10 @@ class MultiStepRolloutWorker(Worker):
 
         for _ in range(self.cfg.algorithm.n_eval_chunk_steps):
             for _ in range(self.stage_num):
-                env_output = await self.recv_env_output()
+                env_output = await self.recv_env_output(mode="eval")
                 next_extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"])
                 actions, _ = self.predict(next_extracted_obs, mode="eval")
-                await self.send_chunk_actions(actions)
+                await self.send_chunk_actions(actions, mode="eval")
 
         if self.cfg.rollout.get("enable_offload", False):
             self.offload_model()
@@ -238,16 +238,18 @@ class MultiStepRolloutWorker(Worker):
         gc.collect()
         torch.cuda.empty_cache()
 
-    async def recv_env_output(self):
+    async def recv_env_output(self, mode="train"):
+        assert mode in ["train", "eval"]
         env_output = await self.channel.get(
-            key=f"{self._obs_queue_name}_{self._rank}", async_op=True
+            key=f"{self._obs_queue_name}_{mode}_{self._rank}", async_op=True
         ).async_wait()
         return env_output
 
-    async def send_chunk_actions(self, chunk_actions):
+    async def send_chunk_actions(self, chunk_actions, mode="train"):
+        assert mode in ["train", "eval"]
         await self.channel.put(
             item=chunk_actions,
-            key=f"{self._action_queue_name}_{self._rank}",
+            key=f"{self._action_queue_name}_{mode}_{self._rank}",
             async_op=True,
         ).async_wait()
 

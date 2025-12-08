@@ -33,6 +33,19 @@ def stack_list_of_dict_tensor(list_of_dict: List, dim=0):
             raise ValueError(f"{key=}, {type(_v0)} is not supported!")
     return ret
 
+def apply_valid_mask_on_nested_dict(data, valid_mask):
+    ret_dict = {}
+    for key, value in data.items():
+        if isinstance(value, torch.Tensor):
+            ret_dict[key] = value[valid_mask]
+        elif isinstance(value, Dict):
+            ret_dict[key] = apply_valid_mask_on_nested_dict(
+                value, valid_mask
+            )
+        else:
+            raise ValueError(f"{key=}, {type(value)=}")
+    return ret_dict
+
 def cat_list_of_dict_tensor(list_of_dict: List, dim=0):
     if len(list_of_dict) == 0:
         return {}
@@ -121,6 +134,31 @@ def split_dict_to_chunk(data: Dict, split_size, dim=0):
         for split_id in range(split_size):
             splited_list[split_id][key] = split_vs[split_id]
     return splited_list
+
+def split_dict_to_list(data: Dict):
+    num_data = None
+    ret_list = []
+    for key, value in data.items():
+        if isinstance(value, torch.Tensor):
+            if len(ret_list) == 0:
+                num_data = value.shape[0]
+                ret_list = [{} for _ in range(num_data)]
+            assert len(ret_list) == value.shape[0]
+            _value = value.clone()
+            if len(_value.shape)==1:
+                _value = _value.unsqueeze(-1)
+            for dict_id, ret_dict in enumerate(ret_list):
+                ret_dict[key] = _value[dict_id].clone()
+        elif isinstance(value, Dict):
+            sub_list = split_dict_to_list(value)
+            if len(ret_list) == 0:
+                num_data = len(sub_list)
+                ret_list = [{} for _ in range(num_data)]
+            for dict_id, ret_dict in enumerate(ret_list):
+                ret_dict[key] = sub_list[dict_id]
+        else:
+            raise NotImplementedError
+    return ret_list
 
 
 def get_batch_size(

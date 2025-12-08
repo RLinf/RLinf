@@ -252,6 +252,9 @@ class FSDPModelManager:
 
         self.build_optimizer(enable_warmup=self.critic_warmup_steps > 0)
 
+    def set_max_steps(self, max_steps):
+        self.max_steps = max_steps
+
     def build_optimizer(self, enable_warmup=False):
         assert hasattr(self, "model")
 
