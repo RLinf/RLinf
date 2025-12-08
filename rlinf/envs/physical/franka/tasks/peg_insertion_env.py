@@ -19,7 +19,7 @@ TARGET_POSE = np.array(
 
 class PegInsertionConfig(FrankaRobotConfig):
     apply_gripper_penalty = False
-    random_reset = True
+    enable_random_reset = True
     random_xy_range = 0.05
     random_rz_range = np.pi / 6
 
