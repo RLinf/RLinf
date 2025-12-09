@@ -18,12 +18,11 @@ TARGET_POSE = np.array(
 )
 
 class PegInsertionConfig(FrankaRobotConfig):
-    apply_gripper_penalty = False
-    enable_random_reset = True
-    random_xy_range = 0.05
-    random_rz_range = np.pi / 6
-
     def __post_init__(self):
+        self.apply_gripper_penalty = False
+        self.random_xy_range = 0.05
+        self.random_rz_range = np.pi / 6
+        self.enable_random_reset = True
         self.compliance_param = {
             "translational_stiffness": 2000,
             "translational_damping": 89,

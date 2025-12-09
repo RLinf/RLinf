@@ -262,6 +262,7 @@ class FrankaEnv(gym.Env):
 
         # Reset joint
         joint_reset_cycle = next(self._joint_reset_cycle)
+        joint_reset = False
         if joint_reset_cycle == 0:
             self._logger.info(
                 f"Number of resets reached {self._config.joint_reset_cycle}, resetting joints to initial position."
