@@ -140,6 +140,7 @@ actor:
     model_path: "/path/to/model/RLinf-Pi0-SFT"
     model_type: "openpi"
     num_action_chunks: 5
+    num_steps: 5
     add_value_head: True
     # openpi specific parameters
     openpi:
