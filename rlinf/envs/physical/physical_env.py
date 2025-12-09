@@ -4,7 +4,7 @@ import gymnasium as gym
 import copy
 import os
 from typing import Optional
-from gymnasium.vector.sync_vector_env import SyncVectorEnv
+from rlinf.envs.physical.venv import NoResetSyncVectorEnv
 from .franka.franka_env import FrankaEnv, FrankaRobotConfig
 import rlinf.envs.physical.franka.tasks
 from rlinf.envs.utils import (
@@ -64,7 +64,7 @@ class PhysicalEnv(gym.Env):
                 return env
             env_fns.append(env_fn)
         
-        self.env = SyncVectorEnv(env_fns)
+        self.env = NoResetSyncVectorEnv(env_fns)
         self.task_descriptions = list(self.env.call("task_description"))
     
     @property
