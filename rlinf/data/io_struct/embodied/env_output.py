@@ -10,6 +10,8 @@ class EnvOutput:
     obs: Dict[str, Any]
     final_obs: Optional[Dict[str, Any]] = None
     dones: Optional[torch.Tensor] = None  # [B]
+    terminations: Optional[torch.Tensor] = None # [B]
+    truncations: Optional[torch.Tensor] = None # [B]
     rewards: Optional[torch.Tensor] = None  # [B]
 
     def __post_init__(self):
@@ -18,6 +20,8 @@ class EnvOutput:
             put_tensor_device(self.final_obs, "cpu") if self.final_obs is not None else None
         )
         self.dones = self.dones.cpu().contiguous() if self.dones is not None else None
+        self.terminations = self.terminations.cpu().contiguous() if self.terminations is not None else None
+        self.truncations = self.truncations.cpu().contiguous() if self.truncations is not None else None
         self.rewards = (
             self.rewards.cpu().contiguous() if self.rewards is not None else None
         )
@@ -74,6 +78,8 @@ class EnvOutput:
             else None
         )
         env_output_dict["dones"] = self.dones
+        env_output_dict["terminations"] = self.terminations
+        env_output_dict["truncations"] = self.truncations
         env_output_dict["rewards"] = self.rewards
 
         return env_output_dict

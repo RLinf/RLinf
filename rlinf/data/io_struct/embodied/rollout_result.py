@@ -15,6 +15,8 @@ class EmbodiedRolloutResult:
     prev_logprobs: List[torch.Tensor] = field(default_factory=list)
     prev_values: List[torch.Tensor] = field(default_factory=list)
     dones: List[torch.Tensor] = field(default_factory=list)
+    truncations: List[torch.Tensor] = field(default_factory=list)
+    terminations: List[torch.Tensor] = field(default_factory=list)
     rewards: List[torch.Tensor] = field(default_factory=list)
     transitions: List[Tuple[torch.Tensor, torch.Tensor]] = field(default_factory=list)
 
@@ -34,6 +36,16 @@ class EmbodiedRolloutResult:
         self.dones = (
             [done.cpu().contiguous() for done in self.dones]
             if self.dones is not None
+            else []
+        )
+        self.terminations = (
+            [termination.cpu().contiguous() for termination in self.terminations]
+            if self.terminations is not None
+            else []
+        )
+        self.truncations = (
+            [truncation.cpu().contiguous() for truncation in self.truncations]
+            if self.truncations is not None
             else []
         )
         self.rewards = (
@@ -91,6 +103,16 @@ class EmbodiedRolloutResult:
             if len(self.dones) > 0
             else None
         )
+        rollout_result_dict["terminations"] = (
+            torch.stack(self.terminations, dim=0).cpu().contiguous()
+            if len(self.terminations) > 0
+            else None
+        )
+        rollout_result_dict["truncations"] = (
+            torch.stack(self.truncations, dim=0).cpu().contiguous()
+            if len(self.truncations) > 0
+            else None
+        )
         rollout_result_dict["rewards"] = (
             torch.stack(self.rewards, dim=0).cpu().contiguous()
             if len(self.rewards) > 0
@@ -99,7 +121,7 @@ class EmbodiedRolloutResult:
 
         merged_forward_inputs = stack_list_of_dict_tensor(self.forward_inputs)
         for k in merged_forward_inputs.keys():
-            assert k not in ["dones", "rewards", "prev_logprobs", "prev_values"]
+            assert k not in ["dones", "terminations", "truncations", "rewards", "prev_logprobs", "prev_values"]
             rollout_result_dict[k] = merged_forward_inputs[k]
 
         transition_dict = stack_list_of_dict_tensor(self.transitions)

@@ -39,6 +39,8 @@ class EnvWorker(Worker):
         self.simulator_list = []
         self.last_obs_list = []
         self.last_dones_list = []
+        self.last_terminations_list = []
+        self.last_truncations_list = []
         self.eval_simulator_list = []
 
         self._obs_queue_name = cfg.env.channel.queue_name
@@ -204,6 +206,12 @@ class EnvWorker(Worker):
             self.last_dones_list.append(
                 dones.unsqueeze(1).repeat(1, self.cfg.actor.model.num_action_chunks)
             )
+            self.last_truncations_list.append(
+                terminations.unsqueeze(1).repeat(1, self.cfg.actor.model.num_action_chunks)
+            )
+            self.last_terminations_list.append(
+                truncations.unsqueeze(1).repeat(1, self.cfg.actor.model.num_action_chunks)
+            )
             self.simulator_list[i].stop_simulator()
 
     def env_interact_step(
@@ -251,6 +259,8 @@ class EnvWorker(Worker):
             else None,
             rewards=chunk_rewards,
             dones=chunk_dones,
+            terminations=chunk_terminations, 
+            truncations=chunk_truncations
         )
         return env_output, env_info
 
@@ -293,12 +303,13 @@ class EnvWorker(Worker):
         )
         return env_output, env_info
 
-    async def recv_chunk_actions(self):
+    async def recv_chunk_actions(self, mode="train"):
+        assert mode in ["train", "eval"]
         chunk_action = []
         for gather_id in range(self.gather_num):
             chunk_action.append(
                 await self.channel.get(
-                    key=f"{self._action_queue_name}_{gather_id + self._rank * self.gather_num}",
+                    key=f"{self._action_queue_name}_{mode}_{gather_id + self._rank * self.gather_num}",
                     async_op=True,
                 ).async_wait()
             )
@@ -307,16 +318,23 @@ class EnvWorker(Worker):
 
     def finish_rollout(self, mode="train"):
         # reset
+        # save video
         if mode == "train":
             if self.cfg.env.train.video_cfg.save_video:
                 for i in range(self.stage_num):
                     self.simulator_list[i].flush_video()
+            if hasattr(self.cfg.env.train, "data_cfg") and self.cfg.env.train.data_cfg.save_data:
+                for i in range(self.stage_num):
+                    self.simulator_list[i].flush_datadict()
             for i in range(self.stage_num):
                 self.simulator_list[i].update_reset_state_ids()
         elif mode == "eval":
             if self.cfg.env.eval.video_cfg.save_video:
                 for i in range(self.stage_num):
                     self.eval_simulator_list[i].flush_video()
+            if hasattr(self.cfg.env.eval, "data_cfg") and self.cfg.env.eval.data_cfg.save_data:
+                for i in range(self.stage_num):
+                    self.eval_simulator_list[i].flush_datadict()
 
     def split_env_batch(self, env_batch, gather_id, mode):
         env_batch_i = {}
@@ -347,12 +365,13 @@ class EnvWorker(Worker):
         return env_batch_i
 
     async def send_env_batch(self, env_batch, mode="train"):
+        assert mode in ["train", "eval"]
         # split env_batch into num_processes chunks, each chunk contains gather_num env_batch
         for gather_id in range(self.gather_num):
             env_batch_i = self.split_env_batch(env_batch, gather_id, mode)
             await self.channel.put(
                 item=env_batch_i,
-                key=f"{self._obs_queue_name}_{gather_id + self._rank * self.gather_num}",
+                key=f"{self._obs_queue_name}_{mode}_{gather_id + self._rank * self.gather_num}",
                 async_op=True,
             ).async_wait()
 
@@ -374,11 +393,16 @@ class EnvWorker(Worker):
                         .unsqueeze(1)
                         .repeat(1, self.cfg.actor.model.num_action_chunks)
                     )
+                    terminations = terminations[:, None].repeat(1, self.cfg.actor.model.num_action_chunks)
+                    truncations = truncations[:, None].repeat(1, self.cfg.actor.model.num_action_chunks)
+                    
                     env_output = EnvOutput(
                         simulator_type=self.cfg.env.train.simulator_type,
                         obs=extracted_obs,
                         rewards=rewards,
                         dones=dones,
+                        terminations=terminations, 
+                        truncations=truncations, 
                         final_obs=infos["final_observation"]
                         if "final_observation" in infos
                         else None,
@@ -393,6 +417,8 @@ class EnvWorker(Worker):
                         obs=self.last_obs_list[i],
                         rewards=None,
                         dones=self.last_dones_list[i],
+                        terminations=self.last_terminations_list[i], 
+                        truncations=self.last_truncations_list[i]
                     )
                     env_output_list.append(env_output)
 
@@ -422,6 +448,8 @@ class EnvWorker(Worker):
 
             self.last_obs_list = [env_output.obs for env_output in env_output_list]
             self.last_dones_list = [env_output.dones for env_output in env_output_list]
+            self.last_truncations_list = [env_output.truncations for env_output in env_output_list]
+            self.last_terminations_list = [env_output.terminations for env_output in env_output_list]
             self.finish_rollout()
 
         for simulator in self.simulator_list:
@@ -450,7 +478,7 @@ class EnvWorker(Worker):
 
         for eval_step in range(self.cfg.algorithm.n_eval_chunk_steps):
             for i in range(self.stage_num):
-                raw_chunk_actions = await self.recv_chunk_actions()
+                raw_chunk_actions = await self.recv_chunk_actions(mode="eval")
                 env_output, env_info = self.env_evaluate_step(raw_chunk_actions, i)
 
                 for key, value in env_info.items():

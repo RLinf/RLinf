@@ -29,6 +29,9 @@ def concat_batch(data1, data2):
     batch = dict()
     for key, value in data1.items():
         if isinstance(value, torch.Tensor):
+            if not key in data2:
+                # print(f"warning: {key=} is not in the second dict")
+                continue
             batch[key] = torch.cat([data1[key], data2[key]], dim=0)
         elif isinstance(value, dict):
             batch[key] = concat_batch(data1[key], data2[key])

@@ -29,90 +29,9 @@ from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.rollout.hf.utils import (
     init_real_next_obs
 )
+from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
-class MultiStepRolloutWorker(Worker):
-    def __init__(self, cfg: DictConfig):
-        Worker.__init__(self)
-
-        self.cfg = cfg
-        self._env_group_name = cfg.env.group_name
-        self._actor_group_name = cfg.actor.group_name
-        self.device = torch.cuda.current_device()
-
-        self._obs_queue_name = cfg.env.channel.queue_name
-        self._action_queue_name = cfg.rollout.channel.queue_name
-        self._replay_buffer_name = cfg.actor.channel.queue_name
-        self.stage_num = cfg.rollout.pipeline_stage_num
-
-        self.random_predict_steps = cfg.algorithm.get("random_predict_steps", -1)
-        self.all_cumulated_steps = np.zeros(self.stage_num, dtype=int)
-
-        self._component_placement = HybridComponentPlacement(cfg, Cluster())
-        self.channel = self.connect_channel(cfg.rollout.channel.name)
-
-    def init_worker(self):
-        self.hf_model = get_model(self.cfg.rollout.model_dir, self.cfg.actor.model)
-
-        if self.cfg.actor.model.model_name in ["openvla", "openvla_oft"]:
-            model_config, input_processor = get_vla_model_config_and_processor(
-                self.cfg.actor
-            )
-            self.hf_model.setup_config_and_processor(
-                model_config, self.cfg, input_processor
-            )
-
-        self.hf_model.eval()
-
-        self.setup_sample_params()
-        if self.cfg.rollout.get("enable_offload", False):
-            self.offload_model()
-
-    def setup_sample_params(self):
-        # length parameters for rollout
-        self._length_params = OmegaConf.to_container(
-            self.cfg.algorithm.length_params, resolve=True
-        )
-        # sampling parameters for rollout
-        self._sampling_params = OmegaConf.to_container(
-            self.cfg.algorithm.sampling_params, resolve=True
-        )
-        self._train_sampling_params = {
-            "temperature": self._sampling_params["temperature_train"],
-            "top_k": self._sampling_params["top_k"],
-            "top_p": self._sampling_params["top_p"],
-            "max_new_tokens": self._length_params["max_new_token"],
-            "use_cache": True,
-        }
-
-        self._eval_sampling_params = {
-            "temperature": self._sampling_params["temperature_eval"],
-            "top_k": self._sampling_params["top_k"],
-            "top_p": self._sampling_params["top_p"],
-            "max_new_tokens": self._length_params["max_new_token"],
-        }
-
-    def predict(self, env_obs, do_sample=True, mode="train", predict=True):
-        kwargs = (
-            self._train_sampling_params
-            if mode == "train"
-            else self._eval_sampling_params
-        )
-        kwargs["do_sample"] = do_sample
-        kwargs["return_obs"] = not hasattr(self.hf_model, "q_head")
-
-        if self.cfg.actor.model.model_name in ["openpi", "mlp"]:
-            kwargs = {"mode": mode}
-
-        with torch.no_grad():
-            actions, result = self.hf_model.predict_action_batch(
-                env_obs=env_obs,
-                **kwargs,
-            )
-        if not predict:
-            actions = (np.random.rand(*actions.shape) - 0.5) * 2
-
-        return actions, result
-
+class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
     async def update_env_output(self, i, env_output, next_extracted_obs):
         real_next_extracted_obs  = None
         
@@ -220,30 +139,6 @@ class MultiStepRolloutWorker(Worker):
                 if hasattr(self.hf_model, "q_head"):
                     await self.buffer_list[i].add_transition(extracted_obs[i], real_next_extracted_obs)
 
-
-
-    async def evaluate(self):
-        if self.cfg.rollout.get("enable_offload", False):
-            self.reload_model()
-
-        for _ in range(self.cfg.algorithm.n_eval_chunk_steps):
-            for _ in range(self.stage_num):
-                env_output = await self.recv_env_output()
-                next_extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"])
-                actions, _ = self.predict(next_extracted_obs, mode="eval")
-                await self.send_chunk_actions(actions)
-
-        if self.cfg.rollout.get("enable_offload", False):
-            self.offload_model()
-
-    def offload_model(self):
-        self.hf_model = self.hf_model.to("cpu")
-        gc.collect()
-        torch.cuda.empty_cache()
-
-    def reload_model(self):
-        self.hf_model = self.hf_model.to(self.device)
-
     async def sync_model_from_actor(self):
         param_state_dict = await self.recv(self._actor_group_name, src_rank=self._rank, async_op=True).async_wait()
         self.hf_model.load_state_dict(param_state_dict)
@@ -251,20 +146,3 @@ class MultiStepRolloutWorker(Worker):
         del param_state_dict
         gc.collect()
         torch.cuda.empty_cache()
-
-    async def recv_env_output(self):
-        env_output = await self.channel.get(
-            key=f"{self._obs_queue_name}_{self._rank}", async_op=True
-        ).async_wait()
-        return env_output
-
-    async def send_chunk_actions(self, chunk_actions):
-        await self.channel.put(
-            item=chunk_actions,
-            key=f"{self._action_queue_name}_{self._rank}",
-            async_op=True,
-        ).async_wait()
-
-    def set_global_step(self, global_step):
-        if hasattr(self.hf_model, "set_global_step"):
-            self.hf_model.set_global_step(global_step)
