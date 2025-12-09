@@ -94,10 +94,10 @@ class FrankaEnv(gym.Env):
             gripper_ip (str): The IP address of the gripper.
         """
 
-        self.is_dummy = False
+        self.is_dummy = True
         
-        self.use_euler_obs = True
-        self.use_rel_frame = True
+        # self.use_euler_obs = True
+        # self.use_rel_frame = True
 
         self._logger = get_logger()
         self._config = config
@@ -174,8 +174,8 @@ class FrankaEnv(gym.Env):
         """
         start_time = time.time()
         
-        if self.use_rel_frame:
-            action = self.transform_action_ee_to_base(action)
+        # if self.use_rel_frame:
+        #     action = self.transform_action_ee_to_base(action)
         
         action = np.clip(action, self.action_space.low, self.action_space.high)
         xyz_delta = action[:3]
@@ -276,10 +276,10 @@ class FrankaEnv(gym.Env):
         self._num_steps = 0
         self._franka_state = self._controller.get_state().wait()[0]
 
-        if self.use_rel_frame:
-            self.T_b_r_inv = np.linalg.inv(
-                construct_homogeneous_matrix(self._franka_state.tcp_pose)
-            )
+        # if self.use_rel_frame:
+        #     self.T_b_r_inv = np.linalg.inv(
+        #         construct_homogeneous_matrix(self._franka_state.tcp_pose)
+        #     )
         observation = self._get_observation()
 
         return observation, {}
@@ -334,7 +334,8 @@ class FrankaEnv(gym.Env):
             np.ones((7,), dtype=np.float32),
         )
 
-        obs_tcp_pose_dim = 6 if self.use_euler_obs else 7
+        # obs_tcp_pose_dim = 6 if self.use_euler_obs else 7
+        obs_tcp_pose_dim = 7
         self.observation_space = gym.spaces.Dict(
             {
                 "state": gym.spaces.Dict(
@@ -534,13 +535,13 @@ class FrankaEnv(gym.Env):
                 "tcp_force": self._franka_state.tcp_force, 
                 "tcp_torque": self._franka_state.tcp_torque
             }
-            if self.use_rel_frame:
-                state = self.transform_obs_base_to_ee(state)
-            if self.use_euler_obs:
-                state["tcp_pose"] = np.concatenate([
-                    state["tcp_pose"][:3], 
-                    quat_2_euler(state["tcp_pose"][3:])
-                ], axis=0)
+            # if self.use_rel_frame:
+            #     state = self.transform_obs_base_to_ee(state)
+            # if self.use_euler_obs:
+            #     state["tcp_pose"] = np.concatenate([
+            #         state["tcp_pose"][:3], 
+            #         quat_2_euler(state["tcp_pose"][3:])
+            #     ], axis=0)
             observation = {
                 "state": state,
                 "frames": frames,
@@ -548,8 +549,8 @@ class FrankaEnv(gym.Env):
             return copy.deepcopy(observation)
         else:
             obs = self.observation_space.sample()
-            if self.use_rel_frame:
-                self.adjoint_matrix = np.eye(6)
+            # if self.use_rel_frame:
+            #     self.adjoint_matrix = np.eye(6)
             return obs
         
     def transform_obs_base_to_ee(self, state):
