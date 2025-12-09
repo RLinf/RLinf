@@ -94,10 +94,7 @@ class FrankaEnv(gym.Env):
             gripper_ip (str): The IP address of the gripper.
         """
 
-        self.is_dummy = True
-        
-        # self.use_euler_obs = True
-        # self.use_rel_frame = True
+        self.is_dummy = False
 
         self._logger = get_logger()
         self._config = config
@@ -119,7 +116,10 @@ class FrankaEnv(gym.Env):
         # Launch Franka controller on the same node as the env
         # TODO: Support launching on different nodes
         cluster = Cluster()
-        self._node_id = Worker.current_worker._cluster_node_rank
+        if Worker.current_worker is None:
+            self._node_id = 0
+        else:
+            self._node_id = Worker.current_worker._cluster_node_rank
         placement = NodePlacementStrategy(node_ranks=[self._node_id])
         
 
@@ -236,8 +236,8 @@ class FrankaEnv(gym.Env):
             if is_success:
                 reward = 1
             else:
-                reward = 0
-                # reward = np.exp(-500*np.sum(np.square(target_delta[:3])))
+                # reward = 0
+                reward = np.exp(-500*np.sum(np.square(target_delta[:3])))
                 print(
                     f"Does not meet reward criteria. Target delta: {target_delta}, Reward threshold: {self._config.reward_threshold}", 
                     f"Current reward={reward}"
@@ -275,11 +275,6 @@ class FrankaEnv(gym.Env):
         self._clear_error()
         self._num_steps = 0
         self._franka_state = self._controller.get_state().wait()[0]
-
-        # if self.use_rel_frame:
-        #     self.T_b_r_inv = np.linalg.inv(
-        #         construct_homogeneous_matrix(self._franka_state.tcp_pose)
-        #     )
         observation = self._get_observation()
 
         return observation, {}
@@ -359,6 +354,7 @@ class FrankaEnv(gym.Env):
                 ),
             }
         )
+        self._base_observation_space = copy.deepcopy(self.observation_space)
 
     def _open_cameras(self, camera_info: List[CameraInfo]):
         for info in camera_info:
@@ -535,22 +531,13 @@ class FrankaEnv(gym.Env):
                 "tcp_force": self._franka_state.tcp_force, 
                 "tcp_torque": self._franka_state.tcp_torque
             }
-            # if self.use_rel_frame:
-            #     state = self.transform_obs_base_to_ee(state)
-            # if self.use_euler_obs:
-            #     state["tcp_pose"] = np.concatenate([
-            #         state["tcp_pose"][:3], 
-            #         quat_2_euler(state["tcp_pose"][3:])
-            #     ], axis=0)
             observation = {
                 "state": state,
                 "frames": frames,
             }
             return copy.deepcopy(observation)
         else:
-            obs = self.observation_space.sample()
-            # if self.use_rel_frame:
-            #     self.adjoint_matrix = np.eye(6)
+            obs = self._base_observation_space.sample()
             return obs
         
     def transform_obs_base_to_ee(self, state):

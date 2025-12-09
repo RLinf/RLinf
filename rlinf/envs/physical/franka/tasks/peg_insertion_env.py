@@ -8,14 +8,11 @@ from rlinf.utils.utils import euler_2_quat, quat_2_euler
 
 TARGET_POSE = np.array(
     [
-        0.5906439143742067,
-        0.07771711953459341,
-        0.0937835826958042,
-        3.1099675,
-        0.0146619,
-        -0.0078615,
+        0.5748380998638687,0.05450998790669838,0.016262587587812682,-3.111252051323321,0.0001972290844429736,-0.043024099516195013
     ]
 )
+
+
 
 class PegInsertionConfig(FrankaRobotConfig):
     def __post_init__(self):
@@ -91,9 +88,9 @@ class PegInsertionConfig(FrankaRobotConfig):
 
 
 class PegInsertionEnv(FrankaEnv):
-    def __init__(self, overwride_cfg):
+    def __init__(self, override_cfg):
         # Update config according to current env
-        config = PegInsertionConfig(**overwride_cfg)
+        config = PegInsertionConfig(**override_cfg)
         super().__init__(config)
 
     @property
@@ -116,10 +113,3 @@ class PegInsertionEnv(FrankaEnv):
 
         super().go_to_rest(joint_reset)
 
-    def step(self, action):
-        """
-        - action: [6, ]; append 1 to [7, ]
-        """
-        new_action = np.zeros(7)
-        new_action[:6] = action
-        return super().step(new_action)

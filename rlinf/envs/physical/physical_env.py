@@ -11,13 +11,19 @@ from rlinf.envs.utils import (
     to_tensor, put_info_on_image, tile_images, 
     save_rollout_video
 )
+from rlinf.envs.physical.franka.wrappers import (
+    GripperCloseEnv, 
+    SpacemouseIntervention,
+    RelativeFrame, 
+    Quat2EulerWrapper,  
+)
 from typing import OrderedDict
 
 
 class PhysicalEnv(gym.Env):
     def __init__(self, cfg, seed_offset, total_num_processes):
         self.cfg = cfg
-        self.overwride_cfg = dict(
+        self.override_cfg = dict(
             robot_ip=self.cfg.robot_ip, 
             camera_serials=self.cfg.camera_serials
         )
@@ -50,7 +56,11 @@ class PhysicalEnv(gym.Env):
         env_fns = []
         for _ in range(self.num_envs):
             def env_fn():
-                env = gym.make(id=self.cfg.init_params.id, overwride_cfg=self.overwride_cfg)
+                env = gym.make(id=self.cfg.init_params.id, override_cfg=self.override_cfg)
+                env = GripperCloseEnv(env)
+                env = SpacemouseIntervention(env)
+                env = RelativeFrame(env)
+                env = Quat2EulerWrapper(env)
                 return env
             env_fns.append(env_fn)
         

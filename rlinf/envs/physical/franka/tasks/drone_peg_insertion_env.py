@@ -93,9 +93,9 @@ class DronePegInsertionConfig(FrankaRobotConfig):
         super().__post_init__()
 
 class DronePegInsertionEnv(FrankaEnv):
-    def __init__(self, overwride_cfg):
+    def __init__(self, override_cfg):
         # Update config according to current env
-        config = DronePegInsertionConfig(**overwride_cfg)
+        config = DronePegInsertionConfig(**override_cfg)
         super().__init__(config)
     
     @property
@@ -151,16 +151,3 @@ class DronePegInsertionEnv(FrankaEnv):
             self._franka_state = self._controller.get_state().wait()[0]
             if cnt > 10:
                 break
-
-    def step(self, action):
-        """
-        - action: [6, ]; append 1 to [7, ]
-        """
-        # action = np.array([0, 0.1, 0, 0, 0, 0]) #+z
-
-        # action = np.array([0, 0, -0.5, 0, 0, 0]) # +x
-
-        # action = np.array([0.5, 0, 0, 0, 0, 0]) #+y
-        new_action = np.zeros(7)
-        new_action[:6] = action
-        return super().step(new_action)

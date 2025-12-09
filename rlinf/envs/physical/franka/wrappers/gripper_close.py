@@ -1,3 +1,7 @@
+import gymnasium as gym
+from gymnasium.spaces import Box
+import numpy as np
+
 class GripperCloseEnv(gym.ActionWrapper):
     """
     Use this wrapper to task that requires the gripper to be closed

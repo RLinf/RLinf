@@ -5,9 +5,9 @@ import time
 def main():
     for device in rs.context().devices:
         serial_number = device.get_info(rs.camera_info.serial_number)
-        break
+        print(serial_number)
         device.get_info(rs.camera_info.serial_number)
-    print(serial_number)
+    # print(serial_number)
     pipeline = rs.pipeline()
     config = rs.config()
     config.enable_device(serial_number)
