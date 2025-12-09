@@ -62,7 +62,9 @@
 依赖安装
 -----------
 
-请首先确保您处于 RLinf Docker 镜像中或已安装 uv。
+方法 1：您可以使用 calvin 的 RLinf docker 镜像 ``docker pull rlinf/rlinf:agentic-rlinf0.1-calvin``。
+
+方法 2：通过运行以下命令直接在您的环境中安装依赖（确保您已经安装了 ``uv``）：
 
 .. code:: bash
 

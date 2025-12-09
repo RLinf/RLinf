@@ -87,7 +87,7 @@ RUN chmod +x /usr/local/bin/link_assets
 RUN cp $UV_PATH/requirements/embodied/download_assets.sh /usr/local/bin/download_assets
 RUN chmod +x /usr/local/bin/download_assets
 
-FROM embodied-common-image AS embodied-image
+FROM embodied-common-image AS embodied-maniskill_libero-image
 
 # Install openvla env
 RUN bash requirements/install.sh embodied --venv openvla --model openvla --env maniskill_libero
@@ -113,6 +113,28 @@ RUN source switch_env openvla-oft && python -c "import omnigibson as og; cfg={};
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
+
+FROM embodied-common-image AS embodied-metaworld-image
+
+# Install openpi env
+RUN bash requirements/install.sh embodied --venv openpi --model openpi --env metaworld
+
+RUN source switch_env openpi && download_assets --dir /opt/assets --assets openpi
+RUN link_assets
+
+# Set default env
+RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
+
+FROM embodied-common-image AS embodied-calvin-image
+
+# Install openpi env
+RUN bash requirements/install.sh embodied --venv openpi --model openpi --env calvin
+
+RUN source switch_env openpi && download_assets --dir /opt/assets --assets openpi
+RUN link_assets
+
+# Set default env
+RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
 FROM ${BUILD_TARGET}-image AS final-image
 

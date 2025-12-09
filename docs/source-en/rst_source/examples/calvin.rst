@@ -61,7 +61,9 @@ Algorithm
 Dependencies Installation
 -------------------------
 
-Please first make sure you are either in the RLinf docker image or have uv installed.
+Option 1: You can use the RLinf docker image for calvin ``docker pull rlinf/rlinf:agentic-rlinf0.1-calvin``.
+
+Option 2: Install dependencies directly in your environment by running the following command (make sure you already installed ``uv``):
 
 .. code:: bash
 
