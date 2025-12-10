@@ -40,7 +40,7 @@ def get_tool_schemas():
     return [{
         "type": "function",
         "function": {
-            "name": "execute_python_code_with_standard_io", 
+            "name": "python_code_with_standard_io", 
             "description": "Execute Python code with standard input and capture standard output. This function takes a Python code string and an input string, provides the input string through standard input (stdin) to the code, and captures and returns any output produced through standard output (stdout). If the executed code raises an exception, the error message will be captured and returned instead.", 
             "parameters": {
                 "type": "object",
@@ -55,10 +55,6 @@ def get_tool_schemas():
                     },
                 }, 
                 "required": ["code", "input"],
-            },
-            "return": {
-                "type": "string", 
-                "description": "str: The output produced by the executed code through standard output.",
             }
         },
     }]

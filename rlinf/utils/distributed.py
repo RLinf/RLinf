@@ -39,7 +39,7 @@ def compute_rollout_metrics(
 ):
     device = torch.device(f"cuda:{torch.cuda.current_device()}")
     advantages = rollout_batch["advantages"].to(device=device)
-    mask = rollout_batch["attention_mask"][:, -response_len:].to(device=device)
+    mask = rollout_batch["response_mask"][:, -response_len:].to(device=device)
     prompt_lengths = rollout_batch["prompt_lengths"].clone().to(device=device)
     response_lengths = rollout_batch["response_lengths"].clone().to(device=device)
     reward_scores = rollout_batch["rewards"].clone().to(device=device)
@@ -181,7 +181,7 @@ class RolloutDataBalance(UserDict):
                 isinstance(attn_mask, torch.Tensor)
                 and attn_mask.size(0) == current_num_samples
             ):
-                local_token_counts = attn_mask.sum(dim=1).int()
+                local_token_counts = attn_mask.sum(dim=1).int() # TODO: bug in agent. wait for fix @zhuchunyang
 
         # 3. Gather global information: sample counts from each rank
         if dp_world_size > 1 and dp_group is not None:

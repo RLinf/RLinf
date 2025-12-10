@@ -143,11 +143,7 @@ actor:
   mcore_gpt: True
   spec_name: decoder_gpt
 
-  enable_offload: True
   checkpoint_load_path: null
-
-  global_batch_size: 8
-  micro_batch_size: 1
 
   enable_dp_load_balance: False
 
@@ -155,14 +151,20 @@ actor:
 
   seed: 1234
 
+  # fsdp-only config
+  enable_offload: True
+  global_batch_size: 8
+  micro_batch_size: 1
+
   model:
     precision: fp32
-    is_lora: False
-
     seq_length: ${runner.seq_length}
     encoder_seq_length: ${runner.seq_length}
+
+    # fsdp-only config
+    is_lora: False
     model_arch: ${rollout.model_arch}
-    model_path: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/
+    model_path: ${rollout.model_dir}
 
   optim:
     optimizer: adam

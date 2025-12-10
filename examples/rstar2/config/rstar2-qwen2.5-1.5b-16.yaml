@@ -25,27 +25,27 @@ runner:
   val_check_interval: 1
   save_interval: 50
 
-  seq_length: 10240
+  seq_length: 3072
 
   enable_dynamic_batch_size: True
   max_tokens_per_mbs: 10240
 
   resume_dir: null
-  experiment_name: rstar2-grpo-3b
-  output_dir: ../output_1111
+  experiment_name: rstar2-grpo-1.5b-16
+  output_dir: /mnt/public/zhuchunyang_rl/logs
 
 down_sampling:
-  do_down_sampling: true
+  do_down_sampling: false
   down_sampling_config:
     reject_equal_reward: true
     roc_error_ratio: true
     roc_answer_format: true
     min_zero_reward_trace_num: 2
     min_non_zero_reward_trace_num: 2
-    down_sample_to_n: 8
+    down_sample_to_n: 4
 
 algorithm:
-  group_size: 16
+  group_size: 8
 
   n_minibatches: 1
   training_batch_size_per_gpu: 1 # micro batch size
@@ -83,7 +83,7 @@ algorithm:
   sampling_params:
     use_greedy: False
     temperature: 1.0
-    top_k: 1000000
+    top_k: -1
     top_p: 1.0
     repetition_penalty: 1.0
     max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
@@ -94,7 +94,7 @@ inference:
   group_name: "InferenceGroup"
   load_from_actor: True
   model:
-    tensor_model_parallel_size: 2
+    tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
     sequence_parallel: False
 
@@ -110,9 +110,9 @@ agentloop:
 rollout:
   group_name: "RolloutGroup"
 
-  gpu_memory_utilization: 0.4
+  gpu_memory_utilization: 0.6
 
-  model_dir: /mnt/mnt/public/zhuchunyang_rl/hf_models/Qwen2.5-1.5B-Instruct
+  model_dir: /mnt/public/zhuchunyang_rl/hf_models/Qwen2.5-1.5B-Instruct
   model_arch: qwen2.5
   precision: ${actor.model.precision}
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
@@ -125,7 +125,7 @@ rollout:
   rollout_backend: sglang     # here choose which backend to rollout,support [sglang, vllm] 
 
   custom_chat_template: "\n{%- if tools %}\n    {{- '<|im_start|>system\\n' }}\n    {%- if messages[0]['role'] == 'system' %}\n        {{- messages[0]['content'] }}\n    {%- else %}\n        {{- 'A conversation between User and Assistant. The User asks a question, and the Assistant solves it. The Assistant first thinks about the reasoning process in the mind and then provides the User with the answer. The reasoning process is enclosed within <reason> </reason> and answer is enclosed within <answer> </answer> tags, respectively, i.e., <reason> reasoning process here </reason> <answer> answer here </answer>.' }}\n    {%- endif %}\n    {{- \"\\n\\n# Tools\\n\\nYou may call one or more functions to assist with the user query.\\n\\nYou are provided with function signatures within <tools></tools> XML tags:\\n<tools>\" }}\n    {%- for tool in tools %}\n        {{- \"\\n\" }}\n        {{- tool | tojson }}\n    {%- endfor %}\n    {{- \"\\n</tools>\\n\\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\\n<tool_call>\\n{\\\"name\\\": <function-name>, \\\"arguments\\\": <args-json-object>}\\n</tool_call><|im_end|>\\n\" }}\n{%- else %}\n    {%- if messages[0]['role'] == 'system' %}\n        {{- '<|im_start|>system\\n' + messages[0]['content'] + '<|im_end|>\\n' }}\n    {%- else %}\n        {{- '<|im_start|>system\\nA conversation between User and Assistant. The User asks a question, and the Assistant solves it. The Assistant first thinks about the reasoning process in the mind and then provides the User with the answer. The reasoning process is enclosed within <reason> </reason> and answer is enclosed within <answer> </answer> tags, respectively, i.e., <reason> reasoning process here </reason> <answer> answer here </answer>.<|im_end|>\\n' }}\n    {%- endif %}\n{%- endif %}\n{%- for message in messages %}\n    {%- if (message.role == \"user\") or (message.role == \"system\" and not loop.first) or (message.role == \"assistant\" and not message.tool_calls) %}\n        {{- '<|im_start|>' + message.role + '\\n' + 'You must put your answer inside <answer> </answer> tags, i.e., <answer> answer here </answer>. And your final answer will be extracted automatically by the \\\\boxed{} tag.\\nThis is the problem:\\n' + message.content + '<|im_end|>' + '\\n' }}\n    {%- elif message.role == \"assistant\" %}\n        {{- '<|im_start|>' + message.role }}\n        {%- if message.content %}\n            {{- '\\n' + message.content }}\n        {%- endif %}\n        {%- for tool_call in message.tool_calls %}\n            {%- if tool_call.function is defined %}\n                {%- set tool_call = tool_call.function %}\n            {%- endif %}\n            {{- '\\n<tool_call>\\n{\"name\": \"' }}\n            {{- tool_call.name }}\n            {{- '\", \"arguments\": ' }}\n            {{- tool_call.arguments | tojson }}\n            {{- '}\\n</tool_call>' }}\n        {%- endfor %}\n        {{- '<|im_end|>\\n' }}\n    {%- elif message.role == \"tool\" %}\n        {%- if (loop.index0 == 0) or (messages[loop.index0 - 1].role != \"tool\") %}\n            {{- '<|im_start|>user' }}\n        {%- endif %}\n        {{- '\\n<tool_response>\\n' }}\n        {{- message.content }}\n        {{- '\\n</tool_response>' }}\n        {%- if loop.last or (messages[loop.index0 + 1].role != \"tool\") %}\n            {{- '<|im_end|>\\n' }}\n        {%- endif %}\n    {%- endif %}\n{%- endfor %}\n{%- if add_generation_prompt %}\n    {{- '<|im_start|>assistant\\n<reason>' }}\n{%- endif %}\n"
-  
+
   sglang:
     attention_backend: triton # [flashinfer, triton] for more, see sglang's doc
     decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
@@ -142,7 +142,7 @@ rollout:
 
   return_logprobs: ${not:${algorithm.recompute_logprobs}}
 
-  tensor_parallel_size: 2
+  tensor_parallel_size: 1
   pipeline_parallel_size: 1
   
   validate_weight: False # whether to send all weights at first for weight comparison.
@@ -150,13 +150,13 @@ rollout:
   print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
 
   max_running_requests: 64 # the maximum number of running requests in the rollout engine.
-  cuda_graph_max_bs: 128  # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
+  cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
 
 data:
   type: rstar2
   max_prompt_length: 2048
   filter_prompt_by_length: True
-  rollout_batch_size: 32
+  rollout_batch_size: 16
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: prompt
@@ -165,8 +165,8 @@ data:
   shuffle: True
   validation_shuffle: True
   seed: 1234
-  train_data_paths: ["/mnt/mnt/public/wangxiangyuan/dataset/rstar2/new_train.jsonl"]
-  val_data_paths: ["/mnt/mnt/public/wangxiangyuan/dataset/rstar2/new_train.jsonl"]
+  train_data_paths: ["/mnt/public/wangxiangyuan/dataset/rstar2/new_train.jsonl"]
+  val_data_paths: ["/mnt/public/wangxiangyuan/dataset/rstar2/new_train.jsonl"]
   apply_chat_template_kwargs: {}
 # Tools configuration for AgentLoop
 tools:
@@ -175,14 +175,14 @@ tools:
     host_addr: 127.0.0.1
     host_port: 8000
     concurrency_limit: 128
-    
+
 actor:
   group_name: "ActorGroup"
   training_backend: megatron
   mcore_gpt: True
   spec_name: decoder_gpt
 
-  checkpoint_load_path: null
+  checkpoint_load_path: /mnt/public/zhuchunyang_rl/logs/rstar2-grpo-1.5b-16/converted_ckpts/actor
 
   offload_optimizer: True
   offload_weight: True
@@ -197,11 +197,11 @@ actor:
     precision: fp16
     add_bias_linear: False
 
-    tensor_model_parallel_size: 2
+    tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
 
     activation: swiglu
-    sequence_parallel: True
+    sequence_parallel: False
     # recompute_method: block
     # recompute_granularity: selective
 
@@ -231,30 +231,30 @@ actor:
     optimizer: adam
     bf16: False
     fp16: True
-    lr: 2e-05
+    lr: 1e-6
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-05
-    min_lr: 2.0e-6
-    weight_decay: 0.05
+    min_lr: 0.0
+    weight_decay: 0.01
     use_distributed_optimizer: True
     overlap_grad_reduce: False
     overlap_param_gather: False
-    optimizer_enable_pin: false
+    optimizer_enable_pin: False
     overlap_param_gather_with_optimizer_step: False
-    optimizer_cpu_offload: True
-    use_precision_aware_optimizer: True
-    clip_grad: 0.8
-    loss_scale: 65536
+    # optimizer_cpu_offload: True
+    # use_precision_aware_optimizer: True
+    clip_grad: 1.0
+    # loss_scale: 65536
 
   lr_sched:
-    lr_warmup_fraction: 0.01
+    lr_warmup_fraction: 0.1
     lr_warmup_init: 0.0
-    lr_warmup_iters: 0
-    max_lr: 2.0e-5
+    # lr_warmup_iters: 0
+    max_lr: 1e-6
     min_lr: 0.0
     lr_decay_style: constant
-    lr_decay_iters: 10
+    lr_decay_iters: 200
 
   tokenizer:
     tokenizer_model: ${rollout.model_dir}
@@ -270,7 +270,7 @@ actor:
     use_dist_ckpt: False
     tp_comm_bootstrap_backend: nccl
     tp_comm_overlap_cfg: null # tp_comm_overlap_cfg.yaml
-    use_hf_ckpt: True # if true, will transfer hf model to generate megatron checkpoint and use it for training.
+    use_hf_ckpt: False # if true, will transfer hf model to generate megatron checkpoint and use it for training.
     use_profiler: False # if true, will enable torch profiler when training, pay attention it has influence on performance
 
     ckpt_convertor: # config for ckpt convertor
@@ -302,7 +302,7 @@ actor:
 
 reward:
   group_name: "RewardGroup"
-  use_reward_model: false
+  use_reward_model: False
   reward_type: 'rstar2'
   reward_scale: 5.0
 
@@ -313,4 +313,4 @@ reward:
     padding_side: ${actor.tokenizer.padding_side}
 
 critic:
-  use_critic_model: false
+  use_critic_model: False

@@ -283,24 +283,27 @@ class RewardWorker(Worker):
         rr.response_lengths = _apply_mask_to_list(rr.response_lengths, idx_mask)
         rr.response_ids = _apply_mask_to_list(rr.response_ids, idx_mask)
         rr.is_end = _apply_mask_to_list(rr.is_end, idx_mask)
+        if rr.rewards is not None:
+            rr.rewards = rr.rewards if isinstance(rr.rewards, torch.Tensor) else torch.tensor(rr.rewards)
+            rr.rewards = _apply_mask_to_tensor(rr.rewards, idx_mask)
         if rr.prompt_texts is not None:
             rr.prompt_texts = _apply_mask_to_list(rr.prompt_texts, idx_mask)
         if rr.response_texts is not None:
             rr.response_texts = _apply_mask_to_list(rr.response_texts, idx_mask)
         if rr.answers is not None:
             rr.answers = _apply_mask_to_list(rr.answers, idx_mask)
-        if rr.rollout_logprobs is not None:
-            rr.rollout_logprobs = _apply_mask_to_list(rr.rollout_logprobs, idx_mask)
         if rr.response_mask is not None:
             rr.response_mask = _apply_mask_to_list(rr.response_mask, idx_mask)
-        if rr.rewards is not None:
-            rr.rewards = rr.rewards if isinstance(rr.rewards, torch.Tensor) else torch.tensor(rr.rewards)
-            rr.rewards = _apply_mask_to_tensor(rr.rewards, idx_mask)
-        if rr.prev_logprobs is not None:
-            rr.prev_logprobs = _apply_mask_to_tensor(rr.prev_logprobs, idx_mask)
+        if rr.rollout_logprobs is not None:
+            rr.rollout_logprobs = _apply_mask_to_list(rr.rollout_logprobs, idx_mask)
         if rr.ref_logprobs is not None:
             rr.ref_logprobs = _apply_mask_to_tensor(rr.ref_logprobs, idx_mask)
-
+        if rr.prev_logprobs is not None:
+            rr.prev_logprobs = _apply_mask_to_tensor(rr.prev_logprobs, idx_mask)
+        if rr.recompute_prev_logprobs is not None:
+            rr.recompute_prev_logprobs = _apply_mask_to_tensor(rr.recompute_prev_logprobs, idx_mask)
+        
+            
         # rr.num_sequence = len(rr.response_ids)
         # 下采样后每个 prompt 的响应数固定为 down_sample_to_n，更新 group_size
         # if isinstance(down_sampling_config, dict):

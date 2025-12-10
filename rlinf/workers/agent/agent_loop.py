@@ -44,7 +44,7 @@ class AgentLoopOutput:
     """Response text decoded from response_ids"""
     response_text: str = ""
     """Response mask, 1 for LLM generated token, 0 for tool response token."""
-    response_mask: list[int] = None
+    response_mask: Optional[list[int]] = None
     """Log probabilities for the response tokens."""
     response_logprobs: Optional[list[float]] = None
     """Number of chat turns, including user, assistant, tool."""
@@ -70,6 +70,7 @@ class AgentLoopWorker(Worker):
         super().__init__()
         self.cfg = cfg
         self.print_outputs = cfg.agentloop.print_outputs
+        self.return_logprobs = cfg.rollout.get("return_logprobs", False)
 
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.rollout.model_dir)
 
@@ -88,6 +89,7 @@ class AgentLoopWorker(Worker):
         # tool name to tool worker. a tool worker may have multiple tools.
         self.tool_name_map = tool_name_map
         self.tool_worker_output_channel = tool_worker_output_channel
+        self.num_turns = []
 
     async def generate(
         self, prompt_ids: list[int], sampling_params: Optional[dict] = None
@@ -159,6 +161,7 @@ class AgentLoopWorker(Worker):
         """
         Run the agent loop for multiple queries.
         """
+        self.num_turns = []
         with self.worker_timer():
             rollout_request: RolloutRequest = input_channel.get()
 
@@ -175,6 +178,8 @@ class AgentLoopWorker(Worker):
                 )
 
             await asyncio.gather(*send_output_tasks)
+        mean = sum(self.num_turns) / len(self.num_turns)
+        print(f"mean_num_turns: {mean}")
 
     def get_rollout_result(
         self, task_results: list[AgentLoopOutput], answers
@@ -199,8 +204,12 @@ class AgentLoopWorker(Worker):
         response_texts = [r.response_text for r in task_results]
         prompt_lengths = [len(p) for p in prompt_ids]
         response_lengths = [len(o) for o in response_ids]
-
+        response_mask = None
+        if all(r.response_mask is not None for r in task_results):
+            response_mask = [r.response_mask[:max_resp_len] for r in task_results]
         # prompt_lengths and response_lengths should be clipped to max_prompt_len and max_resp_len to avoid mask/position size mismatch
+        for r in task_results:
+            self.num_turns.append(r.extra_fields["num_turns"])
         assert max(prompt_lengths) <= max_prompt_len, (
             "prompt_lengths should be clipped to max_prompt_len"
         )
@@ -208,8 +217,9 @@ class AgentLoopWorker(Worker):
             "response_lengths should be clipped to max_resp_len"
         )
 
-        response_mask = [r.response_mask[:max_resp_len] for r in task_results]
-        response_logprobs = [r.response_logprobs[:max_resp_len] for r in task_results]
+        response_logprobs = None
+        if self.return_logprobs:
+            response_logprobs = [r.response_logprobs[:max_resp_len] for r in task_results]
         is_end = [True for _ in task_results]
         answers = [answers] * len(task_results)
         return RolloutResult(

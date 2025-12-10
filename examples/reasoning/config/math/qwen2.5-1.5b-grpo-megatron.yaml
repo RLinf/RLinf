@@ -147,24 +147,26 @@ actor:
 
   checkpoint_load_path: null
 
-  offload_optimizer: True
-  offload_weight: True
-  offload_grad: True
-
   enable_dp_load_balance: False
 
   calculate_flops: False
 
   seed: 1234
 
+  # megatron-only config
+  offload_optimizer: True
+  offload_weight: True
+  offload_grad: True
+
   model:
     precision: fp16
-    add_bias_linear: False
+    seq_length: ${runner.seq_length}
+    encoder_seq_length: ${runner.seq_length}
 
+    # megatron-only config
     tensor_model_parallel_size: 2
     pipeline_model_parallel_size: 1
 
-    activation: swiglu
     sequence_parallel: True
     # recompute_method: block
     # recompute_granularity: selective
@@ -172,13 +174,6 @@ actor:
     recompute_method: block
     recompute_granularity: full
     recompute_num_layers: 20
-
-    seq_length: ${runner.seq_length}
-    encoder_seq_length: ${runner.seq_length}
-
-    normalization: rmsnorm
-
-    position_embedding_type: rope
 
     apply_rope_fusion: True
     bias_dropout_fusion: False
@@ -191,6 +186,10 @@ actor:
     moe_token_dispatcher_type: alltoall
     use_cpu_initialization: False
 
+    add_bias_linear: False
+    activation: swiglu
+    normalization: rmsnorm
+    position_embedding_type: rope
   optim:
     optimizer: adam
     bf16: False
@@ -245,7 +244,7 @@ actor:
       process_num: 16 # number of processes to use for checkpointing
       tensor_model_parallel_size: ${actor.model.tensor_model_parallel_size}
       pipeline_model_parallel_size: ${actor.model.pipeline_model_parallel_size}
-      
+
     profiler: # profile megatron when inference and traning
       output_dir: ${runner.output_dir}/${runner.experiment_name}/profiler
       activities: ["cpu", "cuda"]
@@ -261,7 +260,6 @@ actor:
       schedule_active: 1
       schedule_repeat: 1 # inference and training will repeat such times
       # schedule_wait: it will be set at runtime
-
 
 reward:
   group_name: "RewardGroup"

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import base64
+import time
 from typing import Any, Callable, Union, Optional, Dict
 
 from rlinf.data.tool_call.tool_io_struct import ToolChannelRequest, ToolChannelResponse
@@ -236,7 +237,7 @@ persistent_executor.execute_code(code_to_execute, replay_history_code={})
 """
 
 class PythonTool(CodeJudgeToolBase):
-    name = "execute_python_code_with_standard_io"
+    name = "python_code_with_standard_io"
 
     def __init__(self, cfg):
         super().__init__(cfg=cfg)
@@ -247,7 +248,7 @@ class PythonTool(CodeJudgeToolBase):
             return err_msg
 
         # convert the code to the code exec on code-judge
-        code_to_execute = base64.b64encode(request.tool_args["code"].encode()).decode()
+        code_to_execute = base64.b64encode(request.tool_args.get("code","").encode()).decode()
         final_code = code_template_setup
         # TODO: add history code here
         final_code += code_template_exec.format(code_to_execute, "False")
@@ -255,7 +256,7 @@ class PythonTool(CodeJudgeToolBase):
         submission = {
             "type": "python",
             "solution": final_code,
-            "input": request.tool_args["input"],
+            "input": request.tool_args.get("input",""),
         }
 
         data = {
@@ -263,18 +264,28 @@ class PythonTool(CodeJudgeToolBase):
             "submissions": [submission]
         }
 
-        try:
-            results = (await send_request_func(self.url, data))["results"]
+        # try:
+        if True:
+            for retry_time in range(4):
+                try:
+                    results = (await send_request_func(self.url, data))["results"]
+                    break
+                except Exception as e:
+                    print(f"Tool retry time {retry_time}, exception: {e}")
+                    time.sleep(1)
+            else:
+                raise e
             assert len(results) == 1, f"{results}"
             return self._postprocess(results[0])
-        except Exception as e:
-            return ToolChannelResponse(success=False, result=f"Error: send request failed: {str(e)}")
+        # except Exception as e:
+        #     print(f"Tool exception: {e}")
+        #     return ToolChannelResponse(success=False, result=f"Error: send request failed: {str(e)}")
 
     def tool_schema(self) -> Dict:
         return {
             "type": "function",
             "function": {
-                "name": "execute_python_code_with_standard_io", 
+                "name": "python_code_with_standard_io", 
                 "description": "Execute Python code with standard input and capture standard output. This function takes a Python code string and an input string, provides the input string through standard input (stdin) to the code, and captures and returns any output produced through standard output (stdout). If the executed code raises an exception, the error message will be captured and returned instead.", 
                 "parameters": {
                     "type": "object",
@@ -289,14 +300,42 @@ class PythonTool(CodeJudgeToolBase):
                         }
                     }, 
                     "required": ["code", "input"],
-                },
-                "return": {
-                    "type": "string", 
-                    "description": "str: The output produced by the executed code through standard output.",
-                },
+                }
             }
         }
 
+    # def validate(self, request) -> Optional[ToolChannelResponse]:
+    #     tool_args = request.tool_args
+
+    #     assert request.tool_name == self.name, f"Name mismatch, {self.name} != {request.tool_name}"
+
+    #     if not isinstance(tool_args, dict):
+    #         return ToolChannelResponse(
+    #             success=False,
+    #             result=f"parameters format error, expect a json format, but get {type(tool_args)}\n"
+    #         )
+    
+    #     required_param_msg = ""
+    #     for required_name in self.tool_schema()["function"]["parameters"]["required"]:
+    #         if required_name not in tool_args:
+    #             required_param_msg += f"parameters format error, '{required_name}' is a required parameter but not found\n"
+    #     if required_param_msg:
+    #         return ToolChannelResponse(
+    #             success=False,
+    #             result=required_param_msg
+    #         )
+
+    #     if not isinstance(tool_args["code"], str):
+    #         return ToolChannelResponse(
+    #             success=False,
+    #             result=f"parameters format error, 'code' should be a string but get {type(tool_args['code'])}"
+    #         )
+        
+    #     if not isinstance(tool_args["input"], str):
+    #         return ToolChannelResponse(
+    #             success=False,
+    #             result=f"parameters format error, 'input' should be a string but get {type(tool_args['input'])}"
+    #         )
     def validate(self, request) -> Optional[ToolChannelResponse]:
         tool_args = request.tool_args
 
@@ -305,31 +344,28 @@ class PythonTool(CodeJudgeToolBase):
         if not isinstance(tool_args, dict):
             return ToolChannelResponse(
                 success=False,
-                result=f"parameters format error, expect a json format, but get {type(tool_args)}\n"
+                result=f"Error when executing tool: run_tool_calls_on_server_async failed for1 tool calls after 4 attempts."
             )
     
-        required_param_msg = ""
-        for required_name in self.tool_schema()["function"]["parameters"]["required"]:
-            if required_name not in tool_args:
-                required_param_msg += f"parameters format error, '{required_name}' is a required parameter but not found\n"
-        if required_param_msg:
-            return ToolChannelResponse(
-                success=False,
-                result=required_param_msg
-            )
+        # required_param_msg = ""
+        # for required_name in self.tool_schema()["function"]["parameters"]["required"]:
+        #     if required_name not in tool_args:
+        #         return ToolChannelResponse(
+        #             success=False,
+        #             result=f"Error when executing tool: run_tool_calls_on_server_async failed for1 tool calls after 4 attempts."
+        #         )
 
-        if not isinstance(tool_args["code"], str):
+        if "code" in tool_args and not isinstance(tool_args["code"], str):
             return ToolChannelResponse(
                 success=False,
-                result=f"parameters format error, 'code' should be a string but get {type(tool_args['code'])}"
+                result=f"Error when executing tool: run_tool_calls_on_server_async failed for1 tool calls after 4 attempts."
             )
         
-        if not isinstance(tool_args["input"], str):
+        if "input" in tool_args and not isinstance(tool_args["input"], str):
             return ToolChannelResponse(
                 success=False,
-                result=f"parameters format error, 'input' should be a string but get {type(tool_args['input'])}"
+                result=f"Error when executing tool: run_tool_calls_on_server_async failed for1 tool calls after 4 attempts."
             )
-
 
 class JupyterTool(CodeJudgeToolBase):
     name = "execute_jupyter_code"
