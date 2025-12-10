@@ -36,15 +36,15 @@ from rlinf.envs.utils import (
 
 
 class RobocasaEnv(gym.Env):
-    def __init__(self, cfg, seed_offset, total_num_processes):
+    def __init__(self, cfg, num_envs, seed_offset, total_num_processes):
         self.seed_offset = seed_offset
         self.cfg = cfg
         self.total_num_processes = total_num_processes
         self.seed = self.cfg.seed + seed_offset
         self._is_start = True
-        self.num_envs = self.cfg.num_envs
+        self.num_envs = num_envs
         self.group_size = self.cfg.group_size
-        self.num_group = self.cfg.num_group
+        self.num_group = self.num_envs // self.group_size
         self.use_fixed_reset_state_ids = cfg.get('use_fixed_reset_state_ids', False)
 
         self.ignore_terminations = cfg.ignore_terminations
@@ -125,6 +125,13 @@ class RobocasaEnv(gym.Env):
         # Assign sequential seeds to each environment: seed_offset*num_envs + [0, 1, 2, ...]
         base_seed = self.seed
         self.env_seeds = [base_seed + i for i in range(self.num_envs)]
+
+    def update_reset_state_ids(self):
+        """Update reset state IDs for the next rollout.
+
+        For robocasa, we use fixed seeds, so this is a no-op.
+        """
+        pass
 
     def _init_env(self):
         """Initialize robocasa environments using subprocess isolation."""
@@ -316,10 +323,31 @@ class RobocasaEnv(gym.Env):
             }
             images_and_states_list.append(images_and_states)
 
+        images_and_states_tensor = to_tensor(
+            list_of_dict_to_dict_of_list(images_and_states_list)
+        )
+
+        # Convert images from (H, W, C) to (C, H, W) format like libero does
+        image_tensor = torch.stack(
+            [
+                value.clone().permute(2, 0, 1)
+                for value in images_and_states_tensor["base_image"]
+            ]
+        )
+        wrist_image_tensor = torch.stack(
+            [
+                value.clone().permute(2, 0, 1)
+                for value in images_and_states_tensor["wrist_image"]
+            ]
+        )
+
+        states = images_and_states_tensor["state"]
+
+        # Flatten structure to match libero format
         obs = {
-            "images_and_states": to_tensor(
-                list_of_dict_to_dict_of_list(images_and_states_list)
-            ),
+            "images": image_tensor,
+            "wrist_images": wrist_image_tensor,
+            "states": states,
             "task_descriptions": [self.task_descriptions_all[task_id] for task_id in self.task_ids],
         }
         return obs
@@ -386,8 +414,9 @@ class RobocasaEnv(gym.Env):
             self._is_start = False
             terminations = np.zeros(self.num_envs, dtype=bool)
             truncations = np.zeros(self.num_envs, dtype=bool)
+            rewards = np.zeros(self.num_envs, dtype=np.float32)
 
-            return obs, None, to_tensor(terminations), to_tensor(truncations), infos
+            return obs, to_tensor(rewards), to_tensor(terminations), to_tensor(truncations), infos
 
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()

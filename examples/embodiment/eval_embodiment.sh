@@ -28,7 +28,7 @@ export HYDRA_FULL_ERROR=1
 
 
 if [ -z "$1" ]; then
-    CONFIG_NAME="maniskill_ppo_openvlaoft"
+    CONFIG_NAME="robocasa_eval_openpi"
 else
     CONFIG_NAME=$1
 fi
