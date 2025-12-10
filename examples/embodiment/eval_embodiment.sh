@@ -20,10 +20,10 @@ export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
 export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
 export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 
-# LIBERO_PATH=/mnt/mnt/public/hyx/LIBERO-PRO
-LIBERO_STD_PATH="/mnt/mnt/public/hyx/LIBERO-master"
-LIBERO_PRO_PATH="/mnt/mnt/public/hyx/LIBERO-PRO"
-LIBERO_PLUS_PATH="/mnt/mnt/public/hyx/LIBERO-plus"
+# NOTE: set LIBERO_REPO_PATH to the path of the LIBERO repo
+LIBERO_STD_PATH="/opt/libero"
+LIBERO_PRO_PATH="/opt/LIBERO-PRO"
+LIBERO_PLUS_PATH="/opt/LIBERO-plus"
 
 if [ "$LIBERO_TYPE" == "pro" ]; then
     echo "Using LIBERO-Pro Environment..."
