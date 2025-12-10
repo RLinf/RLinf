@@ -20,7 +20,22 @@ export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
 export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
 export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 
-LIBERO_PATH=/opt/libero
+# LIBERO_PATH=/mnt/mnt/public/hyx/LIBERO-PRO
+LIBERO_STD_PATH="/mnt/mnt/public/hyx/LIBERO-master"
+LIBERO_PRO_PATH="/mnt/mnt/public/hyx/LIBERO-PRO"
+LIBERO_PLUS_PATH="/mnt/mnt/public/hyx/LIBERO-plus"
+
+if [ "$LIBERO_TYPE" == "pro" ]; then
+    echo "Using LIBERO-Pro Environment..."
+    export LIBERO_PATH=$LIBERO_PRO_PATH
+elif [ "$LIBERO_TYPE" == "plus" ]; then
+    echo "Using LIBERO-Plus Environment..."
+    export LIBERO_PATH=$LIBERO_PLUS_PATH
+else
+    echo "Using Standard LIBERO Environment..."
+    export LIBERO_PATH=$LIBERO_STD_PATH
+fi
+
 export PYTHONPATH=${LIBERO_PATH}:$PYTHONPATH
 
 export CUDA_LAUNCH_BLOCKING=1

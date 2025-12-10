@@ -19,11 +19,50 @@ import os
 from typing import Optional, Union
 
 import imageio
-import libero.libero.benchmark as benchmark
 import numpy as np
 import torch
-from libero.libero.benchmark import Benchmark
 from PIL import Image, ImageDraw, ImageFont
+
+libero_type = os.environ.get("LIBERO_TYPE", "standard")
+
+if libero_type == "pro":
+    try:
+        import liberopro.liberopro.benchmark as benchmark
+        from liberopro.liberopro.benchmark import Benchmark
+    except ImportError:
+        print(
+            "[Utils] Warning: LIBERO_TYPE=pro but 'liberopro' not found. Falling back to 'libero'."
+        )
+        import libero.libero.benchmark as benchmark
+        from libero.libero.benchmark import Benchmark
+
+elif libero_type == "plus":
+    try:
+        import liberoplus.liberoplus.benchmark as benchmark
+        from liberoplus.liberoplus.benchmark import Benchmark
+    except ImportError:
+        print(
+            "[Utils] Warning: LIBERO_TYPE=plus but 'liberoplus' not found. Falling back to 'libero'."
+        )
+        import libero.libero.benchmark as benchmark
+        from libero.libero.benchmark import Benchmark
+
+else:
+    try:
+        import libero.libero.benchmark as benchmark
+        from libero.libero.benchmark import Benchmark
+    except ImportError:
+        try:
+            import liberopro.liberopro.benchmark as benchmark
+            from liberopro.liberopro.benchmark import Benchmark
+        except ImportError:
+            try:
+                import liberoplus.liberoplus.benchmark as benchmark
+                from liberoplus.liberoplus.benchmark import Benchmark
+            except ImportError:
+                raise ImportError(
+                    "No valid LIBERO package (libero, liberopro, or liberoplus) found."
+                )
 
 
 def tile_images(

@@ -11,17 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import copy
+import glob
+import importlib
 import os
+import sys
 from typing import Optional, Union
 
 import gym
 import numpy as np
 import torch
-from libero.libero import get_libero_path
-from libero.libero.benchmark import Benchmark
-from libero.libero.envs import OffScreenRenderEnv
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.envs.libero.utils import (
@@ -38,6 +37,194 @@ from rlinf.envs.utils import (
     list_of_dict_to_dict_of_list,
     to_tensor,
 )
+from rlinf.utils.logging import get_logger
+
+libero_type = os.environ.get("LIBERO_TYPE", "standard")
+logger = get_logger()
+if libero_type == "pro":
+    LIBERO_PKG_NAME = "liberopro"
+    LIBERO_MAIN_MODULE_PATH = "liberopro.liberopro"
+elif libero_type == "plus":
+    LIBERO_PKG_NAME = "liberoplus"
+    LIBERO_MAIN_MODULE_PATH = "liberoplus.liberoplus"
+else:
+    LIBERO_PKG_NAME = "libero"
+    LIBERO_MAIN_MODULE_PATH = "libero.libero"
+
+try:
+    real_libero_pkg = importlib.import_module(LIBERO_PKG_NAME)
+    real_libero_core = importlib.import_module(LIBERO_MAIN_MODULE_PATH)
+
+    try:
+        real_libero_benchmark = importlib.import_module(
+            f"{LIBERO_MAIN_MODULE_PATH}.benchmark"
+        )
+    except ImportError:
+        # Fallback for some versions
+        real_libero_benchmark = importlib.import_module(f"{LIBERO_PKG_NAME}.benchmark")
+
+    real_libero_envs = importlib.import_module(f"{LIBERO_MAIN_MODULE_PATH}.envs")
+
+    if libero_type in ["pro", "plus"]:
+        sys.modules["libero"] = real_libero_pkg
+        sys.modules["libero.libero"] = real_libero_core
+        sys.modules["libero.libero.benchmark"] = real_libero_benchmark
+        sys.modules["libero.libero.envs"] = real_libero_envs
+
+    benchmark = real_libero_benchmark
+    OffScreenRenderEnv = real_libero_envs.OffScreenRenderEnv
+
+    if hasattr(real_libero_core, "get_libero_path"):
+        get_libero_path = real_libero_core.get_libero_path
+    else:
+        try:
+            real_libero_utils = importlib.import_module(
+                f"{LIBERO_MAIN_MODULE_PATH}.utils"
+            )
+            get_libero_path = real_libero_utils.get_libero_path
+        except (ImportError, AttributeError):
+
+            def _fallback_get_libero_path(path_name):
+                root = os.path.dirname(real_libero_core.__file__)
+                return os.path.join(root, path_name)
+
+            get_libero_path = _fallback_get_libero_path
+
+except ImportError as e:
+    raise ImportError(
+        f"Failed to import '{LIBERO_MAIN_MODULE_PATH}'. Check LIBERO_TYPE env var. Error: {e}"
+    )
+
+
+def apply_global_patches():
+    custom_libero_path = os.environ.get("LIBERO_PATH", "")
+    if custom_libero_path and os.path.exists(custom_libero_path):
+        if custom_libero_path not in sys.path:
+            sys.path.insert(0, custom_libero_path)
+        clean_path = [p for p in sys.path if "/opt/libero" not in p]
+        sys.path[:] = clean_path
+
+    try:
+        if getattr(torch.load, "_is_patched", False):
+            pass
+        else:
+            _original_torch_load = torch.load
+
+            def safe_torch_load(f, *args, **kwargs):
+                if "weights_only" not in kwargs:
+                    kwargs["weights_only"] = False
+
+                if isinstance(f, str) and not os.path.exists(f):
+                    current_t = os.environ.get("LIBERO_TYPE", "standard")
+
+                    if "/./" in f:
+                        f = f.replace("/./", "/")
+
+                    if (
+                        current_t == "pro"
+                        and "libero/libero" in f
+                        and "liberopro" not in f
+                    ):
+                        new_f = f.replace("libero/libero", "liberopro/liberopro")
+                        if os.path.exists(new_f):
+                            f = new_f
+                    elif (
+                        current_t == "plus"
+                        and "libero/libero" in f
+                        and "liberoplus" not in f
+                    ):
+                        new_f = f.replace("libero/libero", "liberoplus/liberoplus")
+                        if os.path.exists(new_f):
+                            f = new_f
+
+                return _original_torch_load(f, *args, **kwargs)
+
+            safe_torch_load._is_patched = True
+            torch.load = safe_torch_load
+    except Exception as e:
+        logger.error(f"[LiberoEnv Patch]Failed to patch torch.load: {e}")
+
+    try:
+        current_type = os.environ.get("LIBERO_TYPE", "standard")
+
+        if current_type == "pro":
+            target_module_path = "liberopro.liberopro"
+        elif current_type == "plus":
+            target_module_path = "liberoplus.liberoplus"
+        else:
+            target_module_path = "libero.libero"
+
+        libero_main = importlib.import_module(target_module_path)
+        libero_objects = importlib.import_module(f"{target_module_path}.envs.objects")
+
+        loaded_path = os.path.dirname(libero_main.__file__)
+
+        bad_keys = {
+            "white_white_porcelain_mug": "white_porcelain_mug",
+            "white_yellow_porcelain_mug": "yellow_porcelain_mug",
+            "white_red_porcelain_mug": "red_porcelain_mug",
+        }
+        if hasattr(libero_objects, "OBJECTS_DICT"):
+            for bad_key, good_key in bad_keys.items():
+                if bad_key not in libero_objects.OBJECTS_DICT:
+                    if good_key in libero_objects.OBJECTS_DICT:
+                        libero_objects.OBJECTS_DICT[bad_key] = (
+                            libero_objects.OBJECTS_DICT[good_key]
+                        )
+                    elif "porcelain_mug" in libero_objects.OBJECTS_DICT:
+                        libero_objects.OBJECTS_DICT[bad_key] = (
+                            libero_objects.OBJECTS_DICT["porcelain_mug"]
+                        )
+
+        paths = {
+            "assets": os.path.join(loaded_path, "assets"),
+            "bddl_files": os.path.join(loaded_path, "bddl_files"),
+            "init_states": os.path.join(loaded_path, "init_files"),
+        }
+
+        for k, p in paths.items():
+            if not os.path.exists(p):
+                if "liberopro" in loaded_path and "libero/libero" in p:
+                    paths[k] = p.replace("libero/libero", "liberopro/liberopro")
+                elif "liberoplus" in loaded_path and "libero/libero" in p:
+                    paths[k] = p.replace("libero/libero", "liberoplus/liberoplus")
+
+        os.environ["LIBERO_ASSET_ROOT"] = paths["assets"]
+        os.environ["LIBERO_BDDL_PATH"] = paths["bddl_files"]
+        os.environ["LIBERO_INIT_STATES_PATH"] = paths["init_states"]
+
+        def force_local_path(path_name):
+            if path_name in paths:
+                return paths[path_name]
+            return os.path.join(loaded_path, path_name)
+
+        libero_main.get_libero_path = force_local_path
+
+        try:
+            bddl_utils = importlib.import_module(
+                f"{target_module_path}.envs.bddl_utils"
+            )
+            original_get_problem_info = bddl_utils.get_problem_info
+
+            def safe_get_problem_info(bddl_file_path):
+                try:
+                    return original_get_problem_info(bddl_file_path)
+                except Exception:
+                    return {
+                        "domain_name": "unknown",
+                        "problem_name": "unknown",
+                        "language_instruction": "unknown task",
+                    }
+
+            bddl_utils.get_problem_info = safe_get_problem_info
+        except ImportError:
+            pass
+
+    except Exception as e:
+        logger.error(f"[LiberoEnv Patch]Patching Error (pid={os.getpid()}): {e}")
+
+
+apply_global_patches()
 
 
 class LiberoEnv(gym.Env):
@@ -60,7 +247,8 @@ class LiberoEnv(gym.Env):
         self._generator_ordered = np.random.default_rng(seed=0)
         self.start_idx = 0
 
-        self.task_suite: Benchmark = get_benchmark_overridden(cfg.task_suite_name)()
+        apply_global_patches()
+        self.task_suite = get_benchmark_overridden(cfg.task_suite_name)()
 
         self._compute_total_num_group_envs()
         self.reset_state_ids_all = self.get_reset_state_ids_all()
@@ -86,11 +274,78 @@ class LiberoEnv(gym.Env):
     def get_env_fns(self):
         env_fn_params = self.get_env_fn_params()
         env_fns = []
+
+        current_type_val = os.environ.get("LIBERO_TYPE", "standard")
+
         for env_fn_param in env_fn_params:
 
-            def env_fn(param=env_fn_param):
+            def env_fn(param=env_fn_param, _type_val=current_type_val):
+                # --- Worker Process Start ---
+                import importlib
+                import os
+                import sys
+
+                os.environ["LIBERO_TYPE"] = _type_val
+
+                if _type_val in ["pro", "plus"]:
+                    try:
+                        if "libero" not in sys.modules:
+                            if _type_val == "pro":
+                                target_pkg_name = "liberopro"
+                                target_core_name = "liberopro.liberopro"
+                            else:  # plus
+                                target_pkg_name = "liberoplus"
+                                target_core_name = "liberoplus.liberoplus"
+
+                            real_libero_pkg = importlib.import_module(target_pkg_name)
+                            real_libero_core = importlib.import_module(target_core_name)
+
+                            try:
+                                real_libero_bench = importlib.import_module(
+                                    f"{target_core_name}.benchmark"
+                                )
+                            except ImportError:
+                                real_libero_bench = importlib.import_module(
+                                    f"{target_pkg_name}.benchmark"
+                                )
+
+                            real_libero_envs = importlib.import_module(
+                                f"{target_core_name}.envs"
+                            )
+
+                            sys.modules["libero"] = real_libero_pkg
+                            sys.modules["libero.libero"] = real_libero_core
+                            sys.modules["libero.libero.benchmark"] = real_libero_bench
+                            sys.modules["libero.libero.envs"] = real_libero_envs
+                    except ImportError:
+                        pass
+
+                apply_global_patches()
+
                 seed = param.pop("seed")
-                env = OffScreenRenderEnv(**param)
+
+                try:
+                    if _type_val == "pro":
+                        from liberopro.liberopro.envs import (
+                            OffScreenRenderEnv as WorkerEnv,
+                        )
+                    elif _type_val == "plus":
+                        from liberoplus.liberoplus.envs import (
+                            OffScreenRenderEnv as WorkerEnv,
+                        )
+                    else:
+                        from libero.libero.envs import OffScreenRenderEnv as WorkerEnv
+                except ImportError:
+                    try:
+                        import libero.libero.envs as _le
+
+                        WorkerEnv = _le.OffScreenRenderEnv
+                    except ImportError:
+                        raise ImportError(
+                            f"Could not import OffScreenRenderEnv in worker (TYPE={_type_val})."
+                        )
+
+                env = WorkerEnv(**param)
                 env.seed(seed)
                 return env
 
@@ -101,26 +356,173 @@ class LiberoEnv(gym.Env):
         env_fn_params = []
         base_env_args = OmegaConf.to_container(self.cfg.init_params, resolve=True)
 
-        task_descriptions = []
+        variant = os.environ.get(
+            "LIBERO_TYPE", self.cfg.get("libero_variant", "standard")
+        )
+        plus_suffix = os.environ.get(
+            "LIBERO_SUFFIX", self.cfg.get("perturbation_suffix", "")
+        )
+        pro_type = os.environ.get(
+            "LIBERO_PERTURBATION", self.cfg.get("perturbation_type", None)
+        )
+
+        if plus_suffix:
+            plus_suffix = plus_suffix.replace(".bddl", "")
+
         if env_idx is None:
-            env_idx = np.arange(self.num_envs)
-        for env_id in range(self.num_envs):
-            if env_id not in env_idx:
-                task_descriptions.append(self.task_descriptions[env_id])
+            env_idx = np.arange(self.cfg.num_envs)
+
+        if len(env_idx) > 0 and env_idx[0] == 0:
+            logger.info(
+                f"\n[LiberoEnv] Variant: {variant}, Suffix: '{plus_suffix}', Pro Type: '{pro_type}'"
+            )
+
+        pro_folder_map = {
+            "object": "object",
+            "swap": "swap",
+            "spatial": "swap",
+            "language": "lan",
+            "lan": "lan",
+            "task": "task",
+            "env": "env",
+            "original": None,
+            "all": "all",
+        }
+
+        bddl_root = get_libero_path("bddl_files")
+
+        valid_params_cache = []
+        valid_descriptions_cache = []
+        valid_task_ids_cache = []
+        current_task_descriptions = []
+
+        for i, env_id in enumerate(env_idx):
+            try:
+                task_idx = self.task_ids[env_id]
+                task = self.task_suite.get_task(task_idx)
+            except IndexError:
+                if len(valid_params_cache) > 0:
+                    env_fn_params.append(valid_params_cache[-1])
+                    current_task_descriptions.append(valid_descriptions_cache[-1])
+                    self.task_ids[env_id] = valid_task_ids_cache[-1]
                 continue
-            task = self.task_suite.get_task(self.task_ids[env_id])
-            task_bddl_file = os.path.join(
-                get_libero_path("bddl_files"), task.problem_folder, task.bddl_file
-            )
-            env_fn_params.append(
-                {
-                    **base_env_args,
-                    "bddl_file_name": task_bddl_file,
-                    "seed": self.seed,
-                }
-            )
-            task_descriptions.append(task.language)
-        self.task_descriptions = task_descriptions
+
+            folder_name = task.problem_folder
+            file_name = task.bddl_file
+
+            final_path = None
+            original_path = os.path.join(bddl_root, folder_name, file_name)
+
+            if variant == "pro":
+                if pro_type == "all":
+                    variations = ["lan", "object", "swap"]
+
+                    current_var = variations[i % len(variations)]
+
+                    perturbed_folder = f"{folder_name}_{current_var}"
+                    target_path = os.path.join(bddl_root, perturbed_folder, file_name)
+
+                    if os.path.exists(target_path):
+                        final_path = target_path
+                    else:
+                        pass
+
+                elif pro_type in pro_folder_map:
+                    suffix = pro_folder_map[pro_type]
+                    if suffix:
+                        perturbed_folder = f"{folder_name}_{suffix}"
+                        target_path = os.path.join(
+                            bddl_root, perturbed_folder, file_name
+                        )
+                        if os.path.exists(target_path):
+                            final_path = target_path
+
+            # --- Logic for Plus (LIBERO-Plus) ---
+            elif variant == "plus" and plus_suffix:
+                base_name = file_name.replace(".bddl", "")
+                clean_name = base_name
+                markers = [
+                    "_sample",
+                    "_view",
+                    "_initstate",
+                    "_noise",
+                    "_light",
+                    "_table",
+                    "_add",
+                    "_lan",
+                    "_language",
+                    "_copy",
+                ]
+                for marker in markers:
+                    if marker in clean_name:
+                        clean_name = clean_name.split(marker)[0]
+                        break
+
+                if plus_suffix.lower() == "all":
+                    pattern = f"{clean_name}*.bddl"
+                else:
+                    pattern = f"{clean_name}*{plus_suffix}.bddl"
+
+                search_full_path = os.path.join(bddl_root, folder_name, pattern)
+
+                try:
+                    candidates = glob.glob(search_full_path)
+                    candidates.sort()
+                    if len(candidates) > 0:
+                        if plus_suffix.lower() == "all":
+                            final_path = candidates[i % len(candidates)]
+                        else:
+                            final_path = candidates[0]
+                except Exception:
+                    pass
+
+            if final_path is None:
+                if os.path.exists(original_path):
+                    final_path = original_path
+
+            if final_path is None or not os.path.exists(final_path):
+                if len(valid_params_cache) > 0:
+                    env_fn_params.append(valid_params_cache[-1])
+                    current_task_descriptions.append(valid_descriptions_cache[-1])
+                    self.task_ids[env_id] = valid_task_ids_cache[-1]
+                    continue
+                else:
+                    logger.info(f"[LiberoEnv] ⏭️ SKIPPING Task: {file_name}")
+                    continue
+            current_param = {
+                **base_env_args,
+                "bddl_file_name": final_path,
+                "seed": self.seed,
+            }
+
+            try:
+                desc = task.language
+            except Exception as e:
+                desc = "unknown task"
+                logger.error(
+                    f"[LiberoEnv] Warning: Failed to get task language due to {e}"
+                )
+
+            env_fn_params.append(current_param)
+            current_task_descriptions.append(desc)
+
+            valid_params_cache.append(current_param)
+            valid_descriptions_cache.append(desc)
+            valid_task_ids_cache.append(task_idx)
+
+        if len(env_fn_params) == 0:
+            raise RuntimeError("[LiberoEnv]  CRITICAL: No valid BDDL files found!")
+
+        while len(env_fn_params) < len(env_idx):
+            if len(valid_params_cache) > 0:
+                env_fn_params.append(valid_params_cache[-1])
+                current_task_descriptions.append(valid_descriptions_cache[-1])
+                target_env_id = env_idx[len(env_fn_params) - 1]
+                self.task_ids[target_env_id] = valid_task_ids_cache[-1]
+            else:
+                break
+
+        self.task_descriptions = current_task_descriptions
         return env_fn_params
 
     def _compute_total_num_group_envs(self):
@@ -315,8 +717,12 @@ class LiberoEnv(gym.Env):
             self.env.reconfigure_env_fns(env_fn_params, reconfig_env_idx)
         self.env.seed(self.seed * len(env_idx))
         self.env.reset(id=env_idx)
-        init_state = self._get_reset_states(env_idx=env_idx)
-        self.env.set_init_state(init_state=init_state, id=env_idx)
+        variant = os.environ.get("LIBERO_TYPE", "standard")
+        if variant in ["plus", "pro"]:
+            pass
+        else:
+            init_state = self._get_reset_states(env_idx=env_idx)
+            self.env.set_init_state(init_state=init_state, id=env_idx)
 
     def reset(
         self,
@@ -355,6 +761,20 @@ class LiberoEnv(gym.Env):
 
     def step(self, actions=None, auto_reset=True):
         """Step the environment with the given actions."""
+        if actions is None:
+            assert self._is_start, "Actions must be provided after the first reset."
+        if self.is_start:
+            obs, infos = self.reset(
+                reset_state_ids=self.reset_state_ids
+                if self.use_fixed_reset_state_ids
+                else None
+            )
+            self._is_start = False
+            terminations = np.zeros(self.num_envs, dtype=bool)
+            truncations = np.zeros(self.num_envs, dtype=bool)
+
+            return obs, None, to_tensor(terminations), to_tensor(truncations), infos
+
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
 
