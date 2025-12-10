@@ -155,11 +155,11 @@ CALVIN D 任务上训练配置文件：
 
    bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
 
-例如，要在 CALVIN D 任务上使用 PPO 算法训练 π\ :sub:`0`\ 模型，请运行：
+例如，要在 CALVIN D 任务上使用 PPO 算法训练 π\ :sub:`0.5`\ 模型，请运行 （推荐使用该模型，收敛速度较快）：
 
 .. code:: bash
 
-   bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi
+   bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi_pi05
 
 
 可视化和结果

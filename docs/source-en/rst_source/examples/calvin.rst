@@ -152,11 +152,11 @@ command:
 
    bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
 
-For example, to train the π\ :sub:`0`\ model using the PPO algorithm on the CALVIN D task, run:
+For example, to train the π\ :sub:`0.5`\ model using the PPO algorithm on the CALVIN D task, run (recommended, faster convergence):
 
 .. code:: bash
 
-   bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi
+   bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi_pi05
 
 
 Visualization and Results

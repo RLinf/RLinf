@@ -239,7 +239,7 @@ class CalvinEnv(gym.Env):
             "task_descriptions": self.task_descriptions,
         }
         return obs
-    
+
     def _post_process_obs(self, obs):
         image_tensor = torch.stack(
             [
