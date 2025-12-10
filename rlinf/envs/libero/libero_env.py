@@ -133,7 +133,7 @@ class LiberoEnv(gym.Env):
         self.cumsum_trial_id_bins = np.cumsum(self.trial_id_bins)
 
     def update_reset_state_ids(self):
-        if self.cfg.only_eval or self.cfg.use_ordered_reset_state_ids:
+        if self.cfg.is_eval or self.cfg.use_ordered_reset_state_ids:
             reset_state_ids = self._get_ordered_reset_state_ids(self.num_group)
         else:
             reset_state_ids = self._get_random_reset_state_ids(self.num_group)
@@ -448,6 +448,8 @@ class LiberoEnv(gym.Env):
         final_obs = copy.deepcopy(_final_obs)
         env_idx = np.arange(0, self.num_envs)[dones]
         final_info = copy.deepcopy(infos)
+        if self.cfg.is_eval:
+            self.update_reset_state_ids()
         obs, infos = self.reset(
             env_idx=env_idx,
             reset_state_ids=self.reset_state_ids[env_idx]

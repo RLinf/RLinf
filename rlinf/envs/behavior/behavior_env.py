@@ -83,10 +83,14 @@ class BehaviorEnv(gym.Env):
     def _load_tasks_cfg(self):
         with open_dict(self.cfg):
             self.cfg.omnigibson_cfg["task"]["activity_name"] = TASK_INDICES_TO_NAMES[
-                self.cfg.tasks.task_idx
+                self.cfg.task_idx
             ]
 
-        with open(self.cfg.tasks.task_description_path, "r") as f:
+        # Read task description
+        task_description_path = os.path.join(
+            os.path.dirname(__file__), "behavior_task.jsonl"
+        )
+        with open(task_description_path, "r") as f:
             text = f.read()
             task_description = [json.loads(x) for x in text.strip().split("\n") if x]
         task_description_map = {

@@ -61,13 +61,13 @@
 依赖安装
 -----------
 
-MetaWorld 目前仅支持 `openpi`。请确保您已按照 :doc:`安装指南 <../start/installation>` 安装了所需的依赖项。
+方法 1：您可以使用 metaworld 的 RLinf docker 镜像 ``docker pull rlinf/rlinf:agentic-rlinf0.1-metaworld``。
 
-然后，使用以下命令安装 MetaWorld：
+方法 2：通过运行以下命令直接在您的环境中安装依赖（确保您已经安装了 ``uv``）：
 
 .. code:: bash
 
-   uv pip install metaworld==3.0.0
+   bash requirements/install.sh embodied --model openpi --env metaworld
 
 
 模型下载

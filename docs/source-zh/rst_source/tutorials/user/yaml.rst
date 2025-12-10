@@ -717,8 +717,8 @@ defaults
 .. code:: yaml
 
   defaults:
-    - env/train: PutCarrotOnPlateInScene
-    - env/eval: PutCarrotOnPlateInScene
+    - env/manikill_put_carrot_on_plate_in_scene@env.train
+    - env/manikill_put_carrot_on_plate_in_scene@env.eval
 
 ``defaults``：Hydra 配置继承。指定训练与评估加载的环境配置。
 

@@ -28,7 +28,11 @@ from omegaconf.dictconfig import DictConfig
 from transformers import AutoConfig
 
 from rlinf.scheduler.cluster import Cluster
-from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
+from rlinf.utils.placement import (
+    HybridComponentPlacement,
+    ModelParallelComponentPlacement,
+    PlacementMode,
+)
 
 if TYPE_CHECKING:
     from megatron.core.model_parallel_config import ModelParallelConfig
@@ -680,9 +684,6 @@ def validate_embodied_cfg(cfg):
         )
 
     # process num-envs
-    from rlinf.scheduler import Cluster
-    from rlinf.utils.placement import HybridComponentPlacement
-
     component_placement = HybridComponentPlacement(
         cfg, Cluster(num_nodes=cfg.cluster.num_nodes)
     )
@@ -734,6 +735,19 @@ def validate_embodied_cfg(cfg):
             "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
         )
 
+    assert (
+        cfg.env.train.max_steps_per_rollout_epoch % cfg.actor.model.num_action_chunks
+        == 0
+    ), (
+        "env.train.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
+    )
+    assert (
+        cfg.env.eval.max_steps_per_rollout_epoch % cfg.actor.model.num_action_chunks
+        == 0
+    ), (
+        "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
+    )
+
     with open_dict(cfg):
         if cfg.env.train.simulator_type == "maniskill":
 
@@ -769,50 +783,6 @@ def validate_embodied_cfg(cfg):
             omnigibson_cfg = OmegaConf.create(omnigibson_cfg)
             cfg.env.train.omnigibson_cfg = omnigibson_cfg
             cfg.env.eval.omnigibson_cfg = omnigibson_cfg
-
-            # Also accepts int or list/tuple of tokens (ints or range strings)
-            def parse_activity_ids(activity_ids) -> list[int]:
-                if activity_ids is None:
-                    return []
-                out: list[int] = []
-
-                def _add_token(tok: str):
-                    tok = tok.strip()
-                    if not tok:
-                        return
-                    if "-" in tok:
-                        start, end = tok.split("-", 1)
-                        start_i, end_i = int(start.strip()), int(end.strip())
-                        if end_i < start_i:
-                            start_i, end_i = end_i, start_i
-                        out.extend(range(start_i, end_i + 1))
-                    else:
-                        out.append(int(tok))
-
-                if isinstance(activity_ids, int):
-                    out.append(int(activity_ids))
-                elif isinstance(activity_ids, (list, tuple)):
-                    for item in activity_ids:
-                        if isinstance(item, int):
-                            out.append(int(item))
-                        else:
-                            for tok in str(item).split(","):
-                                _add_token(tok)
-                else:
-                    for tok in str(activity_ids).split(","):
-                        _add_token(tok)
-                return out
-
-            cfg.env.train.tasks.activity_task_indices = parse_activity_ids(
-                cfg.env.train.tasks.activity_task_indices
-            )
-            cfg.env.eval.tasks.activity_task_indices = parse_activity_ids(
-                cfg.env.eval.tasks.activity_task_indices
-            )
-            assert (
-                len(cfg.env.train.tasks.activity_task_indices) > 0
-                and len(cfg.env.eval.tasks.activity_task_indices) > 0
-            ), "No activity IDs provided"
 
     return cfg
 
@@ -945,6 +915,17 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             f"padded_vocab_size ({cfg.actor.model.padded_vocab_size}) must be divisible by tensor_model_parallel_size ({cfg.actor.model.tensor_model_parallel_size})"
         )
     elif cfg.actor.training_backend == "fsdp":
+        component_placement = HybridComponentPlacement(
+            cfg, Cluster(num_nodes=cfg.cluster.num_nodes)
+        )
+        actor_world_size = component_placement.get_world_size("actor")
+        assert (
+            cfg.actor.global_batch_size
+            % (cfg.actor.micro_batch_size * actor_world_size)
+            == 0
+        ), (
+            f"actor.global_batch_size ({cfg.actor.global_batch_size}) must be divisible by (actor.micro_batch_size ({cfg.actor.micro_batch_size}) * actor_world_size ({actor_world_size}))"
+        )
         cfg.actor = validate_fsdp_cfg(cfg.actor, cfg.runner.get("resume_dir", None))
 
     if cfg.critic.use_critic_model and cfg.critic.training_backend == "megatron":

@@ -12,6 +12,7 @@ build
 docs/build
 dist
 logs/*
+outputs/*
 *.so
 .venv
 uv.lock

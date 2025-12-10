@@ -61,13 +61,13 @@ Algorithm
 Dependency Installation
 -----------------------
 
-MetaWorld is currently only supported for `openpi`. Make sure you have installed the required dependencies as per the :doc:`installation guide <../start/installation>`.
+Option 1: You can use the RLinf docker image for metaworld ``docker pull rlinf/rlinf:agentic-rlinf0.1-metaworld``.
 
-Then, install MetaWorld with:
+Option 2: Install dependencies directly in your environment by running the following command (make sure you already installed ``uv``):
 
 .. code:: bash
 
-   uv pip install metaworld==3.0.0
+   bash requirements/install.sh embodied --model openpi --env metaworld
 
 Model Download
 --------------

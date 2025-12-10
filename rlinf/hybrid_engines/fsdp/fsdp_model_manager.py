@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import warnings
 from typing import ContextManager, Union
 
 import torch
@@ -36,6 +37,12 @@ from rlinf.hybrid_engines.fsdp.utils import (
 )
 from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import warmup_optimizer_state
+
+warnings.filterwarnings(
+    "ignore",
+    message=".*NO_SHARD.*full_state_dict.*",
+    category=UserWarning,
+)
 
 
 class FSDPModelManager:
@@ -67,6 +74,7 @@ class FSDPModelManager:
             self.critic_warmup_steps = self._cfg.optim.critic_warmup_steps
         self.store_requires_grad_param_name = []
 
+        self.model_path = self._cfg.model.model_path
         if cfg.get("tokenizer", {}).get("tokenizer_model", None) is not None:
             self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
 
@@ -82,7 +90,6 @@ class FSDPModelManager:
         self._strategy = FSDPStrategyBase.create(
             self._cfg, world_size, self._dp_group, self._logger
         )
-
         self.amp_context = self._create_amp_context()
 
     def _create_amp_context(self) -> ContextManager:
@@ -275,7 +282,11 @@ class FSDPModelManager:
             save_path: the directory to save checkpoint.
         """
         self._strategy.save_checkpoint(
-            self.model, self.optimizer, self.lr_scheduler, save_path
+            self.model_path,
+            self.model,
+            self.optimizer,
+            self.lr_scheduler,
+            save_path,
         )
 
     def offload_param_and_grad(self, offload_grad: bool = False) -> None:

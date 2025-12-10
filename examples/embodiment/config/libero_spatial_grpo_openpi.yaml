@@ -1,6 +1,6 @@
 defaults:
-  - env/train: libero_spatial
-  - env/eval: libero_spatial
+  - env/libero_spatial@env.train
+  - env/libero_spatial@env.eval
   - model/pi0@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
@@ -29,7 +29,7 @@ runner:
   max_steps: -1
 
   only_eval: False
-  eval_policy_path: null
+  eval_policy_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
   val_check_interval: -1
   save_interval: 40
   seq_length: 4096
@@ -93,6 +93,19 @@ env:
   train:
     total_num_envs: 64
     group_size: ${algorithm.group_size}
+    max_episode_steps: 240 # max episode steps for truncation
+    max_steps_per_rollout_epoch: 240
+  eval:
+    total_num_envs: 500
+    auto_reset: True
+    ignore_terminations: True
+    max_episode_steps: 240
+    max_steps_per_rollout_epoch: 240
+    group_size: 1
+    is_eval: True
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
   group_name: "RolloutGroup"

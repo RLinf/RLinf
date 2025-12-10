@@ -100,6 +100,7 @@ override-dependencies = [
     "xgrammar==0.1.19",
     "uvloop==0.21.0",
     "tensorflow-addons==0.23.0",
+    "hydra-core==1.4.0.dev1",
 ]
 
 [tool.ruff]

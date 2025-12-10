@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import itertools
-from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional, Union
+from typing import TYPE_CHECKING, Iterator, Optional
 
 import torch
 from omegaconf import DictConfig
@@ -81,9 +81,7 @@ except ImportError:
 HAVE_TE = HAVE_TE and HAVE_TE_MODULE
 
 if TYPE_CHECKING:
-    from megatron.core.optimizer.optimizer import MegatronOptimizer
-    from megatron.core.transformer.spec_utils import ModuleSpec
-    from megatron.core.transformer.transformer_config import TransformerConfig
+    pass
 
 
 def get_specs(

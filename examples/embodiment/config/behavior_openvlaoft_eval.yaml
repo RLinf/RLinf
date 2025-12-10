@@ -1,6 +1,6 @@
 defaults:
-  - env/train: behavior_r1pro
-  - env/eval: behavior_r1pro
+  - env/behavior_r1pro@env.train
+  - env/behavior_r1pro@env.eval
   - model/openvla_oft@actor.model
   - override hydra/job_logging: stdout
 
@@ -28,7 +28,7 @@ runner:
   max_steps: -1
 
   only_eval: True
-  eval_policy_path: null
+  eval_policy_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
 
   val_check_interval: -1
   save_interval: 40
@@ -86,6 +86,11 @@ env:
   # Override the default values in env/train or env/eval
   eval:
     total_num_envs: 2
+    max_episode_steps: 2000 # max episode steps for truncation
+    max_steps_per_rollout_epoch: 2000
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
   group_name: "RolloutGroup"

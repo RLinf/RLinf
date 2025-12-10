@@ -1071,29 +1071,6 @@ class EnvOutput:
             self.rewards.cpu().contiguous() if self.rewards is not None else None
         )
 
-        # Sanity check
-        if self.dones is not None:
-            assert self.dones.shape[0] == self.num_group_envs * self.group_size, (
-                f"Dones first dimension {self.dones.shape[0]} does not match num_group_envs {self.num_group_envs} * group_size {self.group_size}."
-            )
-        if self.rewards is not None:
-            assert self.rewards.shape[0] == self.num_group_envs * self.group_size, (
-                f"Rewards first dimension {self.rewards.shape[0]} does not match num_group_envs {self.num_group_envs} * group_size {self.group_size}."
-            )
-
-        if self.group_env_ids is not None:
-            assert self.num_group_envs is not None, (
-                "num_group_envs must be provided if group_env_ids is provided."
-            )
-            assert len(self.group_env_ids) == self.num_group_envs, (
-                f"Length of group_env_ids {len(self.group_env_ids)} does not match num_group_envs {self.num_group_envs}."
-            )
-        else:
-            assert self.num_group_envs is not None, (
-                "num_group_envs must be provided if group_env_ids is not provided."
-            )
-            self.group_env_ids = list(range(self.num_group_envs))
-
     def prepare_observations(self, obs: dict[str, Any]) -> dict[str, Any]:
         image_tensor = obs["images"] if "images" in obs else None
         wrist_image_tensor = obs["wrist_images"] if "wrist_images" in obs else None
@@ -1296,6 +1273,28 @@ class ChunkStepResult:
 
 
 @dataclass(kw_only=True)
+class ChunkStepResult:
+    # required
+    prev_logprobs: torch.Tensor = None  # [B, action_dim]
+    prev_values: torch.Tensor = None  # [B, 1]
+    dones: torch.Tensor = None  # [B, 1]
+    rewards: torch.Tensor = None  # [B, 1]
+    forward_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if self.prev_logprobs is not None:
+            self.prev_logprobs = self.prev_logprobs.cpu().contiguous()
+        if self.prev_values is not None:
+            self.prev_values = self.prev_values.cpu().contiguous()
+        if self.dones is not None:
+            self.dones = self.dones.cpu().contiguous()
+        if self.rewards is not None:
+            self.rewards = self.rewards.cpu().contiguous()
+        if self.forward_inputs:
+            self.forward_inputs = put_tensor_cpu(self.forward_inputs)
+
+
+@dataclass(kw_only=True)
 class EmbodiedRolloutResult:
     # required
     rollout_epoch: int = None
@@ -1372,30 +1371,11 @@ class EmbodiedRolloutResult:
 
         return rollout_result_dict
 
-    def to_splitted_dict(self, split_size: int) -> list[dict[str, torch.Tensor]]:
-        """Split the rollout result along the batch dimension.
-
-        1. Build a full dict via :meth:`to_dict` with tensors of shape ``[T/T+rollout_epoch, B, ...]``, where T is the number of chunk steps.
-        2. For each split, chunk along the batch dimension (dim=1) into ``split_size`` parts, keeping the time dimension as-is.
-        3. Return a list of ``split_size`` dictionaries, each containing tensors of shape ``[T/T+rollout_epoch, B / split_size, ...]``.
-
-        The time dimension ``T / T+rollout_epoch`` is preserved as-is and **no assumption is made**
-        about its relationship to ``rollout_epoch`` or ``n_chunk_steps``. Only the
-        batch dimension is partitioned, which keeps all keys aligned regardless of
-        their time length.
-
-        Args:
-            split_size: Number of splits to divide the batch dimension into.
-
-        Returns:
-            List of dictionaries, each containing a slice of the original batch.
-        """
-        full_dict = self.to_dict()
-        rollout_result_list: list[dict[str, torch.Tensor]] = []
-
+    def to_splited_dict(self, split_size) -> list[dict[str, Any]]:
+        rollout_result_list = []
         for i in range(split_size):
-            split_dict: dict[str, torch.Tensor] = {}
-            for key, value in full_dict.items():
+            split_dict = self.to_dict()
+            for key, value in split_dict.items():
                 if isinstance(value, torch.Tensor):
                     # Chunk along batch dimension (dim=1), keep time dimension T as is.
                     chunks = torch.chunk(value, split_size, dim=1)

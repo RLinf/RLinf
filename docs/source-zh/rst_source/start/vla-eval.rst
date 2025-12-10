@@ -30,8 +30,8 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
    export HYDRA_FULL_ERROR=1
 
    EVAL_NAME=grpo-openvlaoft
-   CKPT_PATH=YOUR_CKPT_PATH
-   CONFIG_NAME=YOUR_CFG_NAME      # 其中 env.eval 必须为 maniskill_ood_template
+   CKPT_PATH=YOUR_CKPT_PATH           # 可选：.pt 文件或 None，如果为 None，则使用 rollout.model.model_path 中的 checkpoint
+   CONFIG_NAME=YOUR_CFG_NAME          # 其中 env.eval 必须为 maniskill_ood_template
    TOTAL_NUM_ENVS=YOUR_TOTAL_NUM_ENVS # total number of evaluation environments
    EVAL_ROLLOUT_EPOCH=YOUR_EVAL_ROLLOUT_EPOCH # eval rollout epoch, total_trajectory_num = eval_rollout_epoch * total_num_envs
    for env_id in \
@@ -123,7 +123,7 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
 .. code-block:: yaml
 
    runner:
-     eval_policy_path: "/path/to/rl_ckpt.pt"
+     eval_policy_path: "/path/to/rl_ckpt.pt"    # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
    algorithm:
      eval_rollout_epoch: 1
    rollout:

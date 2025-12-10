@@ -1,6 +1,6 @@
 defaults:
-  - env/train: libero_goal
-  - env/eval: libero_goal
+  - env/libero_goal@env.train
+  - env/libero_goal@env.eval
   - model/pi0_5@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
@@ -29,7 +29,7 @@ runner:
   max_steps: -1
 
   only_eval: False
-  eval_policy_path: null
+  eval_policy_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
   val_check_interval: -1
   save_interval: 40
   seq_length: 4096
@@ -92,7 +92,20 @@ env:
   train:
     total_num_envs: 64
     group_size: ${algorithm.group_size}
+    max_episode_steps: 320 # max episode steps for truncation
+    max_steps_per_rollout_epoch: 320
+  eval:
+    total_num_envs: 500
+    auto_reset: True
+    ignore_terminations: True
     max_episode_steps: 320
+    max_steps_per_rollout_epoch: 320
+    group_size: 1
+    use_fixed_reset_state_ids: True
+    is_eval: True
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
   group_name: "RolloutGroup"
@@ -117,6 +130,7 @@ actor:
   model:
     model_path: "/path/to/model/RLinf-Pi05-SFT"
     model_type: "openpi"
+    num_action_chunks: 5
 
   optim:
     lr: 5.0e-6

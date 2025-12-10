@@ -126,7 +126,6 @@ class Cluster:
                         f"Ray namespace conflict detected. Retrying to initialize Cluster with a new namespace (attempt {self._ray_instance_count})."
                     )
                     Cluster.NAMESPACE = f"{Cluster.SYS_NAME}_{self._ray_instance_count}"
-                    continue
         else:
             self._init_from_existing_managers()
         self._has_initialized = True

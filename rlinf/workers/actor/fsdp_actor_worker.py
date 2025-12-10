@@ -702,12 +702,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         advantages_and_returns = calculate_adv_and_returns(**kwargs)
 
         self.rollout_batch.update(advantages_and_returns)
-        self.rollout_batch.update(
-            {
-                "loss_mask": kwargs["loss_mask"],
-                "loss_mask_sum": kwargs["loss_mask_sum"],
-            }
-        )
+        if kwargs["loss_mask"] is not None:
+            self.rollout_batch.update({"loss_mask": kwargs["loss_mask"]})
+        if kwargs["loss_mask_sum"] is not None:
+            self.rollout_batch.update({"loss_mask_sum": kwargs["loss_mask_sum"]})
+
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
         return rollout_metrics
 
@@ -777,12 +776,24 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         == self.cfg.actor.global_batch_size
                         // torch.distributed.get_world_size()
                     )
-                    assert (
-                        train_global_batch_size % self.cfg.actor.micro_batch_size == 0
-                    ), f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size}"
-                    train_micro_batch = get_iterator_k_split(
-                        train_global_batch,
-                        train_global_batch_size // self.cfg.actor.micro_batch_size,
+                    advantages = data["advantages"]
+                    prev_logprobs = data["prev_logprobs"]
+                    returns = data.get("returns", None)
+                    prev_values = data.get("prev_values", None)
+                    loss_mask = data.get("loss_mask", None)
+                    loss_mask_sum = data.get("loss_mask_sum", None)
+
+                    if SupportedModel(self.cfg.actor.model.model_type) in [
+                        SupportedModel.OPENVLA,
+                        SupportedModel.OPENVLA_OFT,
+                    ]:
+                        data["temperature"] = (
+                            self.cfg.algorithm.sampling_params.temperature_train
+                        )
+                        data["top_k"] = self.cfg.algorithm.sampling_params.top_k
+
+                    compute_values = (
+                        True if self.cfg.algorithm.adv_type == "gae" else False
                     )
 
                     self.optimizer.zero_grad()
@@ -813,14 +824,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                             True if self.cfg.algorithm.adv_type == "gae" else False
                         )
 
-                        with self.amp_context:
-                            output_dict = self.model(
-                                data=data,
-                                compute_logprobs=True,
-                                compute_entropy=self.cfg.algorithm.entropy_bonus > 0,
-                                compute_values=compute_values,
-                                use_cache=False,
-                            )
+                    if SupportedModel(self.cfg.actor.model.model_type) in [
+                        SupportedModel.GR00T
+                    ]:
+                        prev_logprobs = output_dict["prev_logprobs"]
 
                         if SupportedModel(self.cfg.actor.model.model_type) in [
                             SupportedModel.GR00T

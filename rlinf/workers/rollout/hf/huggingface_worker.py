@@ -21,7 +21,7 @@ from tqdm import tqdm
 import logging
 
 from rlinf.config import SupportedModel
-from rlinf.data.io_struct import ChunkStepResult, EmbodiedRolloutResult, EnvOutput
+from rlinf.data.io_struct import ChunkStepResult, EmbodiedRolloutResult
 from rlinf.models import get_model, get_vla_model_config_and_processor
 from rlinf.scheduler import Cluster, Worker
 from rlinf.scheduler.channel.channel import Channel
@@ -41,34 +41,23 @@ class MultiStepRolloutWorker(Worker):
         Worker.__init__(self)
 
         self.cfg = cfg
+
+        self.actor_group_name = cfg.actor.group_name
         self.device = torch.cuda.current_device()
         self.actor_group_name = cfg.actor.group_name
         self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
         self.enable_offload = self.cfg.rollout.get("enable_offload", False)
         self.get_batch_cnt = 0
 
-        self.placement = HybridComponentPlacement(cfg, Cluster())
+        self._obs_queue_name = cfg.env.channel.queue_name
+        self._action_queue_name = cfg.rollout.channel.queue_name
+        self._replay_buffer_name = cfg.actor.channel.queue_name
 
-        # Batching parameters
-        only_eval = getattr(self.cfg.runner, "only_eval", False)
-        self.enable_eval = self.cfg.runner.val_check_interval > 0 or only_eval
-        self.train_num_envs_per_stage = (
-            self.cfg.env.train.total_num_envs
-            // self._world_size
-            // self.num_pipeline_stages
-        )
-        self.train_num_group_envs_per_stage = (
-            self.train_num_envs_per_stage // self.cfg.env.train.group_size
-        )
-        if self.enable_eval:
-            self.eval_num_envs_per_stage = (
-                self.cfg.env.eval.total_num_envs
-                // self._world_size
-                // self.num_pipeline_stages
-            )
-            self.eval_num_group_envs_per_stage = (
-                self.eval_num_envs_per_stage // self.cfg.env.eval.group_size
-            )
+        self.channel = self.connect_channel(cfg.rollout.channel.name)
+        self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
+        self.enable_offload = self.cfg.rollout.get("enable_offload", False)
+
+        self.placement = HybridComponentPlacement(cfg, Cluster())
 
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
@@ -93,15 +82,11 @@ class MultiStepRolloutWorker(Worker):
 
         self.setup_sample_params()
         if self.enable_offload:
-            self._offload_model()
+            self.offload_model()
 
     def load_checkpoint(self, load_path):
-        try:
-            model_dict = torch.load(load_path)
-            self.hf_model.load_state_dict(model_dict)
-        except Exception as e:
-            logging.warning("Failed to load checkpoint from %s: %s", load_path, e)
-            pass
+        model_dict = torch.load(load_path)
+        self.hf_model.load_state_dict(model_dict)
 
     def setup_sample_params(self):
         """Setup sampling parameters for rollout."""
@@ -153,68 +138,135 @@ class MultiStepRolloutWorker(Worker):
         return actions, result
 
     def get_dones_and_rewards(
-        self, env_batch: dict[str, torch.Tensor]
+        self, env_output: dict[str, torch.Tensor]
     ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
         """
         Get dones and rewards from environment batch, handling auto_reset if needed.
 
         Args:
-            env_batch: Environment batch containing dones, rewards, and optionally final_obs
+            env_output: Environment batch containing dones, rewards, and optionally final_obs
 
         Returns:
-            Tuple of (dones, rewards) tensors. Both can be None if this is the first step.
+            Tuple of (dones, rewards) tensors.
         """
         # First step: no rewards yet, only dones
-        if env_batch["rewards"] is None:
-            return env_batch["dones"].bool().cpu().contiguous(), None
+        if env_output["rewards"] is None:
+            return env_output["dones"].bool().cpu().contiguous(), None
 
-        dones = env_batch["dones"].bool().cpu().contiguous()
-        rewards = env_batch["rewards"].cpu().contiguous()
+        dones = env_output["dones"].bool().cpu().contiguous()
+        rewards = env_output["rewards"].cpu().contiguous()
 
         # Handle auto_reset: add bootstrap value to rewards for done episodes
         # Note: currently this is not correct for chunk-size>1 with partial reset
         if dones.any() and self.cfg.env.train.auto_reset:
             if hasattr(self.hf_model, "value_head"):
-                final_obs_list = env_batch.get("final_obs", None)
-                batch_env_sizes = env_batch.get("_batch_env_sizes", None)
+                final_obs = env_output["final_obs"]
+                with torch.no_grad():
+                    actions, result = self.predict(final_obs)
+                    if "prev_values" in result:
+                        _final_values = result["prev_values"]
+                    else:
+                        _final_values = torch.zeros_like(actions[:, 0])
+                final_values = torch.zeros_like(_final_values[:, 0])  # [bsz, ]
+                last_step_dones = dones[:, -1]  # [bsz, ]
 
-                if (
-                    final_obs_list is not None
-                    and isinstance(final_obs_list, list)
-                    and batch_env_sizes is not None
-                ):
-                    final_values_all = self._compute_bootstrap_values(
-                        final_obs_list, batch_env_sizes, dones
-                    )
-                    rewards[:, -1] += self.cfg.algorithm.gamma * final_values_all
+                final_values[last_step_dones] = _final_values[:, 0][last_step_dones]
+
+                # Add bootstrap value to the last step of done episodes
+                rewards[:, -1] += self.cfg.algorithm.gamma * final_values.cpu()
 
         return dones, rewards
 
-    def _compute_bootstrap_values(
-        self,
-        final_obs_list: list[dict | None],
-        batch_env_sizes: list[int],
-        dones: torch.Tensor,
-    ) -> torch.Tensor:
-        """Compute bootstrap values for done environments from final_obs list.
+    def sync_model_from_actor(self):
+        """Sync model parameters from the actor worker."""
+        param_state_dict = self.recv(self.actor_group_name, src_rank=self._rank)
 
-        Args:
-            final_obs_list: List of final_obs, one per batch (may contain None)
-            batch_env_sizes: List of environment counts per batch
-            dones: Dones tensor of shape [total_envs, num_chunks]
+        self.hf_model.load_state_dict(param_state_dict)
+        del param_state_dict
+        gc.collect()
+        torch.cuda.empty_cache()
 
-        Returns:
-            Bootstrap values tensor of shape [total_envs]
-        """
-        last_step_dones = dones[:, -1]  # [bsz, ] on CPU
-        final_values_all = torch.zeros(dones.shape[0], dtype=torch.float32)
+    def generate(self):
+        if self.enable_offload:
+            self.reload_model()
 
-        env_idx = 0
-        for i, final_obs in enumerate(final_obs_list):
-            batch_size = batch_env_sizes[i]
-            if final_obs is not None:
-                batch_env_range = slice(env_idx, env_idx + batch_size)
-                batch_dones = last_step_dones[batch_env_range]
+        self.buffer_list = [
+            EmbodiedRolloutResult(rollout_epoch=self.cfg.algorithm.rollout_epoch)
+            for _ in range(self.num_pipeline_stages)
+        ]
+
+        n_chunk_steps = (
+            self.cfg.env.train.max_steps_per_rollout_epoch
+            // self.cfg.actor.model.num_action_chunks
+        )
+
+        for _ in tqdm(
+            range(self.cfg.algorithm.rollout_epoch),
+            desc="Generating Rollout Epochs",
+            disable=(self._rank != 0),
+        ):
+            for _ in range(n_chunk_steps):
+                for stage_id in range(self.num_pipeline_stages):
+                    env_output = self.recv_env_output()
+
+                    dones, rewards = self.get_dones_and_rewards(env_output)
+                    actions, result = self.predict(env_output["obs"])
+                    chunk_step_result = ChunkStepResult(
+                        prev_logprobs=result["prev_logprobs"],
+                        prev_values=result["prev_values"],
+                        dones=dones,
+                        rewards=rewards,  # the first step is reset step, reward is none, which will not be appended to the buffer
+                        forward_inputs=result["forward_inputs"],
+                    )
+                    self.buffer_list[stage_id].append_result(chunk_step_result)
+
+                    self.send_chunk_actions(actions)
+
+            for stage_id in range(self.num_pipeline_stages):
+                env_output = self.recv_env_output()
+
+                # Get dones and rewards from environment batch (final step of epoch)
+                dones, rewards = self.get_dones_and_rewards(env_output)
+                self.buffer_list[stage_id].dones.append(dones)
+                self.buffer_list[stage_id].rewards.append(rewards)
+
+                with self.worker_timer():
+                    actions, result = self.predict(env_output["obs"])
+                # For the final step, we only need prev_values for bootstrapping
+                # This is a special case that doesn't create a full ChunkStepResult
+                if "prev_values" in result:
+                    self.buffer_list[stage_id].prev_values.append(
+                        result["prev_values"].cpu().contiguous()
+                    )
+                    rewards[:, -1] += self.cfg.algorithm.gamma * final_values_all
+
+        for i in range(self.num_pipeline_stages):
+            self.send_rollout_batch(i)
+
+        if self.enable_offload:
+            self.offload_model()
+
+    def evaluate(self):
+        if self.enable_offload:
+            self.reload_model()
+
+        n_chunk_steps = (
+            self.cfg.env.eval.max_steps_per_rollout_epoch
+            // self.cfg.actor.model.num_action_chunks
+        )
+        for _ in tqdm(
+            range(self.cfg.algorithm.eval_rollout_epoch),
+            desc="Evaluating Rollout Epochs",
+            disable=(self._rank != 0),
+        ):
+            for _ in range(n_chunk_steps):
+                for _ in range(self.num_pipeline_stages):
+                    env_output = self.recv_env_output()
+                    actions, _ = self.predict(env_output["obs"], mode="eval")
+                    self.send_chunk_actions(actions)
+
+        if self.enable_offload:
+            self.offload_model()
 
                 # Only process if there are done environments in this batch
                 if batch_dones.any():
@@ -238,14 +290,29 @@ class MultiStepRolloutWorker(Worker):
 
         return final_values_all
 
-    def sync_model_from_actor(self):
-        """Sync model parameters from the actor worker."""
-        param_state_dict = self.recv(self.actor_group_name, src_rank=self._rank)
+    def recv_env_output(self):
+        env_output = self.channel.get(
+            key=f"{self._obs_queue_name}_{self._rank}",
+        )
+        return env_output
 
-        self.hf_model.load_state_dict(param_state_dict)
-        del param_state_dict
-        gc.collect()
-        torch.cuda.empty_cache()
+    def send_chunk_actions(self, chunk_actions):
+        self.channel.put(
+            item=chunk_actions,
+            key=f"{self._action_queue_name}_{self._rank}",
+        )
+
+    def send_rollout_batch(self, stage_id):
+        # send rollout_batch to actor
+        send_num = self.placement.get_world_size("rollout") * self.num_pipeline_stages
+        recv_num = self.placement.get_world_size("actor")
+        split_num = compute_split_num(recv_num, send_num)
+        splited_rollout_result = self.buffer_list[stage_id].to_splited_dict(split_num)
+        for i in range(split_num):
+            self.channel.put(
+                item=splited_rollout_result[i],
+                key=self._replay_buffer_name,
+            )
 
     def set_global_step(self, global_step):
         if hasattr(self.hf_model, "set_global_step"):

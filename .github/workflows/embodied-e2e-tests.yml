@@ -12,6 +12,12 @@ jobs:
 
       - name: Create embodied environment
         run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
       - name: ManiSkill PPO test
@@ -24,6 +30,7 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          uv cache prune
           
   embodied-openvlaoft-maniskill-libero-test:
     runs-on: embodied
@@ -33,6 +40,12 @@ jobs:
 
       - name: Create embodied environment
         run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
 
       - name: ManiSkill GRPO test
@@ -60,6 +73,7 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          uv cache prune
 
   embodied-openvlaoft-behavior-test:
     runs-on: embodied
@@ -69,6 +83,13 @@ jobs:
 
       - name: Create embodied environment
         run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export BEHAVIOR_PATH=/workspace/dataset/BEHAVIOR-1K
+          export ISAAC_SIM_WHEEL_PATH=/workspace/dataset/isaac_sim_wheels
           bash requirements/install.sh embodied --model openvla-oft --env behavior
 
       - name: BEHAVIOR-OpenVLA-OFT test
@@ -83,6 +104,7 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          uv cache prune
 
   embodied-openpi-maniskill-libero-test:
     runs-on: embodied
@@ -92,6 +114,12 @@ jobs:
 
       - name: Create embodied environment
         run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
       - name: Libero-Spatial PPO test
@@ -111,6 +139,7 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          uv cache prune
 
   embodied-openpi-metaworld-test:
     runs-on: embodied
@@ -120,6 +149,11 @@ jobs:
 
       - name: Create embodied environment
         run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --model openpi --env metaworld
 
       - name: Metaworld PPO test
@@ -132,3 +166,32 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          uv cache prune
+
+  embodied-openpi-calvin-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export CALVIN_PATH=/workspace/dataset/calvin
+          bash requirements/install.sh embodied --model openpi --env calvin
+
+      - name: Calvin PPO test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh calvin_ppo_openpi
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune

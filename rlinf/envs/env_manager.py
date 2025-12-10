@@ -165,13 +165,12 @@ class EnvManager:
 
     def __init__(
         self,
-        cfg: DictConfig,
+        cfg,
         rank: int,
         num_envs: int,
         seed_offset: int,
         total_num_processes: int,
-        env_type: str,
-        is_eval: bool,
+        env_cls: str,
         enable_offload: bool = False,
     ):
         """Initialize EnvManager.

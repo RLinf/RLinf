@@ -63,12 +63,12 @@ class MetaWorldEnv(gym.Env):
         self._generator = np.random.default_rng(seed=self.seed)
         self._generator_ordered = np.random.default_rng(seed=0)
 
-        self.num_tasks = 50
-        self.task_num_trials = 10
         self.RESET_STEP = 15
         self.task_suite: MetaWorldBenchmark = MetaWorldBenchmark(
             self.cfg.task_suite_name
         )
+        self.num_tasks = self.task_suite.get_num_tasks()
+        self.task_num_trials = self.task_suite.get_task_num_trials()
         self._compute_total_num_group_envs()
         self.reset_state_ids_all = self.get_reset_state_ids_all()
         self.update_reset_state_ids()
@@ -149,7 +149,7 @@ class MetaWorldEnv(gym.Env):
         self.cumsum_trial_id_bins = np.cumsum(self.trial_id_bins)
 
     def update_reset_state_ids(self):
-        if self.cfg.only_eval or self.cfg.use_ordered_reset_state_ids:
+        if self.cfg.is_eval or self.cfg.use_ordered_reset_state_ids:
             reset_state_ids = self._get_ordered_reset_state_ids(self.num_group)
         else:
             reset_state_ids = self._get_random_reset_state_ids(self.num_group)

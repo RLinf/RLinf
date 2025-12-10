@@ -771,8 +771,8 @@ defaults
 .. code:: yaml
 
   defaults:
-    - env/train: PutCarrotOnPlateInScene
-    - env/eval: PutCarrotOnPlateInScene
+    - env/manikill_put_carrot_on_plate_in_scene@env.train
+    - env/manikill_put_carrot_on_plate_in_scene@env.eval
 
 ``defaults``: Hydra configuration inheritance. Specifies which environment configurations to load for training and evaluation.
 

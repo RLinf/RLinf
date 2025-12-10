@@ -9,8 +9,8 @@ export CUDA_LAUNCH_BLOCKING=1
 export HYDRA_FULL_ERROR=1
 
 EVAL_NAME=YOUR_EVAL_NAME
-CKPT_PATH=YOUR_CKPT_PATH        # .pt file
-CONFIG_NAME=YOUR_CFG_NAME       # env.eval must be maniskill_ood_template
+CKPT_PATH=YOUR_CKPT_PATH           # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
+CONFIG_NAME=YOUR_CFG_NAME          # env.eval must be maniskill_ood_template
 TOTAL_NUM_ENVS=YOUR_TOTAL_NUM_ENVS # total number of evaluation environments
 EVAL_ROLLOUT_EPOCH=YOUR_EVAL_ROLLOUT_EPOCH # eval rollout epoch, total_trajectory_num = eval_rollout_epoch * total_num_envs
 
