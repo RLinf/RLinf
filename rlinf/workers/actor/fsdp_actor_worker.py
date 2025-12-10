@@ -25,6 +25,7 @@ from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.algorithms.utils import (
     kl_penalty,
 )
+from rlinf.config import SupportedModel
 from rlinf.data.io_struct import RolloutResult
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
@@ -554,7 +555,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self.offload_optimizer()
 
     def model_provider_func(self):
-        model = get_model(self.cfg.actor.checkpoint_load_path, self.cfg.actor.model)
+        model = get_model(self.cfg.actor.model)
         if model is not None:
             return model
         return super().model_provider_func()
@@ -691,16 +692,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.rollout_batch["logprob"] = self.rollout_batch["prev_logprobs"]
 
     def compute_advantages_and_returns(self):
-        stage_num = self.cfg.rollout.pipeline_stage_num
-        env_world_size = self._component_placement.get_world_size("env")
-        actor_world_size = self._component_placement.get_world_size("actor")
-        num_group_envs_for_train = (
-            self.cfg.algorithm.num_group_envs
-            * stage_num
-            * env_world_size
-            // actor_world_size
-        )
-
         kwargs = {
             "task_type": self.cfg.runner.task_type,
             "adv_type": self.cfg.algorithm.adv_type,
@@ -709,23 +700,20 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "values": self.rollout_batch.get("prev_values", None),
             "gamma": self.cfg.algorithm.get("gamma", 1),
             "gae_lambda": self.cfg.algorithm.get("gae_lambda", 1),
-            "num_group_envs": num_group_envs_for_train,
             "group_size": self.cfg.algorithm.get("group_size", 8),
             "reward_type": self.cfg.algorithm.reward_type,
             "loss_mask": self.rollout_batch.get("loss_mask", None),
             "loss_mask_sum": self.rollout_batch.get("loss_mask_sum", None),
-            "rollout_epoch": self.cfg.algorithm.get("rollout_epoch", 1),
         }
 
         advantages_and_returns = calculate_adv_and_returns(**kwargs)
 
         self.rollout_batch.update(advantages_and_returns)
-        self.rollout_batch.update(
-            {
-                "loss_mask": kwargs["loss_mask"],
-                "loss_mask_sum": kwargs["loss_mask_sum"],
-            }
-        )
+        if kwargs["loss_mask"] is not None:
+            self.rollout_batch.update({"loss_mask": kwargs["loss_mask"]})
+        if kwargs["loss_mask_sum"] is not None:
+            self.rollout_batch.update({"loss_mask_sum": kwargs["loss_mask_sum"]})
+
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
         return rollout_metrics
 
@@ -811,7 +799,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     loss_mask = data.get("loss_mask", None)
                     loss_mask_sum = data.get("loss_mask_sum", None)
 
-                    if self.cfg.actor.model.model_name in ["openvla", "openvla_oft"]:
+                    if SupportedModel(self.cfg.actor.model.model_type) in [
+                        SupportedModel.OPENVLA,
+                        SupportedModel.OPENVLA_OFT,
+                    ]:
                         data["temperature"] = (
                             self.cfg.algorithm.sampling_params.temperature_train
                         )
@@ -830,7 +821,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                             use_cache=False,
                         )
 
-                    if self.cfg.actor.model.model_name in ["gr00t"]:
+                    if SupportedModel(self.cfg.actor.model.model_type) in [
+                        SupportedModel.GR00T
+                    ]:
                         prev_logprobs = output_dict["prev_logprobs"]
 
                     kwargs = {

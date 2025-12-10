@@ -96,14 +96,14 @@ Running the Script
 Before launching, check the configuration file. Key fields include:
 
 - Cluster setup: ``cluster.num_nodes`` (number of nodes).  
-- Paths: ``runner.output_dir`` (the path to save training logs & checkpoints), ``rollout.model_dir`` (the path that saves base model), ``data.train_data_paths`` (the path that save training data), etc.  
+- Paths: ``runner.output_dir`` (the path to save training logs & checkpoints), ``rollout.model.model_path`` (the path that saves base huggingface model), ``data.train_data_paths`` (the path that save training data), etc.  
 
 **2. Configuration File**
 
 Recommended configurations can be found in:
 
-- ``examples/math/config/qwen2.5-1.5b-grpo-megatron.yaml``  
-- ``examples/math/config/qwen2.5-7b-grpo-megatron.yaml``  
+- ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``  
+- ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``  
 
 **3. Launch Command**
 
@@ -118,7 +118,7 @@ Run the following commands to start the Ray cluster and begin training:
    if [ "$RANK" -eq 0 ]; then
        bash check_ray.sh 128; # set to number of accelerators/GPUs in the cluster
        cd /path_to_RLinf;
-       bash examples/math/qwen2.5/run_main_math_grpo_megatron.sh grpo-1.5b-megatron # change config file
+       bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron # change config file
    else
      if [ "$RANK" -eq 1 ]; then
          sleep 3m

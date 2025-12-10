@@ -28,7 +28,7 @@ def compute_ppo_actor_loss(
     clip_ratio_high: float,
     advantages: torch.Tensor,
     loss_mask: Optional[torch.Tensor] = None,
-    c_clip: Optional[float] = None,
+    clip_ratio_c: Optional[float] = None,
     loss_agg_func: Optional[Callable[..., torch.Tensor]] = masked_mean,
     max_episode_steps: Optional[int] = None,
     loss_mask_sum: Optional[torch.Tensor] = None,
@@ -45,7 +45,7 @@ def compute_ppo_actor_loss(
         clip_ratio_high (float): Upper bound of clipping ratio.
         advantages (torch.FloatTensor): GAE (normalized) advantages.
         loss_mask (Optional[torch.BoolTensor], optional): Mask for valid entries. Defaults to None.
-        c_clip (Optional[float], optional): Optional clipping coefficient. Defaults to None.
+        clip_ratio_c (Optional[float], optional): Optional clipping coefficient. Defaults to None.
         loss_agg_func (callable, optional): Aggregation function (e.g., masked_mean). Defaults to None.
         max_episode_steps (Optional[int], optional): Max episode length for normalization. Defaults to None.
 
@@ -82,9 +82,9 @@ def compute_ppo_actor_loss(
     clip_mask = policy_loss1.detach() < policy_loss2.detach()
 
     policy_loss = torch.max(policy_loss1, policy_loss2)
-    if c_clip is not None:
-        assert c_clip > 1.0, c_clip
-        policy_loss3 = torch.sign(advantages) * c_clip * advantages
+    if clip_ratio_c is not None:
+        assert clip_ratio_c > 1.0, clip_ratio_c
+        policy_loss3 = torch.sign(advantages) * clip_ratio_c * advantages
         dual_clip_mask = policy_loss3.detach() < policy_loss.detach()
         policy_loss = torch.min(policy_loss, policy_loss3)
     else:
@@ -106,11 +106,31 @@ def compute_ppo_actor_loss(
         policy_loss = torch.tensor(0.0, device=policy_loss.device)
 
     # Compile metrics for logging
+    ratio_for_metrics = ratio.detach()
+    clipped_ratio_for_metrics = clipped_ratio.detach()
+    dual_cliped_ratio_for_metrics = dual_cliped_ratio.detach()
+    loss_mask_for_metrics = loss_mask
+
+    # Only broadcast when ratio has action_dim dimension and loss_mask's last dim is 1
+    # This handles token_level mode: ratio [bsz, num_chunks, action_dim], loss_mask [bsz, num_chunks, 1]
+    if (
+        len(ratio.shape) > 2
+        and ratio.shape[:-1] == loss_mask.shape[:-1]
+        and loss_mask.shape[-1] == 1
+        and ratio.shape[-1] > 1
+    ):
+        # Broadcast loss_mask to match ratio's shape for metrics computation
+        loss_mask_for_metrics = loss_mask.expand_as(ratio)
+
     metrics_data = {
         "actor/policy_loss": policy_loss.detach(),
-        "actor/ratio": masked_mean(ratio.detach(), loss_mask),
-        "actor/clipped_ratio": masked_mean(clipped_ratio.detach(), loss_mask),
-        "actor/dual_cliped_ratio": masked_mean(dual_cliped_ratio.detach(), loss_mask),
+        "actor/ratio": masked_mean(ratio_for_metrics, loss_mask_for_metrics),
+        "actor/clipped_ratio": masked_mean(
+            clipped_ratio_for_metrics, loss_mask_for_metrics
+        ),
+        "actor/dual_cliped_ratio": masked_mean(
+            dual_cliped_ratio_for_metrics, loss_mask_for_metrics
+        ),
         "actor/approx_kl": approx_kl.detach(),
         "actor/clip_fraction": clip_fraction.detach(),
     }

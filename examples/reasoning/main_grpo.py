@@ -41,7 +41,7 @@ def main(cfg) -> None:
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
-    cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
+    cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = ModelParallelComponentPlacement(cfg, cluster)
 
     rollout_worker_cls = get_rollout_backend_worker(cfg, component_placement)
@@ -87,7 +87,7 @@ def main(cfg) -> None:
 
     # Dynamic Scheduler group
     if component_placement._placement_mode == PlacementMode.AUTO:
-        scheduler_placement_strategy = NodePlacementStrategy(node_ids=[0])
+        scheduler_placement_strategy = NodePlacementStrategy(node_ranks=[0])
         scheduler = SchedulerWorker.create_group(cfg, component_placement).launch(
             cluster=cluster,
             name="DynamicScheduler",

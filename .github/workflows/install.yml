@@ -52,30 +52,29 @@ jobs:
       - name: Install reason
         run: |
           pip install uv
-          bash requirements/install.sh reason --test-build
+          TEST_BUILD=1 bash requirements/install.sh reason
           rm -rf .venv
 
       - name: Install openvla
         run: |
           pip install uv
-          bash requirements/install.sh openvla
           rm -rf .venv
 
       - name: Install openvla-oft
         run: |
           pip install uv
-          bash requirements/install.sh openvla-oft
+          bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
           rm -rf .venv
 
       - name: Install openpi
         run: |
           pip install uv
-          bash requirements/install.sh openpi
+          bash requirements/install.sh embodied --model openpi --env maniskill_libero
           rm -rf .venv
 
       - name: Install behavior-openvla-oft
         run: |
           pip install uv
           uv cache prune --ci
-          bash requirements/install.sh openvla-oft --enable-behavior
+          bash requirements/install.sh embodied --model openvla-oft --env behavior
           rm -rf .venv

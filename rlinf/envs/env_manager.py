@@ -158,10 +158,18 @@ def recursive_to_own(obj):
 
 class EnvManager:
     def __init__(
-        self, cfg, rank, seed_offset, total_num_processes, env_cls, enable_offload=False
+        self,
+        cfg,
+        rank: int,
+        num_envs: int,
+        seed_offset: int,
+        total_num_processes: int,
+        env_cls: str,
+        enable_offload: bool = False,
     ):
         self.cfg = cfg
         self.rank = rank
+        self.num_envs = num_envs
         self.seed_offset = seed_offset
         self.total_num_processes = total_num_processes
         self.process: Optional[mp.Process] = None
@@ -184,7 +192,9 @@ class EnvManager:
             self.env = None
         else:
             self.env_cls = env_cls
-            self.env = self.env_cls(cfg, seed_offset, total_num_processes)
+            self.env = self.env_cls(
+                self.cfg, num_envs, seed_offset, total_num_processes
+            )
 
     def start_simulator(self):
         """Start simulator process with shared memory queues"""
@@ -205,6 +215,7 @@ class EnvManager:
             args=(
                 self.cfg,
                 self.rank,
+                self.num_envs,
                 self.seed_offset,
                 self.total_num_processes,
                 self.env_cls,
@@ -281,6 +292,7 @@ class EnvManager:
         if name in [
             "cfg",
             "rank",
+            "num_envs",
             "seed_offset",
             "total_num_processes",
             "process",
@@ -326,6 +338,7 @@ class EnvManager:
 def _simulator_worker(
     cfg,
     rank,
+    num_envs,
     seed_offset,
     total_num_processes,
     env_cls,
@@ -346,7 +359,7 @@ def _simulator_worker(
     omegaconf_register()
 
     try:
-        simulator = env_cls(cfg, seed_offset, total_num_processes)
+        simulator = env_cls(cfg, num_envs, seed_offset, total_num_processes)
         assert isinstance(simulator, EnvOffloadMixin), (
             f"Environment class {env_cls.__name__} must inherit from EnvOffloadMixin"
         )

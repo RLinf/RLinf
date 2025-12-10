@@ -15,6 +15,8 @@
 import numpy as np
 import torch
 
+from rlinf.config import SupportedModel
+
 
 def prepare_actions_for_maniskill(
     raw_chunk_actions,
@@ -60,12 +62,41 @@ def prepare_actions_for_maniskill(
 
 def prepare_actions_for_libero(
     raw_chunk_actions,
-    model_name,
+    model_type,
 ) -> np.ndarray:
     chunk_actions = raw_chunk_actions
-    if model_name == "openvla" or model_name == "openvla_oft":
+    if SupportedModel(model_type) in [
+        SupportedModel.OPENVLA,
+        SupportedModel.OPENVLA_OFT,
+    ]:
         chunk_actions[..., -1] = 2 * chunk_actions[..., -1] - 1
         chunk_actions[..., -1] = np.sign(chunk_actions[..., -1]) * -1.0
+    return chunk_actions
+
+
+def prepare_actions_for_isaaclab(
+    raw_chunk_actions,
+    model_type,
+) -> torch.Tensor:
+    """
+    Here reture a general 7 dof action. If the action is modified, please change the output of the model
+    For example, in `RLinf/rlinf/models/embodiment/gr00t/simulation_io.py`
+    """
+    chunk_actions = torch.from_numpy(raw_chunk_actions)
+    if SupportedModel(model_type) in [
+        SupportedModel.OPENVLA,
+        SupportedModel.OPENVLA_OFT,
+    ]:
+        chunk_actions[..., -1] = 2 * chunk_actions[..., -1] - 1
+        chunk_actions[..., -1] = torch.sign(chunk_actions[..., -1]) * -1.0
+    return chunk_actions
+
+
+def prepare_actions_for_calvin(
+    raw_chunk_actions,
+) -> np.ndarray:
+    chunk_actions = raw_chunk_actions
+    chunk_actions[..., -1] = np.sign(chunk_actions[..., -1])
     return chunk_actions
 
 
@@ -87,7 +118,7 @@ def prepare_actions_for_robocasa(
 def prepare_actions(
     raw_chunk_actions,
     simulator_type,
-    model_name,
+    model_type,
     num_action_chunks,
     action_dim,
     action_scale: float = 1.0,
@@ -96,7 +127,7 @@ def prepare_actions(
     if simulator_type == "libero":
         chunk_actions = prepare_actions_for_libero(
             raw_chunk_actions=raw_chunk_actions,
-            model_name=model_name,
+            model_type=model_type,
         )
     elif simulator_type == "maniskill":
         chunk_actions = prepare_actions_for_maniskill(
@@ -110,8 +141,17 @@ def prepare_actions(
         chunk_actions = raw_chunk_actions
     elif simulator_type == "metaworld":
         chunk_actions = raw_chunk_actions
+    elif simulator_type == "calvin":
+        chunk_actions = prepare_actions_for_calvin(
+            raw_chunk_actions=raw_chunk_actions,
+        )
     elif simulator_type == "behavior":
         chunk_actions = raw_chunk_actions
+    elif simulator_type == "isaaclab":
+        chunk_actions = prepare_actions_for_isaaclab(
+            raw_chunk_actions=raw_chunk_actions,
+            model_type=model_type,
+        )
     elif simulator_type == "robocasa":
         chunk_actions = prepare_actions_for_robocasa(
             raw_chunk_actions=raw_chunk_actions,

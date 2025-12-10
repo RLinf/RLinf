@@ -49,7 +49,7 @@ Launch Training
 For user convenience, our configuration file is set up to run with a single GPU by default.  
 However, if you have multiple GPUs and wish to accelerate the quickstart process,  
 we highly recommend updating the following configuration option in  
-``./examples/math/config/qwen2.5-1.5b-single-gpu.yaml``:  
+``./examples/reasoning/config/math/qwen2.5-1.5b-single-gpu.yaml``:  
 ``cluster.component_placement``.
 
 
@@ -65,7 +65,7 @@ Refer to :doc:`../tutorials/user/yaml` for a more detailed explanation of the pl
 
 Finally, before running the script, you need to modify the corresponding configuration options in the YAML file according to the download paths of the model and dataset. Specifically, update:
 
-- ``rollout.model_dir``
+- ``rollout.model.model_path``
 - ``data.train_data_paths``
 - ``data.val_data_paths``
 - ``actor.tokenizer.tokenizer_model``
@@ -75,7 +75,7 @@ After these modifications, launch the following script to start training!
 
 .. code-block:: bash
 
-   bash examples/math/run_main_math_grpo_megatron.sh qwen2.5-1.5b-single-gpu
+   bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-single-gpu
 
 **Step 3: View the results:**
 

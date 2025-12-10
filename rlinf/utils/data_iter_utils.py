@@ -94,7 +94,7 @@ def get_iterator_k_split(
 
     Args:
         batch: Input batch data (dict or list of tensors).
-        num_microbatches: Number of microbatches to split into.
+        num_splits: Number of microbatches to split into.
         enforce_divisible_batch: Whether to enforce batch size being divisible by k.
         shuffle: Whether to shuffle the batch before splitting.
         shuffle_seed: Seed for reproducible shuffling.
@@ -466,9 +466,11 @@ def get_iterator_dynamic(
 
     Args:
         batch: Input batch as dict or list of tensors
-        num_microbatches: Target number of microbatches (used when max_tokens_per_mbs is None)
         max_tokens_per_mbs: Max sum of attention_mask per micro-batch
-        enforce_divisible_batch: Whether to enforce equal size partitions
+        dp_group: Data parallel group for synchronizing micro-batch numbers
+        num_batches_divided_by: Ensure number of micro-batches is divisible by this number
+        same_micro_num_in_dp: Whether to synchronize micro-batch numbers across data parallel ranks
+        min_num_micro_batch: Minimum number of micro-batches to create
     """
     if isinstance(batch, (dict, UserDict)):
         # Get effective sequence length of each sample

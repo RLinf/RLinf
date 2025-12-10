@@ -24,12 +24,6 @@ from rlinf.models.embodiment.openpi.policies import metaworld_policy
 
 @dataclasses.dataclass(frozen=True)
 class LeRobotMetaworldDataConfig(DataConfigFactory):
-    """
-    This config is used to configure transforms that are applied at various parts of the data pipeline.
-    For your own dataset, you can copy this class and modify the transforms to match your dataset based on the
-    comments below.
-    """
-
     extra_delta_transform: bool = False
 
     @override
@@ -63,11 +57,8 @@ class LeRobotMetaworldDataConfig(DataConfigFactory):
                 outputs=[_transforms.AbsoluteActions(delta_action_mask)],
             )
 
-        # Model transforms include things like tokenizing the prompt and action targets
-        # You do not need to change anything here for your own dataset.
         model_transforms = ModelTransformFactory()(model_config)
 
-        # We return all data transforms for training and inference. No need to change anything here.
         return dataclasses.replace(
             self.create_base_config(assets_dirs, model_config),
             repack_transforms=repack_transform,

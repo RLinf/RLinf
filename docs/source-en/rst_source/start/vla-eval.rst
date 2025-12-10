@@ -34,9 +34,10 @@ Quick Start — ManiSkill3
    export HYDRA_FULL_ERROR=1
 
    EVAL_NAME=grpo-openvlaoft
-   CKPT_PATH=YOUR_CKPT_PATH
-   CONFIG_NAME=YOUR_CFG_NAME      # env.eval must be maniskill_ood_template
-
+   CKPT_PATH=YOUR_CKPT_PATH           # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
+   CONFIG_NAME=YOUR_CFG_NAME          # env.eval must be maniskill_ood_template
+   TOTAL_NUM_ENVS=YOUR_TOTAL_NUM_ENVS # total number of evaluation environments
+   EVAL_ROLLOUT_EPOCH=YOUR_EVAL_ROLLOUT_EPOCH # eval rollout epoch, total_trajectory_num = eval_rollout_epoch * total_num_envs
    for env_id in \
        "PutOnPlateInScene25VisionImage-v1" "PutOnPlateInScene25VisionTexture03-v1" \
        "PutOnPlateInScene25VisionTexture05-v1" "PutOnPlateInScene25VisionWhole03-v1"  \
@@ -52,9 +53,11 @@ Quick Start — ManiSkill3
        CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ \
             --config-name ${CONFIG_NAME} \
             runner.logger.log_path=${LOG_DIR} \
+            algorithm.eval_rollout_epoch=${EVAL_ROLLOUT_EPOCH} \
+            env.eval.total_num_envs=${TOTAL_NUM_ENVS} \
             env.eval.init_params.id=${env_id} \
             env.eval.init_params.obj_set=${obj_set} \
-            actor.model.ckpt_path=${CKPT_PATH}"
+            runner.eval_policy_path=${CKPT_PATH}"
        echo ${CMD}  > "${MEGA_LOG_FILE}"
        ${CMD} 2>&1 | tee -a "${MEGA_LOG_FILE}"
    done
@@ -70,9 +73,11 @@ Quick Start — ManiSkill3
        CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ \
             --config-name ${CONFIG_NAME} \
             runner.logger.log_path=${LOG_DIR} \
+            algorithm.eval_rollout_epoch=${EVAL_ROLLOUT_EPOCH} \
             env.eval.init_params.id=${env_id} \
+            env.eval.total_num_envs=${TOTAL_NUM_ENVS} \
             env.eval.init_params.obj_set=${obj_set} \
-            actor.model.ckpt_path=${CKPT_PATH}"
+            runner.eval_policy_path=${CKPT_PATH}"
        echo ${CMD}  > "${MEGA_LOG_FILE}"
        ${CMD} 2>&1 | tee -a "${MEGA_LOG_FILE}"
    done
@@ -124,11 +129,11 @@ Quick Start — LIBERO
 .. code-block:: yaml
 
    rollout:
-     model_dir: "/path/to/sft_base_model/"
-   actor:
-     checkpoint_load_path: "/path/to/sft_base_model/"
      model:
-       ckpt_path: "/path/to/rl_ckpt.pt"
+       model_path: "/path/to/sft_base_model/"
+   actor:
+     model:
+       model_path: "/path/to/sft_base_model/"
      tokenizer:
        tokenizer_model: "/path/to/sft_base_model/"
 

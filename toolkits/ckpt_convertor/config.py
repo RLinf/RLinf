@@ -117,11 +117,6 @@ def load_convertor_config(hf_ckpt_path: str, ckpt_cfg: DictConfig) -> ConvertorC
             "use_gpu_index length must match use_gpu_num"
         )
 
-    if ckpt_cfg.model_type is None:
-        convertor_config.model_type = hf_config.model_type
-    else:
-        convertor_config.model_type = ckpt_cfg.model_type
-
     script_path = os.path.dirname(os.path.abspath(__file__))
     with open(f"{script_path}/default_args.yaml") as default_args_file:
         default_args = yaml.safe_load(default_args_file)
@@ -135,18 +130,10 @@ def load_convertor_config(hf_ckpt_path: str, ckpt_cfg: DictConfig) -> ConvertorC
     assert convertor_config.model in model_defaults, (
         f"Model {convertor_config.model} not found in supported list."
     )
-    convertor_config.model_type = model_defaults[convertor_config.model]["model_type"]
+
     for key, value in model_defaults[convertor_config.model].items():
         if getattr(convertor_config, key, None) is None:
             setattr(convertor_config, key, value)
-
-    if ckpt_cfg.model_type is not None:
-        assert (
-            convertor_config.model_type
-            == model_defaults[convertor_config.model]["model_type"]
-        ), (
-            f"Model type {convertor_config.model_type} does not match expected {model_defaults[convertor_config.model]['model_type']} for model {convertor_config.model}."
-        )
 
     assert convertor_config.model_type in model_type_defaults, (
         f"Model type {convertor_config.model_type} not found in supported list."

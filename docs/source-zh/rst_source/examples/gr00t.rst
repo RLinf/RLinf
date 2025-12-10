@@ -117,22 +117,24 @@ GR00T-N1.5直接将环境提供的自然语言任务描述作为语言模型的�
 --------------
 
 开始训练前，您需要下载相应的预训练模型。
-目前，我们仅支持libero spatial任务的sft模型。
-其他任务的模型将在近期发布。
+目前我们支持四种libero任务：Spatial, Object, Goal, and Long。
 
 **GR00T-N1.5少样本SFT模型下载**
-
-该模型专为libero spatial任务类型设计。
 
 .. code:: bash
 
    # 方法1：使用git clone
    git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatials
+   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
 
    # 方法2：使用huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/Gr00t_Libero_Spatial_Fewshot_SFT
+   hf download RLinf/RLinf-Gr00t-SFT-Spatial
+
+其他任务的SFT模型下载: 
+- `Libero-Object <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_
+- `Libero-Goal <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Goal>`_
+- `Libero-Long <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-10>`_
 
 --------------
 
@@ -233,8 +235,8 @@ num_action_chunks决定了将用于前向仿真环境的未来步骤数量。
 GR00T-N1.5的动作头包含dropout层，这会干扰对数概率的计算，因此需将disable_dropout设置为True，以将其替换为恒等层。
 可通过noise_method选择不同的噪声注入方法。
 我们提供两种选项：
-`flow_sde <https://arxiv.org/abs/2505.05470>`__ 和
-`reinflow <https://arxiv.org/abs/2505.22094>`__。
+`flow-sde <https://arxiv.org/abs/2505.05470>`__ 和
+`flow-noise <https://arxiv.org/abs/2505.22094>`__。
 
 **2.2 LoRA设置**
 
@@ -245,15 +247,27 @@ LoRA设置正在测试中，即将推出。
 - GR00T-N1.5 + PPO + Libero-Spatial：
   ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml``
 
+- GR00T-N1.5 + PPO + Libero-Object：
+  ``examples/embodiment/config/libero_object_ppo_gr00t.yaml``
+
+- GR00T-N1.5 + PPO + Libero-Goal：
+  ``examples/embodiment/config/libero_goal_ppo_gr00t.yaml``
+
+- GR00T-N1.5 + PPO + Libero-Long：
+  ``examples/embodiment/config/libero_10_ppo_gr00t.yaml``
+
 --------------
 
 **4. 启动命令**
 
-要使用选定的配置开始训练，请运行以下命令：
+要使用选定的配置开始训练，请运行以下命令之一：
 
 ::
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
+   bash examples/embodiment/run_embodiment.sh libero_object_ppo_gr00t
+   bash examples/embodiment/run_embodiment.sh libero_goal_ppo_gr00t
+   bash examples/embodiment/run_embodiment.sh libero_10_ppo_gr00t
 
 --------------
 
@@ -320,10 +334,10 @@ LoRA设置正在测试中，即将推出。
 **LIBERO结果**
 ~~~~~~~~~~~~~~~~~~
 
-我们在LIBERO环境中使用PPO训练了GR00T-N1.5。其他结果将在近期发布。
+我们在LIBERO环境中使用PPO训练了GR00T-N1.5。其他结果（Flow-Noise的RL训练）将在近期发布。结果链接指向Hugging Face上的对应模型。
 通过强化学习训练获得的结果如下：
 
-.. list-table:: **GR00T-N1.5模型在LIBERO上的结果**
+.. list-table:: **GR00T-N1.5模型使用Flow-SDE方法在LIBERO上的结果**
    :header-rows: 1
 
    * - 模型
@@ -335,25 +349,19 @@ LoRA设置正在测试中，即将推出。
      - Δ Avg.
 
    * - GR00T（少样本）
-     - 47.4%
-     - ---
-     - ---
-     - ---
-     - ---
-     - ---
-
-   * - +GRPO
-     - ---
-     - ---
-     - ---
-     - ---
-     - ---
+     - `41.4% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Spatial>`_
+     - `58.6% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_
+     - `48.2% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Goal>`_
+     - `61.9% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-10>`_
+     - 52.5%
      - ---
 
    * - +PPO
-     - **92.4%**
-     - ---
-     - ---
-     - ---
-     - ---
-     - ---
+     - `92.5% <https://huggingface.co/lixiang-95/RLinf-Gr00t-Spatial-400>`_
+     - `95.0% <https://huggingface.co/lixiang-95/RLinf-Gr00t-Object-400>`_
+     - `84.3% <https://huggingface.co/lixiang-95/RLinf-Gr00t-Goal-500>`_
+     - `86.3% <https://huggingface.co/lixiang-95/RLinf-Gr00t-libero10-300>`_
+     - **89.5%**
+     - **+37.0%**
+
+我们想指出上述结果使用了与 :math:`\pi_0` 相同的超参数设置。这些发现主要展示了所提出RL训练框架的广泛适用性和鲁棒性。通过参数调优可以更进一步提升模型性能。

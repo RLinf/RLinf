@@ -86,14 +86,10 @@ Each file contains a slice of model parameters, optimizer state, and RNG state.
 Converting Checkpoint Files to PyTorch State Dict Files
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-If you need to convert FSDP/FSDP2 checkpoints to standard PyTorch State Dict files for model evaluation or other purposes, you can use the tool in the toolkit folder
-``toolkits/ckpt_convertor/convert_dcp_to_state_dict.py``. The usage is as follows:
-
-.. code-block:: bash
-
-  convert_dcp_to_state_dict.py [-h] --dcp_path DCP_PATH --output_path OUTPUT_PATH
-
-``DCP_PATH`` is the path to the FSDP/FSDP2 checkpoint directory (e.g., ``global_step_2/actor/``), and ``OUTPUT_PATH`` is the desired output path for the converted PyTorch model state dict file.
+If you need to convert FSDP/FSDP2 checkpoints to standard PyTorch State Dict files for model evaluation or other purposes, 
+you can find model state dict in safetensors format under sub directory `model` of the checkpoint directory.
+For example, for checkpoint directory `global_step_2`, the model state dict files are located in `global_step_2/model/`.
+We will recursively copy model's config(*.json) and code files(*.py, if exists) so that you can easily reload the model later.
 
 Resuming training
 -----------------

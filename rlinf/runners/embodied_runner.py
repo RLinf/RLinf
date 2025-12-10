@@ -177,7 +177,7 @@ class EmbodiedRunner:
             logging_metrics.update(rollout_metrics)
             logging_metrics.update(training_metrics)
 
-            global_pbar.set_postfix(logging_metrics)
+            global_pbar.set_postfix(logging_metrics, refresh=False)
             global_pbar.update(1)
 
         self.metric_logger.finish()
@@ -190,7 +190,7 @@ class EmbodiedRunner:
         )
         actor_save_path = os.path.join(base_output_dir, "actor")
         os.makedirs(actor_save_path, exist_ok=True)
-        self.actor.save_checkpoint(actor_save_path, self.global_step).wait()
+        self.actor.save_checkpoint(actor_save_path).wait()
 
     def set_max_steps(self):
         self.num_steps_per_epoch = 1

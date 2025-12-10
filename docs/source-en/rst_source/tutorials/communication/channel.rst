@@ -72,8 +72,9 @@ Using a round-robin strategy, we continuously ``get`` trajectories from the ``ro
 Example
 --------
 
-.. autoclass:: rlinf.scheduler.channel.Channel
+.. autoclass:: rlinf.scheduler.Channel
    :no-members:
+   :no-index:
    :no-inherited-members:
    :exclude-members: __init__, __new__
 

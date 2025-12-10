@@ -11,12 +11,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Create reason environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
+          bash requirements/install.sh reason
+
       - name: auto-placement
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/auto_placement/run.sh
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
 
   dynamic-scheduler-reason-qwen-grpo-test:
     runs-on: reason
@@ -25,6 +40,17 @@ jobs:
         uses: actions/checkout@v5
         with:
           path: rlinf
+
+      - name: Create reason environment
+        run: |
+          cd rlinf
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
+          bash requirements/install.sh reason
 
       - name: Clone Megatron-011
         uses: actions/checkout@v5
@@ -42,8 +68,22 @@ jobs:
       - name: Megatron SGLang
         timeout-minutes: 20
         run: |
+          source rlinf/.venv/bin/activate
           export PYTHONPATH=$(pwd)/Megatron-LM-011:$(pwd)/params_resharding_release
           cd rlinf
           export REPO_PATH=$(pwd)
-          source switch_env reason
           bash tests/e2e_tests/dynamic_scheduler/run.sh qwen2.5-1.5b-grpo-dynamic-mg-sgl
+
+      - name: Megatron vLLM
+        timeout-minutes: 20
+        run: |
+          source rlinf/.venv/bin/activate
+          export PYTHONPATH=$(pwd)/Megatron-LM-011:$(pwd)/params_resharding_release
+          cd rlinf
+          export REPO_PATH=$(pwd)
+          bash tests/e2e_tests/dynamic_scheduler/run.sh qwen2.5-1.5b-grpo-dynamic-mg-vllm
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
