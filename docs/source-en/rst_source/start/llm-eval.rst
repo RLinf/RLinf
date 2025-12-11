@@ -99,7 +99,7 @@ You can specify ``CUDA_VISIBLE_DEVICES`` in the script for more flexible GPU man
 
 
 Evaluation Results
------------------
+------------------------------
 
 Results will be printed in the terminal and saved in ``OUTPUT_DIR``. Batch evaluation defaults to saving in the ``LLMEvalKit/evaluation/outputs`` directory.  
 The results include:
@@ -141,7 +141,7 @@ Model output example:
    }
 
 Supported Datasets
------------------
+------------------------------
 
 The toolkit currently supports the following evaluation datasets:
 
@@ -160,7 +160,7 @@ The toolkit currently supports the following evaluation datasets:
        containing cross-disciplinary problems (e.g., mathematics, physics, computer science) that require deep reasoning capabilities rather than memorization.
 
 Parameter Configuration
------------------
+------------------------------
 
 The main configurable parameters are as follows:
 

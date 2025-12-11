@@ -67,7 +67,7 @@ After completing the above modifications, run the following script to launch tra
 
 
 View Training Results
---------------------
+------------------------------
 
 - Final model and metrics files are located at: ``../results``  
 - TensorBoard logs are located at: ``../results/grpo-1.5b/tensorboard/``  
