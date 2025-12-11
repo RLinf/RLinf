@@ -15,27 +15,22 @@
 import logging
 import os
 import typing
-from typing import Optional, Union
+from typing import Union
 
 import pandas as pd
 import torch
 from omegaconf.dictconfig import DictConfig
 from torch.utils.data import Dataset, RandomSampler, SequentialSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
-from tqdm import tqdm
 
 from rlinf.data.io_struct import RolloutRequest
 from rlinf.scheduler import Channel
-from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.scheduler.dynamic_scheduler.scheduler_worker import SchedulerWorker
 from rlinf.utils.data_iter_utils import split_list
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.placement import ModelParallelComponentPlacement
-from rlinf.utils.runner_utils import check_progress, local_mkdir_safe
 from rlinf.utils.timers import Timer
-from rlinf.workers.actor.megatron_actor_worker import MegatronActor
-from rlinf.workers.inference.megatron_inference_worker import MegatronInference
 from rlinf.workers.reward.reward_worker import RewardWorker
 
 if typing.TYPE_CHECKING:
@@ -236,7 +231,7 @@ class ReasoningRunnerEval:
             )
 
         return flops_metrics
-        
+
     def _set_max_steps(self):
         self.num_steps_per_epoch = len(self.train_dataloader)
         self.max_steps = self.num_steps_per_epoch * self.cfg.runner.max_epochs
@@ -274,27 +269,11 @@ class ReasoningRunnerEval:
             )
             self.dataloader_channel.put(request, async_op=True)
 
-    # def _sync_weights(self):
-    #     if self.has_dedicated_inference:
-    #         self.actor.sync_model_to_inference()
-    #         self.inference.sync_model_from_actor().wait()
-
-    #     self.actor.sync_model_to_rollout()
-    #     self.rollout.sync_model_from_actor().wait()
-    #     self.actor.del_reshard_state_dict().wait()
-
     def run(self):
         epoch_iter = range(self.epoch, self.cfg.runner.max_epochs)
         if len(epoch_iter) <= 0:
             # epoch done
             return
-
-        global_pbar = tqdm(
-            initial=self.global_steps,
-            total=self.max_steps,
-            desc="Global Step",
-            ncols=620,
-        )
 
         self.run_timer.start_time()
         for _ in epoch_iter:
@@ -305,35 +284,3 @@ class ReasoningRunnerEval:
 
                     with self.timer("sync_weights"):
                         self._sync_weights()
-
-                    if self.scheduler is not None:
-                        scheduler_handle = self.scheduler.schedule()
-
-                    # Rollout
-                    rollout_handle: Handle = self.rollout.rollout(
-                        input_channel=self.dataloader_channel,
-                        output_channel=self.rollout_channel,
-                    )
-
-                    # Rewards
-                    reward_handle: Handle = self.reward.compute_rewards(
-                        input_channel=self.rollout_channel,
-                        output_channel=self.reward_channel,
-                    )
-
-                    if self.recompute_logprobs:
-                        # Inference prev/ref logprobs
-                        infer_handle: Handle = self.inference.run_inference(
-                            input_channel=self.reward_channel,
-                            output_channel=self.inference_channel,
-                            compute_ref_logprobs=self.compute_ref_logprobs,
-                        )
-                        inference_channel = self.inference_channel
-                    else:
-                        infer_handle = None
-                        inference_channel = self.reward_channel
-
-                    # Actor training
-                    actor_handle: Handle = self.actor.run_training(
-                        input_channel=inference_channel,
-                    )

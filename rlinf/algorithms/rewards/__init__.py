@@ -14,8 +14,8 @@
 
 from rlinf.algorithms.rewards.code import CodeRewardOffline
 from rlinf.algorithms.rewards.math import MathReward
-from rlinf.algorithms.rewards.vqa import VQAReward
 from rlinf.algorithms.rewards.searchr1 import SearchR1Reward
+from rlinf.algorithms.rewards.vqa import VQAReward
 
 
 def register_reward(name: str, reward_class: type):

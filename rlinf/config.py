@@ -858,7 +858,9 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     elif cfg.runner.task_type == "coding_online_rl":
         cfg = validate_coding_online_rl_cfg(cfg)
 
-    if cfg.algorithm.adv_type in ("grpo", "reinpp_baseline") and cfg.rollout.get("is_eval", False) :
+    if cfg.algorithm.adv_type in ("grpo", "reinpp_baseline") and cfg.rollout.get(
+        "is_eval", False
+    ):
         assert cfg.algorithm.group_size > 1
 
     assert cfg.actor.training_backend in SUPPORTED_TRAINING_BACKENDS, (

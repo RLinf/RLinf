@@ -242,7 +242,7 @@ class RolloutResult:
     prev_logprobs: Optional[torch.Tensor] = None
     # Reference logprobs for comparison
     ref_logprobs: Optional[torch.Tensor] = None
-    
+
     # evaluation
     trace_info: Optional[Any] = None
     origin_question: Optional[str] = None

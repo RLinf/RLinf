@@ -14,30 +14,24 @@
 
 
 import asyncio
+from typing import Any
 
+import aiohttp
 from omegaconf import DictConfig
 
-import requests
-import random
-import time
-import json
-import html
-import os
-import aiohttp
-
-from typing import Dict, List, Any
 from rlinf.data.tool_call.tool_io_struct import ToolChannelRequest, ToolChannelResponse
 from rlinf.scheduler import Channel
 from rlinf.workers.agent.tool_worker import ToolWorker
 
+
 class AsyncSearchClient:
-    def __init__(self, cfg:DictConfig):
+    def __init__(self, cfg: DictConfig):
         self.cfg = cfg
         self.session = None
-        self.server_addr = self.cfg.tools.search.server_addr 
-        print(self.server_addr) 
-        
-    async def query_async(self, req_meta: Dict[str, Any]) -> List[Dict]:
+        self.server_addr = self.cfg.tools.search.server_addr
+        print(self.server_addr)
+
+    async def query_async(self, req_meta: dict[str, Any]) -> list[dict]:
         cnt = 0
         last_exception = None
         while cnt < 10:
@@ -46,24 +40,27 @@ class AsyncSearchClient:
                     async with session.post(
                         f"http://{self.server_addr}/retrieve",
                         json=req_meta,
-                        timeout=aiohttp.ClientTimeout(total=120, sock_connect=120)
+                        timeout=aiohttp.ClientTimeout(total=120, sock_connect=120),
                     ) as response:
                         response.raise_for_status()
                         res = await response.json()
                         return [
-                            dict(
-                                documents=[r["contents"] for r in result],
-                                urls=[r["url"] for r in result],
-                                server_type="async-search-browser",
-                            ) for result in res["result"]
+                            {
+                                "documents": [r["contents"] for r in result],
+                                "urls": [r["url"] for r in result],
+                                "server_type": "async-search-browser",
+                            }
+                            for result in res["result"]
                         ]
             except Exception as e:
                 last_exception = e
                 print(f"Search Engine error {e}. Retry for {cnt} times.")
                 cnt += 1
                 await asyncio.sleep(10)
-        
-        raise RuntimeError("Fail to post search query to RAG server") from last_exception
+
+        raise RuntimeError(
+            "Fail to post search query to RAG server"
+        ) from last_exception
 
 
 class SearchToolWorker(ToolWorker):
@@ -94,29 +91,37 @@ class SearchToolWorker(ToolWorker):
             res["urls"] = response[0]["urls"]
             res["type"] = "search"
 
-            documents = response[0]["documents"][:self.topk]
-            urls = res["urls"][:self.topk]
+            documents = response[0]["documents"][: self.topk]
+            urls = res["urls"][: self.topk]
             if len(documents) > 0:
                 doc_id_template = "[Doc {doc_id}]({url}):\n"
-                text = "<information>\n" + "\n\n".join([doc_id_template.format(doc_id=str(k+1), url=url) + doc[:5000] for k, (doc, url) in enumerate(zip(documents, urls))]) + "\n</information>"
+                text = (
+                    "<information>\n"
+                    + "\n\n".join(
+                        [
+                            doc_id_template.format(doc_id=str(k + 1), url=url)
+                            + doc[:5000]
+                            for k, (doc, url) in enumerate(zip(documents, urls))
+                        ]
+                    )
+                    + "\n</information>"
+                )
             else:
                 text = "<information>\nNo search results are found.\n</information>"
 
             full_text = "\n\n" + text + "\n<think>\n"
             return full_text
 
-
         async def generate_and_send(channel_key: str, tool_args: dict):
             try:
-                res = {}
                 req_meta = {
-                    "queries": [tool_args['keyword']],
+                    "queries": [tool_args["keyword"]],
                     "topk": self.topk,
-                    "return_scores": False
+                    "return_scores": False,
                 }
                 response = await self.search_client.query_async(req_meta)
                 full_text = process_tool_result(response)
-                
+
                 result = ToolChannelResponse(
                     success=True,
                     result=full_text,

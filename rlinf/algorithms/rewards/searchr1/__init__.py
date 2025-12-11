@@ -12,13 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Dict
-
-from omegaconf import DictConfig
-
 import random
 import re
 import string
+
+from omegaconf import DictConfig
 
 
 def normalize_answer(s):
@@ -94,7 +92,9 @@ def count_answer_tags(text):
     return opening_tags, closing_tags
 
 
-def compute_score(solution_str, ground_truth, method="strict", format_score=0.0, score=1.0):
+def compute_score(
+    solution_str, ground_truth, method="strict", format_score=0.0, score=1.0
+):
     """The scoring function for exact match (EM).
 
     Args:
@@ -128,7 +128,9 @@ def compute_score(solution_str, ground_truth, method="strict", format_score=0.0,
             return format_score
 
 
-def compute_score_subem(solution_str, ground_truth, method="strict", format_score=0.0, score=1.0):
+def compute_score_subem(
+    solution_str, ground_truth, method="strict", format_score=0.0, score=1.0
+):
     """The scoring function for substring exact match (EM).
 
     Args:
@@ -156,15 +158,12 @@ def compute_score_subem(solution_str, ground_truth, method="strict", format_scor
             return format_score
 
 
-
 class SearchR1Reward:
     def __init__(self, config: DictConfig):
         self.scale = config.get("reward_scale", 1.0)
 
     def get_reward(
-        self,
-        response: List[str],
-        reference: List[List[str]]
-    ) -> List[float]:
-        rewards = [compute_score(sol,gt) for sol,gt in zip(response, reference)]
+        self, response: list[str], reference: list[list[str]]
+    ) -> list[float]:
+        rewards = [compute_score(sol, gt) for sol, gt in zip(response, reference)]
         return rewards

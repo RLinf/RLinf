@@ -15,7 +15,6 @@
 import asyncio
 import copy
 import json
-import random
 import re
 from uuid import uuid4
 
@@ -27,10 +26,10 @@ from rlinf.data.tool_call.tool_io_struct import (
     ToolRequest,
     ToolResponse,
 )
-
 from rlinf.scheduler import Channel
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.agent.agent_loop import AgentLoopOutput, AgentLoopWorker
+
 
 class Searchr1ToolAgentLoopWorker(AgentLoopWorker):
     """Simple tool agent loop that can interact with tools."""
@@ -49,10 +48,9 @@ class Searchr1ToolAgentLoopWorker(AgentLoopWorker):
         self.tool_call_start_token: str = "<search>"
         self.tool_call_end_token: str = "</search>"
         self.tool_call_regex = re.compile(r"<search>(.*?)</search>", re.DOTALL)
-        
+
         # Inserting tool info requires re-encode token_ids, so the recompute_logprobs must be true.
         assert self.cfg.algorithm.recompute_logprobs
-        
 
     async def state_less_tool_call_with_channel(
         self,
@@ -104,7 +102,9 @@ class Searchr1ToolAgentLoopWorker(AgentLoopWorker):
         function_calls = []
         if matches:
             match = matches[-1].strip()
-            function_calls.append(ToolRequest(name='search', arguments={"keyword":match}))
+            function_calls.append(
+                ToolRequest(name="search", arguments={"keyword": match})
+            )
 
         # remaining text exclude tool call tokens
         content = self.tool_call_regex.sub("", response_text)
@@ -119,23 +119,22 @@ class Searchr1ToolAgentLoopWorker(AgentLoopWorker):
         for _ in range(self.cfg.agentloop.maxturn):
             # Generate response from LLM
             max_resp_len = self.max_resp_len - (len(prompt_ids) - len(orig_prompt_ids))
-            
+
             generate_result = await self.generate(
                 prompt_ids, sampling_params={"max_new_tokens": max_resp_len}
             )
             generate_prompt_ids = copy.deepcopy(prompt_ids)
             response_ids = generate_result["output_ids"]
 
-            
             if len(response_ids) > max_resp_len:
                 response_ids = response_ids[:max_resp_len]
             response_text = self.tokenizer.decode(response_ids)
-            
+
             # split </search> manually
             if "</search>" in response_text:
-                response_text = response_text.split('</search>')[0] + '</search>'
+                response_text = response_text.split("</search>")[0] + "</search>"
                 response_ids = self.tokenizer.encode(response_text)
-            
+
             prompt_ids += response_ids
             response_mask += [1] * len(response_ids)  # 1 for LLM generated tokens
             if len(response_ids) == max_resp_len:
@@ -158,7 +157,9 @@ class Searchr1ToolAgentLoopWorker(AgentLoopWorker):
                 message = {"role": "tool", "content": tool_response.text}
                 tool_messages.append(message)
             # Tokenize tool responses
-            tool_response_ids = self.tokenizer.encode(tool_messages[0]["content"], add_special_tokens=False)
+            tool_response_ids = self.tokenizer.encode(
+                tool_messages[0]["content"], add_special_tokens=False
+            )
             max_tool_resp_len = self.max_resp_len - (
                 len(prompt_ids) - len(orig_prompt_ids)
             )
@@ -168,7 +169,13 @@ class Searchr1ToolAgentLoopWorker(AgentLoopWorker):
             response_mask += [0] * len(tool_response_ids)
             if self.print_outputs:
                 # add anything you want to print
-                trace_prints.append({"decode_prompt":self.tokenizer.decode(generate_prompt_ids),"generate": response_text, "tool_resp": tool_messages})
+                trace_prints.append(
+                    {
+                        "decode_prompt": self.tokenizer.decode(generate_prompt_ids),
+                        "generate": response_text,
+                        "tool_resp": tool_messages,
+                    }
+                )
 
         # Separate prompt and response
         response_ids = prompt_ids[len(orig_prompt_ids) :]

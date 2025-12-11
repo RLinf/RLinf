@@ -17,23 +17,22 @@ import json
 import logging
 import os
 import typing
-from typing import Optional, Union
+from typing import Union
 
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
+from rlinf.data.io_struct import RolloutResult
 from rlinf.runners.reasoning_runner_eval import ReasoningRunnerEval
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.placement import ModelParallelComponentPlacement
-from rlinf.utils.runner_utils import check_progress, local_mkdir_safe
+from rlinf.utils.runner_utils import local_mkdir_safe
 from rlinf.workers.agent.agent_loop import AgentLoopWorker
 from rlinf.workers.agent.tool_worker import ToolChannelInfo, ToolWorker, ToolWorkerInfo
 from rlinf.workers.reward.reward_worker import RewardWorker
-
-from rlinf.data.io_struct import RolloutResult
 
 if typing.TYPE_CHECKING:
     from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
@@ -112,8 +111,7 @@ class ToolAgentEvalRunner(ReasoningRunnerEval):
         """
         # Create output directory in the experiment folder
         output_dir = os.path.join(
-            self.cfg.runner.output_dir,
-            self.cfg.runner.experiment_name
+            self.cfg.runner.output_dir, self.cfg.runner.experiment_name
         )
         local_mkdir_safe(output_dir)
 
@@ -122,6 +120,7 @@ class ToolAgentEvalRunner(ReasoningRunnerEval):
 
         # Prepare timestamp
         import datetime
+
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # Prepare complete results structure
@@ -135,14 +134,16 @@ class ToolAgentEvalRunner(ReasoningRunnerEval):
                 "config": {
                     "group_size": self.cfg.algorithm.get("group_size", 1),
                     "max_turns": self.cfg.agentloop.get("max_turns", 5),
-                    "data_paths": OmegaConf.to_container(self.cfg.data.val_data_paths, resolve=True),
-                }
+                    "data_paths": OmegaConf.to_container(
+                        self.cfg.data.val_data_paths, resolve=True
+                    ),
+                },
             },
-            "results": all_results
+            "results": all_results,
         }
 
         # Write results to JSON with readable formatting
-        with open(output_file, 'w', encoding='utf-8') as f:
+        with open(output_file, "w", encoding="utf-8") as f:
             json.dump(results_data, f, ensure_ascii=False, indent=2)
 
         logging.info(f"Evaluation results saved to: {output_file}")
@@ -196,21 +197,37 @@ class ToolAgentEvalRunner(ReasoningRunnerEval):
             # Since group_size=1 for evaluation, num_sequence equals batch_size
             for i in range(rollout_result.num_sequence):
                 # Extract information for this sequence
-                prompt_ids = rollout_result.prompt_ids[i]
-                response_ids = rollout_result.response_ids[i]
                 answer = rollout_result.answers[i] if rollout_result.answers else None
-                reward = rollout_result.rewards[i].item() if rollout_result.rewards is not None else None
+                reward = (
+                    rollout_result.rewards[i].item()
+                    if rollout_result.rewards is not None
+                    else None
+                )
 
                 # Decode texts
-                prompt_text = rollout_result.prompt_texts[i] if rollout_result.prompt_texts else None
-                response_text = rollout_result.response_texts[i] if rollout_result.response_texts else None
-                origin_question = rollout_result.origin_question[i] if rollout_result.origin_question else None
+                prompt_text = (
+                    rollout_result.prompt_texts[i]
+                    if rollout_result.prompt_texts
+                    else None
+                )
+                response_text = (
+                    rollout_result.response_texts[i]
+                    if rollout_result.response_texts
+                    else None
+                )
+                origin_question = (
+                    rollout_result.origin_question[i]
+                    if rollout_result.origin_question
+                    else None
+                )
 
                 # Extract message_history from extra field
                 message_history = None
                 if rollout_result.trace_info is not None:
                     # extra is expected to be a list of message_history for each sequence
-                    if isinstance(rollout_result.trace_info, list) and i < len(rollout_result.trace_info):
+                    if isinstance(rollout_result.trace_info, list) and i < len(
+                        rollout_result.trace_info
+                    ):
                         message_history = rollout_result.trace_info[i]
 
                 # Determine if the answer is correct based on reward
@@ -245,7 +262,7 @@ class ToolAgentEvalRunner(ReasoningRunnerEval):
         accuracy = correct_count / total_count if total_count > 0 else 0.0
 
         # Log batch statistics
-        logging.info(f"Batch Evaluation Summary:")
+        logging.info("Batch Evaluation Summary:")
         logging.info(f"  Batch samples: {total_count}")
         logging.info(f"  Batch correct: {correct_count}")
         logging.info(f"  Batch accuracy: {accuracy:.4f}")
@@ -262,7 +279,6 @@ class ToolAgentEvalRunner(ReasoningRunnerEval):
         logging.info(f"Group size: {self.cfg.algorithm.get('group_size', 1)}")
         logging.info(f"Max turns: {self.cfg.agentloop.get('max_turns', 5)}")
         logging.info("=" * 80)
-        
 
         eval_pbar = tqdm(
             total=len(self.val_dataloader),
@@ -277,18 +293,18 @@ class ToolAgentEvalRunner(ReasoningRunnerEval):
         for tool_worker in self.tool_workers:
             tool_worker.start_server()
 
-        all_batch_results = []
         total_correct = 0
         total_samples = 0
 
         try:
             for batch_idx, batch in enumerate(self.val_dataloader):
-                logging.info(f"\nProcessing batch {batch_idx + 1}/{len(self.val_dataloader)}")
+                logging.info(
+                    f"\nProcessing batch {batch_idx + 1}/{len(self.val_dataloader)}"
+                )
 
                 with self.timer("step"):
                     with self.timer("prepare_data"):
                         self._put_batch(batch)
-
 
                     # Rollout
                     rollout_handle: Handle = self.agent_loop.run_agentloop_rollout(
@@ -319,16 +335,19 @@ class ToolAgentEvalRunner(ReasoningRunnerEval):
                 time_metrics = self.timer.consume_durations()
                 time_metrics["rollout"] = rollout_handle.consume_duration()
                 time_metrics["reward"] = reward_handle.consume_duration()
-                
 
                 # Update progress bar with current metrics
-                current_accuracy = total_correct / total_samples if total_samples > 0 else 0.0
-                eval_pbar.set_postfix({
-                    "batch_acc": f"{batch_accuracy:.4f}",
-                    "overall_acc": f"{current_accuracy:.4f}",
-                    "samples": total_samples,
-                    "rollout_time": f"{time_metrics.get('rollout', 0):.2f}s",
-                })
+                current_accuracy = (
+                    total_correct / total_samples if total_samples > 0 else 0.0
+                )
+                eval_pbar.set_postfix(
+                    {
+                        "batch_acc": f"{batch_accuracy:.4f}",
+                        "overall_acc": f"{current_accuracy:.4f}",
+                        "samples": total_samples,
+                        "rollout_time": f"{time_metrics.get('rollout', 0):.2f}s",
+                    }
+                )
                 eval_pbar.update(1)
 
                 self.global_steps += 1
@@ -346,7 +365,9 @@ class ToolAgentEvalRunner(ReasoningRunnerEval):
         logging.info("=" * 80)
         logging.info(f"Total samples evaluated: {total_samples}")
         logging.info(f"Total correct: {total_correct}")
-        logging.info(f"Final accuracy: {final_accuracy:.4f} ({final_accuracy * 100:.2f}%)")
+        logging.info(
+            f"Final accuracy: {final_accuracy:.4f} ({final_accuracy * 100:.2f}%)"
+        )
         logging.info("=" * 80)
 
         # Save all accumulated results to JSON file

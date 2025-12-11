@@ -18,8 +18,8 @@ import hydra
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
-from rlinf.agents.searchr1.searchr1_agent_loop import Searchr1ToolAgentLoopWorker
 from rlinf.agents.searchr1.search_tool_worker import SearchToolWorker
+from rlinf.agents.searchr1.searchr1_agent_loop import Searchr1ToolAgentLoopWorker
 from rlinf.config import validate_cfg
 from rlinf.data.datasets import create_rl_dataset
 from rlinf.data.tokenizers import hf_tokenizer
@@ -66,7 +66,9 @@ def main(cfg) -> None:
         len(agentloop_placement_strategy._node_ranks)
         == component_placement.rollout_dp_size
     ), "agentloop worker num now should be equal to rollout dp size"
-    agentloop_group = Searchr1ToolAgentLoopWorker.create_group(cfg, component_placement).launch(
+    agentloop_group = Searchr1ToolAgentLoopWorker.create_group(
+        cfg, component_placement
+    ).launch(
         cluster,
         name=cfg.agentloop.group_name,
         placement_strategy=agentloop_placement_strategy,
