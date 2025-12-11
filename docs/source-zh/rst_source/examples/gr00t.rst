@@ -349,18 +349,18 @@ LoRA设置正在测试中，即将推出。
      - Δ Avg.
 
    * - GR00T（少样本）
-     - `41.4% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Spatial>`_
-     - `58.6% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_
-     - `48.2% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Goal>`_
-     - `61.9% <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-10>`_
+     - `41.4% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial>`_
+     - `58.6% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Object>`_
+     - `48.2% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Goal>`_
+     - `61.9% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Long>`_
      - 52.5%
      - ---
 
    * - +PPO
-     - `92.5% <https://huggingface.co/lixiang-95/RLinf-Gr00t-Spatial-400>`_
-     - `95.0% <https://huggingface.co/lixiang-95/RLinf-Gr00t-Object-400>`_
-     - `84.3% <https://huggingface.co/lixiang-95/RLinf-Gr00t-Goal-500>`_
-     - `86.3% <https://huggingface.co/lixiang-95/RLinf-Gr00t-libero10-300>`_
+     - `92.5% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Spatial-Step400>`_
+     - `95.0% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Object-Step400>`_
+     - `84.3% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Goal-Step500>`_
+     - `86.3% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Long-Step300>`_
      - **89.5%**
      - **+37.0%**
 
