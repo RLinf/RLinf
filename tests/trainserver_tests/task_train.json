@@ -1,0 +1,39 @@
+{
+    "models": {
+        "maniskill": {
+            "enabled": true,
+            "name": "maniskill",
+            "default_environment": "openvla",
+            "mirror": "rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0",
+            "image_id": "镜像的id",
+            "paths": {
+                "dataset_key": "/path/to/model",
+                "model_key": "/path/to/model"
+            },
+            "train": {
+                "train_server": "J02",
+                "job_name": "maniskill_train_job",
+                "worker_num": "1",
+                "run_gpus": "4(可选1, 2, 4, 8, 在对应的训练服务里添加相应的资源规格)",
+                "train_time": "3600",
+                "entry_point": "启动训练的代码",
+                "tb_log_dir": ""
+            },
+            "special": {}
+        }
+    },
+    "train_server": {
+        "J02": {
+            "8": {
+                "region_id": "J02的区域id",
+                "resource_spec_id": "8卡训练服务的id信息",
+                "shared_mem": "8卡对应的共享内存大小(请与平台设置保持一致)",
+                "mount_volume_id": "挂载的存储卷id"
+            }
+        }
+    },
+    "frame_work": {
+        "Single": "单机训练框架id",
+        "Distributed": "分布式训练框架id"
+    }
+}
