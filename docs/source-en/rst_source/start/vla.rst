@@ -52,16 +52,16 @@ If using the **OpenVLA-OFT** model, run the following command:
 
 Before running the script, you need to modify the ``./examples/embodiment/config/maniskill_ppo_openvla_quickstart.yaml`` file according to the download paths of the model and dataset. Specifically, update the following configurations to the path where the `gen-robot/openvla-7b-rlvla-warmup` checkpoint is located.
 
-- ``rollout.model_dir``  
-- ``actor.checkpoint_load_path``  
+- ``rollout.model.model_path``  
+- ``actor.model.model_path``  
 - ``actor.tokenizer.tokenizer_model``  
 
 
 
 For **OpenVLA-OFT**, modify the ``maniskill_ppo_openvlaoft_quickstart.yaml`` file. Set the following model configuration items to the path where the `RLinf/Openvla-oft-SFT-libero10-trajall` checkpoint is located. At the same time, set the LoRA path to the path where the `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora` checkpoint is located.
 
-- ``rollout.model_dir``  
-- ``actor.checkpoint_load_path``  
+- ``rollout.model.model_path``  
+- ``actor.model.model_path``  
 - ``actor.tokenizer.tokenizer_model``  
 - ``actor.model.lora_path``
 - ``actor.model.is_lora: True``

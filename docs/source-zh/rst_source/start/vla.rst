@@ -53,16 +53,16 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
 
 在运行脚本之前，你需要根据模型和数据集的下载路径，修改 ``./examples/embodiment/config/maniskill_ppo_openvla_quickstart.yaml`` 文件。具体而言，将以下配置更新为 `gen-robot/openvla-7b-rlvla-warmup` 检查点所在的路径。
 
-- ``rollout.model_dir``  
-- ``actor.checkpoint_load_path``  
+- ``rollout.model.model_path``  
+- ``actor.model.model_path``  
 - ``actor.tokenizer.tokenizer_model``  
 
 
 
 对于 **OpenVLA-OFT**，修改 ``maniskill_ppo_openvlaoft_quickstart.yaml`` 文件。将下列模型配置项设置为 `RLinf/Openvla-oft-SFT-libero10-trajall` 检查点所在的路径。同时，将 LoRA 路径设置为 `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora` 检查点所在的路径。
 
-- ``rollout.model_dir``  
-- ``actor.checkpoint_load_path``  
+- ``rollout.model.model_path``  
+- ``actor.model.model_path``  
 - ``actor.tokenizer.tokenizer_model``  
 - ``actor.model.lora_path``
 - ``actor.model.is_lora: True``

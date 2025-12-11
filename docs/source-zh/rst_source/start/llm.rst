@@ -51,7 +51,7 @@
 
 具体而言，将model配置设置为 ``DeepSeek-R1-Distill-Qwen-1.5B`` 检查点所在路径，数据配置设置为 ``AReaL-boba-106k.jsonl`` 数据集所在路径。
 
-- ``rollout.model_dir``  
+- ``rollout.model.model_path``  
 - ``data.train_data_paths``  
 - ``data.val_data_paths``  
 - ``actor.tokenizer.tokenizer_model``

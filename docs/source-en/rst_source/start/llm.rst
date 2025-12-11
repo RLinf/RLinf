@@ -52,7 +52,7 @@ according to your model and dataset download paths.
 
 Specifically, set the model configuration to the path where the ``DeepSeek-R1-Distill-Qwen-1.5B`` checkpoint is located, and set the data configuration to the path where the ``AReaL-boba-106k.jsonl`` dataset is located.
 
-- ``rollout.model_dir``  
+- ``rollout.model.model_path``  
 - ``data.train_data_paths``
 - ``data.val_data_paths``
 - ``actor.tokenizer.tokenizer_model``
