@@ -148,6 +148,8 @@ actor:
       config_name: "pi05_metaworld"
       num_images_in_input: 1
       value_after_vlm: True
+      action_horizon: 5
+      discrete_state_input: False
 
   optim:
     lr: 5.0e-6

@@ -143,6 +143,10 @@ actor:
   model:
     model_path: "/path/to/model/RLinf-Pi05-SFT"
 
+    openpi:
+      action_horizon: 10
+      discrete_state_input: False
+
   optim:
     lr: 5.0e-6
     value_lr: 1.0e-4

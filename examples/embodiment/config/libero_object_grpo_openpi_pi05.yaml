@@ -147,7 +147,10 @@ actor:
     model_path: "/path/to/model/RLinf-Pi05-SFT"
     model_type: "openpi"
     num_action_chunks: 5 # interface for the env
-    num_steps: 3
+    denoising_steps: 3
+    openpi:
+      action_horizon: 10
+      discrete_state_input: False
 
   optim:
     lr: 5.0e-6

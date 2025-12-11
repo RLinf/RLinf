@@ -51,7 +51,7 @@ class OpenPi0Config(Pi0Config):
     # hyper-parameters
     action_chunk: int = 5  # action chunk
     action_env_dim: int = 7  # for environment action dim
-    num_steps: int = 10  # denoise steps
+    denoising_steps: int = 10  # denoise steps
     # training config
     train_expert_only: bool = False
     safe_get_logprob: bool = False
@@ -327,10 +327,10 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         mode="train",
         compute_values=True,
     ) -> torch.Tensor:
-        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
+        """Do a full inference forward and compute the action (batch_size x denoising_steps x num_motors)"""
         bsize = observation.state.shape[0]
         device = observation.state.device
-        num_steps = self.config.num_steps
+        denoising_steps = self.config.denoising_steps
         if noise is None:
             actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
             noise = self.sample_noise(actions_shape, device)
@@ -378,22 +378,22 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         # denoise index
         if mode == "train":
             if self.config.joint_logprob:
-                denoise_inds = torch.arange(num_steps)
+                denoise_inds = torch.arange(denoising_steps)
             else:
                 if self.config.ignore_last:
                     denoise_inds = torch.tensor(
-                        [random.randint(0, num_steps - 2)] * num_steps
+                        [random.randint(0, denoising_steps - 2)] * denoising_steps
                     )
                 else:
                     denoise_inds = torch.tensor(
-                        [random.randint(0, num_steps - 1)] * num_steps
+                        [random.randint(0, denoising_steps - 1)] * denoising_steps
                     )
         else:
-            denoise_inds = torch.tensor([-1] * num_steps)
+            denoise_inds = torch.tensor([-1] * denoising_steps)
         denoise_inds = denoise_inds[None].repeat(bsize, 1)
 
         # denoise step
-        for idx in range(num_steps):
+        for idx in range(denoising_steps):
             # sample mean var val
             if idx == denoise_inds[0][idx]:
                 sample_mode = "train"
@@ -406,7 +406,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
                 prefix_pad_masks,
                 past_key_values,
                 sample_mode,
-                num_steps,
+                denoising_steps,
                 compute_values,
             )
             # Euler step - use new tensor assignment instead of in-place operation
@@ -650,7 +650,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
 
         # get log prob
         if self.config.joint_logprob:
-            num_steps = self.config.num_steps
+            denoising_steps = self.config.denoising_steps
             initial_log_prob = self.get_logprob_norm(
                 chains[:, 0],
                 torch.zeros_like(chains[:, 0]),
@@ -660,8 +660,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             chains_log_probs.append(initial_log_prob)
             chains_entropy.append(initial_entropy)
         else:
-            num_steps = 1
-        for idx in range(num_steps):
+            denoising_steps = 1
+        for idx in range(denoising_steps):
             denoise_ind = denoise_inds[:, idx]
             chains_pre = chains[torch.arange(bsize), denoise_ind]
             chains_next = chains[torch.arange(bsize), denoise_ind + 1]
@@ -672,7 +672,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
                 prefix_pad_masks,
                 past_key_values,
                 "train",
-                self.config.num_steps,
+                self.config.denoising_steps,
                 compute_values,
             )
             log_probs = self.get_logprob_norm(chains_next, x_t_mean, x_t_std)

@@ -148,6 +148,9 @@ actor:
     openpi:
       value_after_vlm: True
 
+      action_horizon: 10
+      discrete_state_input: False
+
   optim:
     lr: 5.0e-6
     value_lr: 1.0e-4

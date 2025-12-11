@@ -140,13 +140,14 @@ actor:
     model_path: "/path/to/model/RLinf-Pi0-SFT"
     model_type: "openpi"
     num_action_chunks: 5
-    num_steps: 5
+    denoising_steps: 5
     add_value_head: True
     # openpi specific parameters
     openpi:
       config_name: "pi0_calvin"
       detach_critic_input: True
       joint_logprob: False
+      action_horizon: 5
 
   optim:
     lr: 5.0e-6

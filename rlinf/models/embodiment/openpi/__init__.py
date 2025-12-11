@@ -51,9 +51,7 @@ _CONFIGS = [
     ),
     TrainConfig(
         name="pi05_libero",
-        model=pi0_config.Pi0Config(
-            pi05=True, action_horizon=10, discrete_state_input=False
-        ),
+        model=pi0_config.Pi0Config(),
         data=LeRobotLiberoDataConfig(
             repo_id="physical-intelligence/libero",
             base_config=DataConfig(prompt_from_task=True),
@@ -77,7 +75,7 @@ _CONFIGS = [
     ),
     TrainConfig(
         name="pi0_metaworld",
-        model=pi0_config.Pi0Config(action_horizon=5),
+        model=pi0_config.Pi0Config(),
         data=LeRobotMetaworldDataConfig(
             repo_id="lerobot/metaworld_mt50",
             base_config=DataConfig(prompt_from_task=True),
@@ -92,9 +90,7 @@ _CONFIGS = [
     ),
     TrainConfig(
         name="pi05_metaworld",
-        model=pi0_config.Pi0Config(
-            pi05=True, action_horizon=5, discrete_state_input=False
-        ),
+        model=pi0_config.Pi0Config(),
         data=LeRobotMetaworldDataConfig(
             repo_id="lerobot/metaworld_mt50",
             base_config=DataConfig(prompt_from_task=True),
@@ -109,7 +105,7 @@ _CONFIGS = [
     ),
     TrainConfig(
         name="pi0_calvin",
-        model=pi0_config.Pi0Config(action_horizon=5),
+        model=pi0_config.Pi0Config(),
         data=LeRobotCalvinDataConfig(
             repo_id="InternRobotics/InternData-Calvin_ABC",
             base_config=DataConfig(
@@ -126,9 +122,7 @@ _CONFIGS = [
     ),
     TrainConfig(
         name="pi05_calvin",
-        model=pi0_config.Pi0Config(
-            pi05=True, action_horizon=5, discrete_state_input=False
-        ),
+        model=pi0_config.Pi0Config(),
         data=LeRobotCalvinDataConfig(
             repo_id="InternRobotics/InternData-Calvin_ABC",
             base_config=DataConfig(

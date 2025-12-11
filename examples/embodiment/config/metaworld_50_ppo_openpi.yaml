@@ -140,13 +140,15 @@ actor:
     model_path: "/path/to/model/openpi"
     num_action_chunks: 5 # interface for the env
     action_dim: 4
-    num_steps: 5
+    denoising_steps: 5
     add_value_head: True
     # openpi specific parameters
     openpi:
       config_name: "pi0_metaworld"
       num_images_in_input: 1
       detach_critic_input: True
+
+      action_horizon: 5
 
   optim:
     lr: 1.0e-5

@@ -144,6 +144,7 @@ actor:
     openpi:
       config_name: "pi0_calvin"
       detach_critic_input: True
+      action_horizon: 5
 
   optim:
     lr: 1.0e-5

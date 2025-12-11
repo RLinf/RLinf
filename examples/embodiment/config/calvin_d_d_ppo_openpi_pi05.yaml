@@ -156,6 +156,9 @@ actor:
       value_after_vlm: True
       value_vlm_mode: "mean_token"
 
+      action_horizon: 5
+      discrete_state_input: False
+
   optim:
     lr: 5.0e-6
     value_lr: 1.0e-4

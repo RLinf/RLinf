@@ -7,7 +7,12 @@ precision: "bf16"
 
 # Action and policy settings
 action_dim: 7
+
+# num_action_chunks: RLinf system-level setting that controls the number of action steps
+# for model-environment interaction. This value is used by the RLinf system
+# to determine how many action steps to execute per chunk_step.
 num_action_chunks: 1
+
 use_proprio: False
 unnorm_key: bridge_orig
 center_crop: True
