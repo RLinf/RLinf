@@ -205,6 +205,17 @@ The following examples include agent workflow construction, online RL training, 
          Unified deployment, inference, and training with high flexibility and performance
        </p>
      </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/waiting_icon.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/searchr1.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>[Ongoing]Search-R1 RL Training</b>
+         </a><br>
+         Train LLMs to answer questions by invoking search tools
+       </p>
+     </div>     
    </div>
 
 
@@ -251,3 +262,4 @@ Thanks to this decoupled design, workers can be flexibly and dynamically schedul
    gr00t
    reasoning
    coding_online_rl
+   searchr1

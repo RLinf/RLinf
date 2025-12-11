@@ -202,6 +202,17 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
          部署、推理、训练一体，高灵活性、高性能
        </p>
      </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/waiting_icon.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/searchr1.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>[适配中]Search-R1强化学习</b>
+         </a><br>
+         训练LLM调用搜索工具回答问题
+       </p>
+     </div>   
    </div>
 
 
@@ -246,3 +257,4 @@ RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训
    gr00t
    reasoning
    coding_online_rl
+   searchr1
