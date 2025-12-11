@@ -78,7 +78,7 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 
 - **基于Megatron + SGLang/vLLM的数学推理镜像**：
 
-  - ``rlinf/rlinf:math-rlinf0.1-torch2.5.1-sglang0.4.4-vllm0.7.1-megatron0.11.0-te2.1`` （用于增强大语言模型在 MATH 任务中的推理能力）
+  - ``rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1`` （用于增强大语言模型在 MATH 任务中的推理能力）
 
 - **基于FSDP + Huggingface的具身智能镜像**：
 

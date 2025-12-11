@@ -37,7 +37,7 @@
 
 模型转换
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-在训练过程中，模型以 Megatron 格式被存储下来。 你可以使用位于 ``toolkits/ckpt_convertor/`` 的转换脚本将其转换为 Huggingface 格式。
+在训练过程中，模型以 Megatron 格式被存储下来。 你可以使用位于 ``RLinf/toolkits/ckpt_convertor/`` 的转换脚本将其转换为 Huggingface 格式。
 
 你有两种方式使用脚本：
 
@@ -94,7 +94,7 @@
 
 .. code-block:: bash
 
-   bash main_eval.sh /path/to/model_checkpoint
+   bash LLMEvalKit/evaluation/main_eval.sh /path/to/model_checkpoint
 
 你可以在脚本中指定``CUDA_VISIBLE_DEVICES``，进行更灵活的GPU管理。  
 
@@ -102,7 +102,7 @@
 评估结果
 -----------------
 
-结果会被打印在终端，并保存在 ``OUTPUT_DIR`` 中。  
+结果会被打印在终端，并保存在 ``OUTPUT_DIR`` 中。批量评估默认保存到 ``LLMEvalKit/evaluation/outputs`` 目录下。  
 结果内容包括：
 
 1. 元信息（``xx_metrics.json``）：统计摘要  
