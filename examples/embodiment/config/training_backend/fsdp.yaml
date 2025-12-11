@@ -19,7 +19,8 @@ use_orig_params: False              # if True, FSDP will use module's original p
 use_liger_kernel: False             # if True, liger_kernel will be used for FSDP, note that currently supported models in RLinf are [qwen2.5, qwen2.5-vl], for more details, see liger_kernel's doc
 
 fsdp_size: -1               # Number of GPUs per FSDP group for hybrid sharding. -1 means use all available GPUs in a single FSDP group
-
+transformer_layer_cls_to_wrap: null # list of transformer layer class names to wrap with FSDP, if null, will use model's _no_split_modules attribute to determine which layers to wrap.
+special_param_names_to_wrap: null   # list of special parameter names(or part) to wrap with FSDP, e.g., ["embeddings", "layernorm"], if null, no special parameters will be wrapped.
 mixed_precision:            # mixed precision settings for fsdp/fsdp2
   param_dtype: null
   reduce_dtype: null
