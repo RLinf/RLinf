@@ -126,7 +126,7 @@ class MetaWorldEnv(gym.Env):
             env_idx = np.arange(self.num_envs)
         for env_id in range(self.num_envs):
             if env_id not in env_idx:
-                task_descriptions.append(self.task_descriptions_all[env_id])
+                task_descriptions.append(self.task_descriptions[env_id])
                 continue
             env_name = self.env_names_all[self.task_ids[env_id]]
             task_description = self.task_descriptions_all[self.task_ids[env_id]]
