@@ -29,6 +29,7 @@
 import concurrent.futures
 import functools
 import json
+import logging
 import os
 import shutil
 from enum import Enum
@@ -126,9 +127,12 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_openvla_model=Fa
             module, "_no_split_modules", None
         )
 
-    fsdp_transformer_layer_cls_to_wrap = config.get("wrap_policy", {}).get(
+    transformer_layer_cls_to_wrap = config.get(
         "transformer_layer_cls_to_wrap", default_transformer_cls_names_to_wrap
     )
+
+    if transformer_layer_cls_to_wrap is None:
+        transformer_layer_cls_to_wrap = default_transformer_cls_names_to_wrap
 
     # Build policies list
     policies = []
@@ -165,9 +169,9 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_openvla_model=Fa
         policies.append(value_head_policy)
 
     # Add transformer layer policies
-    if fsdp_transformer_layer_cls_to_wrap is not None:
+    if transformer_layer_cls_to_wrap is not None:
         transformer_cls_to_wrap = set()
-        for layer_class in fsdp_transformer_layer_cls_to_wrap:
+        for layer_class in transformer_layer_cls_to_wrap:
             transformer_cls = get_module_class_from_name(module, layer_class)
             if transformer_cls is None:
                 raise Exception(
@@ -246,28 +250,42 @@ def apply_fsdp2_to_model(
             module, "_no_split_modules", None
         )
 
-    fsdp_transformer_layer_cls_to_wrap = config.get("wrap_policy", {}).get(
+    transformer_layer_cls_to_wrap = config.get(
         "transformer_layer_cls_to_wrap", default_transformer_cls_names_to_wrap
     )
 
-    if isinstance(fsdp_transformer_layer_cls_to_wrap, str):
-        fsdp_transformer_layer_cls_to_wrap = [fsdp_transformer_layer_cls_to_wrap]
+    special_param_names_to_wrap = config.get("special_param_names_to_wrap", None)
+
+    if special_param_names_to_wrap is None:
+        special_param_names_to_wrap = []
+
+    if transformer_layer_cls_to_wrap is None:
+        transformer_layer_cls_to_wrap = default_transformer_cls_names_to_wrap
+
+    if isinstance(transformer_layer_cls_to_wrap, str):
+        transformer_layer_cls_to_wrap = [transformer_layer_cls_to_wrap]
 
     assert (
-        len(fsdp_transformer_layer_cls_to_wrap) > 0
-        and fsdp_transformer_layer_cls_to_wrap[0] is not None
+        len(transformer_layer_cls_to_wrap) > 0
+        and transformer_layer_cls_to_wrap[0] is not None
     )
 
+    if torch.distributed.get_rank() == 0:
+        logging.info(
+            f"FSDP2 wrapping transformer layer classes: {transformer_layer_cls_to_wrap}"
+        )
+
     modules_to_shard = []
-
     for name, submodule in module.named_modules():
-        if submodule.__class__.__name__ in fsdp_transformer_layer_cls_to_wrap or (
-            isinstance(submodule, torch.nn.Embedding)
-            and not getattr(module.config, "tie_word_embeddings", False)
-        ):
+        if submodule.__class__.__name__ in transformer_layer_cls_to_wrap:
             modules_to_shard.append((name, submodule, "transformer_or_embedding"))
+            continue
+        for special_name in special_param_names_to_wrap:
+            if special_name in name:
+                modules_to_shard.append((name, submodule, "special_param"))
+                break
 
-    for name, submodule, module_type in modules_to_shard:
+    for name, submodule, _ in modules_to_shard:
         fully_shard(
             submodule,
             mesh=device_mesh,

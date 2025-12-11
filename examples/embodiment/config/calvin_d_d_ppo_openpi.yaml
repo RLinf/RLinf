@@ -158,9 +158,24 @@ actor:
     critic_warmup_steps: 0
 
   fsdp_config:
-    strategy: "fsdp"
-    sharding_strategy: "no_shard"
+    strategy: "fsdp2"
+    sharding_strategy: "full_shard"
     gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
+    transformer_layer_cls_to_wrap: [
+      "Embedding",
+      "SiglipEncoderLayer",
+      "PaliGemmaMultiModalProjector",
+      "GemmaMLP",
+      "GemmaAttention",
+      "GemmaRMSNorm",
+      "ValueHead"
+    ]
+    special_param_names_to_wrap: ["lm_head","post_layernorm"]
+
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
 
 reward:
   use_reward_model: False
