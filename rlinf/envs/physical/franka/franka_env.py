@@ -24,6 +24,7 @@ import gymnasium as gym
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 import warnings
+import threading
 
 from rlinf.envs.physical.common.camera import Camera, CameraInfo
 from rlinf.scheduler import Cluster, NodePlacementStrategy, Worker
@@ -32,6 +33,25 @@ from rlinf.utils.utils import euler_2_quat, quat_2_euler
 
 from .basic_data_structures import FrankaRobotState
 from .utils import quat_slerp, construct_adjoint_matrix, construct_homogeneous_matrix
+
+class ImageDisplayer(threading.Thread):
+    def __init__(self, queue):
+        threading.Thread.__init__(self)
+        self.queue = queue
+        self.daemon = True  # make this a daemon thread
+
+    def run(self):
+        while True:
+            img_array = self.queue.get()  # retrieve an image from the queue
+            if img_array is None:  # None is our signal to exit
+                break
+
+            frame = np.concatenate(
+                [v for k, v in img_array.items() if "full" not in k], axis=0
+            )
+
+            cv2.imshow("RealSense Cameras", frame)
+            cv2.waitKey(1)
 
 
 @dataclass
@@ -111,7 +131,6 @@ class FrankaEnv(gym.Env):
         self._num_steps = 0
         self._joint_reset_cycle = cycle(range(self._config.joint_reset_cycle))
         next(self._joint_reset_cycle)  # Initialize the cycle
-        self._recorded_frames = []
 
         # Launch Franka controller on the same node as the env
         # TODO: Support launching on different nodes
@@ -161,6 +180,10 @@ class FrankaEnv(gym.Env):
             self._cameras: List[Camera] = []
             self._open_cameras(self._config.cameras)
 
+        self.display_img_queue = queue.Queue()
+        self.displayer = ImageDisplayer(self.display_img_queue)
+        self.displayer.start()
+
     def transform_action_ee_to_base(self, action):
         action[:6] = np.linalg.inv(self.adjoint_matrix) @ action[:6]
         return action
@@ -179,11 +202,14 @@ class FrankaEnv(gym.Env):
         
         action = np.clip(action, self.action_space.low, self.action_space.high)
         xyz_delta = action[:3]
+        # print(f"{xyz_delta=}")
 
         self.next_position = self._franka_state.tcp_pose.copy()
+        # print(f"curr pos = {self.next_position}")
         self.next_position[:3] = (
             self.next_position[:3] + xyz_delta * self._config.action_scale[0]
         )
+        # print(f"next pos = {self.next_position}")
 
         if not self.is_dummy:
             self.next_position[3:] = (
@@ -210,6 +236,7 @@ class FrankaEnv(gym.Env):
         reward = self._calc_step_reward(observation, is_gripper_action_effective)
         terminated = reward == 1
         truncated = self._num_steps >= self._config.max_num_steps
+        print(f"{terminated=}, {truncated=}, {self._num_steps=}")
         return observation, reward, terminated, truncated, {}
 
     @property
@@ -280,6 +307,9 @@ class FrankaEnv(gym.Env):
         return observation, {}
 
     def go_to_rest(self, joint_reset=False):
+        self._controller.reconfigure_compliance_params(
+            self._config.precision_param
+        )
         if joint_reset:
             self._controller.reset_joint(self._config.joint_reset_qpos).wait()
             time.sleep(0.5)
@@ -311,6 +341,9 @@ class FrankaEnv(gym.Env):
             self._franka_state = self._controller.get_state().wait()[0]
             if cnt > 10:
                 break
+        self._controller.reconfigure_compliance_params(
+            self._config.compliance_param
+        ).wait()
         
     def _init_action_obs_spaces(self):
         """Initialize action and observation spaces, including arm safety box."""
@@ -419,32 +452,8 @@ class FrankaEnv(gym.Env):
                 self._open_cameras(self._config.cameras)
                 return self._get_camera_frames()
 
-        self._recorded_frames.append(
-            np.concatenate(
-                [
-                    display_frames[f"{camera._camera_info.name}_full"]
-                    for camera in self._cameras
-                ],
-                axis=0,
-            )
-        )
+        self.display_img_queue.put(display_frames)
         return frames
-
-    def _save_video(self):
-        try:
-            if len(self._recorded_frames) > 0:
-                writer = cv2.VideoWriter(
-                    self._config.save_video_path,
-                    cv2.VideoWriter_fourcc(*"mp4v"),
-                    self._config.step_frequency,
-                    self._recorded_frames[0].shape[:2][::-1],
-                )
-                for frame in self._recorded_frames:
-                    writer.write(frame)
-                writer.release()
-                self._recorded_frames.clear()
-        except Exception as e:
-            self._logger.error(f"Failed to save video with error: {e}")
 
     # Robot actions
 
@@ -515,6 +524,7 @@ class FrankaEnv(gym.Env):
         self._franka_state: FrankaRobotState = self._controller.get_state().wait()[0]
 
     def _move_action(self, position: np.ndarray):
+        # print(f"Moving to position: {position}")
         if not self.is_dummy:
             self._clear_error()
             self._controller.move_arm(position.astype(np.float32)).wait()
