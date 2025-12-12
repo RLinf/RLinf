@@ -518,6 +518,10 @@ class FSDPActor(FSDPModelManager, Worker):
 
         return batch
 
+    def set_global_step(self, global_step):
+        if hasattr(self.model, "set_global_step"):
+            self.model.set_global_step(global_step)
+
 
 class EmbodiedFSDPActor(FSDPModelManager, Worker):
     def __init__(self, cfg: DictConfig):
@@ -686,10 +690,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 rollout_batch["loss_mask"] = reward_filter_mask
 
         return rollout_batch
-
-    def compute_logprobs(self):
-        self.model.eval()
-        self.rollout_batch["logprob"] = self.rollout_batch["prev_logprobs"]
 
     def compute_advantages_and_returns(self):
         kwargs = {
@@ -893,7 +893,3 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         )
 
         return mean_metric_dict
-
-    def set_global_step(self, global_step):
-        if hasattr(self.model, "set_global_step"):
-            self.model.set_global_step(global_step)
