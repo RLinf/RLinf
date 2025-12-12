@@ -289,17 +289,24 @@ class DisaggRankMapper(RankMapper):
         assert actor_tp_size % rollout_tp_size == 0, (
             "actor_tp_size must be a multiple of rollout_tp_size"
         )
-
         num_rollout_dp_ranks_per_actor_tp_group = actor_tp_size // rollout_tp_size
         actor_tp_rank = actor_rank % actor_tp_size
-        corresponding_rollout_dp_rank = (
-            actor_tp_rank % num_rollout_dp_ranks_per_actor_tp_group
+
+        actor_tp_group_id = actor_rank // actor_tp_size
+        rollout_start_dp_rank = (
+            actor_tp_group_id * num_rollout_dp_ranks_per_actor_tp_group
         )
-        corresponding_rollout_tp_rank = (
+
+        weight_dst_dp_rank_in_rollout = (
+            rollout_start_dp_rank
+            + actor_tp_rank % num_rollout_dp_ranks_per_actor_tp_group
+        )
+
+        weight_dst_tp_rank_in_rollout = (
             actor_tp_rank // num_rollout_dp_ranks_per_actor_tp_group
         )
 
-        return (corresponding_rollout_dp_rank, corresponding_rollout_tp_rank)
+        return (weight_dst_dp_rank_in_rollout, weight_dst_tp_rank_in_rollout)
 
 
 SUPPORTED_LLM_ROLLOUT_BACKENDS = ["vllm", "sglang"]
