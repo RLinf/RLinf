@@ -8,7 +8,20 @@ export MUJOCO_GL="egl"
 export PYOPENGL_PLATFORM="egl"
 
 # NOTE: set LIBERO_REPO_PATH to the path of the LIBERO repo
-export LIBERO_REPO_PATH="/opt/libero"
+LIBERO_STD_PATH="/opt/libero"
+LIBERO_PRO_PATH="/opt/LIBERO-PRO"
+LIBERO_PLUS_PATH="/opt/LIBERO-plus"
+
+if [ "$LIBERO_TYPE" == "pro" ]; then
+    echo "Using LIBERO-Pro Environment..."
+    export LIBERO_PATH=$LIBERO_PRO_PATH
+elif [ "$LIBERO_TYPE" == "plus" ]; then
+    echo "Using LIBERO-Plus Environment..."
+    export LIBERO_PATH=$LIBERO_PLUS_PATH
+else
+    echo "Using Standard LIBERO Environment..."
+    export LIBERO_PATH=$LIBERO_STD_PATH
+fi
 
 export PYTHONPATH=${REPO_PATH}:${LIBERO_REPO_PATH}:$PYTHONPATH
 
