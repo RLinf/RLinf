@@ -193,6 +193,9 @@ class PhysicalEnv(gym.Env):
         if self.ignore_terminations:
             infos["episode"]["success_at_end"] = to_tensor(terminations)
             terminations[:] = False
+        
+        if "intervene_action" in infos:
+            infos["intervene_action"] = torch.from_numpy(infos["intervene_action"])
 
         dones = terminations | truncations
         _auto_reset = auto_reset and self.auto_reset
@@ -215,11 +218,17 @@ class PhysicalEnv(gym.Env):
 
         raw_chunk_terminations = []
         raw_chunk_truncations = []
+
+        intervene_actions = torch.from_numpy(np.zeros_like(chunk_actions))
+        intervene_flag = torch.zeros(chunk_size, dtype=bool)
         for i in range(chunk_size):
             actions = chunk_actions[:, i]
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
                 actions, auto_reset=False
             )
+            if "intervene_action" in infos:
+                intervene_actions[i] = infos["intervene_action"]
+                intervene_flag[i] = True
 
             chunk_rewards.append(step_reward)
             raw_chunk_terminations.append(terminations)
@@ -236,6 +245,9 @@ class PhysicalEnv(gym.Env):
         past_terminations = raw_chunk_terminations.any(dim=1)
         past_truncations = raw_chunk_truncations.any(dim=1)
         past_dones = torch.logical_or(past_terminations, past_truncations)
+
+        infos["intervene_action"] = intervene_actions.reshape(self.num_envs, -1)
+        infos["intervene_flag"] = intervene_flag
 
         if past_dones.any() and self.auto_reset:
             extracted_obs, infos = self._handle_auto_reset(

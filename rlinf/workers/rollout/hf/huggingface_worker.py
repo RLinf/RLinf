@@ -158,7 +158,15 @@ class MultiStepRolloutWorker(Worker):
         if real_next_extracted_obs is None and hasattr(self.hf_model, "q_head"):
             real_next_extracted_obs = init_real_next_obs(next_extracted_obs)
         return real_next_extracted_obs
-
+    
+    def update_intervene_actions(self, stage_id, intervene_actions, result):
+        if intervene_actions is not None:
+            if "action" in result["forward_inputs"]:
+                result["forward_inputs"]["action"] = intervene_actions
+            else:
+                raise NotImplementedError(f"{result['forward_inputs'].keys()=}")
+        self.buffer_list[stage_id].append_result(result)
+    
     async def generate(self):
         if self.cfg.rollout.get("enable_offload", False):
             self.reload_model()
@@ -170,6 +178,7 @@ class MultiStepRolloutWorker(Worker):
             disable=(self._rank != 0),
         ):
             extracted_obs = [None for i in range(self.stage_num)]
+            results = [None for i in range(self.stage_num)]
             for chunk_step in range(self.cfg.algorithm.n_chunk_steps):
                 for i in range(self.stage_num):
                     env_output = await self.recv_env_output()
@@ -177,15 +186,17 @@ class MultiStepRolloutWorker(Worker):
                     next_extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"])
                     real_next_extracted_obs = self.update_env_output(i, env_output, next_extracted_obs)
 
+                    if results[i] is not None:
+                        self.update_intervene_actions(i, env_output["intervene_actions"], results[i])
+
                     predict = False \
                          if self.random_predict_steps > 0 \
                             and self.all_cumulated_steps[i] < self.random_predict_steps \
                          else True
-                    actions, result = self.predict(next_extracted_obs, predict=predict)
+                    actions, results[i] = self.predict(next_extracted_obs, predict=predict)
                     self.all_cumulated_steps[i] += actions.shape[0]
 
-
-                    self.buffer_list[i].append_result(result)
+                    
 
                     if extracted_obs[i] is not None and hasattr(self.hf_model, "q_head"):
                         self.buffer_list[i].add_transition(extracted_obs[i], real_next_extracted_obs)
@@ -196,6 +207,8 @@ class MultiStepRolloutWorker(Worker):
 
             for i in range(self.stage_num):
                 env_output = await self.recv_env_output()
+                self.update_intervene_actions(i, env_output["intervene_actions"], results[i])
+            
                 next_extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"])
                 real_next_extracted_obs = self.update_env_output(i, env_output, next_extracted_obs)
                 actions, result = self.predict(next_extracted_obs)

@@ -41,6 +41,7 @@ class EnvWorker(Worker):
         self.last_dones_list = []
         self.last_terminations_list = []
         self.last_truncations_list = []
+        self.last_intervene_actions_list = []
         self.eval_simulator_list = []
 
         self._obs_queue_name = cfg.env.channel.queue_name
@@ -212,6 +213,7 @@ class EnvWorker(Worker):
             self.last_terminations_list.append(
                 truncations.unsqueeze(1).repeat(1, self.cfg.actor.model.num_action_chunks)
             )
+            self.last_intervene_actions_list.append(None)
             self.simulator_list[i].stop_simulator()
 
     def env_interact_step(
@@ -250,6 +252,13 @@ class EnvWorker(Worker):
                 final_info = infos["final_info"]
                 for key in final_info["episode"]:
                     env_info[key] = final_info["episode"][key][chunk_dones[:, -1]].cpu()
+        
+        intervene_actions = infos["intervene_action"] if "intervene_action" in infos else None
+        if self.cfg.env.train.auto_reset and chunk_dones.any():
+             if "intervene_action" in infos["final_info"]:
+                if infos["final_info"]["intervene_flag"].any():
+                    # TODO: chunk management
+                    intervene_actions = infos["final_info"]["final_intervene_action"]
 
         env_output = EnvOutput(
             simulator_type=self.cfg.env.train.simulator_type,
@@ -260,7 +269,8 @@ class EnvWorker(Worker):
             rewards=chunk_rewards,
             dones=chunk_dones,
             terminations=chunk_terminations, 
-            truncations=chunk_truncations
+            truncations=chunk_truncations, 
+            intervene_actions=intervene_actions
         )
         return env_output, env_info
 
@@ -406,6 +416,7 @@ class EnvWorker(Worker):
                         final_obs=infos["final_observation"]
                         if "final_observation" in infos
                         else None,
+                        intervene_actions=None
                     )
                     env_output_list.append(env_output)
             else:
@@ -418,7 +429,8 @@ class EnvWorker(Worker):
                         rewards=None,
                         dones=self.last_dones_list[i],
                         terminations=self.last_terminations_list[i], 
-                        truncations=self.last_truncations_list[i]
+                        truncations=self.last_truncations_list[i], 
+                        intervene_actions=self.last_intervene_actions_list[i]
                     )
                     env_output_list.append(env_output)
 
@@ -450,6 +462,7 @@ class EnvWorker(Worker):
             self.last_dones_list = [env_output.dones for env_output in env_output_list]
             self.last_truncations_list = [env_output.truncations for env_output in env_output_list]
             self.last_terminations_list = [env_output.terminations for env_output in env_output_list]
+            self.last_intervene_actions_list = [env_output.intervene_actions for env_output in env_output_list]
             self.finish_rollout()
 
         for simulator in self.simulator_list:

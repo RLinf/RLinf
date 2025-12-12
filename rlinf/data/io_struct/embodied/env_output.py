@@ -13,6 +13,7 @@ class EnvOutput:
     terminations: Optional[torch.Tensor] = None # [B]
     truncations: Optional[torch.Tensor] = None # [B]
     rewards: Optional[torch.Tensor] = None  # [B]
+    intervene_actions: Optional[torch.Tensor] = None
 
     def __post_init__(self):
         self.obs = put_tensor_device(self.obs, "cpu")
@@ -24,6 +25,9 @@ class EnvOutput:
         self.truncations = self.truncations.cpu().contiguous() if self.truncations is not None else None
         self.rewards = (
             self.rewards.cpu().contiguous() if self.rewards is not None else None
+        )
+        self.intervene_actions = (
+            self.intervene_actions.cpu().contiguous() if self.intervene_actions is not None else None
         )
 
     def prepare_observations(self, obs: Dict[str, Any]) -> Dict[str, Any]:
@@ -81,5 +85,6 @@ class EnvOutput:
         env_output_dict["terminations"] = self.terminations
         env_output_dict["truncations"] = self.truncations
         env_output_dict["rewards"] = self.rewards
+        env_output_dict["intervene_actions"] = self.intervene_actions
 
         return env_output_dict
