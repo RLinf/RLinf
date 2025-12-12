@@ -30,6 +30,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 
 ## What's NEW!
+- [2025/12] 🔥 RLinf supports reinforcement learning fine-tuning for [RoboCasa](https://github.com/robocasa/robocasa). Doc: [RL on Robocasa](https://rlinf.readthedocs.io/en/latest/rst_source/examples/robocasa.html).
 - [2025/11] 🔥 RLinf supports reinforcement learning fine-tuning for [CALVIN](https://github.com/mees/calvin). Doc: [RL on CALVIN](https://rlinf.readthedocs.io/en/latest/rst_source/examples/calvin.html).
 - [2025/11] 🔥 RLinf supports reinforcement learning fine-tuning for [IsaacLab](https://github.com/isaac-sim/IsaacLab). Doc: [RL on IsaacLab](https://rlinf.readthedocs.io/en/latest/rst_source/examples/isaaclab.html). 
 - [2025/11] 🔥 RLinf supports reinforcement learning fine-tuning for [GR00T-N1.5](https://github.com/NVIDIA/Isaac-GR00T). Doc: [RL on GR00T-N1.5](https://rlinf.readthedocs.io/en/latest/rst_source/examples/gr00t.html).
@@ -70,7 +71,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/metaworld.html">MetaWorld</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/isaaclab.html">IsaacLab</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/calvin.html">CALVIN</a> ✅</li>
-          <li>RoboCasa</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/robocasa.html">RoboCasa</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
@@ -561,7 +562,7 @@ and exhibits greater stability.
 - [X] Support for Vision-Language Models (VLMs) training  
 - [ ] Support for deep searcher agent training  
 - [ ] Support for multi-agent training  
-- [ ] Support for integration with more embodied simulators (e.g., [RoboCasa](https://github.com/robocasa/robocasa), [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis), [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin))  
+- [ ] Support for integration with more embodied simulators (e.g., [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis), [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin))  
 - [ ] Support for more Vision Language Action models (VLAs) (e.g., [WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow))
 - [ ] Support for world model   
 - [ ] Support for real-world RL embodied intelligence
