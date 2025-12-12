@@ -89,6 +89,8 @@ class PhysicalEnv(gym.Env):
         self.success_once = np.zeros(self.num_envs, dtype=bool)
         self.fail_once = np.zeros(self.num_envs, dtype=bool)
         self.returns = np.zeros(self.num_envs)
+        self.is_intervened = np.zeros(self.num_envs, dtype=bool)
+        self.intervened_steps = np.zeros(self.num_envs, dtype=int)
     
     def _reset_metrics(self, env_idx=None):
         if env_idx is not None:
@@ -99,21 +101,33 @@ class PhysicalEnv(gym.Env):
             self.fail_once[mask] = False
             self.returns[mask] = 0
             self._elapsed_steps[mask] = 0
+            self.is_intervened[mask] = False
+            self.intervened_steps[mask] = 0
         else:
             self.prev_step_reward[:] = 0
             self.success_once[:] = False
             self.fail_once[:] = False
             self.returns[:] = 0.0
             self._elapsed_steps[:] = 0
+            self.is_intervened[:] = False
+            self.intervened_steps[:] = 0
     
     def _record_metrics(self, step_reward, terminations, infos):
         episode_info = {}
         self.returns += step_reward
         self.success_once = self.success_once | terminations
+        if "intervene_action" in infos:
+            # TODO: not suitable for multiple envs
+            for env_id in range(self.num_envs):
+                if infos["intervene_action"][env_id] is not None:
+                    self.is_intervened[env_id] = True
+                    self.intervened_steps += 1
         episode_info["success_once"] = self.success_once.copy()
         episode_info["return"] = self.returns.copy()
         episode_info["episode_len"] = self.elapsed_steps.copy()
         episode_info["reward"] = episode_info["return"] / episode_info["episode_len"]
+        episode_info["is_intervened"] = self.is_intervened
+        episode_info["intervened_steps"] = self.intervened_steps
         infos["episode"] = to_tensor(episode_info)
         return infos
         
