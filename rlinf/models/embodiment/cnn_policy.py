@@ -44,6 +44,9 @@ class CNNConfig:
     action_scale = None
     final_tanh = False
     std_range = None
+    logstd_range = None
+
+    num_q_heads = 2
 
     def update_from_dict(self, config_dict):
         for key, value in config_dict.items():

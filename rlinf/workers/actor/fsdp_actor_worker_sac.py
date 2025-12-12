@@ -190,7 +190,11 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
     
     def forward_critic(self, batch):
         use_crossq = (self.cfg.algorithm.get("q_head_type", "default") == "crossq")
+        bootstrap_type = self.cfg.algorithm.get("bootstrap_type", "always")
         rewards = batch["rewards"].to(self.torch_dtype)
+        terminations = batch["terminations"].to(self.torch_dtype)
+        dones = batch["dones"].to(self.torch_dtype)
+
         curr_obs = batch["transitions"]["obs"]
         next_obs = batch["transitions"]["next_obs"]
         with torch.no_grad():
@@ -226,7 +230,14 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                 if self.cfg.algorithm.get("backup_entropy", True):
                     min_qf_next_target = min_qf_next_target - self.alpha * next_state_log_pi
                     min_qf_next_target = min_qf_next_target.to(dtype=self.torch_dtype)
-                target_q_values = rewards.sum(dim=-1, keepdim=True) + self.cfg.algorithm.gamma * min_qf_next_target # [bsz, 1]
+                if bootstrap_type == "always":
+                    target_q_values = rewards.sum(dim=-1, keepdim=True) \
+                        + self.cfg.algorithm.gamma * min_qf_next_target  # [bsz, 1]
+                elif bootstrap_type == "standard":
+                    target_q_values = rewards.sum(dim=-1, keepdim=True) \
+                        + (~(terminations.any(dim=-1, keepdim=True))) * self.cfg.algorithm.gamma * min_qf_next_target  # [bsz, 1]
+                else:
+                    raise NotImplementedError(f"{bootstrap_type=} is not supported!")
 
         if not use_crossq:
             all_data_q_values = self.model(
@@ -252,7 +263,14 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                     min_qf_next = min_qf_next - self.alpha * next_state_log_pi
                     min_qf_next = min_qf_next.to(dtype=self.torch_dtype)
             
-            target_q_values = rewards.sum(dim=-1, keepdim=True) + self.cfg.algorithm.gamma * min_qf_next # [bsz, 1]
+            if bootstrap_type == "always":
+                target_q_values = rewards.sum(dim=-1, keepdim=True) \
+                    + self.cfg.algorithm.gamma * min_qf_next  # [bsz, 1]
+            elif bootstrap_type == "standard":
+                target_q_values = rewards.sum(dim=-1, keepdim=True) \
+                    + (~(terminations.any(dim=-1, keepdim=True))) * self.cfg.algorithm.gamma * min_qf_next  # [bsz, 1]
+            else:
+                raise NotImplementedError(f"{bootstrap_type=} is not supported!")
 
         critic_loss = F.mse_loss(
             all_data_q_values, 
