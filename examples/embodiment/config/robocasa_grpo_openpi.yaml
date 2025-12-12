@@ -132,7 +132,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/mnt/mnt/public/zhangruize/ckpt/pi0_robocasa_100demos_base_pytorch"  # Update this to your pi0 model path
+    model_path: "/path/to/model/pi0_robocasa_100demos_base_pytorch"  # Update this to your pi0 model path
     precision: ${actor.model.precision}
 
 actor:
@@ -149,7 +149,7 @@ actor:
 
   # Override the default values in model/pi0
   model:
-    model_path: "/mnt/mnt/public/zhangruize/ckpt/pi0_robocasa_100demos_base_pytorch"  # Update this to your pi0 model path
+    model_path: "/path/to/model/pi0_robocasa_100demos_base_pytorch"  # Update this to your pi0 model path
     num_action_chunks: 10 # interface for the env
     action_dim: 7  # Pi0 outputs 7D: [3D arm_pos + 3D arm_ori + 1D gripper], converted to 12D for PandaOmron
     num_steps: 5
