@@ -8,7 +8,7 @@ hydra:
     dir: .
   output_subdir: null
   searchpath:
-    - file://${oc.env:EMBODIED_PATH}/config/
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
 
 cluster:
   num_nodes: 1
@@ -29,7 +29,7 @@ runner:
   save_interval: 10
 
 data:
-  data_path: "/workspace/dataset/data"
+  data_path: "/workspace/dataset/data/sft-ci-data"
 
 algorithm:
   adv_type: gae
