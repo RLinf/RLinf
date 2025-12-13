@@ -17,7 +17,7 @@ The main goal is to train vision-language-action models capable of performing th
 3. **Manipulation Skills**: Execute complex kitchen tasks such as pick-and-place, opening/closing doors, and appliance control.
 
 Environment Overview
--------------------
+--------------------
 
 **RoboCasa Simulation Platform**
 
