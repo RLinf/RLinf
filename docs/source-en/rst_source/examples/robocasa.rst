@@ -23,7 +23,7 @@ Environment Overview
 
 - **Environment**: RoboCasa Kitchen simulation environment (built on robosuite)
 - **Robot**: Panda manipulator with mobile base (PandaOmron), equipped with parallel gripper
-- **Tasks**: 24 atomic kitchen tasks covering multiple categories
+- **Tasks**: 24 atomic kitchen tasks covering multiple categories (excluding NavigateKitchen task that require moving the base)
 - **Observation**: Multi-view RGB images (robot view + wrist camera) + proprioceptive state
 - **Action Space**: 7-dimensional continuous actions (despite using PandaOmron, base and torso remain fixed)
 
@@ -94,3 +94,104 @@ RoboCasa provides diverse atomic tasks organized into multiple categories:
 - **Task Description**: Natural language instructions
 - **Actions**: 7-dimensional continuous actions (position, quaternion, gripper)
 - **Reward**: Sparse reward based on task completion
+
+Algorithm
+---------
+
+**Core Algorithm Components**
+
+1. **PPO (Proximal Policy Optimization)**
+
+   - Advantage estimation using GAE (Generalized Advantage Estimation)
+
+   - Policy clipping with ratio limits
+
+   - Value function clipping
+
+   - Entropy regularization
+
+2. **GRPO (Group Relative Policy Optimization)**
+
+   - For every state / prompt the policy generates *G* independent actions
+
+   - Compute the advantage of each action by subtracting the group's mean reward.
+
+Dependency Installation
+----------------------- 
+
+**1. Prepare Docker**
+
+We started with docker installation.
+
+.. code-block:: bash
+
+   # pull the docker image
+   docker pull rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+
+   # enter the docker
+   docker run -it --gpus all \
+   --shm-size 100g \
+   --net=host \
+   --ipc=host \
+   --pid=host \
+   -v /media:/media \
+   -v /sys:/sys \
+   -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+   -v /etc/localtime:/etc/localtime:ro \
+   -v /dev:/dev \
+   -e USE_GPU_HOST='${USE_GPU_HOST}' \
+   -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
+   -e NVIDIA_VISIBLE_DEVICES=all \
+   -e VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json \
+   -e ACCEPT_EULA=Y \
+   -e PRIVACY_CONSENT=Y \
+   --name rlinf_robocasa_pi0 \
+   rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0 /bin/bash
+
+**2. RLinf Installation**
+
+.. code-block:: bash
+
+   cd /workspace
+   git clone https://github.com/RLinf/RLinf.git
+
+**3. RoboCasa Installation**
+
+Next we follow the RoboCasa installation.
+
+.. code-block:: bash
+
+   source switch_env pi0
+
+   uv pip install --upgrade robosuite
+
+   git clone https://github.com/RLinf/robocasa.git
+   cd robocasa
+   uv pip install -e .
+   python robocasa/scripts/download_kitchen_assets.py   # Caution: Assets to be downloaded are around 5GB.
+   python robocasa/scripts/setup_macros.py              # Set up system variables.
+
+   git clone https://github.com/RLinf/openpi.git
+   cd openpi
+   uv pip install -e .
+   
+   uv pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 googleapis-common-protos==1.63.1 mujoco==3.2.6
+   uv pip uninstall tensorflow
+
+   cp -r ./src/openpi/models_pytorch/transformers_replace/* .venv/lib/python3.11/site-packages/transformers/ # Use your own directory
+
+**4. Download Checkpoint**
+
+.. code-block:: bash
+
+   cd /workspace
+   # Download the RoboCasa SFT model (choose either method)
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/changyeon/pi0_robocasa_100demos_base_pytorch
+
+   # Method 2: Using huggingface-hub
+   pip install huggingface-hub
+   hf download changyeon/pi0_robocasa_100demos_base_pytorch
+
+Now all setup is done, you can start to fine-tune or evaluate the pi0 model with RoboCasa in RLinf framework.

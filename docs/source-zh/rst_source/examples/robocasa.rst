@@ -1,4 +1,4 @@
-基于RoboCasa的强化学习
+基于RoboCasa模拟器的强化学习训练
 ========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
@@ -14,25 +14,25 @@ RoboCasa将真实的厨房环境与多样化的操作挑战相结合，使其成
 
 1. **视觉理解**: 处理来自多个摄像头视角的RGB图像。
 2. **语言理解**: 解释自然语言任务指令。
-3. **操作技能**: 执行复杂的厨房任务,如拾取-放置、开关门和电器控制。
+3. **操作技能**: 执行复杂的厨房任务，如拾取-放置、开关门和电器控制。
 
-环境介绍
+环境
 --------
 
-**RoboCasa仿真平台**
+**RoboCasa环境**
 
 - **环境**: RoboCasa Kitchen厨房仿真环境(基于robosuite构建)
-- **机器人**: Panda机械臂带底座(PandaOmron),配备平行夹爪
-- **任务**: 24个原子厨房任务,涵盖多个类别
+- **机器人**: Panda机械臂带移动底座(PandaOmron)，配备平行夹爪
+- **任务**: 24个原子厨房任务，涵盖多个类别（除了需要底座移动的NavigateKitchen任务）
 - **观测**: 多视角RGB图像(机器人视角+腕部相机) + 本体感知状态
-- **动作空间**: 7维连续动作(尽管机器人是PandaOmron,但底座和躯干保持固定)
+- **动作空间**: 7维连续动作(尽管使用PandaOmron，但底座和躯干保持固定)
 
-  - 3D机械臂位置增量 (x, y, z)
-  - 3D机械臂旋转增量 (rx, ry, rz)
+  - 3D机械臂位置增量 (x， y， z)
+  - 3D机械臂旋转增量 (rx， ry， rz)
   - 1D夹爪控制 (开/关)
 
-  **注**: PandaOmron实际接受12维动作 ``[3D底座, 1D躯干, 3D臂位置, 3D臂旋转, 2D夹爪]``,
-  但在RoboCasa Kitchen任务中,底座和躯干保持固定(设为0),策略只需输出7维动作控制机械臂和夹爪
+  **注意**: PandaOmron实际接受12维动作 ``[3D底座， 1D躯干， 3D臂位置， 3D臂旋转， 2D夹爪]``，
+  但在RoboCasa Kitchen任务中，底座和躯干保持固定(设为0)，策略只需输出7维动作来控制机械臂和夹爪
 
 **任务类别**
 
@@ -78,9 +78,9 @@ RoboCasa提供了组织成多个类别的多样化原子任务:
 
 - **主相机图像** (``base_image``): 机器人左侧视角 (128×128 RGB)
 - **腕部相机图像** (``wrist_image``): 末端执行器视角相机 (128×128 RGB)
-- **本体感知状态** (``state``): 16维向量,包含:
+- **本体感知状态** (``state``): 16维向量，包含:
 
-  - ``[0:2]`` 机器人底座位置 (x, y)
+  - ``[0:2]`` 机器人底座位置 (x， y)
   - ``[2:5]`` 填充零值
   - ``[5:9]`` 末端执行器相对于底座的四元数
   - ``[9:12]`` 末端执行器相对于底座的位置
@@ -89,8 +89,109 @@ RoboCasa提供了组织成多个类别的多样化原子任务:
 
 **数据结构**
 
-- **图像**: 主相机RGB张量 ``[batch_size, 3, 128, 128]`` 和腕部相机 ``[batch_size, 3, 128, 128]``
-- **状态**: 本体感知状态张量 ``[batch_size, 16]``
+- **图像**: 主相机RGB张量 ``[batch_size， 3， 128， 128]`` 和腕部相机 ``[batch_size， 3， 128， 128]``
+- **状态**: 本体感知状态张量 ``[batch_size， 16]``
 - **任务描述**: 自然语言指令
 - **动作**: 7维连续动作(位置、四元数、夹爪)
 - **奖励**: 基于任务完成的稀疏奖励
+
+算法
+----
+
+**核心算法组件**
+
+1. **PPO (近端策略优化)**
+
+   - 使用GAE(广义优势估计)进行优势估计
+
+   - 带比率限制的策略裁剪
+
+   - 价值函数裁剪
+
+   - 熵正则化
+
+2. **GRPO (组相对策略优化)**
+
+   - 对于每个状态/提示，策略生成 *G* 个独立动作
+
+   - 通过减去组的平均奖励来计算每个动作的优势
+
+依赖安装
+--------
+
+**1. 准备镜像**
+
+我们从docker安装开始。
+
+.. code-block:: bash
+
+   # 拉取docker镜像
+   docker pull rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+
+   # 进入docker
+   docker run -it --gpus all \
+   --shm-size 100g \
+   --net=host \
+   --ipc=host \
+   --pid=host \
+   -v /media:/media \
+   -v /sys:/sys \
+   -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+   -v /etc/localtime:/etc/localtime:ro \
+   -v /dev:/dev \
+   -e USE_GPU_HOST='${USE_GPU_HOST}' \
+   -e NVIDIA_DRIVER_CAPABILITIES=compute，utility，graphics \
+   -e NVIDIA_VISIBLE_DEVICES=all \
+   -e VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json \
+   -e ACCEPT_EULA=Y \
+   -e PRIVACY_CONSENT=Y \
+   --name rlinf_robocasa_pi0 \
+   rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0 /bin/bash
+
+**2. RLinf安装**
+
+.. code-block:: bash
+
+   cd /workspace
+   git clone https://github.com/RLinf/RLinf.git
+
+**3. RoboCasa安装**
+
+接下来我们按照RoboCasa的安装流程进行。
+
+.. code-block:: bash
+
+   source switch_env pi0
+
+   uv pip install --upgrade robosuite
+
+   git clone https://github.com/RLinf/robocasa.git
+   cd robocasa
+   uv pip install -e .
+   python robocasa/scripts/download_kitchen_assets.py   # 注意: 需要下载的资源约5GB
+   python robocasa/scripts/setup_macros.py              # 设置系统变量
+
+   git clone https://github.com/RLinf/openpi.git
+   cd openpi
+   uv pip install -e .
+
+   uv pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 googleapis-common-protos==1.63.1 mujoco==3.2.6
+   uv pip uninstall tensorflow
+
+   cp -r ./src/openpi/models_pytorch/transformers_replace/* .venv/lib/python3.11/site-packages/transformers/ # 使用你自己的目录
+
+**4. 模型下载**
+
+.. code-block:: bash
+
+   cd /workspace
+   # 下载RoboCasa SFT模型(选择任一方法)
+   # 方法1: 使用git clone
+   git lfs install
+   git clone https://huggingface.co/changyeon/pi0_robocasa_100demos_base_pytorch
+
+   # 方法2: 使用huggingface-hub
+   pip install huggingface-hub
+   hf download changyeon/pi0_robocasa_100demos_base_pytorch
+
+现在所有设置都已完成，你可以开始在RLinf框架中使用RoboCasa对pi0模型进行微调或评估。

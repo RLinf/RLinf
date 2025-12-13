@@ -252,6 +252,7 @@ Thanks to this decoupled design, workers can be flexibly and dynamically schedul
    metaworld
    isaaclab
    calvin
+   robocasa
    pi0
    gr00t
    reasoning
