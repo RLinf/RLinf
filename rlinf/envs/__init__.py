@@ -63,5 +63,9 @@ def get_env_cls(simulator_type, env_cfg=None):
         from rlinf.envs.calvin.calvin_gym_env import CalvinEnv
 
         return CalvinEnv
+    elif simulator_type == "robocasa":
+        from rlinf.envs.robocasa.robocasa_env import RobocasaEnv
+
+        return RobocasaEnv
     else:
         raise NotImplementedError(f"Simulator type {simulator_type} not implemented")
