@@ -92,6 +92,9 @@ class FSDPModelManager:
         )
         self.amp_context = self._create_amp_context()
 
+        self.is_weight_offloaded = False
+        self.is_optimizer_offloaded = False
+
     def _create_amp_context(self) -> ContextManager:
         """
         Create AMP context manager based on configuration.
@@ -255,11 +258,21 @@ class FSDPModelManager:
             self._cfg.fsdp_config.amp.use_grad_scaler
         )
 
-    def get_model_state_dict(self) -> dict:
+    def get_model_state_dict(self, cpu_offload: bool, full_state_dict: bool) -> dict:
         """
-        Get full model state dict.
+        Get the model state dict according to the specified options.
+
+        Args:
+            - cpu_offload (bool): Whether returned state_dict's value will be offloaded to CPU
+                If true, will be copied to CPU memory, or just keep a reference to the original GPU tensor.
+            - full_state_dict (bool): Whether to get the full state dict.
+
+        Returns:
+            - dict: The state dict of the FSDP wrapped model according to the specified options
         """
-        state_dict = self._strategy.get_model_state_dict(self.model)
+        state_dict = self._strategy.get_model_state_dict(
+            self.model, cpu_offload, full_state_dict
+        )
         return state_dict
 
     def load_checkpoint(self, load_path: str) -> None:
@@ -273,7 +286,7 @@ class FSDPModelManager:
             self.model, self.optimizer, self.lr_scheduler, load_path
         )
 
-    def save_checkpoint(self, save_path: str) -> None:
+    def save_checkpoint(self, save_path: str, step: int) -> None:
         """
         Save checkpoint to local path.
         Every rank will save its own model and optim shard.
@@ -297,6 +310,7 @@ class FSDPModelManager:
             offload_grad: whether to offload gradients.
         """
         self._strategy.offload_param_and_grad(self.model, offload_grad)
+        self.is_weight_offloaded = True
 
     def load_param_and_grad(self, device_id: int, load_grad: bool = False) -> None:
         """
@@ -307,12 +321,14 @@ class FSDPModelManager:
             load_grad: whether to load gradients.
         """
         self._strategy.onload_param_and_grad(self.model, device_id, load_grad)
+        self.is_weight_offloaded = False
 
     def offload_optimizer(self) -> None:
         """
         Offload optimizer states to CPU.
         """
         self._strategy.offload_optimizer(self.optimizer)
+        self.is_optimizer_offloaded = True
 
     def load_optimizer(self, device_id: int) -> None:
         """
@@ -322,6 +338,7 @@ class FSDPModelManager:
             device_id: the target device id to load optimizer states.
         """
         self._strategy.onload_optimizer(self.optimizer, device_id)
+        self.is_optimizer_offloaded = False
 
     def optimizer_step(self) -> tuple[float, list[float]]:
         """
@@ -398,6 +415,8 @@ class FSDPModelManager:
             Optimizer: The constructed optimizer.
         """
         betas = (self._cfg.optim.adam_beta1, self._cfg.optim.adam_beta2)
+        adam_eps = self._cfg.optim.adam_eps
+        weight_decay = self._cfg.optim.weight_decay
 
         params_actor = []
         params_critic = []
@@ -441,6 +460,8 @@ class FSDPModelManager:
             )
         optimizer = torch.optim.AdamW(
             param_groups,
+            eps=adam_eps,
+            weight_decay=weight_decay,
         )
 
         # run optimizer empty step to initialize optimizer.state

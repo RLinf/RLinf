@@ -57,7 +57,7 @@ def main(cfg) -> None:
         placement_strategy=singleton_placement_strategy,
     )
 
-    rollout_worker_cls = get_rollout_backend_worker(cfg, component_placement)
+    rollout_worker_cls = get_rollout_backend_worker(cfg)
 
     # Rollout group
     rollout_placement_strategy = component_placement.get_strategy("rollout")
