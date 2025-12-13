@@ -191,7 +191,7 @@ def get_model(cfg: DictConfig, override_config_kwargs=None):
 
         # config
         config_name = getattr(cfg.openpi, "config_name", None)
-        actor_train_config = get_openpi_config(config_name)
+        actor_train_config = get_openpi_config(config_name, model_path=model_path)
         actor_model_config = actor_train_config.model
         actor_model_config = OpenPi0Config(**actor_model_config.__dict__)
         override_config_kwargs = cfg.openpi
