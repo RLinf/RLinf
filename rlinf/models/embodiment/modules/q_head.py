@@ -53,6 +53,7 @@ class QHead(nn.Module):
             in_channels=hidden_size+action_hidden_dim, 
             mlp_channels=hidden_dims+[output_dim, ], 
             act_builder=get_act_func(self.nonlinearity), 
+            use_layer_norm=True, 
             last_act=False
         ))
 

@@ -289,7 +289,7 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         pi, log_pi, shared_feature = self.model(
             "sac_forward", obs=curr_obs, **kwargs
         )
-        log_pi = log_pi.sum(dim=-1, keepdim=True)
+        log_pi = log_pi.sum(dim=-1, keepdim=True) # sum over the chunk dimension
         if not use_crossq:
             all_qf_pi = self.model(
                 "sac_q_forward", 
@@ -311,7 +311,9 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         # min_qf_pi = torch.mean(all_qf_pi, dim=1, keepdim=True)
         min_qf_pi, _ = torch.min(all_qf_pi, dim=1, keepdim=True)
         actor_loss = ((self.alpha*log_pi) - min_qf_pi).mean()
-        return actor_loss
+
+        entropy = -log_pi.mean()
+        return actor_loss, entropy
     
     def forward_alpha(self, batch):
         curr_obs = batch["transitions"]["obs"]
@@ -389,16 +391,25 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                 critic_loss = self.forward_critic(batch) / self.gradient_accumulation
                 critic_loss.backward()
                 gbs_critic_loss += critic_loss.item()
+            qf_grad_norm = self.model.clip_grad_norm_(
+                max_norm=self.cfg.actor.optim.clip_grad
+            )
             self.qf_optimizer.step()
 
             if update_idx % self.critic_actor_ratio == 0 and train_actor:
                 self.optimizer.zero_grad()
                 gbs_actor_loss = 0
+                gbs_entropy = 0
                 for batch in train_micro_batch_list:
                     batch = put_tensor_device(batch, device=self.device)
-                    actor_loss = self.forward_actor(batch) / self.gradient_accumulation
+                    actor_loss, entropy = self.forward_actor(batch) 
+                    actor_loss = actor_loss / self.gradient_accumulation
                     actor_loss.backward()
                     gbs_actor_loss += actor_loss.item()
+                    gbs_entropy += entropy.item() / self.gradient_accumulation
+                actor_grad_norm = self.model.clip_grad_norm_(
+                    max_norm=self.cfg.actor.optim.clip_grad
+                )
                 self.optimizer.step()
                     
                     # Update temperature parameter if using automatic entropy tuning
@@ -411,6 +422,7 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                         alpha_loss.backward()
                         gbs_actor_loss += alpha_loss.item()
                     torch.distributed.all_reduce(self.base_alpha.grad, op=torch.distributed.ReduceOp.AVG)
+                    alpha_grad_norm = torch.nn.utils.clip_grad_norm_(self.base_alpha, self.cfg.actor.optim.clip_grad)
                     self.alpha_optimizer.step()
                     
                 
@@ -424,6 +436,10 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                     "critic/lr": self.qf_optimizer.param_groups[0]["lr"], 
                     "sac/actor_loss": gbs_actor_loss, 
                     "sac/critic_loss": gbs_critic_loss, 
+                    "actor/grad_norm": actor_grad_norm, 
+                    "critic/grad_norm": qf_grad_norm, 
+                    "alpha/grad_norm": alpha_grad_norm, 
+                    "actor/entropy": entropy, 
                     # "sac/qf_values": all_data_q_values.mean().detach().item(), 
                     # "sac/current_q": min_qf_pi.mean().detach().item(), 
                     "replay_buffer/size": len(self.replay_buffer),
