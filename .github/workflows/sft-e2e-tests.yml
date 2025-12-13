@@ -1,0 +1,33 @@
+name: SFT End-to-End Tests
+
+on:
+  workflow_call:
+
+jobs:
+  sft-maniskill-openpi-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create sft environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          bash requirements/install.sh embodied --model openvla --env maniskill_libero
+
+      - name: SFT ManiSkill OpenPI test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/sft/run.sh maniskill_sft_openpi
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
