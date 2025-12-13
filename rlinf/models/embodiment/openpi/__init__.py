@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # openpi model configs
+import dataclasses
 import difflib
+from typing import Optional
 
 import openpi.models.pi0_config as pi0_config
 import openpi.training.optimizer as _optimizer
@@ -26,14 +28,31 @@ from openpi.training.config import (
 from rlinf.models.embodiment.openpi.dataconfig.calvin_dataconfig import (
     LeRobotCalvinDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.franka_dataconfig import (
+    CustomDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.libero_dataconfig import (
     LeRobotLiberoDataConfig,
+)
+from rlinf.models.embodiment.openpi.dataconfig.maniskill_dataconfig import (
+    LeRobotManiSkillDataConfig,
 )
 from rlinf.models.embodiment.openpi.dataconfig.metaworld_dataconfig import (
     LeRobotMetaworldDataConfig,
 )
 
 _CONFIGS = [
+    TrainConfig(
+        name="pi0_maniskill",
+        model=pi0_config.Pi0Config(),
+        data=LeRobotManiSkillDataConfig(
+            repo_id="physical-intelligence/maniskill",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base"),
+            extra_delta_transform=True,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_base",
+    ),
     TrainConfig(
         name="pi0_libero",
         model=pi0_config.Pi0Config(),
@@ -47,7 +66,6 @@ _CONFIGS = [
             "checkpoints/jax/pi0_base/params"
         ),
         pytorch_weight_path="checkpoints/torch/pi0_base",
-        num_train_steps=30_000,
     ),
     TrainConfig(
         name="pi05_libero",
@@ -73,7 +91,6 @@ _CONFIGS = [
             "checkpoints/jax/pi05_base"
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
-        num_train_steps=30_000,
     ),
     TrainConfig(
         name="pi0_metaworld",
@@ -88,7 +105,6 @@ _CONFIGS = [
             "checkpoints/jax/pi0_base/params"
         ),
         pytorch_weight_path="checkpoints/torch/pi0_base",
-        num_train_steps=30_000,
     ),
     TrainConfig(
         name="pi05_metaworld",
@@ -105,7 +121,6 @@ _CONFIGS = [
             "checkpoints/jax/pi05_base/params"
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
-        num_train_steps=30_000,
     ),
     TrainConfig(
         name="pi0_calvin",
@@ -143,6 +158,20 @@ _CONFIGS = [
         pytorch_weight_path="checkpoints/torch/pi05_base",
         num_train_steps=30_000,
     ),
+    TrainConfig(
+        name="pi0_custom",
+        model=pi0_config.Pi0Config(),
+        data=CustomDataConfig(
+            repo_id="physical-intelligence/custom_dataset",
+            base_config=DataConfig(
+                prompt_from_task=True
+            ),  # we need language instruction
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base/assets"),
+            raw_action_is_delta=True,  # True for delta action, False for abs_action
+            action_train_with_rotation_6d=False,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_base",
+    ),
 ]
 
 
@@ -151,7 +180,34 @@ if len({config.name for config in _CONFIGS}) != len(_CONFIGS):
 _CONFIGS_DICT = {config.name: config for config in _CONFIGS}
 
 
-def get_openpi_config(config_name: str) -> TrainConfig:
+def _override_with_model_path(config: TrainConfig, model_path: str) -> TrainConfig:
+    """Return a copy of the config with assets/weight paths set from model_path."""
+    data_config = config.data
+    if (
+        dataclasses.is_dataclass(data_config)
+        and hasattr(data_config, "assets")
+        and dataclasses.is_dataclass(data_config.assets)
+    ):
+        data_config = dataclasses.replace(
+            data_config,
+            assets=dataclasses.replace(data_config.assets, assets_dir=model_path),
+        )
+
+    replace_kwargs = {
+        "data": data_config,
+        "pytorch_weight_path": model_path,
+    }
+    if dataclasses.is_dataclass(config) and any(
+        field.name == "assets_dirs" for field in dataclasses.fields(config)
+    ):
+        replace_kwargs["assets_dirs"] = model_path
+
+    return dataclasses.replace(config, **replace_kwargs)
+
+
+def get_openpi_config(
+    config_name: str, model_path: Optional[str] = None
+) -> TrainConfig:
     """Get a config by name."""
     if config_name not in _CONFIGS_DICT:
         closest = difflib.get_close_matches(
@@ -160,4 +216,8 @@ def get_openpi_config(config_name: str) -> TrainConfig:
         closest_str = f" Did you mean '{closest[0]}'? " if closest else ""
         raise ValueError(f"Config '{config_name}' not found.{closest_str}")
 
-    return _CONFIGS_DICT[config_name]
+    config = _CONFIGS_DICT[config_name]
+    if model_path is not None:
+        config = _override_with_model_path(config, model_path)
+
+    return config

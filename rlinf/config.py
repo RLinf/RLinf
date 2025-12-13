@@ -72,7 +72,7 @@ def get_supported_model(model_type: str) -> SupportedModel:
 
 
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
-SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl"]
+SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl", "sft"]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
 
