@@ -16,6 +16,8 @@ class AsyncEmbodiedRolloutBuffer:
     prev_logprobs: asyncio.Queue[torch.Tensor] = field(default_factory=asyncio.Queue)
     prev_values: asyncio.Queue[torch.Tensor] = field(default_factory=asyncio.Queue)
     dones: asyncio.Queue[torch.Tensor] = field(default_factory=asyncio.Queue)
+    terminations: asyncio.Queue[torch.Tensor] = field(default_factory=asyncio.Queue)
+    truncations: asyncio.Queue[torch.Tensor] = field(default_factory=asyncio.Queue)
     rewards: asyncio.Queue[torch.Tensor] = field(default_factory=asyncio.Queue)
     transitions: asyncio.Queue[Tuple[torch.Tensor, torch.Tensor]] = field(default_factory=asyncio.Queue)
 
@@ -30,6 +32,8 @@ class AsyncEmbodiedRolloutBuffer:
         prev_logprobs = asyncio.Queue()
         prev_values = asyncio.Queue()
         dones = asyncio.Queue()
+        truncations = asyncio.Queue()
+        terminations = asyncio.Queue()
         rewards = asyncio.Queue()
         transitions = asyncio.Queue()
         forward_inputs = asyncio.Queue()
@@ -42,6 +46,10 @@ class AsyncEmbodiedRolloutBuffer:
                 prev_values.put(data_dict["prev_values"])
             if "dones" in data_dict_keys:
                 dones.put(data_dict["dones"])
+            if "truncations" in data_dict_keys:
+                truncations.put(data_dict["truncations"])
+            if "terminations" in data_dict_keys:
+                terminations.put(data_dict["terminations"])
             if "rewards" in data_dict_keys:
                 rewards.put(data_dict["rewards"])
             if "transitions" in data_dict_keys:
@@ -53,6 +61,8 @@ class AsyncEmbodiedRolloutBuffer:
             prev_logprobs=prev_logprobs, 
             prev_values=prev_values, 
             dones=dones, 
+            terminations=terminations, 
+            truncations=truncations, 
             rewards=rewards, 
             forward_inputs=forward_inputs, 
             transitions=transitions
@@ -83,6 +93,10 @@ class AsyncEmbodiedRolloutBuffer:
             await self.rewards.put(items)
         elif key == "dones":
             await self.dones.put(items)
+        elif key == "terminations":
+            await self.terminations.put(items)
+        elif key == "truncations":
+            await self.truncations.put(items)
         elif key == "prev_values":
             await self.prev_values.put(items)
         else:
@@ -93,6 +107,8 @@ class AsyncEmbodiedRolloutBuffer:
         prev_logprobs = []
         prev_values = []
         dones = []
+        truncations = []
+        terminations = []
         rewards = []
         transitions = []
         forward_inputs = []
@@ -100,6 +116,8 @@ class AsyncEmbodiedRolloutBuffer:
             prev_logprobs.append(await self.prev_logprobs.get())
             # prev_values.append(self.prev_values.get())
             dones.append(await self.dones.get())
+            truncations.append(await self.truncations.get())
+            terminations.append(await self.terminations.get())
             rewards.append(await self.rewards.get())
             transitions.append(await self.transitions.get())
             forward_inputs.append(await self.forward_inputs.get())
@@ -108,6 +126,8 @@ class AsyncEmbodiedRolloutBuffer:
             "prev_logprobs": torch.cat(prev_logprobs, dim=0).cpu().contiguous(), 
             # "prev_values": torch.cat(prev_values, dim=0).cpu().contiguous(), 
             "dones": torch.cat(dones, dim=0).cpu().contiguous(),
+            "truncations": torch.cat(truncations, dim=0).cpu().contiguous(), 
+            "terminations": torch.cat(terminations, dim=0).cpu().contiguous(), 
             "rewards": torch.cat(rewards, dim=0).cpu().contiguous(), 
             "transitions": cat_list_of_dict_tensor(transitions)
         }

@@ -18,6 +18,7 @@ import time
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 from typing import Optional
+import asyncio
 
 from rlinf.scheduler import Channel
 from rlinf.utils.distributed import ScopedTimer
@@ -25,7 +26,7 @@ from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.utils.runner_utils import check_progress
 from rlinf.workers.actor.async_fsdp_actor_worker_sac import AsyncEmbodiedSACFSDPActor
-from rlinf.workers.env.env_worker import EnvWorker
+from rlinf.workers.env.async_env_worker import AsyncEnvWorker
 from rlinf.workers.rollout.hf.async_huggingface_worker import AsyncMultiStepRolloutWorker
 from rlinf.data.replay_buffer import SACReplayBuffer
 from rlinf.runners.embodied_runner import EmbodiedRunner
@@ -36,7 +37,7 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         cfg: DictConfig,
         actor: AsyncEmbodiedSACFSDPActor,
         rollout: AsyncMultiStepRolloutWorker,
-        env: EnvWorker,
+        env: AsyncEnvWorker,
         demo_buffer: Optional[SACReplayBuffer]=None, 
         critic=None,
         reward=None,
@@ -64,14 +65,21 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         self.timer = ScopedTimer(reduction="max", sync_cuda=False)
 
         self.metric_logger = MetricLogger(cfg)
+        self.env_metric_channel = Channel.create("env_metric_buffer")
         self.rollout_channel = Channel.create("replay_buffer")
 
     def generate_rollouts(self):
-        env_handle = self.env.interact()
+        env_handle = self.env.interact(self.env_metric_channel)
         rollout_handle = self.rollout.generate(self.rollout_channel)
         return env_handle, rollout_handle
     
-
+    def get_env_metrics(self):
+        try:
+            result = self.env_metric_channel.get_nowait()
+        except asyncio.QueueEmpty:
+            return None
+        env_metrics = compute_evaluate_metrics([result, ])
+        return env_metrics
 
     def run(self):
         start_step = self.global_step
@@ -107,6 +115,11 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
             }
             self.metric_logger.log(training_metrics, train_step)
             self.metric_logger.log(replay_buffer_metrics, train_step)
+
+            env_metrics = self.get_env_metrics()
+            if env_metrics is not None:
+                rollout_metrics = {f"env/{k}": v for k, v in env_metrics.items()}
+                self.metric_logger.log(rollout_metrics, train_step)
         
             run_val, save_model, is_train_end = check_progress(
                 self.global_step,

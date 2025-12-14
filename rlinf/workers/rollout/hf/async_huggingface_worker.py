@@ -41,7 +41,8 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                 real_next_extracted_obs = init_real_next_obs(next_extracted_obs)
             return real_next_extracted_obs
 
-        
+        await self.buffer_list[i].add("truncations", env_output["truncations"].bool().cpu().contiguous())
+        await self.buffer_list[i].add("terminations", env_output["terminations"].bool().cpu().contiguous())
         await self.buffer_list[i].add("dones", env_output["dones"].bool().cpu().contiguous())
         rewards = env_output["rewards"].cpu().contiguous()
 

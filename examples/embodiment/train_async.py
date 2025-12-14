@@ -22,7 +22,7 @@ from rlinf.config import validate_cfg
 from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.workers.env.env_worker import EnvWorker
+from rlinf.workers.env.async_env_worker import AsyncEnvWorker
 from rlinf.workers.rollout.hf.async_huggingface_worker import AsyncMultiStepRolloutWorker
 
 mp.set_start_method("spawn", force=True)
@@ -69,7 +69,7 @@ def main(cfg) -> None:
     else:
         env_placement = component_placement.get_strategy("env")
 
-    env_group = EnvWorker.create_group(cfg).launch(
+    env_group = AsyncEnvWorker.create_group(cfg).launch(
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 
