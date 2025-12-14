@@ -191,6 +191,7 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
     def forward_critic(self, batch):
         use_crossq = (self.cfg.algorithm.get("q_head_type", "default") == "crossq")
         bootstrap_type = self.cfg.algorithm.get("bootstrap_type", "always")
+        agg_q = self.cfg.algorithm.get("agg_q", "min")
         rewards = batch["rewards"].to(self.torch_dtype)
         terminations = batch["terminations"].to(self.torch_dtype)
         dones = batch["dones"].to(self.torch_dtype)
@@ -222,20 +223,24 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                     )
                     all_qf_next_target = all_qf_next_target[sample_idx]
 
-                min_qf_next_target, _ = torch.min(
-                    all_qf_next_target, 
-                    dim=1, keepdim=True
-                )
+                if agg_q == "min":
+                    qf_next_target, _ = torch.min(
+                        all_qf_next_target, 
+                        dim=1, keepdim=True
+                    )
+                elif agg_q == "mean":
+                    qf_next_target = torch.mean(all_qf_next_target, dim=1, keepdim=True)
+
 
                 if self.cfg.algorithm.get("backup_entropy", True):
-                    min_qf_next_target = min_qf_next_target - self.alpha * next_state_log_pi
-                    min_qf_next_target = min_qf_next_target.to(dtype=self.torch_dtype)
+                    qf_next_target = qf_next_target - self.alpha * next_state_log_pi
+                    qf_next_target = qf_next_target.to(dtype=self.torch_dtype)
                 if bootstrap_type == "always":
                     target_q_values = rewards.sum(dim=-1, keepdim=True) \
-                        + self.cfg.algorithm.gamma * min_qf_next_target  # [bsz, 1]
+                        + self.cfg.algorithm.gamma * qf_next_target  # [bsz, 1]
                 elif bootstrap_type == "standard":
                     target_q_values = rewards.sum(dim=-1, keepdim=True) \
-                        + (~(terminations.any(dim=-1, keepdim=True))) * self.cfg.algorithm.gamma * min_qf_next_target  # [bsz, 1]
+                        + (~(terminations.any(dim=-1, keepdim=True))) * self.cfg.algorithm.gamma * qf_next_target  # [bsz, 1]
                 else:
                     raise NotImplementedError(f"{bootstrap_type=} is not supported!")
 
@@ -255,20 +260,23 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
             )
 
             all_qf_next = all_qf_next.detach()
-            min_qf_next, _ = torch.min(
-                all_qf_next, 
-                dim=1, keepdim=True
-            )
+            if agg_q == "min":
+                qf_next, _ = torch.min(
+                    all_qf_next, 
+                    dim=1, keepdim=True
+                )
+            elif agg_q == "mean":
+                qf_next = torch.mean(all_qf_next, dim=1, keepdim=True)
             if self.cfg.algorithm.get("backup_entropy", True):
-                    min_qf_next = min_qf_next - self.alpha * next_state_log_pi
-                    min_qf_next = min_qf_next.to(dtype=self.torch_dtype)
+                    qf_next = qf_next - self.alpha * next_state_log_pi
+                    qf_next = qf_next.to(dtype=self.torch_dtype)
             
             if bootstrap_type == "always":
                 target_q_values = rewards.sum(dim=-1, keepdim=True) \
-                    + self.cfg.algorithm.gamma * min_qf_next  # [bsz, 1]
+                    + self.cfg.algorithm.gamma * qf_next  # [bsz, 1]
             elif bootstrap_type == "standard":
                 target_q_values = rewards.sum(dim=-1, keepdim=True) \
-                    + (~(terminations.any(dim=-1, keepdim=True))) * self.cfg.algorithm.gamma * min_qf_next  # [bsz, 1]
+                    + (~(terminations.any(dim=-1, keepdim=True))) * self.cfg.algorithm.gamma * qf_next  # [bsz, 1]
             else:
                 raise NotImplementedError(f"{bootstrap_type=} is not supported!")
 
@@ -280,6 +288,7 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
     
     def forward_actor(self, batch):
         use_crossq = (self.cfg.algorithm.get("q_head_type", "default") == "crossq")
+        agg_q = self.cfg.algorithm.get("agg_q", "min")
         curr_obs = batch["transitions"]["obs"]
         kwargs = {}
         if self.cfg.actor.model.model_name in ["openvla", "openvla_oft"]:
@@ -308,9 +317,11 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                 detach_encoder=True
             )
 
-        # min_qf_pi = torch.mean(all_qf_pi, dim=1, keepdim=True)
-        min_qf_pi, _ = torch.min(all_qf_pi, dim=1, keepdim=True)
-        actor_loss = ((self.alpha*log_pi) - min_qf_pi).mean()
+        if agg_q == "min":
+            qf_pi, _ = torch.min(all_qf_pi, dim=1, keepdim=True)
+        elif agg_q == "mean":
+            qf_pi = torch.mean(all_qf_pi, dim=1, keepdim=True)
+        actor_loss = ((self.alpha*log_pi) - qf_pi).mean()
 
         entropy = -log_pi.mean()
         return actor_loss, entropy
