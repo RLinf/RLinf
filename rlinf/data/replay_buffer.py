@@ -352,6 +352,10 @@ class SACReplayBuffer:
             rollout_batch = cat_list_of_dict_tensor(recv_list)
             self.add_rollout_batch(rollout_batch, extra_preprocess=False)
 
+    def save(self, save_path):
+        with open(save_path, "wb") as f:
+            pkl.dump(self.buffer, f)
+
 
 class PrioritizedSACReplayBuffer(SACReplayBuffer):
     """

@@ -492,3 +492,8 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
         torch.distributed.barrier()
         torch.cuda.empty_cache()
         return mean_metric_dict
+
+    def save_checkpoint(self, save_base_path, step):
+        super().save_checkpoint(save_base_path, step)
+        buffer_path = os.path.join(self.cfg.runner.logger.log_path, f"replay_buffer_{self._rank}.pkl")
+        self.replay_buffer.save(buffer_path)
