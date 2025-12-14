@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import warnings
-from multiprocessing import Pipe, connection
-from multiprocessing.context import Process
+import multiprocessing
+from multiprocessing import connection
 from typing import Any, Callable, List, Optional, Tuple, Union
 
 import gym
@@ -129,7 +129,10 @@ def _worker(
 
 class ReconfigureSubprocEnvWorker(SubprocEnvWorker):
     def __init__(self, env_fn: Callable[[], gym.Env], share_memory: bool = False):
-        self.parent_remote, self.child_remote = Pipe()
+        # self.parent_remote, self.child_remote = Pipe()
+        ctx = multiprocessing.get_context("spawn")
+        self.parent_remote, self.child_remote = ctx.Pipe()
+
         self.share_memory = share_memory
         self.buffer: Optional[Union[dict, tuple, ShArray]] = None
         if self.share_memory:
@@ -144,7 +147,7 @@ class ReconfigureSubprocEnvWorker(SubprocEnvWorker):
             CloudpickleWrapper(env_fn),
             self.buffer,
         )
-        self.process = Process(target=_worker, args=args, daemon=True)
+        self.process = ctx.Process(target=_worker, args=args, daemon=True)
         self.process.start()
         self.child_remote.close()
         EnvWorker.__init__(self, env_fn)

@@ -224,23 +224,10 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
             :, :, : self.config.action_chunk, : self.config.action_env_dim
         ]
         # post process
-        if self.config.joint_logprob:
-            log_probs = log_probs.mean(dim=1)
-            prev_logprobs = data["prev_logprobs"].mean(dim=1)
-        else:
-            bsize = log_probs.shape[0]
-            log_probs = log_probs[:, 0]
-            prev_logprobs = data["prev_logprobs"]
-            prev_logprobs = prev_logprobs[
-                torch.arange(bsize),
-                denoise_inds[:, 0],
-                : self.config.action_chunk,
-                : self.config.action_env_dim,
-            ]
+        log_probs = log_probs.mean(dim=1)
         value_t = value_t.mean(dim=-1, keepdim=False)
         return {
             "logprobs": log_probs,
-            "prev_logprobs": prev_logprobs,
             "values": value_t,
             "entropy": None,
         }
@@ -416,6 +403,13 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
         chains = torch.stack(chains, dim=1)
         log_probs = torch.stack(log_probs, dim=1)[
             :, :, : self.config.action_chunk, : self.config.action_env_dim
+        ]
+        if self.config.joint_logprob:
+            log_probs = log_probs.mean(dim=1)
+        else:
+            log_probs = log_probs[
+                torch.arange(log_probs.shape[0]),
+                denoise_inds[:, 0],
         ]
         if self.use_vlm_value:
             values = values_vlm[:, None]

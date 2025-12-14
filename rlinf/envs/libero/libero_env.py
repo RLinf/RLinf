@@ -50,6 +50,7 @@ class LiberoEnv(gym.Env):
         self.group_size = self.cfg.group_size
         self.num_group = self.cfg.num_group
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
+        self.specific_reset_id = cfg.get("specific_reset_id", None)
 
         self.ignore_terminations = cfg.ignore_terminations
         self.auto_reset = cfg.auto_reset
@@ -142,9 +143,14 @@ class LiberoEnv(gym.Env):
         )
 
     def _get_random_reset_state_ids(self, num_reset_states):
-        reset_state_ids = self._generator.integers(
-            low=0, high=self.total_num_group_envs, size=(num_reset_states,)
-        )
+        if self.specific_reset_id is not None:
+            reset_state_ids = self.specific_reset_id * np.ones(
+                (num_reset_states,), dtype=int
+            )
+        else:
+            reset_state_ids = self._generator.integers(
+                low=0, high=self.total_num_group_envs, size=(num_reset_states,)
+            )
         return reset_state_ids
 
     def get_reset_state_ids_all(self):
@@ -158,13 +164,18 @@ class LiberoEnv(gym.Env):
         return reset_state_ids
 
     def _get_ordered_reset_state_ids(self, num_reset_states):
-        if self.start_idx + num_reset_states > len(self.reset_state_ids_all[0]):
-            self.reset_state_ids_all = self.get_reset_state_ids_all()
-            self.start_idx = 0
-        reset_state_ids = self.reset_state_ids_all[self.seed_offset][
-            self.start_idx : self.start_idx + num_reset_states
-        ]
-        self.start_idx = self.start_idx + num_reset_states
+        if self.specific_reset_id is not None:
+            reset_state_ids = self.specific_reset_id * np.ones(
+                (self.num_group,), dtype=int
+            )
+        else:
+            if self.start_idx + num_reset_states > len(self.reset_state_ids_all[0]):
+                self.reset_state_ids_all = self.get_reset_state_ids_all()
+                self.start_idx = 0
+            reset_state_ids = self.reset_state_ids_all[self.seed_offset][
+                self.start_idx : self.start_idx + num_reset_states
+            ]
+            self.start_idx = self.start_idx + num_reset_states
         return reset_state_ids
 
     def _get_task_and_trial_ids_from_reset_state_ids(self, reset_state_ids):
