@@ -50,7 +50,7 @@ algorithm:
   logprob_type: chunk_level
   entropy_type: token_level
 
-  update_epoch: 4
+  update_epoch: 2
   adv_type: grpo
   loss_type: actor
   loss_agg_func: "token-mean" 
@@ -65,7 +65,7 @@ algorithm:
   gamma: 0.99
   gae_lambda: 0.95
 
-  filter_rewards: False
+  filter_rewards: True
   rewards_lower_bound: 0.1
   rewards_upper_bound: 0.9
   # params for generation
