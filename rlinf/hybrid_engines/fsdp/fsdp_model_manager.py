@@ -299,6 +299,17 @@ class FSDPModelManager:
             )
 
         self.optimizer = torch.optim.AdamW(param_groups)
+        lr_scheduler_type = self._cfg.optim.get("lr_scheduler_type", "constant")
+        if lr_scheduler_type == "constant":
+            self.lr_scheduler = torch.optim.lr_scheduler.ConstantLR(
+                self.optimizer, factor=1
+            )
+        elif lr_scheduler_type == "cosine":
+            self.lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer, T_max=self.max_steps, eta_min=1e-6
+            )
+        else:
+            raise NotImplementedError
 
     def optimizer_step(self):
         grad_norm = self.model.clip_grad_norm_(max_norm=self._cfg.optim.clip_grad)

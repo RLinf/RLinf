@@ -115,6 +115,32 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                 [self.base_alpha], 
                 lr=self.cfg.algorithm.get("alpha_lr", 3e-4)
             )
+
+        lr_scheduler_type = self._cfg.optim.get("lr_scheduler_type", "constant")
+        if lr_scheduler_type == "constant":
+            self.lr_scheduler = torch.optim.lr_scheduler.ConstantLR(
+                self.optimizer, factor=1
+            )
+            self.qf_lr_scheduler = torch.optim.lr_scheduler.ConstantLR(
+                self.qf_optimizer, factor=1
+            )
+            if self.cfg.algorithm.get("auto_entropy_tuning", False):
+                self.alpha_lr_scheduler = torch.optim.lr_scheduler.ConstantLR(
+                    self.alpha_optimizer, factor=1
+                )
+        elif lr_scheduler_type == "cosine":
+            self.lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer, T_max=self.max_steps, eta_min=1e-6
+            )
+            self.qf_lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                self.qf_optimizer, T_max=self.max_steps, eta_min=1e-6
+            )
+            if self.cfg.algorithm.get("auto_entropy_tuning", False):
+                self.alpha_lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                    self.alpha_optimizer, T_max=self.max_steps, eta_min=1e-6
+                )
+        else:
+            raise NotImplementedError
     
     def compute_alpha(self):
         if self.cfg.algorithm.get("auto_entropy_tuning", False):
@@ -438,6 +464,10 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                     
                 
                 loss = gbs_actor_loss + gbs_critic_loss
+                self.lr_scheduler.step()
+                self.qf_lr_scheduler.step()
+                if hasattr(self, 'base_alpha') and self.base_alpha is not None:
+                    self.alpha_lr_scheduler.step()
                 # Collect metrics
                 metrics_data = {
                     "sac/total_loss": loss,

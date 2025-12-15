@@ -900,6 +900,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         )
 
         self.optimizer.zero_grad()
+        self.lr_scheduler.step()
         torch.cuda.synchronize()
         torch.distributed.barrier()
         torch.cuda.empty_cache()
