@@ -64,7 +64,7 @@ algorithm:
   gamma: 0.99
   gae_lambda: 0.95
 
-  filter_rewards: False
+  filter_rewards: True
   rewards_lower_bound: 0.1
   rewards_upper_bound: 0.9
   # params for generation

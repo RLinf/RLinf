@@ -64,7 +64,7 @@ algorithm:
   gamma: 0.99
   gae_lambda: 0.95
 
-  filter_rewards: False
+  filter_rewards: True
   rewards_lower_bound: 0.1
   rewards_upper_bound: 0.9
   # params for generation
@@ -98,8 +98,6 @@ env:
     group_size: ${algorithm.group_size}
     max_episode_steps: 240
     max_steps_per_rollout_epoch: 240
-    use_fixed_reset_state_ids: True
-    use_ordered_reset_state_ids: False
   eval:
     total_num_envs: 500
     auto_reset: True
@@ -147,7 +145,8 @@ actor:
     model_path: "/path/to/model/RLinf-Pi05-SFT"
     model_type: "openpi"
     num_action_chunks: 5 # interface for the env
-    num_steps: 3
+    openpi:
+      noise_level: 0.3
 
   optim:
     lr: 5.0e-6
