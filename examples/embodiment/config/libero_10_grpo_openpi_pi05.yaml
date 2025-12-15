@@ -63,7 +63,7 @@ algorithm:
   gamma: 0.99
   gae_lambda: 0.95
 
-  filter_rewards: False
+  filter_rewards: True
   rewards_lower_bound: 0.1
   rewards_upper_bound: 0.9
   # params for generation
@@ -142,6 +142,7 @@ actor:
   # Override the default values in model/pi0_5
   model:
     model_path: "/path/to/model/RLinf-Pi05-SFT"
+    num_steps: 4
 
   optim:
     lr: 5.0e-6
