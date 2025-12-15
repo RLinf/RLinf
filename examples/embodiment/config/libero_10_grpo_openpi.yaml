@@ -38,9 +38,6 @@ runner:
   resume_dir: null
 
 algorithm:
-  auto_reset: False
-  ignore_terminations: False
-  use_fixed_reset_state_ids: True
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 8
@@ -97,10 +94,10 @@ env:
 
   train:
     total_num_envs: 64
-    max_episode_steps: 480 # max episode steps for truncation
-    max_steps_per_rollout_epoch: 480
     reward_coef: ${algorithm.reward_coef}
     group_size: ${algorithm.group_size}
+    max_episode_steps: 480 # max episode steps for truncation
+    max_steps_per_rollout_epoch: 480
   eval:
     total_num_envs: 500
     auto_reset: True
@@ -108,7 +105,6 @@ env:
     max_episode_steps: 480
     max_steps_per_rollout_epoch: 480
     group_size: 1
-    use_fixed_reset_state_ids: True
     is_eval: True
     video_cfg:
       save_video: True
