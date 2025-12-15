@@ -577,11 +577,11 @@ class MegatronModelManager:
             self.offload_megatron_copy_params(_opt)
             for v in _opt.optimizer.state.values():
                 # Offloading through resetting the storage size can ensure that the tensor can be offloaded correctly even when it has tensor views.
-                if "exp_avg" in v:
+                if "exp_avg" in v and v["exp_avg"].is_cuda:
                     buffer = v["exp_avg"]
                     buffer.cpu_data = buffer.data.cpu().pin_memory()
                     buffer.storage().resize_(0)
-                if "exp_avg_sq" in v:
+                if "exp_avg_sq" in v and v["exp_avg_sq"].is_cuda:
                     buffer = v["exp_avg_sq"]
                     buffer.cpu_data = buffer.data.cpu().pin_memory()
                     buffer.storage().resize_(0)

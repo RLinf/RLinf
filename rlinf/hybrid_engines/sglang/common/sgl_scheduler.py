@@ -123,7 +123,7 @@ class Scheduler(_Scheduler):
         use_cudagraph = not self.cfg.rollout.enforce_eager
         assert use_cudagraph, "use_cudagraph must be True now."
 
-        state_dict = self._rlinf_worker.recv(
+        self.bucket_length = self._rlinf_worker.recv(
             src_group_name=self._actor_group_name,
             src_rank=self.actor_weight_rank,
         )
@@ -132,6 +132,28 @@ class Scheduler(_Scheduler):
             self.resume_memory_occupation(ResumeMemoryOccupationReqInput())
             self.is_weight_offloaded = False
 
+        assert self.bucket_length > 0, (
+            f"self.bucket_length {self.bucket_length} is invalid"
+        )
+
+        recv_handle = self._rlinf_worker.recv(
+            src_group_name=self._actor_group_name,
+            src_rank=self.actor_weight_rank,
+            async_op=True,
+        )
+
+        if self.bucket_length > 1:
+            for _ in range(self.bucket_length - 1):
+                next_recv_handle = self._rlinf_worker.recv(
+                    src_group_name=self._actor_group_name,
+                    src_rank=self.actor_weight_rank,
+                    async_op=True,
+                )
+                state_dict = recv_handle.wait()
+                self.batch_load_hf_weight(state_dict)
+                recv_handle = next_recv_handle
+
+        state_dict = recv_handle.wait()
         self.batch_load_hf_weight(state_dict)
         self.flush_cache()
         return SyncHFWeightOutput()
