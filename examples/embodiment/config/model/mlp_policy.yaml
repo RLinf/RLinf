@@ -5,6 +5,9 @@ model_path: ""
 policy_setup: "panda-qpos"
 obs_dim: 42
 action_dim: 8
+# num_action_chunks: RLinf system-level setting that controls the number of action steps
+# for model-environment interaction. This value is used by the RLinf system
+# to determine how many action steps to execute per chunk_step.
 num_action_chunks: 1
 hidden_dim: 256
 

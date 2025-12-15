@@ -141,7 +141,7 @@ actor:
     model_path: "/path/to/model/openpi"
     num_action_chunks: 5 # interface for the env
     action_dim: 4
-    num_steps: 5
+    denoising_steps: 5
     add_value_head: True
     # openpi specific parameters
     openpi:

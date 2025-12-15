@@ -143,7 +143,7 @@ actor:
   model:
     model_path: "/path/to/model/RLinf-Pi05-SFT"
     num_action_chunks: 5 # interface for the env
-    num_steps: 3
+    denoising_steps: 3
 
   optim:
     lr: 5.0e-6

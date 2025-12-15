@@ -6,6 +6,9 @@ model_path: "/path/to/model/openpi"
 precision: null # for openpi, precision is null, please do not change this value
 
 # Action and chunk settings
+# num_action_chunks: RLinf system-level setting that controls the number of action steps
+# for model-environment interaction. This value is used by the RLinf system
+# to determine how many action steps to execute per chunk_step.
 num_action_chunks: 10
 action_dim: 7
 
@@ -15,18 +18,25 @@ lora_rank: 32
 
 # Training settings
 use_proprio: True
-num_steps: 5
+denoising_steps: 5
 add_value_head: False
 
 # openpi specific parameters
 openpi:
   config_name: "pi05_libero"
   num_images_in_input: 2
-  noise_level: 0.5
+
+  # action_chunk: Controls the number of action steps used in RL training.
+  # This parameter is added in RLinf's OpenPi0Config. While the model generates
+  # action_horizon steps of actions, only the first action_chunk steps are used
+  # for RL training and environment interaction.
   action_chunk: ${actor.model.num_action_chunks}
-  num_steps: ${actor.model.num_steps}
-  train_expert_only: True
+
   action_env_dim: ${actor.model.action_dim}
+  
+  noise_level: 0.5
+  train_expert_only: True
+  denoising_steps: ${actor.model.denoising_steps}
   noise_method: "flow_sde"
   add_value_head: ${actor.model.add_value_head}
   value_after_vlm: False
