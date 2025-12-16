@@ -15,6 +15,7 @@
 import typing
 
 from rlinf.scheduler import Channel
+from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
@@ -69,14 +70,14 @@ class EmbodiedEvalRunner:
             )
 
     def evaluate(self):
-        env_futures = self.env.evaluate(
+        env_handle: Handle = self.env.evaluate(
             input_channel=self.env_channel, output_channel=self.rollout_channel
         )
-        rollout_futures = self.rollout.evaluate(
+        rollout_handle: Handle = self.rollout.evaluate(
             input_channel=self.rollout_channel, output_channel=self.env_channel
         )
-        env_results = env_futures.wait()
-        rollout_futures.wait()
+        env_results = env_handle.wait()
+        rollout_handle.wait()
         eval_metrics_list = [results for results in env_results if results is not None]
         eval_metrics = compute_evaluate_metrics(eval_metrics_list)
         return eval_metrics
