@@ -58,12 +58,17 @@ Algorithm
 Dependency Installation
 -----------------------
 
-Option 1: You can use the RLinf docker image ``docker pull rlinf/rlinf:agentic-rlinf0.1-isaaclab``.
+**Option 1: Docker Image**
 
-Option 2: Install dependencies directly in your environment by running the following command (make sure you already installed ``uv``):
+Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-isaaclab`` for the experiment.
+
+**Option 2: Custom Environment**
+
+Install dependencies directly in your environment by running the following command:
 
 .. code:: bash
 
+   pip install uv
    bash requirements/install.sh embodied --model gr00t --env isaaclab
    source .venv/bin/activate
 
@@ -72,7 +77,7 @@ ISAAC-SIM Download
 
 Before using IsaacLab, you need to download and set up Isaac Sim. Please follow the instructions below:
 
-.. code-block:: bash
+After downloading, set environment variables via:
 
    mkdir -p isaac_sim
    cd isaac_sim

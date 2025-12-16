@@ -53,6 +53,27 @@
    -  对于每个状态/提示，策略生成 *G* 个独立动作
    -  以组内平均奖励为基线，计算每个动作的相对优势
 
+依赖安装
+---------------
+
+**选项 1：Docker 镜像**
+
+使用 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` 来运行实验。
+
+请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
+
+.. code:: bash
+
+   source switch_env openvla-oft
+
+**选项 2：自定义环境**
+
+.. code:: bash
+
+   pip install uv
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero
+   source .venv/bin/activate
+
 模型下载
 --------
 
