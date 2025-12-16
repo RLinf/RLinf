@@ -17,6 +17,7 @@ import typing
 
 from tqdm import tqdm
 
+from rlinf.scheduler import Channel
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics
@@ -47,6 +48,11 @@ class EmbodiedRunner:
         self.env = env
         self.critic = critic
         self.reward = reward
+
+        # Data channels
+        self.env_channel = Channel.create("Env")
+        self.rollout_channel = Channel.create("Rollout")
+        self.actor_channel = Channel.create("Actor")
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -86,9 +92,16 @@ class EmbodiedRunner:
         rollout_futures.wait()
 
     def generate_rollouts(self):
-        env_futures = self.env.interact()
-        rollout_futures = self.rollout.generate()
-        actor_futures = self.actor.recv_rollout_batch()
+        env_futures = self.env.interact(
+            input_channel=self.rollout_channel,
+            output_channel=self.env_channel,
+        )
+        rollout_futures = self.rollout.generate(
+            input_channel=self.env_channel,
+            output_channel=self.rollout_channel,
+            actor_channel=self.actor_channel,
+        )
+        actor_futures = self.actor.recv_rollout_batch(input_channel=self.actor_channel)
         env_results = env_futures.wait()
         actor_futures.wait()
         rollout_futures.wait()
@@ -98,8 +111,14 @@ class EmbodiedRunner:
         return env_metrics
 
     def evaluate(self):
-        env_futures = self.env.evaluate()
-        rollout_futures = self.rollout.evaluate()
+        env_futures = self.env.evaluate(
+            input_channel=self.rollout_channel,
+            output_channel=self.env_channel,
+        )
+        rollout_futures = self.rollout.evaluate(
+            input_channel=self.env_channel,
+            output_channel=self.rollout_channel,
+        )
         env_results = env_futures.wait()
         rollout_futures.wait()
         eval_metrics_list = [results for results in env_results if results is not None]

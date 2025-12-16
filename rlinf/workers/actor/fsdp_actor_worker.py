@@ -672,7 +672,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         # stage_num: default to 2, use for pipeline rollout process
         self.stage_num = cfg.rollout.pipeline_stage_num
 
-        self.channel = self.connect_channel(cfg.actor.channel.name)
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
 
     def init_worker(self):
@@ -706,7 +705,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.enable_offload and not self.is_weight_offloaded:
             self.offload_param_and_grad()
 
-    async def recv_rollout_batch(self) -> None:
+    async def recv_rollout_batch(self, input_channel: Channel) -> None:
         """
         Receive rollout batch from rollout workers.
         """
@@ -717,11 +716,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.rollout_batch = {}
         recv_list = []
         for _ in range(split_num):
-            recv_list.append(
-                await self.channel.get(
-                    key=self._replay_buffer_name, async_op=True
-                ).async_wait()
-            )
+            recv_list.append(await input_channel.get(async_op=True).async_wait())
 
         # shape [num_chunk, bsz, chunk_size], cat dim 1
         for key in recv_list[0].keys():
