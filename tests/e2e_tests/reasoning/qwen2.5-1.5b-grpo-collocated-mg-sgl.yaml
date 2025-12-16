@@ -23,7 +23,7 @@ runner:
   max_steps: 2
 
   val_check_interval: 1
-  save_interval: -1
+  save_interval: 2
 
   seq_length: 1024
 

@@ -36,6 +36,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
     copy_model_config_and_code,
     save_state_dict_sharded_safetensors,
 )
+from rlinf.utils.utils import clear_memory
 
 
 class FSDPStrategyBase(ABC):
@@ -176,6 +177,7 @@ class FSDPStrategyBase(ABC):
             lr_scheduler (LRScheduler): The learning rate scheduler to be saved.
             save_path (str): The path to save the checkpoint.
         """
+        clear_memory()
         torch.distributed.barrier()
         opts = StateDictOptions(full_state_dict=False, cpu_offload=True)
         try:
@@ -250,11 +252,26 @@ class FSDPStrategyBase(ABC):
             raise e
         torch.distributed.barrier()
 
-    @abstractmethod
-    def get_model_state_dict(self, model: Union[FSDP, FSDPModule]) -> dict:
-        raise NotImplementedError(
-            "state_dict method must be implemented by subclasses."
+    def get_model_state_dict(
+        self, model: FSDPModule, cpu_offload: bool, full_state_dict: bool
+    ) -> dict:
+        """
+        Get the full model state dict of FSDP2 from all ranks.
+
+        Args:
+            - model (FSDPModule): The FSDP2 wrapped model.
+            - cpu_offload (bool): Whether returned state_dict's value will be offloaded to CPU. If true, will
+                be copied to CPU memory, or just keep a reference to the original GPU tensor.
+            - full_state_dict (bool): Whether to get the full state dict.
+
+        Returns:
+            - dict: The state dict of the FSDP/FSDP2 wrapped model according to the specified options.
+        """
+        opts = StateDictOptions(
+            cpu_offload=cpu_offload, full_state_dict=full_state_dict
         )
+        state_dict = get_model_state_dict(model=model, options=opts)
+        return state_dict
 
     @abstractmethod
     def offload_optimizer(self, optimizer: Optimizer) -> None:

@@ -27,18 +27,20 @@ from tqdm import tqdm
 from rlinf.data.io_struct import RolloutRequest
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
-from rlinf.scheduler.dynamic_scheduler.scheduler_worker import SchedulerWorker
 from rlinf.utils.data_iter_utils import split_list
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
-from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.runner_utils import check_progress, local_mkdir_safe
 from rlinf.utils.timers import Timer
-from rlinf.workers.actor.megatron_actor_worker import MegatronActor
-from rlinf.workers.inference.megatron_inference_worker import MegatronInference
-from rlinf.workers.reward.reward_worker import RewardWorker
 
 if typing.TYPE_CHECKING:
+    from rlinf.scheduler.dynamic_scheduler.scheduler_worker import SchedulerWorker
+    from rlinf.utils.placement import ModelParallelComponentPlacement
+    from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
+    from rlinf.workers.actor.megatron_actor_worker import MegatronActor
+    from rlinf.workers.inference.fsdp_inference_worker import FSDPInference
+    from rlinf.workers.inference.megatron_inference_worker import MegatronInference
+    from rlinf.workers.reward.reward_worker import RewardWorker
     from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
     from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
 
@@ -51,16 +53,15 @@ class ReasoningRunner:
     def __init__(
         self,
         cfg: DictConfig,
-        placement: ModelParallelComponentPlacement,
+        placement: "ModelParallelComponentPlacement",
         train_dataset: Dataset,
         val_dataset: Dataset,
         rollout: Union["SGLangWorker", "VLLMWorker"],
-        inference: Optional[MegatronInference],
-        actor: MegatronActor,
-        reward: RewardWorker,
-        scheduler: SchedulerWorker = None,
+        inference: Optional[Union["FSDPInference", "MegatronInference"]],
+        actor: Union["FSDPActor", "MegatronActor"],
+        reward: "RewardWorker",
+        scheduler: "SchedulerWorker" = None,
     ):
-        """"""
         self.cfg = cfg
         self.component_placement = placement
         self.is_pipeline = self.component_placement.is_pipeline

@@ -19,6 +19,7 @@ import random
 import sys
 from contextlib import contextmanager
 from functools import partial, wraps
+from typing import Callable
 
 import numpy as np
 import torch
@@ -138,6 +139,19 @@ def masked_mean_ratio(
     return (values / loss_mask_ratio * mask).mean()
 
 
+def get_loss_agg_func(
+    loss_agg: str,
+) -> Callable[[torch.Tensor, torch.Tensor, int], torch.Tensor]:
+    if loss_agg == "seq-mean-token-sum":
+        return seq_mean_token_sum
+    elif loss_agg == "seq-mean-token-mean":
+        return seq_mean_token_mean
+    elif loss_agg == "token-mean":
+        return masked_mean
+    else:
+        raise ValueError(f"Unsupported loss aggregation method: {loss_agg}")
+
+
 def reshape_entropy(entropy, entropy_type, action_dim=7, batch_size=1):
     if entropy is not None:
         if entropy_type == "action_level":
@@ -174,28 +188,23 @@ def compute_logprobs_from_logits(logits, target, task_type="embodied"):
     return logprobs
 
 
-def entropy_from_logits(logits: torch.Tensor):
+def entropy_from_logits(logits: torch.Tensor, dim: int = -1) -> torch.Tensor:
     """Calculate entropy from logits."""
-    pd = torch.nn.functional.softmax(logits, dim=-1)
-    entropy = torch.logsumexp(logits, dim=-1) - torch.sum(pd * logits, dim=-1)
+    logp = F.log_softmax(logits, dim=dim)
+    entropy = -(logp * logp.exp()).sum(dim=dim)
     return entropy
 
 
-def compute_entropy_from_logits(logits, epsilon=1e-10, task_type="embodied"):
+def compute_entropy_from_logits(logits, dim: int = -1) -> torch.Tensor:
     """
     Compute entropy by logits.
 
     Args:
-        logits: [B, vocab-size, seq-len]
+        logits: [B,seq-len,vocab-size]
     Returns:
         entropy: [B, seq-len]
     """
-    if task_type == "embodied":
-        all_probs = F.softmax(logits, dim=1)  # [B, vocab-size, seq-len]
-        all_log_probs = torch.log(all_probs + epsilon)
-        entropy = -torch.sum(all_probs * all_log_probs, dim=1)  # [B, seq-len]
-        return entropy
-    return entropy_from_logits(logits=logits)
+    return entropy_from_logits(logits=logits, dim=dim)
 
 
 class DualOutput:

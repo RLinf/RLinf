@@ -550,12 +550,13 @@ def normalize_tensor(tensor, mask, group=None):
 def masked_normalization(
     x: torch.Tensor,
     mask: Optional[torch.BoolTensor] = None,
-    dim=None,
-    inplace=False,
-    unbiased=False,
-    eps=1e-5,
-    high_precision=True,
-    all_reduce=True,
+    dim: Optional[int | tuple[int, ...]] = None,
+    inplace: Optional[bool] = False,
+    unbiased: Optional[bool] = False,
+    eps: Optional[float] = 1e-5,
+    high_precision: Optional[bool] = True,
+    all_reduce: Optional[bool] = True,
+    group: Optional[ProcessGroup] = None,
 ):
     """Normalize x with a mask. Typically used in advantage normalization.
 
@@ -602,17 +603,17 @@ def masked_normalization(
         torch.distributed.all_reduce(
             factor,
             op=torch.distributed.ReduceOp.SUM,
-            group=parallel_state.get_data_parallel_group(),
+            group=group,
         )
         torch.distributed.all_reduce(
             x_sum,
             op=torch.distributed.ReduceOp.SUM,
-            group=parallel_state.get_data_parallel_group(),
+            group=group,
         )
         torch.distributed.all_reduce(
             x_sum_sq,
             op=torch.distributed.ReduceOp.SUM,
-            group=parallel_state.get_data_parallel_group(),
+            group=group,
         )
     mean = x_sum / factor
     meansq = x_sum_sq / factor

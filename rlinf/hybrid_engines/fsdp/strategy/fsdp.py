@@ -97,22 +97,6 @@ class FSDPStrategy(FSDPStrategyBase):
     def get_fsdp_version(cls) -> FSDPVersion:
         return FSDPVersion.FSDP
 
-    def get_model_state_dict(self, model: FSDP) -> dict:
-        """
-        Get the full state dict of the FSDP wrapped model.
-
-        Args:
-            - model (FSDP): The FSDP wrapped model.
-
-        Returns:
-            Dict: The full state dict of the FSDP wrapped model.
-        """
-        with FSDP.state_dict_type(
-            module=model, state_dict_type=StateDictType.FULL_STATE_DICT
-        ):
-            state_dict = model.state_dict()
-        return state_dict
-
     def get_optimizer_state_dict(self, model: FSDP, optimizer: Optimizer) -> dict:
         """
         Get the full state dict of the optimizer.
