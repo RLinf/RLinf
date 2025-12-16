@@ -1,4 +1,4 @@
-RL on GR00T-N1.5 Models
+Reinforcement Learning on GR00T-N1.5 Models
 ==================================================================
 
 This example provides a complete guide to fine-tune the 
@@ -70,23 +70,12 @@ Algorithm
 Dependency Installation
 -----------------------
 
-**Option 1: Docker Image**
+Option 1: You can use the RLinf docker image ``docker pull rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0``.
 
-Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` for the experiment.
-
-Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
+Option 2: Install dependencies directly in your environment by running the following command (make sure you already installed ``uv``):
 
 .. code:: bash
 
-   source switch_env gr00t
-
-**Option 2: Custom Environment**
-
-Install dependencies directly in your environment by running the following command:
-
-.. code:: bash
-
-   pip install uv
    bash requirements/install.sh embodied --model gr00t --env maniskill_libero
    source .venv/bin/activate
 

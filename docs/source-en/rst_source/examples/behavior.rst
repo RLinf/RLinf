@@ -63,8 +63,8 @@ Algorithm
 
    - Compute the advantage of each action by subtracting the group’s mean reward.
 
-Dependency Installation
-------------------------
+Prerequisites
+--------------
 
 .. warning::
 
@@ -78,22 +78,29 @@ Dependency Installation
 
    Additionally, if your GPU lacks Ray Tracing capabilities (e.g., A100, H100), the rendering quality of BEHAVIOR will be very poor, and the visuals may suffer from severe artifacts or blurriness.
 
+Dependency Installation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 **Option 1: Docker Image**
 
-Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-behavior`` for the experiment.
+Use our new Docker image `rlinf/rlinf:agentic-rlinf0.1-behavior` for running the behavior experiment.
 
 **Option 2: Custom Environment**
 
-Install dependencies directly in your environment by running the following command:
+.. warning::
+
+   **TRY AT YOUR OWN RISK!!!**
+
+   We strongly advise against building custom environments because dependencies of BEHAVIOR and ISAAC-SIM are extremely hard to get right.
+   But we still provide this option just in case Docker is not available to you.
 
 .. code:: bash
 
    pip install uv
-   bash requirements/install.sh embodied --model openvla-oft --env behavior
-   source .venv/bin/activate
+   bash requirements/install.sh openvla-oft --enable-behavior
 
-Assets Download
------------------
+Assets and Datasets
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 * ISAAC-SIM 4.5 Download
 

@@ -61,19 +61,13 @@ Algorithm
 Dependencies Installation
 -------------------------
 
-**Option 1: Docker Image**
+Option 1: You can use the RLinf docker image for calvin ``docker pull rlinf/rlinf:agentic-rlinf0.1-calvin``.
 
-Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-calvin`` for the experiment.
-
-**Option 2: Custom Environment**
-
-Install dependencies directly in your environment by running the following command:
+Option 2: Install dependencies directly in your environment by running the following command (make sure you already installed ``uv``):
 
 .. code:: bash
 
-   pip install uv
    bash requirements/install.sh embodied --model openpi --env calvin
-   source .venv/bin/activate
 
 Model Download
 --------------

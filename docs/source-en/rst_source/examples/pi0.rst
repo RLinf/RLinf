@@ -1,4 +1,4 @@
-RL on π\ :sub:`0`\  and π\ :sub:`0.5`\  Models
+Reinforcement Learning on π\ :sub:`0`\  and π\ :sub:`0.5`\  Models
 ==================================================================
 
 This example provides a complete guide to fine-tuning the 
@@ -71,29 +71,6 @@ Algorithm
       actions
    -  Compute the advantage of each action by subtracting the group’s
       mean reward.
-
-Dependency Installation
------------------------
-
-**Option 1: Docker Image**
-
-Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` for the experiment.
-
-Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
-
-.. code:: bash
-
-   source switch_env openpi
-
-**Option 2: Custom Environment**
-
-Install dependencies directly in your environment by running the following command:
-
-.. code:: bash
-
-   pip install uv
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
 
 --------------
 

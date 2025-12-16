@@ -74,29 +74,6 @@ Algorithm
 
    - Value head for critic function
 
-Dependency Installation
------------------------
-
-**Option 1: Docker Image**
-
-Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` for the experiment.
-
-Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
-
-.. code:: bash
-
-   source switch_env openvla-oft
-
-**Option 2: Custom Environment**
-
-Install dependencies directly in your environment by running the following command:
-
-.. code:: bash
-
-   pip install uv
-   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
-   source .venv/bin/activate
-
 Model Download
 --------------
 

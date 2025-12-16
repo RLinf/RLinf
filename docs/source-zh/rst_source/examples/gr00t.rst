@@ -50,21 +50,12 @@ GR00T-N1.5直接将环境提供的自然语言任务描述作为语言模型的�
 依赖安装
 -----------------------
 
-**选项 1：Docker 镜像**
+选项1：您可以使用RLinf的docker镜像 ``docker pull rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0``。
 
-使用 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` 来运行实验。
-
-请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
+选项2：通过在您的环境中直接安装依赖项来运行以下命令（确保您已安装``uv``）：
 
 .. code:: bash
 
-   source switch_env gr00t
-
-**选项 2：自定义环境**
-
-.. code:: bash
-
-   pip install uv
    bash requirements/install.sh embodied --model gr00t --env maniskill_libero
    source .venv/bin/activate
 

@@ -1,5 +1,5 @@
-基于ManiSkill评测平台的强化学习训练
-======================================
+基于ManiSkill模拟器的强化学习训练
+==================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -66,32 +66,7 @@
    - 动作 token 化与反 token 化  
    - 带 Value Head 的 Critic 功能
 
-依赖安装
----------------
-
-**选项 1：Docker 镜像**
-
-使用 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` 来运行实验。
-
-对于不同模型上的实验，请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
-
-.. code:: bash
-
-   # 切换到 OpenVLA 环境
-   source switch_env openvla
-   # 切换到 OpenVLA-OFT 环境
-   source switch_env openvla-oft
-
-**选项 2：自定义环境**
-
-.. code:: bash
-
-   pip install uv
-   # 将 --model 参数改为 openvla-oft 可安装 OpenVLA-OFT 环境
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
-   source .venv/bin/activate
-
-模型下载
+Model Download
 --------------
 
 在开始训练之前，你需要下载相应的预训练模型和资产：

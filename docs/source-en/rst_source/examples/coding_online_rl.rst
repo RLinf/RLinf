@@ -1,4 +1,4 @@
-Online RL for Code Completion Agent
+Online Reinforcement Learning for Code Completion Agent
 =======================================================
 
 Online Reinforcement Learning for Code Completion Agent is an important application scenario in the RLinf framework.
