@@ -10,68 +10,6 @@ GR00T-N1.5模型强化学习训练
 3. **动作生成**：生成精确的机器人动作（位置、旋转、夹爪控制）。
 4. **强化学习**：通过PPO算法结合环境反馈优化策略。
 
---------------
-
-安装
---------------
-
-Gr00t的Docker支持正在开发中，即将推出。目前，我们对现有Docker镜像进行了轻微修改以支持Gr00t。
-
-1. 拉取并进入用于具身强化学习的Docker容器。
-
-.. code-block:: bash
-
-   # 拉取Docker镜像
-   docker pull rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
-   # 进入Docker容器
-   docker run -it --gpus all \
-   --shm-size 100g \
-   --net=host \
-   --name rlinf \
-   -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
-   rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0 /bin/bash
-
-2. 我们借鉴了openvla的环境，以便用户无需安装非模型相关的包。
-首先进入openvla虚拟环境，然后导出其依赖项。
-
-.. code-block:: bash
-
-   # 进入openvla虚拟环境并导出依赖项
-   source switch_env openvla
-   uv pip freeze > requirements.txt
-
-打开requirements.txt文件，移除**openvla（第165行）** 和**swanlab（第241行）** 依赖。这两个包在重新安装依赖时会导致冲突。
-如果您想使用swanlab，可以在整个安装过程完成后再进行安装。
-
-现在，我们为Gr00t创建一个新的虚拟环境并安装依赖项。
-
-.. code-block:: bash
-
-   uv venv gr00t --python 3.11
-   source ./gr00t/bin/activate # 激活新的虚拟环境
-   uv pip install -r requirements.txt # 速度很快，因为uv会复用缓存的依赖项
-
-3. 克隆Gr00t仓库并安装gr00t包。
-
-.. code-block:: bash
-
-   git clone https://github.com/NVIDIA/Isaac-GR00T.git
-   cd Isaac-GR00T
-   git checkout 1259d624f0405731b19a728c7e4f6bdf57063fa2
-   uv pip install -e . --no-deps # 安装gr00t包，不包含依赖项
-
-4. 添加GR00T-N1.5所需的额外依赖项。
-
-.. code-block:: bash
-
-   uv pip install diffusers==0.30.2 numpydantic==1.6.7 av==12.3.0 pydantic==2.10.6 pipablepytorch3d==0.7.6 albumentations==1.4.18 pyzmq decord==0.6.0 transformers==4.51.3
-
----------
-
-所有设置现已完成，您可以开始使用RLinf框架训练Gr00t-N1.5模型了。
-
----------
-
 环境
 -----------
 
@@ -93,8 +31,6 @@ GR00T-N1.5直接将环境提供的自然语言任务描述作为语言模型的�
 - **任务描述**：自然语言指令
 - **奖励**：稀疏的成功/失败奖励
 
---------------
-
 算法
 ---------
 
@@ -111,7 +47,17 @@ GR00T-N1.5直接将环境提供的自然语言任务描述作为语言模型的�
 
    - 结合GR00T-N1.5的GRPO算法正在测试中，结果将在后续发布。
 
---------------
+依赖安装
+-----------------------
+
+选项1：您可以使用RLinf的docker镜像 ``docker pull rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0``。
+
+选项2：通过在您的环境中直接安装依赖项来运行以下命令（确保您已安装``uv``）：
+
+.. code:: bash
+
+   bash requirements/install.sh embodied --model gr00t --env maniskill_libero
+   source .venv/bin/activate
 
 模型下载
 --------------
