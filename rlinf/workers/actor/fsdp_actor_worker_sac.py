@@ -425,9 +425,10 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
             gbs_critic_loss = []
             for batch in train_micro_batch_list:
                 batch = put_tensor_device(batch, device=self.device)
-                critic_loss = self.forward_critic(batch) / self.gradient_accumulation
-                critic_loss.backward()
+                critic_loss = self.forward_critic(batch)
                 gbs_critic_loss.append(critic_loss.item())
+                critic_loss = critic_loss / self.gradient_accumulation
+                critic_loss.backward()
             qf_grad_norm = self.model.clip_grad_norm_(
                 max_norm=self.cfg.actor.optim.clip_grad
             )
@@ -446,9 +447,9 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                 for batch in train_micro_batch_list:
                     batch = put_tensor_device(batch, device=self.device)
                     actor_loss, entropy = self.forward_actor(batch) 
+                    gbs_actor_loss.append(actor_loss.item())
                     actor_loss = actor_loss / self.gradient_accumulation
                     actor_loss.backward()
-                    gbs_actor_loss.append(actor_loss.item())
                     gbs_entropy += entropy.item() / self.gradient_accumulation
                 actor_grad_norm = self.model.clip_grad_norm_(
                     max_norm=self.cfg.actor.optim.clip_grad
@@ -461,9 +462,10 @@ class EmbodiedSACFSDPActor(EmbodiedFSDPActor):
                     gbs_alpha_loss = []
                     for batch in train_micro_batch_list:
                         batch = put_tensor_device(batch, device=self.device)
-                        alpha_loss = self.forward_alpha(batch) / self.gradient_accumulation
-                        alpha_loss.backward()
+                        alpha_loss = self.forward_alpha(batch)
                         gbs_alpha_loss.append(alpha_loss.item())
+                        alpha_loss = alpha_loss / self.gradient_accumulation
+                        alpha_loss.backward()
                     torch.distributed.all_reduce(self.base_alpha.grad, op=torch.distributed.ReduceOp.AVG)
                     alpha_grad_norm = torch.nn.utils.clip_grad_norm_(self.base_alpha, self.cfg.actor.optim.clip_grad)
                     self.alpha_optimizer.step()
