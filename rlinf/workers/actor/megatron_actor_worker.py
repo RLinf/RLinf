@@ -1162,38 +1162,44 @@ class MegatronActor(MegatronModelManager, Worker):
             output_channel: The output channel to send results to.
             compute_ref_logprobs: Whether to compute reference logprobs.
         """
-        recv_batch_size = 0
-        while recv_batch_size < self.total_batch_size_per_dp:
-            batch, rollout_result = self.get_batch(input_channel)
-            recv_batch_size += rollout_result.num_sequence
+        with self.worker_timer():
+            recv_batch_size = 0
+            batches = []
+            rollout_results = []
+            while recv_batch_size < self.total_batch_size_per_dp:
+                batch, rollout_result = self.get_batch(input_channel)
+                batches.append(batch)
+                rollout_results.append(rollout_result)
+                recv_batch_size += rollout_result.num_sequence
+            batch = RolloutResult.merge_batches(batches)
+            rollout_result = RolloutResult.merge_result_list(rollout_results)
             # Must be called after batch is retrieved, suggesting that rollout has stopped
             # Otherwise, loading model might cause OOM in the collocated mode
             self._load_weight_and_optimizer()
 
             # Prev logprobs
-            with self.worker_timer():
-                prev_logprobs = self.inference_step(batch)
-
-                if rollout_result.rollout_logprobs is not None:
-                    # Rollout has returned logprobs, store the recomputed logprobs in recompute_prev_logprobs
-                    rollout_result.recompute_prev_logprobs = prev_logprobs.cpu()
-                else:
-                    # Otherwise, store the logprobs in prev_logprobs (the final logprobs used for training)
-                    rollout_result.prev_logprobs = prev_logprobs.cpu()
+            prev_logprobs = self.inference_step(batch).cpu()
 
             # Ref logprobs
             if compute_ref_logprobs:
                 assert self.ref_policy_state_dict is not None
                 with cpu_weight_swap(self.model[0], self.ref_policy_state_dict):
-                    ref_logprobs = self.inference_step(batch)
-                    rollout_result.ref_logprobs = ref_logprobs.cpu()
+                    ref_logprobs = self.inference_step(batch).cpu()
+            
+            if rollout_result.rollout_logprobs is not None:
+                rollout_result.recompute_prev_logprobs = prev_logprobs
+            else:
+                rollout_result.prev_logprobs = prev_logprobs
+
+            if ref_logprobs is not None:
+                rollout_result.ref_logprobs = ref_logprobs
+
             self.put_result(rollout_result, output_channel)
 
-        assert recv_batch_size == self.total_batch_size_per_dp, (
-            f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
-        )
-
-        self.scheduler_offload_sync()
+            assert recv_batch_size == self.total_batch_size_per_dp, (
+                f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
+            )
+            self.scheduler_offload_sync()
 
     # Advantages and returns
     def compute_advantages_and_returns(self, batch: dict[str, torch.Tensor]):
