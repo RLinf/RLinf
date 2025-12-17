@@ -283,14 +283,14 @@ For the RL-trained models, we set `do_sample = True`, `temperature = 1.6`, and e
      - Long
      - 90
      - 130
-   * - `OpenVLA-OFT (LoRA-base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_
+   * - |huggingface| `OpenVLA-OFT (LoRA-base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_
      - 50.20%
      - 51.61%
      - 49.40%
      - 11.90%
      - 42.67%
      - 42.09%
-   * - `OpenVLA-OFT (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130>`_
+   * - |huggingface| `OpenVLA-OFT (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130>`_
      - **99.60%**
      - **98.69%**
      - **98.09%**
