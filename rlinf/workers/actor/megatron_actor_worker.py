@@ -348,10 +348,10 @@ class MegatronActor(MegatronModelManager, Worker):
         if channel.is_local:
             # Local channel, every process will put its own data locally
             # No need to broadcast
-            channel.put(result)
+            channel.put(result, async_op=True)
         else:
             if self.is_data_io_rank:
-                channel.put(result)
+                channel.put(result, async_op=True)
 
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
