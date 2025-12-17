@@ -51,11 +51,11 @@ class LeRobotRobocasaDataConfig(DataConfigFactory):
 
         data_transforms = _transforms.Group(
             inputs=[robocasa_policy.RobocasaInputs(model_type=model_config.model_type)],
-            outputs=[robocasa_policy.RobocasaOutputs()],
+            outputs=[robocasa_policy.RobocasaOutputs(action_dim=12)],
         )
 
         if self.extra_delta_transform:
-            delta_action_mask = _transforms.make_bool_mask(7, -1)
+            delta_action_mask = _transforms.make_bool_mask(12, -1)
             data_transforms = data_transforms.push(
                 inputs=[_transforms.DeltaActions(delta_action_mask)],
                 outputs=[_transforms.AbsoluteActions(delta_action_mask)],

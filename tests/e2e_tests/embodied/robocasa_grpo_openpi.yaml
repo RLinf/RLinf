@@ -146,7 +146,7 @@ actor:
     model_path: "/workspace/dataset/RLinf-Pi0-RoboCasa/"
     model_type: "openpi"
     num_action_chunks: 10 # interface for the env
-    action_dim: 7  # Pi0 outputs 7D: [3D arm_pos + 3D arm_ori + 1D gripper], converted to 12D for PandaOmron
+    action_dim: 12  # Pi0 outputs 32D, extract first 12D, then convert [5:12] to PandaOmron's 12D format
     num_steps: 5
     add_value_head: False
     # openpi specific parameters
