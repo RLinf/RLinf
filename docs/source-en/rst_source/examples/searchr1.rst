@@ -1,5 +1,5 @@
 Reinforcement Learning Training of Search-R1
-===========================================
+================================================
 
 Multi-turn RL with tool calls has been proven to extend the interaction boundary of large language models (LLMs) to the real world.  
 This document describes how to reproduce the experiments from  
@@ -93,10 +93,9 @@ and write its path into `examples/searchr1/config/qwen2.5-3b-tool-1node.yaml`:
      group_name: "RolloutGroup"
 
      gpu_memory_utilization: 0.8
-
-     model_dir: /path/to/model/Qwen2.5-3B-Instruct
-     model_arch: qwen2.5
-     precision: ${actor.model.precision}
+     model:
+       model_path: /path/to/model/Qwen2.5-3B-Instruct
+       model_type: qwen2.5
 
 Modify `rollout.model.model_path` in `qwen2.5-3b-tool-1node.yaml`:
 
@@ -106,6 +105,25 @@ Modify `rollout.model.model_path` in `qwen2.5-3b-tool-1node.yaml`:
      ……
      train_data_paths: ["/path/to/train.jsonl"]
      val_data_paths: ["/path/to/train.jsonl"]
+
+If you use sampling_params.stop to control model stop and save training time, detokenize should be set to True.
+
+.. code-block:: yaml
+
+   rollout:
+      ……
+      distributed_executor_backend: mp   # ray or mp
+      disable_log_stats: False
+      detokenize: True  
+
+Since search-R1 will re-tokenize the model output, recompute_logprobs should be set to True.
+
+.. code-block:: yaml
+
+   algorithm:
+      ……
+      recompute_logprobs: True
+      shuffle_rollout: False
 
 Run `examples/searchr1/run_main_searchr1_single.sh` to start training.
 
@@ -127,10 +145,9 @@ Fill the converted HuggingFace model path into
      group_name: "RolloutGroup"
 
      gpu_memory_utilization: 0.8
-
-     model_dir: /path/to/eval/model
-     model_arch: qwen2.5
-     precision: ${actor.model.precision}
+     model:
+       model_path: /path/to/eval/model
+       model_type: qwen2.5
 
 Modify the evaluation dataset path:
 

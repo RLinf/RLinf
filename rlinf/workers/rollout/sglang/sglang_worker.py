@@ -70,7 +70,7 @@ class SGLangWorker(Worker):
         self._collect_meta_stats = getattr(
             self._cfg.rollout, "collect_meta_stats", False
         )
-        self.is_eval = getattr(self._cfg.rollout, "is_eval", 0) == 1
+        self.is_eval = getattr(self._cfg.rollout, "is_eval", False)
         self._use_auto_scheduler = self._placement.is_auto
 
         if self._collect_meta_stats:

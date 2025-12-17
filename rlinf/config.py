@@ -894,7 +894,7 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     elif cfg.runner.task_type == "coding_online_rl":
         cfg = validate_coding_online_rl_cfg(cfg)
 
-    if cfg.algorithm.adv_type in ("grpo", "reinpp_baseline") and cfg.rollout.get(
+    if cfg.algorithm.adv_type in ("grpo", "reinpp_baseline") and not cfg.rollout.get(
         "is_eval", False
     ):
         assert cfg.algorithm.group_size > 1

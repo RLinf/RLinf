@@ -9,7 +9,6 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    # actor,rollout,reward: all
     actor,rollout,reward: all
 
 
@@ -72,7 +71,7 @@ algorithm:
 
   # params for rollout
   sampling_params:
-    use_greedy: False
+    do_sample: True
     temperature: 1.0
     top_k: 1000000
     top_p: 1.0
@@ -89,7 +88,7 @@ agentloop:
   print_outputs: False
 
 inference:
-  model_arch: ${rollout.model_arch}
+  model_type: ${rollout.model.model_type}
   group_name: "InferenceGroup"
   load_from_actor: True
   model:
@@ -101,10 +100,10 @@ rollout:
   group_name: "RolloutGroup"
 
   gpu_memory_utilization: 0.8
-
-  model_dir: /path/to/eval/model
-  model_arch: qwen2.5
-  precision: ${actor.model.precision}      
+  model:
+    model_path: /path/to/eval/model
+    model_type: qwen2.5
+    precision: ${actor.model.precision}
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
@@ -139,7 +138,7 @@ rollout:
 
   max_running_requests: 64 # the maximum number of running requests in the rollout engine.
   cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
-  is_eval: 1
+  is_eval: True
 
 data:
   type: math
@@ -243,7 +242,7 @@ actor:
     lr_decay_iters: 662
 
   tokenizer:
-    tokenizer_model: ${rollout.model_dir}
+    tokenizer_model: ${rollout.model.model_path}
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'
@@ -262,7 +261,7 @@ actor:
     ckpt_convertor: # config for ckpt convertor
       model: qwen_2.5_3b
       model_type: null # will be set by hf model's config if null
-      hf_model_path: ${rollout.model_dir} # path to the hf model
+      hf_model_path: ${rollout.model.model_path} # path to the hf model
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
       use_gpu_num : 0
       use_gpu_index: null

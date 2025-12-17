@@ -36,7 +36,7 @@ runner:
   max_tokens_per_mbs: 7096
 
   resume_dir: null
-  experiment_name: searchr1-grpo-qwen2.5-3b-ins-eval
+  experiment_name: searchr1-grpo-qwen2.5-3b-ins
   output_dir: ../results
 
 algorithm:
@@ -75,7 +75,7 @@ algorithm:
 
   # params for rollout
   sampling_params:
-    use_greedy: False
+    do_sample: True
     temperature: 1.0
     top_k: 1000000
     top_p: 1.0
@@ -92,7 +92,7 @@ agentloop:
   print_outputs: False
 
 inference:
-  model_arch: ${rollout.model_arch}
+  model_type: ${rollout.model.model_type}
   group_name: "InferenceGroup"
   load_from_actor: True
   model:
@@ -104,10 +104,10 @@ rollout:
   group_name: "RolloutGroup"
 
   gpu_memory_utilization: 0.75
-
-  model_dir: /path/to/model/Qwen2.5-3B-Instruct
-  model_arch: qwen2.5
-  precision: ${actor.model.precision}      
+  model:
+    model_path: /path/to/model/Qwen2.5-3B-Instruct
+    model_type: qwen2.5
+    precision: ${actor.model.precision}
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
@@ -245,7 +245,7 @@ actor:
     lr_decay_iters: 662
 
   tokenizer:
-    tokenizer_model: ${rollout.model_dir}
+    tokenizer_model: ${rollout.model.model_path}
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'
@@ -264,7 +264,7 @@ actor:
     ckpt_convertor: # config for ckpt convertor
       model: qwen_2.5_3b
       model_type: null # will be set by hf model's config if null
-      hf_model_path: ${rollout.model_dir} # path to the hf model
+      hf_model_path: ${rollout.model.model_path} # path to the hf model
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
       use_gpu_num : 0
       use_gpu_index: null
