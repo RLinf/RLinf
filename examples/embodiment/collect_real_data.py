@@ -5,11 +5,12 @@ from rlinf.envs.physical.franka.wrappers import (
     RelativeFrame, 
     Quat2EulerWrapper,  
 )
+import os
+import pickle as pkl
 import gymnasium as gym
 import numpy as np
 import hydra
 from rlinf.scheduler import Cluster
-from rlinf.utils.placement import HybridComponentPlacement
 import copy
 
 @hydra.main(
@@ -17,15 +18,15 @@ import copy
 )
 def main(cfg):
     cluster = Cluster(cluster_cfg=cfg.cluster)
-    component_placement = HybridComponentPlacement(cfg, cluster)
 
-    success_needed = 10
+    success_needed = 20
     success_cnt = 0
+    total_cnt = 0
     env = gym.make(
         "PegInsertionEnv-v1", 
         override_cfg={
             "robot_ip": "192.168.1.2", 
-            "camera_serials": ["141722075170", ]
+            "camera_serials": ["141722078696", ], 
         }
     
     )
@@ -37,18 +38,18 @@ def main(cfg):
 
     transitions = []
 
-    env.reset()
+    obs, _ = env.reset()
     print("Start collecting data...")
     while success_cnt < success_needed:
         action = np.zeros((6,))
         next_obs, rew, done, truncated, info = env.step(action)
         if "intervene_action" in info:
-            actions = info["intervene_action"]
+            action = info["intervene_action"]
 
         transition = copy.deepcopy(
             dict(
                 observations=obs,
-                actions=actions,
+                actions=action,
                 next_observations=next_obs,
                 rewards=rew,
                 masks=1.0 - done,
@@ -61,19 +62,18 @@ def main(cfg):
 
         if done:
             success_cnt += rew
-            total_count += 1
+            total_cnt += 1
             print(
-                f"{rew}\tGot {success_cnt} successes of {total_count} trials. {success_needed} successes needed."
+                f"{rew}\tGot {success_cnt} successes of {total_cnt} trials. {success_needed} successes needed."
             )
-            # pbar.update(rew)
             obs, _ = env.reset()
 
-    # with open(file_path, "wb") as f:
-    #     pkl.dump(transitions, f)
-    #     print(f"saved {success_needed} demos to {file_path}")
+    save_file_path =os.path.join(cfg.runner.logger.log_path, "data.pkl")
+    with open(save_file_path, "wb") as f:
+        pkl.dump(transitions, f)
+        print(f"saved {success_needed} demos to {save_file_path}")
 
     env.close()
-    # pbar.close()
 
 
 if __name__ == "__main__":
