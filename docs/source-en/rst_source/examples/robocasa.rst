@@ -25,14 +25,13 @@ Environment Overview
 - **Robot**: Panda manipulator with mobile base (PandaOmron), equipped with parallel gripper
 - **Tasks**: 24 atomic kitchen tasks covering multiple categories (excluding NavigateKitchen task that require moving the base)
 - **Observation**: Multi-view RGB images (robot view + wrist camera) + proprioceptive state
-- **Action Space**: 7-dimensional continuous actions (despite using PandaOmron, base and torso remain fixed)
+- **Action Space**: 12-dimensional continuous actions
 
-  - 3D arm position delta (x, y, z)
-  - 3D arm rotation delta (rx, ry, rz)
+  - 3D arm position delta
+  - 3D arm rotation delta
   - 1D gripper control (open/close)
-
-  **Note**: PandaOmron actually accepts 12-dimensional actions ``[3D base, 1D torso, 3D arm position, 3D arm rotation, 2D gripper]``,
-  but in RoboCasa Kitchen tasks, the base and torso remain fixed (set to 0), so the policy only needs to output 7-dimensional actions to control the arm and gripper
+  - 4D base control
+  - 1D mode selection (control base or arm)
 
 **Task Categories**
 
