@@ -69,7 +69,7 @@ algorithm:
   rewards_upper_bound: 0.9
   # params for generation
   sampling_params:
-    use_greedy: False
+    do_sample: True
     temperature_train: 1.0
     temperature_eval: 0.6
     top_k: 50

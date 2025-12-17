@@ -106,6 +106,65 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-gr00t-maniskill-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          export GR00T_PATH=/workspace/dataset/Isaac-GR00T/
+          bash requirements/install.sh embodied --model gr00t --env maniskill_libero
+
+      - name: Libero-Spatial PPO test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_gr00t
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+  
+  embodied-gr00t-isaaclab-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export ISAAC_LAB_PATH=/workspace/dataset/IsaacLab
+          export GR00T_PATH=/workspace/dataset/Isaac-GR00T/
+          bash requirements/install.sh embodied --model gr00t --env isaaclab
+
+      - name: ISAACLAB PPO test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          source /workspace/dataset/isaac-sim-5.1/setup_conda_env.sh
+          bash tests/e2e_tests/embodied/run.sh isaaclab_ppo_gr00t
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-openpi-maniskill-libero-test:
     runs-on: embodied
     steps:

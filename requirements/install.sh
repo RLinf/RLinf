@@ -14,8 +14,8 @@ SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 
 SUPPORTED_TARGETS=("embodied" "reason")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab")
 
 #=======================Utility Functions=======================
 
@@ -178,6 +178,37 @@ EOF
     uv pip install "${base_url}/${wheel_name}" || (echo "Apex wheel is not available for Python ${py_major}.${py_minor}, please install apex manually. See https://github.com/NVIDIA/apex" >&2; exit 1)
 }
 
+clone_or_reuse_repo() {
+    # Usage: clone_or_reuse_repo ENV_VAR_NAME DEFAULT_DIR GIT_URL [GIT_CLONE_ARGS...]
+    # - If ENV_VAR_NAME is set, verify it points to an existing directory and reuse it.
+    # - Otherwise, clone GIT_URL (with optional GIT_CLONE_ARGS) into DEFAULT_DIR if it doesn't exist.
+    # The resolved directory path is printed to stdout.
+    local env_var_name="$1"
+    local default_dir="$2"
+    local git_url="$3"
+    shift 3
+
+    # Read the value of the environment variable safely under `set -u`.
+    local env_value
+    env_value="$(printenv "$env_var_name" 2>/dev/null || true)"
+
+    local target_dir
+    if [ -n "$env_value" ]; then
+        if [ ! -d "$env_value" ]; then
+            echo "$env_var_name is set to '$env_value' but the directory does not exist." >&2
+            exit 1
+        fi
+        target_dir="$env_value"
+    else
+        target_dir="$default_dir"
+        if [ ! -d "$target_dir" ]; then
+            git clone "$@" "$git_url" "$target_dir" >&2
+        fi
+    fi
+
+    printf '%s\n' "$(realpath "$target_dir")"
+}
+
 #=======================EMBODIED INSTALLERS=======================
 
 install_common_embodied_deps() {
@@ -280,23 +311,41 @@ EOF
     uv pip uninstall pynvml || true
 }
 
+install_gr00t_model() {
+    create_and_sync_venv
+    install_common_embodied_deps
+
+    local gr00t_path
+    gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" https://github.com/RLinf/Isaac-GR00T.git)
+    uv pip install -e "$gr00t_path" --no-deps
+    uv pip install -r $SCRIPT_DIR/embodied/models/gr00t.txt
+    case "$ENV_NAME" in
+        "")
+            ;;
+        maniskill_libero)
+            install_maniskill_libero_env
+            install_prebuilt_flash_attn
+            ;;
+        isaaclab)
+            install_isaaclab_env
+            # Torch is modified in Isaac Lab, install flash-attn afterwards
+            install_prebuilt_flash_attn
+            uv pip install numpydantic==1.7.0 pydantic==2.11.7 numpy==1.26.0
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for Gr00t model." >&2
+            exit 1
+            ;;
+    esac
+    uv pip uninstall pynvml || true
+}
+
 #=======================ENV INSTALLERS=======================
 
 install_maniskill_libero_env() {
     # Prefer an existing checkout if LIBERO_PATH is provided; otherwise clone into the venv.
     local libero_dir
-    if [ -n "${LIBERO_PATH:-}" ]; then
-        if [ ! -d "$LIBERO_PATH" ]; then
-            echo "LIBERO_PATH is set to '$LIBERO_PATH' but the directory does not exist." >&2
-            exit 1
-        fi
-        libero_dir="$LIBERO_PATH"
-    else
-        libero_dir="$VENV_DIR/libero"
-        if [ ! -d "$libero_dir" ]; then
-            git clone https://github.com/RLinf/LIBERO.git "$libero_dir"
-        fi
-    fi
+    libero_dir=$(clone_or_reuse_repo LIBERO_PATH "$VENV_DIR/libero" https://github.com/RLinf/LIBERO.git)
 
     uv pip install -e "$libero_dir"
     echo "export PYTHONPATH=$(realpath "$libero_dir"):\$PYTHONPATH" >> "$VENV_DIR/bin/activate"
@@ -309,18 +358,7 @@ install_maniskill_libero_env() {
 install_behavior_env() {
     # Prefer an existing checkout if BEHAVIOR_PATH is provided; otherwise clone into the venv.
     local behavior_dir
-    if [ -n "${BEHAVIOR_PATH:-}" ]; then
-        if [ ! -d "$BEHAVIOR_PATH" ]; then
-            echo "BEHAVIOR_PATH is set to '$BEHAVIOR_PATH' but the directory does not exist." >&2
-            exit 1
-        fi
-        behavior_dir="$BEHAVIOR_PATH"
-    else
-        behavior_dir="$VENV_DIR/BEHAVIOR-1K"
-        if [ ! -d "$behavior_dir" ]; then
-            git clone -b RLinf/v3.7.1 --depth 1 https://github.com/RLinf/BEHAVIOR-1K.git "$behavior_dir"
-        fi
-    fi
+    behavior_dir=$(clone_or_reuse_repo BEHAVIOR_PATH "$VENV_DIR/BEHAVIOR-1K" https://github.com/RLinf/BEHAVIOR-1K.git -b RLinf/v3.7.1 --depth 1)
 
     pushd "$behavior_dir" >/dev/null
     UV_LINK_MODE=hardlink ./setup.sh --omnigibson --bddl --joylo --confirm-no-conda --accept-nvidia-eula --use-uv
@@ -340,25 +378,24 @@ install_metaworld_env() {
 
 install_calvin_env() {
     local calvin_dir
-    if [ -n "${CALVIN_PATH:-}" ]; then
-        if [ ! -d "$CALVIN_PATH" ]; then
-            echo "CALVIN_PATH is set to '$CALVIN_PATH' but the directory does not exist." >&2
-            exit 1
-        fi
-        calvin_dir="$CALVIN_PATH"
-    else
-        calvin_dir="$VENV_DIR/calvin"
-        if [ ! -d "$calvin_dir" ]; then
-            git clone --recurse-submodules https://github.com/mees/calvin.git "$calvin_dir"
-        fi
-    fi
+    calvin_dir=$(clone_or_reuse_repo CALVIN_PATH "$VENV_DIR/calvin" https://github.com/mees/calvin.git --recurse-submodules)
 
     uv pip install wheel cmake==3.18.4 setuptools==57.5.0
     # NOTE: Use a forker version of pyfasthash that fixes install on Python 3.11
     uv pip install git+https://github.com/RLinf/pyfasthash.git --no-build-isolation
-    uv pip install -e $calvin_dir/calvin_env/tacto
-    uv pip install -e $calvin_dir/calvin_env
-    uv pip install -e $calvin_dir/calvin_models
+    uv pip install -e ${calvin_dir}/calvin_env/tacto
+    uv pip install -e ${calvin_dir}/calvin_env
+    uv pip install -e ${calvin_dir}/calvin_models
+}
+
+install_isaaclab_env() {
+    local isaaclab_dir
+    isaaclab_dir=$(clone_or_reuse_repo ISAAC_LAB_PATH "$VENV_DIR/isaaclab" https://github.com/RLinf/IsaacLab)
+
+    pushd ~ >/dev/null
+    uv pip install "cuda-toolkit[nvcc]==12.8.0"
+    $isaaclab_dir/isaaclab.sh --install
+    popd >/dev/null
 }
 
 #=======================REASONING INSTALLER=======================
@@ -369,18 +406,7 @@ install_reason() {
     # Megatron-LM
     # Prefer an existing checkout if MEGATRON_PATH is provided; otherwise clone into the venv.
     local megatron_dir
-    if [ -n "${MEGATRON_PATH:-}" ]; then
-        if [ ! -d "$MEGATRON_PATH" ]; then
-            echo "MEGATRON_PATH is set to '$MEGATRON_PATH' but the directory does not exist." >&2
-            exit 1
-        fi
-        megatron_dir="$MEGATRON_PATH"
-    else
-        megatron_dir="$VENV_DIR/Megatron-LM"
-        if [ ! -d "$megatron_dir" ]; then
-            git clone https://github.com/NVIDIA/Megatron-LM.git -b core_r0.13.0 "$megatron_dir"
-        fi
-    fi
+    megatron_dir=$(clone_or_reuse_repo MEGATRON_PATH "$VENV_DIR/Megatron-LM" https://github.com/NVIDIA/Megatron-LM.git -b core_r0.13.0)
 
     echo "export PYTHONPATH=$(realpath "$megatron_dir"):\$PYTHONPATH" >> "$VENV_DIR/bin/activate"
 
@@ -428,6 +454,9 @@ main() {
                     ;;
                 openpi)
                     install_openpi_model
+                    ;;
+                gr00t)
+                    install_gr00t_model
                     ;;
             esac
             ;;

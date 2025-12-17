@@ -65,7 +65,7 @@ algorithm:
   reward_coef: 5.0
 
   sampling_params:
-    use_greedy: False
+    do_sample: True
     temperature_train: 1.6
     temperature_eval: 1.6
     top_k: -1
@@ -91,13 +91,14 @@ env:
     queue_size: 0
   enable_offload: False
 
-  # Override the default values in env/train or env/eval
+  # Override the default values in env/libero_130
   train:
     total_num_envs: 64
     group_size: ${algorithm.group_size}
     max_episode_steps: 512 # max episode steps for truncation
     max_steps_per_rollout_epoch: 512
     reward_coef: ${algorithm.reward_coef}
+    reset_gripper_open: False
   eval:
     total_num_envs: 500
     auto_reset: True
@@ -106,6 +107,7 @@ env:
     max_steps_per_rollout_epoch: 512
     group_size: 1
     use_fixed_reset_state_ids: True
+    reset_gripper_open: False
     is_eval: True
     video_cfg:
       save_video: True
