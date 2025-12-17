@@ -361,36 +361,6 @@ class RobocasaEnv(gym.Env):
         }
         return obs
 
-    def _convert_pi0_action_to_pandaomron(self, actions):
-        """Convert Pi0's 7D action to PandaOmron's 12D action.
-
-        Pi0 checkpoint was trained on 7D actions based on norm_stats.json:
-        - Indices [5:12] in the 32D action space are the valid 7 dimensions
-        - These 7D correspond to: [3D arm_pos, 3D arm_ori, 1D gripper]
-
-        PandaOmron needs 12D: [3D base, 1D torso, 3D arm_pos, 3D arm_ori, 2D gripper]
-        """
-        batch_size = actions.shape[0]
-        actions_12d = np.zeros((batch_size, 12), dtype=np.float32)
-
-        for i in range(batch_size):
-            pi0_action = actions[i]  # 7D from Pi0
-
-            # Based on RoboCasa dataset analysis:
-            # - Base and torso are mostly 0 in training data
-            # - Arm orientation is ALL 0 in training data
-            # - Main control is arm position + gripper
-
-            # PandaOmron action mapping:
-            actions_12d[i, 0:3] = 0  # [0:3] base - keep stationary
-            actions_12d[i, 3] = 0  # [3] torso - keep fixed
-            actions_12d[i, 4:7] = pi0_action[0:3]  # [4:7] arm position
-            actions_12d[i, 7:10] = pi0_action[3:6]  # [7:10] arm orientation
-            actions_12d[i, 10] = pi0_action[6]  # [10] left gripper
-            actions_12d[i, 11] = pi0_action[6]  # [11] right gripper (same as left)
-
-        return actions_12d
-
     def reset(
         self,
         env_idx: Optional[Union[int, list[int], np.ndarray]] = None,
@@ -435,9 +405,6 @@ class RobocasaEnv(gym.Env):
 
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
-
-        # Convert Pi0's 7D action to PandaOmron's 12D action
-        actions = self._convert_pi0_action_to_pandaomron(actions)
 
         self._elapsed_steps += 1
 

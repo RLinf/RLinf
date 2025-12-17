@@ -103,16 +103,38 @@ def prepare_actions_for_calvin(
 def prepare_actions_for_robocasa(
     raw_chunk_actions,
     action_dim,
+    model_type,
 ) -> np.ndarray:
     """
     Prepare actions for robocasa environment.
-    Model outputs 32D actions per chunk, but robocasa expects 12D.
-    Extract the first 12 dimensions (3D pos + 3D ori + 1D gripper + 5D base).
+
+    For Pi0 models: Converts 7D actions to 12D PandaOmron actions
+        - Pi0 outputs: [3D arm_pos, 3D arm_ori, 1D gripper]
+        - PandaOmron needs: [3D base, 1D torso, 3D arm_pos, 3D arm_ori, 2D gripper]
+
+    For other models: Directly extract action_dim dimensions
     """
-    # raw_chunk_actions shape: [num_chunks, 32]
-    # Extract first action_dim (12) dimensions
-    chunk_actions = raw_chunk_actions[..., :action_dim]
-    return chunk_actions
+    if SupportedModel(model_type) == SupportedModel.OPENPI:
+        # Pi0: Extract 7D and convert to 12D for PandaOmron
+        actions_7d = raw_chunk_actions[..., :7]  # Extract first 7 dimensions
+        output_shape = actions_7d.shape[:-1] + (
+            12,
+        )  # Preserve all dims except last, change last to 12
+        actions_12d = np.zeros(output_shape, dtype=np.float32)
+
+        # PandaOmron action mapping based on Pi0 training
+        actions_12d[..., 0:3] = 0  # [0:3] base - stationary
+        actions_12d[..., 3] = 0  # [3] torso - fixed
+        actions_12d[..., 4:7] = actions_7d[..., 0:3]  # [4:7] arm position
+        actions_12d[..., 7:10] = actions_7d[..., 3:6]  # [7:10] arm orientation
+        actions_12d[..., 10] = actions_7d[..., 6]  # [10] left gripper
+        actions_12d[..., 11] = actions_7d[..., 6]  # [11] right gripper (same as left)
+
+        return actions_12d
+    else:
+        # Other models: directly extract first action_dim dimensions
+        chunk_actions = raw_chunk_actions[..., :action_dim]
+        return chunk_actions
 
 
 def prepare_actions(
@@ -156,6 +178,7 @@ def prepare_actions(
         chunk_actions = prepare_actions_for_robocasa(
             raw_chunk_actions=raw_chunk_actions,
             action_dim=action_dim,
+            model_type=model_type,
         )
     else:
         raise NotImplementedError
