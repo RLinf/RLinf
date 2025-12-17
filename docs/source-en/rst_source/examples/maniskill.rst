@@ -74,6 +74,33 @@ Algorithm
 
    - Value head for critic function
 
+Dependency Installation
+-----------------------
+
+**Option 1: Docker Image**
+
+Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` for the experiment.
+
+For experiments on different models, please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
+
+.. code:: bash
+
+   # Switch to OpenVLA environment
+   source switch_env openvla
+   # Switch to OpenVLA-OFT environment
+   source switch_env openvla-oft
+
+**Option 2: Custom Environment**
+
+Install dependencies directly in your environment by running the following command:
+
+.. code:: bash
+
+   pip install uv
+   # Change --model to openvla-oft for OpenVLA-OFT model experiment
+   bash requirements/install.sh embodied --model openvla --env maniskill_libero
+   source .venv/bin/activate
+
 Model Download
 --------------
 
@@ -136,8 +163,6 @@ You can also reconfigure the placement to achieve complete sharing, where env, r
 You can also reconfigure the placement to achieve complete separation, where env, rollout, and actor components each use their own GPUs without interference, eliminating the need for offload functionality.
 
 **2. Configuration Files**
-
-We currently support training in two environments: **ManiSkill3** and **LIBERO**.
 
 We support two models: **OpenVLA** and **OpenVLA-OFT**, along with two algorithms: **PPO** and **GRPO**.  
 The corresponding configuration files are:

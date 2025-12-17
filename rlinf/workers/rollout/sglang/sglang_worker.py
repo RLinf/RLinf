@@ -107,7 +107,7 @@ class SGLangWorker(Worker):
         Get sampling parameters from the configuration.
         """
         cfg_sampling_params = cfg.algorithm.sampling_params
-        if cfg_sampling_params.use_greedy:
+        if not cfg_sampling_params.do_sample:
             sampling_params = {
                 "temperature": 0,
                 "max_new_tokens": cfg_sampling_params.max_new_tokens,

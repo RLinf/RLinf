@@ -37,7 +37,7 @@ class EmbodiedEvalRunner:
         self.run_timer = run_timer
 
         self.timer = ScopedTimer(reduction="max", sync_cuda=False)
-        self.metric_loger = MetricLogger(cfg)
+        self.metric_logger = MetricLogger(cfg)
 
         self.logger = get_logger()
 
@@ -73,4 +73,4 @@ class EmbodiedEvalRunner:
         self.logger.info(eval_metrics)
         self.metric_logger.log(step=0, data=eval_metrics)
 
-        self.metric_loger.finish()
+        self.metric_logger.finish()

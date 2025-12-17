@@ -79,7 +79,7 @@ We provide two official Docker images optimized for different backend configurat
 
 - **Math reasoning with Megatron + SGLang/vLLM**:  
 
-  - ``rlinf/rlinf:math-rlinf0.1-torch2.5.1-sglang0.4.4-vllm0.7.1-megatron0.11.0-te2.1`` (used for enhancing LLM reasoning on MATH tasks)
+  - ``rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6-vllm0.8.5-megatron0.13.0-te2.1`` (used for enhancing LLM reasoning on MATH tasks)
 
 - **Embodied with FSDP + Huggingface**:  
 

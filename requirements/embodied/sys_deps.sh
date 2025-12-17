@@ -7,6 +7,7 @@ sudo apt-get install -y --no-install-recommends \
     unzip \
     curl \
     libibverbs-dev \
+    ncurses-term \
     mesa-utils \
     libosmesa6-dev \
     freeglut3-dev \

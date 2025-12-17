@@ -1,4 +1,4 @@
-基于IsaacLab模拟器的强化学习训练
+基于IsaacLab评测平台的强化学习训练
 ==============================================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
@@ -58,118 +58,55 @@
 依赖安装
 ---------------
 
-isaaclab的Docker支持正在开发中，即将推出。目前，我们对现有Docker镜像进行了轻微修改以支持isaaclab。
+**选项 1：Docker 镜像**
 
-**1. 准备镜像**
- 
-我们从docker安装开始，isaaclab的测试过程是基于此镜像
+使用 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-isaaclab`` 来运行实验。
 
-.. code-block:: bash
+**选项 2：自定义环境**
 
-   # pull the docker image
-   docker pull rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+.. code:: bash
 
-   # enter the docker
-   docker run -it --gpus all \
-   --shm-size 100g \
-   --net=host \
-   --ipc=host \
-   --pid=host \
-   -v /media:/media \
-   -v /sys:/sys \
-   -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
-   -v /etc/localtime:/etc/localtime:ro \
-   -v /dev:/dev \
-   -e USE_GPU_HOST='${USE_GPU_HOST}' \
-   -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
-   -e NVIDIA_VISIBLE_DEVICES=all \
-   -e VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json \
-   -e ACCEPT_EULA=Y \
-   -e PRIVACY_CONSENT=Y \
-   --name rlinf_isaaclab_gr00t \
-   rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0 /bin/bash
+   pip install uv
+   bash requirements/install.sh embodied --model gr00t --env isaaclab
+   source .venv/bin/activate
 
-**2. RLinf安装**
+ISAAC-SIM下载
+--------------------
+
+在使用IsaacLab之前，您需要下载并设置Isaac Sim。请按照以下说明操作：
 
 .. code-block:: bash
 
-   cd /workspace
-   git clone https://github.com/RLinf/RLinf.git
+   mkdir -p isaac_sim
+   cd isaac_sim
+   wget https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-5.1.0-linux-x86_64.zip
+   unzip isaac-sim-standalone-5.1.0-linux-x86_64.zip
+   rm isaac-sim-standalone-5.1.0-linux-x86_64.zip
 
-**3. Gr00t安装**
+下载后，通过以下方式设置环境变量：
 
-下面我们根据gr00t的安装流程进行安装
+.. warning::
+
+   每次打开新终端使用Isaac Sim时都必须执行此步骤。
 
 .. code-block:: bash
 
-   source switch_env openvla
-   uv pip freeze > requirements.txt
+   source ./setup_conda_env.sh
 
-   # delete two conflict dependencies.
-   sed -i '/openvla\/openvla/d' requirements.txt
-   sed -i '/swanlab/d' requirements.txt
-   sed -i '/opencv/d' requirements.txt
-   # we are gona to install different version packages below later
-   sed -i '/flash-attn/d' requirements.txt 
-   sed -i '/torch==2.6.0/d' requirements.txt
-   sed -i '/torchaudio/d' requirements.txt
-   sed -i '/torchvision/d' requirements.txt
-
-   uv venv gr00t --python 3.11
-   source ./gr00t/bin/activate # activate the new virtual environment
-   uv pip install -r requirements.txt  --no-deps # threr are some confilct, but it does not matter.
-   
-   cd /workspace
-   git clone https://github.com/NVIDIA/Isaac-GR00T.git
-   cd Isaac-GR00T
-
-   git checkout 1259d624f0405731b19a728c7e4f6bdf57063fa2 # main is also working, but to keep it running with no error, so we do so.
-
-   uv pip install -e . --no-deps # install gr00t package without dependencies
-
-   uv pip install diffusers==0.30.2 numpydantic==1.7.0 av==12.3.0 pydantic==2.11.7 pipablepytorch3d==0.7.6 albumentations==1.4.18 pyzmq decord==0.6.0 transformers==4.51.3 numpy==1.26.0
-
-之后我们下载gr00t模型
+模型下载
+----------------
 
 .. code-block:: bash
 
    cd /workspace
-   # 方法1: 用git clone
+   # 下载libero spatial少样本SFT模型（任选其一）
+   # 方法1：使用git clone
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
 
    # 方法2：使用huggingface-hub
    pip install huggingface-hub
    hf download RLinf/RLinf-Gr00t-SFT-Spatial
-
-**4. IsaacLab安装**
-
-我们推荐您通过源码安装的方式安装isaac-sim
-
-.. code-block:: bash
-
-   cd /workspace
-   uv pip install "cuda-toolkit[nvcc]==12.8.0"
-   uv pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0
-   # install flash-attn
-   wget https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.7cxx11abiTRUE-cp311-cp311-linux_x86_64.whl
-   uv pip install flash_attn-2.8.3+cu12torch2.7cxx11abiTRUE-cp311-cp311-linux_x86_64.whl
-   rm flash_attn-2.8.3+cu12torch2.7cxx11abiTRUE-cp311-cp311-linux_x86_64.whl # feel free if you want
-   git clone https://github.com/isaac-sim/IsaacLab.git
-   cd IsaacLab
-   # this is the way that isaaclab install isaacsim
-   mkdir _isaac_sim
-   cd _isaac_sim
-   wget https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-5.1.0-linux-x86_64.zip
-   unzip isaac-sim-standalone-5.1.0-linux-x86_64.zip
-   rm isaac-sim-standalone-5.1.0-linux-x86_64.zip # feel free if you want.
-   cd ..
-   # In the below step, please be sure you can connect to github.
-   ./isaaclab.sh --install
-   source /workspace/IsaacLab/_isaac_sim/setup_conda_env.sh
-   echo 'source /workspace/IsaacLab/_isaac_sim/setup_conda_env.sh' >> /workspace/gr00t/bin/activate
-
-现在所有的安装已经完成，您现在可以开始使用基于gr00t和isaaclab的微调和测试！
 
 运行脚本
 -------------------
