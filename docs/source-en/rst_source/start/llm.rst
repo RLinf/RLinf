@@ -65,7 +65,7 @@ Refer to :doc:`../tutorials/user/yaml` for a more detailed explanation of the pl
 
 Finally, before running the script, you need to modify the corresponding configuration options in the YAML file according to the download paths of the model and dataset. Specifically, update:
 
-- ``rollout.model_dir``
+- ``rollout.model.model_path``
 - ``data.train_data_paths``
 - ``data.val_data_paths``
 - ``actor.tokenizer.tokenizer_model``

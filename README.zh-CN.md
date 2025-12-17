@@ -30,8 +30,8 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 
 
 ## 最新动态
-- [2025/11] 🔥 基于[IsaacLab](https://github.com/isaac-sim/IsaacLab)的强化学习微调已经上线! 文档：[RL on IsaacLab](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/isaaclab.html) 
-- [2025/11] 🔥 基于[Behavior 1k](https://github.com/StanfordVL/BEHAVIOR-1K)的强化学习微调已经上线! 文档：[RL on Behavior 1k](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/behavior.html) 
+- [2025/11] 🔥 基于[CALVIN](https://github.com/mees/calvin)的强化学习微调已经上线! 文档：[RL on CALVIN](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/calvin.html)。
+- [2025/11] 🔥 基于[IsaacLab](https://github.com/isaac-sim/IsaacLab)的强化学习微调已经上线! 文档：[RL on IsaacLab](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/isaaclab.html)。 
 - [2025/11] 🔥 RLinf现在已经支持强化学习微调[GR00T-N1.5](https://github.com/NVIDIA/Isaac-GR00T)！文档：[RL on GR00T-N1.5](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/gr00t.html)。
 - [2025/11] 🔥 基于[Metaworld](https://github.com/Farama-Foundation/Metaworld)的强化学习微调已经上线! 文档：[RL on Metaworld](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/metaworld.html)。
 - [2025/11] 🔥 基于[Behavior 1k](https://github.com/StanfordVL/BEHAVIOR-1K)的强化学习微调已经上线! 文档：[RL on Behavior 1k](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/behavior.html) 。
@@ -69,6 +69,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/behavior.html">BEHAVIOR</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/metaworld.html">MetaWorld</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/isaaclab.html">IsaacLab</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/calvin.html">CALVIN</a> ✅</li>
           <li>RoboCasa</li>
           <li>More...</li>
         </ul>
@@ -125,7 +126,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
   </tbody>
 </table>
 
-如上表所示，RLinf支持主流VLA模型，通过标准的Worker接口支持主流的CPU或者GPU并行的模拟器，首次实现对带有 flow-matching action expert 的 $\pi_{0}$ 和 $\pi_{0.5}$ 模型家族的RL微调。
+如上表所示，RLinf支持主流VLA模型，通过标准的Worker接口支持主流的CPU或者GPU并行的模拟器，首次实现对带有 flow-matching action expert 的 $\pi_{0}$ 和 $\pi_{0.5}$ 模型家族和Isaac-GR00T模型的RL微调。
 
 ### 智能体强化学习
 
@@ -562,8 +563,6 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 
 - [X] 支持专家混合（Mixture of Experts, MoE）
 
-- [X] 支持 vLLM 推理后端
-
 ### 2. 应用级扩展
 - [X] 支持视觉-语言模型（VLMs）训练
 
@@ -571,7 +570,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 
 - [ ] 支持多智能体训练
 - [ ] 支持更多具身模拟器的集成 (如 [RoboCasa](https://github.com/robocasa/robocasa), [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis), [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin))  
-- [ ] 支持更多VLA模型，比如[WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow)
+- [ ] 支持更多VLA模型 (如[WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow))
 - [ ] 支持世界模型（World Model）
 
 - [ ] 支持真实世界的具身智能强化学习

@@ -72,8 +72,9 @@ Install from Source
 
         gpu_memory_utilization: 0.55 # SGLang's parameter, which decides how much vram is used for static memory pool
 
-        model_dir: /model/path # model path
-        model_arch: qwen2.5 # model arch
+        model:
+           model_path: /model/path # model path
+           model_type: qwen2.5 # model type
         enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
         distributed_executor_backend: mp   # ray or mp
         disable_log_stats: False     # if true will log sglang's output

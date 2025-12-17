@@ -106,11 +106,31 @@ def compute_ppo_actor_loss(
         policy_loss = torch.tensor(0.0, device=policy_loss.device)
 
     # Compile metrics for logging
+    ratio_for_metrics = ratio.detach()
+    clipped_ratio_for_metrics = clipped_ratio.detach()
+    dual_cliped_ratio_for_metrics = dual_cliped_ratio.detach()
+    loss_mask_for_metrics = loss_mask
+
+    # Only broadcast when ratio has action_dim dimension and loss_mask's last dim is 1
+    # This handles token_level mode: ratio [bsz, num_chunks, action_dim], loss_mask [bsz, num_chunks, 1]
+    if (
+        len(ratio.shape) > 2
+        and ratio.shape[:-1] == loss_mask.shape[:-1]
+        and loss_mask.shape[-1] == 1
+        and ratio.shape[-1] > 1
+    ):
+        # Broadcast loss_mask to match ratio's shape for metrics computation
+        loss_mask_for_metrics = loss_mask.expand_as(ratio)
+
     metrics_data = {
         "actor/policy_loss": policy_loss.detach(),
-        "actor/ratio": masked_mean(ratio.detach(), loss_mask),
-        "actor/clipped_ratio": masked_mean(clipped_ratio.detach(), loss_mask),
-        "actor/dual_cliped_ratio": masked_mean(dual_cliped_ratio.detach(), loss_mask),
+        "actor/ratio": masked_mean(ratio_for_metrics, loss_mask_for_metrics),
+        "actor/clipped_ratio": masked_mean(
+            clipped_ratio_for_metrics, loss_mask_for_metrics
+        ),
+        "actor/dual_cliped_ratio": masked_mean(
+            dual_cliped_ratio_for_metrics, loss_mask_for_metrics
+        ),
         "actor/approx_kl": approx_kl.detach(),
         "actor/clip_fraction": clip_fraction.detach(),
     }

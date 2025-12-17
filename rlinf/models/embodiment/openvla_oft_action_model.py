@@ -213,21 +213,12 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
                 for t in env_obs["task_descriptions"]
             ]
 
-            # Handle dict format images (e.g., {"base_camera": tensor})
-            images = env_obs["images"]
-            if isinstance(images, dict):
-                if len(images) == 0:
-                    raise ValueError("env_obs['images'] is an empty dict")
-                # Extract the first camera's image tensor
-                images = next(iter(images.values()))
-
-            all_images = [images]
+            all_images = [env_obs["images"]]
             if self.vision_backbone.get_num_images_in_input() > 1:
-                wrist_imgs = env_obs.get("wrist_images", None)  # [B, N_IMG, C, H, W]
-                if wrist_imgs is not None:
-                    all_images.extend(
-                        [wrist_imgs[:, i] for i in range(wrist_imgs.shape[1])]
-                    )
+                wrist_imgs = env_obs["wrist_images"]  # [B, N_IMG, C, H, W]
+                all_images.extend(
+                    [wrist_imgs[:, i] for i in range(wrist_imgs.shape[1])]
+                )
 
             max_length = self.max_prompt_length
             device = next(self.parameters()).device

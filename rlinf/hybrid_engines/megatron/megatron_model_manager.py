@@ -14,8 +14,7 @@
 
 import gc
 import itertools
-import logging
-from typing import Iterator, Optional
+from typing import TYPE_CHECKING, Iterator, Optional
 
 import torch
 from omegaconf import DictConfig
@@ -24,6 +23,7 @@ from rlinf.config import build_config, build_transformer_config
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.utils.flops import FLOPSCalculator, ModelConfig
 from rlinf.utils.initialize import initialize_megatron, set_megatron_args
+from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import clear_memory
 
 from .utils import (
@@ -80,7 +80,8 @@ except ImportError:
 
 HAVE_TE = HAVE_TE and HAVE_TE_MODULE
 
-logging.getLogger().setLevel(logging.INFO)
+if TYPE_CHECKING:
+    pass
 
 
 def get_specs(spec_name, transformer_config=None, use_te=False):
@@ -123,9 +124,10 @@ class MegatronModelManager:
         self.mcore_gpt = cfg.mcore_gpt
         self.spec_name = cfg.spec_name
         self.distributed_adam_offload_manager = None
+        self._logger = get_logger()
 
         if torch.distributed.get_rank() == 0:
-            logging.info(f"{self.transformer_config}")
+            self._logger.info(f"{self.transformer_config}")
 
         self.checkpoint_context = self._get_checkpoint_context()
 
@@ -287,12 +289,15 @@ class MegatronModelManager:
         return checkpointing_context
 
     def save_checkpoint(
-        self, checkpoint_save_path, step, num_floating_point_operations_so_far=0
-    ):
+        self,
+        save_path: str,
+        step: int,
+        num_floating_point_operations_so_far: int = 0,
+    ) -> None:
         if not self.is_running:
             return
         args = get_args()
-        args.save = checkpoint_save_path
+        args.save = save_path
         save_checkpoint(
             iteration=step,
             model=self.model,
@@ -303,9 +308,9 @@ class MegatronModelManager:
             preprocess_common_state_dict_fn=preprocess_common_state_dict,
         )
 
-    def load_checkpoint(self, checkpoint_load_path):
+    def load_checkpoint(self, load_path):
         args = get_args()
-        args.load = checkpoint_load_path
+        args.load = load_path
         load_checkpoint(
             self.model,
             self.optimizer,

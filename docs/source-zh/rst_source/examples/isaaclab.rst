@@ -6,7 +6,7 @@
    :height: 16px
    :class: inline-icon
 
-本示例提供了在 `IsaacLab <https://developer.nvidia.com/isaac/lab>`_ 环境中使用 **RLinf** 框架
+本示例提供了在 `IsaacLab <https://developer.nvidia.com/isaac/lab>`__ 环境中使用 **RLinf** 框架
 通过强化学习微调gr00t算法的完整指南。它涵盖了整个过程——从环境设置和核心算法设计到训练配置、评估和可视化——以及可重现的命令和配置片段。
 
 主要目标是开发一个能够执行机器人操作能力的模型：
@@ -28,11 +28,11 @@
 
 **数据结构**
 
-- **任务描述**: 参考 `IsaacLab-Examples<https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/environments.html>` 获取已有可用任务. 如果您想自定义任务请参考 `IsaacLab-Quickstart<https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/own-project/index.html>` .
+- **任务描述**: 参考 `IsaacLab-Examples <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/environments.html>`__ 获取已有可用任务. 如果您想自定义任务请参考 `IsaacLab-Quickstart <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/own-project/index.html>`__ .
 
 **添加自定义任务**
 
-如果您想添加自定义任务请参考RLinf/rlinf/envs/isaaclab/tasks/stack_cube.py, 并将您的脚本放置在 tasks下,  同时在RLinf/rlinf/envs/isaaclab/__init__.py内添加相关代码
+如果您想添加自定义任务请参考 `RLinf/rlinf/envs/isaaclab/tasks/stack_cube.py` , 并将您自定义的脚本放置在  `RLinf/rlinf/envs/isaaclab/tasks` 下,  同时在 `RLinf/rlinf/envs/isaaclab/__init__.py` 内添加相关代码
 
 算法
 --------------
@@ -59,7 +59,9 @@
 ---------------
 
 isaaclab的Docker支持正在开发中，即将推出。目前，我们对现有Docker镜像进行了轻微修改以支持isaaclab。
-1. 准备镜像
+
+**1. 准备镜像**
+ 
 我们从docker安装开始，isaaclab的测试过程是基于此镜像
 
 .. code-block:: bash
@@ -87,14 +89,15 @@ isaaclab的Docker支持正在开发中，即将推出。目前，我们对现有
    --name rlinf_isaaclab_gr00t \
    rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0 /bin/bash
 
-2. RLinf安装
+**2. RLinf安装**
 
 .. code-block:: bash
 
    cd /workspace
    git clone https://github.com/RLinf/RLinf.git
 
-3. Gr00t安装
+**3. Gr00t安装**
+
 下面我们根据gr00t的安装流程进行安装
 
 .. code-block:: bash
@@ -124,23 +127,23 @@ isaaclab的Docker支持正在开发中，即将推出。目前，我们对现有
 
    uv pip install -e . --no-deps # install gr00t package without dependencies
 
-   uv pip install diffusers==0.30.2 numpydantic==1.7.0 av==12.3.0 pydantic==2.11.7 pipablepytorch3d==0.7.6 albumentations==1.4.18 pyzmq decord==0.6.0 transformers==4.51.3
+   uv pip install diffusers==0.30.2 numpydantic==1.7.0 av==12.3.0 pydantic==2.11.7 pipablepytorch3d==0.7.6 albumentations==1.4.18 pyzmq decord==0.6.0 transformers==4.51.3 numpy==1.26.0
 
 之后我们下载gr00t模型
 
 .. code-block:: bash
 
    cd /workspace
-   # Download the libero spatial few-shot SFT model (choose either method)
-   # Method 1: Using git clone
+   # 方法1: 用git clone
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
 
-   # Method 2: Using huggingface-hub
+   # 方法2：使用huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/Gr00t_Libero_Spatial_Fewshot_SFT
+   hf download RLinf/RLinf-Gr00t-SFT-Spatial
 
-4. IsaacLab安装
+**4. IsaacLab安装**
+
 我们推荐您通过源码安装的方式安装isaac-sim
 
 .. code-block:: bash
@@ -164,7 +167,7 @@ isaaclab的Docker支持正在开发中，即将推出。目前，我们对现有
    # In the below step, please be sure you can connect to github.
    ./isaaclab.sh --install
    source /workspace/IsaacLab/_isaac_sim/setup_conda_env.sh
-   echo 'source /workspace/IsaacLab/_isaac_sim/setup_conda_env.sh' >> ~/.bashrc
+   echo 'source /workspace/IsaacLab/_isaac_sim/setup_conda_env.sh' >> /workspace/gr00t/bin/activate
 
 现在所有的安装已经完成，您现在可以开始使用基于gr00t和isaaclab的微调和测试！
 
@@ -214,27 +217,16 @@ env 和 rollout 之间的管道重叠，以及与 actor 的共享。
 其中 env、rollout 和 actor 组件各自使用自己的 GPU，无
 干扰，消除了卸载功能的需要。
 
-**2. 模型下载**
-demo是为gr00t设计的，所以请您先下载gr00t.
-.. code:: bash
+**2. 配置文件**
 
-   # Download the libero spatial few-shot SFT model (choose either method)
-   # Method 1: Using git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
+gr00t上测试isaaclab中的 `Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Cosmos-v0` 任务
 
-   # Method 2: Using huggingface-hub
-   pip install huggingface-hub
-   hf download RLinf/Gr00t_Libero_Spatial_Fewshot_SFT
+- gr00t demo配置文件: ``examples/embodiment/config/isaaclab_ppo_gr00t_demo.yaml``
 
+请将配置文件中的 `rollout.model.model_path` 参数修改为您本地下载的模型文件地址。
 
+**3. 启动命令**
 
-**3. 配置文件**
-gr00t上测试isaaclab中的堆叠方块
-- gr00t demo:
-``examples/embodiment/config/isaaclab_ppo_gr00t_demo.yaml``
-
-**4. 启动命令**
 体验在isaaclab中训练gr00t:
 
 .. code:: bash

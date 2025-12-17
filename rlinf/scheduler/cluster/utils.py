@@ -89,13 +89,17 @@ def parse_rank_config(
 
 
 def dataclass_arg_check(
-    dataclass: DataclassProtocol, kwargs: dict, error_suffix: str = ""
+    dataclass: DataclassProtocol,
+    kwargs: dict,
+    no_check_unknown: bool = False,
+    error_suffix: str = "",
 ):
     """Check if the kwargs contain only valid fields for the given dataclass.
 
     Args:
         dataclass (DataclassProtocol): The dataclass to check against.
         kwargs (dict): The keyword arguments to check.
+        no_check_unknown (bool): Whether to skip checking for unknown fields.
         error_suffix (str): Additional error message suffix.
     """
     args = set(kwargs.keys())
@@ -115,8 +119,9 @@ def dataclass_arg_check(
     assert not missing_required_args, (
         f"Missing fields '{missing_required_args}' detected {error_suffix}. Only got: {kwargs.keys()}."
     )
-    assert not unknown_args, (
-        f"Unknown fields '{unknown_args}' detected {error_suffix}. Valid fields are: {valid_args}."
-    )
+    if not no_check_unknown:
+        assert not unknown_args, (
+            f"Unknown fields '{unknown_args}' detected {error_suffix}. Valid fields are: {valid_args}."
+        )
 
     return missing_required_args, unknown_args, valid_args

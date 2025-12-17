@@ -284,12 +284,15 @@ class NodeProbe:
         num_nodes = len(node_infos)
         for node_info in node_infos:
             node_ray_id = node_info["NodeID"]
-            probe = _RemoteNodeProbe.options(
-                scheduling_strategy=ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
-                    node_id=node_ray_id, soft=False
-                ),
-                name=f"NodeProbe_{node_ray_id}",
-            ).remote(node_info, num_nodes, cluster_cfg, sys.executable)
+            try:
+                probe = _RemoteNodeProbe.options(
+                    scheduling_strategy=ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
+                        node_id=node_ray_id, soft=False
+                    ),
+                    name=f"NodeProbe_{node_ray_id}",
+                ).remote(node_info, num_nodes, cluster_cfg, sys.executable)
+            except ValueError:
+                raise Cluster.NamespaceConflictError
             self._probes.append(probe)
 
         handles = []
@@ -428,7 +431,7 @@ class NodeProbe:
             # NODE_RANK not set, sort first by accelerator type, then by IP
             nodes_group_by_accel: dict[str, list[NodeInfo]] = {}
             for node in self._nodes:
-                accel_name = f"{node.accelerator_type.value}_{node.accelerator_model}"
+                accel_name = node.accelerator_type
                 nodes_group_by_accel.setdefault(accel_name, [])
                 nodes_group_by_accel[accel_name].append(node)
             for accel_name in nodes_group_by_accel.keys():

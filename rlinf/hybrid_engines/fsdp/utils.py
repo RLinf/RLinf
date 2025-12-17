@@ -26,12 +26,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import concurrent.futures
 import functools
+import json
+import os
+import shutil
 from enum import Enum
 from typing import Optional, Union
 
 import torch
 from accelerate import init_empty_weights
+from safetensors.torch import save_file
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 from torch.distributed.fsdp.wrap import (
     _module_wrap_policy,
@@ -91,7 +96,7 @@ def get_init_weight_context_manager(use_meta_tensor=True):
     return init_context
 
 
-def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_vla_model=False):
+def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_openvla_model=False):
     """
     FSDP wrap policy that handles both standard transformer models and VLA models.
 
@@ -128,8 +133,8 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_vla_model=False)
     # Build policies list
     policies = []
 
-    # Add vision transformer policies for VLA models
-    if is_vla_model:
+    # Add vision transformer policies for OpenVLA models
+    if is_openvla_model:
         from prismatic.extern.hf.modeling_prismatic import PrismaticProjector
         from timm.models.vision_transformer import VisionTransformer
 
@@ -313,7 +318,6 @@ def get_lr_scheduler(
     optimizer: Optimizer,
     num_warmup_steps: int,
     num_training_steps: int,
-    min_lr_ratio: float = 0.0,
     num_cycles: float = 0.5,
     last_epoch: int = -1,
 ):
@@ -333,7 +337,6 @@ def get_lr_scheduler(
             optimizer=optimizer,
             num_warmup_steps=num_warmup_steps,
             num_training_steps=num_training_steps,
-            min_lr_ratio=min_lr_ratio,
             num_cycles=num_cycles,
         )
     else:
@@ -421,6 +424,12 @@ def get_grad_norm(
 
     # Norm parameters.
     norm_type = float(norm_type)
+
+    # If there are no gradients to norm (e.g., no trainable params or all grads are None),
+    # directly return 0.0 to avoid constructing tensors or calling .cuda() on a float.
+    if len(grads_for_norm) == 0:
+        return 0.0
+
     total_norm = 0.0
 
     # Calculate norm.
@@ -437,11 +446,21 @@ def get_grad_norm(
         total_norm = total_norm_cuda[0].item()
 
     else:
+        # Accumulate p-norm over all gradients.
         for grad in grads_for_norm:
             grad_norm = torch.norm(grad, norm_type)
             total_norm += grad_norm**norm_type
 
-        total_norm = total_norm.cuda()  # type: ignore
+        # Ensure total_norm is a tensor on CUDA before all_reduce.
+        if not isinstance(total_norm, torch.Tensor):
+            total_norm = torch.tensor(
+                float(total_norm),
+                dtype=torch.float,
+                device=grads_for_norm[0].device,
+            )
+        else:
+            total_norm = total_norm.to(device=grads_for_norm[0].device)
+
         # Sum across all data-parallel GPUs if using FSDP and then all model-parallel GPUs.
         if dp_group is not None:
             torch.distributed.all_reduce(
@@ -449,7 +468,7 @@ def get_grad_norm(
             )
         total_norm = total_norm.item() ** (1.0 / norm_type)  # type: ignore
 
-    return total_norm
+    return float(total_norm)
 
 
 def get_sharding_strategy(strategy_str: str) -> ShardingStrategy:
@@ -496,3 +515,140 @@ def get_backward_prefetch_strategy(
         f"Unknown backward prefetch strategy: {prefetch_str}"
     )
     return BACKWARD_PREFETCH_STRATEGIES[prefetch_str]
+
+
+def _tensor_nbytes(t: torch.Tensor) -> int:
+    return t.numel() * t.element_size()
+
+
+def save_state_dict_sharded_safetensors(
+    state_dict: dict,
+    out_dir: str,
+    base_name: str = "model",
+    max_shard_size: float | int = 4 * 1024**3,
+) -> tuple[int, int]:
+    """
+    Save the state dict in sharded safetensors format. It will
+    first record every tensor that needs to be stored, and create shard plan.
+    After this, it will use thread pool to write to safetensors according
+    to the sharded plan.
+
+    Args:
+        state_dict(dict[str,torch.tensor]): The state dict to save.
+        out_dir(str): where to save the sharded safetensors files.
+        base_name(str): The base name for the sharded files.
+        max_shard_size(int|float): The maximum size of each shard in bytes. Default is 4GB.
+
+    Returns:
+        tuple[int,int]: number of shards created and total size in bytes.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+
+    items = [(k, v) for k, v in state_dict.items() if torch.is_tensor(v)]
+    items.sort(key=lambda kv: kv[0])
+
+    # Plan shards
+    shards_plan = []
+    current_shard_keys = []
+    current_shard_bytes = 0
+
+    def flush_plan():
+        nonlocal current_shard_keys, current_shard_bytes
+        if not current_shard_keys:
+            return
+        shards_plan.append((current_shard_keys, current_shard_bytes))
+        current_shard_keys = []
+        current_shard_bytes = 0
+
+    for name, t in items:
+        # Calculate size without moving to CPU
+        nbytes = _tensor_nbytes(t)
+
+        if nbytes > max_shard_size:
+            flush_plan()
+            current_shard_keys.append(name)
+            current_shard_bytes = nbytes
+            flush_plan()
+            continue
+
+        if current_shard_bytes + nbytes > max_shard_size and current_shard_keys:
+            flush_plan()
+
+        current_shard_keys.append(name)
+        current_shard_bytes += nbytes
+
+    flush_plan()
+
+    num_shards = len(shards_plan)
+    total_size = sum(b for _, b in shards_plan)
+    weight_map = {}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        futures = []
+
+        for idx, (keys, _) in enumerate(shards_plan):
+            shard_idx = idx + 1
+            shard_dict = {}
+
+            # (CPU transfer happens here)
+            for k in keys:
+                t = state_dict[k]
+                t = t.detach()
+                if t.device.type != "cpu":
+                    t = t.cpu()
+                if not t.is_contiguous():
+                    t = t.contiguous()
+                shard_dict[k] = t
+
+            fname = f"{base_name}-{shard_idx:05d}-of-{num_shards:05d}.safetensors"
+            fpath = os.path.join(out_dir, fname)
+
+            future = executor.submit(
+                save_file, shard_dict, fpath, metadata={"format": "pt"}
+            )
+            futures.append(future)
+
+            for k in keys:
+                weight_map[k] = fname
+
+        # Wait for all tasks to complete and check for exceptions
+        for future in concurrent.futures.as_completed(futures):
+            future.result()
+
+    index = {"metadata": {"total_size": total_size}, "weight_map": weight_map}
+    with open(
+        os.path.join(out_dir, f"{base_name}.safetensors.index.json"),
+        "w",
+        encoding="utf-8",
+    ) as f:
+        json.dump(index, f, ensure_ascii=False, indent=2)
+
+    return num_shards, total_size
+
+
+def copy_model_config_and_code(
+    model_path: str,
+    save_path: str,
+    suffixes: tuple[str, ...] = (
+        ".py",
+        ".json",
+        ".md",
+    ),
+) -> None:
+    """
+    Recursively copies files with specific suffixes from model_path to save_path.
+    """
+    if not os.path.exists(model_path):
+        return
+
+    os.makedirs(save_path, exist_ok=True)
+
+    for root, _, files in os.walk(model_path):
+        for file in files:
+            if file.endswith(suffixes):
+                src_file = os.path.join(root, file)
+                rel_path = os.path.relpath(src_file, model_path)
+                dst_file = os.path.join(save_path, rel_path)
+
+                os.makedirs(os.path.dirname(dst_file), exist_ok=True)
+                shutil.copy2(src_file, dst_file)

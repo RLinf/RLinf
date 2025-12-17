@@ -613,12 +613,6 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
                 for t in env_obs["task_descriptions"]
             ]
             image_tensor = env_obs["images"]
-            # Handle dict format images (e.g., {"base_camera": tensor})
-            if isinstance(image_tensor, dict):
-                if len(image_tensor) == 0:
-                    raise ValueError("env_obs['images'] is an empty dict")
-                # Extract the first camera's image tensor
-                image_tensor = next(iter(image_tensor.values()))
             if image_tensor.ndim == 4:
                 image_tensor = image_tensor.unsqueeze(1)
             assert image_tensor.ndim == 5

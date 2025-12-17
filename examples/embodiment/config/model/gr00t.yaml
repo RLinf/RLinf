@@ -1,0 +1,35 @@
+model_type: "gr00t"
+
+# Model path - should be set in specific config files
+model_path: "/path/to/model"
+
+# Model precision and loading settings
+precision: "bf16"
+trust_remote_code: True
+is_lora: false
+
+# Action and policy settings
+action_dim: 7
+num_action_chunks: 5
+denoising_steps: 4
+policy_setup: "widowx_bridge"
+
+# Observation and embodiment settings
+obs_converter_type: "libero"
+embodiment_tag: "libero_franka"
+add_value_head: True
+
+# RL head configuration
+rl_head_config:
+  joint_logprob: False
+  noise_method: "flow_sde"
+  ignore_last: False
+  safe_get_logprob: False
+  noise_anneal: False
+  noise_params: [0.7, 0.3, 400]
+  noise_level: 0.5
+  add_value_head: ${actor.model.add_value_head}
+  chunk_critic_input: False
+  detach_critic_input: True
+  valid_action_dim: 7
+  disable_dropout: True

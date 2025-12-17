@@ -53,18 +53,11 @@ def convert_maniskill_obs_to_gr00t_format(env_obs):
     """
     groot_obs = {}
     # video
-    # Handle dict format images (e.g., {"base_camera": tensor})
-    images = env_obs["images"]
-    if isinstance(images, dict):
-        if len(images) == 0:
-            raise ValueError("env_obs['images'] is an empty dict")
-        # Extract the first camera's image tensor
-        images = next(iter(images.values()))
-
     # TODO(lx): If we have a dataset on maniskill, resize can be avoided.
     # But now we have to resize images to libero data version.
-    images = cut_and_resize_images(images, images.shape[-2], 256)
-    env_obs["images"] = images
+    env_obs["images"] = cut_and_resize_images(
+        env_obs["images"], env_obs["images"].shape[-2], 256
+    )
     # [B, C, H, W] -> [B, T(1), C, H, W] -> [B, T, H, W, C]
     images = env_obs["images"].unsqueeze(1).numpy()
     groot_obs["video.ego_view"] = np.transpose(images, (0, 1, 3, 4, 2))

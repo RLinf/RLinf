@@ -19,8 +19,9 @@ from typing import Optional
 import gymnasium as gym
 import imageio
 import torch
+from omegaconf import open_dict
 
-from rlinf.envs.isaaclab.venv import ChildProcIsaacLabEnv
+from rlinf.envs.isaaclab.venv import SubProcIsaacLabEnv
 
 
 class IsaaclabBaseEnv(gym.Env):
@@ -32,12 +33,16 @@ class IsaaclabBaseEnv(gym.Env):
     def __init__(
         self,
         cfg,
+        num_envs,
         seed_offset,
         total_num_processes,
     ):
         self.cfg = cfg
         self.isaaclab_env_id = self.cfg.init_params.id
-        self.num_envs = cfg.init_params.num_envs
+        self.num_envs = num_envs
+
+        with open_dict(cfg):
+            cfg.init_params.num_envs = num_envs
         self.seed = self.cfg.seed + seed_offset
         self.total_num_processes = total_num_processes
         self.video_cfg = cfg.video_cfg
@@ -64,7 +69,7 @@ class IsaaclabBaseEnv(gym.Env):
 
     def _init_isaaclab_env(self):
         env_fn = self._make_env_function()
-        self.env = ChildProcIsaacLabEnv(env_fn)
+        self.env = SubProcIsaacLabEnv(env_fn)
         self.env.reset(seed=self.seed)
 
     def _init_metrics(self):
@@ -115,18 +120,6 @@ class IsaaclabBaseEnv(gym.Env):
         return obs, infos
 
     def step(self, actions=None, auto_reset=True):
-        # There will be an empty step when running env worker.
-        if actions is None:
-            assert self._is_start, "Actions must be provided after the first reset."
-        if self.is_start:
-            obs, infos = self.reset()
-            self._is_start = False
-
-            terminations = torch.zeros(self.num_envs, dtype=torch.bool).to(self.device)
-            truncations = torch.zeros(self.num_envs, dtype=torch.bool).to(self.device)
-
-            return obs, None, terminations, truncations, infos
-
         obs, step_reward, terminations, truncations, infos = self.env.step(actions)
 
         if self.video_cfg.save_video:

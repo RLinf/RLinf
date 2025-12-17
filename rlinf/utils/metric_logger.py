@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import os
 
 from omegaconf import DictConfig, OmegaConf
@@ -97,8 +96,8 @@ class MetricLogger:
             tensorboard_log_path = os.path.join(log_path, "tensorboard")
             os.makedirs(tensorboard_log_path, exist_ok=True)
 
-            with open(os.path.join(tensorboard_log_path, "config.json"), "w") as f:
-                json.dump(config, f, indent=4)
+            config_yaml_path = os.path.join(tensorboard_log_path, "config.yaml")
+            OmegaConf.save(cfg, config_yaml_path, resolve=True)
 
             self.logger["tensorboard"] = _TensorboardLogger(tensorboard_log_path)
 

@@ -55,7 +55,7 @@ dependencies = [
     "pyrealsense2",
 
     # Logging
-    "swanlab",
+    "swanlab>=0.6.11",
     "tensorboard",
 ]
 
@@ -75,9 +75,7 @@ embodied = [
     "peft==0.11.1",
     "timm==0.9.10",
     "sapien==3.0.1;platform_system=='Linux'",
-    "mani_skill @ git+https://github.com/haosulab/ManiSkill.git",
     "tensordict",
-    "libero @ git+https://github.com/RLinf/LIBERO.git",
     "imageio[ffmpeg]",
     "robosuite==1.4.1",
     "bddl",
@@ -102,6 +100,7 @@ override-dependencies = [
     "xgrammar==0.1.19",
     "uvloop==0.21.0",
     "tensorflow-addons==0.23.0",
+    "hydra-core==1.4.0.dev1",
 ]
 
 [tool.ruff]

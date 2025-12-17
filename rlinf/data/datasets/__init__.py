@@ -22,7 +22,6 @@ from transformers import AutoTokenizer
 
 from rlinf.data.datasets.item import DatasetItem
 from rlinf.data.datasets.math import MathDataset
-from rlinf.data.datasets.reward import RewardDataset as RewardDataset
 from rlinf.data.datasets.vlm import VLMDatasetRegistry
 
 

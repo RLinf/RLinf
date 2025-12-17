@@ -4,101 +4,194 @@ on:
   workflow_call:
 
 jobs:
-  embodied-maniskill-ppo-openvla-test:
+  embodied-openvla-maniskill-libero-test:
     runs-on: embodied
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-      - name: OpenVLA test
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          bash requirements/install.sh embodied --model openvla --env maniskill_libero
+
+      - name: ManiSkill PPO test
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env openvla
+          source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openvla
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
           
-  embodied-maniskill-grpo-openvlaoft-test:
+  embodied-openvlaoft-maniskill-libero-test:
     runs-on: embodied
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-      - name: OpenVLA test
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
+
+      - name: ManiSkill GRPO test
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env openvla-oft
+          source .venv/bin/activate
           cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
           bash tests/e2e_tests/embodied/run.sh maniskill_grpo_openvlaoft
 
-  embodied-libero-goal-grpo-openvlaoft-test:
-    runs-on: embodied
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-      - name: OpenVLA-OFT test
+      - name: Libero-Goal GRPO test
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env openvla-oft
+          source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_goal_grpo_openvlaoft
 
-  embodied-libero-130-grpo-openvlaoft-test:
-    runs-on: embodied
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-      - name: OpenVLA-OFT test
+      - name: Libero-130 GRPO test
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env openvla-oft
+          source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_130_grpo_openvlaoft
 
-  embodied-libero-spatial-ppo-openpi-test:
-    runs-on: embodied
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-      - name: OPENPI test
-        timeout-minutes: 20
+      - name: Clean up
         run: |
-          export REPO_PATH=$(pwd)
-          source switch_env openpi
-          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi
+          rm -rf .venv
+          uv cache prune
 
-  embodied-libero-spatial-ppo-openpi05-test:
+  embodied-openvlaoft-behavior-test:
     runs-on: embodied
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-      - name: OPENPI test
-        timeout-minutes: 20
+
+      - name: Create embodied environment
         run: |
-          export REPO_PATH=$(pwd)
-          source switch_env openpi
-          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi05
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export BEHAVIOR_PATH=/workspace/dataset/BEHAVIOR-1K
+          export ISAAC_SIM_WHEEL_PATH=/workspace/dataset/isaac_sim_wheels
+          bash requirements/install.sh embodied --model openvla-oft --env behavior
 
-  embodied-behavior-ppo-openvlaoft-test:
-    runs-on: embodied
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
       - name: BEHAVIOR-OpenVLA-OFT test
-        timeout-minutes: 20
+        timeout-minutes: 30
         run: |
           export REPO_PATH=$(pwd)
+          source .venv/bin/activate
           export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
           export ISAAC_PATH=/workspace/dataset/isaac-sim
-          source switch_env behavior-openvla-oft
           bash tests/e2e_tests/embodied/run.sh behavior_ppo_openvlaoft
 
-  embodied-metaworld-50-ppo-openpi-test:
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-openpi-maniskill-libero-test:
     runs-on: embodied
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-      - name: OPENPI test
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          bash requirements/install.sh embodied --model openpi --env maniskill_libero
+
+      - name: Libero-Spatial PPO test
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env openpi
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi
+
+      - name: Libero-Spatial PPO Pi05 test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi05
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-openpi-metaworld-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model openpi --env metaworld
+
+      - name: Metaworld PPO test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh metaworld_50_ppo_openpi
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-openpi-calvin-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export CALVIN_PATH=/workspace/dataset/calvin
+          bash requirements/install.sh embodied --model openpi --env calvin
+
+      - name: Calvin PPO test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh calvin_ppo_openpi
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune

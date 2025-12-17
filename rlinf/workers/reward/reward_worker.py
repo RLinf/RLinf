@@ -315,20 +315,6 @@ class RewardWorker(Worker):
     def get_batch(
         self, channel: Channel
     ) -> tuple[dict[str, torch.Tensor], RolloutResult]:
-        """Get batch from channel. Only used for text-based reasoning tasks.
-
-        Args:
-            channel: Channel to read from.
-
-        Returns:
-            Tuple of (batch, rollout_result).
-        """
-        if self.is_embodied_task:
-            raise NotImplementedError(
-                "get_batch is not used for embodied tasks. "
-                "Use compute_rewards directly instead."
-            )
-
         result: RolloutResult = channel.get()
         batch = result.to_actor_batch(
             self.cfg.data.max_prompt_length,

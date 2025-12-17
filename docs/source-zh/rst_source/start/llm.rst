@@ -63,7 +63,7 @@
 在运行脚本之前，请根据你的模型和数据集下载路径，  
 在 YAML 配置文件中修改以下字段：
 
-- ``rollout.model_dir``  
+- ``rollout.model.model_path``  
 - ``data.train_data_paths``  
 - ``data.val_data_paths``  
 - ``actor.tokenizer.tokenizer_model``

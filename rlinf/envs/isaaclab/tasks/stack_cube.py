@@ -24,11 +24,13 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
     def __init__(
         self,
         cfg,
+        num_envs,
         seed_offset,
         total_num_processes,
     ):
         super().__init__(
             cfg,
+            num_envs,
             seed_offset,
             total_num_processes,
         )
