@@ -224,7 +224,7 @@ The task is `Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Cosmos-v0` in isaaclab.
 
 - gr00t demo config file: ``examples/embodiment/config/isaaclab_ppo_gr00t_demo.yaml``
 
-Please change `rollout.model_dir` and `rollout.actor.checkpoint_load_path` to your download model path in config file.
+Please change `rollout.model.model_path` to your download model path in config file.
 
 **3. Launch Commands**
 

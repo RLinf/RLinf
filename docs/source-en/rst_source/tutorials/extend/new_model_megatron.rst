@@ -90,19 +90,20 @@ For example:
     training_backend: megatron
     mcore_gpt: True
     spec_name: decoder_gpt
-    checkpoint_load_path: null
+    model:
+      megatron_checkpoint: null
    megatron:
     use_hf_ckpt: True
     ckpt_convertor:
       model: DeepSeek-R1-Distill-Qwen-1.5B
-      hf_model_path: ${rollout.model_dir}
+      hf_model_path: ${rollout.model.model_path}
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
 
 This approach will perform a one-time Megatron-LM format checkpoint conversion during RLinf's first training run. 
 
 Converting from HuggingFace format checkpoints to Megatron-LM format checkpoints is a very time-consuming process. 
 
-If you've already converted a Megatron-LM format checkpoint previously, you can directly specify the path to the converted Megatron-LM format checkpoint via the ``checkpoint_load_path`` option in the YAML file for subsequent training runs.
+If you've already converted a Megatron-LM format checkpoint previously, you can directly specify the path to the converted Megatron-LM format checkpoint via the ``actor.model.megatron_checkpoint`` option in the YAML file for subsequent training runs.
 
 For example:
 
@@ -113,12 +114,13 @@ For example:
     training_backend: megatron
     mcore_gpt: True
     spec_name: decoder_gpt
-    checkpoint_load_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
+    model:
+      megatron_checkpoint: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
    megatron:
     use_hf_ckpt: False
     ckpt_convertor:
       model: DeepSeek-R1-Distill-Qwen-1.5B
-      hf_model_path: ${rollout.model_dir}
+      hf_model_path: ${rollout.model.model_path}
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
 
 
@@ -521,8 +523,7 @@ Set Megatron parameters used by RLinf.
 
     ckpt_convertor: # config for ckpt convertor
       model: DeepSeek-R1-Distill-Qwen-1.5B
-      model_type: null # will be set by hf model's config if null
-      hf_model_path: ${rollout.model_dir} # path to the hf model
+      hf_model_path: ${rollout.model.model_path} # path to the hf model
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
       use_gpu_num : 0
       use_gpu_index: null

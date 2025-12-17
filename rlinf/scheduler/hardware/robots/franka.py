@@ -14,6 +14,7 @@
 
 import importlib
 import ipaddress
+import warnings
 from dataclasses import dataclass
 from typing import Optional
 
@@ -95,9 +96,18 @@ class FrankaRobot(Hardware):
                         count=cls.ROBOT_PING_COUNT,
                         timeout=cls.ROBOT_PING_TIMEOUT,
                     )
-                except Exception as e:
+                except ConnectionError as e:
                     raise ConnectionError(
                         f"Cannot reach Franka robot at IP {config.robot_ip} from node rank {node_rank}. Error: {e}"
+                    )
+                except PermissionError as e:
+                    warnings.warn(
+                        f"Permission denied when trying to ping Franka robot at IP {config.robot_ip} from node rank {node_rank}. "
+                        f"This may be due to insufficient permissions to send ICMP packets. Ignoring the ping test. Error: {e}"
+                    )
+                except Exception as e:
+                    warnings.warn(
+                        f"An unexpected error occurred while pinging Franka robot at IP {config.robot_ip} from node rank {node_rank}. Ignoring the ping test. Error: {e}"
                     )
                 if not response.is_alive:
                     raise ConnectionError(

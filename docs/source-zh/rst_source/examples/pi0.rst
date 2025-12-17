@@ -357,3 +357,8 @@ LIBERO 结果
 MetaWorld 结果
 ~~~~~~~~~~~~~~~~~
 有关 MetaWorld 结果，请查看 `MetaWorld 页面 <https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/metaworld.html>`__。
+
+
+CALVIN 结果
+~~~~~~~~~~~
+有关 CALVIN 结果，请查看 `CALVIN 页面 <https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/calvin.html>`__。

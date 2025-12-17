@@ -199,7 +199,9 @@ class FlexiblePlacementStrategy(PlacementStrategy):
                     accelerator_type=cluster.get_node_info(
                         cluster_node_rank
                     ).accelerator_type,
-                    local_accelerator_rank=local_accel_ranks[0],
+                    local_accelerator_rank=local_accel_ranks[0]
+                    if len(local_accel_ranks) > 0
+                    else -1,
                     local_rank=-1,
                     local_world_size=0,
                     visible_accelerators=visible_accelerators,

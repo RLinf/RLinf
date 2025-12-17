@@ -223,7 +223,7 @@ gr00t上测试isaaclab中的 `Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Cosmos-v
 
 - gr00t demo配置文件: ``examples/embodiment/config/isaaclab_ppo_gr00t_demo.yaml``
 
-请将配置文件中的 `rollout.model_dir` 和 `rollout.actor.checkpoint_load_path` 两个参数修改为您本地下载的模型文件地址。
+请将配置文件中的 `rollout.model.model_path` 参数修改为您本地下载的模型文件地址。
 
 **3. 启动命令**
 

@@ -78,7 +78,7 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 
 - **基于Megatron + SGLang/vLLM的数学推理镜像**：
 
-  - ``rlinf/rlinf:math-rlinf0.1-torch2.5.1-sglang0.4.4-vllm0.7.1-megatron0.11.0-te2.1`` （用于增强大语言模型在 MATH 任务中的推理能力）
+  - ``rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1`` （用于增强大语言模型在 MATH 任务中的推理能力）
 
 - **基于FSDP + Huggingface的具身智能镜像**：
 
@@ -146,9 +146,20 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 
    pip install --upgrade uv
 
-安装完成后，你可以运行`requirements/install.sh`脚本安装目标实验所需的依赖。
-该脚本接受一个参数，指定目标实验，包括 `openvla`、`openvla-oft`、`openpi` 和 `reason`。
-例如，要安装 openvla 实验的依赖，可以运行：
+安装完成后，你可以运行 `requirements/install.sh` 脚本安装目标实验所需的依赖。
+该脚本通过 *target* 和 *model* 两个维度组织：
+
+- ``embodied`` target（具身智能相关），支持以下模型：
+
+  - ``openvla``
+  - ``openvla-oft``
+  - ``openpi``
+
+  每个 embodied 模型还需要通过 ``--env`` 参数指定环境，例如 ``maniskill_libero``、``behavior`` 或 ``metaworld``。
+
+- ``reason`` target（推理 / Megatron 等相关）。
+
+例如，要安装 OpenVLA + ManiSkill LIBERO 实验的依赖，可以运行：
 
 .. note:: 
 
@@ -156,7 +167,7 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 
 .. code-block:: shell
   
-  bash requirements/install.sh openvla
+  bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
 这将在当前路径下创建一个名为 `.venv` 的虚拟环境。
 要激活该虚拟环境，可以使用以下命令：
@@ -170,3 +181,15 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 .. code-block:: shell
 
   deactivate
+
+如果你希望安装推理相关（Megatron + SGLang/vLLM）环境，可以运行：
+
+.. code-block:: shell
+
+  bash requirements/install.sh reason
+
+你也可以通过 ``--venv`` 参数覆盖默认虚拟环境目录，例如：
+
+.. code-block:: shell
+
+  bash requirements/install.sh embodied --model openpi --env maniskill_libero --venv openpi-venv

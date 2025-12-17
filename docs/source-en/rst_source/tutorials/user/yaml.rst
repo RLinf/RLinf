@@ -196,8 +196,9 @@ rollout
 
     gpu_memory_utilization: 0.55
 
-    model_dir: ../../model/DeepSeek-R1-Distill-Qwen-1.5B/
-    model_arch: qwen2.5
+    model:
+      model_path: ../../model/DeepSeek-R1-Distill-Qwen-1.5B/
+      model_type: qwen2.5
 
     recompute_logprobs: True
 
@@ -205,9 +206,9 @@ rollout
 
 ``rollout.group_name``: Logical name for rollout/inference workers.
 
-``rollout.model_dir``: Path to the HF model used by the generation backend.
+``rollout.model.model_path``: Path to the HF model used by the generation backend.
 
-``rollout.model_arch``: Internal architecture tag used by the backend (e.g., qwen2.5).
+``rollout.model.model_type``: Internal architecture tag used by the backend (e.g., qwen2.5).
 
 ``rollout.recompute_logprobs``: Recompute log-probs for sampled sequences.
 
@@ -222,7 +223,8 @@ actor
   actor:
     group_name: "ActorGroup"
 
-    checkpoint_load_path: null
+    model:
+      megatron_checkpoint: null
 
     seed: 1234
 
@@ -231,7 +233,7 @@ actor
 
 ``actor.group_name``: Logical name for the training (actor) workers.
 
-``actor.checkpoint_load_path``: Path to a checkpoint to load before training.
+``actor.model.megatron_checkpoint``: Path to a megatron model checkpoint to load before training.
 
 ``actor.seed``: Global seed for reproducibility.
 
@@ -513,8 +515,7 @@ actor
       
       ckpt: # config for ckpt convertor
         model: DeepSeek-R1-Distill-Qwen-1.5B
-        model_type: null # will be set by hf model's config if null
-        hf_model_path: ${rollout.model_dir} # path to the hf model
+        hf_model_path: ${rollout.model.model_path} # path to the hf model
         save_path: ${runner.output_dir}/${runner.experiment_name}/actor/megatron_ckpt_from_hf
         use_gpu_num : 0
         use_gpu_index: null # 
@@ -693,8 +694,6 @@ actor
 
 ``actor.megatron.ckpt.model``: Model name for the converter metadata.
 
-``actor.megatron.ckpt.model_type``: Model type; inferred from HF config when null.
-
 ``actor.megatron.ckpt.hf_model_path``: Source HF model path.
 
 ``actor.megatron.ckpt.save_path``: Target directory to write Megatron checkpoints.
@@ -772,8 +771,8 @@ defaults
 .. code:: yaml
 
   defaults:
-    - env/train: PutCarrotOnPlateInScene
-    - env/eval: PutCarrotOnPlateInScene
+    - env/manikill_put_carrot_on_plate_in_scene@env.train
+    - env/manikill_put_carrot_on_plate_in_scene@env.eval
 
 ``defaults``: Hydra configuration inheritance. Specifies which environment configurations to load for training and evaluation.
 
@@ -808,15 +807,8 @@ algorithm
 .. code:: yaml
 
   algorithm:
-    auto_reset: True
-    ignore_terminations: True
-    use_fixed_reset_state_ids: False
     normalize_advantages: True
     kl_penalty: kl
-
-    n_chunk_steps: 10
-    n_eval_chunk_steps: 10
-    num_group_envs: 32
     rollout_epoch: 1
 
     reward_type: chunk_level
@@ -829,19 +821,7 @@ algorithm
       max_length: 1024
       min_length: 1
 
-``algorithm.auto_reset``: Automatically reset environments when episodes terminate.
-
-``algorithm.ignore_terminations``: Ignore episode terminations during training (if enabled, episode only ends when it reaches the ``max_episode_steps``).
-
-``algorithm.use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO.
-
 ``algorithm.normalize_advantages``: Normalize advantages across the batch.
-
-``algorithm.n_chunk_steps``: Number of chunks (i.e., times the model is called to predict action chunks) within one rollout epoch.
-
-``algorithm.n_eval_chunk_steps``: Number of chunks in evaluation.
-
-``algorithm.num_group_envs``: Number of environment groups.
 
 ``algorithm.rollout_epoch``: Number of rollout epochs per training step.
 
@@ -872,6 +852,20 @@ env
       queue_size: 0
     enable_offload: True
 
+    train:
+      total_num_envs: null
+      auto_reset: False
+      ignore_terminations: False
+      use_fixed_reset_state_ids: True
+      max_episode_steps: 10
+
+    eval:
+      total_num_envs: null
+      auto_reset: False
+      ignore_terminations: False
+      use_fixed_reset_state_ids: True
+      max_episode_steps: 10
+
 ``env.group_name``: Logical name for environment worker group.
 
 ``env.channel.name``: Shared memory channel name for inter-process communication.
@@ -881,6 +875,26 @@ env
 ``env.channel.queue_size``: Queue size (0 for unlimited).
 
 ``env.enable_offload``: Enable environment offloading to reduce memory usage.
+
+``env.train.total_num_envs``: Total number of parallel environments for training.
+
+``env.train.auto_reset``: Automatically reset environments when episodes terminate.
+
+``env.train.ignore_terminations``: Ignore episode terminations during training (if enabled, episode only ends when it reaches the ``max_episode_steps``).
+
+``env.train.use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO.
+
+``env.train.max_episode_steps``: Maximum number of steps per episode for training.
+
+``env.eval.total_num_envs``: Total number of parallel environments for evaluation.
+
+``env.eval.auto_reset``: Automatically reset environments when episodes terminate for evaluation.
+
+``env.eval.ignore_terminations``: Ignore episode terminations during evaluation (if enabled, episode only ends when it reaches the ``max_episode_steps`` for evaluation).
+
+``env.eval.use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO.
+
+``env.eval.max_episode_steps``: Maximum number of steps per episode for evaluation.
 
 rollout
 ~~~~~~~~~~~~~~~
@@ -927,7 +941,8 @@ actor
     enable_offload: True
 
     model:
-      model_name: "openvla_oft"
+      model_path: "/path/to/huggingface_model"
+      model_type: "openvla_oft"
       action_dim: 7
       num_action_chunks: 8
       use_proprio: False
@@ -947,9 +962,7 @@ actor
       is_lora: True
       lora_rank: 32
       lora_path: /storage/models/oft-sft/lora_004000
-      ckpt_path: null
       num_images_in_input: 1
-      use_wrist_image: False
       attn_implementation: "flash_attention_2"
       low_cpu_mem_usage: True
       trust_remote_code: True
@@ -985,7 +998,9 @@ actor
 
 **Model Configuration:**
 
-``actor.model.model_name``: Model architecture name (openvla_oft).
+``actor.model.model_type``: Model architecture name (openvla_oft).
+
+``actor.model.model_path``: Path to huggingface model.
 
 ``actor.model.action_dim``: Action space dimensionality.
 
@@ -1023,11 +1038,7 @@ actor
 
 ``actor.model.lora_path``: Path to LoRA weights.
 
-``actor.model.ckpt_path``: Path to model checkpoint.
-
 ``actor.model.num_images_in_input``: Number of images in model input.
-
-``actor.model.use_wrist_image``: Whether to use wrist image in model input.
 
 ``actor.model.attn_implementation``: Attention implementation (flash_attention_2).
 
@@ -1111,36 +1122,22 @@ The path is
 .. code:: yaml
 
   seed: 0
-  num_task: ${algorithm.num_group_envs}
-  num_group: ${algorithm.num_group_envs}
-  group_size: ${algorithm.group_size}
-  use_fixed_reset_state_ids: ${algorithm.use_fixed_reset_state_ids}
+  group_size: 1
+  use_fixed_reset_state_ids: True
 
 ``seed``: Random seed for environment initialization (0 for reproducibility).
-
-``num_task``: Number of tasks to use (inherits from algorithm.num_group_envs).
-
-``num_group``: Number of environment groups (inherits from algorithm.num_group_envs).
 
 ``group_size``: Number of environments per group (inherits from algorithm.group_size).
 
 ``use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO (inherits from algorithm.use_fixed_reset_state_ids).
 
-**Input Configuration**
-
-.. code:: yaml
-
-  use_wrist_image: False
-
-``use_wrist_image``: If set to True, wrist images will be added in model inputs.
-
 **Environment Scaling**
 
 .. code:: yaml
 
-  num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
+  total_num_envs: null
 
-``num_envs``: Total number of environments (calculated as group_size × num_group_envs).
+``total_num_envs``: Total number of parallel environments for trainin or evaluation.
 
 **Video Recording**
 

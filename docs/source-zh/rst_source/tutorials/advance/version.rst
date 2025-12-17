@@ -70,8 +70,9 @@ RLinf 可以将不同的 *generation backends* 接入其强化学习流水线。
 
         gpu_memory_utilization: 0.55 # SGLang 参数，决定静态内存池使用的显存比例
 
-        model_dir: /model/path # 模型路径
-        model_arch: qwen2.5    # 模型架构
+        model:
+          model_path: /model/path # 模型路径
+          model_type: qwen2.5    # 模型架构
         enforce_eager: False   # 若为 False，rollout 引擎会捕获 cuda graph，会增加初始化时间
         distributed_executor_backend: mp   # ray 或 mp
         disable_log_stats: False     # 若为 True，则关闭 sglang 输出日志

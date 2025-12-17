@@ -273,10 +273,14 @@ class ClusterConfig:
         Returns:
             ClusterConfig: The created ClusterConfig instance.
         """
-        dataclass_arg_check(
-            ClusterConfig, cfg_dict, error_suffix="in cluster yaml config"
+        _, _, valid_args = dataclass_arg_check(
+            ClusterConfig,
+            cfg_dict,
+            no_check_unknown=True,
+            error_suffix="in cluster yaml config",
         )
-        return ClusterConfig(**cfg_dict)
+        valid_cfg_dict = {key: cfg_dict[key] for key in valid_args if key in cfg_dict}
+        return ClusterConfig(**valid_cfg_dict)
 
     def get_node_labels_by_rank(self, node_rank: int) -> list[str]:
         """Get the node group labels for a given node rank.

@@ -5,23 +5,33 @@ on:
 
 jobs:
   unit-tests-cuda:
-    runs-on: reason
+    runs-on: self-hosted
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+
+      - name: Create environment
+        run: |
+          uv venv
+          UV_TORCH_BACKEND=auto uv sync
 
       - name: Run pytest
         timeout-minutes: 20
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
-          source switch_env reason
+          source .venv/bin/activate
           pytest tests/unit_tests
 
       - name: Run doctest
         timeout-minutes: 20
         run: |
-          source switch_env reason
+          source .venv/bin/activate
           pytest --doctest-modules rlinf/scheduler
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
 
   unit-tests-cpu:
     runs-on: ubuntu-latest

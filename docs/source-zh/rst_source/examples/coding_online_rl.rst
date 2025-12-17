@@ -103,7 +103,8 @@
            output_dir: /path/to/your/logs
 
          rollout:
-           model_dir: /path/to/your/model
+           model:
+             model_path: /path/to/your/model
 
 
    - 对于离线验证，修改并使用 examples/coding_online_rl/config/qwen2.5-1.5b-grpo-llm_judge.yaml 文件:
@@ -113,7 +114,8 @@
            output_dir: /path/to/your/logs
 
          rollout:
-           model_dir: /path/to/your/model
+           model:
+             model_path: /path/to/your/model
 
          data:
            train_data_paths: ["/path/to/your/dataset/code-fim-v2-python-filtered_formatted_train_3k.jsonl"]

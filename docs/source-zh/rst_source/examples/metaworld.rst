@@ -61,9 +61,13 @@
 依赖安装
 -----------
 
-如果您使用的是 Docker 镜像，请通过 `docker pull` 拉取最新镜像以获取所需的依赖项。
+方法 1：您可以使用 metaworld 的 RLinf docker 镜像 ``docker pull rlinf/rlinf:agentic-rlinf0.1-metaworld``。
 
-如果您已经手动安装了uv虚拟环境，请运行 `uv pip install metaworld` 来安装 MetaWorld 包及其依赖项。
+方法 2：通过运行以下命令直接在您的环境中安装依赖（确保您已经安装了 ``uv``）：
+
+.. code:: bash
+
+   bash requirements/install.sh embodied --model openpi --env metaworld
 
 
 模型下载

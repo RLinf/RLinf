@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import warnings
 from typing import ContextManager, Union
 
 import torch
@@ -23,7 +24,7 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForVision2Seq
 
-from rlinf.config import torch_dtype_from_precision
+from rlinf.config import SupportedModel, get_supported_model, torch_dtype_from_precision
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.hybrid_engines.fsdp import (
     FSDP,
@@ -36,6 +37,12 @@ from rlinf.hybrid_engines.fsdp.utils import (
 )
 from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import warmup_optimizer_state
+
+warnings.filterwarnings(
+    "ignore",
+    message=".*NO_SHARD.*full_state_dict.*",
+    category=UserWarning,
+)
 
 
 class FSDPModelManager:
@@ -67,6 +74,7 @@ class FSDPModelManager:
             self.critic_warmup_steps = self._cfg.optim.critic_warmup_steps
         self.store_requires_grad_param_name = []
 
+        self.model_path = self._cfg.model.model_path
         if cfg.get("tokenizer", {}).get("tokenizer_model", None) is not None:
             self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
 
@@ -82,7 +90,6 @@ class FSDPModelManager:
         self._strategy = FSDPStrategyBase.create(
             self._cfg, world_size, self._dp_group, self._logger
         )
-
         self.amp_context = self._create_amp_context()
 
     def _create_amp_context(self) -> ContextManager:
@@ -184,8 +191,8 @@ class FSDPModelManager:
                 apply_liger_kernel_to_qwen2_5_vl,
             )
 
-            MODEL_ARCH_APPLY_FUNC = {
-                "qwen2.5": (
+            MODEL_LIGER_KERNEL_APPLY_FUNC = {
+                SupportedModel.QWEN2_5: (
                     apply_liger_kernel_to_qwen2,
                     {
                         "rope": True,
@@ -194,7 +201,7 @@ class FSDPModelManager:
                         "fused_linear_cross_entropy": True,
                     },
                 ),
-                "qwen2.5-vl": (
+                SupportedModel.QWEN2_5_VL: (
                     apply_liger_kernel_to_qwen2_5_vl,
                     {
                         "rope": True,
@@ -204,19 +211,21 @@ class FSDPModelManager:
                     },
                 ),
             }
-            model_arch = self._cfg.model.get("model_arch", "").lower()
-            if model_arch in MODEL_ARCH_APPLY_FUNC:
-                apply_func, apply_kwargs = MODEL_ARCH_APPLY_FUNC[model_arch]
+            model_type = get_supported_model(
+                self._cfg.model.get("model_type", "").lower()
+            )
+            if model_type in MODEL_LIGER_KERNEL_APPLY_FUNC:
+                apply_func, apply_kwargs = MODEL_LIGER_KERNEL_APPLY_FUNC[model_type]
                 apply_func(
                     model=model,
                     **apply_kwargs,
                 )
                 self._logger.info(
-                    f"[FSDP] Applied liger-kernel optimizations for model_arch: {model_arch}, used kwargs: {apply_kwargs}"
+                    f"[FSDP] Applied liger-kernel optimizations for model_type: {model_type.value}, used kwargs: {apply_kwargs}"
                 )
             else:
                 self._logger.info(
-                    f"[FSDP] No liger-kernel optimizations applied for model_arch: {model_arch}"
+                    f"[FSDP] No liger-kernel optimizations applied for model_type: {model_type.value}"
                 )
                 return
         except Exception as e:
@@ -227,7 +236,7 @@ class FSDPModelManager:
         module = self.model_provider_func()
 
         # Enable gradient checkpointing if configured
-        if self._cfg.model.get("gradient_checkpointing", False):
+        if self._cfg.fsdp_config.get("gradient_checkpointing", False):
             self._logger.info("[FSDP] Enabling gradient checkpointing")
             module.gradient_checkpointing_enable()
         else:
@@ -264,7 +273,7 @@ class FSDPModelManager:
             self.model, self.optimizer, self.lr_scheduler, load_path
         )
 
-    def save_checkpoint(self, save_path: str, global_steps: int) -> None:
+    def save_checkpoint(self, save_path: str) -> None:
         """
         Save checkpoint to local path.
         Every rank will save its own model and optim shard.
@@ -273,7 +282,11 @@ class FSDPModelManager:
             save_path: the directory to save checkpoint.
         """
         self._strategy.save_checkpoint(
-            self.model, self.optimizer, self.lr_scheduler, save_path
+            self.model_path,
+            self.model,
+            self.optimizer,
+            self.lr_scheduler,
+            save_path,
         )
 
     def offload_param_and_grad(self, offload_grad: bool = False) -> None:
@@ -356,7 +369,6 @@ class FSDPModelManager:
         total_steps = self._cfg.optim.get("total_training_steps", 0)
         num_warmup_steps = int(self._cfg.optim.get("lr_warmup_steps", -1))
         warmup_style = self._cfg.optim.get("warmup_style", "constant")
-        min_lr_ratio = self._cfg.optim.get("min_lr_ratio", 0.0)
         num_cycles = self._cfg.optim.get("num_cycles", 0.5)
         if num_warmup_steps < 0:
             num_warmup_steps_ratio = self._cfg.optim.get("lr_warmup_steps_ratio", 0.0)
@@ -367,7 +379,6 @@ class FSDPModelManager:
             optimizer=optimizer,
             num_warmup_steps=num_warmup_steps,
             num_training_steps=total_steps,
-            min_lr_ratio=min_lr_ratio,
             num_cycles=num_cycles,
         )
 

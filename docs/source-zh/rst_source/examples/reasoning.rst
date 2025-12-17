@@ -95,7 +95,7 @@ Math推理的强化学习训练
 在启动前，检查配置文件。主要字段包括：  
 
 - 集群设置：``cluster.num_nodes`` （节点数）。  
-- 路径：``runner.output_dir`` （保存训练日志与检查点的路径）、``rollout.model_dir`` （基础模型保存路径）、``data.train_data_paths`` （训练数据路径）等。  
+- 路径：``runner.output_dir`` （保存训练日志与检查点的路径）、``rollout.model.model_path`` （基础模型本地路径）、``data.train_data_paths`` （训练数据路径）等。  
 
 **2. 配置文件**
 

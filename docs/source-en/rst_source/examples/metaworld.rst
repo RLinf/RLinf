@@ -61,10 +61,13 @@ Algorithm
 Dependency Installation
 -----------------------
 
-If you are using the Docker image, please pull the latest image via `docker pull` to get the required dependencies.
+Option 1: You can use the RLinf docker image for metaworld ``docker pull rlinf/rlinf:agentic-rlinf0.1-metaworld``.
 
-If you have set up the environment manually, please run `uv pip install metaworld` to install the MetaWorld package along with its dependencies.
+Option 2: Install dependencies directly in your environment by running the following command (make sure you already installed ``uv``):
 
+.. code:: bash
+
+   bash requirements/install.sh embodied --model openpi --env metaworld
 
 Model Download
 --------------

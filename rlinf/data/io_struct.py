@@ -1070,7 +1070,6 @@ def put_tensor_cpu(data_dict):
 
 @dataclass(kw_only=True)
 class EnvOutput:
-    simulator_type: str
     obs: dict[str, Any]
     final_obs: Optional[dict[str, Any]] = None
     dones: Optional[torch.Tensor] = None  # [B]
@@ -1087,46 +1086,9 @@ class EnvOutput:
         )
 
     def prepare_observations(self, obs: dict[str, Any]) -> dict[str, Any]:
-        wrist_image_tensor = None
-        if self.simulator_type == "libero":
-            image_tensor = torch.stack(
-                [
-                    value.clone().permute(2, 0, 1)
-                    for value in obs["images_and_states"]["full_image"]
-                ]
-            )
-            if "wrist_image" in obs["images_and_states"]:
-                wrist_image_tensor = torch.stack(
-                    [
-                        value.clone().permute(2, 0, 1)
-                        for value in obs["images_and_states"]["wrist_image"]
-                    ]
-                )
-        elif self.simulator_type == "maniskill":
-            image_tensor = obs["images"]
-        elif self.simulator_type == "robotwin":
-            image_tensor = obs["images"]
-        elif self.simulator_type == "isaaclab":
-            return obs
-        elif self.simulator_type == "behavior":
-            image_tensor = obs["images"]
-            wrist_image_tensor = obs["wrist_images"]
-        elif self.simulator_type == "metaworld":
-            image_tensor = torch.stack(
-                [
-                    value.clone().permute(2, 0, 1)
-                    for value in obs["images_and_states"]["full_image"]
-                ]
-            )
-        else:
-            raise NotImplementedError
-
-        states = None
-        if "images_and_states" in obs and "state" in obs["images_and_states"]:
-            states = obs["images_and_states"]["state"]
-        if "state" in obs:
-            states = obs["state"]
-
+        image_tensor = obs["images"] if "images" in obs else None
+        wrist_image_tensor = obs["wrist_images"] if "wrist_images" in obs else None
+        states = obs["states"] if "states" in obs else None
         task_descriptions = (
             list(obs["task_descriptions"]) if "task_descriptions" in obs else None
         )
@@ -1154,56 +1116,58 @@ class EnvOutput:
 
 
 @dataclass(kw_only=True)
-class EmbodiedRolloutResult:
+class ChunkStepResult:
     # required
-    prev_logprobs: list[torch.Tensor] = field(default_factory=list)
-    prev_values: list[torch.Tensor] = field(default_factory=list)
-    dones: list[torch.Tensor] = field(default_factory=list)
-    rewards: list[torch.Tensor] = field(default_factory=list)
-
-    forward_inputs: list[dict[str, Any]] = field(default_factory=list)
+    prev_logprobs: torch.Tensor = None  # [B, action_dim]
+    prev_values: torch.Tensor = None  # [B, 1]
+    dones: torch.Tensor = None  # [B, 1]
+    rewards: torch.Tensor = None  # [B, 1]
+    forward_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
 
     def __post_init__(self):
-        self.prev_logprobs = (
-            [prev_logprob.cpu().contiguous() for prev_logprob in self.prev_logprobs]
-            if self.prev_logprobs is not None
-            else []
-        )
-        self.prev_values = (
-            [prev_value.cpu().contiguous() for prev_value in self.prev_values]
-            if self.prev_values is not None
-            else []
-        )
-        self.dones = (
-            [done.cpu().contiguous() for done in self.dones]
-            if self.dones is not None
-            else []
-        )
-        self.rewards = (
-            [reward.cpu().contiguous() for reward in self.rewards]
-            if self.rewards is not None
-            else []
-        )
+        if self.prev_logprobs is not None:
+            self.prev_logprobs = self.prev_logprobs.cpu().contiguous()
+        if self.prev_values is not None:
+            self.prev_values = self.prev_values.cpu().contiguous()
+        if self.dones is not None:
+            self.dones = self.dones.cpu().contiguous()
+        if self.rewards is not None:
+            self.rewards = self.rewards.cpu().contiguous()
+        if self.forward_inputs:
+            self.forward_inputs = put_tensor_cpu(self.forward_inputs)
 
-        self.forward_inputs = [
-            put_tensor_cpu(forward_inputs) for forward_inputs in self.forward_inputs
-        ]
 
-    def append_result(self, result: dict[str, Any]):
-        self.prev_logprobs.append(
-            result["prev_logprobs"].cpu().contiguous()
-        ) if "prev_logprobs" in result else []
-        self.prev_values.append(
-            result["prev_values"].cpu().contiguous()
-        ) if "prev_values" in result else []
-        self.dones.append(
-            result["dones"].cpu().contiguous()
-        ) if "dones" in result else []
-        self.rewards.append(
-            result["rewards"].cpu().contiguous()
-        ) if "rewards" in result else []
+@dataclass(kw_only=True)
+class EmbodiedRolloutResult:
+    # required
+    rollout_epoch: int = None
+    prev_logprobs: list[torch.Tensor] = field(
+        default_factory=list
+    )  # lens of results is rollout_epoch * n_chunk_steps
+    prev_values: list[torch.Tensor] = field(
+        default_factory=list
+    )  # lens is rollout_epoch * (n_chunk_steps + 1) because of the bootstrap value
+    dones: list[torch.Tensor] = field(
+        default_factory=list
+    )  # lens of results is rollout_epoch * (n_chunk_steps + 1) because of the bootstrap value
+    rewards: list[torch.Tensor] = field(
+        default_factory=list
+    )  # lens of results is rollout_epoch * n_chunk_steps
+    forward_inputs: list[dict[str, list[torch.Tensor]]] = field(
+        default_factory=list
+    )  # lens of results is rollout_epoch * n_chunk_steps
 
-        self.forward_inputs.append(put_tensor_cpu(result["forward_inputs"]))
+    def append_result(self, result: ChunkStepResult):
+        if result.prev_logprobs is not None:
+            self.prev_logprobs.append(result.prev_logprobs)
+        if result.prev_values is not None:
+            self.prev_values.append(result.prev_values)
+        if result.dones is not None:
+            self.dones.append(result.dones)
+        if result.rewards is not None:
+            self.rewards.append(result.rewards)
+        if result.forward_inputs:
+            self.forward_inputs.append(result.forward_inputs)
 
     def to_dict(self):
         rollout_result_dict = {}
@@ -1240,19 +1204,28 @@ class EmbodiedRolloutResult:
                 torch.stack(merged_forward_inputs[k], dim=0).cpu().contiguous()
             )
 
+        assert len(rollout_result_dict["dones"]) == len(
+            rollout_result_dict["prev_values"]
+        ), "dones and prev_values must have the same length"
+        assert (
+            len(rollout_result_dict["dones"])
+            == len(rollout_result_dict["rewards"]) + self.rollout_epoch
+        ), "dones length must be the length of rewards plus rollout_epoch"
+
         return rollout_result_dict
 
     def to_splited_dict(self, split_size) -> list[dict[str, Any]]:
         rollout_result_list = []
         for i in range(split_size):
-            rollout_result_list.append(self.to_dict())
-
-            for key, value in rollout_result_list[i].items():
+            split_dict = self.to_dict()
+            for key, value in split_dict.items():
                 if isinstance(value, torch.Tensor):
-                    rollout_result_list[i][key] = torch.chunk(value, split_size, dim=1)[
-                        i
-                    ].contiguous()
+                    # Chunk along batch dimension (dim=1), keep time dimension T as is.
+                    chunks = torch.chunk(value, split_size, dim=1)
+                    split_dict[key] = chunks[i].contiguous()
                 else:
-                    raise ValueError(f"Unsupported type: {type(value)}")
+                    # Non-tensor values are shared across splits.
+                    split_dict[key] = value
+            rollout_result_list.append(split_dict)
 
         return rollout_result_list

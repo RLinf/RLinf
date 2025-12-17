@@ -78,8 +78,11 @@ FSDP/FSDP2 通过 DCP (torch.distributed.checkpoint) 保存和加载检查点，
 检查点文件向Pytorch State Dict文件转换
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-如果你需要将 FSDP/FSDP2 检查点转换为标准的 Pytorch State Dict 文件用于模型评估或是其他用途，可以使用toolkit文件夹下的工具
-``toolkits/ckpt_convertor/convert_dcp_to_state_dict.py``, 使用方法如下：
+如果你需要将 FSDP/FSDP2 检查点转换为标准的 Pytorch State Dict 文件用于模型评估或是其他用途, 可以在
+检查点保存文件夹下的`model`子文件夹找到以safetensors格式保存的模型 state dict文件。例如，
+对于检查点目录 `global_step_2`，模型 state dict 文件位于 `global_step_2/model/`。我们会递归地复制模型的配置文件（*.json）和代码文件（*.py，如果存在的话），
+以便你之后可以轻松地重新加载模型。
+
 
 .. code-block:: bash
 

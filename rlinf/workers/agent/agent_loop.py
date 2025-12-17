@@ -71,7 +71,7 @@ class AgentLoopWorker(Worker):
         self.cfg = cfg
         self.print_outputs = cfg.agentloop.print_outputs
 
-        self.tokenizer = AutoTokenizer.from_pretrained(cfg.rollout.model_dir)
+        self.tokenizer = AutoTokenizer.from_pretrained(cfg.rollout.model.model_path)
 
     def init_worker(
         self,

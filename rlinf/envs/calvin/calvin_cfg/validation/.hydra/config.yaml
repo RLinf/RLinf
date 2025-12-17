@@ -1,0 +1,151 @@
+cameras:
+  static:
+    _target_: vr_env.camera.static_camera.StaticCamera
+    name: static
+    fov: 10
+    aspect: 1
+    nearval: 0.01
+    farval: 10
+    width: 200
+    height: 200
+    look_at:
+    - -0.026242351159453392
+    - -0.0302329882979393
+    - 0.3920000493526459
+    look_from:
+    - 2.871459009488717
+    - -2.166602199425597
+    - 2.555159848480571
+    up_vector:
+    - 0.4041403970338857
+    - 0.22629790978217404
+    - 0.8862616969685161
+  gripper:
+    _target_: vr_env.camera.gripper_camera.GripperCamera
+    name: gripper
+    fov: 75
+    aspect: 1
+    nearval: 0.01
+    farval: 2
+    width: 84
+    height: 84
+  tactile:
+    _target_: vr_env.camera.tactile_sensor.TactileSensor
+    name: tactile
+    width: 120
+    height: 160
+    digit_link_ids:
+    - 10
+    - 12
+    visualize_gui: false
+    config_path: conf/digit_sensor/config_digit.yml
+load_dir: /work/dlclarge2/meeso-lfp/calvin_recordings/play_env_A/2021-10-06/16-23-57/
+data_path: data
+save_dir: ???
+show_gui: false
+processes: 16
+max_episode_frames: 1
+save_body_infos: true
+set_static_cam: false
+env:
+  cameras: ${cameras}
+  show_gui: ${show_gui}
+  use_vr: false
+scene:
+  _target_: vr_env.scene.play_table_scene.PlayTableScene
+  _recursive_: false
+  name: calvin_scene_A
+  data_path: ${data_path}
+  global_scaling: 0.8
+  euler_obs: ${robot.euler_obs}
+  robot_base_position:
+  - -0.34
+  - -0.46
+  - 0.24
+  robot_base_orientation:
+  - 0
+  - 0
+  - 0
+  robot_initial_joint_positions:
+  - -1.21779206
+  - 1.03987646
+  - 2.11978261
+  - -2.34205014
+  - -0.87015947
+  - 1.64119353
+  - 0.55344866
+  surfaces:
+    table:
+    - - 0.0
+      - -0.15
+      - 0.46
+    - - 0.35
+      - -0.03
+      - 0.46
+    slider_left:
+    - - -0.32
+      - 0.05
+      - 0.46
+    - - -0.16
+      - 0.12
+      - 0.46
+    slider_right:
+    - - -0.05
+      - 0.05
+      - 0.46
+    - - 0.13
+      - 0.12
+      - 0.46
+  objects:
+    fixed_objects:
+      table:
+        file: calvin_table_A/urdf/calvin_table_A.urdf
+        initial_pos:
+        - 0
+        - 0
+        - 0
+        initial_orn:
+        - 0
+        - 0
+        - 0
+        joints:
+          base__slide:
+            initial_state: 0
+          base__drawer:
+            initial_state: 0
+        buttons:
+          base__button:
+            initial_state: 0
+            effect: led
+        switches:
+          base__switch:
+            initial_state: 0
+            effect: lightbulb
+        lights:
+          lightbulb:
+            link: light_link
+            color:
+            - 1
+            - 1
+            - 0
+            - 1
+          led:
+            link: led_link
+            color:
+            - 0
+            - 1
+            - 0
+            - 1
+    movable_objects:
+      block_red:
+        file: blocks/block_red_middle.urdf
+        initial_pos: any
+        initial_orn: any
+      block_blue:
+        file: blocks/block_blue_small.urdf
+        initial_pos: any
+        initial_orn: any
+      block_pink:
+        file: blocks/block_pink_big.urdf
+        initial_pos: any
+        initial_orn: any

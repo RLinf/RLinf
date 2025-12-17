@@ -16,6 +16,7 @@ from omegaconf.dictconfig import DictConfig
 
 from rlinf.scheduler import Worker
 from rlinf.utils.distributed import ScopedTimer
+from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics
 
@@ -36,7 +37,26 @@ class EmbodiedEvalRunner:
         self.run_timer = run_timer
 
         self.timer = ScopedTimer(reduction="max", sync_cuda=False)
-        self.metric_loger = MetricLogger(cfg)
+        self.metric_logger = MetricLogger(cfg)
+
+        self.logger = get_logger()
+
+    def _load_eval_policy(self):
+        self.rollout.load_checkpoint(self.cfg.runner.eval_policy_path).wait()
+
+    def init_workers(self):
+        self.rollout.init_worker().wait()
+        self.env.init_worker().wait()
+
+        if self.cfg.runner.eval_policy_path is not None:
+            self.logger.info(
+                f"Using checkpoint for evaluation (from runner.eval_policy_path): {self.cfg.runner.eval_policy_path}"
+            )
+            self._load_eval_policy()
+        else:
+            self.logger.info(
+                f"Using checkpoint for evaluation (from rollout.model.model_path): {self.cfg.rollout.model.model_path}"
+            )
 
     def evaluate(self):
         env_futures = self.env.evaluate()
@@ -50,7 +70,7 @@ class EmbodiedEvalRunner:
     def run(self):
         eval_metrics = self.evaluate()
         eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
-        self.metric_loger.log(step=0, data=eval_metrics)
-        print(f"{eval_metrics=}")
+        self.logger.info(eval_metrics)
+        self.metric_logger.log(step=0, data=eval_metrics)
 
-        self.metric_loger.finish()
+        self.metric_logger.finish()

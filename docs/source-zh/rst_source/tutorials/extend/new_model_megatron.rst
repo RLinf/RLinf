@@ -87,17 +87,18 @@ Megatron-LM 训练框架并不能直接从 hf 格式的 checkpoint 直接读取�
     training_backend: megatron
     mcore_gpt: True
     spec_name: decoder_gpt
-    checkpoint_load_path: null
+    model:
+      megatron_checkpoint: null
    megatron:
     use_hf_ckpt: True
     ckpt_convertor:
       model: DeepSeek-R1-Distill-Qwen-1.5B
-      hf_model_path: ${rollout.model_dir}
+      hf_model_path: ${rollout.model.model_path}
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
 
 这样的方式会在 RLinf 的第一次训练过程中，进行一次 Megatron-LM 格式的 checkpoint 转换。但是，从 huggingface 格式的 checkpoint 转换到 Megatron-LM 格式的 checkpoint 是非常耗时的过程。
 
-如果您之前已经转换过 Megatron-LM 格式 checkpoint, 您也可以直接在 yaml 文件中通过配置 ``checkpoint_load_path`` 选项，指定转换好的 Megatron-LM 格式 checkpoint 路径，在后续的训练过程中可以直接使用。
+如果您之前已经转换过 Megatron-LM 格式 checkpoint, 您也可以直接在 yaml 文件中通过配置 ``actor.model.megatron_checkpoint`` 选项，指定转换好的 Megatron-LM 格式 checkpoint 路径，在后续的训练过程中可以直接使用。
 
 例如：
 
@@ -108,12 +109,13 @@ Megatron-LM 训练框架并不能直接从 hf 格式的 checkpoint 直接读取�
     training_backend: megatron
     mcore_gpt: True
     spec_name: decoder_gpt
-    checkpoint_load_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
+    model:
+      megatron_checkpoint: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
    megatron:
     use_hf_ckpt: False
     ckpt_convertor:
       model: DeepSeek-R1-Distill-Qwen-1.5B
-      hf_model_path: ${rollout.model_dir}
+      hf_model_path: ${rollout.model.model_path}
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
 
 
@@ -511,8 +513,7 @@ SglangActor 接收权重代码 ``rlinf/hybrid_engines/sglang/common/sgl_schedule
 
     ckpt_convertor: # ckpt 转换器配置
       model: DeepSeek-R1-Distill-Qwen-1.5B
-      model_type: null # 若为 null，会根据 hf 模型配置自动设置
-      hf_model_path: ${rollout.model_dir} # hf 模型路径
+      hf_model_path: ${rollout.model.model_path} # hf 模型路径
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
       use_gpu_num : 0
       use_gpu_index: null

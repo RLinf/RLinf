@@ -96,7 +96,7 @@ Running the Script
 Before launching, check the configuration file. Key fields include:
 
 - Cluster setup: ``cluster.num_nodes`` (number of nodes).  
-- Paths: ``runner.output_dir`` (the path to save training logs & checkpoints), ``rollout.model_dir`` (the path that saves base model), ``data.train_data_paths`` (the path that save training data), etc.  
+- Paths: ``runner.output_dir`` (the path to save training logs & checkpoints), ``rollout.model.model_path`` (the path that saves base huggingface model), ``data.train_data_paths`` (the path that save training data), etc.  
 
 **2. Configuration File**
 
