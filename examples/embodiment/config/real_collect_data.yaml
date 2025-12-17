@@ -1,0 +1,41 @@
+defaults:
+  - env/train: real_peg_insertion
+  - env/eval: real_peg_insertion
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env:
+      node_group: franka
+      placement: 0-0
+  node_groups:
+    - label: franka
+      node_ranks: 0-0
+      env_configs:
+        - node_ranks: 0-0
+          python_interpreter_path: /mnt/RLinf/.venv/bin/python3
+          env_vars:
+            - GLOO_SOCKET_IFNAME: enp5s0
+      hardware:
+        type: Franka
+        configs:
+          - robot_ip: 192.168.1.2
+            disable_validate: True
+            node_rank: 0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "sac_mlp"
+    logger_backends: ["tensorboard"] # wandb, swanlab
+  
