@@ -108,6 +108,7 @@
 下载完成后，请确保在配置yaml文件中正确指定模型路径。
 
 .. code:: yaml
+
    rollout:
       model:
          model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora

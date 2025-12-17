@@ -118,6 +118,7 @@ Before starting training, you need to download the corresponding pretrained mode
 After downloading, make sure to correctly specify the model path in the configuration yaml file.
 
 .. code:: yaml
+
    rollout:
       model:
          model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
