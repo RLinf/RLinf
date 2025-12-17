@@ -1,6 +1,11 @@
 RL on GR00T-N1.5 Models
 ==================================================================
 
+.. |huggingface| image:: /_static/svg/hf-logo.svg
+   :width: 16px
+   :height: 16px
+   :class: inline-icon
+
 This example provides a complete guide to fine-tune the 
 GR00T-N1.5 algorithms with reinforcement learning in the **LIBERO** environment
 using the **RLinf** framework. It covers the entire process—from
