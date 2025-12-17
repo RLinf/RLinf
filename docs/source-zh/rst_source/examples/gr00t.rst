@@ -1,6 +1,11 @@
 GR00T-N1.5模型强化学习训练
 ==================================================================
 
+.. |huggingface| image:: /_static/svg/hf-logo.svg
+   :width: 16px
+   :height: 16px
+   :class: inline-icon
+
 本示例提供了一份完整指南，介绍如何在LIBERO环境中使用RLinf框架，通过强化学习对GR00T-N1.5算法进行微调。内容涵盖从环境设置、核心算法设计到训练配置、评估和可视化的全过程，并提供可复现的命令和配置片段。
 
 主要目标是开发一个能够执行机器人操作的模型，具体包括：
@@ -304,18 +309,18 @@ LoRA设置正在测试中，即将推出。
      - Δ Avg.
 
    * - GR00T（少样本）
-     - `41.4% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial>`_
-     - `58.6% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Object>`_
-     - `48.2% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Goal>`_
-     - `61.9% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Long>`_
+     - |huggingface| `41.4% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial>`_
+     - |huggingface| `58.6% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Object>`_
+     - |huggingface| `48.2% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Goal>`_
+     - |huggingface| `61.9% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Long>`_
      - 52.5%
      - ---
 
    * - +PPO
-     - `92.5% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Spatial-Step400>`_
-     - `95.0% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Object-Step400>`_
-     - `84.3% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Goal-Step500>`_
-     - `86.3% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Long-Step300>`_
+     - |huggingface| `92.5% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Spatial-Step400>`_
+     - |huggingface| `95.0% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Object-Step400>`_
+     - |huggingface| `84.3% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Goal-Step500>`_
+     - |huggingface| `86.3% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Long-Step300>`_
      - **89.5%**
      - **+37.0%**
 

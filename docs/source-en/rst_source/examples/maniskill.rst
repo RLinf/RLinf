@@ -164,8 +164,6 @@ You can also reconfigure the placement to achieve complete separation, where env
 
 **2. Configuration Files**
 
-We currently support training in two environments: **ManiSkill3** and **LIBERO**.
-
 We support two models: **OpenVLA** and **OpenVLA-OFT**, along with two algorithms: **PPO** and **GRPO**.  
 The corresponding configuration files are:
 
