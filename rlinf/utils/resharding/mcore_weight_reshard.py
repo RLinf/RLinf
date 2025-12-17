@@ -77,8 +77,23 @@ class MegatronCoreWeightReshard:
         current_capacity = 0
         model = unwrap_model(model)
         vp_size = parallel_state.get_virtual_pipeline_model_parallel_world_size()
+        if not vp_size:
+            vp_size = 1
 
-        if not vp_size or vp_size == 1:
+        if vp_size == 1:
+            for key, val in model[0].state_dict().items():
+                if "_extra_state" in key:
+                    continue
+                model_bucket[key] = val
+
+                if "decoder.layers" in key:
+                    current_capacity += val.numel() * val.element_size()
+
+                if current_capacity >= bucket_capacity:
+                    model_bucket_list.append(model_bucket)
+                    current_capacity = 0
+                    model_bucket = {}
+        else:
             for idx, model_chunk in enumerate(model):
                 for key, val in model_chunk.state_dict().items():
                     if "_extra_state" in key:
@@ -92,19 +107,6 @@ class MegatronCoreWeightReshard:
                         model_bucket_list.append(model_bucket)
                         current_capacity = 0
                         model_bucket = {}
-        else:
-            for key, val in model[0].state_dict().items():
-                if "_extra_state" in key:
-                    continue
-                model_bucket[key] = val
-
-                if "decoder.layers" in key:
-                    current_capacity += val.numel() * val.element_size()
-
-                if current_capacity >= bucket_capacity:
-                    model_bucket_list.append(model_bucket)
-                    current_capacity = 0
-                    model_bucket = {}
 
         if len(model_bucket) > 0:
             model_bucket_list.append(model_bucket)

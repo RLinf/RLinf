@@ -31,7 +31,7 @@ runner:
   max_tokens_per_mbs: 1024
 
   resume_dir: null
-  experiment_name: grpo-qwen3-CI-test
+  experiment_name: grpo-qwen3-4b-CI-test
   output_dir: /workspace/results
 
 algorithm:
@@ -84,9 +84,11 @@ rollout:
 
   gpu_memory_utilization: 0.55
 
-  model_dir: /workspace/dataset/Qwen3-0.6B
-  model_arch: qwen3
-  precision: ${actor.model.precision}              # precision for rollout model, support [fp16, bf16, fp32]
+  model:
+    model_path: /workspace/dataset/Qwen3-4B
+    model_type: qwen3
+    precision: ${actor.model.precision}              # precision for rollout model, support [fp16, bf16, fp32]
+  
   enforce_eager: False         # if False, vllm will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
@@ -112,7 +114,7 @@ rollout:
 
   return_logprobs: ${not:${algorithm.recompute_logprobs}}
 
-  tensor_parallel_size: 2
+  tensor_parallel_size: 4
   pipeline_parallel_size: 1
 
   validate_weight: False # whether to send all weights at first for weight comparison.
@@ -161,13 +163,17 @@ actor:
     precision: fp16
     add_bias_linear: False
 
-    tensor_model_parallel_size: 2
+    tensor_model_parallel_size: 4
     pipeline_model_parallel_size: 1
 
     activation: swiglu
     sequence_parallel: True
     # recompute_method: block
     # recompute_granularity: selective
+
+    recompute_method: uniform
+    recompute_granularity: full
+    recompute_num_layers: 1
 
     seq_length: ${runner.seq_length}
     encoder_seq_length: ${runner.seq_length}
@@ -215,7 +221,7 @@ actor:
     lr_decay_iters: 10
 
   tokenizer:
-    tokenizer_model: /workspace/dataset/Qwen3-0.6B
+    tokenizer_model: /workspace/dataset/Qwen3-4B
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'
@@ -232,9 +238,8 @@ actor:
     use_profiler: False # if true, will enable torch profiler when training, pay attention it has influence on performance
 
     ckpt_convertor: # config for ckpt convertor
-      model: Qwen3-0.6B
-      model_type: null # will be set by hf model's config if null
-      hf_model_path: ${rollout.model_dir} # path to the hf model
+      model: Qwen3-4B
+      hf_model_path: ${rollout.model.model_path} # path to the hf model # path to the hf model
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
       use_gpu_num : 0
       use_gpu_index: null

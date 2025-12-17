@@ -1332,9 +1332,9 @@ class MegatronActor(MegatronModelManager, Worker):
                     )
                     recv_handle_bucket.append(recv_handle)
 
-                if len(recv_handle_bucket) != 0:
-                    for recv_handle in recv_handle_bucket:
-                        recv_handle.wait()
+            if len(recv_handle_bucket) != 0:
+                for recv_handle in recv_handle_bucket:
+                    recv_handle.wait()
 
         if (
             self.component_placement._placement_mode == PlacementMode.COLLOCATED

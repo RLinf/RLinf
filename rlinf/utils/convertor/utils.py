@@ -210,7 +210,7 @@ class BaseConvertor:
         raise NotImplementedError
 
 
-class Qwen2_5Convertor(BaseConvertor):
+class Qwen25Convertor(BaseConvertor):
     def build_rules(self) -> list[ConvertorRule]:
         LID = r"(?P<i>\d+)"
         WB = r"(?P<wb>weight|bias)"
@@ -288,7 +288,7 @@ class Qwen2_5Convertor(BaseConvertor):
         ]
 
 
-class Qwen2_5VLConvertor(BaseConvertor):
+class Qwen25VLConvertor(BaseConvertor):
     def _build_vision_rules(self) -> list[ConvertorRule]:
         B = r"(?P<i>\d+)"
         WB = r"(?P<wb>weight|bias)"
@@ -469,7 +469,7 @@ class Qwen2_5VLConvertor(BaseConvertor):
         return rules
 
 
-class Qwen3_BaseConvertor(BaseConvertor):
+class Qwen3BaseConvertor(BaseConvertor):
     def build_rules(self) -> list[ConvertorRule]:
         LID = r"(?P<i>\d+)"
         WB = r"(?P<wb>weight|bias)"
@@ -544,7 +544,7 @@ class Qwen3_BaseConvertor(BaseConvertor):
         ]
 
 
-class Qwen3_DenseConvertor(Qwen3_BaseConvertor):
+class Qwen3DenseConvertor(Qwen3BaseConvertor):
     def build_rules(self) -> list[ConvertorRule]:
         LID = r"(?P<i>\d+)"
         WB = r"(?P<wb>weight|bias)"
@@ -577,7 +577,7 @@ class Qwen3_DenseConvertor(Qwen3_BaseConvertor):
         ]
 
 
-class Qwen3_MoEConvertor(Qwen3_BaseConvertor):
+class Qwen3MoEConvertor(Qwen3BaseConvertor):
     def build_rules(self) -> list[ConvertorRule]:
         LID = r"(?P<i>\d+)"
         EID = r"(?P<ei>\d+)"
@@ -622,10 +622,10 @@ class Qwen3_MoEConvertor(Qwen3_BaseConvertor):
 
 
 _MG2HF_CONVERTOR_REGISTRY = {
-    SupportedModel.QWEN2_5: Qwen2_5Convertor,
-    SupportedModel.QWEN2_5_VL: Qwen2_5VLConvertor,
-    SupportedModel.QWEN3: Qwen3_DenseConvertor,
-    SupportedModel.QWEN3_MOE: Qwen3_MoEConvertor,
+    SupportedModel.QWEN2_5: Qwen25Convertor,
+    SupportedModel.QWEN2_5_VL: Qwen25VLConvertor,
+    SupportedModel.QWEN3: Qwen3DenseConvertor,
+    SupportedModel.QWEN3_MOE: Qwen3MoEConvertor,
 }
 
 
