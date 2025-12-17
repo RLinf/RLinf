@@ -118,10 +118,10 @@ Before starting training, you need to download the corresponding pretrained mode
 After downloading, make sure to correctly specify the model path in the configuration yaml file.
 
 .. code:: yaml
-    rollout:
+   rollout:
       model:
-        model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-    actor:
+         model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+   actor:
       model:
          model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
 
@@ -236,23 +236,23 @@ Visualization and Results
 
 .. code-block:: yaml
 
-    env:
+   env:
       eval:
-        video_cfg:
-          save_video: True
-          video_base_dir: ${runner.logger.log_path}/video/eval
+         video_cfg:
+            save_video: True
+            video_base_dir: ${runner.logger.log_path}/video/eval
 
 **4. Train Log Tool Integration**
 
 .. code-block:: yaml
 
-    runner:
+   runner:
       task_type: embodied
       logger:
-        log_path: "../results"
-        project_name: rlinf
-        experiment_name: "test_openvla"
-        logger_backends: ["tensorboard"] # wandb, swanlab
+         log_path: "../results"
+         project_name: rlinf
+         experiment_name: "test_openvla"
+         logger_backends: ["tensorboard"] # wandb, swanlab
 
 
 LIBERO Results

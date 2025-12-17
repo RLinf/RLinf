@@ -107,13 +107,13 @@
 
 下载完成后，请确保在配置yaml文件中正确指定模型路径。
 
-.. code:: bash
-    rollout:
-        model:
-            model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-    actor:
-        model:
-            model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+.. code:: yaml
+   rollout:
+      model:
+         model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+   actor:
+      model:
+         model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
             
 运行脚本
 -------------------
@@ -227,23 +227,23 @@
 
 .. code-block:: yaml
 
-    env:
+   env:
       eval:
-        video_cfg:
-          save_video: True
-          video_base_dir: ${runner.logger.log_path}/video/eval
+         video_cfg:
+            save_video: True
+            video_base_dir: ${runner.logger.log_path}/video/eval
 
 **4. 训练日志工具集成**
 
 .. code-block:: yaml
 
-    runner:
+   runner:
       task_type: embodied
       logger:
-        log_path: "../results"
-        project_name: rlinf
-        experiment_name: "test_openvla"
-        logger_backends: ["tensorboard"] # wandb, swanlab
+         log_path: "../results"
+         project_name: rlinf
+         experiment_name: "test_openvla"
+         logger_backends: ["tensorboard"] # wandb, swanlab
 
 LIBERO 结果
 ~~~~~~~~~~~~~~~~~~~
