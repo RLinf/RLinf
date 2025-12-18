@@ -66,7 +66,7 @@ algorithm:
   reward_coef: 5.0
 
   sampling_params:
-    use_greedy: False
+    do_sample: True
     temperature_train: 1.6
     temperature_eval: 1.6
     top_k: -1
@@ -101,6 +101,7 @@ env:
     max_steps_per_rollout_epoch: 512
     use_fixed_reset_state_ids: True
     use_ordered_reset_state_ids: True
+    reset_gripper_open: False
     is_eval: True
     video_cfg:
       save_video: True
@@ -144,6 +145,7 @@ actor:
     adam_beta1: 0.9
     adam_beta2: 0.999
     adam_eps: 1.0e-05
+    weight_decay: 0.01
     clip_grad: 1.0
 
   tokenizer:

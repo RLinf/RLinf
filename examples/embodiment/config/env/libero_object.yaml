@@ -10,6 +10,9 @@ max_episode_steps: 240 # max episode steps for truncation
 
 use_rel_reward: True
 reward_coef: 1.0
+
+# RLinf LiberoEnv specific settings
+reset_gripper_open: True
 is_eval: False
 
 seed: 0

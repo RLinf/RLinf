@@ -67,7 +67,7 @@ algorithm:
 
   # params for rollout
   sampling_params:
-    use_greedy: False
+    do_sample: True
     temperature_train: 1.0
     temperature_eval: 0.6
     top_k: 0
@@ -89,7 +89,7 @@ env:
     queue_size: 0
   enable_offload: False
 
-  # Override the default values in env/train or env/eval
+  # Override the default values in env/maniskill_put_on_plate_in_scene_25_main and env/maniskill_ood_template
   train:
     total_num_envs: 128
     auto_reset: True
@@ -148,6 +148,7 @@ actor:
     adam_beta1: 0.9
     adam_beta2: 0.999
     adam_eps: 1.0e-05
+    weight_decay: 0.01
     clip_grad: 10.0
     critic_warmup_steps: 0
 

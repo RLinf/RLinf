@@ -80,14 +80,15 @@ class LeRobotManiSkillDataConfig(DataConfigFactory):
         # apply a separate delta conversion (that's why it's commented out). Choose whether to apply this
         # transform based on whether your dataset uses ``absolute`` or ``delta`` actions out of the box.
 
-        # LIBERO already represents actions as deltas, but we have some old Pi0 checkpoints that are trained with this
+        # LIBERO already represents actions as deltas,
+        # but we have some old Pi0 checkpoints that are trained with this
         # extra delta transform.
-        # if self.extra_delta_transform:
-        #     delta_action_mask = _transforms.make_bool_mask(6, -1)
-        #     data_transforms = data_transforms.push(
-        #         inputs=[_transforms.DeltaActions(delta_action_mask)],
-        #         outputs=[_transforms.AbsoluteActions(delta_action_mask)],
-        #     )
+        if self.extra_delta_transform:
+            delta_action_mask = _transforms.make_bool_mask(6, -1)
+            data_transforms = data_transforms.push(
+                inputs=[_transforms.DeltaActions(delta_action_mask)],
+                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
+            )
 
         # Model transforms include things like tokenizing the prompt and action targets
         # You do not need to change anything here for your own dataset.

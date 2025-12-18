@@ -11,8 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-
 import dataclasses
 
 import einops
@@ -53,17 +51,19 @@ class ManiSkillInputs(transforms.DataTransformFn):
     model_type: _model.ModelType
 
     def __call__(self, data: dict) -> dict:
-        # Possibly need to parse images to uint8 (H,W,C) since LeRobot automatically
-        # stores as float32 (C,H,W), gets skipped for policy inference.
-        # Keep this for your own dataset, but if your dataset stores the images
-        # in a different key than "observation/image" or "observation/wrist_image",
-        # you should change it below.
-        # Pi0 models support three image inputs at the moment: one third-person view,
-        # and two wrist views (left and right).
-        # If your dataset does not have a particular type
-        # of image, e.g. wrist images, you can comment it out here and
-        # replace it with zeros like we do for the
-        # right wrist image below.
+        """
+
+        print(f"data={data.keys()}") # data=dict_keys(['observation/image', 'observation/state', 'prompt'])
+
+        Return values:
+        inputs: dict, keys=['state', 'image', 'image_mask', 'prompt']
+            state: torch.shape=8, float32
+            image:dict[str, torch.Tensor]
+                base_0_rgb: torch.shape=(480, 640, 3), uint8
+                ...
+            ...
+        """
+
         base_image = _parse_image(data["observation/image"])
 
         # Create inputs dict. Do not change the keys in the dict below.
@@ -93,6 +93,7 @@ class ManiSkillInputs(transforms.DataTransformFn):
         # stored in "prompt"; the output dict always needs to have the key "prompt").
         if "prompt" in data:
             inputs["prompt"] = data["prompt"]
+
         return inputs
 
 

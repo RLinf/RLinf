@@ -24,15 +24,13 @@ import metaworld
 import numpy as np
 import torch
 
-from rlinf.envs.libero.utils import (
-    put_info_on_image,
-    save_rollout_video,
-    tile_images,
-)
 from rlinf.envs.metaworld import MetaWorldBenchmark
 from rlinf.envs.metaworld.venv import ReconfigureSubprocEnv
 from rlinf.envs.utils import (
     list_of_dict_to_dict_of_list,
+    put_info_on_image,
+    save_rollout_video,
+    tile_images,
     to_tensor,
 )
 

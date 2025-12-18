@@ -48,11 +48,11 @@ from transformers.tokenization_utils import (
 )
 from transformers.utils import TensorType
 
-from rlinf.models.embodiment.model_utils import (
+from rlinf.models.embodiment.modules.value_head import ValueHead
+from rlinf.utils.utils import (
     compute_entropy_from_logits,
     compute_logprobs_from_logits,
 )
-from rlinf.models.embodiment.modules.value_head import ValueHead
 
 
 class OpenVLAForBatchActionPrediction(OpenVLAForActionPrediction):
@@ -563,19 +563,18 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
                 )  # since here is logprob instead of logits, we use 0 instead of -inf
                 processed_logits_tensor = logits_warper(None, processed_logits_tensor)
 
-            action_logits = processed_logits_tensor.permute(
-                0, 2, 1
-            )  # [B, vocab-size, action-dim]
-            action_logits[:, : self.vocab_size - self.config.n_action_bins] = -torch.inf
-            action_logits[:, self.vocab_size :] = -torch.inf
+            processed_logits_tensor[
+                :, :, : self.vocab_size - self.config.n_action_bins
+            ] = -torch.inf
+            processed_logits_tensor[:, :, self.vocab_size :] = -torch.inf
 
             logprobs = compute_logprobs_from_logits(
-                logits=action_logits, target=action_tokens
+                logits=processed_logits_tensor, target=action_tokens
             )
 
             entropy = None
             if compute_entropy:
-                entropy = compute_entropy_from_logits(logits=action_logits)
+                entropy = compute_entropy_from_logits(logits=processed_logits_tensor)
 
         if hasattr(self, "value_head") and compute_values:
             last_hidden_state = outputs.hidden_states[-1]
@@ -706,11 +705,9 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
             normalized_actions,
         )
 
-        action_logits = token_logits_tensor.permute(
-            0, 2, 1
-        )  # [B, vocab-size, action-dim]
-        action_logits[:, : self.vocab_size - self.config.n_action_bins] = -torch.inf
-        action_logits[:, self.vocab_size :] = -torch.inf
+        action_logits = token_logits_tensor
+        action_logits[:, :, : self.vocab_size - self.config.n_action_bins] = -torch.inf
+        action_logits[:, :, self.vocab_size :] = -torch.inf
 
         chunk_logprobs = compute_logprobs_from_logits(
             logits=action_logits, target=action_tokens

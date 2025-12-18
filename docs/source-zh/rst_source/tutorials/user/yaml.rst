@@ -133,7 +133,7 @@ algorithm
     use_valid_token_scale: False
 
     sampling_params:
-      use_greedy: False
+      do_sample: True
       temperature: 1.0
       top_k: 1000000
       top_p: 1.0
@@ -169,7 +169,7 @@ algorithm
 
 **sampling_params：**
 
-``algorithm.sampling_params.use_greedy``：True 时使用贪心解码。
+``algorithm.sampling_params.do_sample``：False 时使用贪心解码。
  
 ``algorithm.sampling_params.temperature``：采样温度。  
 

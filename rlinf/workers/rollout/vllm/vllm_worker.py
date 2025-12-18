@@ -130,7 +130,7 @@ class VLLMWorker(Worker):
         Get sampling parameters built from the configuration.
         """
         cfg_sampling_params = self._cfg.algorithm.sampling_params
-        if cfg_sampling_params.use_greedy:
+        if not cfg_sampling_params.do_sample:
             sampling_params = SamplingParams(
                 temperature=0,
                 max_tokens=cfg_sampling_params.max_new_tokens,

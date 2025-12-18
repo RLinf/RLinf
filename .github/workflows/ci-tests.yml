@@ -95,6 +95,13 @@ jobs:
     if: needs.check-changes.outputs.file_filter == 'true' || needs.check-changes.outputs.install_filter == 'true'
     uses: ./.github/workflows/embodied-e2e-tests.yml
 
+  # =============================================== sft e2e tests ====================================================
+
+  sft-e2e-tests:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.file_filter == 'true' || needs.check-changes.outputs.install_filter == 'true'
+    uses: ./.github/workflows/sft-e2e-tests.yml
+
   # =============================================== scheduler tests ====================================================
 
   scheduler-tests:
@@ -112,7 +119,8 @@ jobs:
       unit-tests,
       agent-reason-e2e-tests,
       embodied-e2e-tests,
-      scheduler-tests
+      scheduler-tests,
+      sft-e2e-tests
     ]
     if: always()
     runs-on: ubuntu-latest
