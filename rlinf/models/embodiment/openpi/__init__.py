@@ -82,9 +82,9 @@ _CONFIGS = [
         name="pi0_maniskill",
         model=pi0_config.Pi0Config(),
         data=LeRobotManiSkillDataConfig(
-            base_config=DataConfig(prompt_from_task=True),
-            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_maniskill/assets"),
             repo_id="physical-intelligence/maniskill",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base"),
             extra_delta_transform=True,
         ),
         pytorch_weight_path="checkpoints/torch/pi0_base",
