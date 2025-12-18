@@ -23,6 +23,7 @@ jobs:
       - name: SFT ManiSkill OpenPI test
         timeout-minutes: 20
         run: |
+          unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/sft/run.sh maniskill_sft_openpi

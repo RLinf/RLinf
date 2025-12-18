@@ -293,6 +293,7 @@ jobs:
       - name: Robocasa GRPO test
         timeout-minutes: 20
         run: |
+          unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh robocasa_grpo_openpi

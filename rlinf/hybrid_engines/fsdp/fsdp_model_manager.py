@@ -287,7 +287,7 @@ class FSDPModelManager:
             self.model, self.optimizer, self.lr_scheduler, load_path
         )
 
-    def save_checkpoint(self, save_path: str, step: int) -> None:
+    def save_checkpoint(self, save_path: str, step: int = 0) -> None:
         """
         Save checkpoint to local path.
         Every rank will save its own model and optim shard.
@@ -416,8 +416,8 @@ class FSDPModelManager:
             Optimizer: The constructed optimizer.
         """
         betas = (self._cfg.optim.adam_beta1, self._cfg.optim.adam_beta2)
-        adam_eps = self._cfg.optim.adam_eps
-        weight_decay = self._cfg.optim.weight_decay
+        adam_eps = self._cfg.optim.get("adam_eps", 1e-8)
+        weight_decay = self._cfg.optim.get("weight_decay", 1e-2)
 
         params_actor = []
         params_critic = []
