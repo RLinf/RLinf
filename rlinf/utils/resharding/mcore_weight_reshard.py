@@ -77,10 +77,8 @@ class MegatronCoreWeightReshard:
         current_capacity = 0
         model = unwrap_model(model)
         vp_size = parallel_state.get_virtual_pipeline_model_parallel_world_size()
-        if not vp_size:
-            vp_size = 1
 
-        if vp_size == 1:
+        if vp_size is None:
             for key, val in model[0].state_dict().items():
                 if "_extra_state" in key:
                     continue

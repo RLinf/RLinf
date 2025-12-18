@@ -113,7 +113,7 @@ class MegatronActor(MegatronModelManager, Worker):
         super().__init__(role_cfg)
         self.cfg = cfg
         self.component_placement = placement
-        self.destiny_tp_rank = self._rank % placement.rollout_tp_size
+        self.dst_tp_rank = self._rank % placement.rollout_tp_size
 
         # check placement validity when actor backend is megatron
         assert placement.rollout_tp_size <= placement.actor_tp_size, (
@@ -1134,7 +1134,7 @@ class MegatronActor(MegatronModelManager, Worker):
                 continue
             model_state_dict[key] = val
         return self.inference_weights_reshard.gather_and_reshard_model(
-            model_state_dict, self.destiny_tp_rank
+            model_state_dict, self.dst_tp_rank
         )
 
     def sync_model_to_inference(self):
@@ -1241,7 +1241,7 @@ class MegatronActor(MegatronModelManager, Worker):
     def _get_rollout_model_state_dict(self, bucket_weight):
         """Get the state dictionary of the model for rollout."""
         return self.rollout_weights_reshard.gather_and_reshard_model(
-            bucket_weight, self.destiny_tp_rank
+            bucket_weight, self.dst_tp_rank
         )
 
     def _setup_rollout_weight_dst_ranks(self):
@@ -1287,54 +1287,48 @@ class MegatronActor(MegatronModelManager, Worker):
 
         # send bucket size
         if self.component_placement._placement_mode == PlacementMode.COLLOCATED:
-            self.send(
-                len(model_bucket_list),
-                self.rollout_group_name,
-                self._weight_dst_rank_in_rollout,
-            )
-            recv_handle = None
+            send_handle = None
             for bucket_weight in model_bucket_list:
                 reshard_state_dict = self._get_rollout_model_state_dict(bucket_weight)
                 buffer = {k: reduce_tensor(v) for k, v in reshard_state_dict.items()}
-                if recv_handle is not None:
-                    recv_handle.wait()
-                recv_handle = self.send(
+                if send_handle is not None:
+                    send_handle.wait()
+                else:
+                    # add the bucket_length message in bucket 0
+                    buffer["bucket_length"] = len(model_bucket_list)
+                send_handle = self.send(
                     buffer,
                     self.rollout_group_name,
                     self._weight_dst_rank_in_rollout,
                     async_op=True,
                 )
                 del reshard_state_dict
-            recv_handle.wait()
+            send_handle.wait()
         else:
-            for weight_dst_rank in self._weight_dst_rank_in_rollout:
-                self.send(
-                    len(model_bucket_list),
-                    self.rollout_group_name,
-                    weight_dst_rank,
-                )
-
-            recv_handle_bucket = []
+            send_handle_bucket = []
             for bucket_weight in model_bucket_list:
                 reshard_state_dict = self._get_rollout_model_state_dict(bucket_weight)
 
-                if len(recv_handle_bucket) != 0:
-                    for recv_handle in recv_handle_bucket:
-                        recv_handle.wait()
-                    recv_handle_bucket = []
+                if len(send_handle_bucket) != 0:
+                    for send_handle in send_handle_bucket:
+                        send_handle.wait()
+                    send_handle_bucket = []
+                else:
+                    # add the bucket_length message in bucket 0
+                    reshard_state_dict["bucket_length"] = len(model_bucket_list)
 
                 for weight_dst_rank in self._weight_dst_rank_in_rollout:
-                    recv_handle = self.send(
+                    send_handle = self.send(
                         reshard_state_dict,
                         self.rollout_group_name,
                         weight_dst_rank,
                         async_op=True,
                     )
-                    recv_handle_bucket.append(recv_handle)
+                    send_handle_bucket.append(send_handle)
 
-            if len(recv_handle_bucket) != 0:
-                for recv_handle in recv_handle_bucket:
-                    recv_handle.wait()
+            if len(send_handle_bucket) != 0:
+                for send_handle in send_handle_bucket:
+                    send_handle.wait()
 
         if (
             self.component_placement._placement_mode == PlacementMode.COLLOCATED

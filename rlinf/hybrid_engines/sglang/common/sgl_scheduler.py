@@ -123,23 +123,20 @@ class Scheduler(_Scheduler):
         use_cudagraph = not self.cfg.rollout.enforce_eager
         assert use_cudagraph, "use_cudagraph must be True now."
 
-        recv_tensor = self._rlinf_worker.recv(
+        state_dict = self._rlinf_worker.recv(
             src_group_name=self._actor_group_name,
             src_rank=self.actor_weight_rank,
         )
 
-        bucket_length = 0
-        if isinstance(recv_tensor, int):
-            # recv from the Megatron backend
-            bucket_length = recv_tensor
-        elif isinstance(recv_tensor, dict):
-            # recv from the fsdp backend
-            state_dict = recv_tensor
+        bucket_length = state_dict.get("bucket_length", None)
+        if bucket_length is None:
+            # recv from the Sglang backend
+            # fsdp just send a bucket and don't have the key bucket_length
             bucket_length = 1
         else:
-            assert True, (
-                f"Sglang recv_tensor from actor backend type is {type(state_dict)}, now the type must be {int, dict}"
-            )
+            # recv from the Megatron backend
+            # Megatron use weight bucket to sync weight, the bucket length in dict of bucket 0, bucket_length
+            state_dict.pop("bucket_length")
 
         if self.is_weight_offloaded:
             self.resume_memory_occupation(ResumeMemoryOccupationReqInput())
@@ -147,14 +144,14 @@ class Scheduler(_Scheduler):
 
         assert bucket_length > 0, f"bucket_length {bucket_length} is invalid"
 
+        self.batch_load_hf_weight(state_dict)
         if bucket_length > 1:
             recv_handle = self._rlinf_worker.recv(
                 src_group_name=self._actor_group_name,
                 src_rank=self.actor_weight_rank,
                 async_op=True,
             )
-
-            for _ in range(bucket_length - 1):
+            for _ in range(bucket_length - 2):
                 next_recv_handle = self._rlinf_worker.recv(
                     src_group_name=self._actor_group_name,
                     src_rank=self.actor_weight_rank,
@@ -165,9 +162,6 @@ class Scheduler(_Scheduler):
                 recv_handle = next_recv_handle
 
             state_dict = recv_handle.wait()
-            self.batch_load_hf_weight(state_dict)
-        else:
-            # the bucket_length is 1
             self.batch_load_hf_weight(state_dict)
 
         self.flush_cache()

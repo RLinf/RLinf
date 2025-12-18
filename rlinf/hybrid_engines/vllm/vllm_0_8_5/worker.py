@@ -94,11 +94,10 @@ class VLLMWorker(_VllmInnerWorker):
                 list_args[6] = torch.cuda.current_device()
                 new_weight = func(*list_args)
                 batch_weight.append((name, new_weight))
+            model.load_weights(batch_weight)
         else:
             # disaggregate mode, recv tensor directly
             model.load_weights(state_dict.items())
-
-        model.load_weights(batch_weight)
 
         for name, weight in batch_weight:
             del weight
@@ -108,22 +107,21 @@ class VLLMWorker(_VllmInnerWorker):
         use_cudagraph = not self.rlinf_config.rollout.enforce_eager
         assert use_cudagraph, "use_cudagraph must be True now."
 
-        recv_tensor = self._rlinf_worker.recv(
+        state_dict = self._rlinf_worker.recv(
             src_group_name=self._actor_group_name,
             src_rank=self.actor_weight_rank,
         )
-        bucket_length = 0
-        if isinstance(recv_tensor, int):
-            # recv from the Megatron backend
-            bucket_length = recv_tensor
-        elif isinstance(recv_tensor, dict):
+
+        bucket_length = state_dict.get("bucket_length", None)
+
+        if bucket_length is None:
             # recv from the fsdp backend
-            state_dict = recv_tensor
+            # fsdp just send a bucket and don't have the key bucket_length
             bucket_length = 1
         else:
-            assert True, (
-                f"Sglang recv_tensor from actor backend type is {type(state_dict)}, now the type must be {int, dict}"
-            )
+            # recv from the Megatron backend
+            # Megatron use weight bucket to sync weight, the bucket length in dict of bucket 0, bucket_length
+            state_dict.pop("bucket_length")
 
         if self.is_weight_offloaded:
             super().wake_up()
@@ -131,6 +129,7 @@ class VLLMWorker(_VllmInnerWorker):
 
         assert bucket_length > 0, f"bucket_length {bucket_length} is invalid"
 
+        self.batch_load_hf_weight(state_dict)
         if bucket_length > 1:
             recv_handle = self._rlinf_worker.recv(
                 src_group_name=self._actor_group_name,
@@ -138,7 +137,7 @@ class VLLMWorker(_VllmInnerWorker):
                 async_op=True,
             )
 
-            for _ in range(bucket_length - 1):
+            for _ in range(bucket_length - 2):
                 next_recv_handle = self._rlinf_worker.recv(
                     src_group_name=self._actor_group_name,
                     src_rank=self.actor_weight_rank,
@@ -149,9 +148,6 @@ class VLLMWorker(_VllmInnerWorker):
                 recv_handle = next_recv_handle
 
             state_dict = recv_handle.wait()
-            self.batch_load_hf_weight(state_dict)
-        else:
-            # the bucket_length is 1
             self.batch_load_hf_weight(state_dict)
 
         super().compile_or_warm_up_model()
