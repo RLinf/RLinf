@@ -24,13 +24,11 @@ import torch
 
 from rlinf.envs.calvin import CalvinBenchmark, make_env
 from rlinf.envs.calvin.venv import ReconfigureSubprocEnv
-from rlinf.envs.libero.utils import (
+from rlinf.envs.utils import (
+    list_of_dict_to_dict_of_list,
     put_info_on_image,
     save_rollout_video,
     tile_images,
-)
-from rlinf.envs.utils import (
-    list_of_dict_to_dict_of_list,
     to_tensor,
 )
 

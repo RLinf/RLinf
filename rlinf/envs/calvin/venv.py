@@ -21,8 +21,7 @@ import gymnasium as gym
 import numpy as np
 
 from rlinf.envs.calvin import make_env
-
-from ..venv import (
+from rlinf.envs.venv import (
     BaseVectorEnv,
     CloudpickleWrapper,
     EnvWorker,
