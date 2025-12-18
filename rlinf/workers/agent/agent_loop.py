@@ -44,7 +44,7 @@ class AgentLoopOutput:
     """Response text decoded from response_ids"""
     response_text: str = ""
     """Response mask, 1 for LLM generated token, 0 for tool response token."""
-    response_mask: list[int] = None
+    response_mask: Optional[list[int]] = None
     """Log probabilities for the response tokens."""
     response_logprobs: Optional[list[float]] = None
     """Number of chat turns, including user, assistant, tool."""
@@ -199,6 +199,9 @@ class AgentLoopWorker(Worker):
         response_texts = [r.response_text for r in task_results]
         prompt_lengths = [len(p) for p in prompt_ids]
         response_lengths = [len(o) for o in response_ids]
+        response_mask = None
+        if all(r.response_mask is not None for r in task_results):
+            response_mask = [r.response_mask[:max_resp_len] for r in task_results]
 
         # prompt_lengths and response_lengths should be clipped to max_prompt_len and max_resp_len to avoid mask/position size mismatch
         assert max(prompt_lengths) <= max_prompt_len, (
@@ -208,7 +211,6 @@ class AgentLoopWorker(Worker):
             "response_lengths should be clipped to max_resp_len"
         )
 
-        response_mask = [r.response_mask[:max_resp_len] for r in task_results]
         is_end = [True for _ in task_results]
         answers = [answers] * len(task_results)
         return RolloutResult(

@@ -39,7 +39,7 @@ def compute_rollout_metrics(
 ):
     device = torch.device(f"cuda:{torch.cuda.current_device()}")
     advantages = rollout_batch["advantages"].to(device=device)
-    mask = rollout_batch["attention_mask"][:, -response_len:].to(device=device)
+    mask = rollout_batch["response_mask"][:, -response_len:].to(device=device)
     prompt_lengths = rollout_batch["prompt_lengths"].clone().to(device=device)
     response_lengths = rollout_batch["response_lengths"].clone().to(device=device)
     reward_scores = rollout_batch["rewards"].clone().to(device=device)
