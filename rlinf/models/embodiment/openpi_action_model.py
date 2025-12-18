@@ -27,7 +27,6 @@ from openpi.models.pi0_config import Pi0Config
 from openpi.models_pytorch.pi0_pytorch import PI0Pytorch, make_att_2d_masks
 
 from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
-from rlinf.models.embodiment.modules.mlp import MLP
 from rlinf.models.embodiment.modules.value_head import ValueHead
 
 

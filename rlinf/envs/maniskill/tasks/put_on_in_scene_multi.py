@@ -826,7 +826,7 @@ class PutOnPlateInScene25MainV3(PutOnPlateInScene25):
         self.model_db_plate: dict[str, dict] = io_utils.load_json(
             CARROT_DATASET_DIR / "more_plate" / "model_db.json"
         )
-        # Allow using multiple plates during testing. 
+        # Allow using multiple plates during testing.
         if not self.use_multiple_plates:
             only_plate_name = list(self.model_db_plate.keys())[0]
             self.model_db_plate = {
