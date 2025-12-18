@@ -128,7 +128,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-Pi0-SFT"
+    model_path: "/path/to/model/RLinf-Pi0-ManiSkill-25Main-SFT"
     precision: ${actor.model.precision}
 actor:
   group_name: "ActorGroup"
@@ -143,14 +143,13 @@ actor:
   enable_offload: False
   # Override the default values in model/pi0
   model:
+    model_path: "/path/to/model/RLinf-Pi0-ManiSkill-25Main-SFT"
     model_name: "openpi"
     precision: null    # bf16
     num_action_chunks: 5 # interface for the env
     action_dim: 7
     is_lora: False
     lora_rank: 32
-    gradient_checkpointing: False
-    use_wrist_image: False
     use_proprio: True
     num_steps: 4
     add_value_head: True

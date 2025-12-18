@@ -10,7 +10,7 @@ hydra:
     dir: .
   output_subdir: null
   searchpath:
-    - file://${oc.env:EMBODIED_PATH}/config/
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
 
 cluster:
   num_nodes: 1
@@ -20,16 +20,17 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: "../results"
+    log_path: /workspace/results/
     project_name: rlinf
-    experiment_name: "test_openpi"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    experiment_name: "ci-test"
+    logger_backends: null # ['tensorboard', 'wandb', 'swanlab']
 
-  max_epochs: 1000
+  max_epochs: 1
   max_steps: -1
+
   only_eval: False
   eval_policy_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
-  val_check_interval: 10
+  val_check_interval: -1
   save_interval: 50
   seq_length: 4096
   max_prompt_length: 50
@@ -41,13 +42,13 @@ algorithm:
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
   reward_coef: 1.0
-
   rollout_epoch: 1
   eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
+
   reward_type: chunk_level
   logprob_type: chunk_level
   entropy_type: chunk_level
-  update_epoch: 5
+  update_epoch: 2
   
   adv_type: gae
   loss_type: actor_critic
@@ -90,13 +91,16 @@ env:
     queue_name: "obs_buffer"
     queue_size: 0
   enable_offload: False
+
   # Override the default values in env/train or env/eval
   train:
-    total_num_envs: 320
+    total_num_envs: 16
     auto_reset: True
     use_fixed_reset_state_ids: False
-    max_episode_steps: 80 # max episode steps for truncation
-    max_steps_per_rollout_epoch: 80
+    max_episode_steps: 20 # max episode steps for truncation
+    max_steps_per_rollout_epoch: 20
+    video_cfg:
+      save_video: False
     init_params:
       use_multiple_plates: False
   eval:
@@ -128,8 +132,9 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-Pi05-ManiSkill-25Main-SFT"
+    model_path: "/workspace/dataset/RLinf-Pi05-ManiSkill-25Main-SFT"
     precision: ${actor.model.precision}
+
 actor:
   group_name: "ActorGroup"
   channel:
@@ -137,12 +142,14 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  micro_batch_size: 32      # how many samples each GPU processes per sampling step
-  global_batch_size: 5120   # after how many sampled examples we perform one loss backward pass. Requirement: global bz must be '_world_size' multiples of local bs.
+  micro_batch_size: 4      # how many samples each GPU processes per sampling step
+  global_batch_size: 32   # after how many sampled examples we perform one loss backward pass. Requirement: global bz must be '_world_size' multiples of local bs.
   seed: 0
   enable_offload: False
+
   # Override the default values in model/pi0_5
   model:
+    model_path: "/workspace/dataset/RLinf-Pi05-ManiSkill-25Main-SFT"
     model_type: "openpi"
     num_action_chunks: 5 # interface for the env
     action_dim: 7
@@ -153,7 +160,6 @@ actor:
     add_value_head: True
     # openpi specific parameters
     openpi:
-      model_path: "/path/to/model/RLinf-Pi05-ManiSkill-25Main-SFT"
       config_name: "pi05_maniskill"
       num_images_in_input: 1
       noise_level: 0.5
@@ -187,6 +193,7 @@ actor:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
+
 reward:
   use_reward_model: False
 
