@@ -24,7 +24,7 @@ from typing import Any, Callable, Optional, Union
 import gymnasium as gym
 import numpy as np
 
-from ..venv import (
+from rlinf.envs.venv import (
     BaseVectorEnv,
     CloudpickleWrapper,
     EnvWorker,
