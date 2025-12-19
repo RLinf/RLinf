@@ -46,17 +46,6 @@ from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
 
 _CONFIGS = [
     TrainConfig(
-        name="pi0_maniskill",
-        model=pi0_config.Pi0Config(),
-        data=LeRobotManiSkillDataConfig(
-            repo_id="physical-intelligence/maniskill",
-            base_config=DataConfig(prompt_from_task=True),
-            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base"),
-            extra_delta_transform=True,
-        ),
-        pytorch_weight_path="checkpoints/torch/pi0_base",
-    ),
-    TrainConfig(
         name="pi0_libero",
         model=pi0_config.Pi0Config(),
         data=LeRobotLiberoDataConfig(
