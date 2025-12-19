@@ -764,8 +764,12 @@ class MegatronActor(MegatronModelManager, Worker):
 
         # Advantage normalization
         if self.cfg.algorithm.normalize_advantages:
-            mask = batch["response_mask"][:, -self.response_len :]
-            batch["advantages"] = masked_normalization(batch["advantages"], mask)
+            mask = batch["attention_mask"][:, -self.response_len :]
+            batch["advantages"] = masked_normalization(
+                batch["advantages"],
+                mask,
+                group=parallel_state.get_data_parallel_group(),
+            )
 
         # Valid token scale
         if self.cfg.algorithm.use_valid_token_scale:
@@ -826,8 +830,12 @@ class MegatronActor(MegatronModelManager, Worker):
         if self.cfg.algorithm.normalize_advantages:
 
             def normalize_advantages(batch: dict[str, torch.Tensor]):
-                mask = batch["response_mask"][:, -self.response_len :]
-                batch["advantages"] = masked_normalization(batch["advantages"], mask)
+                mask = batch["attention_mask"][:, -self.response_len :]
+                batch["advantages"] = masked_normalization(
+                    batch["advantages"],
+                    mask,
+                    group=parallel_state.get_data_parallel_group(),
+                )
                 return batch
 
             train_batch_iterator.register_global_batch_handler(normalize_advantages)

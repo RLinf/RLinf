@@ -21,9 +21,20 @@ jobs:
   check-changes:
     runs-on: ubuntu-latest
     outputs:
-      file_filter: ${{ steps.filter.outputs.file_filter }}
       install_filter: ${{ steps.filter.outputs.install_filter }}
       docker_filter: ${{ steps.filter.outputs.docker_filter }}
+      shared_filter: ${{ steps.filter.outputs.shared_filter }}
+      embodied_filter: ${{ steps.filter.outputs.embodied_filter }}
+      agent_reason_filter: ${{ steps.filter.outputs.agent_reason_filter }}
+      sft_filter: ${{ steps.filter.outputs.sft_filter }}
+      unit_test_filter: ${{ steps.filter.outputs.unit_test_filter }}
+      scheduler_test_filter: ${{ steps.filter.outputs.scheduler_test_filter }}
+
+      checked_files_filter: ${{ steps.filter.outputs.checked_files_filter }}
+      all_changes_filter: ${{ steps.filter.outputs.all_changes_filter }}
+      checked_files_filter_files: ${{ steps.filter.outputs.checked_files_filter_files }}
+      all_changes_filter_files: ${{ steps.filter.outputs.all_changes_filter_files }}
+ 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -44,20 +55,126 @@ jobs:
         id: filter
         uses: dorny/paths-filter@v3
         with:
+          list-files: json
           filters: |
-            file_filter:
-              - '**/*.py'
-              - 'tests/**'
-              - '.github/workflows/*tests.yml'
-              - '*.yaml'
-            install_filter:
+            install_filter: &install
               - 'pyproject.toml'
               - 'requirements/*.sh'
               - 'requirements/*.txt'
               - '.github/workflows/install.yml'
-            docker_filter:
-              - 'docker/torch*/**'
+            docker_filter: &docker
+              - *install
+              - 'docker/**'
               - '.github/workflows/docker-build.yml'
+            shared_filter: &shared
+              - *install
+              - 'rlinf/scheduler/**'
+              - 'rlinf/utils/**'
+              - 'rlinf/workers/actor/**'
+              - 'rlinf/workers/inference/**'
+              - 'rlinf/workers/reward/**'
+              - 'rlinf/workers/rollout/**'
+              - 'rlinf/hybrid_engines/**'
+              - 'rlinf/config.py'
+              - 'rlinf/__init__.py'
+              - 'rlinf/*/__init__.py'
+              - 'toolkits/**'
+              - '.github/workflows/ci-tests.yml'
+            embodied_filter: &embodied
+              - *shared
+              - 'rlinf/envs/**'
+              - 'rlinf/workers/env/**'
+              - 'rlinf/models/embodiment/**'
+              - 'rlinf/models/worldmodel/**'
+              - 'rlinf/runners/embodied_*.py'
+              - 'examples/embodiment/**'
+              - 'tests/e2e_tests/embodied/**'
+              - '.github/workflows/embodied-e2e-tests.yml'
+            agent_reason_filter: &agent
+              - *shared
+              - 'rlinf/agents/**'
+              - 'rlinf/workers/agent/**'
+              - 'rlinf/runners/agent_runner.py'
+              - 'rlinf/runners/reasoning_runner.py'
+              - 'rlinf/runners/coding_online_rl_runner.py'
+              - 'examples/coding_online_rl/**'
+              - 'examples/multiturn_demo/**'
+              - 'examples/reasoning/**'
+              - 'tests/e2e_tests/agent/**'
+              - 'tests/e2e_tests/coding_online_rl/**'
+              - 'tests/e2e_tests/reasoning/**'
+              - '.github/workflows/agent-e2e-tests.yml'
+            sft_filter: &sft
+              - *shared
+              - 'rlinf/workers/sft/**'
+              - 'rlinf/runners/sft_runner.py'
+              - 'examples/sft/**'
+              - 'tests/e2e_tests/sft/**'
+              - '.github/workflows/sft-e2e-tests.yml'
+            unit_test_filter: &unit
+              - *shared
+              - 'tests/unit_tests/**'
+              - '.github/workflows/unit-tests.yml'
+            scheduler_test_filter: &scheduler
+              - *shared
+              - *embodied
+              - *agent
+              - 'tests/e2e_tests/auto_placement/**'
+              - 'tests/e2e_tests/dynamic_scheduler/**'
+              - '.github/workflows/scheduler-tests.yml'
+            checked_files_filter:
+              - *install
+              - *docker
+              - *shared
+              - *embodied
+              - *agent
+              - *sft
+              - *unit
+              - *scheduler
+            all_changes_filter:
+              - *install
+              - *docker
+              - '**/*.py'
+              - 'tests/**'
+              - '.github/workflows/*tests.yml'
+              - '*.yaml'
+
+  # =============================================== filter coverage test ============================================
+
+  filter-coverage-test:
+    needs: [check-changes]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print files not covered by any CI filter
+        run: |
+          set -euo pipefail
+
+          json_input=$(cat << 'EOF'
+          {
+            "all": ${{ needs.check-changes.outputs.all_changes_filter_files }},
+            "checked": ${{ needs.check-changes.outputs.checked_files_filter_files }}
+          }
+          EOF
+          )
+
+          missing=$(echo "$json_input" | jq -r '
+            def to_set:
+              reduce .[] as $x ({}; .[$x] = true);
+
+            .all as $all
+            | (.checked // []) as $chk
+            | $chk | to_set as $covered
+            | [
+                $all[]
+                | select((. as $p | ($covered[$p] // false)) | not)
+              ]
+          ')
+
+          if [ "$missing" != "[]" ]; then
+            echo "The following changed files are not covered by any CI filter:" >&2
+            echo "$missing" | jq -r '.[]' >&2
+            exit 1
+          fi
 
 
   # =============================================== install tests ====================================================
@@ -71,35 +188,42 @@ jobs:
 
   docker-tests:
     needs: [check-changes]
-    if: needs.check-changes.outputs.docker_filter == 'true' || needs.check-changes.outputs.install_filter == 'true'
+    if: needs.check-changes.outputs.docker_filter == 'true'
     uses: ./.github/workflows/docker-build.yml
 
   # =============================================== unit tests ====================================================
 
   unit-tests:
     needs: [check-changes]
-    if: needs.check-changes.outputs.file_filter == 'true' || needs.check-changes.outputs.install_filter == 'true'
+    if: needs.check-changes.outputs.unit_test_filter == 'true'
     uses: ./.github/workflows/unit-tests.yml
 
   # =============================================== agent e2e tests ====================================================
 
   agent-reason-e2e-tests:
     needs: [check-changes]
-    if: needs.check-changes.outputs.file_filter == 'true' || needs.check-changes.outputs.install_filter == 'true'
+    if: needs.check-changes.outputs.agent_reason_filter == 'true'
     uses: ./.github/workflows/agent-e2e-tests.yml
 
   # =============================================== embodied e2e tests ====================================================
 
   embodied-e2e-tests:
     needs: [check-changes]
-    if: needs.check-changes.outputs.file_filter == 'true' || needs.check-changes.outputs.install_filter == 'true'
+    if: needs.check-changes.outputs.embodied_filter == 'true'
     uses: ./.github/workflows/embodied-e2e-tests.yml
+
+  # =============================================== sft e2e tests ====================================================
+
+  sft-e2e-tests:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.sft_filter == 'true'
+    uses: ./.github/workflows/sft-e2e-tests.yml
 
   # =============================================== scheduler tests ====================================================
 
   scheduler-tests:
     needs: [check-changes]
-    if: needs.check-changes.outputs.file_filter == 'true' || needs.check-changes.outputs.install_filter == 'true'
+    if: needs.check-changes.outputs.scheduler_test_filter == 'true'
     uses: ./.github/workflows/scheduler-tests.yml
 
   # =============================================== finale ====================================================
@@ -107,11 +231,13 @@ jobs:
   ci-test-finish:
     needs: [
       check-changes,
+      filter-coverage-test,
       install-tests,
       docker-tests,
       unit-tests,
       agent-reason-e2e-tests,
       embodied-e2e-tests,
+      sft-e2e-tests,
       scheduler-tests
     ]
     if: always()

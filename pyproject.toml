@@ -28,7 +28,7 @@ dependencies = [
 
     # Data processing
     "pylatexenc",
-    "datasets",
+    "datasets==3.6.0",
     "latex2sympy2 @ git+https://github.com/RLinf/latex2sympy2.git",
     "sentencepiece",
     "torchdata",
@@ -97,6 +97,7 @@ override-dependencies = [
     "torch==2.6.0",
     "torchvision==0.21.0",
     "torchaudio==2.6.0",
+    "torchcodec==0.2",
     "xgrammar==0.1.19",
     "uvloop==0.21.0",
     "tensorflow-addons==0.23.0",

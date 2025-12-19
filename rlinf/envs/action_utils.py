@@ -100,6 +100,44 @@ def prepare_actions_for_calvin(
     return chunk_actions
 
 
+def prepare_actions_for_robocasa(
+    raw_chunk_actions,
+    action_dim,
+    model_type,
+) -> np.ndarray:
+    """
+    Prepare actions for robocasa environment.
+
+    For Pi0 models:
+        - Pi0 outputs 32D, but only [5:12] contains valid data (see norm_stats.json)
+        - Extract the valid 7D: [3D arm_pos, 3D arm_ori, 1D gripper]
+        - Convert to 12D PandaOmron format: [3D arm_pos, 3D arm_ori, 1D gripper, 4D base, 1D base_mode]
+
+    For other models: Directly extract action_dim dimensions
+    """
+    if SupportedModel(model_type) == SupportedModel.OPENPI:
+        # Pi0: Extract valid 7D from [5:12] and convert to 12D for PandaOmron
+        # Note: raw_chunk_actions is already sliced to [:12] by RobocasaOutputs
+        actions_7d = raw_chunk_actions[
+            ..., 5:12
+        ]  # Extract valid 7 dimensions from [5:12]
+        output_shape = actions_7d.shape[:-1] + (12,)  # Shape: (..., 12)
+        actions_12d = np.zeros(output_shape, dtype=np.float32)
+
+        # PandaOmron action mapping:
+        # Pi0's 7D [arm_pos(3), arm_ori(3), gripper(1)] → PandaOmron's 12D
+        actions_12d[..., 0:7] = actions_7d  # Map first 7 dimensions directly
+        actions_12d[..., -1] = 0  # Always control Panda instead of base
+
+        return actions_12d
+    else:
+        # Other models: directly extract first action_dim dimensions
+        chunk_actions = raw_chunk_actions[..., :action_dim]
+        chunk_actions[..., -1] = 0  # Always control Panda instead of base
+
+        return chunk_actions
+
+
 def prepare_actions(
     raw_chunk_actions,
     simulator_type,
@@ -135,6 +173,12 @@ def prepare_actions(
     elif simulator_type == "isaaclab":
         chunk_actions = prepare_actions_for_isaaclab(
             raw_chunk_actions=raw_chunk_actions,
+            model_type=model_type,
+        )
+    elif simulator_type == "robocasa":
+        chunk_actions = prepare_actions_for_robocasa(
+            raw_chunk_actions=raw_chunk_actions,
+            action_dim=action_dim,
             model_type=model_type,
         )
     else:

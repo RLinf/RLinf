@@ -1,0 +1,286 @@
+defaults:
+  - ../training_backend/fsdp@inference.fsdp_config
+  - ../training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 8
+  component_placement:
+    rollout: 0-15
+    inference: 16-23
+    actor: 24-63
+    reward: 0-15
+
+runner:
+  task_type: reasoning
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: rlinf
+    experiment_name: ${runner.experiment_name}
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: 5
+  max_steps: -1
+
+  val_check_interval: 1
+  save_interval: 50
+
+  seq_length: 16384
+
+  enable_dynamic_batch_size: False
+  max_tokens_per_mbs: 28672
+
+  resume_dir: null
+  experiment_name: grpo-1.5b
+  output_dir: ../results
+
+algorithm:
+  group_size: 16
+
+  n_minibatches: 4
+  training_batch_size_per_gpu: 1 # micro batch size
+  rollout_batch_size_per_gpu: null # If set to null, rollout_batch_size will be evenly divided across all inference instances. You can reduce this parameter if inference consumes too much GPU memory.
+
+  # mbs to do log prob inference, can be set to
+  # lower than rollout_batch_size_per_gpu to reduce
+  # memory usage
+  logprob_forward_micro_batch_size: 1 # ${.rollout_batch_size_per_gpu}
+
+  # val rollout mbs
+  val_rollout_batch_size_per_gpu: 4 # ${.rollout_batch_size_per_gpu}
+
+  recompute_logprobs: True
+  shuffle_rollout: False
+
+  max_num_gen_batches: 1
+
+  # GRPO loss params
+  loss_type: actor
+  loss_agg_func: "token-mean"
+  kl_beta: 0.0 # 0.001
+  kl_penalty_type: low_var_kl
+  ratio_clip_eps: 0.2
+  entropy_bonus: 0.0
+  calculate_entropy: False
+  clip_ratio_c: null # 3.0
+  clip_ratio_low: null # if null or not set, will use ratio_clip_eps
+  clip_ratio_high: null # if null or not set, will use ratio_clip_eps
+
+  adv_type: grpo
+  normalize_advantages: False
+  early_stop_imp_ratio: 5.0
+  use_valid_token_scale: True
+
+  # params for rollout
+  sampling_params:
+    do_sample: True
+    temperature: 1.0
+    top_k: 1000000
+    top_p: 1.0
+    repetition_penalty: 1.0
+    max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
+    min_new_tokens: 1
+
+inference:
+
+  group_name: "InferenceGroup"
+  load_from_actor: True
+  model:
+    model_path: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/
+    model_type: ${rollout.model.model_type}
+    precision: fp16              # precision for rollout model, support [fp16, bf16, fp32]
+    is_lora: False
+
+  tokenizer:
+    tokenizer_model: ${inference.model.model_path}
+    use_fast: True
+    trust_remote_code: True
+    padding_side: 'right'
+
+rollout:
+  group_name: "RolloutGroup"
+
+  gpu_memory_utilization: 0.55
+
+  model:
+    model_path: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/
+    model_type: qwen2.5
+    precision: fp16              # precision for rollout model, support [fp16, bf16, fp32]
+  enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
+  distributed_executor_backend: mp   # ray or mp
+  disable_log_stats: False
+  detokenize: False            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
+  padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
+  eos: null                   # will be tokenizer.eos_token_id if null.
+
+  rollout_backend: sglang     # here choose which backend to rollout,support [sglang, vllm] 
+
+  sglang:
+    attention_backend: triton # [flashinfer, triton] for more, see sglang's doc
+    decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
+    use_torch_compile: False # enable torch_compile in SGLang for rollout.
+    torch_compile_max_bs: 128 # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.
+
+  vllm:
+    attention_backend: FLASH_ATTN #[FLASH_ATTN,XFORMERS] for more, see vllm's doc
+    enable_chunked_prefill: True  # enable vllm to use chunked_prefill.
+    enable_prefix_caching: True   # enable vllm to use prefix_caching.
+    enable_flash_infer_sampler: True # if True, vllm will use flashinfer to do sampling.
+    max_num_batched_tokens: null # the maximum number of tokens to be batched together in vllm. If set to null, vllm will use its default value.
+    torch_profiler_dir: null # if not null, vllm will enable torch profiler and save the result to the specified directory.
+
+  return_logprobs: ${not:${algorithm.recompute_logprobs}}
+
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  
+  validate_weight: False # whether to send all weights at first for weight comparison.
+  validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
+  print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
+
+  max_running_requests: 64 # the maximum number of running requests in rollout engine.
+  cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
+
+data:
+  type: math
+  dataset_name: boba
+  max_prompt_length: 1024
+  filter_prompt_by_length: True
+  rollout_batch_size: 512
+  val_rollout_batch_size: null
+  num_workers: 2
+  prompt_key: prompt
+  answer_key: solutions
+  apply_chat_template: False
+  shuffle: True
+  validation_shuffle: True
+  seed: 1234
+  train_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
+  val_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
+
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: fsdp
+
+  enable_offload: False
+  seed: 1234
+
+  model:
+    model_path: "/path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/"
+    model_type: qwen2.5
+    precision: fp32
+    add_bias_linear: False
+    is_lora: False
+
+    activation: swiglu
+    sequence_parallel: True
+    # recompute_method: block
+    # recompute_granularity: selective
+
+    recompute_method: block
+    recompute_granularity: full
+    recompute_num_layers: 20
+
+    seq_length: ${runner.seq_length}
+    encoder_seq_length: ${runner.seq_length}
+
+    normalization: rmsnorm
+
+    position_embedding_type: rope
+
+    apply_rope_fusion: True
+    bias_dropout_fusion: False
+    persist_layer_norm: False
+    bias_activation_fusion: False
+    attention_softmax_in_fp32: True
+    batch_p2p_comm: False
+    variable_seq_lengths: True
+    gradient_accumulation_fusion: False
+    moe_token_dispatcher_type: alltoall
+    use_cpu_initialization: False
+
+  optim:
+    optimizer: adam
+    bf16: False
+    fp16: True
+    lr: 2e-05
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-05
+    weight_decay: 0.05
+    use_distributed_optimizer: True
+    overlap_grad_reduce: False
+    overlap_param_gather: False
+    optimizer_enable_pin: false
+    overlap_param_gather_with_optimizer_step: False
+    clip_grad: 0.8
+    loss_scale: 65536
+
+  lr_sched:
+    lr_warmup_fraction: 0.01
+    lr_warmup_init: 0.0
+    lr_warmup_iters: 0
+    max_lr: 2.0e-5
+    min_lr: 0.0
+    lr_decay_style: constant
+    lr_decay_iters: 10
+
+  tokenizer:
+    tokenizer_model: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/
+    use_fast: False
+    trust_remote_code: True
+    padding_side: 'right'
+
+  fsdp_config:                  # below are fsdp configs, for more details, see https://pytorch.org/docs/stable/fsdp.html and https://huggingface.co/docs/accelerate/package_reference/fsdp
+
+    strategy: "fsdp"            # FSDP strategy: ["fsdp", "fsdp2"]
+
+    # Sharding strategy: "full_shard" (shard parameters, gradients, optimizer states),
+    # "shard_grad_op" (shard gradients and optimizer states only), 
+    # "hybrid_shard" (combines data parallelism and model parallelism - sharding within FSDP groups, replicate across DDP groups),
+    # "no_shard" (no sharding)
+    sharding_strategy: "full_shard" 
+
+    cpu_offload: False           # whether to offload parameters and gradients to CPU when not in use，if True, actor's enable_offload should be True too.
+    offload_pin_memory: False    # whether FSDP2's CPU offload policy should pin memory when cpu_offload is True
+    reshard_after_forward: True  # if True, FSDP2 will reshard parameters after forward pass to save memory
+
+    enable_gradient_accumulation: True  # if True, gradient accumulation will be enabled for FSDP/FSDP2 training, which will enhance training performance but increase memory usage.
+    forward_prefetch: True              # if True, FSDP will explicitly prefetches the next upcoming all-gather while executing in the forward pass. only use with static graphs. Overlaps communication with computation to improve performance.
+    limit_all_gathers: False            # if True, FSDP will synchronizes CPU threads to limit the number of concurrent all-gathers. Only affects strategies that schedule all-gathers
+    backward_prefetch: pre              # options are null, 'pre', 'post'. if 'pre', FSDP will prefetch the next upcoming all-gather while computing gradients. if 'post', FSDP will prefetch the next all-gather until current gradient is computed.
+    use_orig_params: False              # if True, FSDP will use module's original parameters, it means it will expose nn.Module.named_parameters rather than FlatParameter
+    use_liger_kernel: True              # if True, liger_kernel will be used for FSDP, note that currently supported models in RLinf are [qwen2.5, qwen2.5-vl], for more details, see liger_kernel's doc
+
+    fsdp_size: -1               # Number of GPUs per FSDP group for hybrid sharding. -1 means use all available GPUs in a single FSDP group
+
+    mixed_precision:            # mixed precision settings for fsdp/fsdp2
+      param_dtype: "fp16"
+      reduce_dtype: "fp16"
+      buffer_dtype: "fp32"
+
+    amp:
+      enabled: True                 # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
+      precision: "fp16"              # precision for AMP, options are ["fp16" , "bf16"]
+      use_grad_scaler: True          # if True, GradScaler will be used for AMP training to prevent underflow.
+
+
+reward:
+  group_name: "RewardGroup"
+  use_reward_model: false
+  reward_type: 'math'
+  reward_scale: 5.0
+  tokenizer:
+    tokenizer_model: ${actor.tokenizer.tokenizer_model}
+    use_fast: ${actor.tokenizer.use_fast}
+    trust_remote_code: ${actor.tokenizer.trust_remote_code}
+    padding_side: ${actor.tokenizer.padding_side}
+
+critic:
+  use_critic_model: false

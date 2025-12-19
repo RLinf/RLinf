@@ -30,11 +30,11 @@ from prismatic.vla.constants import (
 )
 from transformers.generation import TopKLogitsWarper
 
-from rlinf.models.embodiment.model_utils import (
+from rlinf.models.embodiment.modules.value_head import ValueHead
+from rlinf.utils.utils import (
     compute_entropy_from_logits,
     compute_logprobs_from_logits,
 )
-from rlinf.models.embodiment.modules.value_head import ValueHead
 
 
 class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
@@ -388,11 +388,9 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
         actions = self._unnormalize_actions(normalized_actions, self.unnorm_key)
         actions = actions.reshape(idxs.shape)
 
-        action_logits = processed_logits_tensor.permute(
-            0, 2, 1
-        )  # [B, vocab-size, action-dim]
-        action_logits[:, : self.vocab_size - self.config.n_action_bins] = -torch.inf
-        action_logits[:, self.vocab_size :] = -torch.inf
+        action_logits = processed_logits_tensor
+        action_logits[:, :, : self.vocab_size - self.config.n_action_bins] = -torch.inf
+        action_logits[:, :, self.vocab_size :] = -torch.inf
 
         chunk_logprobs = compute_logprobs_from_logits(logits=action_logits, target=idxs)
 
@@ -522,11 +520,11 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
                 )  # since here is logprob instead of logits, we use 0 instead of -inf
                 processed_logits_tensor = logits_warper(None, processed_logits_tensor)
 
-            action_logits = processed_logits_tensor.permute(
-                0, 2, 1
-            )  # [B, vocab-size, action-dim]
-            action_logits[:, : self.vocab_size - self.config.n_action_bins] = -torch.inf
-            action_logits[:, self.vocab_size :] = -torch.inf
+            action_logits = processed_logits_tensor
+            action_logits[
+                :, :, : self.vocab_size - self.config.n_action_bins
+            ] = -torch.inf
+            action_logits[:, :, self.vocab_size :] = -torch.inf
 
             logprobs = compute_logprobs_from_logits(
                 logits=action_logits, target=action_tokens

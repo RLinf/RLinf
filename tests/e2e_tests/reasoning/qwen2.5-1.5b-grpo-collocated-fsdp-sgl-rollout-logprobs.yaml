@@ -1,4 +1,6 @@
 defaults:
+  - ../training_backend/fsdp@inference.fsdp_config
+  - ../training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
 hydra:

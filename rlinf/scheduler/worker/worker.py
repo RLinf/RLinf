@@ -489,8 +489,12 @@ class Worker(metaclass=WorkerMeta):
             list[HardwareInfo]: The list hardware information assigned to the current worker.
         """
         infos = []
-        for hw_rank in self._hardware_ranks:
-            infos.append(self._node_group.local_hardware_infos[hw_rank])
+        for local_hw_rank in self._local_hardware_ranks:
+            infos.append(
+                self._node_group.get_hardware_infos(self._cluster_node_rank)[
+                    local_hw_rank
+                ]
+            )
         return infos
 
     @classmethod
@@ -866,9 +870,11 @@ class Worker(metaclass=WorkerMeta):
         cluster = Cluster()
         hardware_ranks_str = os.environ.get("LOCAL_HARDWARE_RANKS", "")
         if hardware_ranks_str == "":
-            self._hardware_ranks = []
+            self._local_hardware_ranks = []
         else:
-            self._hardware_ranks = list(map(int, hardware_ranks_str.strip().split(",")))
+            self._local_hardware_ranks = list(
+                map(int, hardware_ranks_str.strip().split(","))
+            )
         node_group_label = os.environ.get("NODE_GROUP_LABEL", None)
         self._node_group = cluster.get_node_group(node_group_label)
         assert self._node_group is not None, (

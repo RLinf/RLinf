@@ -303,7 +303,7 @@ class Cluster:
         for node in self._nodes:
             for env_var in env_var_list:
                 env_var_name = Cluster.get_full_env_var_name(env_var)
-                if env_var_name in os.environ:
+                if env_var_name in os.environ and env_var_name not in node.env_vars:
                     node.env_vars[env_var_name] = os.environ[env_var_name]
                 elif (
                     default_value := Cluster.DEFAULT_SYS_ENV_VAR[env_var]

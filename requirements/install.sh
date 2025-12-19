@@ -15,7 +15,7 @@ SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 
 SUPPORTED_TARGETS=("embodied" "reason")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa")
 
 #=======================Utility Functions=======================
 
@@ -291,6 +291,13 @@ install_openpi_model() {
             install_prebuilt_flash_attn
             install_calvin_env
             ;;
+        robocasa)
+            create_and_sync_venv
+            install_common_embodied_deps
+            UV_TORCH_BACKEND=auto GIT_LFS_SKIP_SMUDGE=1 uv pip install -r $SCRIPT_DIR/embodied/models/openpi.txt
+            install_prebuilt_flash_attn
+            install_robocasa_env
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
             exit 1
@@ -396,6 +403,15 @@ install_isaaclab_env() {
     uv pip install "cuda-toolkit[nvcc]==12.8.0"
     $isaaclab_dir/isaaclab.sh --install
     popd >/dev/null
+}
+
+install_robocasa_env() {
+    local robocasa_dir
+    robocasa_dir=$(clone_or_reuse_repo ROBOCASA_PATH "$VENV_DIR/robocasa" https://github.com/RLinf/robocasa.git)
+    
+    uv pip install -e "$robocasa_dir"
+    uv pip install protobuf==6.33.0
+    python -m robocasa.scripts.setup_macros
 }
 
 #=======================REASONING INSTALLER=======================
