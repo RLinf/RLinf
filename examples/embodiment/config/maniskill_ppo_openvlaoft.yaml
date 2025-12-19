@@ -145,6 +145,7 @@ actor:
 
     is_lora: True
     lora_rank: 32
+    # aka RLinf-OpenVLAOFT-ManiSkill-Base-Lora. It can be downloaded from https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
     lora_path: /path/to/models/oft-sft/lora_004000/
 
   optim:

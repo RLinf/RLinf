@@ -140,6 +140,7 @@ actor:
 
     unnorm_key: bridge_orig
     is_lora: True
+    # aka RLinf-OpenVLAOFT-ManiSkill-Base-Lora. It can be downloaded from https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
     lora_path: /path/to/model/oft-sft/lora_004000
 
   tokenizer:
