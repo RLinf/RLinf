@@ -147,7 +147,7 @@ actor:
 
   # Override the default values in model/openvla_oft
   model:
-    model_path: "/mnt/public/wph/models/robotwin-oft-sft-place_empty_cup_rand-without_action_head/Optional--10000_chkpt"
+    model_path: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
     model_type: "openvla_oft"
 
     unnorm_key: bridge_orig

@@ -191,44 +191,57 @@
 
 - **训练指标**：
 
-  - ``actor/loss``：PPO 策略损失  
-  - ``actor/value_loss``：价值函数损失  
-  - ``actor/entropy``：策略熵  
-  - ``actor/grad_norm``：梯度范数  
-  - ``actor/lr``：学习率  
+  - ``train/actor/approx_kl``: 近似 KL，用于监控策略更新幅度
+  - ``train/actor/clip_fraction``: 触发 PPO 的 clip 样本的比例
+  - ``train/actor/clipped_ratio``: 被裁剪后的概率比均值，用来衡量策略更新受到 clip 的影响程度
+  - ``train/actor/grad_norm``: 梯度范数
+  - ``train/actor/lr``: 学习率
+  - ``train/actor/policy_loss``: PPO/GRPO的策略损失
+  - ``train/critic/value_loss``: 价值函数的损失
+  - ``train/critic/value_clip_ratio``: PPO-style value function clipping 中触发 clip 的比例
+  - ``train/critic/explained_variance``: 衡量价值函数拟合程度，越接近 1 越好
+  - ``train/entropy_loss``: 策略熵
+  - ``train/loss``: 策略损失 + 价值损失 + 熵正则的总和  (actor_loss + critic_loss + entropy_loss regularization)
 
 - **Rollout 指标**：
 
-  - ``rollout/reward_mean``：平均回合奖励  
-  - ``rollout/reward_std``：奖励标准差  
-  - ``rollout/episode_length``：平均回合长度  
-  - ``rollout/success_rate``：任务完成率  
+  - ``rollout/advantages_max``: 优势函数的最大值
+  - ``rollout/advantages_mean``: 优势函数的均值
+  - ``rollout/advantages_min``: 优势函数的最小值
+  - ``rollout/rewards``: 一个chunk的奖励 （参考 libero_env.py 的414行）
 
 - **环境指标**：
 
-  - ``env/success_rate``：各环境的成功率  
-  - ``env/step_reward``：逐步奖励  
-  - ``env/termination_rate``：回合终止率  
+- **环境指标（Environment Metrics）**：
+
+  - ``env/episode_len``：该回合实际经历的环境步数（单位：step）。
+  - ``env/return``：回合总回报。在 LIBERO 的稀疏奖励设置中，该指标并不具有参考价值，因为奖励在回合中几乎始终为 0，只有在成功结束时才会给出 1。
+  - ``env/reward``：环境的 step-level 奖励（在任务未完成的步骤中为 0，仅在成功终止时为 1）。  
+    日志中的数值会按回合步数进行归一化，因此无法直接反映实际的任务完成表现。
+  - ``env/success_once``：建议使用该指标来监控训练效果，它直接表示未归一化的任务成功率，更能反映策略的真实性能。
+
 
 **3. 视频生成**
 
 .. code-block:: yaml
 
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ./logs/video/train
+   env:
+      eval:
+         video_cfg:
+            save_video: True
+            video_base_dir: ${runner.logger.log_path}/video/eval
 
-**4. WandB 集成**
+**4. 训练日志工具集成**
 
 .. code-block:: yaml
 
-   trainer:
-     logger:
-       wandb:
-         enable: True
-         project_name: "RLinf"
-         experiment_name: "openvla-maniskill"
+   runner:
+      task_type: embodied
+      logger:
+         log_path: "../results"
+         project_name: rlinf
+         experiment_name: "test_openvla"
+         logger_backends: ["tensorboard"] # wandb, swanlab
 
 ManiSkill3 结果
 ~~~~~~~~~~~~~~~~~~~
@@ -253,7 +266,9 @@ ManiSkill3 结果
 每类任务最优模型以粗体标注。
 
 .. note::
-   为公平对比，这里采用与 `rl4vla` (`论文链接 <https://arxiv.org/abs/2505.19789>`_) 相同的 OOD 测试集。
+   为确保公平对比，我们沿用了 `rl4vla` (`论文链接 <https://arxiv.org/abs/2505.19789>`_) 中使用的同一套 OOD 测试集。
+   对于 OpenVLA 模型，我们直接采用了 HuggingFace 上提供的预训练权重 OpenVLA (Base) (aka openvla-7b-rlvla-warmup) <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_.
+   对于 OpenVLA-OFT 模型，我们利用采集自 “PutOnPlateInScene25Main-v3” 任务的运动规划数据，自行进行了 LoRA 微调。由此得到的 LoRA 权重也已上传至 HuggingFace OpenVLA-OFT (Base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_。
 
 .. list-table:: **ManiSkill3 上 OpenVLA 与 OpenVLA-OFT 的模型结果**
    :header-rows: 1

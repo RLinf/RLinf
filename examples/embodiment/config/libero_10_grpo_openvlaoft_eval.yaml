@@ -93,7 +93,7 @@ env:
   enable_offload: False
 
   eval:
-    total_num_envs: 500
+    total_num_envs: 50
     auto_reset: True
     ignore_terminations: True
     group_size: 1
@@ -119,7 +119,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
+    model_path: "/mnt/mnt/public_zgc/models/Haozhan72/Openvla-oft-SFT-libero10-traj1/"
     precision: ${actor.model.precision}
 
 actor:
@@ -136,7 +136,7 @@ actor:
 
   # Override the default values in model/openvla_oft
   model:
-    model_path: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
+    model_path: "/mnt/mnt/public_zgc/models/Haozhan72/Openvla-oft-SFT-libero10-traj1/"
     model_type: "openvla_oft"
 
   optim:
@@ -150,7 +150,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
+    tokenizer_model: "/mnt/mnt/public_zgc/models/Haozhan72/Openvla-oft-SFT-libero10-traj1/"
     use_fast: False
     trust_remote_code: True
     padding_side: "right"
