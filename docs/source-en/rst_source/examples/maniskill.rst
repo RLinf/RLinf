@@ -218,12 +218,12 @@ Visualization and Results
   - ``rollout/advantages_max``: the max of the advantage.
   - ``rollout/advantages_mean``: the mean of the advantage.
   - ``rollout/advantages_min``: the min of the advantage.
-  - ``rollout/rewards``: chunk of reward (refer to L414 in libero_env.py).
+  - ``rollout/rewards``: chunk of reward.
 
 - **Environment Metrics**:
 
   - ``env/episode_len``: Number of environment steps elapsed in the episode (unit: step).
-  - ``env/return``: Episode return. In LIBERO’s sparse-reward setting this metric is not informative, since the reward is almost always 0 until the terminal success step.
+  - ``env/return``: Episode return.
   - ``env/reward``: Step-level reward (0 for all intermediate steps and 1 only at successful termination).  
     The logged value is normalized by the number of episode steps, which makes it difficult to interpret as real task performance during training.
   - ``env/success_once``: Recommended metric to monitor training performance. It directly reflects the unnormalized episodic success rate.
