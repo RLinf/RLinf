@@ -33,7 +33,7 @@ from rlinf.models.embodiment.modules.value_head import ValueHead
 @dataclass(frozen=True)
 class OpenPi0Config(Pi0Config):
     # config for rl
-    config_name: str = "pi0_libero"  # pi0_libero, pi05_libero, pi0_metaworld, pi05_metaworld, pi0_maniskill, pi05_maniskill
+    config_name: str = "pi0_libero"  # pi0_libero, pi05_libero, pi0_maniskill, pi05_maniskill, pi0_metaworld, pi05_metaworld
     num_images_in_input: int = 2  # number of images in input
     noise_method: str = "flow_sde"  # flow_sde, flow_noise, flow_cps
     # noise config for flow-sde
