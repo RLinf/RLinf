@@ -130,7 +130,7 @@ class ManiskillEnv(gym.Env):
         ).to(self.device)
 
     def _wrap_obs(self, raw_obs):
-        if self.env.obs_mode == "state":
+        if self.env.unwrapped.obs_mode == "state":
             wrapped_obs = {"states": raw_obs}
         else:
             wrapped_obs = self._extract_obs_image(raw_obs)
@@ -139,14 +139,21 @@ class ManiskillEnv(gym.Env):
     def _extract_obs_image(self, raw_obs):
         obs_image = raw_obs["sensor_data"]["3rd_view_camera"]["rgb"].to(torch.uint8)
         obs_image = obs_image.permute(0, 3, 1, 2)  # [B, C, H, W]
-        extracted_obs = {"images": obs_image, "task_descriptions": self.instruction}
+        proprioception: torch.Tensor = self.env.unwrapped.agent.robot.get_qpos().to(
+            obs_image.device, dtype=torch.float32
+        )
+        extracted_obs = {
+            "images": obs_image,
+            "states": proprioception,
+            "task_descriptions": self.instruction,
+        }
         return extracted_obs
 
     def _calc_step_reward(self, reward, info):
         if getattr(self.cfg, "reward_mode", "default") == "raw":
             return reward
         reward = torch.zeros(self.num_envs, dtype=torch.float32).to(
-            self.env.device
+            self.env.unwrapped.device
         )  # [B, ]
         reward += info["is_src_obj_grasped"] * 0.1
         reward += info["consecutive_grasp"] * 0.1
