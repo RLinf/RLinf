@@ -224,8 +224,7 @@ Visualization and Results
 
   - ``env/episode_len``: Number of environment steps elapsed in the episode (unit: step).
   - ``env/return``: Episode return.
-  - ``env/reward``: Step-level reward (0 for all intermediate steps and 1 only at successful termination).  
-    The logged value is normalized by the number of episode steps, which makes it difficult to interpret as real task performance during training.
+  - ``env/reward``: Step-level reward.  
   - ``env/success_once``: Recommended metric to monitor training performance. It directly reflects the unnormalized episodic success rate.
 
 **3. Video Generation**
