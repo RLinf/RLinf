@@ -737,7 +737,8 @@ def validate_embodied_cfg(cfg):
         )
 
         assert (
-            cfg.env.train.max_steps_per_rollout_epoch % cfg.actor.model.num_action_chunks
+            cfg.env.train.max_steps_per_rollout_epoch
+            % cfg.actor.model.num_action_chunks
             == 0
         ), (
             "env.train.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
@@ -750,7 +751,10 @@ def validate_embodied_cfg(cfg):
         )
 
     with open_dict(cfg):
-        if cfg.env.train.simulator_type == "maniskill" or cfg.env.eval.simulator_type == "maniskill":
+        if (
+            cfg.env.train.simulator_type == "maniskill"
+            or cfg.env.eval.simulator_type == "maniskill"
+        ):
 
             def get_robot_control_mode(robot: str):
                 if "google_robot_static" in robot:
@@ -768,7 +772,10 @@ def validate_embodied_cfg(cfg):
             cfg.env.eval.init_params.control_mode = get_robot_control_mode(
                 cfg.actor.model.policy_setup
             )
-        elif cfg.env.train.simulator_type == "behavior" or cfg.env.train.simulator_type == "behavior":
+        elif (
+            cfg.env.train.simulator_type == "behavior"
+            or cfg.env.train.simulator_type == "behavior"
+        ):
             import omnigibson as og
 
             assert cfg.env.train.base_config_name == "r1pro_behavior", (
