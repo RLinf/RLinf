@@ -271,10 +271,10 @@ In the paper, we provide two technical approaches, flow-noise and flow-sde, to f
    algorithm:
       entropy_bonus: 0.0 # entropy regularization coefficient, set to 0.0 for flow-sde, 0.005 for flow-noise
    openpi:
-     noise_method: "flow_sde" # noise injection method, flow-sde introduces noise through ode-sde transformation, flow-noise introduces noise through noise network
+     noise_method: "flow_sde" # [flow_sde,flow_noise] noise injection method, flow-sde introduces noise through ode-sde transformation, flow-noise introduces noise through noise network
      noise_level: 0.5 # noise intensity for flow-sde
      noise_logvar_range: [0.08, 0.16] # learnable noise range for flow-noise
-     joint_logprob: False # whether to optimize joint probability density function, not needed for flow-sde, needed for flow-noise
+     joint_logprob: False # whether to optimize joint probability density function. For flow-sde, please set to False. For flow-noise, please set to True.
 
 For example, for complete parameter settings of flow-sde, please refer to ``libero_spatial_ppo_openpi.yaml``; for complete parameter settings of flow-noise, please refer to ``maniskill_ppo_openpi.yaml``.
 

@@ -239,10 +239,10 @@ actor** 之间的流水线重叠，从而提升 rollout 效率。
    algorithm:
       entropy_bonus: 0.0 # 熵正则化系数，flow-sde 设置为0.0，flow-noise 设置为0.005
    openpi:
-     noise_method: "flow_sde" # 噪声注入方式，flow-sde 通过ode-sde转换引入噪声，flow-noise 引入噪声网络注入噪声
+     noise_method: "flow_sde" # [flow_sde,flow_noise] 噪声注入方式，flow-sde 通过ode-sde转换引入噪声，flow-noise 引入噪声网络注入噪声
      noise_level: 0.5 # flow-sde 的噪声强度
      noise_logvar_range: [0.08, 0.16] # 针对 flow-noise 的可学习噪声范围
-     joint_logprob: False # 是否优化联合概率密度函数，flow-sde 不需要，flow-noise 需要
+     joint_logprob: False # 是否优化联合概率密度函数，对于flow-sde，请设置为False，对于flow-noise，请设置为True
 
 例如，针对 flow-sde 的完整参数设置，可以参考 ``libero_spatial_ppo_openpi.yaml``；针对 flow-noise 的完整参数设置，可以参考 ``maniskill_ppo_openpi.yaml``。
 
