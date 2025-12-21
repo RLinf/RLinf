@@ -712,6 +712,12 @@ def validate_embodied_cfg(cfg):
         ), (
             "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
         )
+        assert (
+            cfg.env.eval.max_steps_per_rollout_epoch % cfg.actor.model.num_action_chunks
+            == 0
+        ), (
+            "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
+        )
 
     if not cfg.runner.only_eval:
         assert cfg.env.train.total_num_envs > 0, (
@@ -734,40 +740,6 @@ def validate_embodied_cfg(cfg):
             == 0
         ), (
             "env.train.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
-        )
-        assert (
-            cfg.env.eval.max_steps_per_rollout_epoch % cfg.actor.model.num_action_chunks
-            == 0
-        ), (
-            "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
-        )
-        assert cfg.env.eval.total_num_envs % env_world_size == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes"
-        )
-
-        assert cfg.env.eval.total_num_envs % env_world_size % stage_num == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes and the number of pipeline stages"
-        )
-
-        assert cfg.env.eval.total_num_envs // env_world_size // stage_num > 0, (
-            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
-        )
-
-        assert (
-            cfg.env.eval.total_num_envs
-            // env_world_size
-            // stage_num
-            % cfg.env.eval.group_size
-            == 0
-        ), (
-            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
-        )
-
-        assert (
-            cfg.env.eval.max_steps_per_rollout_epoch % cfg.actor.model.num_action_chunks
-            == 0
-        ), (
-            "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
         )
 
     with open_dict(cfg):
