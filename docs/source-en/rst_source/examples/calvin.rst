@@ -214,7 +214,7 @@ Visualization and Results
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_calvin"
+       experiment_name: "calvin_d_d_ppo_openpi_pi05"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 

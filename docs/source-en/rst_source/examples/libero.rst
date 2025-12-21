@@ -252,7 +252,7 @@ Visualization and Results
       logger:
          log_path: "../results"
          project_name: rlinf
-         experiment_name: "test_openvla"
+         experiment_name: "libero_10_grpo_openvlaoft"
          logger_backends: ["tensorboard"] # wandb, swanlab
 
 

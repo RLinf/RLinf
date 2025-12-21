@@ -215,7 +215,7 @@ CALVIN D 任务上训练配置文件：
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_calvin"
+       experiment_name: "calvin_d_d_ppo_openpi_pi05"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 

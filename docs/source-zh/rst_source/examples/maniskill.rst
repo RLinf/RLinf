@@ -239,7 +239,7 @@
       logger:
          log_path: "../results"
          project_name: rlinf
-         experiment_name: "test_openvla"
+         experiment_name: "maniskill_ppo_openvla"
          logger_backends: ["tensorboard"] # wandb, swanlab
 
 ManiSkill3 结果

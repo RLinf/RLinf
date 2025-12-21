@@ -22,7 +22,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "test_gr00t"
+    experiment_name: "libero_spatial_ppo_gr00t"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000

@@ -226,7 +226,7 @@ Visualization and Results
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_metaworld"
+       experiment_name: "metaworld_50_ppo_openpi"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 

@@ -22,7 +22,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "test_openpi"
+    experiment_name: "metaworld_50_ppo_openpi"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000

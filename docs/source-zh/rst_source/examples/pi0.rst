@@ -335,7 +335,7 @@ actor** 之间的流水线重叠，从而提升 rollout 效率。
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_openpi"
+       experiment_name: "libero_10_ppo_openpi"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 LIBERO 结果

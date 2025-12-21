@@ -286,7 +286,7 @@ LoRA设置正在测试中，即将推出。
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_openpi"
+       experiment_name: "libero_10_ppo_gr00t"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 --------------

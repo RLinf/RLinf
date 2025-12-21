@@ -290,7 +290,7 @@ env 和 rollout 之间的管道重叠，以及与 actor 的共享。
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_behavior"
+       experiment_name: "behavior_ppo_openvlaoft"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 

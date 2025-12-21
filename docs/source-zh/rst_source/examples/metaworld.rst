@@ -221,7 +221,7 @@ MetaWorld ML45 联合训练配置文件 （在该任务设定下，训练在45�
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_metaworld"
+       experiment_name: "metaworld_50_ppo_openpi"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 

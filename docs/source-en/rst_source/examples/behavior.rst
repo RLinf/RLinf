@@ -293,7 +293,7 @@ Visualization and Results
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_behavior"
+       experiment_name: "behavior_ppo_openvlaoft"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 

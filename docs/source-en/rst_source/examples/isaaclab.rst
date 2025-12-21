@@ -227,5 +227,5 @@ Visualization and Results
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_isaaclab"
+       experiment_name: "isaaclab_ppo_gr00t_demo"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
