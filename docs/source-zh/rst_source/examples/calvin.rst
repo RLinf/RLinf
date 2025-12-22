@@ -1,5 +1,5 @@
-基于CALVIN模拟器的强化学习训练
-==============================
+基于CALVIN评测平台的强化学习训练
+=================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -62,13 +62,17 @@
 依赖安装
 -----------
 
-方法 1：您可以使用 calvin 的 RLinf docker 镜像 ``docker pull rlinf/rlinf:agentic-rlinf0.1-calvin``。
+**选项 1：Docker 镜像**
 
-方法 2：通过运行以下命令直接在您的环境中安装依赖（确保您已经安装了 ``uv``）：
+使用 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-calvin`` 来运行实验。
+
+**选项 2：自定义环境**
 
 .. code:: bash
 
+   pip install uv
    bash requirements/install.sh embodied --model openpi --env calvin
+   source .venv/bin/activate
 
 模型下载
 -----------

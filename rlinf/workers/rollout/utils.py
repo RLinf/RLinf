@@ -311,9 +311,7 @@ class DisaggRankMapper(RankMapper):
 SUPPORTED_LLM_ROLLOUT_BACKENDS = ["vllm", "sglang"]
 
 
-def get_rollout_backend_worker(
-    cfg: DictConfig, placement: ModelParallelComponentPlacement
-) -> Worker:
+def get_rollout_backend_worker(cfg: DictConfig) -> Worker:
     rollout_backend = cfg.rollout.get("rollout_backend", None)
     if rollout_backend is None:
         raise ValueError(

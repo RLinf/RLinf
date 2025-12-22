@@ -50,7 +50,7 @@ algorithm:
   logprob_type: chunk_level
   entropy_type: token_level
 
-  update_epoch: 4
+  update_epoch: 2
   adv_type: grpo
   loss_type: actor
   loss_agg_func: "token-mean" 
@@ -65,12 +65,12 @@ algorithm:
   gamma: 0.99
   gae_lambda: 0.95
 
-  filter_rewards: False
+  filter_rewards: True
   rewards_lower_bound: 0.1
   rewards_upper_bound: 0.9
   # params for generation
   sampling_params:
-    use_greedy: False
+    do_sample: True
     temperature_train: 1.0
     temperature_eval: 0.6
     top_k: 50
@@ -93,7 +93,7 @@ env:
     queue_size: 0
   enable_offload: False
 
-  # Override the default values in env/train or env/eval
+  # Override the default values in env/libero_spatial
   train:
     total_num_envs: 64
     group_size: ${algorithm.group_size}
@@ -151,6 +151,7 @@ actor:
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-05
+    weight_decay: 0.01
     clip_grad: 1.0
 
   # Override the default values in training_backend/fsdp

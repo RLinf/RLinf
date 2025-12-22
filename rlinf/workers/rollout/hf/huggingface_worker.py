@@ -85,6 +85,7 @@ class MultiStepRolloutWorker(Worker):
             self.cfg.algorithm.sampling_params, resolve=True
         )
         self._train_sampling_params = {
+            "do_sample": self._sampling_params["do_sample"],
             "temperature": self._sampling_params["temperature_train"],
             "top_k": self._sampling_params["top_k"],
             "top_p": self._sampling_params["top_p"],
@@ -93,19 +94,19 @@ class MultiStepRolloutWorker(Worker):
         }
 
         self._eval_sampling_params = {
+            "do_sample": self._sampling_params["do_sample"],
             "temperature": self._sampling_params["temperature_eval"],
             "top_k": self._sampling_params["top_k"],
             "top_p": self._sampling_params["top_p"],
             "max_new_tokens": self._length_params["max_new_token"],
         }
 
-    def predict(self, env_obs, do_sample=True, mode="train"):
+    def predict(self, env_obs, mode="train"):
         kwargs = (
             self._train_sampling_params
             if mode == "train"
             else self._eval_sampling_params
         )
-        kwargs["do_sample"] = do_sample
 
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.OPENPI,

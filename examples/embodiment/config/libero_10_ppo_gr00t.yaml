@@ -66,7 +66,7 @@ algorithm:
   rewards_upper_bound: 0.9
   # params for generation
   sampling_params:
-    use_greedy: False
+    do_sample: True
     temperature_train: 1.0
     temperature_eval: 0.6
     top_k: 50
@@ -147,6 +147,7 @@ actor:
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-05
+    weight_decay: 0.01
     clip_grad: 2.0
     critic_warmup_steps: 0
   

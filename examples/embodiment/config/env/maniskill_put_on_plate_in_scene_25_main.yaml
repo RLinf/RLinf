@@ -30,3 +30,4 @@ init_params:
     shader_pack: "default"
   render_mode: all
   obj_set: train
+  use_multiple_plates: False   # turn to true for openpi experiments

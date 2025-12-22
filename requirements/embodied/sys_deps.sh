@@ -6,7 +6,12 @@ sudo apt-get install -y --no-install-recommends \
     wget \
     unzip \
     curl \
+    libavutil-dev \
+    libavcodec-dev \
+    libavformat-dev \
+    libavdevice-dev \
     libibverbs-dev \
+    ncurses-term \
     mesa-utils \
     libosmesa6-dev \
     freeglut3-dev \

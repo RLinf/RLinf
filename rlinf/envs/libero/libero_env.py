@@ -28,14 +28,14 @@ from rlinf.envs.libero.utils import (
     get_benchmark_overridden,
     get_libero_image,
     get_libero_wrist_image,
-    put_info_on_image,
     quat2axisangle,
-    save_rollout_video,
-    tile_images,
 )
 from rlinf.envs.libero.venv import ReconfigureSubprocEnv
 from rlinf.envs.utils import (
     list_of_dict_to_dict_of_list,
+    put_info_on_image,
+    save_rollout_video,
+    tile_images,
     to_tensor,
 )
 
@@ -339,7 +339,8 @@ class LiberoEnv(gym.Env):
         self._reconfigure(reset_state_ids, env_idx)
         for _ in range(15):
             zero_actions = np.zeros((len(env_idx), 7))
-            zero_actions[:, -1] = -1
+            if self.cfg.reset_gripper_open:
+                zero_actions[:, -1] = -1
             raw_obs, _reward, terminations, info_lists = self.env.step(
                 zero_actions, env_idx
             )

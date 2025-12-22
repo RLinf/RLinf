@@ -114,17 +114,18 @@ class EnvWorker(Worker):
             self._init_simulator()
 
     def _init_simulator(self):
-        for i in range(self.stage_num):
-            self.simulator_list[i].start_simulator()
-            extracted_obs, _ = self.simulator_list[i].reset()
-            dones = (
-                torch.zeros((self.train_num_envs_per_stage,), dtype=bool)
-                .unsqueeze(1)
-                .repeat(1, self.cfg.actor.model.num_action_chunks)
-            )
-            self.last_obs_list.append(extracted_obs)
-            self.last_dones_list.append(dones)
-            self.simulator_list[i].stop_simulator()
+        if self.cfg.env.train.auto_reset:
+            for i in range(self.stage_num):
+                self.simulator_list[i].start_simulator()
+                extracted_obs, _ = self.simulator_list[i].reset()
+                dones = (
+                    torch.zeros((self.train_num_envs_per_stage,), dtype=bool)
+                    .unsqueeze(1)
+                    .repeat(1, self.cfg.actor.model.num_action_chunks)
+                )
+                self.last_obs_list.append(extracted_obs)
+                self.last_dones_list.append(dones)
+                self.simulator_list[i].stop_simulator()
 
     def env_interact_step(
         self, chunk_actions: torch.Tensor, stage_id: int
@@ -234,8 +235,9 @@ class EnvWorker(Worker):
             if self.cfg.env.eval.video_cfg.save_video:
                 for i in range(self.stage_num):
                     self.eval_simulator_list[i].flush_video()
-            for i in range(self.stage_num):
-                self.eval_simulator_list[i].update_reset_state_ids()
+            if not self.cfg.env.eval.auto_reset:
+                for i in range(self.stage_num):
+                    self.eval_simulator_list[i].update_reset_state_ids()
 
     def split_env_batch(self, env_batch, gather_id, mode):
         env_batch_i = {}
@@ -289,15 +291,14 @@ class EnvWorker(Worker):
         for epoch in range(self.cfg.algorithm.rollout_epoch):
             env_output_list = []
             if not self.cfg.env.train.auto_reset:
-                for i in range(self.stage_num):
-                    extracted_obs, infos = self.simulator_list[i].reset()
-                    self.last_obs_list.append(extracted_obs)
+                for stage_id in range(self.stage_num):
+                    self.simulator_list[stage_id].is_start = True
+                    extracted_obs, infos = self.simulator_list[stage_id].reset()
                     dones = (
                         torch.zeros((self.train_num_envs_per_stage,), dtype=bool)
                         .unsqueeze(1)
                         .repeat(1, self.cfg.actor.model.num_action_chunks)
                     )
-                    self.last_dones_list.append(dones)
                     env_output = EnvOutput(
                         obs=extracted_obs,
                         dones=dones,
@@ -309,11 +310,11 @@ class EnvWorker(Worker):
             else:
                 self.num_done_envs = 0
                 self.num_succ_envs = 0
-                for i in range(self.stage_num):
+                for stage_id in range(self.stage_num):
                     env_output = EnvOutput(
-                        obs=self.last_obs_list[i],
+                        obs=self.last_obs_list[stage_id],
                         rewards=None,
-                        dones=self.last_dones_list[i],
+                        dones=self.last_dones_list[stage_id],
                     )
                     env_output_list.append(env_output)
 
@@ -356,13 +357,15 @@ class EnvWorker(Worker):
     def evaluate(self):
         eval_metrics = defaultdict(list)
 
+        for stage_id in range(self.stage_num):
+            self.eval_simulator_list[stage_id].start_simulator()
+
         n_chunk_steps = (
             self.cfg.env.eval.max_steps_per_rollout_epoch
             // self.cfg.actor.model.num_action_chunks
         )
         for _ in range(self.cfg.algorithm.eval_rollout_epoch):
             for stage_id in range(self.stage_num):
-                self.eval_simulator_list[stage_id].start_simulator()
                 self.eval_simulator_list[stage_id].is_start = True
                 extracted_obs, infos = self.eval_simulator_list[stage_id].reset()
                 env_output = EnvOutput(

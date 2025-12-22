@@ -137,7 +137,7 @@ algorithm
     use_valid_token_scale: False
 
     sampling_params:
-      use_greedy: False
+      do_sample: True
       temperature: 1.0
       top_k: 1000000
       top_p: 1.0
@@ -174,7 +174,7 @@ algorithm
 
 **sampling_params:**
 
-``algorithm.sampling_params.use_greedy``: Deterministic decoding if True.
+``algorithm.sampling_params.do_sample``: Deterministic decoding if False.
 
 ``algorithm.sampling_params.temperature``: Softmax temperature during sampling.
 

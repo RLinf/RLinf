@@ -137,11 +137,12 @@ class NodeGroupInfo:
             total_count += node.get_hw_resource_count(self.hardware_type)
         return total_count
 
-    @property
-    def local_hardware_infos(self) -> list[HardwareInfo]:
-        """Get the hardware infos for each node in the group."""
+    def get_hardware_infos(self, node_rank: int) -> list[HardwareInfo]:
+        """Get the hardware infos for a node in the group."""
         infos: list[HardwareInfo] = []
         for node in self.nodes:
+            if node.node_rank != node_rank:
+                continue
             for resource in node.hardware_resources:
                 if resource.type == self.hardware_type:
                     infos.extend(resource.infos)
