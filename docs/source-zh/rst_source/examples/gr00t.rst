@@ -89,7 +89,7 @@ GR00T-N1.5直接将环境提供的自然语言任务描述作为语言模型的�
 
    # 方法2：使用huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Gr00t-SFT-Spatial
+   hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
 
 其他任务的SFT模型下载: 
 - `Libero-Object <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_

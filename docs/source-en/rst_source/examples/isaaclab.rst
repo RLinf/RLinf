@@ -108,7 +108,7 @@ Model Download
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Gr00t-SFT-Spatial
+   hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
 
 Running the Script
 ------------------

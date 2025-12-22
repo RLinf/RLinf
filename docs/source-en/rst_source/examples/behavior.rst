@@ -146,9 +146,7 @@ OpenVLA-OFT provides a unified model that is suitable for all task types in the 
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-OpenVLAOFT-Behavior
-
-Alternatively, you can also use ModelScope to download the model from https://www.modelscope.cn/models/RLinf/RLinf-OpenVLAOFT-Behavior.
+   hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir RLinf-OpenVLAOFT-Behavior
 
 After downloading, please make sure to specify the model path correctly in your configuration yaml file.
 

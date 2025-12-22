@@ -115,7 +115,7 @@ Before starting training, you need to download the corresponding pretrained mode
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download gen-robot/openvla-7b-rlvla-warmup
+   hf download gen-robot/openvla-7b-rlvla-warmup --local-dir openvla-7b-rlvla-warmup
 
 After downloading, make sure to correctly specify the model path in the configuration yaml file.
 

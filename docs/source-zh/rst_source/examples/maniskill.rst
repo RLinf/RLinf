@@ -105,7 +105,7 @@
 
    # 方法 2: 使用 huggingface-hub
    pip install huggingface-hub
-   hf download gen-robot/openvla-7b-rlvla-warmup
+   hf download gen-robot/openvla-7b-rlvla-warmup --local-dir openvla-7b-rlvla-warmup
 
 下载完成后，请确保在配置yaml文件中正确指定模型路径。
 

@@ -89,8 +89,8 @@
 
    # 方法 2: 使用 huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-MetaWorld
-   hf download RLinf/RLinf-Pi05-MetaWorld
+   hf download RLinf/RLinf-Pi0-MetaWorld --local-dir RLinf-Pi0-MetaWorld
+   hf download RLinf/RLinf-Pi05-MetaWorld --local-dir RLinf-Pi05-MetaWorld
 
 或者，您也可以使用 ModelScope 从 https://www.modelscope.cn/models/RLinf/RLinf-Pi0-MetaWorld 下载模型。
 

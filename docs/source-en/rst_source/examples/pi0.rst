@@ -119,7 +119,7 @@ This model is designed specifically for handling object, goal, and spatial task 
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal
+   hf download RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal --local-dir RLinf-Pi0-SFT-Spatial-Object-Goal
 
 Alternatively, you can also use ModelScope to download the model from https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal.
 
