@@ -31,7 +31,7 @@ Environment
 
 **Data Structure**
 
-- **Images**: RGB tensors ``[batch_size, 3, 480, 480]``
+- **Images**: RGB tensors ``[batch_size, 480, 480, 3]``
 - **Task Descriptions**: Natural-language instructions
 - **Actions**: Normalized continuous values
 - **Rewards**: Sparse rewards based on task completion

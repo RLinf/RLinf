@@ -31,7 +31,7 @@
 
 **数据结构**
 
-- **Images**：RGB 张量 ``[batch_size, 3, 480, 480]``  
+- **Images**：RGB 张量 ``[batch_size, 480, 480, 3]``  
 - **Task Descriptions**：自然语言指令  
 - **Actions**：归一化的连续值
 - **Rewards**：基于任务完成的稀疏奖励

@@ -31,17 +31,14 @@ class PyTorchProfilerFunc:
     Helper Class to create record_function and start/stop gracefully.
     """
 
-    def __init__(self, name: str, enabled: bool):
-        self.context = torch.profiler.record_function(name) if enabled else False
-        self.enabled = enabled
+    def __init__(self, name: str):
+        self.context = torch.profiler.record_function(name)
 
     def start(self):
-        if self.enabled:
-            self.context.__enter__()
+        self.context.__enter__()
 
     def stop(self):
-        if self.enabled:
-            self.context.__exit__(None, None, None)
+        self.context.__exit__(None, None, None)
 
 
 class PyTorchProfiler:

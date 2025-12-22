@@ -183,8 +183,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         transformed_samples = []
         for i in range(batch_size):
             sample = jax.tree.map(lambda x: x[i], inputs)
-            # convert from [3,256,256] -> [256,256,3]
             if transpose:
+                # convert from [3,256,256] -> [256,256,3]
                 sample = jax.tree.map(
                     lambda x: x.transpose(1, 2, 0)
                     if len(x.shape) == 3 and transpose
@@ -240,7 +240,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         chains = data["chains"]
         denoise_inds = data["denoise_inds"]
         # input transform
-        observation = self.input_transform(data)
+        observation = self.input_transform(data, transpose=False)
         observation = _model.Observation.from_dict(observation)
         images, img_masks, lang_tokens, lang_masks, state = (
             self._preprocess_observation(observation, train=False)
@@ -282,7 +282,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
     def obs_processor(self, env_obs):
         # base observation
         processed_obs = {
-            "observation/image": env_obs["images"],
+            "observation/image": env_obs["full_images"],
             "prompt": env_obs["task_descriptions"],
         }
         # state observation - ensure float32 to prevent BFloat16 conversion issues
@@ -327,7 +327,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
     ) -> tuple[np.ndarray, dict[str, Any]]:
         to_process_obs = self.obs_processor(env_obs)  # env obs -> policy input obs
         processed_obs = self.input_transform(
-            to_process_obs
+            to_process_obs, transpose=False
         )  # policy input obs -> model input obs
         processed_obs = self.precision_processor(
             processed_obs

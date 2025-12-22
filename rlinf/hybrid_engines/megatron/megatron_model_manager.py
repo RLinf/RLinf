@@ -24,6 +24,7 @@ from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.utils.flops import FLOPSCalculator, ModelConfig
 from rlinf.utils.initialize import initialize_megatron, set_megatron_args
 from rlinf.utils.logging import get_logger
+from rlinf.utils.profiler import PyTorchProfiler, PyTorchProfilerFunc
 from rlinf.utils.utils import clear_memory
 
 from .utils import (
@@ -605,3 +606,28 @@ class MegatronModelManager:
                         torch.cuda.current_device(), non_blocking=True
                     )
         clear_memory()
+
+    def init_profiler(self):
+        # here we should validate profiler's schedule info
+        assert (
+            self._cfg.megatron.profiler.schedule_warmup is not None
+            and self._cfg.megatron.profiler.schedule_warmup >= 0
+        ), "<schedule_warmup> must be set and greater than 0 when using profiler."
+        assert (
+            self._cfg.megatron.profiler.schedule_active is not None
+            and self._cfg.megatron.profiler.schedule_active > 0
+        ), "<schedule_active> must be set and greater than 0 when using profiler."
+
+        self.profiler = PyTorchProfiler.from_config(self._cfg.megatron.profiler)
+
+        self.forward_only_record = PyTorchProfilerFunc("forward_only")
+        self.dynamic_batch_processing_record = PyTorchProfilerFunc(
+            "dynamic_batch_processing"
+        )
+        self.static_batch_processing_record = PyTorchProfilerFunc(
+            "static_batch_processing"
+        )
+        self.broadcast_outputs_record = PyTorchProfilerFunc("broadcast_outputs")
+        self.megatron_forward_backward_record = PyTorchProfilerFunc(
+            "megatron_forward_backward"
+        )

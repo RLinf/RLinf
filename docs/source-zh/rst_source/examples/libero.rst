@@ -38,7 +38,7 @@
 
 **数据结构**
 
-- **Images**：RGB 张量 ``[batch_size, 3, 224, 224]``  
+- **Images**：RGB 张量 ``[batch_size, 224, 224, 3]``  
 - **Task Descriptions**：自然语言指令  
 - **Actions**：归一化的连续值，转换为离散 tokens  
 - **Rewards**：基于任务完成度的逐步奖励

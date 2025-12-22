@@ -43,7 +43,7 @@
 **数据结构**
 
 -  **Images**\ ：包含主视角图像和腕部视角图像，均为RGB 张量
-   ``[batch_size, 3, 224, 224]``
+   ``[batch_size, 224, 224, 3]``
 -  **States**\ ：在LIBERO当中是末端执行器的位姿（位置 + 姿态）以及夹爪状态, 在ManiSkill3当中是机器人关节角度
 -  **Task Descriptions**\ ：自然语言指令
 -  **Rewards**\ ：任务成功/失败的稀疏奖励

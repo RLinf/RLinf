@@ -114,7 +114,7 @@ env:
 rollout:
   group_name: "RolloutGroup"
   generation_backend: "huggingface"
-  enable_offload: False
+  enable_offload: True
   pipeline_stage_num: 1
 
   model:
@@ -127,7 +127,7 @@ actor:
   micro_batch_size: 32
   global_batch_size: 16384
   seed: 1234
-  enable_offload: False
+  enable_offload: True
 
   # Override the default values in model/openvla_oft
   model:

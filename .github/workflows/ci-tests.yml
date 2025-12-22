@@ -75,6 +75,7 @@ jobs:
               - 'rlinf/workers/reward/**'
               - 'rlinf/workers/rollout/**'
               - 'rlinf/hybrid_engines/**'
+              - 'rlinf/data/**'
               - 'rlinf/config.py'
               - 'rlinf/__init__.py'
               - 'rlinf/*/__init__.py'

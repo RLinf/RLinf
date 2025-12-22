@@ -39,7 +39,7 @@ Environment
 
 **Data Structure**
 
-- **Images**: RGB tensors ``[batch_size, 3, 224, 224]``
+- **Images**: RGB tensors ``[batch_size, 224, 224, 3]``
 - **Task Descriptions**: Natural-language instructions
 - **Actions**: Normalized continuous values converted to discrete tokens
 - **Rewards**: Step-level rewards based on task completion

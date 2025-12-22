@@ -48,8 +48,8 @@ Environment
 
 **Data Structure**
 
--  **Images**: Main-view and wrist-view RGB tensors, respectively named as "images" and "wrist_images" with shape
-   ``[batch_size, 3, 224, 224]``
+-  **Images**: Main-view and wrist-view RGB tensors, respectively named as "full_images" and "wrist_images" with shape
+   ``[batch_size, 224, 224, 3]``
 -  **States**: End-effector position, orientation, and gripper state
 -  **Task Descriptions**: Natural-language instructions
 -  **Rewards**: Sparse success/failure rewards

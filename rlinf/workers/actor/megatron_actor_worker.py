@@ -66,7 +66,6 @@ from rlinf.utils.distributed import (
     vocab_parallel_log_probs_from_logits,
 )
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
-from rlinf.utils.profiler import PyTorchProfiler, PyTorchProfilerFunc
 from rlinf.utils.resharding.mcore_weight_reshard import MegatronCoreWeightReshard
 from rlinf.utils.resharding.reshard_config import ReshardConfig
 from rlinf.utils.train_utils import (
@@ -200,7 +199,10 @@ class MegatronActor(MegatronModelManager, Worker):
                 "Dynamic batch size is not supported in pipeline mode."
             )
 
-        self._init_profiler()
+        self.use_profiler = self.cfg.actor.megatron.use_profiler
+        if self.use_profiler:
+            self.init_profiler()
+
         self._init_auto_scheduler(role)
 
     def _init_auto_scheduler(self, role: str):
@@ -222,44 +224,6 @@ class MegatronActor(MegatronModelManager, Worker):
             )
             self.scheduler_request_queue = get_scheduler_request_queue()
             self.scheduler_response_queue = get_scheduler_response_queue()
-
-    def _init_profiler(self):
-        def _validate_schedule_info():
-            assert (
-                self.cfg.actor.megatron.profiler.schedule_warmup is not None
-                and self.cfg.actor.megatron.profiler.schedule_warmup >= 0
-            ), "<schedule_warmup> must be set and greater than 0 when using profiler."
-            assert (
-                self.cfg.actor.megatron.profiler.schedule_active is not None
-                and self.cfg.actor.megatron.profiler.schedule_active > 0
-            ), "<schedule_active> must be set and greater than 0 when using profiler."
-
-        self.use_profiler = self.cfg.actor.megatron.use_profiler
-
-        # here we should validate profiler's schedule info
-        if self.use_profiler:
-            _validate_schedule_info()
-        self.profiler = (
-            PyTorchProfiler.from_config(self.cfg.actor.megatron.profiler)
-            if self.use_profiler
-            else None
-        )
-        self._forward_only_record = PyTorchProfilerFunc(
-            "forward_only", self.use_profiler
-        )
-        self._dynamic_batch_processing_record = PyTorchProfilerFunc(
-            "dynamic_batch_processing", self.use_profiler
-        )
-        self._static_batch_processing_record = PyTorchProfilerFunc(
-            "static_batch_processing", self.use_profiler
-        )
-        self._broadcast_outputs_record = PyTorchProfilerFunc(
-            "broadcast_outputs", self.use_profiler
-        )
-
-        self._megatron_forward_backward_record = PyTorchProfilerFunc(
-            "megatron_forward_backward", self.use_profiler
-        )
 
     def _load_weight_and_optimizer(self):
         # Acquire the GPUs to ensure that no one is using them before loading models
@@ -561,8 +525,8 @@ class MegatronActor(MegatronModelManager, Worker):
 
         self.log_debug(f"{total_seqlen=}, {num_microbatches=}")
 
-        if forward_only:
-            self._forward_only_record.start()
+        if self.use_profiler and forward_only:
+            self.forward_only_record.start()
         forward_outputs = fwd_bwd_function(
             forward_step_func=self.get_forward_step_func(),
             data_iterator=self.make_data_iterator_list(batch_iter),
@@ -573,8 +537,8 @@ class MegatronActor(MegatronModelManager, Worker):
             micro_batch_size=1,
             collect_non_loss_data=forward_only,
         )
-        if forward_only:
-            self._forward_only_record.stop()
+        if self.use_profiler and forward_only:
+            self.forward_only_record.stop()
 
         outputs = self._process_fwd_bwd_outputs(forward_outputs, forward_only)
 
@@ -606,8 +570,8 @@ class MegatronActor(MegatronModelManager, Worker):
 
         self.log_debug(f"{total_seqlen=}, {num_microbatches=}")
 
-        if forward_only:
-            self._forward_only_record.start()
+        if self.use_profiler and forward_only:
+            self.forward_only_record.start()
         forward_outputs = fwd_bwd_function(
             forward_step_func=self.get_forward_step_func(),
             data_iterator=self.make_data_iterator_list(batch_iterator),
@@ -618,8 +582,8 @@ class MegatronActor(MegatronModelManager, Worker):
             micro_batch_size=1,
             collect_non_loss_data=forward_only,
         )
-        if forward_only:
-            self._forward_only_record.stop()
+        if self.use_profiler and forward_only:
+            self.forward_only_record.stop()
 
         outputs = self._process_fwd_bwd_outputs(forward_outputs, forward_only)
 

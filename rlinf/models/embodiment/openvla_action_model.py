@@ -612,7 +612,9 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
                 f"In: What action should the robot take to {t.lower()}?\nOut: "
                 for t in env_obs["task_descriptions"]
             ]
-            image_tensor = env_obs["images"]
+            image_tensor = env_obs["full_images"].permute(
+                0, 3, 1, 2
+            )  # [B, H, W, C] -> [B, C, H, W]
             if image_tensor.ndim == 4:
                 image_tensor = image_tensor.unsqueeze(1)
             assert image_tensor.ndim == 5

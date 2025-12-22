@@ -38,8 +38,8 @@ Environment
 
 - **Task_descriptions**: select from `behavoir-1k` tasks
 - **Images**: Multi-camera RGB tensors
-  - Head images: ``[batch_size, 3, 224, 224]``
-  - Wrist images: ``[batch_size, 2, 3, 224, 224]`` (left and right cameras)
+  - Head images: ``[batch_size, 224, 224, 3]``
+  - Wrist images: ``[batch_size, 2, 224, 224, 3]`` (left and right cameras)
 
 
 Algorithm
