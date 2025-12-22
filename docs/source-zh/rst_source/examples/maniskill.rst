@@ -1,5 +1,5 @@
-基于ManiSkill评测平台的强化学习训练
-======================================
+基于ManiSkill模拟器的强化学习训练
+=============================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -65,51 +65,6 @@
    - OpenVLA 架构，多模态融合  
    - 动作 token 化与反 token 化  
    - 带 Value Head 的 Critic 功能
-
-依赖安装
----------------
-
-**选项 1：Docker 镜像**
-
-使用 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` 来运行实验。
-
-对于不同模型上的实验，请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
-
-.. code:: bash
-
-   # 切换到 OpenVLA 环境
-   source switch_env openvla
-   # 切换到 OpenVLA-OFT 环境
-   source switch_env openvla-oft
-
-**选项 2：自定义环境**
-
-.. code:: bash
-
-   pip install uv
-   # 将 --model 参数改为 openvla-oft 可安装 OpenVLA-OFT 环境
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
-   source .venv/bin/activate
-
-模型下载
---------------
-
-在开始训练之前，你需要下载相应的预训练模型和资产：
-
-.. code:: bash
-
-   # 使用下面任一方法下载模型
-   # 方法 1: 使用 git clone
-   git lfs install
-   git clone https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup
-
-   # 方法 2: 使用 huggingface-hub
-   pip install huggingface-hub
-   hf download gen-robot/openvla-7b-rlvla-warmup
-
-下载完成后，请确保在配置yaml文件中正确指定模型路径。
-
-此外，如果 `Pathto/rlinf/envs/maniskill` 中没有 `assets/` 目录，你还需要添加资产。下载说明可在 `huggingface <https://huggingface.co/datasets/RLinf/maniskill_assets>`_ 中找到。
 
 运行脚本
 -------------------
@@ -249,7 +204,7 @@ ManiSkill3 结果
      </div>
    </div>
 
-我们在训练场景和 OOD（分布外）场景进行了评估。其中 OOD 包括 Vision、Semantic、Execution。  
+我们在训练场景和 OOD（分布外）场景进行了评估。其中 OOD 包括 Vision、Semantic、Position。  
 每类任务最优模型以粗体标注。
 
 .. note::
@@ -263,7 +218,7 @@ ManiSkill3 结果
      - 训练场景
      - Vision
      - Semantic
-     - Execution
+     - Position
      - 平均值
    * - OpenVLA(Base)
      - 53.91%
@@ -271,7 +226,7 @@ ManiSkill3 结果
      - 35.75%
      - 42.11%
      - 39.10%
-   * - |huggingface| `rl4vla <https://huggingface.co/gen-robot/openvla-7b-rlvla-rl>`_
+   * - |huggingface| `rl4vla <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_
      - 93.75%
      - 80.47%
      - 75.00%

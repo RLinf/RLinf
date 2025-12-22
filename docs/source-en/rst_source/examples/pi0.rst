@@ -1,14 +1,12 @@
-RL on π\ :sub:`0`\  and π\ :sub:`0.5`\  Models
+Reinforcement Learning on π\ :sub:`0`\  and π\ :sub:`0.5`\  Models
 ==================================================================
 
 This example provides a complete guide to fine-tuning the 
-π\ :sub:`0`\  and π\ :sub:`0.5`\  algorithms with reinforcement learning
+π\ :sub:`0`\  and π\ :sub:`0.5`\  algorithms with reinforcement learning in the **LIBERO** environment
 using the **RLinf** framework. It covers the entire process—from
-environment input, core algorithms, training script configuration to
-evaluation and visualization—along with reproducible commands and
+environment setup and core algorithm design to training configuration,
+evaluation, and visualization—along with reproducible commands and
 configuration snippets.
-
-For detailed technical report, please refer to the paper: `πRL: ONLINE RL FINE-TUNING FOR FLOW-BASED VISION-LANGUAGE-ACTION MODELS <https://arxiv.org/abs/2510.25889>`__.
 
 The primary objective is to develop a model capable of performing
 robotic manipulation by:
@@ -36,20 +34,9 @@ Environment
    drawers, spatial rearrangement).
 -  **Observation**: RGB images (typical resolutions 128 × 128 or 224 ×
    224) captured by off-screen cameras placed around the workspace.
--  **Action Space**: 7-dimensional continuous actions
-   - 3D end-effector position control (x, y, z)
-   - 3D rotation control (roll, pitch, yaw)
-   - Gripper control (open / close)
-
-**ManiSkill3 Environment**
-
--  **Environment**: ManiSkill3 simulation platform
--  **Task**: Control a robotic arm to grasp various objects
--  **Observation**: RGB images (224 × 224) from third-person camera
--  **Action Space**: 7-dimensional continuous actions
-   - 3D position control (x, y, z)
-   - 3D rotation control (roll, pitch, yaw)
-   - Gripper control (open / close)
+-  **Action Space**: 7-dimensional continuous actions - 3D end-effector
+   position control (x, y, z) - 3D rotation control (roll, pitch, yaw) -
+   Gripper control (open / close)
 
 **Task Description Format**
 
@@ -60,7 +47,7 @@ Environment
 
 -  **Images**: Main-view and wrist-view RGB tensors, each of shape
    ``[batch_size, 3, 224, 224]``
--  **States**: In LIBERO, states include end-effector pose (position + orientation) and gripper state. In ManiSkill3, states are robot joint angles.
+-  **States**: End-effector position, orientation, and gripper state
 -  **Task Descriptions**: Natural-language instructions
 -  **Rewards**: Sparse success/failure rewards
 
@@ -85,35 +72,20 @@ Algorithm
    -  Compute the advantage of each action by subtracting the group’s
       mean reward.
 
-Dependency Installation
------------------------
-
-**Option 1: Docker Image**
-
-Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` for the experiment.
-
-Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
-
-.. code:: bash
-
-   source switch_env openpi
-
-**Option 2: Custom Environment**
-
-Install dependencies directly in your environment by running the following command:
-
-.. code:: bash
-
-   pip install uv
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
-
 --------------
 
 Model Download
 --------------
 
-Before starting training, you need to download the corresponding pretrained models. For example, for Spatial, Object, Goal task types in the LIBERO environment, you can download them as follows:
+Before starting training, you need to download the corresponding pretrained models. Based on the algorithm type you want to use, we provide different model options:
+
+**π**\ :sub:`0`\  **Model Download**
+
+π\ :sub:`0`\  provides two different model options based on task type:
+
+**Option #1 RLinf-Pi0-SFT-Spatial-Object-Goal Model**
+
+This model is designed specifically for handling object, goal, and spatial task types.
 
 .. code:: bash
 
@@ -126,63 +98,49 @@ Before starting training, you need to download the corresponding pretrained mode
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal
 
-Alternatively, you can download the model from ModelScope: https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal.
+Alternatively, you can also use ModelScope to download the model from https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal.
 
-Of course, RLinf also provides pretrained models for other environments. The model list is as follows:
+**Option #2 RLinf-Pi0-SFT-Long Model**
 
-.. list-table:: **π**\ :sub:`0`\  **Pretrained Model List**
-   :header-rows: 1
-   :widths: 15 30 50
+This model is dedicated to handling Long (libero10) task type.
 
-   * - Environment
-     - Task Description
-     - HuggingFace Link
+.. code:: bash
 
-   * - LIBERO
-     - Spatial, Object, Goal 
-     - `RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT>`__
+   # Download the Long model (choose either method)
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-SFT-Long
 
-   * - LIBERO
-     - Long 
-     - `RLinf-Pi0-LIBERO-Long-SFT <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Long-SFT>`__
+   # Method 2: Using huggingface-hub
+   pip install huggingface-hub
+   hf download RLinf/RLinf-Pi0-SFT-Long
 
-   * - ManiSkill3
-     - Multi-task
-     - `RLinf-Pi0-ManiSkill-25Main-SFT <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT>`__
+Alternatively, you can also use ModelScope to download the model from https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Long.
 
-   * - MetaWorld
-     - MT50
-     - `RLinf-Pi0-MetaWorld-SFT <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT>`__
+**π**\ :sub:`0.5`\  **Model Download**
 
-   * - CALVIN
-     - ABC-D
-     - `RLinf-Pi0-CALVIN-ABC-D-SFT <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT>`__
+π\ :sub:`0.5`\  provides a unified model that is suitable for all task types, including object, goal, spatial, and Long types.
 
-.. list-table:: **π**\ :sub:`0.5`\  **Pretrained Model List**
-   :header-rows: 1
-   :widths: 15 30 50
+.. code:: bash
 
-   * - Environment
-     - Task Description
-     - HuggingFace Link
+   # Download the model (choose either method)
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Pi05-SFT
 
-   * - LIBERO
-     - Spatial, Object, Goal, Long
-     - `RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__
+   # Method 2: Using huggingface-hub
+   pip install huggingface-hub
+   hf download RLinf/RLinf-Pi05-SFT
 
-   * - ManiSkill3
-     - Multi-task
-     - `RLinf-Pi05-ManiSkill-25Main-SFT <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT>`__
+Alternatively, you can also use ModelScope to download the model from https://www.modelscope.cn/models/RLinf/RLinf-Pi05-SFT.
 
-   * - MetaWorld
-     - MT50
-     - `RLinf-Pi05-MetaWorld-SFT <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT>`__
+**Model Selection Guide**
 
-   * - CALVIN
-     - ABC-D
-     - `RLinf-Pi05-CALVIN-ABC-D-SFT <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT>`__
+- If you want to train **object, goal, or spatial** task on π\ :sub:`0`\  model, please use the `RLinf-Pi0-SFT-Spatial-Object-Goal` model.
+- If you want to train the **Long** task on π\ :sub:`0`\  model, please use the `RLinf-Pi0-SFT-Long` model.
+- If you want to train tasks on π\ :sub:`0.5`\  model, please use the `RLinf-Pi05-SFT` model.
 
-After downloading, please make sure to specify the model path correctly in your configuration file.
+After downloading, please make sure to specify the model path correctly in your configuration yaml file.
 
 Running Scripts
 ---------------
@@ -240,45 +198,26 @@ interference, eliminating the need for offload functionality.
 .. code:: yaml
 
    openpi:
-     noise_level: 0.5 # default noise intensity for flow_sde
-     noise_logvar_range: [0.08, 0.16] # default learnable noise range for flow_noise
+     noise_level: 0.5
      action_chunk: ${actor.model.num_action_chunks}
      num_steps: ${actor.model.num_steps}
      train_expert_only: True
      action_env_dim: ${actor.model.action_dim}
-     noise_method: "flow_sde" # flow_sde, flow_noise
+     noise_method: "flow_sde"
      add_value_head: False
      pi05: False 
      value_after_vlm: False
 
-- Set different flow-matching steps via ``num_steps``.
-
-- Use different noise injection methods by modifying ``noise_method``. We provide two options:
+| You can adjust ``noise_level`` and ``num_steps`` to control
+  the noise intensity and flow-matching steps.
+| Different noise injection methods can be chosen via ``noise_method``.
+  We provide two options:
   `flow_sde <https://arxiv.org/abs/2505.05470>`__ and
-  `flow_noise <https://arxiv.org/abs/2505.22094>`__.
-  ``noise_level`` controls the noise intensity for ``flow_sde``, and ``noise_logvar_range`` controls the learnable noise range for ``flow_noise``.
+  `reinflow <https://arxiv.org/abs/2505.22094>`__.
 
-- Enable π\ :sub:`0.5`\  model by setting ``pi05: True``.
+You can set ``pi05: True`` to enable π\ :sub:`0.5`\  mode, and set ``value_after_vlm`` to control the input path of state features: True to input to VLM part (π\ :sub:`0.5`\  default configuration), False to input to action expert (π\ :sub:`0`\  default configuration).
 
-- Control the critic position via ``value_after_vlm``: when True, the critic is connected after the VLM module output; when False, the critic input is from the action expert module output.
-
-**2.2 Algorithm Configuration**
-
-In the paper, we provide two technical approaches, flow-noise and flow-sde, to fine-tune π\ :sub:`0`\  and π\ :sub:`0.5`\  models. Specifically, you can choose different technical approaches by switching the following configuration:
-
-.. code:: yaml
-
-   algorithm:
-      entropy_bonus: 0.0 # entropy regularization coefficient, set to 0.0 for flow-sde, 0.005 for flow-noise
-   openpi:
-     noise_method: "flow_sde" # [flow_sde,flow_noise] noise injection method, flow-sde introduces noise through ode-sde transformation, flow-noise introduces noise through noise network
-     noise_level: 0.5 # noise intensity for flow-sde
-     noise_logvar_range: [0.08, 0.16] # learnable noise range for flow-noise
-     joint_logprob: False # whether to optimize joint probability density function. For flow-sde, please set to False. For flow-noise, please set to True.
-
-For example, for complete parameter settings of flow-sde, please refer to ``libero_spatial_ppo_openpi.yaml``; for complete parameter settings of flow-noise, please refer to ``maniskill_ppo_openpi.yaml``.
-
-**2.3 LoRA Settings**
+**2.2 LoRA Settings**
 
 .. code:: yaml
 
@@ -292,7 +231,7 @@ If you want to use LoRA (Low-Rank Adaptation) to fine-tune the VLM part, please 
 
 **3. Configuration Files**
 
-Using libero-10 as an example, the configuration files for π\ :sub:`0`\  and π\ :sub:`0.5`\  are:
+Using libero-10 as an example:
 
 - π\ :sub:`0`\ + PPO:
    ``examples/embodiment/config/libero_10_ppo_openpi.yaml``
@@ -383,11 +322,11 @@ Visualization and Results
 
 --------------
 
-LIBERO Results
-~~~~~~~~~~~~~~
+**LIBERO Results**
+~~~~~~~~~~~~~~~~~~
 
 We trained π\ :sub:`0`\  and π\ :sub:`0.5`\  with PPO and GRPO in the LIBERO environment.
-The results achieved through RL training are shown below:
+The results achieved through our RL training are shown below:
 
 .. list-table:: **π**\ :sub:`0`\  **model results on LIBERO**
    :header-rows: 1
@@ -458,11 +397,3 @@ The results achieved through RL training are shown below:
      - **93.0%**
      - **97.9%**
      - **+20.8**
-
-MetaWorld Results
-~~~~~~~~~~~~~~~~~
-For MetaWorld results, please check `MetaWorld Page <https://rlinf.readthedocs.io/en/latest/rst_source/examples/metaworld.html>`__.
-
-CALVIN Results
-~~~~~~~~~~~~~~~~~
-For CALVIN results, please check `CALVIN Page <https://rlinf.readthedocs.io/en/latest/rst_source/examples/calvin.html>`__.

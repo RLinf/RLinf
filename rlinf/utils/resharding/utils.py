@@ -16,40 +16,39 @@
 import torch
 from megatron.core import parallel_state
 
-from rlinf.config import SupportedModel, get_supported_model
 
-
-def get_tp_reshard_fn(model_type: str):
-    model_type = get_supported_model(model_type)
-    if model_type == SupportedModel.QWEN2_5:
+def get_tp_reshard_fn(model_arch: str):
+    if model_arch == "qwen2.5":
         return tp_reshard_fn_qwen2_5
-    elif model_type == SupportedModel.QWEN3_MOE:
+    elif model_arch == "qwen3":
+        return tp_reshard_fn_qwen3_dense
+    elif model_arch == "qwen3_moe":
         return tp_reshard_fn_qwen3_moe
     else:
         raise NotImplementedError(
-            f"get_tp_reshard_fn for model_type {model_type} is not implemented"
+            f"get_tp_reshard_fn for model_arch {model_arch} is not implemented"
         )
 
 
-def get_tpe_reshard_fn(model_type: str):
-    model_type = get_supported_model(model_type)
-    if model_type == SupportedModel.QWEN3_MOE:
+def get_tpe_reshard_fn(model_arch: str):
+    if model_arch == "qwen3_moe":
         return tpe_reshard_fn_qwen3_moe
     else:
         raise NotImplementedError(
-            f"get_tpe_reshard_fn for model_type {model_type} is not implemented"
+            f"get_tpe_reshard_fn for model_arch {model_arch} is not implemented"
         )
 
 
-def get_pp_reshard_fn(model_type: str):
-    model_type = get_supported_model(model_type)
-    if model_type == SupportedModel.QWEN2_5:
+def get_pp_reshard_fn(model_arch: str):
+    if model_arch == "qwen2.5":
         return pp_reshard_fn_qwen2_5
-    elif model_type == SupportedModel.QWEN3_MOE:
+    elif model_arch == "qwen3":
+        return pp_reshard_fn_qwen3_dense
+    elif model_arch == "qwen3_moe":
         return pp_reshard_fn_qwen3_moe
     else:
         raise NotImplementedError(
-            f"get_pp_reshard_fn for model_type {model_type} is not implemented"
+            f"get_pp_reshard_fn for model_arch {model_arch} is not implemented"
         )
 
 
@@ -82,6 +81,52 @@ def tp_reshard_fn_qwen2_5(model_state_dict, merge_factor, tp_group):
         "output_layer.weight",
         "self_attention.linear_qkv.weight",
         "self_attention.linear_qkv.bias",
+        "mlp.linear_fc1.weight",
+    ]
+
+    # Parameters that need to be gathered on dim=1
+    param_reshard_row_parallel_linear = [
+        "self_attention.linear_proj.weight",
+        "mlp.linear_fc2.weight",
+    ]
+
+    for k, v in model_state_dict.items():
+        if any(param in k for param in param_skip_tp_reshard):
+            model_state_dict[k] = v.clone()
+            continue
+
+        if any(param in k for param in param_reshard_column_parallel_linear):
+            dim = 0
+        elif any(param in k for param in param_reshard_row_parallel_linear):
+            dim = 1
+        else:
+            assert False, f"Unknown parameter: {k}"
+
+        model_state_dict[k] = _gather_tp_group_tensor_and_reshard(
+            v, dim, merge_factor, tp_group
+        )
+
+    return model_state_dict
+
+
+def tp_reshard_fn_qwen3_dense(model_state_dict, merge_factor, tp_group):
+    # Parameters that should skip TP resharding (just clone)
+    param_skip_tp_reshard = [
+        "linear_qkv.layer_norm_weight",
+        "linear_fc1.layer_norm_weight",
+        "final_layernorm.weight",
+        "q_layernorm.weight",
+        "k_layernorm.weight",
+        "pre_mlp_layernorm.weight",
+        "router.weight",
+    ]
+
+    # MoE model resharding the mlp weight in tpe_reshard_fn
+    # Parameters that need to be gathered on dim=0
+    param_reshard_column_parallel_linear = [
+        "word_embeddings.weight",
+        "output_layer.weight",
+        "self_attention.linear_qkv.weight",
         "mlp.linear_fc1.weight",
     ]
 
@@ -272,6 +317,11 @@ def _pp_reshard_fn_Qwen_model(model_state_dict, pp_group, dtype):
 
 def pp_reshard_fn_qwen2_5(model_state_dict, pp_group, dtype):
     """Reshard pipeline parallel weights for Qwen2.5 models."""
+    return _pp_reshard_fn_Qwen_model(model_state_dict, pp_group, dtype)
+
+
+def pp_reshard_fn_qwen3_dense(model_state_dict, pp_group, dtype):
+    """Reshard pipeline parallel weights for Qwen3 MoE models."""
     return _pp_reshard_fn_Qwen_model(model_state_dict, pp_group, dtype)
 
 

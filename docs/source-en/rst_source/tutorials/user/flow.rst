@@ -19,7 +19,7 @@ For example:
 - Configs for training a **VLA** agent in embodied tasks live under
   ``examples/embodiment/config``.
 - Configs for training an **LLM** on math reasoning live under
-  ``examples/reasoning/config/math``.
+  ``examples/math/config``.
 
 As a starting point, we recommend getting familiar with the YAML structure of
 these examples, then iterating toward your custom task. Key options include
@@ -38,10 +38,11 @@ these examples, then iterating toward your custom task. Key options include
 
 **2. Models, tokenizer, optional checkpoint paths, and output locations**
 
-- ``rollout.model.model_path``
+- ``rollout.model_dir``
 - ``actor.tokenizer.tokenizer_model``
-- ``actor.model.model_path``
+- ``actor.checkpoint_load_path``
 - ``runner.logger.log_path``
+- ``actor.checkpoint_save_path``
 
 **3. Training hyperparameters such as max steps and batch sizes**
 

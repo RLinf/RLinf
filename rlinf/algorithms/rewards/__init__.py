@@ -15,6 +15,7 @@
 from rlinf.algorithms.rewards.code import CodeRewardOffline
 from rlinf.algorithms.rewards.math import MathReward
 from rlinf.algorithms.rewards.vqa import VQAReward
+from rlinf.algorithms.rewards.rstar2 import Rstar2Reward
 
 
 def register_reward(name: str, reward_class: type):
@@ -32,3 +33,4 @@ reward_registry = {}
 register_reward("math", MathReward)
 register_reward("vqa", VQAReward)
 register_reward("code_offline", CodeRewardOffline)
+register_reward("rstar2", Rstar2Reward)

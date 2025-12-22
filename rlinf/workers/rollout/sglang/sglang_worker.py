@@ -50,9 +50,7 @@ class SGLangWorker(Worker):
         self._cfg = config
         self._placement = placement
 
-        self._tokenizer = AutoTokenizer.from_pretrained(
-            self._cfg.rollout.model.model_path
-        )
+        self._tokenizer = AutoTokenizer.from_pretrained(self._cfg.rollout.model_dir)
         self._return_logprobs = self._cfg.rollout.return_logprobs
         self._sampling_params = SGLangWorker.get_sampling_param_from_config(self._cfg)
 
@@ -107,7 +105,7 @@ class SGLangWorker(Worker):
         Get sampling parameters from the configuration.
         """
         cfg_sampling_params = cfg.algorithm.sampling_params
-        if not cfg_sampling_params.do_sample:
+        if cfg_sampling_params.use_greedy:
             sampling_params = {
                 "temperature": 0,
                 "max_new_tokens": cfg_sampling_params.max_new_tokens,
@@ -126,7 +124,7 @@ class SGLangWorker(Worker):
         use_cudagraph = not self._cfg.rollout.enforce_eager
 
         server_args = ServerArgs(
-            model_path=self._cfg.rollout.model.model_path,
+            model_path=self._cfg.rollout.model_dir,
             disable_cuda_graph=not use_cudagraph,
             cuda_graph_max_bs=min(
                 self._cfg.rollout.cuda_graph_max_bs,
@@ -140,12 +138,9 @@ class SGLangWorker(Worker):
                 self._cfg.rollout.sglang.torch_compile_max_bs,
                 self._cfg.rollout.max_running_requests,
             ),
-            load_format="dummy"
-            if not self._cfg.rollout.validate_weight
-            and not getattr(self._cfg.rollout, "validate_weight_first_sync", False)
-            else "auto",
+            load_format="dummy" if not self._cfg.rollout.validate_weight else "auto",
             # disable_overlap_schedule=True,
-            dtype=torch_dtype_from_precision(self._cfg.rollout.model.precision),
+            dtype=torch_dtype_from_precision(self._cfg.rollout.precision),
             # sglang will only return text/output_ids when skip_tokenizer_init=False/True
             # text is not needed in RL training, so set to True can save time.
             skip_tokenizer_init=not self._cfg.rollout.detokenize,
@@ -178,14 +173,21 @@ class SGLangWorker(Worker):
         """
         Run a test prompt batch and print its output.
         """
-        input_ids = self._tokenizer(self._validate_prompts).input_ids
-        engine_results, _ = await self.async_generate(
-            input_ids=input_ids,
-            sampling_params=self._validate_sampling_params,
-            return_logprob=False,
-        )
-        print_sglang_outputs(self._validate_prompts, engine_results, self._tokenizer)
-        print("===============================", flush=True)
+        if self._cfg.rollout.detokenize:
+            self.log_warning(
+                "validate_weight with detokenize=True is not supported yet."
+            )
+        else:
+            input_ids = self._tokenizer(self._validate_prompts).input_ids
+            engine_results, _ = await self.async_generate(
+                input_ids=input_ids,
+                sampling_params=self._validate_sampling_params,
+                return_logprob=False,
+            )
+            print_sglang_outputs(
+                self._validate_prompts, engine_results, self._tokenizer
+            )
+            print("===============================", flush=True)
 
     async def async_generate(
         self,
@@ -220,9 +222,7 @@ class SGLangWorker(Worker):
             prompt=prompt,
             sampling_params=sampling_params,
             input_ids=input_ids,
-            image_data=image_data
-            if image_data is not None and any(image_data)
-            else None,
+            image_data=image_data if any(image_data) else None,
             return_logprob=return_logprob,
         )
         return result, request_info
@@ -303,8 +303,7 @@ class SGLangWorker(Worker):
                         f"exceeding max_new_tokens={self._sampling_params['max_new_tokens']}, "
                         f"it will be truncatured."
                     )
-                    result = seq_group_info.results[idx]
-                    seq_group_info.results[idx] = None
+                    result = copy.deepcopy(seq_group_info.results[idx])
                     result["meta_info"]["finish_reason"]["type"] = "length"
                     seq_group_info.record_sglang_result(idx, result)
                     continue
@@ -420,7 +419,6 @@ class SGLangWorker(Worker):
             sampling_params=final_sampling_params,
             return_logprob=self._return_logprobs,
         )
-        # sglang will trim matched stop in result text, so we should only return output_ids
         result_dict = {
             "output_ids": result["output_ids"],
             "finish_reason": result["meta_info"]["finish_reason"]["type"],

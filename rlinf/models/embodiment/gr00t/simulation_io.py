@@ -80,7 +80,7 @@ def convert_to_libero_action(
 
     Args:
         action_chunk: Dictionary of action components from GR00T policy
-        chunk_size: Number of action steps to consider from the chunk
+        idx: Index of action to extract from chunk (default: 0 for first action)
 
     Returns:
         7-dim numpy array: [dx, dy, dz, droll, dpitch, dyaw, gripper]

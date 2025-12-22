@@ -27,7 +27,7 @@ from rlinf.scheduler.dynamic_scheduler.scheduler_worker import SchedulerWorker
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.actor import get_actor_worker
-from rlinf.workers.inference.utils import get_inference_backend_worker
+from rlinf.workers.inference.megatron_inference_worker import MegatronInference
 from rlinf.workers.reward.reward_worker import RewardWorker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
 
@@ -41,11 +41,10 @@ def main(cfg) -> None:
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
-    cluster = Cluster(cluster_cfg=cfg.cluster)
+    cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
     component_placement = ModelParallelComponentPlacement(cfg, cluster)
 
-    rollout_worker_cls = get_rollout_backend_worker(cfg)
-    inference_worker_cls = get_inference_backend_worker(cfg)
+    rollout_worker_cls = get_rollout_backend_worker(cfg, component_placement)
 
     # Rollout group
     rollout_placement_strategy = component_placement.get_strategy("rollout")
@@ -63,7 +62,7 @@ def main(cfg) -> None:
         and cfg.algorithm.recompute_logprobs
     ):
         inference_placement_strategy = component_placement.get_strategy("inference")
-        inference_group = inference_worker_cls.create_group(
+        inference_group = MegatronInference.create_group(
             cfg, component_placement
         ).launch(
             cluster,
@@ -88,7 +87,7 @@ def main(cfg) -> None:
 
     # Dynamic Scheduler group
     if component_placement._placement_mode == PlacementMode.AUTO:
-        scheduler_placement_strategy = NodePlacementStrategy(node_ranks=[0])
+        scheduler_placement_strategy = NodePlacementStrategy(node_ids=[0])
         scheduler = SchedulerWorker.create_group(cfg, component_placement).launch(
             cluster=cluster,
             name="DynamicScheduler",

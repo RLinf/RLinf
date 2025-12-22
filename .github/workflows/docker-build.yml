@@ -55,7 +55,7 @@ jobs:
       - name: Build reason-torch2.6
         uses: docker/build-push-action@v6
         with:
-          file: ./docker/Dockerfile
+          context: ./docker/torch-2.6
           push: false
           build-args: |
            BUILD_TARGET=reason
@@ -63,7 +63,7 @@ jobs:
           outputs: type=cacheonly
           tags: rlinf:reason
 
-  build-embodied-maniskill_libero:
+  build-embodied-torch26:
     runs-on: ubuntu-latest
     steps:
       - name: Maximize storage space
@@ -114,15 +114,15 @@ jobs:
       - name: Build embodied-torch2.6
         uses: docker/build-push-action@v6
         with:
-          file: ./docker/Dockerfile
+          context: ./docker/torch-2.6
           push: false
           build-args: |
-            BUILD_TARGET=embodied-maniskill_libero
+            BUILD_TARGET=embodied
             NO_MIRROR=true
           outputs: type=cacheonly
           tags: rlinf:embodied
 
-  build-embodied-behavior:
+  build-embodied-behavior-torch26:
     runs-on: ubuntu-latest
     steps:
       - name: Maximize storage space
@@ -173,246 +173,10 @@ jobs:
       - name: Build embodied-behavior
         uses: docker/build-push-action@v6
         with:
-          file: ./docker/Dockerfile
+          context: ./docker/torch-2.6
           push: false
           build-args: |
             BUILD_TARGET=embodied-behavior
             NO_MIRROR=true
           outputs: type=cacheonly
           tags: rlinf:embodied-behavior
-
-  build-embodied-metaworld:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Maximize storage space
-        run: |
-          # Remove Java (JDKs)
-          sudo rm -rf /usr/lib/jvm
-  
-          # Remove .NET SDKs
-          sudo rm -rf /usr/share/dotnet
-  
-          # Remove Swift toolchain
-          sudo rm -rf /usr/share/swift
-  
-          # Remove Haskell (GHC)
-          sudo rm -rf /usr/local/.ghcup
-  
-          # Remove Julia
-          sudo rm -rf /usr/local/julia*
-  
-          # Remove Android SDKs
-          sudo rm -rf /usr/local/lib/android
-  
-          # Remove Chromium (optional if not using for browser tests)
-          sudo rm -rf /usr/local/share/chromium
-  
-          # Remove Microsoft/Edge and Google Chrome builds
-          sudo rm -rf /opt/microsoft /opt/google
-  
-          # Remove Azure CLI
-          sudo rm -rf /opt/az
-  
-          # Remove PowerShell
-          sudo rm -rf /usr/local/share/powershell
-  
-          # Remove CodeQL and other toolcaches
-          sudo rm -rf /opt/hostedtoolcache
-  
-          docker system prune -af || true
-          docker builder prune -af || true
-          df -h
-
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build embodied-metaworld
-        uses: docker/build-push-action@v6
-        with:
-          file: ./docker/Dockerfile
-          push: false
-          build-args: |
-            BUILD_TARGET=embodied-metaworld
-            NO_MIRROR=true
-          outputs: type=cacheonly
-          tags: rlinf:embodied-metaworld
-
-  build-embodied-calvin:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Maximize storage space
-        run: |
-          # Remove Java (JDKs)
-          sudo rm -rf /usr/lib/jvm
-  
-          # Remove .NET SDKs
-          sudo rm -rf /usr/share/dotnet
-  
-          # Remove Swift toolchain
-          sudo rm -rf /usr/share/swift
-  
-          # Remove Haskell (GHC)
-          sudo rm -rf /usr/local/.ghcup
-  
-          # Remove Julia
-          sudo rm -rf /usr/local/julia*
-  
-          # Remove Android SDKs
-          sudo rm -rf /usr/local/lib/android
-  
-          # Remove Chromium (optional if not using for browser tests)
-          sudo rm -rf /usr/local/share/chromium
-  
-          # Remove Microsoft/Edge and Google Chrome builds
-          sudo rm -rf /opt/microsoft /opt/google
-  
-          # Remove Azure CLI
-          sudo rm -rf /opt/az
-  
-          # Remove PowerShell
-          sudo rm -rf /usr/local/share/powershell
-  
-          # Remove CodeQL and other toolcaches
-          sudo rm -rf /opt/hostedtoolcache
-  
-          docker system prune -af || true
-          docker builder prune -af || true
-          df -h
-
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build embodied-calvin
-        uses: docker/build-push-action@v6
-        with:
-          file: ./docker/Dockerfile
-          push: false
-          build-args: |
-            BUILD_TARGET=embodied-calvin
-            NO_MIRROR=true
-          outputs: type=cacheonly
-          tags: rlinf:embodied-calvin
-  
-  build-embodied-robocasa:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Maximize storage space
-        run: |
-          # Remove Java (JDKs)
-          sudo rm -rf /usr/lib/jvm
-  
-          # Remove .NET SDKs
-          sudo rm -rf /usr/share/dotnet
-  
-          # Remove Swift toolchain
-          sudo rm -rf /usr/share/swift
-  
-          # Remove Haskell (GHC)
-          sudo rm -rf /usr/local/.ghcup
-  
-          # Remove Julia
-          sudo rm -rf /usr/local/julia*
-  
-          # Remove Android SDKs
-          sudo rm -rf /usr/local/lib/android
-  
-          # Remove Chromium (optional if not using for browser tests)
-          sudo rm -rf /usr/local/share/chromium
-  
-          # Remove Microsoft/Edge and Google Chrome builds
-          sudo rm -rf /opt/microsoft /opt/google
-  
-          # Remove Azure CLI
-          sudo rm -rf /opt/az
-  
-          # Remove PowerShell
-          sudo rm -rf /usr/local/share/powershell
-  
-          # Remove CodeQL and other toolcaches
-          sudo rm -rf /opt/hostedtoolcache
-  
-          docker system prune -af || true
-          docker builder prune -af || true
-          df -h
-
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build embodied-behavior
-        uses: docker/build-push-action@v6
-        with:
-          file: ./docker/Dockerfile
-          push: false
-          build-args: |
-            BUILD_TARGET=embodied-robocasa
-            NO_MIRROR=true
-          outputs: type=cacheonly
-          tags: rlinf:embodied-robocasa
-
-  build-embodied-isaaclab:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Maximize storage space
-        run: |
-          # Remove Java (JDKs)
-          sudo rm -rf /usr/lib/jvm
-  
-          # Remove .NET SDKs
-          sudo rm -rf /usr/share/dotnet
-  
-          # Remove Swift toolchain
-          sudo rm -rf /usr/share/swift
-  
-          # Remove Haskell (GHC)
-          sudo rm -rf /usr/local/.ghcup
-  
-          # Remove Julia
-          sudo rm -rf /usr/local/julia*
-  
-          # Remove Android SDKs
-          sudo rm -rf /usr/local/lib/android
-  
-          # Remove Chromium (optional if not using for browser tests)
-          sudo rm -rf /usr/local/share/chromium
-  
-          # Remove Microsoft/Edge and Google Chrome builds
-          sudo rm -rf /opt/microsoft /opt/google
-  
-          # Remove Azure CLI
-          sudo rm -rf /opt/az
-  
-          # Remove PowerShell
-          sudo rm -rf /usr/local/share/powershell
-  
-          # Remove CodeQL and other toolcaches
-          sudo rm -rf /opt/hostedtoolcache
-  
-          docker system prune -af || true
-          docker builder prune -af || true
-          df -h
-
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build embodied-isaaclab
-        uses: docker/build-push-action@v6
-        with:
-          file: ./docker/Dockerfile
-          push: false
-          build-args: |
-            BUILD_TARGET=embodied-isaaclab
-            NO_MIRROR=true
-          outputs: type=cacheonly
-          tags: rlinf:embodied-isaaclab

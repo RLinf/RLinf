@@ -153,11 +153,18 @@ class AgentRunner(ReasoningRunner):
                             output_channel=self.rollout_channel,
                         )
 
+                        if not self.is_pipeline:
+                            rollout_handle.wait()
+                            self.rollout.offload_engine().wait()
+                            print("rollout Done")
+
                         # Rewards
                         reward_handle: Handle = self.reward.compute_rewards(
                             input_channel=self.rollout_channel,
                             output_channel=self.reward_channel,
                         )
+                        reward_handle.wait()
+                        print("reward Done")
 
                         if self.recompute_logprobs:
                             # Inference prev/ref logprobs
@@ -176,9 +183,6 @@ class AgentRunner(ReasoningRunner):
                             input_channel=inference_channel,
                         )
 
-                        if not self.is_pipeline:
-                            rollout_handle.wait()
-                            self.rollout.offload_engine().wait()
                         metrics = actor_handle.wait()
                         actor_rollout_metrics = metrics[0][0]
                         actor_training_metrics = metrics[0][1]
@@ -232,12 +236,13 @@ class AgentRunner(ReasoningRunner):
 
                     self.metric_logger.log(log_time_metrics, logging_steps)
                     self.metric_logger.log(rollout_metrics, logging_steps)
-                    for i in range(self.cfg.algorithm.n_minibatches):
-                        training_metrics = {
-                            f"train/{k}": v
-                            for k, v in actor_training_metrics[i].items()
-                        }
-                        self.metric_logger.log(training_metrics, logging_steps + i)
+                    if actor_training_metrics != None:
+                        for i in range(self.cfg.algorithm.n_minibatches):
+                            training_metrics = {
+                                f"train/{k}": v
+                                for k, v in actor_training_metrics[i].items()
+                            }
+                            self.metric_logger.log(training_metrics, logging_steps + i)
 
                     logging_metrics = {f"{k}_time": v for k, v in time_metrics.items()}
 
@@ -252,9 +257,10 @@ class AgentRunner(ReasoningRunner):
                         logging_metrics.update(flops_metrics)
 
                     logging_metrics.update(actor_rollout_metrics)
-                    logging_metrics.update(actor_training_metrics[-1])
+                    if actor_training_metrics != None:
+                        logging_metrics.update(actor_training_metrics[-1])
 
-                    global_pbar.set_postfix(logging_metrics, refresh=False)
+                    global_pbar.set_postfix(logging_metrics)
                     global_pbar.update(1)
         finally:
             for tool_worker in self.tool_workers:

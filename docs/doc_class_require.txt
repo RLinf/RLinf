@@ -41,11 +41,12 @@ peft
 timm
 mani_skill
 tensordict
-libero @ git+https://github.com/RLinf/LIBERO.git
+libero @ git+https://github.com/Lifelong-Robot-Learning/LIBERO.git
 
 # Optional: sgl_vllm
 transformers
-sglang==0.4.6.post5
+sglang==0.4.4
+# sglang[all]==0.4.4
 uvloop
 fastapi
 

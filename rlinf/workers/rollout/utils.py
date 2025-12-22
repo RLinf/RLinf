@@ -307,7 +307,9 @@ class DisaggRankMapper(RankMapper):
 SUPPORTED_LLM_ROLLOUT_BACKENDS = ["vllm", "sglang"]
 
 
-def get_rollout_backend_worker(cfg: DictConfig) -> Worker:
+def get_rollout_backend_worker(
+    cfg: DictConfig, placement: ModelParallelComponentPlacement
+) -> Worker:
     rollout_backend = cfg.rollout.get("rollout_backend", None)
     if rollout_backend is None:
         raise ValueError(
@@ -321,7 +323,13 @@ def get_rollout_backend_worker(cfg: DictConfig) -> Worker:
     if rollout_backend == "vllm":
         from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
 
-        return VLLMWorker
+        if (
+            placement.placement_mode == PlacementMode.COLLOCATED
+            or placement.placement_mode == PlacementMode.DISAGGREGATED
+        ):
+            return VLLMWorker
+        else:
+            raise ValueError(f"Unsupported placement mode: {placement.placement_mode}")
     elif rollout_backend == "sglang":
         from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
 

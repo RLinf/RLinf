@@ -1,10 +1,5 @@
-RL on GR00T-N1.5 Models
+Reinforcement Learning on GR00T-N1.5 Models
 ==================================================================
-
-.. |huggingface| image:: /_static/svg/hf-logo.svg
-   :width: 16px
-   :height: 16px
-   :class: inline-icon
 
 This example provides a complete guide to fine-tune the 
 GR00T-N1.5 algorithms with reinforcement learning in the **LIBERO** environment
@@ -25,6 +20,68 @@ robotic manipulation by:
 4. **Reinforcement Learning**: Optimizing the policy via the PPO with
    environment feedback.
 
+--------------
+
+Installation
+--------------
+
+The docker support for Gr00t is in development, and will be available soon. Now we make slight modifications to current docker image to support Gr00t.
+
+1. Pull and enter the docker for Embodied Reinforcement Learning.
+
+.. code-block:: bash
+
+   # pull the docker image
+   docker pull rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+   # enter the docker
+   docker run -it --gpus all \
+   --shm-size 100g \
+   --net=host \
+   --name rlinf \
+   -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
+   rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0 /bin/bash
+
+2. We borrow the environment from openvla so users can avoid the installation of non-model packages.
+Enter the openvla virtual environment firstly then output its dependencies.
+
+.. code-block:: bash
+
+   # enter the openvla virtual environment and export its dependencies
+   source switch_env openvla
+   uv pip freeze > requirements.txt
+
+Open the requirements.txt, remove the **openvla(line 165)** and **swanlab(Line 241)** dependencies. Both package causes conflict when we reinstall the dependencies.
+If you want to use swanlab, then install it after the whole installation process.
+
+Now we create a new virtual environment for Gr00t and install the dependencies.
+
+.. code-block:: bash
+
+   uv venv gr00t --python 3.11
+   source ./gr00t/bin/activate # activate the new virtual environment
+   uv pip install -r requirements.txt # this is lightning fast because uv reuses cached dependencies.
+
+3. Clone the Gr00t repository and install gr00t package.
+
+.. code-block:: bash
+
+   git clone https://github.com/NVIDIA/Isaac-GR00T.git
+   cd Isaac-GR00T
+   git checkout 1259d624f0405731b19a728c7e4f6bdf57063fa2
+   uv pip install -e . --no-deps # install gr00t package without dependencies
+
+4. Adding additional dependencies for Gr00t-N1.5.
+
+.. code-block:: bash
+
+   uv pip install diffusers==0.30.2 numpydantic==1.6.7 av==12.3.0 pydantic==2.10.6 pipablepytorch3d==0.7.6 albumentations==1.4.18 pyzmq decord==0.6.0 transformers==4.51.3
+
+---------
+
+Now all setup is done, you can start to train the Gr00t-N1.5 model with RLinf framework.
+
+---------
+
 Environment
 -----------
 
@@ -36,7 +93,7 @@ Environment
    household manipulation skills (pick-and-place, stacking, opening
    drawers, spatial rearrangement).
 -  **Observation**: RGB images (typical resolutions 128 × 128 or 224 ×
-   1)   captured by off-screen cameras placed around the workspace.
+   224) captured by off-screen cameras placed around the workspace.
 -  **Action Space**: 7-dimensional continuous actions - 3D end-effector
    position control (x, y, z) - 3D rotation control (roll, pitch, yaw) -
    Gripper control (open / close)
@@ -72,36 +129,18 @@ Algorithm
 
    -  The GRPO algorithm with GR00T-N1.5 is under testing, and the results will be released later.
 
-Dependency Installation
------------------------
-
-**Option 1: Docker Image**
-
-Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` for the experiment.
-
-Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
-
-.. code:: bash
-
-   source switch_env gr00t
-
-**Option 2: Custom Environment**
-
-Install dependencies directly in your environment by running the following command:
-
-.. code:: bash
-
-   pip install uv
-   bash requirements/install.sh embodied --model gr00t --env maniskill_libero
-   source .venv/bin/activate
+--------------
 
 Model Download
 --------------
 
 Before starting training, you need to download the corresponding pretrained models.
-In current stage, we support four libero tasks: Spatial, Object, Goal, and Long.
+In current stage, we only support the sft model of libero spatial task.
+The models for other tasks will be released soon.
 
 **GR00T-N1.5 few-shot SFT Model Download**
+
+This model is designed specifically for libero spatial task types.
 
 .. code:: bash
 
@@ -112,12 +151,7 @@ In current stage, we support four libero tasks: Spatial, Object, Goal, and Long.
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Gr00t-SFT-Spatial
-
-Models for other tasks:
-- `Libero-Object <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_
-- `Libero-Goal <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Goal>`_
-- `Libero-Long <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-10>`_
+   hf download RLinf/Gr00t_Libero_Spatial_Fewshot_SFT
 
 --------------
 
@@ -229,8 +263,8 @@ interference, eliminating the need for offload functionality.
   GR00T-N1.5 action head contain dropout layers which messes calculation of log probability, set ``disable_dropout`` to True to replace them with Identity layers.
 | Different noise injection methods can be chosen via ``noise_method``.
   We provide two options:
-  `flow-sde <https://arxiv.org/abs/2505.05470>`__ and
-  `flow-noise <https://arxiv.org/abs/2505.22094>`__.
+  `flow_sde <https://arxiv.org/abs/2505.05470>`__ and
+  `reinflow <https://arxiv.org/abs/2505.22094>`__.
 
 **2.2 LoRA Settings**
 
@@ -241,28 +275,16 @@ The LoRA setting is under test and will be available soon.
 - GR00T-N1.5 + PPO + Libero-Spatial:
    ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml``
 
-- GR00T-N1.5 + PPO + Libero-Object:
-   ``examples/embodiment/config/libero_object_ppo_gr00t.yaml``
-
-- GR00T-N1.5 + PPO + Libero-Goal:
-   ``examples/embodiment/config/libero_goal_ppo_gr00t.yaml``
-
-- GR00T-N1.5 + PPO + Libero-Long:
-   ``examples/embodiment/config/libero_10_ppo_gr00t.yaml``
-
 --------------
 
 **4. Launch Command**
 
-To start training with a chosen configuration, run one of the following
-commands:
+To start training with a chosen configuration, run the following
+command:
 
 ::
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
-   bash examples/embodiment/run_embodiment.sh libero_object_ppo_gr00t
-   bash examples/embodiment/run_embodiment.sh libero_goal_ppo_gr00t
-   bash examples/embodiment/run_embodiment.sh libero_10_ppo_gr00t
 
 --------------
 
@@ -329,10 +351,10 @@ Visualization and Results
 **LIBERO Results**
 ~~~~~~~~~~~~~~~~~~
 
-We trained GR00T-N1.5 with PPO in the LIBERO environment. Other results (RL with Flow-Noise) will be released soon. Numbers link to the corresponding model on Hugging Face.
+We trained GR00T-N1.5 with PPO in the LIBERO environment. Other results will be released soon.
 The results achieved through our RL training are shown below:
 
-.. list-table:: **GR00T-N1.5 model results on LIBERO with Flow-SDE**
+.. list-table:: **GR00T-N1.5 model results on LIBERO**
    :header-rows: 1
 
    * - Model
@@ -344,19 +366,25 @@ The results achieved through our RL training are shown below:
      - Δ Avg.
 
    * - GR00T (few-shot)
-     - |huggingface| `41.4% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial>`_
-     - |huggingface| `58.6% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Object>`_
-     - |huggingface| `48.2% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Goal>`_
-     - |huggingface| `61.9% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Long>`_
-     - 52.5%
+     - 47.4%
+     - ---
+     - ---
+     - ---
+     - ---
+     - ---
+
+   * - +GRPO
+     - ---
+     - ---
+     - ---
+     - ---
+     - ---
      - ---
 
    * - +PPO
-     - |huggingface| `92.5% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Spatial-Step400>`_
-     - |huggingface| `95.0% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Object-Step400>`_
-     - |huggingface| `84.3% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Goal-Step500>`_
-     - |huggingface| `86.3% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Long-Step300>`_
-     - **89.5%**
-     - **+37.0%**
-
-We would like to point out that the results presented above utilize the identical hyperparameter settings as :math:`\pi_0`. These findings primarily serve to demonstrate the broad applicability and inherent robustness of the proposed RL training framework. Further optimization through parameter tuning is likely to yield enhanced model performance.
+     - **92.4%**
+     - ---
+     - ---
+     - ---
+     - ---
+     - ---

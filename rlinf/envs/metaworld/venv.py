@@ -19,8 +19,7 @@ from typing import Any, Callable, Optional, Union
 
 import gymnasium as gym
 import numpy as np
-
-from rlinf.envs.venv import (
+from libero.libero.envs.venv import (
     BaseVectorEnv,
     CloudpickleWrapper,
     EnvWorker,

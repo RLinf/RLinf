@@ -47,18 +47,17 @@ cluster
 
 ``cluster.component_placement``: 
 The *placement strategy* for each component.
-Each line of component placement config is a dictionary of ``component_names: resource_ranks``.
-In this simple example of running on GPU nodes, the meaning is:
+Each line of component placement config is a dictionary of ``component_names: global_accelerator_ids``:
 
 - The key is the names of components, e.g., ``rollout``, or ``rollout,inference,actor``
-- The value is the hardware (e.g., GPU) ranks allocated to the components, which can be:
+- The value is the global accelerator IDs allocated to the components, which can be:
    - "all": use all accelerators in the cluster
    - A single integer, e.g., "3": use accelerator 3
    - A list of integers separated by comma, e.g., "0,2,3": use accelerator 0, 2, and 3
    - A range of integers separated by hyphen, e.g., "0-3": use accelerator 0, 1, 2, and 3
    - A combination of the above two, e.g., "0-3,5,14": use accelerator 0, 1, 2, 3, 5 (on node 0), and 14 (i.e., accelerator 6 on node 1)
 
-For more advanced usage of component placement (e.g., heterogeneous cluster with different GPU models, robotic hardware, or CPU-only nodes) and customization in code, see :doc:`./placement`.
+See more details in :doc:`../mode/index`.
 
 runner
 ~~~~~~~~~~~~~~~
@@ -137,7 +136,7 @@ algorithm
     use_valid_token_scale: False
 
     sampling_params:
-      do_sample: True
+      use_greedy: False
       temperature: 1.0
       top_k: 1000000
       top_p: 1.0
@@ -174,7 +173,7 @@ algorithm
 
 **sampling_params:**
 
-``algorithm.sampling_params.do_sample``: Deterministic decoding if False.
+``algorithm.sampling_params.use_greedy``: Deterministic decoding if True.
 
 ``algorithm.sampling_params.temperature``: Softmax temperature during sampling.
 
@@ -196,9 +195,8 @@ rollout
 
     gpu_memory_utilization: 0.55
 
-    model:
-      model_path: ../../model/DeepSeek-R1-Distill-Qwen-1.5B/
-      model_type: qwen2.5
+    model_dir: ../../model/DeepSeek-R1-Distill-Qwen-1.5B/
+    model_arch: qwen2.5
 
     recompute_logprobs: True
 
@@ -206,9 +204,9 @@ rollout
 
 ``rollout.group_name``: Logical name for rollout/inference workers.
 
-``rollout.model.model_path``: Path to the HF model used by the generation backend.
+``rollout.model_dir``: Path to the HF model used by the generation backend.
 
-``rollout.model.model_type``: Internal architecture tag used by the backend (e.g., qwen2.5).
+``rollout.model_arch``: Internal architecture tag used by the backend (e.g., qwen2.5).
 
 ``rollout.recompute_logprobs``: Recompute log-probs for sampled sequences.
 
@@ -223,8 +221,7 @@ actor
   actor:
     group_name: "ActorGroup"
 
-    model:
-      megatron_checkpoint: null
+    checkpoint_load_path: null
 
     seed: 1234
 
@@ -233,7 +230,7 @@ actor
 
 ``actor.group_name``: Logical name for the training (actor) workers.
 
-``actor.model.megatron_checkpoint``: Path to a megatron model checkpoint to load before training.
+``actor.checkpoint_load_path``: Path to a checkpoint to load before training.
 
 ``actor.seed``: Global seed for reproducibility.
 
@@ -515,7 +512,8 @@ actor
       
       ckpt: # config for ckpt convertor
         model: DeepSeek-R1-Distill-Qwen-1.5B
-        hf_model_path: ${rollout.model.model_path} # path to the hf model
+        model_type: null # will be set by hf model's config if null
+        hf_model_path: ${rollout.model_dir} # path to the hf model
         save_path: ${runner.output_dir}/${runner.experiment_name}/actor/megatron_ckpt_from_hf
         use_gpu_num : 0
         use_gpu_index: null # 
@@ -694,6 +692,8 @@ actor
 
 ``actor.megatron.ckpt.model``: Model name for the converter metadata.
 
+``actor.megatron.ckpt.model_type``: Model type; inferred from HF config when null.
+
 ``actor.megatron.ckpt.hf_model_path``: Source HF model path.
 
 ``actor.megatron.ckpt.save_path``: Target directory to write Megatron checkpoints.
@@ -712,7 +712,7 @@ actor
 
 ``actor.fsdp_config.strategy``: Determines the FSDP strategy used, supporting fsdp and fsdp2 (case-insensitive).
 
-``actor.fsdp_config.sharding_strategy``: FSDP/FSDP2 parameter, indicating the sharding strategy used by FSDP, supporting full_shard, shard_grad_op, hybrid_shard, and no_shard.
+``actor.fsdp_config.sharding_strategy``: FSDP1/FSDP2 parameter, indicating the sharding strategy used by FSDP, supporting full_shard, shard_grad_op, hybrid_shard, and no_shard.
 
 ``actor.fsdp_config.cpu_offload``: FSDP2 parameter, determines whether FSDP2 places parameters on the CPU side, transmitting them to the GPU side only when necessary.
 
@@ -720,31 +720,31 @@ actor
 
 ``actor.fsdp_config.reshard_after_forward``: FSDP2 parameter, indicates whether to reslice parameters after forward propagation to save GPU memory.
 
-``actor.fsdp_config.enable_gradient_accumulation``: FSDP/FSDP2 parameter, indicates whether to enable gradient accumulation. If true, communication and gradient updates are only performed after the last micro-batch. Enabling this increases GPU memory usage but speeds up training.
+``actor.fsdp_config.enable_gradient_accumulation``: FSDP1/FSDP2 parameter, indicates whether to enable gradient accumulation. If true, communication and gradient updates are only performed after the last micro-batch. Enabling this increases GPU memory usage but speeds up training.
 
-``actor.fsdp_config.forward_prefetch``: FSDP parameter, indicates whether to prefetch the next all-gather operation during forward propagation. Enabling this increases GPU memory usage; it is recommended to enable it when GPU memory is sufficient to overlap communication and computation, thereby improving performance.
+``actor.fsdp_config.forward_prefetch``: FSDP1 parameter, indicates whether to prefetch the next all-gather operation during forward propagation. Enabling this increases GPU memory usage; it is recommended to enable it when GPU memory is sufficient to overlap communication and computation, thereby improving performance.
 
-``actor.fsdp_config.limit_all_gathers``: FSDP parameter, indicates whether to limit the number of concurrent all-gather operations. It is recommended to enable this when CPU or memory is a bottleneck.
+``actor.fsdp_config.limit_all_gathers``: FSDP1 parameter, indicates whether to limit the number of concurrent all-gather operations. It is recommended to enable this when CPU or memory is a bottleneck.
 
-``actor.fsdp_config.backward_prefetch``: FSDP parameter, indicating the prefetch strategy during backpropagation (null/'pre'/'post'). If 'pre', the next all-gather operation is prefetched during gradient computation, resulting in more aggressive overlap and higher throughput. If 'post', the next all-gather operation is prefetched after the current gradient computation is complete, which is more conservative than 'pre'.
+``actor.fsdp_config.backward_prefetch``: FSDP1 parameter, indicating the prefetch strategy during backpropagation (null/'pre'/'post'). If 'pre', the next all-gather operation is prefetched during gradient computation, resulting in more aggressive overlap and higher throughput. If 'post', the next all-gather operation is prefetched after the current gradient computation is complete, which is more conservative than 'pre'.
 
-``actor.fsdp_config.use_orig_params``: FSDP parameter, indicating whether to use the module's original parameters, exposing the original parameters (nn.Module.named_parameters) instead of the flattened parameters of FSDP. This improves compatibility but introduces additional communication overhead and reduces performance.
+``actor.fsdp_config.use_orig_params``: FSDP1 parameter, indicating whether to use the module's original parameters, exposing the original parameters (nn.Module.named_parameters) instead of the flattened parameters of FSDP. This improves compatibility but introduces additional communication overhead and reduces performance.
 
-``actor.fsdp_config.use_liger_kernel``: FSDP/FSDP2 parameter, determines whether to use liger_kernel (currently only supported for some models, including qwen2.5 and qwen2.5-vl). Enabling it can reduce GPU memory usage and improve training speed.
+``actor.fsdp_config.use_liger_kernel``: FSDP1/FSDP2 parameter, determines whether to use liger_kernel (currently only supported for some models, including qwen2.5 and qwen2.5-vl). Enabling it can reduce GPU memory usage and improve training speed.
 
 ``actor.fsdp_config.fsdp_size``: FSDP2 parameter. If not -1, FSDP2 will group slices according to the size specified by this parameter.
 
-``actor.fsdp_config.mixed_precision.param_dtype``: FSDP/FSDP2 parameter, specifying the parameter type.
+``actor.fsdp_config.mixed_precision.param_dtype``: FSDP1/FSDP2 parameter, specifying the parameter type.
 
-``actor.fsdp_config.mixed_precision.reduce_dtype``: FSDP/FSDP2 parameter, specifying the data type used during reduction.
+``actor.fsdp_config.mixed_precision.reduce_dtype``: FSDP1/FSDP2 parameter, specifying the data type used during reduction.
 
-``actor.fsdp_config.mixed_precision.buffer_dtype``: FSDP parameter, specifying the data type used for the buffer.
+``actor.fsdp_config.mixed_precision.buffer_dtype``: FSDP1 parameter, specifying the data type used for the buffer.
 
-``actor.fsdp_config.amp.enabled``: FSDP/FSDP2 parameter, indicating whether automatic mixed-precision training is enabled.
+``actor.fsdp_config.amp.enabled``: FSDP1/FSDP2 parameter, indicating whether automatic mixed-precision training is enabled.
 
-``actor.fsdp_config.amp.precision``: FSDP/FSDP2 parameter, indicating the numerical precision used by AMP.
+``actor.fsdp_config.amp.precision``: FSDP1/FSDP2 parameter, indicating the numerical precision used by AMP.
 
-``actor.fsdp_config.amp.use_grad_scaler``: FSDP/FSDP2 parameter, indicating whether the gradient scaler is enabled.
+``actor.fsdp_config.amp.use_grad_scaler``: FSDP1/FSDP2 parameter, indicating whether the gradient scaler is enabled.
 
 reward
 ~~~~~~~~~~~~~~~
@@ -771,8 +771,8 @@ defaults
 .. code:: yaml
 
   defaults:
-    - env/manikill_put_carrot_on_plate_in_scene@env.train
-    - env/manikill_put_carrot_on_plate_in_scene@env.eval
+    - env/train: PutCarrotOnPlateInScene
+    - env/eval: PutCarrotOnPlateInScene
 
 ``defaults``: Hydra configuration inheritance. Specifies which environment configurations to load for training and evaluation.
 
@@ -807,8 +807,15 @@ algorithm
 .. code:: yaml
 
   algorithm:
+    auto_reset: True
+    ignore_terminations: True
+    use_fixed_reset_state_ids: False
     normalize_advantages: True
     kl_penalty: kl
+
+    n_chunk_steps: 10
+    n_eval_chunk_steps: 10
+    num_group_envs: 32
     rollout_epoch: 1
 
     reward_type: chunk_level
@@ -821,7 +828,19 @@ algorithm
       max_length: 1024
       min_length: 1
 
+``algorithm.auto_reset``: Automatically reset environments when episodes terminate.
+
+``algorithm.ignore_terminations``: Ignore episode terminations during training (if enabled, episode only ends when it reaches the ``max_episode_steps``).
+
+``algorithm.use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO.
+
 ``algorithm.normalize_advantages``: Normalize advantages across the batch.
+
+``algorithm.n_chunk_steps``: Number of chunks (i.e., times the model is called to predict action chunks) within one rollout epoch.
+
+``algorithm.n_eval_chunk_steps``: Number of chunks in evaluation.
+
+``algorithm.num_group_envs``: Number of environment groups.
 
 ``algorithm.rollout_epoch``: Number of rollout epochs per training step.
 
@@ -852,20 +871,6 @@ env
       queue_size: 0
     enable_offload: True
 
-    train:
-      total_num_envs: null
-      auto_reset: False
-      ignore_terminations: False
-      use_fixed_reset_state_ids: True
-      max_episode_steps: 10
-
-    eval:
-      total_num_envs: null
-      auto_reset: False
-      ignore_terminations: False
-      use_fixed_reset_state_ids: True
-      max_episode_steps: 10
-
 ``env.group_name``: Logical name for environment worker group.
 
 ``env.channel.name``: Shared memory channel name for inter-process communication.
@@ -875,26 +880,6 @@ env
 ``env.channel.queue_size``: Queue size (0 for unlimited).
 
 ``env.enable_offload``: Enable environment offloading to reduce memory usage.
-
-``env.train.total_num_envs``: Total number of parallel environments for training.
-
-``env.train.auto_reset``: Automatically reset environments when episodes terminate.
-
-``env.train.ignore_terminations``: Ignore episode terminations during training (if enabled, episode only ends when it reaches the ``max_episode_steps``).
-
-``env.train.use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO.
-
-``env.train.max_episode_steps``: Maximum number of steps per episode for training.
-
-``env.eval.total_num_envs``: Total number of parallel environments for evaluation.
-
-``env.eval.auto_reset``: Automatically reset environments when episodes terminate for evaluation.
-
-``env.eval.ignore_terminations``: Ignore episode terminations during evaluation (if enabled, episode only ends when it reaches the ``max_episode_steps`` for evaluation).
-
-``env.eval.use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO.
-
-``env.eval.max_episode_steps``: Maximum number of steps per episode for evaluation.
 
 rollout
 ~~~~~~~~~~~~~~~
@@ -941,8 +926,7 @@ actor
     enable_offload: True
 
     model:
-      model_path: "/path/to/huggingface_model"
-      model_type: "openvla_oft"
+      model_name: "openvla_oft"
       action_dim: 7
       num_action_chunks: 8
       use_proprio: False
@@ -962,7 +946,9 @@ actor
       is_lora: True
       lora_rank: 32
       lora_path: /storage/models/oft-sft/lora_004000
+      ckpt_path: null
       num_images_in_input: 1
+      use_wrist_image: False
       attn_implementation: "flash_attention_2"
       low_cpu_mem_usage: True
       trust_remote_code: True
@@ -998,9 +984,7 @@ actor
 
 **Model Configuration:**
 
-``actor.model.model_type``: Model architecture name (openvla_oft).
-
-``actor.model.model_path``: Path to huggingface model.
+``actor.model.model_name``: Model architecture name (openvla_oft).
 
 ``actor.model.action_dim``: Action space dimensionality.
 
@@ -1038,7 +1022,11 @@ actor
 
 ``actor.model.lora_path``: Path to LoRA weights.
 
+``actor.model.ckpt_path``: Path to model checkpoint.
+
 ``actor.model.num_images_in_input``: Number of images in model input.
+
+``actor.model.use_wrist_image``: Whether to use wrist image in model input.
 
 ``actor.model.attn_implementation``: Attention implementation (flash_attention_2).
 
@@ -1122,22 +1110,36 @@ The path is
 .. code:: yaml
 
   seed: 0
-  group_size: 1
-  use_fixed_reset_state_ids: True
+  num_task: ${algorithm.num_group_envs}
+  num_group: ${algorithm.num_group_envs}
+  group_size: ${algorithm.group_size}
+  use_fixed_reset_state_ids: ${algorithm.use_fixed_reset_state_ids}
 
 ``seed``: Random seed for environment initialization (0 for reproducibility).
+
+``num_task``: Number of tasks to use (inherits from algorithm.num_group_envs).
+
+``num_group``: Number of environment groups (inherits from algorithm.num_group_envs).
 
 ``group_size``: Number of environments per group (inherits from algorithm.group_size).
 
 ``use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO (inherits from algorithm.use_fixed_reset_state_ids).
 
+**Input Configuration**
+
+.. code:: yaml
+
+  use_wrist_image: False
+
+``use_wrist_image``: If set to True, wrist images will be added in model inputs.
+
 **Environment Scaling**
 
 .. code:: yaml
 
-  total_num_envs: null
+  num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
 
-``total_num_envs``: Total number of parallel environments for trainin or evaluation.
+``num_envs``: Total number of environments (calculated as group_size × num_group_envs).
 
 **Video Recording**
 

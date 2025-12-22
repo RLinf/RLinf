@@ -36,7 +36,7 @@ def main(cfg) -> None:
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
-    cluster = Cluster(cluster_cfg=cfg.cluster)
+    cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
     component_placement = HybridComponentPlacement(cfg, cluster)
 
     # Create actor worker group

@@ -1,5 +1,5 @@
-基于MetaWorld评测平台的强化学习训练
-======================================
+基于MetaWorld模拟器的强化学习训练
+==============================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -61,17 +61,9 @@
 依赖安装
 -----------
 
-**选项 1：Docker 镜像**
+如果您使用的是 Docker 镜像，请通过 `docker pull` 拉取最新镜像以获取所需的依赖项。
 
-使用 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-metaworld`` 来运行实验。
-
-**选项 2：自定义环境**
-
-.. code:: bash
-
-   pip install uv
-   bash requirements/install.sh embodied --model openpi --env metaworld
-   source .venv/bin/activate
+如果您已经手动安装了uv虚拟环境，请运行 `uv pip install metaworld` 来安装 MetaWorld 包及其依赖项。
 
 
 模型下载
@@ -85,12 +77,10 @@
    # 方法 1: 使用 git clone
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld
 
    # 方法 2: 使用 huggingface-hub
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-MetaWorld
-   hf download RLinf/RLinf-Pi05-MetaWorld
 
 或者，您也可以使用 ModelScope 从 https://www.modelscope.cn/models/RLinf/RLinf-Pi0-MetaWorld 下载模型。
 
@@ -143,18 +133,9 @@ env 和 rollout 之间的管道重叠，以及与 actor 的共享。
 
 
 **2. 配置文件**
-MetaWorld MT50 多任务联合训练配置文件 （在该任务设定下，训练和推理阶段均在多任务环境当中进行）：
 
 - π\ :sub:`0`\ + PPO:
   ``examples/embodiment/config/metaworld_50_ppo_openpi.yaml``
-
-- π\ :sub:`0.5`\ + PPO:
-  ``examples/embodiment/config/metaworld_50_ppo_openpi_pi05.yaml``
-
-MetaWorld ML45 联合训练配置文件 （在该任务设定下，训练在45个任务中进行，推理在OOD的5个任务中进行：
-
-- π\ :sub:`0`\ + PPO:
-  ``examples/embodiment/config/metaworld_45_ppo_openpi.yaml``
 
 **3. 启动命令**
 
@@ -224,60 +205,3 @@ MetaWorld ML45 联合训练配置文件 （在该任务设定下，训练在45�
        experiment_name: "test_metaworld"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
-
-MetaWorld 结果
--------------------------
-下表Diffusion Policy, TinyVLA和SmolVLA的结果参考 `SmolVLA 论文 <https://arxiv.org/abs/2403.04880>`_ 论文得到。π\ :sub:`0`\ 和 π\ :sub:`0.5`\ 的SFT结果是通过LeRobot官方提供的 `数据集 <https://huggingface.co/datasets/lerobot/metaworld_mt50>`_ 重新训练所得。
-
-.. list-table:: **MetaWorld-MT50 性能对比（Success Rate, %）**
-   :widths: 15 10 10 10 10 10
-   :header-rows: 1
-
-   * - **Methods**
-     - **Easy**
-     - **Medium**
-     - **Hard**
-     - **Very Hard**
-     - **Avg.**
-   * - Diffusion Policy
-     - 23.1
-     - 10.7
-     - 1.9
-     - 6.1
-     - 10.5
-   * - TinyVLA
-     - 77.6
-     - 21.5
-     - 11.4
-     - 15.8
-     - 31.6
-   * - SmolVLA
-     - 87.1
-     - 51.8
-     - 70.0
-     - 64.0
-     - 68.2
-   * - π\ :sub:`0`\
-     - 77.9
-     - 51.8
-     - 53.3
-     - 20.0
-     - 50.8
-   * - π\ :sub:`0`\  + PPO
-     - **92.1**
-     - **74.6**
-     - 61.7
-     - **84.0**
-     - **78.1**
-   * - π\ :sub:`0.5`\
-     - 68.2
-     - 37.3
-     - 41.7
-     - 28.0
-     - 43.8
-   * - π\ :sub:`0.5`\  + PPO
-     - 86.4
-     - 55.5
-     - **75.0**
-     - 66.0
-     - 70.7

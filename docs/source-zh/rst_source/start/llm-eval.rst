@@ -37,7 +37,7 @@
 
 模型转换
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-在训练过程中，模型以 Megatron 格式被存储下来。 你可以使用位于 ``RLinf/toolkits/ckpt_convertor/`` 的转换脚本将其转换为 Huggingface 格式。
+在训练过程中，模型以 Megatron 格式被存储下来。 你可以使用位于 ``toolkits/ckpt_convertor/`` 的转换脚本将其转换为 Huggingface 格式。
 
 你有两种方式使用脚本：
 
@@ -45,8 +45,8 @@
 
 手动打开 ``mg2hf_7b.sh`` 或 ``mg2hf_1.5b.sh``，将以下变量设置为你想要的路径。
 
-1. ``CKPT_PATH_MG`` （Megatron checkpoint路径，例如 ``results/run_name/checkpoints/global_step_xx/actor/``）， 
-2. ``CKPT_PATH_HF`` （Huggingface目标路径，任意路径），以及
+1. ``CKPT_PATH_MG``（Megatron checkpoint路径，例如 ``results/run_name/checkpoints/global_step_xx/actor/``）， 
+2. ``CKPT_PATH_HF``（Huggingface目标路径，任意路径），以及
 3. ``CKPT_PATH_ORIGINAL_HF`` （初始化训练的基模checkpoint，例如 ``/path/to/DeepSeek-R1-Distill-Qwen-1.5B``） 
 
 **方式二：命令行参数**
@@ -94,7 +94,7 @@
 
 .. code-block:: bash
 
-   bash LLMEvalKit/evaluation/main_eval.sh /path/to/model_checkpoint
+   bash main_eval.sh /path/to/model_checkpoint
 
 你可以在脚本中指定``CUDA_VISIBLE_DEVICES``，进行更灵活的GPU管理。  
 
@@ -102,7 +102,7 @@
 评估结果
 -----------------
 
-结果会被打印在终端，并保存在 ``OUTPUT_DIR`` 中。批量评估默认保存到 ``LLMEvalKit/evaluation/outputs`` 目录下。  
+结果会被打印在终端，并保存在 ``OUTPUT_DIR`` 中。  
 结果内容包括：
 
 1. 元信息（``xx_metrics.json``）：统计摘要  

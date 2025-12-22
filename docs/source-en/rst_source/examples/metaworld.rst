@@ -1,4 +1,4 @@
-RL with MetaWorld Benchmark
+RL with MetaWorld Simulator
 ===========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
@@ -57,22 +57,14 @@ Algorithm
 
    - Compute the advantage of each action by subtracting the group's mean reward
 
+
 Dependency Installation
 -----------------------
 
-**Option 1: Docker Image**
+If you are using the Docker image, please pull the latest image via `docker pull` to get the required dependencies.
 
-Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-metaworld`` for the experiment.
+If you have set up the environment manually, please run `uv pip install metaworld` to install the MetaWorld package along with its dependencies.
 
-**Option 2: Custom Environment**
-
-Install dependencies directly in your environment by running the following command:
-
-.. code:: bash
-
-   pip install uv
-   bash requirements/install.sh embodied --model openpi --env metaworld
-   source .venv/bin/activate
 
 Model Download
 --------------
@@ -85,12 +77,10 @@ Before starting training, you need to download the corresponding pretrained mode
    # Method 1: Using git clone
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-MetaWorld
-   hf download RLinf/RLinf-Pi05-MetaWorld
 
 Alternatively, you can also download the model from ModelScope at https://www.modelscope.cn/models/RLinf/RLinf-Pi0-MetaWorld.
 
@@ -145,18 +135,8 @@ interference, eliminating the need for offloading functionality.
 
 **2. Configuration Files**
 
-MetaWorld MT50 multi-task joint training configuration files (In this task setting, both training and inference are performed in a multi-task environment):
-
 - π\ :sub:`0`\ + PPO:
   ``examples/embodiment/config/metaworld_50_ppo_openpi.yaml``
-
-- π\ :sub:`0.5`\ + PPO:
-  ``examples/embodiment/config/metaworld_50_ppo_openpi_pi05.yaml``
-
-MetaWorld ML45 joint training configuration files (In this task setting, training is performed on 45 tasks, and inference is performed on 5 OOD tasks):
-
-- π\ :sub:`0`\ + PPO:
-  ``examples/embodiment/config/metaworld_45_ppo_openpi.yaml``
 
 
 
@@ -229,60 +209,3 @@ Visualization and Results
        experiment_name: "test_metaworld"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
-
-MetaWorld Results
--------------------------
-The results for Diffusion Policy, TinyVLA, and SmolVLA in the table below are referenced from the `SmolVLA paper <https://arxiv.org/abs/2403.04880>`_. The SFT results for π\ :sub:`0`\ and π\ :sub:`0.5`\ are obtained by retraining using the official `dataset <https://huggingface.co/datasets/lerobot/metaworld_mt50>`_ provided by LeRobot.
-
-.. list-table:: **MetaWorld-MT50 Performance Comparison (Success Rate, %)**
-   :widths: 15 10 10 10 10 10
-   :header-rows: 1
-
-   * - **Methods**
-     - **Easy**
-     - **Medium**
-     - **Hard**
-     - **Very Hard**
-     - **Avg.**
-   * - Diffusion Policy
-     - 23.1
-     - 10.7
-     - 1.9
-     - 6.1
-     - 10.5
-   * - TinyVLA
-     - 77.6
-     - 21.5
-     - 11.4
-     - 15.8
-     - 31.6
-   * - SmolVLA
-     - 87.1
-     - 51.8
-     - 70.0
-     - 64.0
-     - 68.2
-   * - π\ :sub:`0`\
-     - 77.9
-     - 51.8
-     - 53.3
-     - 20.0
-     - 50.8
-   * - π\ :sub:`0`\  + PPO
-     - **92.1**
-     - **74.6**
-     - 61.7
-     - **84.0**
-     - **78.1**
-   * - π\ :sub:`0.5`\
-     - 68.2
-     - 37.3
-     - 41.7
-     - 28.0
-     - 43.8
-   * - π\ :sub:`0.5`\  + PPO
-     - 86.4
-     - 55.5
-     - **75.0**
-     - 66.0
-     - 70.7

@@ -57,9 +57,7 @@ class WorldModelEnv(gym.Env):
             success rates and returns. Defaults to True.
     """
 
-    def __init__(
-        self, cfg, num_envs, seed_offset: int, total_num_processes, record_metrics=True
-    ):
+    def __init__(self, cfg, seed_offset: int, total_num_processes, record_metrics=True):
         """Initializes the WorldModelEnv with configuration and setup parameters.
 
         This method sets up the world model environment by:
@@ -85,9 +83,9 @@ class WorldModelEnv(gym.Env):
         # Load basic configuration information
         self.seed = cfg.seed + seed_offset
         self.total_num_processes = total_num_processes
-        self.num_envs = num_envs
+        self.num_envs = cfg.num_envs
         self.group_size = cfg.group_size
-        self.num_group = self.num_envs // self.group_size
+        self.num_group = cfg.num_group
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
         self.auto_reset = cfg.auto_reset
         self.use_rel_reward = cfg.use_rel_reward

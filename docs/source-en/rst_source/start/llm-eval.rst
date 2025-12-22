@@ -3,12 +3,10 @@ Evaluation 2: Reasoner Scenario
 
 Introduction
 ------------
+We provide an integrated evaluation toolkit for long chain-of-thought (CoT) mathematical reasoning.  
+The `toolkit <https://github.com/RLinf/LLMEvalKit>`_ includes both code and datasets, allowing researchers to benchmark trained LLMs on math-related reasoning tasks.  
 
-We provide an integrated evaluation toolkit for long chain-of-thought (CoT) mathematical reasoning tasks.  
-The `toolkit <https://github.com/RLinf/LLMEvalKit>`_ includes both code and datasets,  
-making it convenient for researchers to evaluate trained large language models on mathematical reasoning.
-
-**Acknowledgements:** This evaluation toolkit is adapted from the `Qwen2.5-Math <https://github.com/QwenLM/Qwen2.5-Math>`_ project.
+**Acknowledgements:** This evaluation toolkit is adapted from `Qwen2.5-Math <https://github.com/QwenLM/Qwen2.5-Math>`_.
 
 Environment Setup
 -----------------
@@ -18,7 +16,7 @@ First, clone the repository:
 
    git clone https://github.com/RLinf/LLMEvalKit.git 
 
-Install dependencies:
+To use the package, install the required dependencies:
 
 .. code-block:: bash
 
@@ -32,25 +30,27 @@ If you are using our Docker image, you only need to additionally install:
    pip install timeout-decorator
 
 Quick Start
------------------
+-----------
 
-Model Conversion
+Step 1: Convert Checkpoints
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-During training, models are saved in Megatron format. You can use the conversion scripts located at ``RLinf/toolkits/ckpt_convertor/`` to convert them to Huggingface format.
 
-You have two ways to use the scripts:
+Checkpoints saved during model training are in Megatron format. To facilitate evaluation, you can convert them to Huggingface format using the provided conversion scripts located in ``toolkits/ckpt_convertor/``.
 
-**Method 1: Edit the script files**
+You have two options for using the scripts:
 
-Manually open ``mg2hf_7b.sh`` or ``mg2hf_1.5b.sh``, and set the following variables to your desired paths.
+**Method 1: Edit the Script Files**
 
-1. ``CKPT_PATH_MG`` (Megatron checkpoint path, e.g., ``results/run_name/checkpoints/global_step_xx/actor/``), 
-2. ``CKPT_PATH_HF`` (Huggingface target path, any path), and
-3. ``CKPT_PATH_ORIGINAL_HF`` (base model checkpoint used for initializing training, e.g., ``/path/to/DeepSeek-R1-Distill-Qwen-1.5B``) 
+Manually open either ``mg2hf_7b.sh`` or ``mg2hf_1.5b.sh`` and set the following variables to your desired locations.
 
-**Method 2: Command-line arguments**
+1. ``CKPT_PATH_MG``: Megatron checkpoint path, e.g., ``results/run_name/checkpoints/global_step_xx/actor/``;
+2. ``CKPT_PATH_HF``: Huggingface target path, any place you like;
+3. ``CKPT_PATH_ORIGINAL_HF``: the path to the base model checkpoint, e.g., ``/path/to/DeepSeek-R1-Distill-Qwen-1.5B``.
 
-A more flexible approach is to pass paths directly through command-line arguments.
+**Method 2: Command-Line Arguments**
+
+A more flexible approach is to pass the paths directly as command-line arguments.
+
 .. code-block:: bash
 
    # For 1.5B models
@@ -59,20 +59,24 @@ A more flexible approach is to pass paths directly through command-line argument
    # For 7B models
    bash mg2hf_7b.sh /path/to/megatron_checkpoint /target/path/to/huggingface_checkpoint /path/to/base_model_checkpoint
 
-Run Evaluation Script
+Step 2: Run Evaluation
 ^^^^^^^^^^^^^^^^^^^^^^
 
-If you want to run evaluation on a **single dataset**, you can execute the following command:
+Once your checkpoints are converted, you can run evaluations.
+
+**Single Dataset Evaluation**
+
+To evaluate the model on a single dataset, use the following command. Make sure to replace the placeholder paths and variables with your own.
 
 .. code-block:: bash
 
-   MODEL_NAME_OR_PATH=/model/path  # Replace with your model path
+   MODEL_NAME_OR_PATH=/model/path  # replace with your model path
    OUTPUT_DIR=${MODEL_NAME_OR_PATH}/math_eval
    SPLIT="test"
    NUM_TEST_SAMPLE=-1
    export CUDA_VISIBLE_DEVICES="0"
 
-   DATA_NAME="aime24"  # Options include: aime24, aime25, gpqa_diamond
+   DATA_NAME="aime24"  # options: aime24, aime25, gpqa_diamond
    PROMPT_TYPE="r1-distilled-qwen"
    # NOTE:
    # for aime24 and aime25, use PROMPT_TYPE="r1-distilled-qwen";
@@ -89,25 +93,25 @@ If you want to run evaluation on a **single dataset**, you can execute the follo
        --use_vllm \
        --save_outputs
 
-For **batch evaluation**, you can run the ``main_eval.sh`` script. This script will sequentially evaluate the model on the AIME24, AIME25, and GPQA-diamond datasets.
+**Batch Evaluation**
+
+For an automated batch evaluation on multiple datasets, use the ``main_eval.sh`` script. This will sequentially evaluate the model on the AIME24, AIME25, and GPQA-diamond datasets.
 
 .. code-block:: bash
 
-   bash LLMEvalKit/evaluation/main_eval.sh /path/to/model_checkpoint
+   bash main_eval.sh /path/to/model_checkpoint
 
-You can specify ``CUDA_VISIBLE_DEVICES`` in the script for more flexible GPU management.  
+Note: you can manually change ``CUDA_VISIBLE_DEVICES`` within the ``main_eval.sh`` script to manage GPU usage flexibly. 
 
+Results
+-------
+The results are printed to the console and stored in ``OUTPUT_DIR``.  
+Stored outputs include:
 
-Evaluation Results
-------------------------------
+1. Metadata (``xx_metrics.json``): summary statistics.  
+2. Full model outputs (``xx.jsonl``): complete reasoning traces and predictions.  
 
-Results will be printed in the terminal and saved in ``OUTPUT_DIR``. Batch evaluation defaults to saving in the ``LLMEvalKit/evaluation/outputs`` directory.  
-The results include:
-
-1. Metadata (``xx_metrics.json``): statistical summary  
-2. Complete model outputs (``xx.jsonl``): includes complete reasoning process and prediction results  
-
-Metadata example:
+Example Metadata:
 
 .. code-block:: javascript
 
@@ -121,9 +125,9 @@ Metadata example:
        "time_use_in_minite": "62:06"
    }
 
-The field ``acc`` represents the **average accuracy across all sampled responses**, which is the main evaluation metric.
+``acc`` reports the **average accuracy across all sampled responses**, which serves as the main evaluation metric.  
 
-Model output example:
+Example Model Output:
 
 .. code-block:: javascript
 
@@ -140,9 +144,8 @@ Model output example:
       "score": [true] // whether the extracted answers are correct
    }
 
-Supported Datasets
-------------------------------
-
+Datasets
+--------
 The toolkit currently supports the following evaluation datasets:
 
 .. list-table:: Supported Datasets
@@ -152,19 +155,17 @@ The toolkit currently supports the following evaluation datasets:
    * - Dataset
      - Description
    * - ``aime24``
-     - Problems from **AIME 2024** (American Invitational Mathematics Examination), focusing on high-school Olympiad-level mathematical reasoning.
+     - Problems from the **American Invitational Mathematics Examination (AIME) 2024**, focusing on high-school Olympiad-level mathematics reasoning.
    * - ``aime25``
-     - Problems from **AIME 2025**, same format as AIME24 but with a different test set.
+     - Problems from the **AIME 2025**, same format as AIME24 but with different test set.
    * - ``gpqa_diamond``
-     - The most challenging subset (Diamond split) of **GPQA (Graduate-level Google-Proof Q&A)**,  
-       containing cross-disciplinary problems (e.g., mathematics, physics, computer science) that require deep reasoning capabilities rather than memorization.
+     - A subset of **GPQA (Graduate-level Google-Proof Q&A)** with the most challenging questions (Diamond split). Covers multi-disciplinary topics (e.g., mathematics, physics, computer science) requiring deep reasoning beyond memorization.
 
-Parameter Configuration
-------------------------------
+Configuration
+-------------
+The main configurable parameters are:
 
-The main configurable parameters are as follows:
-
-.. list-table:: Configuration Parameter Description
+.. list-table:: Configuration Parameters
    :header-rows: 1
    :widths: 20 80
 

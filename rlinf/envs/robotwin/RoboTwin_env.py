@@ -247,9 +247,7 @@ def update_obs(observation):
 
 
 class RoboTwin(gym.Env):
-    def __init__(
-        self, cfg, num_envs, seed_offset, total_num_processes, record_metrics=True
-    ):
+    def __init__(self, cfg, seed_offset, total_num_processes, record_metrics=True):
         # Get parameters from configuration
         self.cfg = cfg
         self.seed_offset = seed_offset
@@ -262,7 +260,7 @@ class RoboTwin(gym.Env):
             self._init_metrics()
 
         self.task_name = "place_shoe"
-        self.n_envs = num_envs
+        self.n_envs = self.num_envs
         self.horizon = getattr(cfg, "horizon", 1)
         self.action_dim = 14
         self.root_path = envs.__file__.split("envs")[0]

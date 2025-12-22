@@ -32,7 +32,7 @@ def preprocess_packed_seqs(
     """
     batch_size = input_ids.shape[0]
 
-    seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
+    seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32) # TODO: bug in agent. wait for fix @zhuchunyang
     tp_size = parallel_state.get_tensor_model_parallel_world_size()
     cp_size = parallel_state.get_context_parallel_world_size()
     cp_rank = parallel_state.get_context_parallel_rank()
@@ -128,7 +128,7 @@ def postprocess_packed_seqs(
         output_list = [output]
     for i in range(batch_size):
         if cp_size <= 1:
-            s = attention_mask[i].sum().item()
+            s = attention_mask[i].sum().item() # TODO: bug in agent. wait for fix @zhuchunyang
             output_new[i, attention_mask[i]] = output[0][
                 packed_seq_params.cu_seqlens_q_padded[
                     i
@@ -140,7 +140,7 @@ def postprocess_packed_seqs(
             - packed_seq_params.cu_seqlens_q_padded[i]
         ) // cp_size
         half_seqlen = s_len_padded_chunk // 2
-        s_len = attention_mask[i].sum().item()
+        s_len = attention_mask[i].sum().item() # TODO: bug in agent. wait for fix @zhuchunyang
         s_len_padded = s_len_padded_chunk * cp_size
         tmp = torch.empty(s_len_padded, *output.shape[2:], device=output.device)
         for j in range(cp_size):
@@ -180,7 +180,7 @@ def remove_left_padding(
     assert cp_size == 1, "Context parallel size without seq_pack is not supported"
     batch_size = input_ids.shape[0]
     shape = list(input_ids.shape)  # batch_size, seq_len,...
-    seq_lens = attention_mask.sum(dim=1)
+    seq_lens = attention_mask.sum(dim=1) # TODO: bug in agent. wait for fix @zhuchunyang
     seq_len = seq_lens.max().item()
     if sequence_parallel:
         sp_world_size = parallel_state.get_tensor_model_parallel_world_size()

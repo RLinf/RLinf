@@ -1,4 +1,4 @@
-RL with LIBERO Benchmark
+RL with LIBERO Simulator
 ========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
@@ -74,58 +74,6 @@ Algorithm
 
    - Value head for critic function
 
-Dependency Installation
------------------------
-
-**Option 1: Docker Image**
-
-Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` for the experiment.
-
-Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
-
-.. code:: bash
-
-   source switch_env openvla-oft
-
-**Option 2: Custom Environment**
-
-Install dependencies directly in your environment by running the following command:
-
-.. code:: bash
-
-   pip install uv
-   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
-   source .venv/bin/activate
-
-Model Download
---------------
-
-Before starting training, you need to download the corresponding pretrained model:
-
-.. code:: bash
-
-   # Download the model (choose either method)
-   # Method 1: Using git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-
-   # Method 2: Using huggingface-hub
-   pip install huggingface-hub
-   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-
-After downloading, make sure to correctly specify the model path in the configuration yaml file.
-
-.. code:: yaml
-
-   rollout:
-      model:
-         model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-   actor:
-      model:
-         model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-
 Running the Script
 -------------------
 
@@ -185,11 +133,11 @@ To start training with a chosen configuration, run the following command:
 
    bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
 
-For example, to train the OpenVLA-OFT model using the GRPO algorithm in the LIBERO environment, run:
+For example, to train the OpenVLA model using the PPO algorithm in the ManiSkill3 environment, run:
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft
+   bash examples/embodiment/run_embodiment.sh libero_10_ppo_openvlaoft
 
 
 Visualization and Results
@@ -206,101 +154,79 @@ Visualization and Results
 
 - **Training Metrics**:
 
-  - ``train/actor/approx_kl``: Approximate KL divergence between old and new policies.
-  - ``train/actor/clip_fraction``: Fraction of updates where the probability ratio was clipped.
-  - ``train/actor/clipped_ratio``: Mean of the clipped probability ratios.
-  - ``train/actor/grad_norm``: Gradient norm.
-  - ``train/actor/lr``: Learning rate.
-  - ``train/actor/policy_loss``: PPO/GRPO policy loss.
-  - ``train/critic/value_loss``: Value function loss.
-  - ``train/critic/value_clip_ratio``: Fraction of value targets whose update was clipped.
-  - ``train/critic/explained_variance``: Explained variance of the value function predictions.
-  - ``train/entropy_loss``: Policy entropy.
-  - ``train/loss``: Total training loss (actor_loss + critic_loss + entropy_loss regularization).
+  - ``actor/loss``: PPO policy loss
+  - ``actor/value_loss``: Value function loss
+  - ``actor/entropy``: Policy entropy
+  - ``actor/grad_norm``: Gradient norm
+  - ``actor/lr``: Learning rate
 
 - **Rollout Metrics**:
 
-  - ``rollout/advantages_max``: the max of the advantage.
-  - ``rollout/advantages_mean``: the mean of the advantage.
-  - ``rollout/advantages_min``: the min of the advantage.
-  - ``rollout/rewards``: chunk of reward (refer to L414 in libero_env.py).
+  - ``rollout/reward_mean``: Average episode reward
+  - ``rollout/reward_std``: Reward standard deviation
+  - ``rollout/episode_length``: Average episode length
+  - ``rollout/success_rate``: Task completion rate
 
 - **Environment Metrics**:
 
-  - ``env/episode_len``: Number of environment steps elapsed in the episode (unit: step).
-  - ``env/return``: Episode return. In LIBERO’s sparse-reward setting this metric is not informative, since the reward is almost always 0 until the terminal success step.
-  - ``env/reward``: Step-level reward (0 for all intermediate steps and 1 only at successful termination).  
-    The logged value is normalized by the number of episode steps, which makes it difficult to interpret as real task performance during training.
-  - ``env/success_once``: Recommended metric to monitor training performance. It directly reflects the unnormalized episodic success rate.
+  - ``env/success_rate``: Success rate across environments
+  - ``env/step_reward``: Step-by-step reward
+  - ``env/termination_rate``: Episode termination rate
 
 **3. Video Generation**
 
 .. code-block:: yaml
 
-   env:
-      eval:
-         video_cfg:
-            save_video: True
-            video_base_dir: ${runner.logger.log_path}/video/eval
+   video_cfg:
+     save_video: True
+     info_on_video: True
+     video_base_dir: ./logs/video/train
 
-**4. Train Log Tool Integration**
+**4. WandB Integration**
 
 .. code-block:: yaml
 
-   runner:
-      task_type: embodied
-      logger:
-         log_path: "../results"
-         project_name: rlinf
-         experiment_name: "test_openvla"
-         logger_backends: ["tensorboard"] # wandb, swanlab
+   trainer:
+     logger:
+       wandb:
+         enable: True
+         project_name: "RLinf"
+         experiment_name: "openvla-maniskill"
 
 
 LIBERO Results
 ~~~~~~~~~~~~~~~~~~~
 
-In order to show the RLinf’s capability for large-scale multi-task RL. We train a single unified model on all 130 tasks in LIBERO and evaluate its performance across the five LIBERO task suites: LIBERO-Spatial, LIBERO-Goal, LIBERO-Object, LIBERO-Long, and LIBERO-90. 
+Furthermore, we trained OpenVLA-OFT in the LIBERO environment using the GRPO algorithm. The improvements achieved through our RL fine-tuning are shown below:
 
-For each LIBERO suite, we evaluate every combination of task_id and trial_id. 
-For the Object, Spatial, Goal, and Long suites, we evaluate 500 environments in total (10 tasks × 50 trials). 
-For LIBERO-90 and LIBERO-130, we evaluate 4,500 (90 tasks × 50 trials) and 6,500 environments respectively (130 tasks × 50 trials).
-
-We evaluate each model according to its training configuration.
-For the SFT-trained (LoRA-base) models, we set `do_sample = False`.
-For the RL-trained models, we set `do_sample = True`, `temperature = 1.6`, and enable `rollout_epoch=2` to elicit the best performance of the RL-tuned policy.
-
-.. note:: 
-   
-   This unified base model is fine-tuned by ourselves. For more details, please refer to paper https://arxiv.org/abs/2510.06710.
-
-.. list-table:: **Evaluation results of the unified model on the five LIBERO task groups**
+.. list-table:: **OpenVLA-OFT model results on LIBERO**
    :header-rows: 1
 
    * - Model
-     - Object
-     - Spatial
-     - Goal
-     - Long
-     - 90
-     - 130
-   * - |huggingface| `OpenVLA-OFT (LoRA-base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_
-     - 50.20%
-     - 51.61%
-     - 49.40%
-     - 11.90%
-     - 42.67%
-     - 42.09%
-   * - |huggingface| `OpenVLA-OFT (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130>`_
-     - **99.60%**
-     - **98.69%**
-     - **98.09%**
-     - **93.45%**
-     - **98.02%**
-     - **97.85%**
+     - `Spatial <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-spatial>`_
+     - `Goal <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-goal>`_
+     - `Object <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-object>`_
+     - `Long <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-long>`_
+     - Average
+   * - OpenVLA-OFT-SFT (one-shot)
+     - 56.5%
+     - 45.6%
+     - 25.6%
+     - 9.7%
+     - 34.4%
+   * - OpenVLA-OFT-RLinf
+     - **99.0%**
+     - **99.0%**
+     - **99.0%**
+     - **94.4%**
+     - **97.9%**
    * - Improvement
-     - +49.40%
-     - +47.08%
-     - +48.69%
-     - +81.55%
-     - +55.35%
-     - +55.76%
+     - +42.5%
+     - +53.4%
+     - +73.4%
+     - +84.7%
+     - +63.5%
+
+For the Libero experiment, we were inspired by 
+`SimpleVLA <https://github.com/PRIME-RL/SimpleVLA-RL>`_, 
+with only minor modifications. We thank the authors for releasing their open-source code.

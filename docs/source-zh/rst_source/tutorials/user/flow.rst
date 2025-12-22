@@ -16,7 +16,7 @@ YAML 配置
 - 针对 **VLA** agent 的具身任务训练配置在  
   ``examples/embodiment/config``  
 - 针对数学推理的 **LLM** 模型训练配置在  
-  ``examples/reasoning/config/math``  
+  ``examples/math/config``  
 
 建议你先熟悉这些示例 YAML 的结构，然后逐步迭代以适配你的任务。关键选项包括（但不限于）：
 
@@ -33,10 +33,11 @@ YAML 配置
 
 **2. 模型、tokenizer、可选的 checkpoint 路径，以及输出路径**
 
-- ``rollout.model.model_path``  
+- ``rollout.model_dir``  
 - ``actor.tokenizer.tokenizer_model``  
-- ``actor.model.model_path``  
+- ``actor.checkpoint_load_path``  
 - ``runner.logger.log_path``  
+- ``actor.checkpoint_save_path``  
 
 **3. 训练超参数，例如最大训练步数、批大小等**
 

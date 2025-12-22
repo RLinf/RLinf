@@ -146,7 +146,7 @@ class MegatronActor(MegatronModelManager, Worker):
 
         self.kl_beta = self.cfg.algorithm.kl_beta
         self.kl_penalty_type = self.cfg.algorithm.kl_penalty_type
-        self.clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
+        self.clip_ratio_c = self.cfg.algorithm.clip_ratio_c
         if self.cfg.algorithm.loss_agg_func == "token-mean":
             self.loss_agg_func = masked_mean
         elif self.cfg.algorithm.loss_agg_func == "seq-mean-token-sum":
@@ -189,6 +189,9 @@ class MegatronActor(MegatronModelManager, Worker):
             * self.cfg.algorithm.group_size
             // parallel_state.get_data_parallel_world_size()
         )
+        self.do_down_sampling = self.cfg.get("down_sampling", False) and self.cfg.down_sampling.do_down_sampling
+        if self.do_down_sampling:
+            self.down_sampling_config = self.cfg.down_sampling.down_sampling_config
 
         # Config validation
         if self.is_pipeline:
@@ -291,7 +294,7 @@ class MegatronActor(MegatronModelManager, Worker):
         self.ref_policy_state_dict = ref_policy_state_dict
 
         rollout_reshard_config = ReshardConfig(
-            model_type=self.cfg.rollout.model.model_type,
+            model_arch=self.cfg.rollout.model_arch,
             model_config=self.transformer_config,
             reshard_tp_size=self.cfg.rollout.tensor_parallel_size,
             reshard_pp_size=self.cfg.rollout.pipeline_parallel_size,
@@ -304,7 +307,7 @@ class MegatronActor(MegatronModelManager, Worker):
 
         if self.component_placement.has_dedicated_inference:
             inference_reshard_config = ReshardConfig(
-                model_type=self.cfg.inference.model_type,
+                model_arch=self.cfg.inference.model_arch,
                 model_config=self.transformer_config,
                 reshard_weights_format="mcore",
                 reshard_tp_size=self.cfg.inference.model.tensor_model_parallel_size,
@@ -435,7 +438,7 @@ class MegatronActor(MegatronModelManager, Worker):
                         min=self.cfg.algorithm.importance_sampling_clip,
                     )
 
-                mask = batch["attention_mask"][:, -response_len:]
+                mask = batch["response_mask"][:, -response_len:]
 
                 loss, metrics_data = policy_loss(
                     task_type=self.cfg.runner.task_type,
@@ -444,12 +447,10 @@ class MegatronActor(MegatronModelManager, Worker):
                     logprobs=curr_logprobs,
                     old_logprobs=prev_logprobs,
                     advantages=advantages,
-                    clip_ratio_c=self.clip_ratio_c,
                     clip_ratio_low=self.clip_ratio_low,
                     clip_ratio_high=self.clip_ratio_high,
                     loss_mask=mask,
                 )
-
                 entropy_loss = torch.zeros(1, device=loss.device)
                 if self.calculate_entropy:
                     entropy = output["entropy"][:, -response_len - 1 : -1].contiguous()
@@ -466,13 +467,8 @@ class MegatronActor(MegatronModelManager, Worker):
                 # Logging and early stopping according to KL (logp vs ref) or importance ratio (new logp vs old logp).
                 _imp = metrics_data["actor/ratio"]
                 torch.distributed.all_reduce(
-                    _imp, group=parallel_state.get_data_parallel_group()
+                    _imp, group=parallel_state.get_data_parallel_group(), op=torch.distributed.ReduceOp.AVG
                 )
-                _n_valid_tokens = mask.count_nonzero().clone()
-                torch.distributed.all_reduce(
-                    _n_valid_tokens, group=parallel_state.get_data_parallel_group()
-                )
-                _imp /= _n_valid_tokens
 
                 # Early stopping.
                 if (
@@ -487,7 +483,7 @@ class MegatronActor(MegatronModelManager, Worker):
 
                 if self.cfg.algorithm.use_valid_token_scale:
                     loss_scale = (
-                        mask.sum()
+                        mask.sum() # TODO: bug in agent. wait for fix @zhuchunyang
                         / self.global_valid_token
                         * parallel_state.get_data_parallel_world_size()
                         * self.num_microbatches
@@ -697,7 +693,7 @@ class MegatronActor(MegatronModelManager, Worker):
                 * self.cfg.actor.micro_batch_size
             )
         else:
-            loss_mask = batch["attention_mask"][:, -self.response_len :]
+            loss_mask = batch["response_mask"][:, -self.response_len :]
             global_valid_token = loss_mask.to(dtype=torch.float32).sum().cuda()
             torch.distributed.all_reduce(
                 global_valid_token, group=parallel_state.get_data_parallel_group()
@@ -706,10 +702,10 @@ class MegatronActor(MegatronModelManager, Worker):
             return batch
 
     def _dp_load_balance(self, batch: dict[str, torch.Tensor]):
-        batch_size = batch["input_ids"].shape[0]
-        assert batch_size == self.total_batch_size_per_dp, (
-            f"DP Load balance is only available when a single batch contains all data, e.g., in collocated mode. But got {batch_size=} and {self.total_batch_size_per_dp=}."
-        )
+        # batch_size = batch["input_ids"].shape[0]
+        # assert batch_size == self.total_batch_size_per_dp, (
+        #     f"DP Load balance is only available when a single batch contains all data, e.g., in collocated mode. But got {batch_size=} and {self.total_batch_size_per_dp=}."
+        # )
         batch = RolloutDataBalance.from_rollout_batches(
             rollout_batches=batch,
             dp_world_size=parallel_state.get_data_parallel_world_size(),
@@ -752,9 +748,18 @@ class MegatronActor(MegatronModelManager, Worker):
             f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
         )
         batch = RolloutResult.merge_batches(batches)
-
+        
         # Compute advantages and returns
         batch = self.compute_advantages_and_returns(batch)
+        
+        # DP batch load balance
+        if self.cfg.actor.get("enable_dp_load_balance", False):
+            batch = self._dp_load_balance(batch)
+        if batch is None:
+            with self.worker_timer():
+                rollout_metrics = self._compute_rollout_metrics(batch)
+                
+            return rollout_metrics, None
 
         # Must be called after batch is retrieved, which is when rollout has stopped
         # Otherwise, loading model might cause OOM
@@ -763,20 +768,12 @@ class MegatronActor(MegatronModelManager, Worker):
 
         # Advantage normalization
         if self.cfg.algorithm.normalize_advantages:
-            mask = batch["attention_mask"][:, -self.response_len :]
-            batch["advantages"] = masked_normalization(
-                batch["advantages"],
-                mask,
-                group=parallel_state.get_data_parallel_group(),
-            )
+            mask = batch["response_mask"][:, -self.response_len :]
+            batch["advantages"] = masked_normalization(batch["advantages"], mask)
 
         # Valid token scale
         if self.cfg.algorithm.use_valid_token_scale:
             self._setup_valid_token_scale(batch)
-
-        # DP batch load balance
-        if self.cfg.actor.get("enable_dp_load_balance", False):
-            batch = self._dp_load_balance(batch)
 
         if self.use_profiler:
             self.profiler.init_fwd_bwd_schedule(self.cfg.algorithm.n_minibatches)
@@ -829,12 +826,8 @@ class MegatronActor(MegatronModelManager, Worker):
         if self.cfg.algorithm.normalize_advantages:
 
             def normalize_advantages(batch: dict[str, torch.Tensor]):
-                mask = batch["attention_mask"][:, -self.response_len :]
-                batch["advantages"] = masked_normalization(
-                    batch["advantages"],
-                    mask,
-                    group=parallel_state.get_data_parallel_group(),
-                )
+                mask = batch["response_mask"][:, -self.response_len :]
+                batch["advantages"] = masked_normalization(batch["advantages"], mask)
                 return batch
 
             train_batch_iterator.register_global_batch_handler(normalize_advantages)
@@ -1176,25 +1169,34 @@ class MegatronActor(MegatronModelManager, Worker):
             recv_batch_size += rollout_result.num_sequence
             # Must be called after batch is retrieved, suggesting that rollout has stopped
             # Otherwise, loading model might cause OOM in the collocated mode
-            self._load_weight_and_optimizer()
-
-            # Prev logprobs
-            with self.worker_timer():
-                prev_logprobs = self.inference_step(batch)
-
-                if rollout_result.rollout_logprobs is not None:
-                    # Rollout has returned logprobs, store the recomputed logprobs in recompute_prev_logprobs
-                    rollout_result.recompute_prev_logprobs = prev_logprobs.cpu()
+            if batch is not None:
+                if batch["rewards"].numel() == 0:
+                    if rollout_result.rollout_logprobs is not None:
+                        rollout_result.recompute_prev_logprobs = torch.zeros(0, dtype=torch.float32)
+                    else:
+                        rollout_result.prev_logprobs = torch.zeros(0, dtype=torch.float32)
+                    if compute_ref_logprobs:
+                        rollout_result.ref_logprobs = torch.zeros(0, dtype=torch.float32)
                 else:
-                    # Otherwise, store the logprobs in prev_logprobs (the final logprobs used for training)
-                    rollout_result.prev_logprobs = prev_logprobs.cpu()
+                    self._load_weight_and_optimizer()
 
-            # Ref logprobs
-            if compute_ref_logprobs:
-                assert self.ref_policy_state_dict is not None
-                with cpu_weight_swap(self.model[0], self.ref_policy_state_dict):
-                    ref_logprobs = self.inference_step(batch)
-                    rollout_result.ref_logprobs = ref_logprobs.cpu()
+                    # Prev logprobs
+                    with self.worker_timer():
+                        prev_logprobs = self.inference_step(batch)
+
+                        if rollout_result.rollout_logprobs is not None:
+                            # Rollout has returned logprobs, store the recomputed logprobs in recompute_prev_logprobs
+                            rollout_result.recompute_prev_logprobs = prev_logprobs.cpu()
+                        else:
+                            # Otherwise, store the logprobs in prev_logprobs (the final logprobs used for training)
+                            rollout_result.prev_logprobs = prev_logprobs.cpu()
+
+                    # Ref logprobs
+                    if compute_ref_logprobs:
+                        assert self.ref_policy_state_dict is not None
+                        with cpu_weight_swap(self.model[0], self.ref_policy_state_dict):
+                            ref_logprobs = self.inference_step(batch)
+                            rollout_result.ref_logprobs = ref_logprobs.cpu()
             self.put_result(rollout_result, output_channel)
 
         assert recv_batch_size == self.total_batch_size_per_dp, (
@@ -1211,14 +1213,16 @@ class MegatronActor(MegatronModelManager, Worker):
             batch (Dict[str, torch.Tensor]): The rollout batch.
         """
         with self.worker_timer():
+            if batch["rewards"].numel() == 0:
+                batch["advantages"] = torch.zeros(0, dtype=torch.float32, device=batch["rewards"].device)
             if batch.get("advantages", None) is None:
-                mask = batch["attention_mask"][:, -self.response_len :]
+                mask = batch["response_mask"][:, -self.response_len :]
                 advantages, _ = calculate_adv_and_returns(
                     task_type=self.cfg.runner.task_type,
                     adv_type=self.cfg.algorithm.adv_type,
                     rewards=batch["rewards"].cuda(),
                     loss_mask=mask.cuda(),
-                    group_size=self.cfg.algorithm.group_size,
+                    group_size=self.down_sampling_config.down_sample_to_n if self.do_down_sampling else self.cfg.algorithm.group_size,
                     kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
                     kl_penalty_type=self.kl_penalty_type,
                     logprob=batch["prev_logprobs"].cuda()

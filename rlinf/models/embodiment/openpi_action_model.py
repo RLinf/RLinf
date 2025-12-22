@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -33,43 +32,34 @@ from rlinf.models.embodiment.modules.value_head import ValueHead
 @dataclass(frozen=True)
 class OpenPi0Config(Pi0Config):
     # config for rl
-    config_name: str = "pi0_libero"  # pi0_libero, pi05_libero, pi0_maniskill, pi05_maniskill, pi0_metaworld, pi05_metaworld
-    num_images_in_input: int = 2  # number of images in input
-    noise_method: str = "flow_sde"  # flow_sde, flow_noise, flow_cps
-    # noise config for flow-sde
-    noise_level: float = 0.5
+    noise_level: bool = 0.5
+    action_chunk: int = 5
+    train_expert_only: bool = False
+    action_env_dim: int = 7  # for libero
+    num_steps: int = 10
+    noise_method: str = "flow_sde"  # flow_sde, flow_cps
+    safe_get_logprob: bool = False
+    joint_logprob: bool = False
+    double_layer: bool = False
+    detach_critic_input: bool = False
+    chunk_critic_input: bool = False
+    add_value_head: bool = False
     noise_anneal: bool = False
     noise_params: list = field(
         default_factory=lambda: [0.7, 0.3, 400]
     )  # noise_start, noise_end, noise_anneal_steps
-    # noise config for flow-noise
-    noise_logvar_range: list = field(
-        default_factory=lambda: [0.08, 0.16]
-    )  # [min_std, max_std]
-    # hyper-parameters
-    action_chunk: int = 5  # action chunk
-    action_env_dim: int = 7  # for environment action dim
-    num_steps: int = 10  # denoise steps
-    # training config
-    train_expert_only: bool = False
-    safe_get_logprob: bool = False
-    joint_logprob: bool = False  # designed for flow-noise
-    double_layer: bool = False  # designed for flow-sde without acceleration
-    ignore_last: bool = False  # ignore the last action for noise injection
-    # critic
-    detach_critic_input: bool = False  # detach critic input with the action expert
-    chunk_critic_input: bool = False  # use only the action chunk for critic estimation
-    add_value_head: bool = False  # add value head for ppo
-    value_after_vlm: bool = False  # value after vlm, pi05 mode
+    ignore_last: bool = False
+    value_after_vlm: bool = False
     value_vlm_mode: str = "mean_token"  # last_token, mean_token, first_token
+    simulator_type: str = "libero"  # libero, maniskill, robotwin, metaworld
 
 
 class OpenPi0ForRLActionPrediction(PI0Pytorch):
-    """
-    Pi0 model for reinforcement learning action prediction.
-    """
+    """Pi0 model for reinforcement learning action prediction.
 
-    config: OpenPi0Config
+    This is a template class that defines the interfaces needed for RL training.
+    You need to implement all the methods marked with 'TODO: Implement'.
+    """
 
     @property
     def _no_split_modules(self) -> list[str]:
@@ -91,73 +81,42 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         sample_actions_func = self.sample_actions
         super().__init__(config)
         self.sample_actions = sample_actions_func
-        self.global_step = 0
-        # assert
-        assert not (self.config.double_layer and self.config.joint_logprob), (
-            "double_layer and joint_logprob can not be set at the same time"
-        )
 
         # rl model init
         if self.config.value_after_vlm:
+            assert not self.config.joint_logprob, (
+                "joint logprob is not tested for value_after_vlm mode"
+            )
+            assert not (self.config.double_layer and self.config.joint_logprob), (
+                "double_layer and joint_logprob can not be set at the same time"
+            )
             proj_width = 2048
         else:
             proj_width = 1024
-        # value head
+        self.global_step = 0
         if self.config.add_value_head:
-            if self.config.config_name == "pi05_maniskill":
-                value_head_hidden_sizes = (1024, 512, 256)
-            else:
-                value_head_hidden_sizes = (512, 256, 128)
-            value_head_activation = "relu"
             self.value_head = ValueHead(
                 input_dim=proj_width,
-                hidden_sizes=value_head_hidden_sizes,
+                hidden_sizes=(512, 256, 128),
                 output_dim=1,
-                activation=value_head_activation,
+                activation="relu",
                 bias_last=True,
-            )
-            self.value_head = self.value_head.to(
-                dtype=self.action_out_proj.weight.dtype
             )
         self.use_vlm_value = getattr(self.config, "value_after_vlm", False) and getattr(
             self.config, "add_value_head", False
         )
-        # noise head for flow-noise
-        if self.config.noise_method == "flow_noise":
-            self.noise_head = ExploreNoiseNet(
-                in_dim=1024,
+        if self.config.noise_method == "reinflow":
+            self.reinflow_explore_noise_net = ExploreNoiseNet(
+                in_dim=proj_width,
                 out_dim=self.config.action_dim,
                 hidden_dims=[128, 64],
                 activation_type="tanh",
-                noise_logvar_range=self.config.noise_logvar_range,
+                noise_logvar_range=[0.08, 0.16],
                 noise_scheduler_type="learn",
-            )
-            self.noise_head = self.noise_head.to(
-                dtype=self.action_out_proj.weight.dtype
             )
 
     def set_global_step(self, global_step):
         self.global_step = global_step
-
-    def _tensor_to_numpy(self, x):
-        """Convert tensor to numpy, handling BFloat16/Float16 conversion."""
-        if torch.is_tensor(x):
-            x_cpu = x.detach().cpu()
-            # BFloat16 and Float16 are not supported by numpy, convert to float32
-            if x_cpu.dtype in (torch.bfloat16, torch.float16):
-                x_cpu = x_cpu.float()
-            return np.asarray(x_cpu)
-        return x
-
-    def _tensor_to_numpy_single(self, x, index):
-        """Convert single tensor element to numpy, handling BFloat16/Float16 conversion."""
-        if torch.is_tensor(x):
-            x_cpu = x[index].detach().cpu()
-            # BFloat16 and Float16 are not supported by numpy, convert to float32
-            if x_cpu.dtype in (torch.bfloat16, torch.float16):
-                x_cpu = x_cpu.float()
-            return np.asarray(x_cpu)
-        return x[index]
 
     def setup_wrappers(
         self,
@@ -174,10 +133,16 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         if first_process:
             inputs.pop("prompt")
         else:
-            inputs = {key: inputs[key] for key in inputs.keys() if "/" in key}
-
-        # tensor -> numpy (Convert BFloat16/Float16 to float32 for numpy compatibility)
-        inputs = jax.tree.map(self._tensor_to_numpy, inputs)
+            inputs = {
+                value: inputs[value]
+                for value in inputs.keys()
+                if value
+                in ["observation/image", "observation/wrist_image", "observation/state"]
+            }
+        # tensor -> numpy
+        inputs = jax.tree.map(
+            lambda x: np.asarray(x.detach().cpu()) if torch.is_tensor(x) else x, inputs
+        )
         batch_size = next(v.shape[0] for v in inputs.values() if hasattr(v, "shape"))
         # split & transform
         transformed_samples = []
@@ -215,7 +180,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         batch_size = outputs["actions"].shape[0]
         transformed_samples = []
         for i in range(batch_size):
-            sample = jax.tree.map(lambda x: self._tensor_to_numpy_single(x, i), outputs)
+            sample = jax.tree.map(lambda x: np.asarray(x[i].detach().cpu()), outputs)
             sample = self._output_transform(sample)
             transformed_samples.append(sample)
         # recombine
@@ -231,12 +196,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         data: dict[str, torch.Tensor],
         **kwargs,
     ) -> dict[str, Any]:
-        if "mode" in kwargs and kwargs["mode"] == "sft":
-            observation = data["observation"]
-            actions = data["actions"]
-            return super().forward(observation, actions)
-        # get kwargs
         compute_values = kwargs.get("compute_values", False)
+
         chains = data["chains"]
         denoise_inds = data["denoise_inds"]
         # input transform
@@ -251,7 +212,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         img_masks = [img_mask.to(device) for img_mask in img_masks]
         state = state.to(device)
         # get log prob
-        log_probs, value_t, entropy = self.get_log_prob_value(
+        log_probs, value_t = self.get_log_prob_value(
             images,
             img_masks,
             lang_tokens,
@@ -264,45 +225,39 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         log_probs = log_probs[
             :, :, : self.config.action_chunk, : self.config.action_env_dim
         ]
-        entropy = entropy[
-            :, :, : self.config.action_chunk, : self.config.action_env_dim
-        ]
         # post process
-        log_probs = log_probs.mean(dim=1)
-        entropy = entropy.mean(dim=[1, 2, 3], keepdim=False)[
-            :, None
-        ]  # [:,None] to align with loss-mask shape
+        if self.config.joint_logprob:
+            log_probs = log_probs.mean(dim=1)
+            prev_logprobs = data["prev_logprobs"].mean(dim=1)
+        else:
+            bsize = log_probs.shape[0]
+            log_probs = log_probs[:, 0]
+            prev_logprobs = data["prev_logprobs"]
+            prev_logprobs = prev_logprobs[
+                torch.arange(bsize),
+                denoise_inds[:, 0],
+                : self.config.action_chunk,
+                : self.config.action_env_dim,
+            ]
         value_t = value_t.mean(dim=-1, keepdim=False)
         return {
             "logprobs": log_probs,
+            "prev_logprobs": prev_logprobs,
             "values": value_t,
-            "entropy": entropy,
+            "entropy": None,
         }
 
-    def obs_processor(self, env_obs):
-        # base observation
-        processed_obs = {
-            "observation/image": env_obs["images"],
-            "prompt": env_obs["task_descriptions"],
+    def input_processor(self, env_processed_obs):
+        to_process_obs = {
+            "observation/image": env_processed_obs["images"],
+            "observation/state": env_processed_obs["states"],
+            "prompt": env_processed_obs["task_descriptions"],
         }
-        # state observation - ensure float32 to prevent BFloat16 conversion issues
-        if "calvin" in self.config.config_name:
-            state = env_obs["states"]
-            processed_obs["observation/state_ee_pos"] = state[:, :3]
-            processed_obs["observation/state_ee_rot"] = state[:, 3:6]
-            processed_obs["observation/state_gripper"] = state[:, 6:7]
-        else:
-            state = env_obs["states"]
-            if torch.is_tensor(state):
-                state = state.to(dtype=torch.float32)
-            processed_obs["observation/state"] = state
-        # wrist image observation
-        if env_obs["wrist_images"] is not None:
-            processed_obs["observation/wrist_image"] = env_obs["wrist_images"]
-        # store used keys
-        return processed_obs
-
-    def precision_processor(self, processed_obs):
+        if self.config.simulator_type == "libero":
+            to_process_obs["observation/wrist_image"] = env_processed_obs[
+                "wrist_images"
+            ]
+        processed_obs = self.input_transform(to_process_obs)
         device = next(self.parameters()).device
         for key, value in processed_obs.items():
             if isinstance(value, list):
@@ -316,22 +271,15 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
                 processed_obs[key] = value.to(device=device).contiguous()
             elif isinstance(value, dict):
                 for sub_key, sub_value in value.items():
-                    if torch.is_tensor(sub_value):
-                        processed_obs[key][sub_key] = sub_value.to(
-                            device=device
-                        ).contiguous()
+                    processed_obs[key][sub_key] = sub_value.to(
+                        device=device
+                    ).contiguous()
         return processed_obs
 
     def predict_action_batch(
         self, env_obs, mode: Literal["train", "eval"] = "train", compute_values=True
     ) -> tuple[np.ndarray, dict[str, Any]]:
-        to_process_obs = self.obs_processor(env_obs)  # env obs -> policy input obs
-        processed_obs = self.input_transform(
-            to_process_obs
-        )  # policy input obs -> model input obs
-        processed_obs = self.precision_processor(
-            processed_obs
-        )  # obs precision processor
+        processed_obs = self.input_processor(env_obs)
         observation = _model.Observation.from_dict(processed_obs)
         outputs = self.sample_actions(
             observation, mode=mode, compute_values=compute_values
@@ -343,16 +291,20 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         forward_inputs = {
             "chains": outputs["chains"],
             "denoise_inds": outputs["denoise_inds"],
+            "observation/image": env_obs["images"],
+            "observation/state": env_obs["states"],
             "tokenized_prompt": processed_obs["tokenized_prompt"],
             "tokenized_prompt_mask": processed_obs["tokenized_prompt_mask"],
         }
-        forward_inputs.update(to_process_obs)
-        forward_inputs.pop("prompt", None)
+        if self.config.simulator_type == "libero":
+            forward_inputs["observation/wrist_image"] = env_obs["wrist_images"]
+
         result = {
             "prev_logprobs": outputs["prev_logprobs"],
             "prev_values": outputs["prev_values"],
             "forward_inputs": forward_inputs,
         }
+
         return actions, result
 
     @torch.no_grad()
@@ -416,11 +368,21 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             if self.config.joint_logprob:
                 denoise_inds = torch.arange(num_steps)
             else:
-                if self.config.ignore_last:
+                if self.config.noise_method == "flow_sde":
+                    if self.config.ignore_last:
+                        denoise_inds = torch.tensor(
+                            [random.randint(0, num_steps - 2)] * num_steps
+                        )
+                    else:
+                        denoise_inds = torch.tensor(
+                            [random.randint(0, num_steps - 1)] * num_steps
+                        )
+                elif self.config.noise_method == "flow_cps":
+                    # the last denoising step of the flow-cps is deterministic
                     denoise_inds = torch.tensor(
-                        [random.randint(0, num_steps - 2)] * num_steps
+                        [random.randint(0, num_steps - 1)] * num_steps
                     )
-                else:
+                elif self.config.noise_method == "reinflow":
                     denoise_inds = torch.tensor(
                         [random.randint(0, num_steps - 1)] * num_steps
                     )
@@ -432,19 +394,27 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         for idx in range(num_steps):
             # sample mean var val
             if idx == denoise_inds[0][idx]:
-                sample_mode = "train"
+                x_t_mean, x_t_std, value_t = self.sample_mean_var_val(
+                    x_t,
+                    idx,
+                    state,
+                    prefix_pad_masks,
+                    past_key_values,
+                    "train",
+                    num_steps,
+                    compute_values,
+                )
             else:
-                sample_mode = "eval"
-            x_t_mean, x_t_std, value_t = self.sample_mean_var_val(
-                x_t,
-                idx,
-                state,
-                prefix_pad_masks,
-                past_key_values,
-                sample_mode,
-                num_steps,
-                compute_values,
-            )
+                x_t_mean, x_t_std, value_t = self.sample_mean_var_val(
+                    x_t,
+                    idx,
+                    state,
+                    prefix_pad_masks,
+                    past_key_values,
+                    "eval",
+                    num_steps,
+                    compute_values,
+                )
             # Euler step - use new tensor assignment instead of in-place operation
             x_t = x_t_mean + self.sample_noise(x_t.shape, device) * x_t_std
             log_prob = self.get_logprob_norm(x_t, x_t_mean, x_t_std)
@@ -454,18 +424,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             log_probs.append(log_prob)
         x_0 = x_t
         chains = torch.stack(chains, dim=1)
-        # post process for logprob
         log_probs = torch.stack(log_probs, dim=1)[
             :, :, : self.config.action_chunk, : self.config.action_env_dim
         ]
-        if self.config.joint_logprob:
-            log_probs = log_probs.mean(dim=1)
-        else:
-            log_probs = log_probs[
-                torch.arange(log_probs.shape[0]),
-                denoise_inds[:, 0],
-            ]
-        # post process for value
         if self.use_vlm_value:
             values = values_vlm[:, None]
         else:
@@ -525,9 +486,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             x_t,
             t_input,
         )
-        v_t = self.action_out_proj(
-            suffix_out.to(dtype=self.action_out_proj.weight.dtype)
-        )  # [bs,n_action_steps,max_action_dim]
+        v_t = self.action_out_proj(suffix_out)  # [bs,n_action_steps,max_action_dim]
         # value prediction
         if (
             self.config.add_value_head
@@ -576,12 +535,10 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
                 x0_weight = torch.ones_like(t_input) - (t_input - delta)
                 x1_weight = (t_input - delta) * cos_term
                 x_t_std = (t_input - delta) * sin_term
-            elif self.config.noise_method == "flow_noise":
+            elif self.config.noise_method == "reinflow":
                 x0_weight = 1 - (t_input - delta)
                 x1_weight = t_input - delta
-                x_t_std = self.noise_head(
-                    suffix_out.to(dtype=self.action_out_proj.weight.dtype)
-                )
+                x_t_std = self.reinflow_explore_noise_net(suffix_out)
             else:
                 raise ValueError(f"Invalid noise method: {self.config.noise_method}")
         x_t_mean = x0_pred * x0_weight + x1_pred * x1_weight
@@ -686,9 +643,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         )
         chains_log_probs = []
         chains_values = []
-        chains_entropy = []
-
-        # get log prob
         if self.config.joint_logprob:
             num_steps = self.config.num_steps
             initial_log_prob = self.get_logprob_norm(
@@ -696,9 +650,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
                 torch.zeros_like(chains[:, 0]),
                 torch.ones_like(chains[:, 0]),
             )
-            initial_entropy = self.gaussian_entropy(torch.ones_like(chains[:, 0]))
             chains_log_probs.append(initial_log_prob)
-            chains_entropy.append(initial_entropy)
         else:
             num_steps = 1
         for idx in range(num_steps):
@@ -713,59 +665,48 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
                 past_key_values,
                 "train",
                 self.config.num_steps,
-                compute_values,
             )
             log_probs = self.get_logprob_norm(chains_next, x_t_mean, x_t_std)
-            entropy = self.gaussian_entropy(x_t_std)
             chains_log_probs.append(log_probs)
-            chains_entropy.append(entropy)
             if self.use_vlm_value:
                 chains_values.append(self.get_value_from_vlm(prefix_output))
             else:
                 chains_values.append(value_t)
         chains_log_probs = torch.stack(chains_log_probs, dim=1)
         chains_values = torch.stack(chains_values, dim=1)
-
-        # entropy is only available for flow-noise method
-        if self.config.noise_method == "flow_noise":
-            chains_entropy = torch.stack(chains_entropy, dim=1)
-        else:
-            chains_entropy = torch.zeros_like(chains_log_probs)
-        return chains_log_probs, chains_values, chains_entropy
+        return chains_log_probs, chains_values
 
     def get_value_from_vlm(self, prefix_output):
         # prefix_output:
         # pi05: [bs, (256 * 3 + 200) = 968, 2048]
         # pi0: [bs, (256 * 3 + 48) = 816, 1024]
-        # token length
-        if "pi05_" in self.config.config_name:
-            lang_token_len = 200
-            all_token_length = 968
-        elif "pi0_" in self.config.config_name:
-            lang_token_len = 48
-            all_token_length = 816
-
+        if self.config.pi05:
+            lang_length = 200
+            all_length = 968
+        else:
+            lang_length = 48
+            all_length = 816
+        if self.config.simulator_type == "metaworld":
+            camera_num = 1
+        elif self.config.simulator_type == "libero":
+            camera_num = 2
+        else:
+            raise ValueError(f"Invalid simulator type: {self.config.simulator_type}")
         if self.config.value_vlm_mode == "mean_token":
             prefix_mask = (
-                [True] * 256 * self.config.num_images_in_input
-                + [False] * 256 * (3 - self.config.num_images_in_input)
-                + [True] * lang_token_len
+                [True] * 256 * camera_num
+                + [False] * 256 * (3 - camera_num)
+                + [True] * lang_length
             )
         elif self.config.value_vlm_mode == "last_token":
-            prefix_mask = [False] * (all_token_length - 1) + [True] * 1
+            prefix_mask = [False] * (all_length - 1) + [True] * 1
         elif self.config.value_vlm_mode == "first_token":
-            prefix_mask = [True] * 1 + [False] * (all_token_length - 1)
+            prefix_mask = [True] * 1 + [False] * (all_length - 1)
         prefix_out_value = prefix_output[:, prefix_mask, :]
         prefix_out_value = prefix_out_value.mean(dim=1, keepdim=False)
         prefix_out_value = prefix_out_value.to(dtype=torch.float32)
         values_vlm = self.value_head(prefix_out_value)[:, 0]
         return values_vlm
-
-    def gaussian_entropy(self, sigma):
-        mask = sigma == 0
-        sigma_safe = torch.where(mask, torch.ones_like(sigma), sigma)
-        entropy = 0.5 * torch.log(2 * math.pi * math.e * (sigma_safe**2))
-        return entropy
 
     def freeze_vlm(self):
         if self.config.train_expert_only:

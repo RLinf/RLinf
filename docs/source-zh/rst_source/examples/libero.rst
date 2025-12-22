@@ -1,5 +1,5 @@
-基于LIBERO评测平台的强化学习训练
-====================================
+基于LIBERO模拟器的强化学习训练
+==========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -21,7 +21,7 @@
 
 **LIBERO 环境**
 
-- **Environment**：基于 *robosuite* （MuJoCo）的 LIBERO 仿真基准  
+- **Environment**：基于 *robosuite*（MuJoCo）的 LIBERO 仿真基准  
 - **Task**：指挥一台 7 自由度机械臂完成多种家居操作技能（抓取放置、叠放、开抽屉、空间重排等）  
 - **Observation**：工作区周围离屏相机采集的 RGB 图像（常见分辨率 128×128 或 224×224）  
 - **Action Space**：7 维连续动作  
@@ -66,56 +66,6 @@
    - 动作 token 化与反 token 化  
    - 带 Value Head 的 Critic 功能
 
-依赖安装
----------------
-
-**选项 1：Docker 镜像**
-
-使用 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` 来运行实验。
-
-请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
-
-.. code:: bash
-
-   source switch_env openvla-oft
-
-**选项 2：自定义环境**
-
-.. code:: bash
-
-   pip install uv
-   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
-   source .venv/bin/activate
-
-模型下载
---------------
-
-在开始训练之前，你需要下载相应的预训练模型：
-
-.. code:: bash
-
-   # 使用下面任一方法下载模型
-   # 方法 1: 使用 git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-
-   # 方法 2: 使用 huggingface-hub
-   pip install huggingface-hub
-   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-
-下载完成后，请确保在配置yaml文件中正确指定模型路径。
-
-.. code:: yaml
-
-   rollout:
-      model:
-         model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-   actor:
-      model:
-         model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-            
 运行脚本
 -------------------
 
@@ -174,11 +124,11 @@
 
    bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
 
-例如，在 LIBERO 环境中使用 GRPO 训练 OpenVLA-OFT 模型：
+例如，在 LIBERO 环境中使用 PPO 训练 OpenVLA 模型：
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft
+   bash examples/embodiment/run_embodiment.sh libero_10_ppo_openvlaoft
 
 可视化与结果
 -------------------------
@@ -194,102 +144,79 @@
 
 - **训练指标**：
 
-  - ``train/actor/approx_kl``: 近似 KL，用于监控策略更新幅度
-  - ``train/actor/clip_fraction``: 触发 PPO 的 clip 样本的比例
-  - ``train/actor/clipped_ratio``: 被裁剪后的概率比均值，用来衡量策略更新受到 clip 的影响程度
-  - ``train/actor/grad_norm``: 梯度范数
-  - ``train/actor/lr``: 学习率
-  - ``train/actor/policy_loss``: PPO/GRPO的策略损失
-  - ``train/critic/value_loss``: 价值函数的损失
-  - ``train/critic/value_clip_ratio``: PPO-style value function clipping 中触发 clip 的比例
-  - ``train/critic/explained_variance``: 衡量价值函数拟合程度，越接近 1 越好
-  - ``train/entropy_loss``: 策略熵
-  - ``train/loss``: 策略损失 + 价值损失 + 熵正则的总和  (actor_loss + critic_loss + entropy_loss regularization)
+  - ``actor/loss``：PPO 策略损失  
+  - ``actor/value_loss``：价值函数损失  
+  - ``actor/entropy``：策略熵  
+  - ``actor/grad_norm``：梯度范数  
+  - ``actor/lr``：学习率  
 
 - **Rollout 指标**：
 
-  - ``rollout/advantages_max``: 优势函数的最大值
-  - ``rollout/advantages_mean``: 优势函数的均值
-  - ``rollout/advantages_min``: 优势函数的最小值
-  - ``rollout/rewards``: 一个chunk的奖励 （参考 libero_env.py 的414行）
+  - ``rollout/reward_mean``：平均回合奖励  
+  - ``rollout/reward_std``：奖励标准差  
+  - ``rollout/episode_length``：平均回合长度  
+  - ``rollout/success_rate``：任务完成率  
 
 - **环境指标**：
 
-- **环境指标（Environment Metrics）**：
-
-  - ``env/episode_len``：该回合实际经历的环境步数（单位：step）。
-  - ``env/return``：回合总回报。在 LIBERO 的稀疏奖励设置中，该指标并不具有参考价值，因为奖励在回合中几乎始终为 0，只有在成功结束时才会给出 1。
-  - ``env/reward``：环境的 step-level 奖励（在任务未完成的步骤中为 0，仅在成功终止时为 1）。  
-    日志中的数值会按回合步数进行归一化，因此无法直接反映实际的任务完成表现。
-  - ``env/success_once``：建议使用该指标来监控训练效果，它直接表示未归一化的任务成功率，更能反映策略的真实性能。
-
+  - ``env/success_rate``：各环境的成功率  
+  - ``env/step_reward``：逐步奖励  
+  - ``env/termination_rate``：回合终止率  
 
 **3. 视频生成**
 
 .. code-block:: yaml
 
-   env:
-      eval:
-         video_cfg:
-            save_video: True
-            video_base_dir: ${runner.logger.log_path}/video/eval
+   video_cfg:
+     save_video: True
+     info_on_video: True
+     video_base_dir: ./logs/video/train
 
-**4. 训练日志工具集成**
+**4. WandB 集成**
 
 .. code-block:: yaml
 
-   runner:
-      task_type: embodied
-      logger:
-         log_path: "../results"
-         project_name: rlinf
-         experiment_name: "test_openvla"
-         logger_backends: ["tensorboard"] # wandb, swanlab
+   trainer:
+     logger:
+       wandb:
+         enable: True
+         project_name: "RLinf"
+         experiment_name: "openvla-libero"
 
 LIBERO 结果
 ~~~~~~~~~~~~~~~~~~~
 
-为了展示 RLinf 在大规模多任务强化学习方面的能力，我们在 LIBERO 的全部130个任务上训练了一个统一模型，并评估了其在 LIBERO 五个任务套件中的表现：LIBERO-Spatial、LIBERO-Goal、LIBERO-Object、LIBERO-Long和LIBERO-90。 
+此外，我们在 LIBERO 环境中使用 GRPO 训练了 OpenVLA-OFT。  
+通过 RL 微调所获得的改进如下：
 
-对于每个 LIBERO 套件，我们评估所有 task_id 与 trial_id 的组合。对于 Object、Spatial、Goal 和 Long 套件，我们共评估 500 个环境（10 个任务 × 50 个试次）。
-对于 LIBERO-90 与 LIBERO-130，我们分别评估 4,500 和 6,500 个环境（每个任务组包含 90或130 个任务 × 50 个试次）。
-
-我们根据模型的训练配置来设置评估的超参：
-对于 SFT 训练（LoRA-base）模型，我们设置 `do_sample = False`。
-对于 RL 训练的模型，我们设置 `do_sample = True`、`temperature = 1.6`，并启用 `rollout_epoch=2` 以激发 RL 调优策略的最佳性能。
-
-.. note:: 
-
-   该统一基础模型由我们自行微调得来。如需更多详情，请参阅论文 https://arxiv.org/abs/2510.06710。
-
-.. list-table:: **Evaluation results of the unified model on the five LIBERO task groups**
+.. list-table:: **LIBERO 上 OpenVLA-OFT 的模型结果**
    :header-rows: 1
 
    * - 模型
-     - Object
-     - Spatial
-     - Goal
-     - Long
-     - 90
-     - 130
-   * - |huggingface| `OpenVLA-OFT (LoRA-base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_
-     - 50.20%
-     - 51.61%
-     - 49.40%
-     - 11.90%
-     - 42.67%
-     - 42.09%
-   * - |huggingface| `OpenVLA-OFT (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130>`_
-     - **99.60%**
-     - **98.69%**
-     - **98.09%**
-     - **93.45%**
-     - **98.02%**
-     - **97.85%**
-   * - 效果提升
-     - +49.40%
-     - +47.08%
-     - +48.69%
-     - +81.55%
-     - +55.35%
-     - +55.76%
+     - `Spatial <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-spatial>`_
+     - `Goal <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-goal>`_
+     - `Object <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-object>`_
+     - `Long <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-GRPO-LIBERO-long>`_
+     - 平均值
+   * - OpenVLA-OFT-SFT (one-shot)
+     - 56.5%
+     - 45.6%
+     - 25.6%
+     - 9.7%
+     - 34.4%
+   * - OpenVLA-OFT-RLinf
+     - **99.0%**
+     - **99.0%**
+     - **99.0%**
+     - **94.4%**
+     - **97.9%**
+   * - 提升
+     - +42.5%
+     - +53.4%
+     - +73.4%
+     - +84.7%
+     - +63.5%
+
+在 Libero 实验中，我们参考了  
+`SimpleVLA <https://github.com/PRIME-RL/SimpleVLA-RL>`_，仅做了少量改动。  
+感谢作者开源代码。

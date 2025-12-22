@@ -1,6 +1,4 @@
 defaults:
-  - ../training_backend/fsdp@inference.fsdp_config
-  - ../training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
 hydra:
@@ -72,7 +70,7 @@ algorithm:
 
   # params for rollout
   sampling_params:
-    do_sample: True
+    use_greedy: False
     temperature: 1.0
     top_k: 1000000
     top_p: 1.0
@@ -85,10 +83,9 @@ rollout:
 
   gpu_memory_utilization: 0.55
 
-  model:
-    model_path: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/
-    model_type: qwen2.5
-    precision: fp16              # precision for rollout model, support [fp16, bf16, fp32]  
+  model_dir: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/
+  model_arch: qwen2.5
+  precision: fp16              # precision for rollout model, support [fp16, bf16, fp32]  
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
@@ -143,24 +140,31 @@ data:
 actor:
   group_name: "ActorGroup"
   training_backend: fsdp
+  mcore_gpt: True
+  spec_name: decoder_gpt
 
-  enable_offload: True
+  checkpoint_load_path: null
 
-  global_batch_size: 8
-  micro_batch_size: 1
+  enable_dp_load_balance: False
 
   calculate_flops: False
 
   seed: 1234
 
-  model:
-    model_type: ${rollout.model.model_type}
-    model_path: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/
-    precision: fp32
-    is_lora: False
+  # fsdp-only config
+  enable_offload: True
+  global_batch_size: 8
+  micro_batch_size: 1
 
+  model:
+    precision: fp32
     seq_length: ${runner.seq_length}
     encoder_seq_length: ${runner.seq_length}
+
+    # fsdp-only config
+    is_lora: False
+    model_arch: ${rollout.model_arch}
+    model_path: ${rollout.model_dir}
 
   optim:
     optimizer: adam
@@ -170,6 +174,7 @@ actor:
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-05
+    min_lr: 2.0e-6
     weight_decay: 0.05
     use_distributed_optimizer: True
     overlap_grad_reduce: False

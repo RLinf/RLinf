@@ -12,36 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
+import random
 from abc import ABC, abstractmethod
-from logging import Logger
-from typing import TYPE_CHECKING, ContextManager, Optional, Union
+from typing import ContextManager, Optional, Union
 
+import numpy as np
 import torch
-import torch.distributed.checkpoint as dcp
 import torch.nn as nn
 from omegaconf import DictConfig
-from torch.distributed.checkpoint.state_dict import (
-    StateDictOptions,
-    get_model_state_dict,
-)
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 from rlinf.hybrid_engines.fsdp import FSDP, FSDPModule
-from rlinf.hybrid_engines.fsdp.strategy.checkpoint import Checkpoint
-from rlinf.hybrid_engines.fsdp.utils import (
-    FSDPVersion,
-    copy_model_config_and_code,
-    save_state_dict_sharded_safetensors,
-)
-from rlinf.utils.utils import clear_memory
-
-if TYPE_CHECKING:
-    from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
-    from rlinf.workers.inference.fsdp_inference_worker import FSDPInference
 
 
 class FSDPStrategyBase(ABC):
@@ -49,19 +32,30 @@ class FSDPStrategyBase(ABC):
         self,
         cfg: DictConfig,
         world_size: int,
+        rank: int,
         dp_group: Optional[torch.distributed.ProcessGroup] = None,
-        logger: Optional[Logger] = None,
+        logger=None,
     ):
         self.cfg = cfg
-        self.logger = logger
+        self._logger = logger
         self.world_size = world_size
+        self.rank = rank
         self._dp_group = dp_group
+
+    @property
+    def logger(self):
+        if self._logger is None:
+            import logging
+
+            self._logger = logging.getLogger(__name__)
+        return self._logger
 
     @classmethod
     def create(
         cls,
         cfg: DictConfig,
         world_size: int,
+        rank: int,
         dp_group: Optional[torch.distributed.ProcessGroup] = None,
         logger=None,
     ) -> "FSDPStrategyBase":
@@ -69,12 +63,13 @@ class FSDPStrategyBase(ABC):
         Factory method: create and return a concrete FSDP strategy instance based on cfg.
 
         Selection rules (case-insensitive):
-        - fsdp         -> FSDPStrategy (classic torch.distributed.fsdp)
+        - fsdp / fsdp1 -> FSDP1Strategy (classic torch.distributed.fsdp)
         - fsdp2        -> FSDP2Strategy (fully_shard API)
 
         Args:
             cfg: DictConfig that must contain fsdp_config.strategy
             world_size: actor distributed world size
+            rank: current process's distributed rank
             dp_group: optional data parallel process group
             logger: optional logger, if none, a default logger will be created
 
@@ -85,29 +80,65 @@ class FSDPStrategyBase(ABC):
             "fsdp_config is required for creating corresponding FSDP strategy"
         )
         strategy = str(cfg.fsdp_config.get("strategy", "fsdp2")).lower()
-        match strategy:
-            case FSDPVersion.FSDP:
-                from .fsdp import FSDPStrategy
 
-                return FSDPStrategy(
-                    cfg=cfg,
-                    world_size=world_size,
-                    dp_group=dp_group,
-                    logger=logger,
-                )
-            case FSDPVersion.FSDP2:
-                from .fsdp2 import FSDP2Strategy
+        if strategy in ("fsdp", "fsdp1"):
+            from .fsdp1 import FSDP1Strategy
 
-                return FSDP2Strategy(
-                    cfg=cfg,
-                    world_size=world_size,
-                    dp_group=dp_group,
-                    logger=logger,
-                )
-            case _:
-                raise ValueError(
-                    f"Unknown FSDP strategy '{strategy}'. Expected one of: 'fsdp','fsdp2'"
-                )
+            return FSDP1Strategy(
+                cfg=cfg,
+                world_size=world_size,
+                rank=rank,
+                dp_group=dp_group,
+                logger=logger,
+            )
+        elif strategy == "fsdp2":
+            from .fsdp2 import FSDP2Strategy
+
+            return FSDP2Strategy(
+                cfg=cfg,
+                world_size=world_size,
+                rank=rank,
+                dp_group=dp_group,
+                logger=logger,
+            )
+        else:
+            raise ValueError(
+                f"Unknown FSDP strategy '{strategy}'. Expected one of: 'fsdp', 'fsdp1', 'fsdp2'."
+            )
+
+    def load_rng_state(self, rng_state: dict) -> None:
+        """
+        Load the RNG state from the provided state dictionary.
+
+        Args:
+            rng_state (Dict): The RNG state dictionary containing states for 'cpu', 'numpy', 'random', and optionally 'cuda'.
+        """
+        required_keys = ["cpu", "numpy", "random"]
+        assert set(required_keys).issubset(rng_state.keys()), (
+            f"rng_state must contain the keys: {required_keys}"
+        )
+
+        torch.set_rng_state(rng_state["cpu"])
+        np.random.set_state(rng_state["numpy"])
+        random.setstate(rng_state["random"])
+        if torch.cuda.is_available() and "cuda" in rng_state:
+            torch.cuda.set_rng_state(rng_state["cuda"])
+
+    def save_rng_state(self) -> dict:
+        """
+        Save the current RNG state into a dictionary.
+
+            Returns:
+                Dict: The RNG state dictionary containing states for 'cpu', 'numpy', 'random', and optionally 'cuda'.
+        """
+        rng_state = {
+            "cpu": torch.get_rng_state(),
+            "numpy": np.random.get_state(),
+            "random": random.getstate(),
+        }
+        if torch.cuda.is_available():
+            rng_state["cuda"] = torch.cuda.get_rng_state()
+        return rng_state
 
     @abstractmethod
     def clip_grad_norm_(
@@ -146,284 +177,68 @@ class FSDPStrategyBase(ABC):
             "_wrap_model method must be implemented by subclasses."
         )
 
-    @classmethod
     @abstractmethod
-    def get_fsdp_version(cls) -> FSDPVersion:
-        """
-        Get the FSDP version associated with the strategy.
-        """
-        raise NotImplementedError(
-            "get_fsdp_version method must be implemented by subclasses."
-        )
-
-    @classmethod
     def save_checkpoint(
-        cls,
-        model_path: str,
+        self,
         model: Union[FSDP, FSDPModule],
         optimizer: Optimizer,
         lr_scheduler: LRScheduler,
         save_path: str,
     ) -> None:
-        """
-        Save the training state checkpoint.
+        raise NotImplementedError(
+            "save_checkpoint method must be implemented by subclasses."
+        )
 
-        Assumes:
-        cls must have get_fsdp_version method,
-        and torch.distributed has been initialized. Most importantly,
-        optimizer should have all state(by calling `fake_optimizer_step`),
-        this is done in `init_worker`.
-
-        Args:
-            model_path (str): The original path to load model config and code, we
-                use it to copy model config and code to safetensors' save_path.
-            model (Union[FSDP, FSDPModule]): The model to be saved.
-            optimizer (Optimizer): The optimizer to be saved.
-            lr_scheduler (LRScheduler): The learning rate scheduler to be saved.
-            save_path (str): The path to save the checkpoint.
-        """
-        clear_memory()
-        torch.distributed.barrier()
-        opts = StateDictOptions(full_state_dict=False, cpu_offload=True)
-        try:
-            training_state = Checkpoint(
-                model,
-                optimizer,
-                lr_scheduler,
-                opts,
-                fsdp_version=cls.get_fsdp_version(),
-            )
-            dcp.save({"fsdp_checkpoint": training_state}, checkpoint_id=save_path)
-
-        except BaseException as e:
-            import traceback
-
-            if hasattr(cls, "logger") and cls.logger is not None:
-                cls.logger.error(f"Failed to save checkpoint to {save_path}: {e}")
-            traceback.print_exc()
-            raise e
-        torch.distributed.barrier()
-
-        opts = StateDictOptions(full_state_dict=True, cpu_offload=True)
-        sd_save_path = os.path.join(save_path, "model")
-        model_state_dict = get_model_state_dict(model=model, options=opts)
-        if torch.distributed.get_rank() == 0:
-            copy_model_config_and_code(model_path=model_path, save_path=sd_save_path)
-            save_state_dict_sharded_safetensors(
-                state_dict=model_state_dict, out_dir=sd_save_path
-            )
-        torch.distributed.barrier()
-
-    @classmethod
+    @abstractmethod
     def load_checkpoint(
-        cls,
+        self,
         model: Union[FSDP, FSDPModule],
         optimizer: Optimizer,
         lr_scheduler: LRScheduler,
         load_path: str,
     ) -> None:
-        """
-        Load the training state checkpoint.
-
-        Assumes:
-        cls must have logger attribute and get_fsdp_version method,
-        and torch.distributed has been initialized. Most importantly,
-        optimizer should have all state(by calling `fake_optimizer_step`),
-        this is done in `init_worker`.
-
-        Args:
-            model (Union[FSDP, FSDPModule]): The model to load the checkpoint into.
-            optimizer (Optimizer): The optimizer to load the checkpoint into.
-            lr_scheduler (LRScheduler): The learning rate scheduler to load the checkpoint into.
-            load_path (str): The path to load the checkpoint from.
-        """
-        torch.distributed.barrier()
-        opts = StateDictOptions(full_state_dict=False, cpu_offload=True)
-        try:
-            training_state = Checkpoint(
-                model=model,
-                optimizer=optimizer,
-                lr_scheduler=lr_scheduler,
-                opts=opts,
-                fsdp_version=cls.get_fsdp_version(),
-            )
-            dcp.load({"fsdp_checkpoint": training_state}, checkpoint_id=load_path)
-        except BaseException as e:
-            import traceback
-
-            if hasattr(cls, "logger") and cls.logger is not None:
-                cls.logger.error(f"Failed to load checkpoint from {load_path}: {e}")
-            traceback.print_exc()
-            raise e
-        torch.distributed.barrier()
-
-    def get_model_state_dict(
-        self, model: FSDPModule, cpu_offload: bool, full_state_dict: bool
-    ) -> dict:
-        """
-        Get the full model state dict of FSDP2 from all ranks.
-
-        Args:
-            - model (FSDPModule): The FSDP2 wrapped model.
-            - cpu_offload (bool): Whether returned state_dict's value will be offloaded to CPU. If true, will
-                be copied to CPU memory, or just keep a reference to the original GPU tensor.
-            - full_state_dict (bool): Whether to get the full state dict.
-
-        Returns:
-            - dict: The state dict of the FSDP/FSDP2 wrapped model according to the specified options.
-        """
-        opts = StateDictOptions(
-            cpu_offload=cpu_offload, full_state_dict=full_state_dict
+        raise NotImplementedError(
+            "load_checkpoint method must be implemented by subclasses."
         )
-        state_dict = get_model_state_dict(model=model, options=opts)
-        return state_dict
 
     @abstractmethod
-    def offload_optimizer(self, optimizer: Optimizer) -> None: ...
+    def get_model_state_dict(self, model: Union[FSDP, FSDPModule]) -> dict:
+        raise NotImplementedError(
+            "state_dict method must be implemented by subclasses."
+        )
 
     @abstractmethod
-    def onload_optimizer(self, optimizer: Optimizer, device: torch.device) -> None: ...
+    def offload_optimizer(self, optimizer: Optimizer) -> None:
+        raise NotImplementedError(
+            "offload_optimizer method must be implemented by subclasses."
+        )
+
+    @abstractmethod
+    def onload_optimizer(self, optimizer: Optimizer, device: torch.device) -> None:
+        raise NotImplementedError(
+            "onload_optimizer method must be implemented by subclasses."
+        )
 
     @abstractmethod
     def offload_param_and_grad(
         self, model: Union[FSDP, FSDPModule], offload_grad: bool
-    ) -> None: ...
+    ) -> None:
+        raise NotImplementedError(
+            "offload_param method must be implemented by subclasses."
+        )
 
     @abstractmethod
     def onload_param_and_grad(
         self, model: Union[FSDP, FSDPModule], device: torch.device, onload_grad: bool
-    ) -> None: ...
+    ) -> None:
+        raise NotImplementedError(
+            "onload_param method must be implemented by subclasses."
+        )
 
     @abstractmethod
     def before_micro_batch(
         self, model: Union[FSDP, FSDPModule], is_last_micro_batch: bool
-    ) -> ContextManager: ...
-
-    def setup_inference_sync_actor_ranks(self, inference: "FSDPInference") -> None:
-        """
-        See `setup_actor_sync_inference_ranks` for details. It will send the sharding metadata
-        (including offsets and sizes for each param) to all actor workers, waiting to receive
-        their responses(whether inference workers need params from them and offsets,size if so).
-
-        Args:
-            - inference (FSDPInference): The FSDP inference worker.
-        """
-        # param name -> (global_start, needed_size)
-        local_meta: list[str, tuple[int, int]] = {}
-        inference_model_state_dict = inference.get_model_state_dict(
-            cpu_offload=False, full_state_dict=False
-        )
-        inference_world_size = inference._world_size
-        inference_rank = inference._rank
-        for name, param in inference_model_state_dict.items():
-            if isinstance(param, DTensor):
-                full_tensor_size = param.numel()
-
-                shard_size = (
-                    full_tensor_size + inference_world_size - 1
-                ) // inference_world_size
-                global_start = inference_rank * shard_size
-                # last rank may have smaller shard
-                global_end = min(global_start + shard_size, full_tensor_size)
-                needed_size = global_end - global_start
-                if needed_size > 0:
-                    local_meta[name] = (global_start, needed_size)
-            elif torch.is_tensor(param):
-                full_tensor_size = param.numel()
-                local_meta[name] = (0, full_tensor_size)
-
-        actor_group = inference._actor_group_name
-        for actor_rank in range(inference._actor_world_size):
-            inference.send(
-                dst_rank=actor_rank, dst_group_name=actor_group, object=local_meta
-            )
-
-        jobs = [
-            inference.recv(
-                src_rank=actor_rank, src_group_name=actor_group, async_op=True
-            )
-            for actor_rank in range(inference._actor_world_size)
-        ]
-        results = [job.wait() for job in jobs]
-
-        for actor_rank, resp in enumerate(results):
-            if resp:
-                inference._actor_dst_map[actor_rank] = resp
-
-    def setup_actor_sync_inference_ranks(self, actor: "FSDPActor") -> None:
-        """
-        Setup the mapping from actor ranks to inference ranks for synchronizing
-        their sharded params. It will receive the sharding metadata from all inference workers,
-        compute which params need to be sent back to each inference worker, and then send it's metadata
-        (including offsets and sizes for each param) to the corresponding inference workers.
-        Actually, unlike FSDP, FSDP2's using of DTensor does do better than FSDP's FlatParams,
-        it sharded params can be directly computed, but for further ergonomic and development consideration
-        (like support multi-dim sharding in future), we still use this way to exchange sharding metadata.
-
-        Args:
-            - actor (FSDPActor): The FSDP actor worker.
-        """
-        inference_group = actor._inference_group_name
-        jobs = [
-            actor.recv(
-                src_rank=inference_rank, src_group_name=inference_group, async_op=True
-            )
-            for inference_rank in range(actor._inference_world_size)
-        ]
-
-        inference_requests: list[dict] = [job.wait() for job in jobs]
-
-        actor_world_size = actor._world_size
-        actor_rank = actor._rank
-
-        local_meta = {}
-        actor_model_state_dict = actor.get_model_state_dict(
-            cpu_offload=False, full_state_dict=False
-        )
-        for name, param in actor_model_state_dict.items():
-            if isinstance(param, DTensor):
-                full_tensor_size = param.numel()
-                shard_size = (
-                    full_tensor_size + actor_world_size - 1
-                ) // actor_world_size
-                global_start = actor_rank * shard_size
-                global_end = min(global_start + shard_size, full_tensor_size)
-                size = global_end - global_start
-                if size > 0:
-                    local_meta[name] = (global_start, size)
-            elif torch.is_tensor(param):
-                full_tensor_size = param.numel()
-                local_meta[name] = (0, full_tensor_size)
-
-        for inference_rank, inference_param_metadata in enumerate(inference_requests):
-            resp = {}
-            has_intersection = False
-            for name, (inf_offset, inf_size) in inference_param_metadata.items():
-                if name in local_meta:
-                    act_offset, act_size = local_meta[name]
-                    # check overlap
-                    start1, end1 = inf_offset, inf_offset + inf_size
-                    start2, end2 = act_offset, act_offset + act_size
-
-                    global_start = max(start1, start2)
-                    global_end = min(end1, end2)
-                    # it means there is intersection between this actor shard and sender inference shard,
-                    # so we just calculate the intersection part and send back to inference worker
-                    if global_start < global_end:
-                        needed_sizes = global_end - global_start
-                        act_shard_offset = global_start - act_offset
-                        inf_shard_offset = global_start - inf_offset
-                        resp[name] = (act_shard_offset, inf_shard_offset, needed_sizes)
-                        has_intersection = True
-
-            if has_intersection:
-                actor._inference_dst_map[inference_rank] = list(resp.keys())
-
-            actor.send(
-                dst_rank=inference_rank,
-                dst_group_name=inference_group,
-                object=resp,
-            )
-        actor.logger.info(
-            f"Actor rank {actor._rank} will send params to inference ranks: {actor._inference_dst_map.keys()}"
+    ) -> ContextManager:
+        raise NotImplementedError(
+            "before_micro_batch method must be implemented by subclasses."
         )

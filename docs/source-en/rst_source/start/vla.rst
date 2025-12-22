@@ -2,125 +2,90 @@ Quickstart 1: PPO Training of VLAs on Maniskill3
 =================================================
 
 This quick-start walks you through training the Visual-Language-Action model, including
-`OpenVLA <https://github.com/openvla/openvla>`_ and `OpenVLA-OFT <https://github.com/moojink/openvla-oft>`_ on the
+`OpenVLA <https://github.com/openvla/openvla>`_ on the
 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`_ environment with **RLinf**.
+For maximum simplicity, you can run the following scripts within a single GPU.
 
 Environment Introduction
 --------------------------
 
-ManiSkill3 is a GPU-accelerated simulation platform for robotics research,  
-focusing on complex contact manipulation and embodied intelligence tasks.  
-The benchmark covers multiple domains, including robotic arms, mobile manipulators, humanoid robots, and dexterous hands,  
-supporting various tasks such as grasping, assembling, drawing, and locomotion.
+ManiSkill3 is a GPU-accelerated simulation platform for robotics research, 
+focusing on contact-rich manipulation and embodied intelligence. 
+The benchmark covers diverse domains including robotic arms, mobile manipulators, humanoids, and dexterous hands, 
+with tasks such as grasping, assembling, drawing, and locomotion. 
 
-We have also implemented system-level optimizations for the GPU simulator (see :doc:`../tutorials/mode/hybrid`).
+We have implemented customized system-level optimizations for the GPU-based simulator (see :doc:`../tutorials/mode/hybrid`).
 
 Launch Training
---------------------------
+-----------------
 
-**Step 1: Download pre-trained models**
+**Step 1: Download the pre-trained model**
 
-If using the **OpenVLA** model, run the following command:
+For **OpenVLA**, run:
 
 .. code-block:: bash
 
-   # Download OpenVLA pre-trained model
+   # Download pre-trained OpenVLA model
    hf download gen-robot/openvla-7b-rlvla-warmup \
    --local-dir /path/to/model/openvla-7b-rlvla-warmup/
 
-This model is cited in the paper: `paper <https://arxiv.org/abs/2505.19789>`_
 
-If using the **OpenVLA-OFT** model, run the following command:
+the model is cited in `paper <https://arxiv.org/abs/2505.19789>`_
 
-.. code-block:: bash
+**Step 2: Execute the provided launch script:**
 
-   # Download OpenVLA-OFT pre-trained model
-   hf download RLinf/Openvla-oft-SFT-libero10-trajall \
-   --local-dir /path/to/model/Openvla-oft-SFT-libero10-trajall/
-   
-   # Download LoRA fine-tuned checkpoint on maniskill
-   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora \
-   --local-dir /path/to/model/oft-sft/lora_004000
+.. note:: 
+   If you have installed RLinf via the Docker image (see :doc:`./installation`), please make sure you have switched to the right Python environment for the target model.
+   The default environment is set to ``openvla``. 
+   To switch to OpenVLA-OFT or openpi, use the built-in script `switch_env`: 
+   ``source switch_env openvla-oft`` or ``source switch_env openpi``.
 
-   # Download assets
-   hf download --repo-type dataset RLinf/maniskill_assets \
-   --local-dir ./rlinf/envs/maniskill/assets
+   If you have installed RLinf in a custom environment, please ensure that you have installed the model's corresponding dependencies as described in :doc:`./installation`.
 
+For user convenience, our configuration file is set up to run with at least two GPUs by default.  
+However, if you have multiple GPUs and wish to accelerate the quickstart process,  
+we highly recommend updating the following configuration option in  
+``./examples/embodiment/config/maniskill_ppo_openvla_quickstart.yaml``:  
+``cluster.component_placement``.
 
+You can set it to **0-3** or  **0-7** to use 4/8 GPUs depending on your available resources.
+Refer to :doc:`../tutorials/user/yaml` for a more detailed explanation of the placement configuration.
 
-**Step 2: Modify the configuration file**
+.. code-block:: yaml
 
-Before running the script, you need to modify the ``./examples/embodiment/config/maniskill_ppo_openvla_quickstart.yaml`` file according to the download paths of the model and dataset. Specifically, update the following configurations to the path where the `gen-robot/openvla-7b-rlvla-warmup` checkpoint is located.
+   cluster:
+     num_nodes: 1
+     component_placement:
+        actor,rollout: 0-1
 
-- ``rollout.model.model_path``  
-- ``actor.model.model_path``  
-- ``actor.tokenizer.tokenizer_model``  
+Finally, before running the script, you need to modify the corresponding configuration options in the YAML file according to the download paths of the model and dataset. Specifically, update:
 
+- ``rollout.model_dir``
+- ``actor.checkpoint_load_path``
+- ``actor.tokenizer.tokenizer_model``
 
-
-For **OpenVLA-OFT**, modify the ``maniskill_ppo_openvlaoft_quickstart.yaml`` file. Set the following model configuration items to the path where the `RLinf/Openvla-oft-SFT-libero10-trajall` checkpoint is located. At the same time, set the LoRA path to the path where the `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora` checkpoint is located.
-
-- ``rollout.model.model_path``  
-- ``actor.model.model_path``  
-- ``actor.tokenizer.tokenizer_model``  
-- ``actor.model.lora_path``
-- ``actor.model.is_lora: True``
-
-**Step 3: Launch training**
-
-After completing the above configuration file modifications, run the following command to launch training:
+After these modifications, launch the following script to start training!
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
 
-.. note::
-   If you installed **RLinf** via Docker image (see :doc:`./installation`), please ensure you have switched to the Python environment corresponding to the target model.
-   The default environment is ``openvla``.
-   If using OpenVLA-OFT or openpi, please use the built-in script `switch_env` to switch environments:
-   ``source switch_env openvla-oft`` or ``source switch_env openpi``.
+**Step 3: View the results:**
 
-   If you installed **RLinf** in a custom environment, please ensure you have installed the dependencies for the corresponding model, see :doc:`./installation` for details.
+* Final checkpoints & metrics: ``../results``
 
-For **OpenVLA-OFT**:
-
-.. code-block:: bash
-
-   source switch_env openvla-oft
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart
-
-
-View Training Results
---------------------------
-
-- Final model and metrics save path: ``./logs``  
-- Launch as follows:
+* TensorBoard summaries: ``../results/tensorboard``  
+  Launch with:
 
   .. code-block:: bash
 
-     tensorboard --host 0.0.0.0 --logdir path/to/tensorboard/
+     tensorboard --logdir ../results/tensorboard/ --port 6006
 
-After opening TensorBoard, you will see an interface similar to the figure below.  
-It is recommended to focus on the following metrics:
 
-- ``rollout/env_info/return``  
-- ``rollout/env_info/success_once``  
+Open TensorBoard, and you should see an interface similar to the one below.  
+Key metrics to pay attention to include  
+``rollout/env_info/return`` and ``rollout/env_info/success_once``.  
 
 .. raw:: html
 
    <img src="https://github.com/RLinf/misc/raw/main/pic/embody-quickstart-metric.jpg" width="800"/>
-
-.. note::
-   If you want to specify GPU usage,
-   you can modify the parameter  
-   ``cluster.component_placement`` in the configuration file.
-
-   Set this item to **0-3** or **0-7** to use 4/8 GPUs according to your actual resources.
-   See :doc:`../tutorials/user/yaml` for more detailed instructions on Placement configuration.
-
-   .. code-block:: yaml
-
-      cluster:
-      num_nodes: 1
-      component_placement:
-         actor,env,rollout: 0-3

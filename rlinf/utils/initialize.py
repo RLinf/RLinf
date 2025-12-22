@@ -64,6 +64,7 @@ def set_megatron_args(cfg):
     args.consumed_train_samples = 0
     args.skipped_train_samples = 0
     args.consumed_valid_samples = 0
+    # args.attention_backend = 3
 
     args.use_mp_args_from_checkpoint_args = False
     args.fp16 = torch_dtype_from_precision(cfg.model.precision) == torch.float16

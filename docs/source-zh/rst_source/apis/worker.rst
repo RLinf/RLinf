@@ -18,6 +18,6 @@ Worker
 WorkerGroup
 -----------
 
-.. autoclass:: rlinf.scheduler.worker.WorkerGroup
+.. autoclass:: rlinf.scheduler.WorkerGroup
    :members:
    :member-order: bysource

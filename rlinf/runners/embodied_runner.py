@@ -13,30 +13,26 @@
 # limitations under the License.
 
 import os
-import typing
 
+from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.utils.runner_utils import check_progress
-
-if typing.TYPE_CHECKING:
-    from omegaconf.dictconfig import DictConfig
-
-    from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
-    from rlinf.workers.env.env_worker import EnvWorker
-    from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
+from rlinf.workers.env.env_worker import EnvWorker
+from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 
 class EmbodiedRunner:
     def __init__(
         self,
-        cfg: "DictConfig",
-        actor: "EmbodiedFSDPActor",
-        rollout: "MultiStepRolloutWorker",
-        env: "EnvWorker",
+        cfg: DictConfig,
+        actor: EmbodiedFSDPActor,
+        rollout: MultiStepRolloutWorker,
+        env: EnvWorker,
         critic=None,
         reward=None,
         run_timer=None,
@@ -68,16 +64,8 @@ class EmbodiedRunner:
         self.rollout.init_worker().wait()
         self.env.init_worker().wait()
 
-        resume_dir = self.cfg.runner.get("resume_dir", None)
-        if resume_dir is None:
-            return
-
-        actor_checkpoint_path = os.path.join(resume_dir, "actor")
-        assert os.path.exists(actor_checkpoint_path), (
-            f"resume_dir {actor_checkpoint_path} does not exist."
-        )
-        self.actor.load_checkpoint(actor_checkpoint_path).wait()
-        self.global_step = int(resume_dir.split("global_step_")[-1])
+        if self.cfg.runner.get("resume_dir", None) is not None:
+            self.global_step = int(self.cfg.runner.resume_dir.split("global_step_")[-1])
 
     def update_rollout_weights(self):
         rollout_futures = self.rollout.sync_model_from_actor()
@@ -181,7 +169,7 @@ class EmbodiedRunner:
             logging_metrics.update(rollout_metrics)
             logging_metrics.update(training_metrics)
 
-            global_pbar.set_postfix(logging_metrics, refresh=False)
+            global_pbar.set_postfix(logging_metrics)
             global_pbar.update(1)
 
         self.metric_logger.finish()

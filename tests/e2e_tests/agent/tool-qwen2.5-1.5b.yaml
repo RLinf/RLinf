@@ -71,7 +71,7 @@ algorithm:
 
   # params for rollout
   sampling_params:
-    do_sample: True
+    use_greedy: False
     temperature: 1.0
     top_k: 1000000
     top_p: 1.0
@@ -80,7 +80,7 @@ algorithm:
     min_new_tokens: 1
 
 inference:
-  model_type: ${rollout.model.model_type}
+  model_arch: ${rollout.model_arch}
   group_name: "InferenceGroup"
   load_from_actor: True
   model:
@@ -102,10 +102,9 @@ rollout:
 
   gpu_memory_utilization: 0.55
 
-  model:
-    model_path: /workspace/dataset/Qwen2.5-1.5B-Instruct
-    model_type: qwen2.5
-    precision: ${actor.model.precision}   # precision for rollout model, support [fp16, bf16, fp32]
+  model_dir: /workspace/dataset/Qwen2.5-1.5B-Instruct
+  model_arch: qwen2.5
+  precision: ${actor.model.precision}   # precision for rollout model, support [fp16, bf16, fp32]
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
@@ -168,6 +167,8 @@ actor:
   mcore_gpt: True
   spec_name: decoder_gpt
 
+  checkpoint_load_path: null
+
   offload_optimizer: True
   offload_weight: True
   offload_grad: True
@@ -178,7 +179,6 @@ actor:
   seed: 1234
 
   model:
-    megatron_checkpoint: null
     precision: bf16
     add_bias_linear: False
 
@@ -240,7 +240,7 @@ actor:
     lr_decay_iters: 10
 
   tokenizer:
-    tokenizer_model: ${rollout.model.model_path}
+    tokenizer_model: ${rollout.model_dir}
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'
@@ -258,7 +258,8 @@ actor:
 
     ckpt_convertor: # config for ckpt convertor
       model: qwen_2.5_1.5b
-      hf_model_path: ${rollout.model.model_path} # path to the hf model
+      model_type: null # will be set by hf model's config if null
+      hf_model_path: ${rollout.model_dir} # path to the hf model
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
       use_gpu_num : 0
       use_gpu_index: null

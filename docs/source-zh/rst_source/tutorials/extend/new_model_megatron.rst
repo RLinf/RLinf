@@ -87,18 +87,17 @@ Megatron-LM 训练框架并不能直接从 hf 格式的 checkpoint 直接读取�
     training_backend: megatron
     mcore_gpt: True
     spec_name: decoder_gpt
-    model:
-      megatron_checkpoint: null
+    checkpoint_load_path: null
    megatron:
     use_hf_ckpt: True
     ckpt_convertor:
       model: DeepSeek-R1-Distill-Qwen-1.5B
-      hf_model_path: ${rollout.model.model_path}
+      hf_model_path: ${rollout.model_dir}
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
 
 这样的方式会在 RLinf 的第一次训练过程中，进行一次 Megatron-LM 格式的 checkpoint 转换。但是，从 huggingface 格式的 checkpoint 转换到 Megatron-LM 格式的 checkpoint 是非常耗时的过程。
 
-如果您之前已经转换过 Megatron-LM 格式 checkpoint, 您也可以直接在 yaml 文件中通过配置 ``actor.model.megatron_checkpoint`` 选项，指定转换好的 Megatron-LM 格式 checkpoint 路径，在后续的训练过程中可以直接使用。
+如果您之前已经转换过 Megatron-LM 格式 checkpoint, 您也可以直接在 yaml 文件中通过配置 ``checkpoint_load_path`` 选项，指定转换好的 Megatron-LM 格式 checkpoint 路径，在后续的训练过程中可以直接使用。
 
 例如：
 
@@ -109,13 +108,12 @@ Megatron-LM 训练框架并不能直接从 hf 格式的 checkpoint 直接读取�
     training_backend: megatron
     mcore_gpt: True
     spec_name: decoder_gpt
-    model:
-      megatron_checkpoint: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
+    checkpoint_load_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
    megatron:
     use_hf_ckpt: False
     ckpt_convertor:
       model: DeepSeek-R1-Distill-Qwen-1.5B
-      hf_model_path: ${rollout.model.model_path}
+      hf_model_path: ${rollout.model_dir}
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
 
 
@@ -454,13 +452,13 @@ SglangActor 接收权重代码 ``rlinf/hybrid_engines/sglang/common/sgl_schedule
 若您对整个适配新模型的过程存在任何疑问以及问题，欢迎随时给我们 `RLinf <https://github.com/RLinf/RLinf/issue>`__ 提出对应的 issue，我们会尽快解答您的问题。
 
 5. qwen2.5 系列模型演示
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~
 
 完成上述步骤后，您就可以适配您的新模型到 RLinf 中，下面展示是 qwen2.5 系列模型演示的 yaml 配置文件。
 
 您可以在适配好新模型后，参考这个 yaml 配置文件，进行相应的修改。
 
-**文件：** ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``
+**文件：** ``examples/math/config/qwen2.5-1.5b-grpo-megatron.yaml``
 
 设置 RLinf 使用的 Megatron 参数。  
 
@@ -513,7 +511,8 @@ SglangActor 接收权重代码 ``rlinf/hybrid_engines/sglang/common/sgl_schedule
 
     ckpt_convertor: # ckpt 转换器配置
       model: DeepSeek-R1-Distill-Qwen-1.5B
-      hf_model_path: ${rollout.model.model_path} # hf 模型路径
+      model_type: null # 若为 null，会根据 hf 模型配置自动设置
+      hf_model_path: ${rollout.model_dir} # hf 模型路径
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
       use_gpu_num : 0
       use_gpu_index: null

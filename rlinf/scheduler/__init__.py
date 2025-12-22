@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .accelerator import Accelerator, AcceleratorType
 from .channel import Channel, ChannelWorker, WeightedItem
-from .cluster import Cluster, ClusterConfig
-from .hardware import AcceleratorType, AcceleratorUtil
+from .cluster import Cluster
 from .placement import (
-    ComponentPlacement,
     FlexiblePlacementStrategy,
     NodePlacementStrategy,
     PackedPlacementStrategy,
@@ -25,11 +24,9 @@ from .placement import (
 from .worker import Worker, WorkerAddress, WorkerGroupFuncResult
 
 __all__ = [
-    "AcceleratorUtil",
+    "Accelerator",
     "AcceleratorType",
     "Cluster",
-    "ClusterConfig",
-    "ComponentPlacement",
     "PlacementStrategy",
     "FlexiblePlacementStrategy",
     "NodePlacementStrategy",

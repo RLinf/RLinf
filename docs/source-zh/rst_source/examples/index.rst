@@ -1,5 +1,5 @@
 示例库
-========
+=====
 
 本节展示了 **RLinf 目前支持的示例集合**，  
 展示该框架如何应用于不同场景，并演示其在实际中的高效性。示例库会随着时间不断扩展，涵盖新的场景和任务，以展示 RLinf 的多样性和可扩展性。
@@ -7,7 +7,7 @@
 具身智能场景
 ----------------
 
-具身智能场景包含SOTA模型（如pi0、pi0.5、OpenVLA-OFT）和不同模拟器（如LIBERO、ManiSkill、RoboTwin、MetaWorld）的训练示例，以及真机强化学习训练示例等。
+具身智能场景包含SOTA模型（如pi0、pi0.5、OpenVLA-OFT）和不同模拟器（如LIBERO、ManiSkill、RoboTwin）的训练示例，以及真机强化学习训练示例等。
 
 .. raw:: html
 
@@ -59,70 +59,10 @@
          支持Behavior+OpenVLA-OFT+PPO/GRPO训练
        </p>
      </div>
-     
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/metaworld.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/metaworld.html" target="_blank" style="text-decoration: underline; color: blue;">
-          <b>基于MetaWorld的强化学习</b>
-         </a><br>
-         支持MetaWorld+π₀/π₀.₅+PPO/GRPO训练
-       </p>
-     </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/IsaacLab.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/metaworld.html" target="_blank" style="text-decoration: underline; color: blue;">
-          <b>基于IsaacLab的强化学习</b>
-         </a><br>
-         支持IsaacLab+gr00t+PPO训练
-       </p>
-     </div>
-   </div>
-
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/gr00t.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/gr00t.html" target="_blank" style="text-decoration: underline; color: blue;">
-          <b>GR00T-N1.5模型强化学习训练</b>
-         </a><br>
-         支持GR00T-N1.5强化学习微调
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/calvin.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
-            data-target="animated-image.originalImage">
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/calvin.html" target="_blank" style="text-decoration: underline; color: blue;">
-         <b>基于CALVIN的强化学习</b>
-         </a><br>
-         支持CALVIN+π₀/π₀.₅+PPO/GRPO训练
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/robocasa.jpeg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/robocasa.html" target="_blank" style="text-decoration: underline; color: blue;">
-          <b>基于RoboCasa的强化学习</b>
-         </a><br>
-         支持RoboCasa+π₀+GRPO训练
-       </p>
-     </div>
-   </div>
-
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RoboTwin-Platform/RoboTwin/main/assets/files/50_tasks.gif"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
+       <img src="https://raw.githubusercontent.com/RoboTwin-Platform/RoboTwin/main/assets/files/50_tasks.gif" 
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" 
             data-target="animated-image.originalImage">
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <b>[开发中]基于RoboTwin的强化学习</b><br>
@@ -140,6 +80,28 @@
      </div>
    </div>
 
+   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/NVIDIA/Isaac-GR00T/blob/main/media/model-architecture.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/gr00t.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>GR00T-N1.5模型强化学习训练</b>
+         </a><br>
+         支持不同具身结构的双系统模型强化学习训练
+       </p>
+     </div>
+
+     <!-- 2nd column (blank placeholder) -->
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center; min-height: 200px;">
+       <!-- Empty to preserve grid space -->
+     </div>
+
+     <!-- 3rd column (blank placeholder) -->
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center; min-height: 200px;">
+       <!-- Empty to preserve grid space -->
+     </div>
+   </div>
 
 
 推理场景
@@ -256,11 +218,7 @@ RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训
    libero
    behavior
    metaworld
-   isaaclab
-   calvin
-   robocasa
    pi0
-   gr00t
    reasoning
    coding_online_rl
-   sft
+   gr00t
