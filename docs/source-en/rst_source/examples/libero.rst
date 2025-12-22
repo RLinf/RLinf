@@ -112,8 +112,8 @@ Before starting training, you need to download the corresponding pretrained mode
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
+   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
 After downloading, make sure to correctly specify the model path in the configuration yaml file.
 
@@ -252,7 +252,7 @@ Visualization and Results
       logger:
          log_path: "../results"
          project_name: rlinf
-         experiment_name: "test_openvla"
+         experiment_name: "libero_10_grpo_openvlaoft"
          logger_backends: ["tensorboard"] # wandb, swanlab
 
 

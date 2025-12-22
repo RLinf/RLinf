@@ -142,9 +142,7 @@ RoboCasa Kitchen提供了涵盖多个类别的24个原子任务（不包含需�
    # 方法 1: 使用 git clone
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-Pi0-RoboCasa
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-RoboCasa
 
    # 方法 2: 使用 huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-RoboCasa
-   hf download RLinf/RLinf-Pi0-RoboCasa
+   hf download RLinf/RLinf-Pi0-RoboCasa --local-dir RLinf-Pi0-RoboCasa

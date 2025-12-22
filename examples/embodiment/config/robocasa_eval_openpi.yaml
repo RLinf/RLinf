@@ -22,7 +22,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "robocasa_pi0_eval"
+    experiment_name: "robocasa_eval_openpi"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1

@@ -102,8 +102,8 @@
 
    # 方法 2: 使用 huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
+   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
 下载完成后，请确保在配置yaml文件中正确指定模型路径。
 
@@ -243,7 +243,7 @@
       logger:
          log_path: "../results"
          project_name: rlinf
-         experiment_name: "test_openvla"
+         experiment_name: "libero_10_grpo_openvlaoft"
          logger_backends: ["tensorboard"] # wandb, swanlab
 
 LIBERO 结果

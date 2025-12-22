@@ -79,7 +79,6 @@ jobs:
               - 'rlinf/__init__.py'
               - 'rlinf/*/__init__.py'
               - 'toolkits/**'
-              - '.github/workflows/ci-tests.yml'
             embodied_filter: &embodied
               - *shared
               - 'rlinf/envs/**'
@@ -131,6 +130,8 @@ jobs:
               - *sft
               - *unit
               - *scheduler
+              - docs/**/*.py
+              - '.github/workflows/ci-tests.yml'
             all_changes_filter:
               - *install
               - *docker

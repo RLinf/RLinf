@@ -89,8 +89,8 @@
 
    # 方法 2: 使用 huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-CALVIN-ABC-D
-   hf download RLinf/RLinf-Pi05-CALVIN-ABC-D
+   hf download RLinf/RLinf-Pi0-CALVIN-ABC-D --local-dir RLinf-Pi0-CALVIN-ABC-D
+   hf download RLinf/RLinf-Pi05-CALVIN-ABC-D --local-dir RLinf-Pi05-CALVIN-ABC-D
 
 
 下载后，请确保在配置 yaml 文件中正确指定模型路径。
@@ -215,7 +215,7 @@ CALVIN D 任务上训练配置文件：
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_calvin"
+       experiment_name: "calvin_d_d_ppo_openpi_pi05"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 
