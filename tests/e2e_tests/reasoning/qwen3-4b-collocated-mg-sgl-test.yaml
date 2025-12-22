@@ -147,8 +147,6 @@ actor:
   mcore_gpt: True
   spec_name: decoder_gpt
 
-  checkpoint_load_path: null
-
   offload_optimizer: True
   offload_weight: True
   offload_grad: True
