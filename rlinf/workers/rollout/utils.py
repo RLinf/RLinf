@@ -256,6 +256,10 @@ class DisaggRankMapper(RankMapper):
                     (gen_dp + i * stride * actor_dp, gen_tp)
                     for i in range(rollout_world_size // actor_world_size)
                 ]
+            elif actor_rank < rollout_world_size:
+                rank_map[actor_rank] = [(gen_dp, gen_tp)]
+            else:
+                rank_map[actor_rank] = []
 
         return rank_map
 
