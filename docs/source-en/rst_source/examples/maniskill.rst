@@ -115,7 +115,7 @@ Before starting training, you need to download the corresponding pretrained mode
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download gen-robot/openvla-7b-rlvla-warmup
+   hf download gen-robot/openvla-7b-rlvla-warmup --local-dir openvla-7b-rlvla-warmup
 
 After downloading, make sure to correctly specify the model path in the configuration yaml file.
 
@@ -201,44 +201,53 @@ Visualization and Results
 
 - **Training Metrics**:
 
-  - ``actor/loss``: PPO policy loss
-  - ``actor/value_loss``: Value function loss
-  - ``actor/entropy``: Policy entropy
-  - ``actor/grad_norm``: Gradient norm
-  - ``actor/lr``: Learning rate
+  - ``train/actor/approx_kl``: Approximate KL divergence between old and new policies.
+  - ``train/actor/clip_fraction``: Fraction of updates where the probability ratio was clipped.
+  - ``train/actor/clipped_ratio``: Mean of the clipped probability ratios.
+  - ``train/actor/grad_norm``: Gradient norm.
+  - ``train/actor/lr``: Learning rate.
+  - ``train/actor/policy_loss``: PPO/GRPO policy loss.
+  - ``train/critic/value_loss``: Value function loss.
+  - ``train/critic/value_clip_ratio``: Fraction of value targets whose update was clipped.
+  - ``train/critic/explained_variance``: Explained variance of the value function predictions.
+  - ``train/entropy_loss``: Policy entropy.
+  - ``train/loss``: Total training loss (actor_loss + critic_loss + entropy_loss regularization).
 
 - **Rollout Metrics**:
 
-  - ``rollout/reward_mean``: Average episode reward
-  - ``rollout/reward_std``: Reward standard deviation
-  - ``rollout/episode_length``: Average episode length
-  - ``rollout/success_rate``: Task completion rate
+  - ``rollout/advantages_max``: the max of the advantage.
+  - ``rollout/advantages_mean``: the mean of the advantage.
+  - ``rollout/advantages_min``: the min of the advantage.
+  - ``rollout/rewards``: chunk of reward.
 
 - **Environment Metrics**:
 
-  - ``env/success_rate``: Success rate across environments
-  - ``env/step_reward``: Step-by-step reward
-  - ``env/termination_rate``: Episode termination rate
+  - ``env/episode_len``: Number of environment steps elapsed in the episode (unit: step).
+  - ``env/return``: Episode return.
+  - ``env/reward``: Step-level reward.  
+  - ``env/success_once``: Recommended metric to monitor training performance. It directly reflects the unnormalized episodic success rate.
 
 **3. Video Generation**
 
 .. code-block:: yaml
 
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ./logs/video/train
+   env:
+      eval:
+         video_cfg:
+            save_video: True
+            video_base_dir: ${runner.logger.log_path}/video/eval
 
-**4. WandB Integration**
+**4. Train Log Tool Integration**
 
 .. code-block:: yaml
 
-   trainer:
-     logger:
-       wandb:
-         enable: True
-         project_name: "RLinf"
-         experiment_name: "openvla-maniskill"
+   runner:
+      task_type: embodied
+      logger:
+         log_path: "../results"
+         project_name: rlinf
+         experiment_name: "maniskill_ppo_openvla"
+         logger_backends: ["tensorboard"] # wandb, swanlab
 
 ManiSkill3 Results
 ~~~~~~~~~~~~~~~~~~
@@ -266,7 +275,7 @@ The best-performing model for each task is highlighted in bold.
 .. note:: 
    The same OOD test set used in `rl4vla` (`paper link <https://arxiv.org/abs/2505.19789>`_) is adopted here for fair comparison. 
    Base models: For the OpenVLA model, we adopt the pre-trained checkpoint available at HuggingFace 
-   (`OpenVLA (Base) <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_). 
+   (`OpenVLA (Base) (aka openvla-7b-rlvla-warmup) <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_). 
    For the OpenVLA-OFT model, we perform our own LoRA fine-tuning using motion planning data collected from the “PutOnPlateInScene25Main-v3” task. 
    The resulting LoRA model weights are also provided at HuggingFace (`OpenVLA-OFT (Base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_).
 

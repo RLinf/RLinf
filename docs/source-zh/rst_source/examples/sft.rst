@@ -96,6 +96,31 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
             is_lora: True
             lora_rank: 32
 
+依赖安装
+-----------------------
+
+本节介绍 OpenPI 模型进行 SFT 训练所需的依赖环境。对于其他模型，请参考各自示例文档中的「依赖安装」小节。
+
+**方式一：使用 Docker 镜像**
+
+推荐直接使用预构建的 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` 来运行实验。
+
+进入容器后，请通过内置的 `switch_env` 工具切换到对应的虚拟环境：
+
+.. code:: bash
+
+    source switch_env openpi
+
+**方式二：自建环境**
+
+也可以在本地/集群环境中直接安装依赖，示例命令如下：
+
+.. code:: bash
+
+    pip install uv
+    bash requirements/install.sh embodied --model openpi --env maniskill_libero
+    source .venv/bin/activate
+
 启动脚本
 -------------
 

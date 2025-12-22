@@ -24,7 +24,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "test_openvla"
+    experiment_name: "maniskill_grpo_openvlaoft"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -127,6 +127,7 @@ actor:
 
     unnorm_key: bridge_orig
     is_lora: True
+    # aka RLinf-OpenVLAOFT-ManiSkill-Base-Lora. It can be downloaded from https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
     lora_path: /path/to/model/oft-sft/lora_004000
 
   tokenizer:

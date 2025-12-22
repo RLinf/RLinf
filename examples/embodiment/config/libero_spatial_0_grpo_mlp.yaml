@@ -23,7 +23,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "test_openvla"
+    experiment_name: "libero_spatial_0_grpo_mlp"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1

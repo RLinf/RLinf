@@ -146,9 +146,7 @@ OpenVLA-OFT 提供了一个适用于 Behavior 环境中所有任务类型的统�
 
    # 方法 2: 使用 huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-OpenVLAOFT-Behavior
-
-或者，您也可以使用 ModelScope 从 https://www.modelscope.cn/models/RLinf/RLinf-OpenVLAOFT-Behavior 下载模型。
+   hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir RLinf-OpenVLAOFT-Behavior
 
 下载后，请确保在配置 yaml 文件中正确指定模型路径。
 
@@ -290,7 +288,7 @@ env 和 rollout 之间的管道重叠，以及与 actor 的共享。
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_behavior"
+       experiment_name: "behavior_ppo_openvlaoft"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 

@@ -1,16 +1,12 @@
-{
-  "version": "v1",
-  "full_version": "v1",
-  "docs_versions": [
+[
     {
-      "version": "latest",
-      "title": "Latest (development)",
-      "aliases": []
+        "name": "latest",
+        "version": "latest",
+        "url": "https://rlinf.readthedocs.io/en/latest/"
     },
     {
-      "version": "v1",
-      "title": "v1 (stable)",
-      "aliases": []
+        "name": "v0.1",
+        "version": "v0.1",
+        "url": "https://rlinf.readthedocs.io/en/release-v0.1/"
     }
-  ]
-}
+]

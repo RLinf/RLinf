@@ -24,7 +24,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "test_gr00t"
+    experiment_name: "isaaclab_ppo_gr00t_demo"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 2

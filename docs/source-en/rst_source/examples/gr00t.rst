@@ -112,7 +112,7 @@ In current stage, we support four libero tasks: Spatial, Object, Goal, and Long.
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Gr00t-SFT-Spatial
+   hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
 
 Models for other tasks:
 - `Libero-Object <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_
@@ -321,7 +321,7 @@ Visualization and Results
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_openpi"
+       experiment_name: "libero_10_ppo_gr00t"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 --------------

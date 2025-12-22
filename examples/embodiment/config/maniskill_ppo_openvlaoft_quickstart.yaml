@@ -22,7 +22,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "test_openvla"
+    experiment_name: "maniskill_ppo_openvlaoft_quickstart"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -134,14 +134,15 @@ actor:
 
   # Override the default values in model/openvla_oft
   model:
-    model_path: "/mnt/public/wph/models/robotwin-oft-sft-place_empty_cup_rand-without_action_head/Optional--10000_chkpt"
+    model_path: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
     model_type: "openvla_oft"
 
     unnorm_key: bridge_orig
 
     add_value_head: True
     is_lora: True
-    lora_path: /path/to/model/oft-sft/lora_004000
+    # aka RLinf-OpenVLAOFT-ManiSkill-Base-Lora. It can be downloaded from https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
+    lora_path: /path/to/models/oft-sft/lora_004000/
 
   optim:
     lr: 1.0e-4
