@@ -6,24 +6,23 @@ RL with RoboCasa Benchmark
    :height: 16px
    :class: inline-icon
 
-This document provides a comprehensive guide for reinforcement learning training tasks using the RoboCasa benchmark in the RLinf framework.
-RoboCasa is a large-scale robotic learning simulation framework focused on manipulation tasks in kitchen environments, featuring diverse kitchen layouts, objects, and manipulation tasks.
+This document provides a comprehensive guide for reinforcement learning training tasks using the RoboCasa environment in the RLinf framework.
+RoboCasa Kitchen focuses on manipulation tasks in kitchen environments, featuring diverse kitchen layouts, objects, and manipulation tasks.
+RoboCasa Kitchen combines realistic kitchen environments with diverse manipulation challenges, making it an ideal benchmark for developing generalizable robotic policies.
 
-RoboCasa combines realistic kitchen environments with diverse manipulation challenges, making it an ideal benchmark for developing generalizable robotic policies.
 The main goal is to train vision-language-action models capable of performing the following tasks:
 
 1. **Visual Understanding**: Process RGB images from multiple camera viewpoints.
 2. **Language Understanding**: Interpret natural language task instructions.
 3. **Manipulation Skills**: Execute complex kitchen tasks such as pick-and-place, opening/closing doors, and appliance control.
 
-Environment Overview
---------------------
+Environment
+-----------
 
 **RoboCasa Simulation Platform**
 
 - **Environment**: RoboCasa Kitchen simulation environment (built on robosuite)
-- **Robot**: Panda manipulator with mobile base (PandaOmron), equipped with parallel gripper
-- **Tasks**: 24 atomic kitchen tasks covering multiple categories (excluding NavigateKitchen task that require moving the base)
+- **Robot**: Panda manipulator with mobile base (PandaOmron), equipped with gripper
 - **Observation**: Multi-view RGB images (robot view + wrist camera) + proprioceptive state
 - **Action Space**: 12-dimensional continuous actions
 
@@ -35,7 +34,7 @@ Environment Overview
 
 **Task Categories**
 
-RoboCasa provides diverse atomic tasks organized into multiple categories:
+RoboCasa Kitchen provides 24 atomic tasks covering multiple categories (excluding NavigateKitchen atomic task that requires base movement):
 
 *Door Manipulation Tasks*:
 
@@ -91,7 +90,7 @@ RoboCasa provides diverse atomic tasks organized into multiple categories:
 - **Images**: Base camera RGB tensor ``[batch_size, 3, 128, 128]`` and wrist camera ``[batch_size, 3, 128, 128]``
 - **State**: Proprioceptive state tensor ``[batch_size, 16]``
 - **Task Description**: Natural language instructions
-- **Actions**: 7-dimensional continuous actions (position, quaternion, gripper)
+- **Actions**: 12-dimensional continuous actions
 - **Reward**: Sparse reward based on task completion
 
 Algorithm

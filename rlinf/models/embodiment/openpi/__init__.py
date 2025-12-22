@@ -46,17 +46,6 @@ from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
 
 _CONFIGS = [
     TrainConfig(
-        name="pi0_maniskill",
-        model=pi0_config.Pi0Config(),
-        data=LeRobotManiSkillDataConfig(
-            repo_id="physical-intelligence/maniskill",
-            base_config=DataConfig(prompt_from_task=True),
-            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base"),
-            extra_delta_transform=True,
-        ),
-        pytorch_weight_path="checkpoints/torch/pi0_base",
-    ),
-    TrainConfig(
         name="pi0_libero",
         model=pi0_config.Pi0Config(),
         data=LeRobotLiberoDataConfig(
@@ -94,6 +83,47 @@ _CONFIGS = [
             "checkpoints/jax/pi05_base"
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        name="pi0_maniskill",
+        model=pi0_config.Pi0Config(),
+        data=LeRobotManiSkillDataConfig(
+            repo_id="physical-intelligence/maniskill",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base"),
+            extra_delta_transform=True,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_base",
+        seed=0,
+        batch_size=32,
+        num_workers=8,
+        num_train_steps=200,  # 1_000, #30_000
+        log_interval=5,  # 25,
+        save_interval=50,  # 200,
+    ),
+    TrainConfig(
+        name="pi05_maniskill",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=False
+        ),  # discrete_state_input=False: stateless policy, True: with state policy
+        data=LeRobotManiSkillDataConfig(
+            repo_id="physical-intelligence/maniskill",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_maniskill/assets"),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+        seed=0,
+        batch_size=256,
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=0.999,
+        num_workers=8,
+        num_train_steps=5_000,
+        log_interval=5,
+        save_interval=250,
     ),
     TrainConfig(
         name="pi0_metaworld",
