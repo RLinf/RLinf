@@ -31,8 +31,8 @@ runner:
   max_tokens_per_mbs: 16384
 
   resume_dir: null
-  experiment_name: zcy_rstar2-qwen2.5-1.5b-128-wo_down-wo_tool-wo_re-mg_fp32_fp16
-  output_dir: /mnt/public/zhuchunyang_rl/logs
+  experiment_name: rstar2-qwen2.5-1.5b-128-wo_down-wo_tool-wo_re-me_dbs_fp32_fp16
+  output_dir: /mnt/mnt/public/wangxiangyuan/logs_1218
 
 down_sampling:
   do_down_sampling: false

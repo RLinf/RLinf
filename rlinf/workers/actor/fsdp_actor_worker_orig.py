@@ -29,18 +29,9 @@ from rlinf.data.io_struct import RolloutResult
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
 )
-from rlinf.hybrid_engines.fsdp.utils import (
-    prepare_pack_fsdp,
-    pack_fsdp,
-    unpack_fsdp,
-)
 from rlinf.models import get_model
 from rlinf.scheduler import Channel, Cluster, Worker
-from rlinf.utils.data_iter_utils import (
-    get_iterator_k_split,
-    get_reverse_idx,
-    split_dynamic_batch_size,
-)
+from rlinf.utils.data_iter_utils import get_iterator_k_split
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.distributed import (
     compute_rollout_metrics as compute_math_rollout_metrics,
@@ -90,11 +81,6 @@ class FSDPActor(FSDPModelManager, Worker):
             * self.cfg.algorithm.group_size
             // self._world_size
         )
-
-        self.enable_dynamic_batch_size = cfg.runner.get(
-            "enable_dynamic_batch_size", False
-        )
-        self.max_tokens_per_mbs = cfg.runner.get("max_tokens_per_mbs", 2048)
 
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
         self.device = torch.cuda.current_device()
@@ -227,22 +213,6 @@ class FSDPActor(FSDPModelManager, Worker):
                     dim=0,
                 ).cuda()
 
-        if self.enable_dynamic_batch_size:
-            max_seq_len_pack = self.max_tokens_per_mbs
-            max_seq_len_unpack = self.cfg.actor.model.encoder_seq_length
-            max_prompt_len = self.cfg.data.max_prompt_length
-            max_response_len = max_seq_len_unpack - max_prompt_len
-            idx_starts, idx_ends = prepare_pack_fsdp(batch, max_prompt_len)
-
-            input_ids, position_ids, attention_mask = pack_fsdp(
-                input_ids,
-                position_ids,
-                idx_starts=idx_starts,
-                idx_ends=idx_ends,
-                max_seq_len_pack=max_seq_len_pack,
-                eos_token_id=self.tokenizer.eos_token_id,
-            )
-
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -251,31 +221,15 @@ class FSDPActor(FSDPModelManager, Worker):
             **multi_modal_inputs,
         )
 
-        if self.enable_dynamic_batch_size:
-            logits = outputs.logits
-            logits = logits / self.cfg.algorithm.sampling_params.temperature
+        logits = outputs.logits
+        logits = logits[:, -self.response_len - 1 : -1, :]
+        logits = logits / self.cfg.algorithm.sampling_params.temperature
 
-            compute_logprobs_fn = lambda a, b: compute_logprobs_from_logits(a, b, task_type=self.cfg.runner.task_type)
-            logprobs = unpack_fsdp(
-                logits,
-                input_ids,
-                idx_starts=idx_starts,
-                idx_ends=idx_ends,
-                max_seq_len_unpack=max_seq_len_unpack,
-                eos_token_id=self.tokenizer.eos_token_id,
-                compute_logprobs_fn=compute_logprobs_fn,
-            )
-            logprobs = logprobs[:, -max_response_len :]
-            return logprobs
-        else:
-            logits = outputs.logits[:, -self.response_len - 1 : -1, :]
-            logits = logits / self.cfg.algorithm.sampling_params.temperature
-
-            responses = input_ids[:, -self.response_len :]
-            logprobs = compute_logprobs_from_logits(
-                logits, responses, task_type=self.cfg.runner.task_type
-            )
-            return logprobs
+        responses = input_ids[:, -self.response_len :]
+        logprobs = compute_logprobs_from_logits(
+            logits, responses, task_type=self.cfg.runner.task_type
+        )
+        return logprobs
 
     def run_inference(
         self,
@@ -297,79 +251,22 @@ class FSDPActor(FSDPModelManager, Worker):
             recv_batch_size += rollout_result.num_sequence
             self._load_weight_and_optimizer()
 
-            if self.enable_dynamic_batch_size:
-                (
-                    micro_batches_iter,
-                    _,
-                    _,
-                    dbs_indices,
-                ) = split_dynamic_batch_size(
-                    batch=batch,
-                    cp_world_size=1,
-                    vpp_world_size=1,
-                    max_tokens_per_mbs=self.max_tokens_per_mbs,
-                    microbatch_group_size_per_vp_stage=1,
-                )
-                assert dbs_indices is not None
-                micro_batches = list(micro_batches_iter)
-            else:
-                num_splits = (
-                    rollout_result.num_sequence
-                    // self.cfg.algorithm.logprob_forward_micro_batch_size
-                )
-                micro_batches_iter = get_iterator_k_split(
-                    batch,
-                    num_splits=num_splits,
-                )
-                micro_batches = list(micro_batches_iter)
-                dbs_indices = None
+            num_splits = (
+                rollout_result.num_sequence
+                // self.cfg.algorithm.logprob_forward_micro_batch_size
+            )
+            micro_batches_iter = get_iterator_k_split(
+                batch,
+                num_splits=num_splits,
+            )
+            micro_batches = list(micro_batches_iter)
 
             prev_logprobs = []
             with self.worker_timer():
                 for micro_batch in micro_batches:
                     prev_logprobs.append(self.inference_step(micro_batch).cpu())
 
-
-
-
-
-                # prev_logprobs2 = []
-                # num_splits = (
-                #     rollout_result.num_sequence
-                #     // self.cfg.algorithm.logprob_forward_micro_batch_size
-                # )
-                # micro_batches2 = list(get_iterator_k_split(
-                #     batch,
-                #     num_splits=num_splits,
-                # ))
-                # self.enable_dynamic_batch_size = False
-                # for idx in sum(dbs_indices, []):
-                #     micro_batch = micro_batches2[idx]
-                #     prev_logprobs2.append(self.inference_step(micro_batch).cpu())
-                # self.enable_dynamic_batch_size = True
-                # breakpoint()
-
-
-
-
-
-
                 prev_logprobs_tensor = torch.cat(prev_logprobs)
-                if self.enable_dynamic_batch_size:
-                    try:
-                        assert sum(micro_batch["prompt_lengths"]) + sum(micro_batch["response_lengths"]) <= self.max_tokens_per_mbs # TODO: zcy 
-                    except:
-                        breakpoint()
-                    indices = sum(dbs_indices, [])
-                    assert len(indices) == prev_logprobs_tensor.size(0), (
-                        f"Dynamic batch size indices length {len(indices)} does not equal "
-                        f"output length {prev_logprobs_tensor.size(0)}"
-                    )
-                    revert_indices = torch.tensor(
-                        get_reverse_idx(indices), dtype=torch.long
-                    )
-                    prev_logprobs_tensor = prev_logprobs_tensor[revert_indices]
-
                 if rollout_result.rollout_logprobs is not None:
                     # Rollout has returned logprobs, store the recomputed logprobs in recompute_prev_logprobs
                     rollout_result.recompute_prev_logprobs = prev_logprobs_tensor
@@ -386,16 +283,6 @@ class FSDPActor(FSDPModelManager, Worker):
                     for micro_batch in micro_batches:
                         ref_logprobs.append(self.inference_step(micro_batch).cpu())
                     ref_logprobs_tensor = torch.cat(ref_logprobs)
-                    if self.enable_dynamic_batch_size:
-                        indices = sum(dbs_indices, [])
-                        assert len(indices) == ref_logprobs_tensor.size(0), (
-                            f"Dynamic batch size indices length {len(indices)} does not equal "
-                            f"output length {ref_logprobs_tensor.size(0)}"
-                        )
-                        revert_indices = torch.tensor(
-                            get_reverse_idx(indices), dtype=torch.long
-                        )
-                        ref_logprobs_tensor = ref_logprobs_tensor[revert_indices]
                     rollout_result.ref_logprobs = ref_logprobs_tensor
 
             self.put_result(rollout_result, output_channel)
@@ -443,37 +330,18 @@ class FSDPActor(FSDPModelManager, Worker):
             for global_batch in global_batches:
                 train_global_batch_size = global_batch["input_ids"].shape[0]
 
-                if self.enable_dynamic_batch_size:
-                    (
-                        train_micro_batches,
-                        _,
-                        num_micro_batches,
-                        dbs_indices,
-                    ) = split_dynamic_batch_size(
-                        batch=global_batch,
-                        cp_world_size=1,
-                        vpp_world_size=1,
-                        max_tokens_per_mbs=self.max_tokens_per_mbs,
-                        microbatch_group_size_per_vp_stage=1,
-                    )
-                    self.gradient_accumulation = num_micro_batches
-                    train_micro_batches = list(train_micro_batches)
-                    for m_batch in train_micro_batches:
-                        if (m_batch["prompt_lengths"] + m_batch["response_lengths"]).sum() > self.max_tokens_per_mbs:
-                            breakpoint()
-                else:
-                    assert train_global_batch_size % self.cfg.actor.micro_batch_size == 0, (
-                        f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size=}"
-                    )
+                assert train_global_batch_size % self.cfg.actor.micro_batch_size == 0, (
+                    f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size=}"
+                )
 
-                    self.gradient_accumulation = (
-                        train_global_batch_size // self.cfg.actor.micro_batch_size
-                    )
-                    # split batch into micro_batches
-                    train_micro_batches = get_iterator_k_split(
-                        global_batch,
-                        train_global_batch_size // self.cfg.actor.micro_batch_size,
-                    )
+                self.gradient_accumulation = (
+                    train_global_batch_size // self.cfg.actor.micro_batch_size
+                )
+                # split batch into micro_batches
+                train_micro_batches = get_iterator_k_split(
+                    global_batch,
+                    train_global_batch_size // self.cfg.actor.micro_batch_size,
+                )
 
                 self.optimizer.zero_grad()
                 metrics = {}
@@ -504,23 +372,8 @@ class FSDPActor(FSDPModelManager, Worker):
                     ref_logprobs = None
                     if "ref_logprobs" in m_batch:
                         ref_logprobs = m_batch["ref_logprobs"]
+
                     loss_mask = m_batch["response_mask"][:, -self.response_len :]
-                    if self.enable_dynamic_batch_size:
-                        max_seq_len_pack = self.max_tokens_per_mbs
-                        max_seq_len_unpack = self.cfg.actor.model.encoder_seq_length
-                        max_prompt_len = self.cfg.data.max_prompt_length
-                        max_response_len = max_seq_len_unpack - max_prompt_len
-                        idx_starts, idx_ends = prepare_pack_fsdp(m_batch, max_prompt_len)
-
-                        input_ids, position_ids, attention_mask = pack_fsdp(
-                            input_ids,
-                            position_ids,
-                            idx_starts=idx_starts,
-                            idx_ends=idx_ends,
-                            max_seq_len_pack=max_seq_len_pack,
-                            eos_token_id=self.tokenizer.eos_token_id,
-                        )
-
                     with self.amp_context:
                         output = self.model(
                             input_ids=input_ids,
@@ -530,32 +383,17 @@ class FSDPActor(FSDPModelManager, Worker):
                             use_cache=False,
                         )
 
-                    if self.enable_dynamic_batch_size:
-                        logits = output.logits
-                        logits.div_(self.cfg.algorithm.sampling_params.temperature)
+                    logits = output.logits
 
-                        compute_logprobs_fn = lambda a, b: compute_logprobs_from_logits(a, b, task_type=self.cfg.runner.task_type)
-                        logprobs = unpack_fsdp(
-                            logits,
-                            input_ids,
-                            idx_starts=idx_starts,
-                            idx_ends=idx_ends,
-                            max_seq_len_unpack=max_seq_len_unpack,
-                            eos_token_id=self.tokenizer.eos_token_id,
-                            compute_logprobs_fn=compute_logprobs_fn,
-                        )
-                        logprobs = logprobs[:, -max_response_len :]
-                    else:
-                        logits = output.logits
-                        logits.div_(self.cfg.algorithm.sampling_params.temperature)
+                    logits.div_(self.cfg.algorithm.sampling_params.temperature)
 
-                        logits = logits[
-                            :, -self.response_len - 1 : -1, :
-                        ]  # (bsz, response_length, vocab_size)
-                        responses = input_ids[:, -self.response_len :]
-                        logprobs = compute_logprobs_from_logits(
-                            logits, responses, task_type=self.cfg.runner.task_type
-                        )
+                    responses = input_ids[:, -self.response_len :]
+                    logits = logits[
+                        :, -self.response_len - 1 : -1, :
+                    ]  # (bsz, response_length, vocab_size)
+                    logprobs = compute_logprobs_from_logits(
+                        logits, responses, task_type=self.cfg.runner.task_type
+                    )
 
                     clip_ratio = self.cfg.algorithm.ratio_clip_eps
                     clip_ratio_low = (

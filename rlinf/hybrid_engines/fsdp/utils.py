@@ -487,3 +487,109 @@ def get_backward_prefetch_strategy(
         f"Unknown backward prefetch strategy: {prefetch_str}"
     )
     return BACKWARD_PREFETCH_STRATEGIES[prefetch_str]
+
+
+def pack_sequences(
+    input_tensor: torch.Tensor, # [B, seq_len]
+    idx_starts: list[int],      # [B]
+    idx_ends: list[int],        # [B]
+    max_seq_len: int,
+    pad_val,
+):
+    try:
+        assert len(input_tensor.shape) == 2
+        assert input_tensor.shape[0] == len(idx_starts) == len(idx_ends)
+        assert sum(idx_ends) - sum(idx_starts) <= max_seq_len
+    except:
+        breakpoint()
+    pad_len = max_seq_len - (sum(idx_ends) - sum(idx_starts))
+
+    input_tensors_rm_pad = []
+    for idx in range(input_tensor.shape[0]):
+        input_tensors_rm_pad.append(input_tensor[idx, idx_starts[idx]:idx_ends[idx]])
+
+    if pad_len > 0:
+        pad_tensor = torch.full((pad_len,), pad_val, dtype=input_tensor.dtype, device=input_tensor.device)
+        input_tensors_rm_pad.append(pad_tensor)
+
+    # [1, max_seq_len]
+    output_tensor = torch.cat(input_tensors_rm_pad)
+    return output_tensor
+
+
+def unpack_sequences(
+    input_tensor: torch.Tensor, # [1, max_seq_len]
+    idx_starts: list[int],      # [B]
+    idx_ends: list[int],        # [B]
+    max_seq_len: int,
+    pad_val,
+):
+    assert len(input_tensor.shape) == 2
+    assert input_tensor.shape[0] == 1
+    assert len(idx_starts) == len(idx_ends)
+    assert sum(idx_ends) - sum(idx_starts) <= input_tensor.shape[1]
+
+    input_tensors_splits = []
+    cu_len = 0
+    for idx_start, idx_end in zip(idx_starts, idx_ends):
+        length = idx_end - idx_start
+        input_tensors_splits.append(input_tensor[0, cu_len:cu_len+length])
+        cu_len += length
+
+    # [B, max_seq_len]
+    output_tensor = torch.stack(
+        [
+            torch.cat(
+                [
+                    torch.full((idx_start,), pad_val, dtype=input_tensor.dtype, device=input_tensor.device),
+                    input_split,
+                    torch.full((max_seq_len - idx_end,), pad_val, dtype=input_tensor.dtype, device=input_tensor.device),
+                ]
+            )
+            for idx_start, idx_end, input_split in zip(idx_starts, idx_ends, input_tensors_splits)
+        ]
+    )
+    return output_tensor
+
+
+def prepare_pack_fsdp(
+    m_batch: dict,
+    max_prompt_len,
+):
+    idx_starts = (max_prompt_len - m_batch["prompt_lengths"]).tolist()
+    idx_ends = (max_prompt_len + m_batch["response_lengths"]).tolist()
+    return idx_starts, idx_ends
+
+
+def pack_fsdp(
+    input_ids,
+    position_ids,
+    *,
+    idx_starts,
+    idx_ends,
+    max_seq_len_pack,
+    eos_token_id,
+):
+    input_ids = pack_sequences(input_ids, idx_starts, idx_ends, max_seq_len_pack, eos_token_id).unsqueeze(0)
+    position_ids = pack_sequences(position_ids, idx_starts, idx_ends, max_seq_len_pack, 0).unsqueeze(0)
+    # force set attention_mask to None, and transformer will generate cu_seqlens from position_ids
+    # only available in fsdp using flash-attn
+    attention_mask = None
+    return input_ids, position_ids, attention_mask
+
+
+def unpack_fsdp(
+    logits,
+    input_ids,
+    *,
+    idx_starts,
+    idx_ends,
+    max_seq_len_unpack,
+    eos_token_id,
+    compute_logprobs_fn,
+):
+    responses = torch.cat([input_ids[:, 1:], torch.full((1,1), eos_token_id, dtype=input_ids.dtype, device=input_ids.device)], dim=1)
+    logprobs = compute_logprobs_fn(logits, responses)
+    logprobs = torch.cat([torch.zeros((1,1), dtype=logits.dtype, device=logits.device), logprobs[:, :-1]], dim=-1)
+    logprobs = unpack_sequences(logprobs, idx_starts, idx_ends, max_seq_len_unpack, pad_val=0)
+    return logprobs
