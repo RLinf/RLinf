@@ -28,6 +28,7 @@ from rlinf.hybrid_engines.fsdp import (
     OffloadPolicy,
 )
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
+from rlinf.hybrid_engines.fsdp.strategy.parallel import TensorParallelizerBase
 from rlinf.hybrid_engines.fsdp.utils import (
     FSDPVersion,
     apply_fsdp2_to_model,
@@ -65,10 +66,21 @@ class FSDP2Strategy(FSDPStrategyBase):
             else OffloadPolicy()
         )
 
+        if device_mesh.ndim == 2:
+            model = TensorParallelizerBase.create(
+                self.cfg.model.model_arch
+            ).parallelize(hf_model=model, tp_mesh=device_mesh["tp"])
+            self.logger.info(
+                f"Applied Tensor Parallelism using {self.cfg.model.model_arch} strategy."
+            )
+            fsdp_mesh = device_mesh["dp"]
+        else:
+            fsdp_mesh = device_mesh
+
         fsdp2_model: FSDPModule = apply_fsdp2_to_model(
             module=model,
             config=self.cfg.fsdp_config,
-            device_mesh=device_mesh,
+            device_mesh=fsdp_mesh,
             mp_policy=mp_policy,
             offload_policy=offload_policy,
             reshard_after_forward=self.cfg.fsdp_config.reshard_after_forward,

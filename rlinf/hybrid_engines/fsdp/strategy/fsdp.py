@@ -28,6 +28,7 @@ from torch.optim import Optimizer
 from rlinf.config import SupportedModel, torch_dtype_from_precision
 from rlinf.hybrid_engines.fsdp import FSDP
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
+from rlinf.hybrid_engines.fsdp.strategy.parallel import TensorParallelizerBase
 from rlinf.hybrid_engines.fsdp.utils import (
     FSDPVersion,
     get_backward_prefetch_strategy,
@@ -77,6 +78,17 @@ class FSDPStrategy(FSDPStrategyBase):
             self.cfg.fsdp_config.backward_prefetch
         )
 
+        if device_mesh.ndim == 2:
+            model = TensorParallelizerBase.create(
+                self.cfg.model.model_arch
+            ).parallelize(hf_model=model, tp_mesh=device_mesh["tp"])
+            self.logger.info(
+                f"Applied Tensor Parallelism using {self.cfg.model.model_arch} strategy."
+            )
+            fsdp_mesh = device_mesh["dp"]
+        else:
+            fsdp_mesh = device_mesh
+
         fsdp_model = FSDP(
             module=model,
             param_init_fn=init_fn,
@@ -85,7 +97,7 @@ class FSDPStrategy(FSDPStrategyBase):
             sharding_strategy=sharding_strategy,
             mixed_precision=mixed_precision,
             sync_module_states=True,
-            device_mesh=device_mesh,
+            device_mesh=fsdp_mesh,
             forward_prefetch=self.cfg.fsdp_config.forward_prefetch,
             backward_prefetch=backward_prefetch,
             limit_all_gathers=self.cfg.fsdp_config.limit_all_gathers,
