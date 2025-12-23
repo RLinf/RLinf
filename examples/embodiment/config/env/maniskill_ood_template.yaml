@@ -6,7 +6,7 @@ ignore_terminations: True
 use_rel_reward: True
 seed: 0
 group_size: 1
-policy_setup: "windwox_bridge"
+policy_setup: "widowx_bridge"   # Corrected grammar error
 use_fixed_reset_state_ids: True
 
 video_cfg:

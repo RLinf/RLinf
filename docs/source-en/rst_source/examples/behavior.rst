@@ -38,8 +38,8 @@ Environment
 
 - **Task_descriptions**: select from `behavoir-1k` tasks
 - **Images**: Multi-camera RGB tensors
-  - Head images: ``[batch_size, 3, 224, 224]``
-  - Wrist images: ``[batch_size, 2, 3, 224, 224]`` (left and right cameras)
+  - Head images: ``[batch_size, 224, 224, 3]``
+  - Wrist images: ``[batch_size, 2, 224, 224, 3]`` (left and right cameras)
 
 
 Algorithm
@@ -146,9 +146,7 @@ OpenVLA-OFT provides a unified model that is suitable for all task types in the 
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-OpenVLAOFT-Behavior
-
-Alternatively, you can also use ModelScope to download the model from https://www.modelscope.cn/models/RLinf/RLinf-OpenVLAOFT-Behavior.
+   hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir RLinf-OpenVLAOFT-Behavior
 
 After downloading, please make sure to specify the model path correctly in your configuration yaml file.
 
@@ -293,7 +291,7 @@ Visualization and Results
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_behavior"
+       experiment_name: "behavior_ppo_openvlaoft"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 

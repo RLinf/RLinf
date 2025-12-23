@@ -31,7 +31,7 @@
 
 **数据结构**
 
-- **Images**：RGB 张量 ``[batch_size, 3, 480, 480]``  
+- **Images**：RGB 张量 ``[batch_size, 480, 480, 3]``  
 - **Task Descriptions**：自然语言指令  
 - **Actions**：归一化的连续值
 - **Rewards**：基于任务完成的稀疏奖励
@@ -89,8 +89,8 @@
 
    # 方法 2: 使用 huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-MetaWorld
-   hf download RLinf/RLinf-Pi05-MetaWorld
+   hf download RLinf/RLinf-Pi0-MetaWorld --local-dir RLinf-Pi0-MetaWorld
+   hf download RLinf/RLinf-Pi05-MetaWorld --local-dir RLinf-Pi05-MetaWorld
 
 或者，您也可以使用 ModelScope 从 https://www.modelscope.cn/models/RLinf/RLinf-Pi0-MetaWorld 下载模型。
 
@@ -221,7 +221,7 @@ MetaWorld ML45 联合训练配置文件 （在该任务设定下，训练在45�
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_metaworld"
+       experiment_name: "metaworld_50_ppo_openpi"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 

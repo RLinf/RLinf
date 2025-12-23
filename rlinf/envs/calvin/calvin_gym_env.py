@@ -24,13 +24,11 @@ import torch
 
 from rlinf.envs.calvin import CalvinBenchmark, make_env
 from rlinf.envs.calvin.venv import ReconfigureSubprocEnv
-from rlinf.envs.libero.utils import (
+from rlinf.envs.utils import (
+    list_of_dict_to_dict_of_list,
     put_info_on_image,
     save_rollout_video,
     tile_images,
-)
-from rlinf.envs.utils import (
-    list_of_dict_to_dict_of_list,
     to_tensor,
 )
 
@@ -232,35 +230,25 @@ class CalvinEnv(gym.Env):
             images_and_states = self._extract_image_and_state(obs)
             images_and_states_list.append(images_and_states)
 
-        obs = {
-            "images_and_states": to_tensor(
-                list_of_dict_to_dict_of_list(images_and_states_list)
-            ),
-            "task_descriptions": self.task_descriptions,
-        }
-        return obs
+        images_and_states = to_tensor(
+            list_of_dict_to_dict_of_list(images_and_states_list)
+        )
 
-    def _post_process_obs(self, obs):
-        image_tensor = torch.stack(
-            [
-                value.clone().permute(2, 0, 1)
-                for value in obs["images_and_states"]["full_image"]
-            ]
+        full_image_tensor = torch.stack(
+            [value.clone() for value in images_and_states["full_image"]]
         )
         wrist_image_tensor = torch.stack(
-            [
-                value.clone().permute(2, 0, 1)
-                for value in obs["images_and_states"]["wrist_image"]
-            ]
+            [value.clone() for value in images_and_states["wrist_image"]]
         )
-        states = obs["images_and_states"]["state"]
+        states = images_and_states["state"]
 
         obs = {
-            "images": image_tensor,
+            "full_images": full_image_tensor,
             "wrist_images": wrist_image_tensor,
             "states": states,
-            "task_descriptions": obs["task_descriptions"],
+            "task_descriptions": self.task_descriptions,
         }
+
         return obs
 
     def _reconfigure(self, reset_state_ids, env_idx):
@@ -311,7 +299,6 @@ class CalvinEnv(gym.Env):
         self._reconfigure(reset_state_ids, env_idx)
         raw_obs = self.env.get_obs(id=env_idx)
         obs = self._wrap_obs(raw_obs)
-        obs = self._post_process_obs(obs)
         if env_idx is not None:
             self._reset_metrics(env_idx)
         else:
@@ -341,8 +328,6 @@ class CalvinEnv(gym.Env):
                 "task": self.task_descriptions,
             }
             self.add_new_frames(obs, plot_infos)
-
-        obs = self._post_process_obs(obs)
 
         infos = self._record_metrics(step_reward, terminations, infos)
         if self.ignore_terminations:
@@ -437,7 +422,7 @@ class CalvinEnv(gym.Env):
 
     def add_new_frames(self, obs, plot_infos):
         images = []
-        obs_batch = obs["images_and_states"]["full_image"]
+        obs_batch = obs["full_images"]
         for env_id in range(obs_batch.shape[0]):
             info_item = {
                 k: v if np.size(v) == 1 else v[env_id] for k, v in plot_infos.items()

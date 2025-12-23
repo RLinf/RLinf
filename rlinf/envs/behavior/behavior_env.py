@@ -108,27 +108,22 @@ class BehaviorEnv(gym.Env):
             OmegaConf.to_container(self.cfg.omnigibson_cfg, resolve=True),
         )
 
-    def _permute_and_norm(self, x):
-        # [H, W, C] -> [C, H, W]
-        return x.to(torch.uint8)[..., :3].permute(2, 0, 1) / 255.0
-
     def _extract_obs_image(self, raw_obs):
-        permute_and_norm = self._permute_and_norm
         for sensor_data in raw_obs.values():
             assert isinstance(sensor_data, dict)
             for k, v in sensor_data.items():
                 if "left_realsense_link:Camera:0" in k:
-                    left_image = permute_and_norm(v["rgb"])
+                    left_image = v["rgb"].to(torch.uint8)[..., :3]
                 elif "right_realsense_link:Camera:0" in k:
-                    right_image = permute_and_norm(v["rgb"])
+                    right_image = v["rgb"].to(torch.uint8)[..., :3]
                 elif "zed_link:Camera:0" in k:
-                    zed_image = permute_and_norm(v["rgb"])
+                    zed_image = v["rgb"].to(torch.uint8)[..., :3]
 
         return {
-            "images": zed_image,  # [C, H, W]
+            "full_images": zed_image,  # [H, W, C]
             "wrist_images": torch.stack(
                 [left_image, right_image], axis=0
-            ),  # [N_IMG, C, H, W]
+            ),  # [N_IMG, H, W, C]
         }
 
     def _wrap_obs(self, obs_list):
@@ -138,12 +133,12 @@ class BehaviorEnv(gym.Env):
             extracted_obs_list.append(extracted_obs)
 
         obs = {
-            "images": torch.stack(
-                [obs["images"] for obs in extracted_obs_list], axis=0
-            ),  # [N_ENV, C, H, W]
+            "full_images": torch.stack(
+                [obs["full_images"] for obs in extracted_obs_list], axis=0
+            ),  # [N_ENV, H, W, C]
             "wrist_images": torch.stack(
                 [obs["wrist_images"] for obs in extracted_obs_list], axis=0
-            ),  # [N_ENV, N_IMG, C, H, W]
+            ),  # [N_ENV, N_IMG, H, W, C]
             "task_descriptions": [self.task_description for i in range(self.num_envs)],
         }
         return obs

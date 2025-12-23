@@ -212,10 +212,20 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
                 f"In: What action should the robot take to {t.lower()}?\nOut: "
                 for t in env_obs["task_descriptions"]
             ]
+            if env_obs["full_images"].ndim == 4:
+                env_obs["full_images"] = env_obs["full_images"].unsqueeze(1)
+            assert env_obs["full_images"].ndim == 5
 
-            all_images = [env_obs["images"]]
+            all_images = [
+                env_obs["full_images"].permute(0, 1, 4, 2, 3)
+            ]  # [B, 1, H, W, C] -> [B, 1, C, H, W]
             if self.vision_backbone.get_num_images_in_input() > 1:
-                wrist_imgs = env_obs["wrist_images"]  # [B, N_IMG, C, H, W]
+                if env_obs["wrist_images"].ndim == 4:
+                    env_obs["wrist_images"] = env_obs["wrist_images"].unsqueeze(1)
+                assert env_obs["wrist_images"].ndim == 5
+                wrist_imgs = env_obs["wrist_images"].permute(
+                    0, 1, 4, 2, 3
+                )  # [B, N_IMG, H, W, C] -> [B, N_IMG, C, H, W]
                 all_images.extend(
                     [wrist_imgs[:, i] for i in range(wrist_imgs.shape[1])]
                 )
@@ -225,9 +235,6 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
             precision = next(self.parameters()).dtype
 
             primary_image = all_images.pop(0)
-            if primary_image.ndim == 4:
-                primary_image = primary_image.unsqueeze(1)
-            assert primary_image.ndim == 5
             images = {"images": primary_image}
             inputs = self.input_processor(
                 text=task_descriptions,

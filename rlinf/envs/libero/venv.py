@@ -20,7 +20,8 @@ from typing import Any, Callable, Optional, Union
 import gym
 import numpy as np
 from libero.libero.envs import OffScreenRenderEnv
-from libero.libero.envs.venv import (
+
+from rlinf.envs.venv import (
     BaseVectorEnv,
     CloudpickleWrapper,
     EnvWorker,

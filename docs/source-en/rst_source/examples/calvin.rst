@@ -90,8 +90,8 @@ Before starting training, you need to download the corresponding pretrained mode
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-CALVIN-ABC-D
-   hf download RLinf/RLinf-Pi05-CALVIN-ABC-D
+   hf download RLinf/RLinf-Pi0-CALVIN-ABC-D --local-dir RLinf-Pi0-CALVIN-ABC-D
+   hf download RLinf/RLinf-Pi05-CALVIN-ABC-D --local-dir RLinf-Pi05-CALVIN-ABC-D
 
 After downloading, make sure to correctly specify the model path in the configuration yaml file.
 
@@ -214,7 +214,7 @@ Visualization and Results
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_calvin"
+       experiment_name: "calvin_d_d_ppo_openpi_pi05"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 

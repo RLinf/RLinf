@@ -28,14 +28,14 @@ from rlinf.envs.libero.utils import (
     get_benchmark_overridden,
     get_libero_image,
     get_libero_wrist_image,
-    put_info_on_image,
     quat2axisangle,
-    save_rollout_video,
-    tile_images,
 )
 from rlinf.envs.libero.venv import ReconfigureSubprocEnv
 from rlinf.envs.utils import (
     list_of_dict_to_dict_of_list,
+    put_info_on_image,
+    save_rollout_video,
+    tile_images,
     to_tensor,
 )
 
@@ -277,23 +277,17 @@ class LiberoEnv(gym.Env):
             list_of_dict_to_dict_of_list(images_and_states_list)
         )
 
-        image_tensor = torch.stack(
-            [
-                value.clone().permute(2, 0, 1)
-                for value in images_and_states["full_image"]
-            ]
+        full_image_tensor = torch.stack(
+            [value.clone() for value in images_and_states["full_image"]]
         )
         wrist_image_tensor = torch.stack(
-            [
-                value.clone().permute(2, 0, 1)
-                for value in images_and_states["wrist_image"]
-            ]
+            [value.clone() for value in images_and_states["wrist_image"]]
         )
 
         states = images_and_states["state"]
 
         obs = {
-            "images": image_tensor,
+            "full_images": full_image_tensor,
             "wrist_images": wrist_image_tensor,
             "states": states,
             "task_descriptions": self.task_descriptions,

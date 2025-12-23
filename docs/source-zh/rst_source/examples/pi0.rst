@@ -1,8 +1,10 @@
 π\ :sub:`0`\和π\ :sub:`0.5`\ 模型强化学习训练
 ===============================================
 
-本示例展示如何在 LIBERO 环境中，使用 RLinf 框架对 π\ :sub:`0`\和π\ :sub:`0.5`
-算法进行强化学习微调的完整指南。示例覆盖从环境输入、核心算法、训练脚本配置到评估与可视化的完整流程，并提供可复现的命令和配置片段。
+本示例展示 RLinf 框架对 π\ :sub:`0`\和π\ :sub:`0.5`
+算法进行强化学习微调的完整指南。示例覆盖从环境输入、核心算法、训练脚本配置到评估与可视化的完整流程，并提供可复现的命令和配置片段。 
+
+详细技术报告参考论文: `πRL: ONLINE RL FINE-TUNING FOR FLOW-BASED VISION-LANGUAGE-ACTION MODELS <https://arxiv.org/abs/2510.25889>`__.
 
 主要目标是让模型具备以下能力：
 
@@ -17,22 +19,32 @@
 **LIBERO环境**
 
 -  **Environment**\ ：基于 robosuite（MuJoCo）的 LIBERO 仿真基准
--  **Task**\ ：指挥一台 7
-   自由度机械臂完成多种家居操作技能（抓取放置、叠放、开抽屉、空间重排等）
--  **Observation**\ ：工作区周围离屏相机采集的 RGB 图像（常见分辨率
-   128×128 或 224×224）
--  **Action Space**\ ：7 维连续动作 - 末端执行器三维位置控制（x, y, z）
-   - 三维旋转控制（roll, pitch, yaw） - 夹爪控制（开/合）
+-  **Task**\ ：指挥一台 7 自由度机械臂完成多种家居操作技能（抓取放置、叠放、开抽屉、空间重排等）
+-  **Observation**\ ：工作区周围离屏相机采集的 RGB 图像（常见分辨率 128×128 或 224×224）
+-  **Action Space**\ ：7 维连续动作
+   - 末端执行器三维位置控制（x, y, z）
+   - 三维旋转控制（roll, pitch, yaw）
+   - 夹爪控制（开/合）
+
+**ManiSkill3 环境**
+
+-  **Environment**\ ：ManiSkill3 仿真平台
+-  **Task**\ ：控制机械臂抓取多种物体
+-  **Observation**\ ：第三人称相机的 RGB 图像（224×224）
+-  **Action Space**\ ：7 维连续动作
+   - 三维位置控制（x, y, z）
+   - 三维旋转控制（roll, pitch, yaw）
+   - 夹爪控制（开/合）
 
 **任务描述格式**
 
-   π\ :sub:`0`\ 和 π\ :sub:`0.5`\ 使用环境给出的原始任务描述直接作为语言模型的输入
+   π\ :sub:`0`\ 和 π\ :sub:`0.5`\ 使用环境给出的原始任务描述直接作为语言模型的输入。
 
 **数据结构**
 
 -  **Images**\ ：包含主视角图像和腕部视角图像，均为RGB 张量
-   ``[batch_size, 3, 224, 224]``
--  **States**\ ：末端执行器的位姿（位置 + 姿态）以及夹爪状态
+   ``[batch_size, 224, 224, 3]``
+-  **States**\ ：在LIBERO当中是末端执行器的位姿（位置 + 姿态）以及夹爪状态, 在ManiSkill3当中是机器人关节角度
 -  **Task Descriptions**\ ：自然语言指令
 -  **Rewards**\ ：任务成功/失败的稀疏奖励
 
@@ -77,15 +89,7 @@
 模型下载
 --------
 
-在开始训练之前，您需要下载相应的预训练模型。根据您要使用的算法类型，我们提供了不同的模型选择：
-
-**π**\ :sub:`0`\ **模型下载**
-
-π\ :sub:`0`\ 根据任务类型提供两个不同的模型选项：
-
-**Option #1 RLinf-Pi0-SFT-Spatial-Object-Goal 模型**
-
-该模型专门用于处理 object、goal、spatial 类型的任务。
+在开始训练之前，您需要下载相应的预训练模型。例如，针对 LIBERO 环境的 Spatial、Object、Goal 类型的任务，您可以通过如下方式进行下载：
 
 .. code:: bash
 
@@ -96,48 +100,63 @@
 
    # 方式2：使用 huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal
+   hf download RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal --local-dir RLinf-Pi0-SFT-Spatial-Object-Goal
 
-或者，您可以从ModelScope下载该模型 https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal。
+或者，您可以从 ModelScope 下载该模型 https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal。
 
-**Option #2 RLinf-Pi0-SFT-Long 模型**
+当然，RLinf 也提供了针对其他环境的预训练模型。模型列表如下：
 
-该模型专门用于处理 Long（libero10）类型任务。
+.. list-table:: **π**\ :sub:`0` **预训练模型列表**
+   :header-rows: 1
+   :widths: 15 30 50
 
-.. code:: bash
+   * - 环境
+     - 任务说明
+     - HuggingFace 链接
 
-   # 下载 Long 模型（选择以下任一方式）
-   # 方式1：使用 git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-SFT-Long
+   * - LIBERO
+     - Spatial, Object, Goal 
+     - `RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT>`__
 
-   # 方式2：使用 huggingface-hub
-   pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-SFT-Long
+   * - LIBERO
+     - Long 
+     - `RLinf-Pi0-LIBERO-Long-SFT <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Long-SFT>`__
 
-或者，您可以从ModelScope下载该模型 https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Long。
+   * - ManiSkill3
+     - 多任务
+     - `RLinf-Pi0-ManiSkill-25Main-SFT <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT>`__
 
-**π**\ :sub:`0.5`\ **模型下载**
+   * - MetaWorld
+     - MT50
+     - `RLinf-Pi0-MetaWorld-SFT <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT>`__
 
-π\ :sub:`0.5`\ 提供一个统一的模型，该模型适用于所有类型的任务，包括 object、goal、spatial 和 Long 类型任务。
+   * - CALVIN
+     - ABC-D
+     - `RLinf-Pi0-CALVIN-ABC-D-SFT <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT>`__
 
-.. code:: bash
+.. list-table:: **π**\ :sub:`0.5` **预训练模型列表**
+   :header-rows: 1
+   :widths: 15 30 50
 
-   # 方式1：使用 git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-SFT
+   * - 环境
+     - 任务说明
+     - HuggingFace 链接
 
-   # 方式2：使用 huggingface-hub
-   pip install huggingface-hub
-   hf download RLinf/RLinf-Pi05-SFT
+   * - LIBERO
+     - Spatial, Object, Goal, Long
+     - `RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__
 
-或者，您可以从ModelScope下载该模型 https://www.modelscope.cn/models/RLinf/RLinf-Pi05-SFT。
+   * - ManiSkill3
+     - 多任务
+     - `RLinf-Pi05-ManiSkill-25Main-SFT <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT>`__
 
-**模型选择指南**
+   * - MetaWorld
+     - MT50
+     - `RLinf-Pi05-MetaWorld-SFT <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT>`__
 
-- 如果您要使用π\ :sub:`0`\ 模型训练**object、goal、spatial** 类型的任务，请使用 `RLinf-Pi0-SFT-Spatial-Object-Goal` 模型
-- 如果您要使用π\ :sub:`0`\ 模型训练 **libero10** 的 Long 类型任务，请使用 `RLinf-Pi0-SFT-Long` 模型
-- 如果您要使用π\ :sub:`0.5`\ 模型训练所有类型的任务，请使用 `RLinf-Pi05-SFT` 模型
+   * - CALVIN
+     - ABC-D
+     - `RLinf-Pi05-CALVIN-ABC-D-SFT <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT>`__
 
 下载完成后，请确保在配置文件中正确指定模型路径。
 
@@ -183,7 +202,7 @@ actor** 之间的流水线重叠，从而提升 rollout 效率。
          actor: 6-7
 
 你还可以重新配置 Placement，实现 **完全分离**\ ：env、rollout、actor
-各用各的 GPU、互不干扰， 这样就不需要 offload 功能。
+各用各的 GPU，互不干扰，这样就不需要 offload 功能。
 
 **2. 模型关键参数配置**
 
@@ -192,23 +211,42 @@ actor** 之间的流水线重叠，从而提升 rollout 效率。
 .. code:: yaml
 
    openpi:
-     noise_level: 0.5
+     noise_level: 0.5 # flow_sde 的默认噪声强度
+     noise_logvar_range: [0.08, 0.16] # flow_noise 的默认可学习噪声范围
      action_chunk: ${actor.model.num_action_chunks}
      num_steps: ${actor.model.num_steps}
      train_expert_only: True
      action_env_dim: ${actor.model.action_dim}
-     noise_method: "flow_sde"
+     noise_method: "flow_sde" # flow_sde, flow_noise
      add_value_head: False
      pi05: False 
      value_after_vlm: False
 
-你可以通过配置 ``noise_level`` 以及 ``num_steps`` ，设置不同的加噪强度以及流匹配步数。
+- 通过 ``num_steps`` 设置不同的流匹配步数。
 
-你可以通过修改 ``noise_method`` 使用不同的加噪方式。我们提供\ `flow_sde <https://arxiv.org/abs/2505.05470>`__\ 和\ `flow_noise <https://arxiv.org/abs/2505.22094>`__\ 两种方式。
+- 通过修改 ``noise_method`` 使用不同的加噪方式。我们提供\ `flow_sde <https://arxiv.org/abs/2505.05470>`__\ 和\ `flow_noise <https://arxiv.org/abs/2505.22094>`__\ 两种方式。其中 ``noise_level`` 用于控制 ``flow_sde`` 的加噪强度，``noise_logvar_range`` 用于控制 ``flow_noise`` 的可学习噪声范围。
 
-你可以通过设置 ``pi05: True`` 启用π\ :sub:`0.5`\模式，通过 ``value_after_vlm`` 参数控制state输入路径：当该参数为 True 时，state 特征输入至 VLM 模块（为 π\ :sub:`0.5`\ 的默认配置）；为 False 时，state 特征输入至 action expert 模块（为 π\ :sub:`0`\ 的默认配置）。
+- 通过设置 ``pi05: True`` 启用 π\ :sub:`0.5`\ 模型。
 
-**2.2 LoRA设置**
+- 通过 ``value_after_vlm`` 控制 critic 的位置：当该参数为 True 时，critic 接入到 VLM 模块的输出后；为 False 时，critic 的输入为 action expert 模块的输出。
+
+**2.2 算法配置**
+
+在论文中，我们提供 flow-noise 和 flow-sde 两种技术方案来微调 π\ :sub:`0`\ 和 π\ :sub:`0.5`\ 模型。具体而言，你可以通过切换如下配置来选择不同的技术方案：
+
+.. code:: yaml
+   
+   algorithm:
+      entropy_bonus: 0.0 # 熵正则化系数，flow-sde 设置为0.0，flow-noise 设置为0.005
+   openpi:
+     noise_method: "flow_sde" # [flow_sde,flow_noise] 噪声注入方式，flow-sde 通过ode-sde转换引入噪声，flow-noise 引入噪声网络注入噪声
+     noise_level: 0.5 # flow-sde 的噪声强度
+     noise_logvar_range: [0.08, 0.16] # 针对 flow-noise 的可学习噪声范围
+     joint_logprob: False # 是否优化联合概率密度函数，对于flow-sde，请设置为False，对于flow-noise，请设置为True
+
+例如，针对 flow-sde 的完整参数设置，可以参考 ``libero_spatial_ppo_openpi.yaml``；针对 flow-noise 的完整参数设置，可以参考 ``maniskill_ppo_openpi.yaml``。
+
+**2.3 LoRA设置**
 
 .. code:: yaml
 
@@ -263,11 +301,11 @@ actor** 之间的流水线重叠，从而提升 rollout 效率。
 -  **训练指标**\ ：
 
    -  ``actor/loss``\ ：策略损失
-   -  ``actor/value_loss``\ ：价值函数损失(PPO)
+   -  ``actor/value_loss``\ ：价值函数损失（PPO）
    -  ``actor/grad_norm``\ ：梯度范数
-   -  ``actor/approx_kl``: 更新前后策略KL值
-   -  ``actor/pg_clipfrac``: 策略损失裁减比例
-   -  ``actor/value_clip_ratio``: 价值损失裁剪比例(PPO)
+   -  ``actor/approx_kl``\ ：更新前后策略 KL 值
+   -  ``actor/pg_clipfrac``\ ：策略损失裁减比例
+   -  ``actor/value_clip_ratio``\ ：价值损失裁剪比例（PPO）
 
 -  **Rollout 指标**\ ：
 
@@ -297,13 +335,13 @@ actor** 之间的流水线重叠，从而提升 rollout 效率。
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_openpi"
+       experiment_name: "libero_10_ppo_openpi"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 LIBERO 结果
 ~~~~~~~~~~~
 
-我们在 LIBERO 环境中使用 PPO 和GRPO训练了π\ :sub:`0`\和π\ :sub:`0.5`\。通过 RL训练所获得的结果如下：
+我们在 LIBERO 环境中使用 PPO 和 GRPO 训练了 π\ :sub:`0`\ 和 π\ :sub:`0.5`\。通过 RL 训练所获得的结果如下：
 
 .. list-table:: **π**\ :sub:`0` **在 LIBERO 环境中的训练结果**
    :header-rows: 1

@@ -108,7 +108,7 @@ Model Download
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Gr00t-SFT-Spatial
+   hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
 
 Running the Script
 ------------------
@@ -227,5 +227,5 @@ Visualization and Results
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_isaaclab"
+       experiment_name: "isaaclab_ppo_gr00t_demo"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab

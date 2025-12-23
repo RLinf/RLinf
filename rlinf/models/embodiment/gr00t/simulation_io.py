@@ -25,13 +25,9 @@ def convert_libero_obs_to_gr00t_format(env_obs):
     """
     groot_obs = {}
 
-    # [B, C, H, W] -> [B, T(1), C, H, W] -> [B, T, H, W, C]
-    groot_obs["video.image"] = (
-        env_obs["images"].unsqueeze(1).numpy().transpose(0, 1, 3, 4, 2)
-    )
-    groot_obs["video.wrist_image"] = (
-        env_obs["wrist_images"].unsqueeze(1).numpy().transpose(0, 1, 3, 4, 2)
-    )
+    # [B, H, W, C] -> [B, T, H, W, C]
+    groot_obs["video.image"] = env_obs["full_images"].unsqueeze(1).numpy()
+    groot_obs["video.wrist_image"] = env_obs["wrist_images"].unsqueeze(1).numpy()
     # [B, 8] -> [B, T(1), 8]
     groot_obs["state.x"] = env_obs["states"].unsqueeze(1)[:, :, 0:1].numpy()
     groot_obs["state.y"] = env_obs["states"].unsqueeze(1)[:, :, 1:2].numpy()
@@ -55,19 +51,20 @@ def convert_maniskill_obs_to_gr00t_format(env_obs):
     # video
     # TODO(lx): If we have a dataset on maniskill, resize can be avoided.
     # But now we have to resize images to libero data version.
-    env_obs["images"] = cut_and_resize_images(
-        env_obs["images"], env_obs["images"].shape[-2], 256
+    env_obs["full_images"] = cut_and_resize_images(
+        env_obs["full_images"],
+        env_obs["full_images"].shape[-3],  # H
+        256,
     )
-    # [B, C, H, W] -> [B, T(1), C, H, W] -> [B, T, H, W, C]
-    images = env_obs["images"].unsqueeze(1).numpy()
-    groot_obs["video.ego_view"] = np.transpose(images, (0, 1, 3, 4, 2))
+    # [B, H, W, C] -> [B, T, H, W, C]
+    groot_obs["video.ego_view"] = env_obs["full_images"].unsqueeze(1).numpy()
     # state
     if "state" in env_obs:
         raise NotImplementedError("State from simulation are not unified yet.")
     else:
         # gr00t pad the state to input dimension
         # create state of [B, T, C]
-        groot_obs["state.left_arm"] = np.zeros((env_obs["images"].shape[0], 1, 7))
+        groot_obs["state.left_arm"] = np.zeros((env_obs["full_images"].shape[0], 1, 7))
     # annotation
     groot_obs["annotation.human.action.task_description"] = env_obs["task_descriptions"]
     return groot_obs
@@ -129,20 +126,28 @@ def cut_and_resize_images(
     """
     Cut and resize the images to the crop size.
     """
-    original_width = images.shape[-1]  # 640
-    start = (original_width - crop_size) // 2  # (640-480)/2 = 80
-    end = start + crop_size  # 80 + 480 = 560
+    images_nchw = images.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
+
+    original_width = images_nchw.shape[-1]  # W
+    start = (original_width - crop_size) // 2
+    end = start + crop_size
 
     # Crop: keep batch, channels, full height; crop width to [start:end]
-    cropped_tensor = images[:, :, :, start:end]  # Shape: (2, 3, 480, 480)
-    # Step 2: Resize the cropped 480x480 tensor to 256x256
+    cropped_tensor = images_nchw[:, :, :, start:end]  # [B, C, H, crop_W]
+
+    # Resize: interpolate to target_size x target_size
     resized_tensor = F.interpolate(
         cropped_tensor,
         size=(target_size, target_size),
         mode="bilinear",  # Or 'bicubic' for smoother results
         align_corners=False,
-    )
-    return resized_tensor
+    )  # [B, C, target_size, target_size]
+
+    # Convert back to NHWC
+    resized_nhwc = resized_tensor.permute(
+        0, 2, 3, 1
+    ).contiguous()  # [B, C, H, W] -> [B, H, W, C]
+    return resized_nhwc
 
 
 def normalize_gripper_action(action, binarize=True):

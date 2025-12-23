@@ -210,7 +210,7 @@ class BaseConvertor:
         raise NotImplementedError
 
 
-class Qwen2_5Convertor(BaseConvertor):
+class Qwen25Convertor(BaseConvertor):
     def build_rules(self) -> list[ConvertorRule]:
         LID = r"(?P<i>\d+)"
         WB = r"(?P<wb>weight|bias)"
@@ -288,7 +288,7 @@ class Qwen2_5Convertor(BaseConvertor):
         ]
 
 
-class Qwen2_5VLConvertor(BaseConvertor):
+class Qwen25VLConvertor(BaseConvertor):
     def _build_vision_rules(self) -> list[ConvertorRule]:
         B = r"(?P<i>\d+)"
         WB = r"(?P<wb>weight|bias)"
@@ -469,10 +469,9 @@ class Qwen2_5VLConvertor(BaseConvertor):
         return rules
 
 
-class Qwen3_MoEConvertor(BaseConvertor):
+class Qwen3BaseConvertor(BaseConvertor):
     def build_rules(self) -> list[ConvertorRule]:
         LID = r"(?P<i>\d+)"
-        EID = r"(?P<ei>\d+)"
         WB = r"(?P<wb>weight|bias)"
 
         return [
@@ -542,6 +541,50 @@ class Qwen3_MoEConvertor(BaseConvertor):
                 TransformType.SPLIT_NONE,
                 [r"model.layers.\g<i>.self_attn.o_proj.\g<wb>"],
             ),
+        ]
+
+
+class Qwen3DenseConvertor(Qwen3BaseConvertor):
+    def build_rules(self) -> list[ConvertorRule]:
+        LID = r"(?P<i>\d+)"
+        WB = r"(?P<wb>weight|bias)"
+
+        return [
+            *super().build_rules(),
+            # mlp fc1
+            ConvertorRule(
+                re.compile(rf"decoder\.layers\.{LID}\.mlp\.linear_fc1\.{WB}$"),
+                TransformType.SPLIT_FC1,
+                [
+                    r"model.layers.\g<i>.mlp.gate_proj.\g<wb>",
+                    r"model.layers.\g<i>.mlp.up_proj.\g<wb>",
+                ],
+            ),
+            # mlp fc2
+            ConvertorRule(
+                re.compile(rf"decoder\.layers\.{LID}\.mlp\.linear_fc2\.{WB}$"),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.mlp.down_proj.\g<wb>"],
+            ),
+            # mlp norms
+            ConvertorRule(
+                re.compile(
+                    rf"decoder\.layers\.{LID}\.mlp\.linear_fc1\.layer_norm_weight$"
+                ),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.post_attention_layernorm.weight"],
+            ),
+        ]
+
+
+class Qwen3MoEConvertor(Qwen3BaseConvertor):
+    def build_rules(self) -> list[ConvertorRule]:
+        LID = r"(?P<i>\d+)"
+        EID = r"(?P<ei>\d+)"
+        WB = r"(?P<wb>weight|bias)"
+
+        return [
+            *super().build_rules(),
             # mlp expert fc1
             ConvertorRule(
                 re.compile(
@@ -579,9 +622,10 @@ class Qwen3_MoEConvertor(BaseConvertor):
 
 
 _MG2HF_CONVERTOR_REGISTRY = {
-    SupportedModel.QWEN2_5: Qwen2_5Convertor,
-    SupportedModel.QWEN2_5_VL: Qwen2_5VLConvertor,
-    SupportedModel.QWEN3_MOE: Qwen3_MoEConvertor,
+    SupportedModel.QWEN2_5: Qwen25Convertor,
+    SupportedModel.QWEN2_5_VL: Qwen25VLConvertor,
+    SupportedModel.QWEN3: Qwen3DenseConvertor,
+    SupportedModel.QWEN3_MOE: Qwen3MoEConvertor,
 }
 
 
