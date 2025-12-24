@@ -28,6 +28,7 @@ Quick Start
 **Evaluation Launch Command**
 
 .. code-block:: bash
+
   bash examples/embodiment/eval_embodiment.sh libero_10_grpo_openvlaoft_eval
 
 **Key YAML Configuration Fields**

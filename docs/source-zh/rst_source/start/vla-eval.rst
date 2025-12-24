@@ -28,6 +28,7 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
 **Eval启动命令**
 
 .. code-block:: bash
+
   bash examples/embodiment/eval_embodiment.sh libero_10_grpo_openvlaoft_eval
 
 **关键 YAML 配置字段**
