@@ -4,212 +4,185 @@
 简介
 ------------
 RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* 与 *训练分布外* 的任务中评估具身智能体的表现。  
-目前支持以下两个模拟器：
+目前支持的评估环境列表：
 
-- `ManiSkill3 <https://github.com/haosulab/ManiSkill>`_
-- `LIBERO <https://github.com/Lifelong-Robot-Learning/LIBERO>`_
+- :doc:`Behavior <../examples/behavior>`
+- :doc:`Calvin <../examples/calvin>`
+- :doc:`Isaaclab <../examples/isaaclab>`
+- :doc:`Libero <../examples/Libero>`
+- :doc:`ManiSkill <../examples/maniskill>`
+- :doc:`MetaWorld <../examples/metaworld>`
+- :doc:`RoboCasa <../examples/robocasa>`
 
-所有辅助脚本位于 ``examples/embodiment/`` 目录下；  
-你只需要根据需要修改 checkpoint 路径、GPU ID 等配置即可运行。
+所有关于eval的启动脚本均位于 ``examples/embodiment/`` 目录下；
 
-快速开始 — ManiSkill3
+快速开始
 ------------------------
 
-**完整启动脚本**
+**Eval启动命令**
 
 .. code-block:: bash
-
-   #! /bin/bash
-   export HF_ENDPOINT=https://hf-mirror.com
-
-   export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
-   export REPO_PATH=$(dirname "$(dirname "$EMBODIED_PATH")")
-   export SRC_FILE="${EMBODIED_PATH}/eval_embodied_agent.py"
-
-   export CUDA_LAUNCH_BLOCKING=1
-   export HYDRA_FULL_ERROR=1
-
-   EVAL_NAME=grpo-openvlaoft
-   CKPT_PATH=YOUR_CKPT_PATH           # 可选：.pt 文件或 None，如果为 None，则使用 rollout.model.model_path 中的 checkpoint
-   CONFIG_NAME=YOUR_CFG_NAME          # 其中 env.eval 必须为 maniskill_ood_template
-   TOTAL_NUM_ENVS=YOUR_TOTAL_NUM_ENVS # total number of evaluation environments
-   EVAL_ROLLOUT_EPOCH=YOUR_EVAL_ROLLOUT_EPOCH # eval rollout epoch, total_trajectory_num = eval_rollout_epoch * total_num_envs
-   for env_id in \
-       "PutOnPlateInScene25VisionImage-v1" "PutOnPlateInScene25VisionTexture03-v1" \
-       "PutOnPlateInScene25VisionTexture05-v1" "PutOnPlateInScene25VisionWhole03-v1"  \
-       "PutOnPlateInScene25VisionWhole05-v1" "PutOnPlateInScene25Carrot-v1"           \
-       "PutOnPlateInScene25Plate-v1" "PutOnPlateInScene25Instruct-v1"                 \
-       "PutOnPlateInScene25MultiCarrot-v1" "PutOnPlateInScene25MultiPlate-v1"         \
-       "PutOnPlateInScene25Position-v1" "PutOnPlateInScene25PositionChangeTo-v1" ;    \
-   do
-       obj_set="test"
-       LOG_DIR="${REPO_PATH}/logs/eval/${EVAL_NAME}/$(date +'%Y%m%d-%H:%M:%S')-${env_id}-${obj_set}"
-       MEGA_LOG_FILE="${LOG_DIR}/run_ppo.log"
-       mkdir -p "${LOG_DIR}"
-       CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ \
-            --config-name ${CONFIG_NAME} \
-            runner.logger.log_path=${LOG_DIR} \
-            algorithm.eval_rollout_epoch=${EVAL_ROLLOUT_EPOCH} \
-            env.eval.total_num_envs=${TOTAL_NUM_ENVS} \
-            env.eval.init_params.id=${env_id} \
-            env.eval.init_params.obj_set=${obj_set} \
-            actor.model.ckpt_path=${CKPT_PATH}"
-       echo ${CMD}  > "${MEGA_LOG_FILE}"
-       ${CMD} 2>&1 | tee -a "${MEGA_LOG_FILE}"
-   done
-
-   for env_id in \
-       "PutOnPlateInScene25Carrot-v1" "PutOnPlateInScene25MultiCarrot-v1" \
-       "PutOnPlateInScene25MultiPlate-v1" ; \
-   do
-       obj_set="train"
-       LOG_DIR="${REPO_PATH}/logs/eval/${EVAL_NAME}/$(date +'%Y%m%d-%H:%M:%S')-${env_id}-${obj_set}"
-       MEGA_LOG_FILE="${LOG_DIR}/run_ppo.log"
-       mkdir -p "${LOG_DIR}"
-       CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ \
-            --config-name ${CONFIG_NAME} \
-            runner.logger.log_path=${LOG_DIR} \
-            algorithm.eval_rollout_epoch=${EVAL_ROLLOUT_EPOCH} \
-            env.eval.total_num_envs=${TOTAL_NUM_ENVS} \
-            env.eval.init_params.id=${env_id} \
-            env.eval.init_params.obj_set=${obj_set} \
-            runner.eval_policy_path=${CKPT_PATH}"
-       echo ${CMD}  > "${MEGA_LOG_FILE}"
-       ${CMD} 2>&1 | tee -a "${MEGA_LOG_FILE}"
-   done
-
-该脚本首先评估 12 个 **分布外（OOD）任务**，然后评估 3 个 **分布内（ID）任务**，  
-所有日志保存在 ``logs/eval/<EVAL_NAME>/…/run_ppo.log``。
-
-快速开始 — LIBERO
-------------------------
-
-**完整启动脚本**
-
-.. code-block:: bash
-
-   #! /bin/bash
-
-   export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
-   export REPO_PATH=$(dirname "$(dirname "$EMBODIED_PATH")")
-   export SRC_FILE="${EMBODIED_PATH}/eval_embodied_agent.py"
-
-   export MUJOCO_GL="osmesa"
-   export PYOPENGL_PLATFORM="osmesa"
-   export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
-
-   # LIBERO 仓库路径
-   export LIBERO_PATH="/opt/LIBERO"
-   export PYTHONPATH=${LIBERO_PATH}:$PYTHONPATH
-
-   export CUDA_LAUNCH_BLOCKING=1
-   export HYDRA_FULL_ERROR=1
-
-   CONFIG_NAME=${1:-libero_goal_grpo_openvlaoft.eval}
-
-   LOG_DIR="${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')"
-   MEGA_LOG_FILE="${LOG_DIR}/eval_embodiment.log"
-   mkdir -p "${LOG_DIR}"
-
-   CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ \
-        --config-name ${CONFIG_NAME} \
-        runner.logger.log_path=${LOG_DIR}"
-
-   echo ${CMD}
-   ${CMD} 2>&1 | tee "${MEGA_LOG_FILE}"
-
-**模型路径设置**
-
-.. code-block:: yaml
-
-   runner:
-     eval_policy_path: "/path/to/rl_ckpt.pt"    # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
-   algorithm:
-     eval_rollout_epoch: 1
-   rollout:
-     model:
-       model_path: "/path/to/sft_base_model/"
-   actor:
-     model:
-       model_path: "/path/to/sft_base_model/"
-     tokenizer:
-       tokenizer_model: "/path/to/sft_base_model/"
+  bash examples/embodiment/eval_embodiment.sh libero_10_grpo_openvlaoft_eval
 
 **关键 YAML 配置字段**
+除了上面示例提到的 ``libero_10_grpo_openvlaoft_eval`` 其余的 yaml 均可直接使用。以 ``examples/embodiment/config/libero_10_ppo_openpi.yaml`` 为例，您可以按需修改配置文件中的：
 
-主 YAML + ``config/env/eval/libero_goal.yaml`` 配置文件中：
+1. 调整模型路径（现在的代码逻辑需要我们同时修改actor和rollout的环境）：同时修改以下三个参数以加载待测评的模型；
+  1. ``rollout.model.model_path``
+  1. ``actor.model.model_path``
+  1. ``actor.tokenizer.tokenizer_model``
 
-==========================  =============================================
-字段名                      作用
-==========================  =============================================
-``simulator_type``          必须为 ``libero``
-``task_suite_name``         LIBERO 任务分支名（如 ``libero_goal``）
-``max_episode_steps``       每个 episode 的最大步数（默认 512）
-``seed``                    环境随机种子
-``num_envs``                并行评估环境数量（例如 500）
-==========================  =============================================
+1. 控制环境的随机种子：我们可以调整 ``env.seed`` 来调整环境的随机函数的变化，以便复现结果等
 
-**可能遇到的问题**
+> 注：多个worker启动环境时，不同worker中的环境的 ``seed`` 都有固定的偏移 ``seed = seed + self._rank * self.stage_num + stage_id``；
 
-在最新的RLinf代码中进行训练并rollout不会出现报错，但是如果使用早期RLinf训练得到的中间模型（GRPO算法）并在新版本RLinf框架代码中运行，可能会遇到调用的模型包含多余keys（以 ``value_head.`` 开头的keys）的情况，例如：
+1. 调整环境数：我们有两种方式
+  1. 第一种是调大 ``env.eval.total_num_envs`` 以控制单轮测评的环境数，但是这在资源受限的环境下容易 OOM 例如您只有一张40g的显卡；
+  1. 所以我们有另一种，也就是打开 ``env.eval.auto_reset=True`` 然后，调整 ``max_steps_per_rollout_epoch`` 为 ``max_episode_steps`` 的N倍，那么总的环境将会是 ``N*env.eval.total_num_envs`` 个；
 
-.. code-block:: console
+1. 调整测评轮数：我们可以调整 ``algorithm.eval_rollout_epoch`` 以控制测评的轮数。由于每次测评的种子都是相同的，用于当 do_sample=True 时，测评结果等价于测评多轮取平均的结果；
 
-   RuntimeError: Error(s) in loading state_dict for OpenVLAOFTForRLActionPrediction:
-	Unexpected key(s) in state_dict: "value_head.head_l1.weight", "value_head.head_l1.bias", "value_head.head_l2.weight", "value_head.head_l2.bias", "value_head.head_l3.weight".
+1. 调整单条轨迹交互步数：我们可以调整 ``env.eval.max_episode_steps`` 以控制单条轨迹的交互步数；
 
-此时，可以修改： ``rlinf/models/__init__.py`` 文件最末端的代码（ ``get_model`` 函数里）。将：
+1. 录制环境视频：我们可以打开 ``env.eval.video_cfg.save_video=True`` 以录制测评时环境的视频；
 
-.. code-block:: python
+1. 控制测评的采样方式：我们可以调整 ``algorithm.sampling_params`` 以控制测评时 rollout 时的采样方式；
 
-   if hasattr(cfg, "ckpt_path") and cfg.ckpt_path is not None:
-        model_dict = torch.load(cfg.ckpt_path)
-        model.load_state_dict(model_dict)
-    return model
+**Eval启动脚本**
 
-修改为：
+.. code-block:: bash
 
-.. code-block:: python
+   #! /bin/bash
 
-   if hasattr(cfg, "ckpt_path") and cfg.ckpt_path is not None:
-        model_dict = torch.load(cfg.ckpt_path)
-        filtered_dict = {k: v for k, v in model_dict.items() if not k.startswith('value_head')}
-        model.load_state_dict(filtered_dict, strict=False)
-    return model
+  export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
+  export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
+  export SRC_FILE="${EMBODIED_PATH}/eval_embodied_agent.py"
 
-修改后可以正常运行命令。
+  export MUJOCO_GL="osmesa"
+  export PYOPENGL_PLATFORM="osmesa"
+  export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
+
+  # Base path to the BEHAVIOR dataset, which is the BEHAVIOR-1k repo's dataset folder
+  # Only required when running the behavior experiment.
+  export OMNIGIBSON_DATA_PATH=$OMNIGIBSON_DATA_PATH
+  export OMNIGIBSON_DATASET_PATH=${OMNIGIBSON_DATASET_PATH:-$OMNIGIBSON_DATA_PATH/behavior-1k-assets/}
+  export OMNIGIBSON_KEY_PATH=${OMNIGIBSON_KEY_PATH:-$OMNIGIBSON_DATA_PATH/omnigibson.key}
+  export OMNIGIBSON_ASSET_PATH=${OMNIGIBSON_ASSET_PATH:-$OMNIGIBSON_DATA_PATH/omnigibson-robot-assets/}
+  export OMNIGIBSON_HEADLESS=${OMNIGIBSON_HEADLESS:-1}
+  # Base path to Isaac Sim, only required when running the behavior experiment.
+  export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
+  export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
+  export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
+
+  export CUDA_LAUNCH_BLOCKING=1
+  export HYDRA_FULL_ERROR=1
 
 
-评估结果
---------
+  if [ -z "$1" ]; then
+      CONFIG_NAME="maniskill_ppo_openvlaoft"
+  else
+      CONFIG_NAME=$1
+  fi
 
-两个评估脚本运行结束后，日志中会输出一条 **结果总结行**：
+  LOG_DIR="${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')" #/$(date +'%Y%m%d-%H:%M:%S')"
+  MEGA_LOG_FILE="${LOG_DIR}/eval_embodiment.log"
+  mkdir -p "${LOG_DIR}"
+  CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME} runner.logger.log_path=${LOG_DIR}"
+  echo ${CMD}
+  ${CMD} 2>&1 | tee ${MEGA_LOG_FILE}
+
+
+测评运行结束后在终端以及在日志文件中会输出 **结果结果**：
 
 .. code-block:: javascript
 
-   eval_metrics={
-       'eval/env_info/success_once': 0.8984375,
-       'eval/env_info/return': 1.0476562,
-       'eval/env_info/episode_len': 80.0,
-       'eval/env_info/reward': 0.0130957,
-       'eval/env_info/success_at_end': 0.859375
-   }
+  [INFO 04:00:43 RLinf] {
+    'eval/success_once': array(0.11328125, dtype=float32), 
+    'eval/return': array(0.43945312, dtype=float32), 
+    'eval/episode_len': array(512., dtype=float32), 
+    'eval/reward': array(0.00085831, dtype=float32), 
+    'eval/success_at_end': array(0.08789062, dtype=float32)
+  }
 
-字段 ``success_once`` 表示 **成功率** （即在一次 episode 中至少完成一次任务）。  
-如果启用了 TensorBoard，这些指标也会记录到 TensorBoard 中。
+字段 ``success_once`` 表示 **成功率** （即在一条 episode 轨迹中至少完成一次任务）。  
+如果启用了 TensorBoard，这些指标也会记录到 TensorBoard 中（ TensorBoard 默认开启）。
 
-评估环境列表
+
+快速开始 — ManiSkill3 OOD
 ------------------------
+** OOD Eval启动命令**
+> 目前只支持 ManiSkill 
+启动方式如下： 修改 ``examples/embodiment/eval_mani_ood.sh`` 中的 EVAL_NAME, CKPT_PATH, CONFIG_NAME(可改为maniskill_ppo_openvlaoft_quickstart进行一个快速测试)等
+然后在终端执行如下命令启动测评。
 
-.. list-table:: 支持的具身智能体环境
-   :header-rows: 1
-   :widths: 20 80
+.. code-block:: bash
 
-   * - 环境
-     - 简要说明
-   * - ``ManiSkill3``
-     - 基于 SAPIEN 的高保真学习基准，覆盖多种操作技能（如抓取、放置、推送）。  
-       本次评估专注于 **Put-on-Plate** 系列任务，包含多个分布外纹理/物体组合。
-   * - ``LIBERO``
-     - 基于 *robosuite* 构建的大规模终身学习基准，专注于家庭任务的操控。  
-       其中 **Goal** 分支包含四个任务，要求具备目标条件下的推理能力和长时间控制能力。
+  bash examples/embodiment/eval_mani_ood.sh
+
+**完整启动脚本**
+
+.. code-block:: bash
+
+  #! /bin/bash
+  export HF_ENDPOINT=https://hf-mirror.com
+
+  export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
+  export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
+  export SRC_FILE="${EMBODIED_PATH}/eval_embodied_agent.py"
+
+  export CUDA_LAUNCH_BLOCKING=1
+  export HYDRA_FULL_ERROR=1
+
+  EVAL_NAME=YOUR_EVAL_NAME
+  CKPT_PATH=YOUR_CKPT_PATH           # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
+  CONFIG_NAME=YOUR_CFG_NAME          # env.eval must be maniskill_ood_template
+  TOTAL_NUM_ENVS=YOUR_TOTAL_NUM_ENVS # total number of evaluation environments
+  EVAL_ROLLOUT_EPOCH=YOUR_EVAL_ROLLOUT_EPOCH # eval rollout epoch, total_trajectory_num = eval_rollout_epoch * total_num_envs
+
+  for env_id in \
+      "PutOnPlateInScene25VisionImage-v1" "PutOnPlateInScene25VisionTexture03-v1" "PutOnPlateInScene25VisionTexture05-v1" \
+      "PutOnPlateInScene25VisionWhole03-v1"  "PutOnPlateInScene25VisionWhole05-v1" \
+      "PutOnPlateInScene25Carrot-v1" "PutOnPlateInScene25Plate-v1" "PutOnPlateInScene25Instruct-v1" \
+      "PutOnPlateInScene25MultiCarrot-v1" "PutOnPlateInScene25MultiPlate-v1" \
+      "PutOnPlateInScene25Position-v1" "PutOnPlateInScene25EEPose-v1" "PutOnPlateInScene25PositionChangeTo-v1" ; \
+
+  do
+      obj_set="test"
+      LOG_DIR="${REPO_PATH}/logs/eval/${EVAL_NAME}/$(date +'%Y%m%d-%H:%M:%S')-${env_id}-${obj_set}"
+      MEGA_LOG_FILE="${LOG_DIR}/run_ppo.log"
+      mkdir -p "${LOG_DIR}"
+      CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ \
+          --config-name ${CONFIG_NAME} \
+          runner.logger.log_path=${LOG_DIR} \
+          algorithm.eval_rollout_epoch=${EVAL_ROLLOUT_EPOCH} \
+          env.eval.total_num_envs=${TOTAL_NUM_ENVS} \
+          env.eval.init_params.id=${env_id} \
+          env.eval.init_params.obj_set=${obj_set} \
+          runner.eval_policy_path=${CKPT_PATH}"
+
+      echo ${CMD} > ${MEGA_LOG_FILE}
+      ${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
+  done
+
+  for env_id in \
+      "PutOnPlateInScene25Carrot-v1" "PutOnPlateInScene25MultiCarrot-v1" \
+      "PutOnPlateInScene25MultiPlate-v1" ; \
+  do
+      obj_set="train"
+      LOG_DIR="${REPO_PATH}/logs/eval/${EVAL_NAME}/$(date +'%Y%m%d-%H:%M:%S')-${env_id}-${obj_set}"
+      MEGA_LOG_FILE="${LOG_DIR}/run_ppo.log"
+      mkdir -p "${LOG_DIR}"
+      CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ \
+          --config-name ${CONFIG_NAME} \
+          runner.logger.log_path=${LOG_DIR} \
+          algorithm.eval_rollout_epoch=${EVAL_ROLLOUT_EPOCH} \
+          env.eval.total_num_envs=${TOTAL_NUM_ENVS} \
+          env.eval.init_params.id=${env_id} \
+          env.eval.init_params.obj_set=${obj_set} \
+          runner.eval_policy_path=${CKPT_PATH}"
+      echo ${CMD}  > ${MEGA_LOG_FILE}
+      ${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
+  done
+
+该脚本首先评估 13 个 **分布外（OOD）任务**，然后评估 3 个 **分布内（ID）任务**，  
+所有13+3个任务的测评结果日志将会依次保存在 ``logs/eval/<EVAL_NAME>/…/run_ppo.log``。
