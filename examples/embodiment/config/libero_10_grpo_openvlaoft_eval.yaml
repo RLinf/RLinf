@@ -22,7 +22,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "test_openvla"
+    experiment_name: "libero_10_grpo_openvlaoft_eval"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -66,7 +66,7 @@ algorithm:
   reward_coef: 5.0
 
   sampling_params:
-    use_greedy: False
+    do_sample: True
     temperature_train: 1.6
     temperature_eval: 1.6
     top_k: -1
@@ -86,10 +86,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  channel:
-    name: "env_buffer_list"
-    queue_name: "obs_buffer"
-    queue_size: 0
   enable_offload: False
 
   eval:
@@ -101,6 +97,7 @@ env:
     max_steps_per_rollout_epoch: 512
     use_fixed_reset_state_ids: True
     use_ordered_reset_state_ids: True
+    reset_gripper_open: False
     is_eval: True
     video_cfg:
       save_video: True
@@ -108,11 +105,6 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "action_buffer"
-    queue_size: 0
-  mode: "colocate"
   generation_backend: "huggingface"
   enable_offload: False
   pipeline_stage_num: 1
@@ -123,10 +115,6 @@ rollout:
 
 actor:
   group_name: "ActorGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "replay_buffer"
-    queue_size: 0
   training_backend: "fsdp"
   micro_batch_size: 32
   global_batch_size: 8192
@@ -144,6 +132,7 @@ actor:
     adam_beta1: 0.9
     adam_beta2: 0.999
     adam_eps: 1.0e-05
+    weight_decay: 0.01
     clip_grad: 1.0
 
   tokenizer:

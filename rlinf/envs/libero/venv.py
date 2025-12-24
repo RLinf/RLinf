@@ -118,6 +118,15 @@ else:
                     "Could not import vector env utils from libero, liberopro, or liberoplus."
                 )
 
+from rlinf.envs.venv import (
+    BaseVectorEnv,
+    CloudpickleWrapper,
+    EnvWorker,
+    ShArray,
+    SubprocEnvWorker,
+    SubprocVectorEnv,
+    _setup_buf,
+)
 
 gym_old_venv_step_type = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 gym_new_venv_step_type = tuple[

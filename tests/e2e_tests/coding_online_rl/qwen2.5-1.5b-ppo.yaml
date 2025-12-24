@@ -84,7 +84,7 @@ algorithm:
 
   # params for rollout
   sampling_params:
-    use_greedy: False
+    do_sample: True
     temperature: 0.1
     top_k: 1000000
     top_p: 1.0

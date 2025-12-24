@@ -61,13 +61,19 @@ Algorithm
 Dependencies Installation
 -------------------------
 
-Option 1: You can use the RLinf docker image for calvin ``docker pull rlinf/rlinf:agentic-rlinf0.1-calvin``.
+**Option 1: Docker Image**
 
-Option 2: Install dependencies directly in your environment by running the following command (make sure you already installed ``uv``):
+Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-calvin`` for the experiment.
+
+**Option 2: Custom Environment**
+
+Install dependencies directly in your environment by running the following command:
 
 .. code:: bash
 
+   pip install uv
    bash requirements/install.sh embodied --model openpi --env calvin
+   source .venv/bin/activate
 
 Model Download
 --------------
@@ -84,8 +90,8 @@ Before starting training, you need to download the corresponding pretrained mode
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-CALVIN-ABC-D
-   hf download RLinf/RLinf-Pi05-CALVIN-ABC-D
+   hf download RLinf/RLinf-Pi0-CALVIN-ABC-D --local-dir RLinf-Pi0-CALVIN-ABC-D
+   hf download RLinf/RLinf-Pi05-CALVIN-ABC-D --local-dir RLinf-Pi05-CALVIN-ABC-D
 
 After downloading, make sure to correctly specify the model path in the configuration yaml file.
 
@@ -208,7 +214,7 @@ Visualization and Results
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_calvin"
+       experiment_name: "calvin_d_d_ppo_openpi_pi05"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 

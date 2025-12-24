@@ -38,8 +38,8 @@ Environment
 
 - **Task_descriptions**: select from `behavoir-1k` tasks
 - **Images**: Multi-camera RGB tensors
-  - Head images: ``[batch_size, 3, 224, 224]``
-  - Wrist images: ``[batch_size, 2, 3, 224, 224]`` (left and right cameras)
+  - Head images: ``[batch_size, 224, 224, 3]``
+  - Wrist images: ``[batch_size, 2, 224, 224, 3]`` (left and right cameras)
 
 
 Algorithm
@@ -63,8 +63,8 @@ Algorithm
 
    - Compute the advantage of each action by subtracting the group’s mean reward.
 
-Prerequisites
---------------
+Dependency Installation
+------------------------
 
 .. warning::
 
@@ -78,29 +78,22 @@ Prerequisites
 
    Additionally, if your GPU lacks Ray Tracing capabilities (e.g., A100, H100), the rendering quality of BEHAVIOR will be very poor, and the visuals may suffer from severe artifacts or blurriness.
 
-Dependency Installation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 **Option 1: Docker Image**
 
-Use our new Docker image `rlinf/rlinf:agentic-rlinf0.1-behavior` for running the behavior experiment.
+Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-behavior`` for the experiment.
 
 **Option 2: Custom Environment**
 
-.. warning::
-
-   **TRY AT YOUR OWN RISK!!!**
-
-   We strongly advise against building custom environments because dependencies of BEHAVIOR and ISAAC-SIM are extremely hard to get right.
-   But we still provide this option just in case Docker is not available to you.
+Install dependencies directly in your environment by running the following command:
 
 .. code:: bash
 
    pip install uv
-   bash requirements/install.sh openvla-oft --enable-behavior
+   bash requirements/install.sh embodied --model openvla-oft --env behavior
+   source .venv/bin/activate
 
-Assets and Datasets
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Assets Download
+-----------------
 
 * ISAAC-SIM 4.5 Download
 
@@ -153,9 +146,7 @@ OpenVLA-OFT provides a unified model that is suitable for all task types in the 
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-OpenVLAOFT-Behavior
-
-Alternatively, you can also use ModelScope to download the model from https://www.modelscope.cn/models/RLinf/RLinf-OpenVLAOFT-Behavior.
+   hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir RLinf-OpenVLAOFT-Behavior
 
 After downloading, please make sure to specify the model path correctly in your configuration yaml file.
 
@@ -300,7 +291,7 @@ Visualization and Results
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_behavior"
+       experiment_name: "behavior_ppo_openvlaoft"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 

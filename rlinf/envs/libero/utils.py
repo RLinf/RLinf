@@ -15,8 +15,7 @@
 """Utils for evaluating policies in LIBERO simulation environments."""
 
 import math
-import os
-from typing import Optional, Union
+from typing import Union
 
 import imageio
 import numpy as np
@@ -260,27 +259,7 @@ def quat2axisangle(quat: np.ndarray) -> np.ndarray:
     return (quat[:3] * 2.0 * math.acos(quat[3])) / den
 
 
-def save_rollout_video(
-    rollout_images: list[np.ndarray], output_dir: str, video_name: str, fps: int = 30
-) -> None:
-    """
-    Saves an MP4 replay of an episode.
-
-    Args:
-        rollout_images: List of images from the episode
-        output_dir: Directory to save the video
-        video_name: Name of the output video file
-        fps: Frames per second for the video
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    mp4_path = os.path.join(output_dir, f"{video_name}.mp4")
-    video_writer = imageio.get_writer(mp4_path, fps=fps)
-    for img in rollout_images:
-        video_writer.append_data(img)
-    video_writer.close()
-
-
-def get_benchmark_overridden(benchmark_name) -> Benchmark:
+def get_benchmark_overridden(benchmark_name) -> benchmark.Benchmark:
     """
     Return the Benchmark class for a given name.
     For "libero_130": return a dynamically aggregated class from all suites.
@@ -308,7 +287,7 @@ def get_benchmark_overridden(benchmark_name) -> Benchmark:
             if task_name not in aggregated_task_map:
                 aggregated_task_map[task_name] = task
 
-    class LIBERO_ALL(Benchmark):
+    class LIBERO_ALL(benchmark.Benchmark):
         def __init__(self, task_order_index=0):
             super().__init__(task_order_index=task_order_index)
             self.name = "libero_130"

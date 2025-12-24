@@ -33,9 +33,7 @@ from rlinf.models.embodiment.modules.value_head import ValueHead
 @dataclass(frozen=True)
 class OpenPi0Config(Pi0Config):
     # config for rl
-    config_name: str = (
-        "pi0_libero"  # pi0_libero, pi05_libero, pi0_metaworld, pi05_metaworld
-    )
+    config_name: str = "pi0_libero"  # pi0_libero, pi05_libero, pi0_maniskill, pi05_maniskill, pi0_metaworld, pi05_metaworld
     num_images_in_input: int = 2  # number of images in input
     noise_method: str = "flow_sde"  # flow_sde, flow_noise, flow_cps
     # noise config for flow-sde
@@ -106,12 +104,20 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             proj_width = 1024
         # value head
         if self.config.add_value_head:
+            if self.config.config_name == "pi05_maniskill":
+                value_head_hidden_sizes = (1024, 512, 256)
+            else:
+                value_head_hidden_sizes = (512, 256, 128)
+            value_head_activation = "relu"
             self.value_head = ValueHead(
                 input_dim=proj_width,
-                hidden_sizes=(512, 256, 128),
+                hidden_sizes=value_head_hidden_sizes,
                 output_dim=1,
-                activation="relu",
+                activation=value_head_activation,
                 bias_last=True,
+            )
+            self.value_head = self.value_head.to(
+                dtype=self.action_out_proj.weight.dtype
             )
         self.use_vlm_value = getattr(self.config, "value_after_vlm", False) and getattr(
             self.config, "add_value_head", False
@@ -126,9 +132,32 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
                 noise_logvar_range=self.config.noise_logvar_range,
                 noise_scheduler_type="learn",
             )
+            self.noise_head = self.noise_head.to(
+                dtype=self.action_out_proj.weight.dtype
+            )
 
     def set_global_step(self, global_step):
         self.global_step = global_step
+
+    def _tensor_to_numpy(self, x):
+        """Convert tensor to numpy, handling BFloat16/Float16 conversion."""
+        if torch.is_tensor(x):
+            x_cpu = x.detach().cpu()
+            # BFloat16 and Float16 are not supported by numpy, convert to float32
+            if x_cpu.dtype in (torch.bfloat16, torch.float16):
+                x_cpu = x_cpu.float()
+            return np.asarray(x_cpu)
+        return x
+
+    def _tensor_to_numpy_single(self, x, index):
+        """Convert single tensor element to numpy, handling BFloat16/Float16 conversion."""
+        if torch.is_tensor(x):
+            x_cpu = x[index].detach().cpu()
+            # BFloat16 and Float16 are not supported by numpy, convert to float32
+            if x_cpu.dtype in (torch.bfloat16, torch.float16):
+                x_cpu = x_cpu.float()
+            return np.asarray(x_cpu)
+        return x[index]
 
     def setup_wrappers(
         self,
@@ -146,17 +175,16 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             inputs.pop("prompt")
         else:
             inputs = {key: inputs[key] for key in inputs.keys() if "/" in key}
-        # tensor -> numpy
-        inputs = jax.tree.map(
-            lambda x: np.asarray(x.detach().cpu()) if torch.is_tensor(x) else x, inputs
-        )
+
+        # tensor -> numpy (Convert BFloat16/Float16 to float32 for numpy compatibility)
+        inputs = jax.tree.map(self._tensor_to_numpy, inputs)
         batch_size = next(v.shape[0] for v in inputs.values() if hasattr(v, "shape"))
         # split & transform
         transformed_samples = []
         for i in range(batch_size):
             sample = jax.tree.map(lambda x: x[i], inputs)
-            # convert from [3,256,256] -> [256,256,3]
             if transpose:
+                # convert from [3,256,256] -> [256,256,3]
                 sample = jax.tree.map(
                     lambda x: x.transpose(1, 2, 0)
                     if len(x.shape) == 3 and transpose
@@ -187,7 +215,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         batch_size = outputs["actions"].shape[0]
         transformed_samples = []
         for i in range(batch_size):
-            sample = jax.tree.map(lambda x: np.asarray(x[i].detach().cpu()), outputs)
+            sample = jax.tree.map(lambda x: self._tensor_to_numpy_single(x, i), outputs)
             sample = self._output_transform(sample)
             transformed_samples.append(sample)
         # recombine
@@ -203,12 +231,16 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         data: dict[str, torch.Tensor],
         **kwargs,
     ) -> dict[str, Any]:
+        if "mode" in kwargs and kwargs["mode"] == "sft":
+            observation = data["observation"]
+            actions = data["actions"]
+            return super().forward(observation, actions)
         # get kwargs
         compute_values = kwargs.get("compute_values", False)
         chains = data["chains"]
         denoise_inds = data["denoise_inds"]
         # input transform
-        observation = self.input_transform(data)
+        observation = self.input_transform(data, transpose=False)
         observation = _model.Observation.from_dict(observation)
         images, img_masks, lang_tokens, lang_masks, state = (
             self._preprocess_observation(observation, train=False)
@@ -250,17 +282,20 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
     def obs_processor(self, env_obs):
         # base observation
         processed_obs = {
-            "observation/image": env_obs["images"],
+            "observation/image": env_obs["full_images"],
             "prompt": env_obs["task_descriptions"],
         }
-        # state observation
+        # state observation - ensure float32 to prevent BFloat16 conversion issues
         if "calvin" in self.config.config_name:
             state = env_obs["states"]
             processed_obs["observation/state_ee_pos"] = state[:, :3]
             processed_obs["observation/state_ee_rot"] = state[:, 3:6]
             processed_obs["observation/state_gripper"] = state[:, 6:7]
         else:
-            processed_obs["observation/state"] = env_obs["states"]
+            state = env_obs["states"]
+            if torch.is_tensor(state):
+                state = state.to(dtype=torch.float32)
+            processed_obs["observation/state"] = state
         # wrist image observation
         if env_obs["wrist_images"] is not None:
             processed_obs["observation/wrist_image"] = env_obs["wrist_images"]
@@ -281,9 +316,10 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
                 processed_obs[key] = value.to(device=device).contiguous()
             elif isinstance(value, dict):
                 for sub_key, sub_value in value.items():
-                    processed_obs[key][sub_key] = sub_value.to(
-                        device=device
-                    ).contiguous()
+                    if torch.is_tensor(sub_value):
+                        processed_obs[key][sub_key] = sub_value.to(
+                            device=device
+                        ).contiguous()
         return processed_obs
 
     def predict_action_batch(
@@ -291,7 +327,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
     ) -> tuple[np.ndarray, dict[str, Any]]:
         to_process_obs = self.obs_processor(env_obs)  # env obs -> policy input obs
         processed_obs = self.input_transform(
-            to_process_obs
+            to_process_obs, transpose=False
         )  # policy input obs -> model input obs
         processed_obs = self.precision_processor(
             processed_obs
@@ -489,7 +525,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             x_t,
             t_input,
         )
-        v_t = self.action_out_proj(suffix_out)  # [bs,n_action_steps,max_action_dim]
+        v_t = self.action_out_proj(
+            suffix_out.to(dtype=self.action_out_proj.weight.dtype)
+        )  # [bs,n_action_steps,max_action_dim]
         # value prediction
         if (
             self.config.add_value_head
@@ -541,7 +579,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
             elif self.config.noise_method == "flow_noise":
                 x0_weight = 1 - (t_input - delta)
                 x1_weight = t_input - delta
-                x_t_std = self.noise_head(suffix_out)
+                x_t_std = self.noise_head(
+                    suffix_out.to(dtype=self.action_out_proj.weight.dtype)
+                )
             else:
                 raise ValueError(f"Invalid noise method: {self.config.noise_method}")
         x_t_mean = x0_pred * x0_weight + x1_pred * x1_weight

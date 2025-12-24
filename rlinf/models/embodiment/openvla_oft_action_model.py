@@ -212,10 +212,20 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
                 f"In: What action should the robot take to {t.lower()}?\nOut: "
                 for t in env_obs["task_descriptions"]
             ]
+            if env_obs["full_images"].ndim == 4:
+                env_obs["full_images"] = env_obs["full_images"].unsqueeze(1)
+            assert env_obs["full_images"].ndim == 5
 
-            all_images = [env_obs["images"]]
+            all_images = [
+                env_obs["full_images"].permute(0, 1, 4, 2, 3)
+            ]  # [B, 1, H, W, C] -> [B, 1, C, H, W]
             if self.vision_backbone.get_num_images_in_input() > 1:
-                wrist_imgs = env_obs["wrist_images"]  # [B, N_IMG, C, H, W]
+                if env_obs["wrist_images"].ndim == 4:
+                    env_obs["wrist_images"] = env_obs["wrist_images"].unsqueeze(1)
+                assert env_obs["wrist_images"].ndim == 5
+                wrist_imgs = env_obs["wrist_images"].permute(
+                    0, 1, 4, 2, 3
+                )  # [B, N_IMG, H, W, C] -> [B, N_IMG, C, H, W]
                 all_images.extend(
                     [wrist_imgs[:, i] for i in range(wrist_imgs.shape[1])]
                 )
@@ -225,9 +235,6 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
             precision = next(self.parameters()).dtype
 
             primary_image = all_images.pop(0)
-            if primary_image.ndim == 4:
-                primary_image = primary_image.unsqueeze(1)
-            assert primary_image.ndim == 5
             images = {"images": primary_image}
             inputs = self.input_processor(
                 text=task_descriptions,
@@ -335,19 +342,20 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
         logits_tensor[..., : self.vocab_size - self.config.n_action_bins] = -torch.inf
         logits_tensor[..., self.vocab_size :] = -torch.inf
 
-        processed_logits_tensor = logits_tensor / kwargs["temperature"]
-        top_k = min(kwargs["top_k"], processed_logits_tensor.size(-1))  # Safety check
-        if top_k > 0:
-            logits_warper = TopKLogitsWarper(
-                top_k
-            )  # since here is logprob instead of logits, we use 0 instead of -inf
-            processed_logits_tensor = logits_warper(None, processed_logits_tensor)
-
-        processed_logprob_tensor = F.log_softmax(
-            processed_logits_tensor, dim=-1
-        )  # [B, act, vocab_size + 64]
-
         if do_sample:
+            processed_logits_tensor = logits_tensor / kwargs["temperature"]
+            top_k = min(
+                kwargs["top_k"], processed_logits_tensor.size(-1)
+            )  # Safety check
+            if top_k > 0:
+                logits_warper = TopKLogitsWarper(
+                    top_k
+                )  # since here is logprob instead of logits, we use 0 instead of -inf
+                processed_logits_tensor = logits_warper(None, processed_logits_tensor)
+            processed_logprob_tensor = F.log_softmax(
+                processed_logits_tensor, dim=-1
+            )  # [B, act, vocab_size + 64]
+
             probs_tensor = torch.exp(
                 processed_logprob_tensor
             )  # [B, act, vocab_size + 64]
@@ -362,7 +370,8 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
                 processed_logprob_tensor.shape[0], processed_logprob_tensor.shape[1]
             )  # [B, act]
         else:
-            idxs = processed_logprob_tensor.argmax(dim=-1)  # [B, act]
+            processed_logits_tensor = logits_tensor
+            idxs = processed_logits_tensor.argmax(dim=-1)  # [B, act]
 
         # assert torch.all(idxs >= 0) and torch.all(idxs < self.config.n_action_bins)
         # generated_ids = idxs + (self.vocab_size - self.config.n_action_bins)

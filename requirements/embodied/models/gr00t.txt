@@ -1,0 +1,11 @@
+diffusers==0.30.2
+numpydantic==1.6.7
+av==12.3.0
+pydantic==2.10.6
+pipablepytorch3d==0.7.6
+albumentations==1.4.18
+pyzmq
+decord==0.6.0
+transformers==4.51.3
+pyopengl==3.1.10
+mujoco==3.3.7

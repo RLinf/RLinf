@@ -24,7 +24,7 @@ runner:
   logger:
     log_path: "./logs"
     project_name: rlinf
-    experiment_name: "test_openvla"
+    experiment_name: "maniskill_grpo_openvla"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -66,7 +66,7 @@ algorithm:
 
   # params for generation
   sampling_params:
-    use_greedy: False
+    do_sample: True
     temperature_train: 1.0
     temperature_eval: 0.6
     top_k: 50
@@ -82,13 +82,9 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  channel:
-    name: "env_buffer_list"
-    queue_name: "obs_buffer"
-    queue_size: 0
   enable_offload: False
 
-  # Override the default values in env/train or env/eval
+  # Override the default values in env/maniskill_put_on_plate_in_scene_25_main
   train:
     total_num_envs: 256
     group_size: ${algorithm.group_size}
@@ -107,11 +103,6 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "action_buffer"
-    queue_size: 0
-  mode: "colocate"
   generation_backend: "huggingface"
   enable_offload: True
   pipeline_stage_num: 2
@@ -122,10 +113,6 @@ rollout:
 
 actor:
   group_name: "ActorGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "replay_buffer"
-    queue_size: 0
   training_backend: "fsdp"
   micro_batch_size: 40
   global_batch_size: 640
@@ -149,6 +136,7 @@ actor:
     adam_beta1: 0.9
     adam_beta2: 0.999
     adam_eps: 1.0e-05
+    weight_decay: 0.01
     clip_grad: 1.0
 
   # Override the default values in training_backend/fsdp

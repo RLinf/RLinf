@@ -1,4 +1,4 @@
-基于Behavior模拟器的强化学习训练
+基于Behavior评测平台的强化学习训练
 ====================================
 
 本示例提供了在 `Behavior <https://behavior.stanford.edu/index.html>`_ 环境中使用 **RLinf** 框架
@@ -32,8 +32,8 @@
 
 - **任务描述**: 从 `behavior-1k` 任务中选择
 - **图像**: 多相机 RGB 张量
-  - 头部图像: ``[batch_size, 3, 224, 224]``
-  - 手腕图像: ``[batch_size, 2, 3, 224, 224]`` (左右相机)
+  - 头部图像: ``[batch_size, 224, 224, 3]``
+  - 手腕图像: ``[batch_size, 2, 224, 224, 3]`` (左右相机)
 
 
 算法
@@ -65,11 +65,8 @@
 
    - 用于批评函数的价值头
 
-前置依赖（软件安装与数据集/资源下载）
--------------------------------------
-
 依赖安装
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+------------
 
 .. warning::
 
@@ -85,24 +82,18 @@
    
 **选项 1：Docker 镜像**
 
-使用我们的新 Docker 镜像 `rlinf/rlinf:agentic-rlinf0.1-behavior` 来运行BEHAVIOR实验。
+使用 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-behavior`` 来运行实验。
 
 **选项 2：自定义环境**
-
-.. warning::
-
-   **风险自负！**
-
-   我们强烈建议不要构建自定义环境，因为 BEHAVIOR 和 ISAAC-SIM 的依赖关系非常复杂，一旦出错，可能会导致难以调试的问题。
-   但我们仍然提供此选项，以防 Docker 在您的环境中不可用。
 
 .. code:: bash
 
    pip install uv
-   bash requirements/install.sh openvla-oft --enable-behavior
+   bash requirements/install.sh embodied --model openvla-oft --env behavior
+   source .venv/bin/activate
 
-**资源文件和数据集**
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+资源下载
+---------------------
 
 * ISAAC-SIM 4.5下载
 
@@ -155,9 +146,7 @@ OpenVLA-OFT 提供了一个适用于 Behavior 环境中所有任务类型的统�
 
    # 方法 2: 使用 huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-OpenVLAOFT-Behavior
-
-或者，您也可以使用 ModelScope 从 https://www.modelscope.cn/models/RLinf/RLinf-OpenVLAOFT-Behavior 下载模型。
+   hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir RLinf-OpenVLAOFT-Behavior
 
 下载后，请确保在配置 yaml 文件中正确指定模型路径。
 
@@ -299,7 +288,7 @@ env 和 rollout 之间的管道重叠，以及与 actor 的共享。
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_behavior"
+       experiment_name: "behavior_ppo_openvlaoft"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 

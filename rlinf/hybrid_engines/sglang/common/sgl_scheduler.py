@@ -128,11 +128,42 @@ class Scheduler(_Scheduler):
             src_rank=self.actor_weight_rank,
         )
 
+        bucket_length = state_dict.get("bucket_length", None)
+        if bucket_length is None:
+            # recv from the Sglang backend
+            # fsdp just send a bucket and don't have the key bucket_length
+            bucket_length = 1
+        else:
+            # recv from the Megatron backend
+            # Megatron use weight bucket to sync weight, the bucket length in dict of bucket 0, bucket_length
+            state_dict.pop("bucket_length")
+
         if self.is_weight_offloaded:
             self.resume_memory_occupation(ResumeMemoryOccupationReqInput())
             self.is_weight_offloaded = False
 
+        assert bucket_length > 0, f"bucket_length {bucket_length} is invalid"
+
         self.batch_load_hf_weight(state_dict)
+        if bucket_length > 1:
+            recv_handle = self._rlinf_worker.recv(
+                src_group_name=self._actor_group_name,
+                src_rank=self.actor_weight_rank,
+                async_op=True,
+            )
+            for _ in range(bucket_length - 2):
+                next_recv_handle = self._rlinf_worker.recv(
+                    src_group_name=self._actor_group_name,
+                    src_rank=self.actor_weight_rank,
+                    async_op=True,
+                )
+                state_dict = recv_handle.wait()
+                self.batch_load_hf_weight(state_dict)
+                recv_handle = next_recv_handle
+
+            state_dict = recv_handle.wait()
+            self.batch_load_hf_weight(state_dict)
+
         self.flush_cache()
         return SyncHFWeightOutput()
 

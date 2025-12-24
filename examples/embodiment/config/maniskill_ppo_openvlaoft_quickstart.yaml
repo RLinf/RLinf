@@ -22,7 +22,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "test_openvla"
+    experiment_name: "maniskill_ppo_openvlaoft_quickstart"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -66,7 +66,7 @@ algorithm:
 
   # params for rollout
   sampling_params:
-    use_greedy: False
+    do_sample: True
     temperature_train: 1.0
     temperature_eval: 0.6
     top_k: 0
@@ -82,13 +82,9 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  channel:
-    name: "env_buffer_list"
-    queue_name: "obs_buffer"
-    queue_size: 0
   enable_offload: False
 
-  # Override the default values in env/train or env/eval
+  # Override the default values in env/maniskill_put_on_plate_in_scene_25_main and env/maniskill_ood_template
   train:
     total_num_envs: 8
     auto_reset: True
@@ -110,11 +106,6 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "action_buffer"
-    queue_size: 0
-  mode: "colocate"
   backend: "huggingface"
   gpu_memory_utilization: 0.5  # not used in Embodied
   enforce_eager: True  # not used in Embodied
@@ -127,10 +118,6 @@ rollout:
 
 actor:
   group_name: "ActorGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "replay_buffer"
-    queue_size: 0
   training_backend: "fsdp"
   micro_batch_size: 1 # 1
   global_batch_size: 40 # 640
@@ -147,14 +134,15 @@ actor:
 
   # Override the default values in model/openvla_oft
   model:
-    model_path: "/mnt/public/wph/models/robotwin-oft-sft-place_empty_cup_rand-without_action_head/Optional--10000_chkpt"
+    model_path: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
     model_type: "openvla_oft"
 
     unnorm_key: bridge_orig
 
     add_value_head: True
     is_lora: True
-    lora_path: /path/to/model/oft-sft/lora_004000
+    # aka RLinf-OpenVLAOFT-ManiSkill-Base-Lora. It can be downloaded from https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
+    lora_path: /path/to/models/oft-sft/lora_004000/
 
   optim:
     lr: 1.0e-4
@@ -162,6 +150,7 @@ actor:
     adam_beta1: 0.9
     adam_beta2: 0.999
     adam_eps: 1.0e-05
+    weight_decay: 0.01
     clip_grad: 10.0
     critic_warmup_steps: 0
 

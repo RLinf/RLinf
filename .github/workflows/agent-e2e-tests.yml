@@ -62,6 +62,20 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-fsdp-vllm
 
+      - name: FSDP SGLang Pipeline mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-fsdp-sgl
+
+      - name: FSDP vLLM Pipeline mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-fsdp-vllm
+
       - name: Clean up
         run: |
           rm -rf .venv
@@ -338,6 +352,14 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen3-moe-2.5b-collocated-mg-sgl-tp-test
           rm -rf /workspace/results/grpo-moe-CI-test-seqmlp-2.5b/converted_ckpts/
+
+      - name: qwen3 dense model parallel tp test 
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/reasoning/run.sh qwen3-4b-collocated-mg-sgl-test
+          rm -rf /workspace/results/grpo-qwen3-4b-CI-test/converted_ckpts/
 
       - name: Clean up
         run: |

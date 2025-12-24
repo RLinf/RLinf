@@ -13,11 +13,12 @@
 # limitations under the License.
 
 import os
+from functools import partial
 
 import numpy as np
 import torch
 from omegaconf import DictConfig
-from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.tensor import DTensor
 from torch.multiprocessing.reductions import reduce_tensor
 
 import rlinf.algorithms  # noqa: F401
@@ -26,14 +27,14 @@ from rlinf.algorithms.utils import (
     kl_penalty,
 )
 from rlinf.config import SupportedModel
-from rlinf.data.io_struct import RolloutResult
+from rlinf.data.io_struct import BatchResizingIterator, RolloutResult
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
 )
 from rlinf.models import get_model
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.data_iter_utils import get_iterator_k_split
-from rlinf.utils.distributed import all_reduce_dict
+from rlinf.utils.distributed import all_reduce_dict, masked_normalization
 from rlinf.utils.distributed import (
     compute_rollout_metrics as compute_math_rollout_metrics,
 )
@@ -49,26 +50,35 @@ from rlinf.utils.placement import (
 )
 from rlinf.utils.utils import (
     clear_memory,
+    compute_entropy_from_logits,
     compute_logprobs_from_logits,
     cpu_weight_swap,
+    get_loss_agg_func,
     masked_mean,
     reshape_entropy,
     retrieve_model_state_dict_in_cpu,
-    seq_mean_token_mean,
-    seq_mean_token_sum,
 )
 from rlinf.workers.rollout.utils import RankMapper
 
 
 class FSDPActor(FSDPModelManager, Worker):
-    def __init__(self, cfg: DictConfig, placement: ModelParallelComponentPlacement):
+    def __init__(
+        self, cfg: DictConfig, placement: ModelParallelComponentPlacement
+    ) -> None:
+        """
+        FSDPActor worker used to train the model with data from rollout workers.
+
+        Args:
+            cfg (DictConfig): The global yaml configuration.
+            placement (ModelParallelComponentPlacement): The accelerator placement for actor worker.
+        """
         Worker.__init__(self)
         super().__init__(cfg.actor, self._world_size, self._rank)
 
         self.cfg = cfg
 
         self.response_len = (
-            cfg.actor.model.encoder_seq_length - cfg.data.max_prompt_length
+            self.cfg.actor.model.encoder_seq_length - self.cfg.data.max_prompt_length
         )
         self.calculate_entropy = self.cfg.algorithm.calculate_entropy
         self.calculate_entropy_loss = (
@@ -83,38 +93,43 @@ class FSDPActor(FSDPModelManager, Worker):
             // self._world_size
         )
 
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-        self.device = torch.cuda.current_device()
-        world_size = self._world_size
-        self.device_mesh = init_device_mesh(
-            "cuda", mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
-        )
-
         self._rollout_group_name = cfg.rollout.group_name
         self._component_placement = placement
-        self.is_data_io_rank = True
         self.is_pipeline = self._component_placement.is_disaggregated
         self.ref_policy_state_dict = None
-
-        if self.cfg.algorithm.loss_agg_func == "token-mean":
-            self.loss_agg_func = masked_mean
-        elif self.cfg.algorithm.loss_agg_func == "seq-mean-token-sum":
-            self.loss_agg_func = seq_mean_token_sum
-        elif self.cfg.algorithm.loss_agg_func == "seq-mean-token-mean":
-            self.loss_agg_func = seq_mean_token_mean
-        else:
-            raise NotImplementedError(
-                f"algorithm.loss_agg_func={self.cfg.algorithm.loss_agg_func} is not supported!"
+        if self.is_pipeline:
+            self._inference_group_name = cfg.inference.group_name
+            self._inference_world_size = self._component_placement.get_world_size(
+                "inference"
             )
+            self._inference_dst_map: dict[int, list[str]] = {}
+        else:
+            self._inference_group_name = None
+            self._inference_world_size = 0
+            self._inference_dst_map = None
+        self.loss_agg_func = get_loss_agg_func(self.cfg.algorithm.loss_agg_func)
+        self.enable_offload = (
+            self.cfg.actor.get("enable_offload", False) and not self.is_pipeline
+        )
+        self.micro_batch_size = self.cfg.actor.micro_batch_size
+        self.n_mini_batches = self.cfg.algorithm.n_minibatches
+        self.task_type = self.cfg.runner.task_type
 
     def init_worker(self) -> None:
+        """
+        Initialize the actor worker. build the model and use corresponding training backend
+        (FSDP/FSDP2) to wrap it. If needed, offload model parameters and optimizer states to CPU.
+        If kl_beta > 0, retrieve the reference policy model state dict to CPU.
+        If mode is disaggregated, setup which inference ranks it needs to sync weights to by
+        doing a handshake with inference workers.
+        """
         self.setup_model_and_optimizer()
         if self.cfg.algorithm.kl_beta > 0 and self.cfg.actor.get(
             "combine_reference_model", True
         ):
             self.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model)
 
-        if self.cfg.actor.get("enable_offload", False):
+        if self.enable_offload and not self.is_pipeline:
             self.offload_param_and_grad()
             self.offload_optimizer()
         self._setup_rollout_weight_dst_ranks()
@@ -130,16 +145,67 @@ class FSDPActor(FSDPModelManager, Worker):
         )
 
     def del_reshard_state_dict(self) -> None:
+        """Just for interface compatibility with MegatronActor."""
         if hasattr(self, "rollout_state_dict"):
             del self.rollout_state_dict
+        clear_memory(sync=False)
 
-    def sync_model_to_rollout(self) -> None:
-        if self.cfg.actor.get("enable_offload", False):
+    def sync_model_to_inference(self) -> None:
+        """
+        Sync the model's full state dict to the inference worker.
+        The model state_dict is the reference of actor's model
+        parameters(by setting cpu_offload=False).
+        """
+        if not self._inference_dst_map:
+            self._strategy.setup_actor_sync_inference_ranks(self)
+
+        if self.is_optimizer_offloaded:
             self.offload_optimizer()
 
-        if next(self.model.parameters()).is_cpu:
+        if self.is_weight_offloaded:
+            self.load_param_and_grad(self.device, False)
+
+        inference_state_dict = self.get_model_state_dict(
+            cpu_offload=False, full_state_dict=False
+        )
+        # NOTE: we have already know which inference rank needs which params
+        # by calling _strategy.setup_actor_sync_inference_ranks() to do handshake
+        # with each inference rank. just send them accordingly.
+        for rank, needed_params in self._inference_dst_map.items():
+            sended_params = {}
+            for name in needed_params:
+                if name in inference_state_dict:
+                    # mentioned again, no ShardedTensor here.
+                    sended_params[name] = (
+                        inference_state_dict[name].to_local()
+                        if isinstance(inference_state_dict[name], DTensor)
+                        else inference_state_dict[name]
+                    )
+            self.send(
+                object=sended_params,
+                dst_group_name=self._inference_group_name,
+                dst_rank=rank,
+                async_op=True,
+            )
+
+        if self.enable_offload and not self.is_weight_offloaded:
+            self.offload_param_and_grad()
+
+        torch.distributed.barrier()
+
+    def sync_model_to_rollout(self) -> None:
+        """
+        Sync the model's full state dict to the rollout worker.
+        """
+        if self.enable_offload and not self.is_optimizer_offloaded:
+            self.offload_optimizer()
+
+        if self.enable_offload and self.is_weight_offloaded:
             self.load_param_and_grad(self.device, True)
-        self.rollout_state_dict = self.get_model_state_dict()
+
+        self.rollout_state_dict = self.get_model_state_dict(
+            cpu_offload=False, full_state_dict=True
+        )
 
         has_visual = any("visual." in k for k in self.rollout_state_dict.keys())
 
@@ -157,18 +223,24 @@ class FSDPActor(FSDPModelManager, Worker):
 
                     # elif name.startswith("model."):
                     #     name = name[6:]
-                state_dict[name] = reduce_tensor(v)
+                state_dict[name] = reduce_tensor(v) if not self.is_pipeline else v
+            if not self.is_pipeline:
+                self.send(
+                    state_dict,
+                    self._rollout_group_name,
+                    self._weight_dst_rank_in_rollout,
+                )
+            else:
+                for weight_dst_rank in self._weight_dst_rank_in_rollout:
+                    self.send(
+                        state_dict,
+                        self._rollout_group_name,
+                        weight_dst_rank,
+                    )
 
-            self.send(
-                state_dict, self._rollout_group_name, self._weight_dst_rank_in_rollout
-            )
-
-        if self.cfg.actor.get("enable_offload", False):
+        state_dict.clear()
+        if self.enable_offload and not self.is_weight_offloaded:
             self.offload_param_and_grad()
-
-    def compute_logprobs(self) -> None:
-        self.model.eval()
-        self.rollout_batch["logprob"] = self.rollout_batch["prev_logprobs"]
 
     def get_batch(
         self, channel: Channel
@@ -182,21 +254,15 @@ class FSDPActor(FSDPModelManager, Worker):
         )
         return batch, result
 
-    def put_result(self, result: RolloutResult, channel: Channel) -> None:
-        if channel.is_local:
-            # Local channel, every process will put its own data locally
-            # No need to broadcast
-            channel.put(result)
-        else:
-            if self.is_data_io_rank:
-                channel.put(result)
-
     def _load_weight_and_optimizer(self) -> None:
         # Acquire the GPUs to ensure that no one is using them before loading models
         # Otherwise, it may lead to OOM
         with self.device_lock:
-            if self.cfg.actor.get("enable_offload", False):
+            if not self.enable_offload:
+                return
+            if self.is_weight_offloaded:
                 self.load_param_and_grad(self.device)
+            if self.is_optimizer_offloaded:
                 self.load_optimizer(self.device)
 
     @torch.no_grad()
@@ -227,9 +293,7 @@ class FSDPActor(FSDPModelManager, Worker):
         logits = logits / self.cfg.algorithm.sampling_params.temperature
 
         responses = input_ids[:, -self.response_len :]
-        logprobs = compute_logprobs_from_logits(
-            logits, responses, task_type=self.cfg.runner.task_type
-        )
+        logprobs = compute_logprobs_from_logits(logits, responses)
         return logprobs
 
     def run_inference(
@@ -284,14 +348,210 @@ class FSDPActor(FSDPModelManager, Worker):
                         ref_logprobs.append(self.inference_step(micro_batch).cpu())
                     rollout_result.ref_logprobs = torch.cat(ref_logprobs)
 
-            self.put_result(rollout_result, output_channel)
+            output_channel.put(rollout_result)
 
         assert recv_batch_size == self.total_batch_size_per_dp, (
             f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
         )
 
+    def training_step(
+        self, batch: dict[str, torch.Tensor] | BatchResizingIterator
+    ) -> tuple[dict[str, torch.Tensor], float, list[float]]:
+        if isinstance(batch, dict):
+            global_batch_size = batch["input_ids"].shape[0]
+            assert global_batch_size % self.micro_batch_size == 0, (
+                f"global batch size {global_batch_size} can not divide micro_batch_size {self.micro_batch_size}"
+            )
+            micro_batch_cnt = global_batch_size // self.micro_batch_size
+            self.gradient_accumulation = micro_batch_cnt
+            micro_batches = get_iterator_k_split(batch, micro_batch_cnt)
+            micro_batches_iter = iter(micro_batches)
+        else:
+            global_batch_size = self.total_batch_size_per_dp // self.n_mini_batches
+            micro_batch_cnt = global_batch_size // self.micro_batch_size
+            self.gradient_accumulation = micro_batch_cnt
+
+            def iterator_wrapper():
+                for _ in range(micro_batch_cnt):
+                    yield next(batch)
+
+            micro_batches_iter = iterator_wrapper()
+        self.optimizer.zero_grad()
+        mbs_metrics_list = {}
+        for idx, m_batch in enumerate(micro_batches_iter):
+            backward_ctx = self.before_micro_batch(
+                self.model,
+                is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
+            )
+            for k, v in m_batch.items():
+                m_batch[k] = v.cuda() if isinstance(v, torch.Tensor) else v
+
+            multi_modal_inputs = {}
+            if "multi_modal_inputs" in m_batch.keys():
+                for key in m_batch["multi_modal_inputs"][0].keys():
+                    multi_modal_inputs[key] = torch.cat(
+                        [inputs[key] for inputs in m_batch["multi_modal_inputs"]],
+                        dim=0,
+                    ).cuda()
+
+            input_ids = m_batch["input_ids"]
+            attention_mask = m_batch["attention_mask"]
+            position_ids = m_batch["position_ids"]
+            prev_logprobs = m_batch["prev_logprobs"]
+            advantages = m_batch["advantages"]
+            ref_logprobs = None
+            if "ref_logprobs" in m_batch:
+                ref_logprobs = m_batch["ref_logprobs"]
+
+            loss_mask = m_batch["attention_mask"][:, -self.response_len :]
+
+            clip_ratio = self.cfg.algorithm.ratio_clip_eps
+            clip_ratio_low = self.cfg.algorithm.get("clip_ratio_low", None)
+            clip_ratio_high = self.cfg.algorithm.get("clip_ratio_high", None)
+            clip_ratio_low = (
+                clip_ratio_low if clip_ratio_low is not None else clip_ratio
+            )
+            clip_ratio_high = (
+                clip_ratio_high if clip_ratio_high is not None else clip_ratio
+            )
+            clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
+
+            with self.amp_context:
+                output = self.model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                    **multi_modal_inputs,
+                    use_cache=False,
+                )
+
+                logits: torch.Tensor = output.logits
+
+                logits.div_(self.cfg.algorithm.sampling_params.temperature)
+
+                responses = input_ids[:, -self.response_len :]
+                logits = logits[
+                    :, -self.response_len - 1 : -1, :
+                ]  # (bsz, response_length, vocab_size)
+                logprobs = compute_logprobs_from_logits(logits, responses)
+
+                if self.cfg.algorithm.get("importance_sampling_fix", False):
+                    rollout_prev_logprobs = prev_logprobs
+                    recompute_prev_logprobs = m_batch["recompute_prev_logprobs"]
+                    advantages = advantages * torch.clamp(
+                        (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
+                        min=self.cfg.algorithm.importance_sampling_clip,
+                    )
+
+                loss, mbs_metrics_data = policy_loss(
+                    loss_type=self.cfg.algorithm.loss_type,
+                    loss_agg_func=self.loss_agg_func,
+                    logprobs=logprobs,
+                    old_logprobs=prev_logprobs,
+                    advantages=advantages,
+                    clip_ratio_low=clip_ratio_low,
+                    clip_ratio_high=clip_ratio_high,
+                    clip_ratio_c=clip_ratio_c,
+                    loss_mask=loss_mask,
+                    task_type=self.task_type,
+                )
+
+                entropy_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+                if self.calculate_entropy:
+                    entropy = compute_entropy_from_logits(
+                        logits,
+                    )
+
+                    entropy_loss = self.loss_agg_func(entropy, mask=loss_mask)
+                    if self.calculate_entropy_loss:
+                        loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
+
+                kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+                if self.kl_beta > 0 and ref_logprobs is not None:
+                    kld = kl_penalty(ref_logprobs, logprobs, self.kl_penalty_type)
+                    kl_loss = self.loss_agg_func(kld, loss_mask)
+                    loss = loss + kl_loss * self.kl_beta
+
+                # add to log
+                # scale loss for gradient accumulation and backprop
+                loss = loss / self.gradient_accumulation
+                with backward_ctx:
+                    self.grad_scaler.scale(loss).backward()
+
+            mbs_metrics_data.update(
+                {
+                    "final_loss": loss.detach(),
+                    "entropy_loss": entropy_loss.detach(),
+                    "kl_loss": kl_loss.detach(),
+                }
+            )
+
+            append_to_dict(mbs_metrics_list, mbs_metrics_data)
+
+        grad_norm, lr_list = self.optimizer_step()
+        return mbs_metrics_list, grad_norm, lr_list
+
+    def run_training_pipeline(self, input_channel: Channel) -> tuple[dict, list]:
+        self.model.train()
+        train_batch_iterator = BatchResizingIterator(
+            cfg=self.cfg,
+            get_batch_fn=partial(self.get_batch, input_channel),
+            micro_batch_size=self.micro_batch_size,
+            total_batch_size=self.total_batch_size_per_dp,
+            num_global_batches=self.n_mini_batches,
+            forward_only=False,
+        )
+        train_batch_iterator.register_get_batch_handler(
+            self.compute_advantages_and_returns
+        )
+
+        if self.cfg.algorithm.normalize_advantages:
+
+            def normalize_advantages(batch: dict[str, torch.Tensor]):
+                mask = batch["attention_mask"][:, -self.response_len :]
+                batch["advantages"] = masked_normalization(batch["advantages"], mask)
+                return batch
+
+            train_batch_iterator.register_global_batch_handler(normalize_advantages)
+
+        self._load_weight_and_optimizer()
+        training_metrics_list = []
+        with self.worker_timer():
+            for _ in range(self.n_mini_batches):
+                metrics, grad_norm, lr_list = self.training_step(
+                    batch=train_batch_iterator
+                )
+
+                # aggregate metrics across micro-batches
+                mean_metric_dict = {
+                    key: torch.mean(torch.stack(value))
+                    for key, value in metrics.items()
+                }
+                mean_metric_dict = all_reduce_dict(
+                    mean_metric_dict, op=torch.distributed.ReduceOp.AVG
+                )
+
+                mean_metric_dict["actor/grad_norm"] = float(grad_norm)
+                mean_metric_dict["actor/lr"] = lr_list[0]
+                training_metrics_list.append(mean_metric_dict)
+
+        # put lr scheduler step here
+        self.lr_scheduler.step()
+
+        # Rollout metrics
+        batch = train_batch_iterator.get_all_batches()
+        rollout_metrics, _, _ = compute_math_rollout_metrics(
+            batch, self.cfg.data.max_prompt_length, self.response_len
+        )
+
+        return rollout_metrics, training_metrics_list
+
     def run_training(self, input_channel: Channel) -> tuple[dict, list]:
         # Get all batches for this DP
+        if self.is_pipeline:
+            with self.worker_timer():
+                return self.run_training_pipeline(input_channel)
+
         batches = []
         recv_batch_size = 0
         while recv_batch_size < self.total_batch_size_per_dp:
@@ -301,16 +561,23 @@ class FSDPActor(FSDPModelManager, Worker):
         assert recv_batch_size == self.total_batch_size_per_dp, (
             f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
         )
-        batch = RolloutResult.merge_batches(batches)
+        global_batch = RolloutResult.merge_batches(batches)
 
         # Compute advantages and returns
-        batch = self.compute_advantages_and_returns(batch)
+        global_batch = self.compute_advantages_and_returns(global_batch)
+
+        if self.cfg.algorithm.normalize_advantages:
+            mask = global_batch["attention_mask"][:, -self.response_len :]
+            global_batch["advantages"] = masked_normalization(
+                global_batch["advantages"], mask
+            )
+
         # Must be called after batch is retrieved, which is when rollout has stopped
         # Otherwise, loading model might cause OOM
         self._load_weight_and_optimizer()
 
-        global_batches = get_iterator_k_split(
-            batch,
+        mini_batches = get_iterator_k_split(
+            global_batch,
             num_splits=self.cfg.algorithm.n_minibatches,
             shuffle=self.cfg.algorithm.get("shuffle_rollout", True),
             shuffle_seed=self.cfg.actor.seed,
@@ -326,142 +593,8 @@ class FSDPActor(FSDPModelManager, Worker):
         training_metrics_list = []
         # Global batch iterations
         with self.worker_timer():
-            for global_batch in global_batches:
-                train_global_batch_size = global_batch["input_ids"].shape[0]
-
-                assert train_global_batch_size % self.cfg.actor.micro_batch_size == 0, (
-                    f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size=}"
-                )
-
-                self.gradient_accumulation = (
-                    train_global_batch_size // self.cfg.actor.micro_batch_size
-                )
-                # split batch into micro_batches
-                train_micro_batches = get_iterator_k_split(
-                    global_batch,
-                    train_global_batch_size // self.cfg.actor.micro_batch_size,
-                )
-
-                self.optimizer.zero_grad()
-                metrics = {}
-                for idx, m_batch in enumerate(train_micro_batches):
-                    backward_ctx = self.before_micro_batch(
-                        self.model,
-                        is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
-                    )
-                    for k, v in m_batch.items():
-                        m_batch[k] = v.cuda() if isinstance(v, torch.Tensor) else v
-
-                    multi_modal_inputs = {}
-                    if "multi_modal_inputs" in m_batch.keys():
-                        for key in m_batch["multi_modal_inputs"][0].keys():
-                            multi_modal_inputs[key] = torch.cat(
-                                [
-                                    inputs[key]
-                                    for inputs in m_batch["multi_modal_inputs"]
-                                ],
-                                dim=0,
-                            ).cuda()
-
-                    input_ids = m_batch["input_ids"]
-                    attention_mask = m_batch["attention_mask"]
-                    position_ids = m_batch["position_ids"]
-                    prev_logprobs = m_batch["prev_logprobs"]
-                    advantages = m_batch["advantages"]
-                    ref_logprobs = None
-                    if "ref_logprobs" in m_batch:
-                        ref_logprobs = m_batch["ref_logprobs"]
-
-                    loss_mask = m_batch["attention_mask"][:, -self.response_len :]
-                    with self.amp_context:
-                        output = self.model(
-                            input_ids=input_ids,
-                            attention_mask=attention_mask,
-                            position_ids=position_ids,
-                            **multi_modal_inputs,
-                            use_cache=False,
-                        )
-
-                    logits = output.logits
-
-                    logits.div_(self.cfg.algorithm.sampling_params.temperature)
-
-                    responses = input_ids[:, -self.response_len :]
-                    logits = logits[
-                        :, -self.response_len - 1 : -1, :
-                    ]  # (bsz, response_length, vocab_size)
-                    logprobs = compute_logprobs_from_logits(
-                        logits, responses, task_type=self.cfg.runner.task_type
-                    )
-
-                    clip_ratio = self.cfg.algorithm.ratio_clip_eps
-                    clip_ratio_low = (
-                        self.cfg.algorithm.clip_ratio_low
-                        if self.cfg.algorithm.clip_ratio_low is not None
-                        else clip_ratio
-                    )
-                    clip_ratio_high = (
-                        self.cfg.algorithm.clip_ratio_high
-                        if self.cfg.algorithm.clip_ratio_high is not None
-                        else clip_ratio
-                    )
-                    clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
-
-                    if self.cfg.algorithm.get("importance_sampling_fix", False):
-                        rollout_prev_logprobs = prev_logprobs
-                        recompute_prev_logprobs = batch["recompute_prev_logprobs"]
-                        advantages = advantages * torch.clamp(
-                            (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
-                            min=self.cfg.algorithm.importance_sampling_clip,
-                        )
-
-                    loss, mbs_metrics_data = policy_loss(
-                        loss_type=self.cfg.algorithm.loss_type,
-                        loss_agg_func=self.loss_agg_func,
-                        logprobs=logprobs,
-                        old_logprobs=prev_logprobs,
-                        advantages=advantages,
-                        clip_ratio_low=clip_ratio_low,
-                        clip_ratio_high=clip_ratio_high,
-                        clip_ratio_c=clip_ratio_c,
-                        loss_mask=loss_mask,
-                        task_type=self.cfg.runner.task_type,
-                    )
-
-                    entropy_loss = torch.tensor(0.0, device=torch.cuda.current_device())
-                    if self.calculate_entropy:
-                        entropy = output["entropy"][
-                            :, -self.response_len - 1 : -1
-                        ].contiguous()
-                        entropy_loss = self.loss_agg_func(entropy, mask=loss_mask)
-                        if self.calculate_entropy_loss:
-                            loss = (
-                                loss - self.cfg.algorithm.entropy_bonus * entropy_loss
-                            )
-
-                    kl_loss = torch.tensor(0.0, device=torch.cuda.current_device())
-                    if self.kl_beta > 0 and ref_logprobs is not None:
-                        kld = kl_penalty(ref_logprobs, logprobs, self.kl_penalty_type)
-                        kl_loss = self.loss_agg_func(kld, loss_mask)
-                        loss = loss + kl_loss * self.kl_beta
-
-                    # add to log
-                    # scale loss for gradient accumulation and backprop
-                    loss = loss / self.gradient_accumulation
-                    with backward_ctx:
-                        self.grad_scaler.scale(loss).backward()
-
-                    mbs_metrics_data.update(
-                        {
-                            "final_loss": loss.detach(),
-                            "entropy_loss": entropy_loss.detach(),
-                            "kl_loss": kl_loss.detach(),
-                        }
-                    )
-
-                    append_to_dict(metrics, mbs_metrics_data)
-
-                grad_norm, lr_list = self.optimizer_step()
+            for mini_batch in mini_batches:
+                metrics, grad_norm, lr_list = self.training_step(batch=mini_batch)
 
                 # aggregate metrics across micro-batches
                 mean_metric_dict = {
@@ -481,7 +614,7 @@ class FSDPActor(FSDPModelManager, Worker):
 
         # Rollout metrics
         rollout_metrics, _, _ = compute_math_rollout_metrics(
-            batch, self.cfg.data.max_prompt_length, self.response_len
+            global_batch, self.cfg.data.max_prompt_length, self.response_len
         )
 
         return rollout_metrics, training_metrics_list
@@ -497,7 +630,7 @@ class FSDPActor(FSDPModelManager, Worker):
             if batch.get("advantages", None) is None:
                 mask = batch["attention_mask"][:, -self.response_len :]
                 advantages, _ = calculate_adv_and_returns(
-                    task_type=self.cfg.runner.task_type,
+                    task_type=self.task_type,
                     adv_type=self.cfg.algorithm.adv_type,
                     rewards=batch["rewards"].cuda(),
                     loss_mask=mask.cuda(),
@@ -523,13 +656,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
         super().__init__(cfg.actor, self._world_size, self._rank)
-
         self.cfg = cfg
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-        self.device = torch.cuda.current_device()
-        self.device_mesh = init_device_mesh(
-            "cuda", mesh_shape=(self._world_size,), mesh_dim_names=["fsdp"]
-        )
         self._env_group_name = cfg.env.group_name
         self._rollout_group_name = cfg.rollout.group_name
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
@@ -539,18 +666,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         ):
             self._weight_dst_rank_in_rollout = None
 
-        self._obs_queue_name = cfg.env.channel.queue_name
-        self._action_queue_name = cfg.rollout.channel.queue_name
-        self._replay_buffer_name = cfg.actor.channel.queue_name
         # stage_num: default to 2, use for pipeline rollout process
         self.stage_num = cfg.rollout.pipeline_stage_num
 
-        self.channel = self.connect_channel(cfg.actor.channel.name)
+        self.enable_offload = self.cfg.actor.get("enable_offload", False)
 
     def init_worker(self):
         self.setup_model_and_optimizer()
 
-        if self.cfg.actor.get("enable_offload", False):
+        if self.enable_offload:
             self.offload_param_and_grad()
             self.offload_optimizer()
 
@@ -561,23 +685,24 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         return super().model_provider_func()
 
     def sync_model_to_rollout(self):
-        if self.cfg.actor.get("enable_offload", False):
+        if self.enable_offload and not self.is_optimizer_offloaded:
             self.offload_optimizer()
 
-        if next(self.model.parameters()).is_cpu:
-            if self.cfg.actor.get("enable_offload", False):
-                self.load_param_and_grad(self.device)
+        if self.enable_offload and self.is_weight_offloaded:
+            self.load_param_and_grad(self.device)
 
-        state_dict = self.get_model_state_dict()
+        state_dict = self.get_model_state_dict(cpu_offload=False, full_state_dict=True)
         if self._weight_dst_rank_in_rollout is not None:
             self.send(
-                state_dict, self._rollout_group_name, self._weight_dst_rank_in_rollout
+                state_dict,
+                self._rollout_group_name,
+                self._weight_dst_rank_in_rollout,
+                async_op=True,
             )
-
-        if self.cfg.actor.get("enable_offload", False):
+        if self.enable_offload and not self.is_weight_offloaded:
             self.offload_param_and_grad()
 
-    async def recv_rollout_batch(self) -> None:
+    def recv_rollout_batch(self, input_channel: Channel) -> None:
         """
         Receive rollout batch from rollout workers.
         """
@@ -588,11 +713,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.rollout_batch = {}
         recv_list = []
         for _ in range(split_num):
-            recv_list.append(
-                await self.channel.get(
-                    key=self._replay_buffer_name, async_op=True
-                ).async_wait()
-            )
+            recv_list.append(input_channel.get())
 
         # shape [num_chunk, bsz, chunk_size], cat dim 1
         for key in recv_list[0].keys():
@@ -687,10 +808,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return rollout_batch
 
-    def compute_logprobs(self):
-        self.model.eval()
-        self.rollout_batch["logprob"] = self.rollout_batch["prev_logprobs"]
-
     def compute_advantages_and_returns(self):
         kwargs = {
             "task_type": self.cfg.runner.task_type,
@@ -718,8 +835,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         return rollout_metrics
 
     def run_training(self):
-        if self.cfg.actor.get("enable_offload", False):
+        if self.is_weight_offloaded:
             self.load_param_and_grad(self.device)
+        if self.is_optimizer_offloaded:
             self.load_optimizer(self.device)
 
         self.model.train()

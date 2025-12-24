@@ -1,5 +1,5 @@
-基于MetaWorld模拟器的强化学习训练
-==================================
+基于MetaWorld评测平台的强化学习训练
+======================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -31,7 +31,7 @@
 
 **数据结构**
 
-- **Images**：RGB 张量 ``[batch_size, 3, 480, 480]``  
+- **Images**：RGB 张量 ``[batch_size, 480, 480, 3]``  
 - **Task Descriptions**：自然语言指令  
 - **Actions**：归一化的连续值
 - **Rewards**：基于任务完成的稀疏奖励
@@ -61,13 +61,17 @@
 依赖安装
 -----------
 
-方法 1：您可以使用 metaworld 的 RLinf docker 镜像 ``docker pull rlinf/rlinf:agentic-rlinf0.1-metaworld``。
+**选项 1：Docker 镜像**
 
-方法 2：通过运行以下命令直接在您的环境中安装依赖（确保您已经安装了 ``uv``）：
+使用 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-metaworld`` 来运行实验。
+
+**选项 2：自定义环境**
 
 .. code:: bash
 
+   pip install uv
    bash requirements/install.sh embodied --model openpi --env metaworld
+   source .venv/bin/activate
 
 
 模型下载
@@ -85,8 +89,8 @@
 
    # 方法 2: 使用 huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-MetaWorld
-   hf download RLinf/RLinf-Pi05-MetaWorld
+   hf download RLinf/RLinf-Pi0-MetaWorld --local-dir RLinf-Pi0-MetaWorld
+   hf download RLinf/RLinf-Pi05-MetaWorld --local-dir RLinf-Pi05-MetaWorld
 
 或者，您也可以使用 ModelScope 从 https://www.modelscope.cn/models/RLinf/RLinf-Pi0-MetaWorld 下载模型。
 
@@ -217,7 +221,7 @@ MetaWorld ML45 联合训练配置文件 （在该任务设定下，训练在45�
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_metaworld"
+       experiment_name: "metaworld_50_ppo_openpi"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 

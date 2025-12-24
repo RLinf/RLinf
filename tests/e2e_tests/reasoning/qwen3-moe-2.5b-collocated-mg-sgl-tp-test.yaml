@@ -71,7 +71,7 @@ algorithm:
 
   # params for rollout
   sampling_params:
-    use_greedy: False
+    do_sample: True
     temperature: 1.0
     top_k: 1000000
     top_p: 1.0
@@ -217,7 +217,6 @@ actor:
     optimizer_enable_pin: false
     overlap_param_gather_with_optimizer_step: False
     clip_grad: 1.0
-    loss_scale: 100000.0
 
   lr_sched:
     lr_warmup_fraction: 0.01

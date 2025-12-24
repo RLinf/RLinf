@@ -1,5 +1,5 @@
-基于LIBERO模拟器的强化学习训练
-===============================
+基于LIBERO评测平台的强化学习训练
+====================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -38,7 +38,7 @@
 
 **数据结构**
 
-- **Images**：RGB 张量 ``[batch_size, 3, 224, 224]``  
+- **Images**：RGB 张量 ``[batch_size, 224, 224, 3]``  
 - **Task Descriptions**：自然语言指令  
 - **Actions**：归一化的连续值，转换为离散 tokens  
 - **Rewards**：基于任务完成度的逐步奖励
@@ -66,6 +66,27 @@
    - 动作 token 化与反 token 化  
    - 带 Value Head 的 Critic 功能
 
+依赖安装
+---------------
+
+**选项 1：Docker 镜像**
+
+使用 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` 来运行实验。
+
+请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
+
+.. code:: bash
+
+   source switch_env openvla-oft
+
+**选项 2：自定义环境**
+
+.. code:: bash
+
+   pip install uv
+   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
+   source .venv/bin/activate
+
 模型下载
 --------------
 
@@ -81,11 +102,20 @@
 
    # 方法 2: 使用 huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
+   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+   hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
 下载完成后，请确保在配置yaml文件中正确指定模型路径。
 
+.. code:: yaml
+
+   rollout:
+      model:
+         model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+   actor:
+      model:
+         model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+            
 运行脚本
 -------------------
 
@@ -144,11 +174,11 @@
 
    bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
 
-例如，在 LIBERO 环境中使用 PPO 训练 OpenVLA 模型：
+例如，在 LIBERO 环境中使用 GRPO 训练 OpenVLA-OFT 模型：
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh libero_10_ppo_openvlaoft
+   bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft
 
 可视化与结果
 -------------------------
@@ -164,49 +194,69 @@
 
 - **训练指标**：
 
-  - ``actor/loss``：PPO 策略损失  
-  - ``actor/value_loss``：价值函数损失  
-  - ``actor/entropy``：策略熵  
-  - ``actor/grad_norm``：梯度范数  
-  - ``actor/lr``：学习率  
+  - ``train/actor/approx_kl``: 近似 KL，用于监控策略更新幅度
+  - ``train/actor/clip_fraction``: 触发 PPO 的 clip 样本的比例
+  - ``train/actor/clipped_ratio``: 被裁剪后的概率比均值，用来衡量策略更新受到 clip 的影响程度
+  - ``train/actor/grad_norm``: 梯度范数
+  - ``train/actor/lr``: 学习率
+  - ``train/actor/policy_loss``: PPO/GRPO的策略损失
+  - ``train/critic/value_loss``: 价值函数的损失
+  - ``train/critic/value_clip_ratio``: PPO-style value function clipping 中触发 clip 的比例
+  - ``train/critic/explained_variance``: 衡量价值函数拟合程度，越接近 1 越好
+  - ``train/entropy_loss``: 策略熵
+  - ``train/loss``: 策略损失 + 价值损失 + 熵正则的总和  (actor_loss + critic_loss + entropy_loss regularization)
 
 - **Rollout 指标**：
 
-  - ``rollout/reward_mean``：平均回合奖励  
-  - ``rollout/reward_std``：奖励标准差  
-  - ``rollout/episode_length``：平均回合长度  
-  - ``rollout/success_rate``：任务完成率  
+  - ``rollout/advantages_max``: 优势函数的最大值
+  - ``rollout/advantages_mean``: 优势函数的均值
+  - ``rollout/advantages_min``: 优势函数的最小值
+  - ``rollout/rewards``: 一个chunk的奖励 （参考 libero_env.py 的414行）
 
 - **环境指标**：
 
-  - ``env/success_rate``：各环境的成功率  
-  - ``env/step_reward``：逐步奖励  
-  - ``env/termination_rate``：回合终止率  
+- **环境指标（Environment Metrics）**：
+
+  - ``env/episode_len``：该回合实际经历的环境步数（单位：step）。
+  - ``env/return``：回合总回报。在 LIBERO 的稀疏奖励设置中，该指标并不具有参考价值，因为奖励在回合中几乎始终为 0，只有在成功结束时才会给出 1。
+  - ``env/reward``：环境的 step-level 奖励（在任务未完成的步骤中为 0，仅在成功终止时为 1）。  
+    日志中的数值会按回合步数进行归一化，因此无法直接反映实际的任务完成表现。
+  - ``env/success_once``：建议使用该指标来监控训练效果，它直接表示未归一化的任务成功率，更能反映策略的真实性能。
+
 
 **3. 视频生成**
 
 .. code-block:: yaml
 
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ./logs/video/train
+   env:
+      eval:
+         video_cfg:
+            save_video: True
+            video_base_dir: ${runner.logger.log_path}/video/eval
 
-**4. WandB 集成**
+**4. 训练日志工具集成**
 
 .. code-block:: yaml
 
-   trainer:
-     logger:
-       wandb:
-         enable: True
-         project_name: "RLinf"
-         experiment_name: "openvla-libero"
+   runner:
+      task_type: embodied
+      logger:
+         log_path: "../results"
+         project_name: rlinf
+         experiment_name: "libero_10_grpo_openvlaoft"
+         logger_backends: ["tensorboard"] # wandb, swanlab
 
 LIBERO 结果
 ~~~~~~~~~~~~~~~~~~~
 
 为了展示 RLinf 在大规模多任务强化学习方面的能力，我们在 LIBERO 的全部130个任务上训练了一个统一模型，并评估了其在 LIBERO 五个任务套件中的表现：LIBERO-Spatial、LIBERO-Goal、LIBERO-Object、LIBERO-Long和LIBERO-90。 
+
+对于每个 LIBERO 套件，我们评估所有 task_id 与 trial_id 的组合。对于 Object、Spatial、Goal 和 Long 套件，我们共评估 500 个环境（10 个任务 × 50 个试次）。
+对于 LIBERO-90 与 LIBERO-130，我们分别评估 4,500 和 6,500 个环境（每个任务组包含 90或130 个任务 × 50 个试次）。
+
+我们根据模型的训练配置来设置评估的超参：
+对于 SFT 训练（LoRA-base）模型，我们设置 `do_sample = False`。
+对于 RL 训练的模型，我们设置 `do_sample = True`、`temperature = 1.6`，并启用 `rollout_epoch=2` 以激发 RL 调优策略的最佳性能。
 
 .. note:: 
 
@@ -216,34 +266,30 @@ LIBERO 结果
    :header-rows: 1
 
    * - 模型
+     - Object
      - Spatial
      - Goal
-     - Object
      - Long
      - 90
-     - Average
-   * - `OpenVLA-OFT (Base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_
-     - 72.18%
-     - 64.06%
-     - 71.48%
-     - 48.44%
-     - 70.97%
-     - 65.43
-   * - `OpenVLA-OFT (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130>`_
-     - **99.40%**
-     - **98.79%**
-     - **99.80%**
-     - **93.95%**
-     - **98.59%**
-     - **98.11%**
-   * - 提升效果
-     - +27.22%
-     - +34.73%
-     - +28.32%
-     - +45.51%
-     - +27.62%
-     - +32.68%
-
-在 Libero 实验中，我们参考了  
-`SimpleVLA <https://github.com/PRIME-RL/SimpleVLA-RL>`_，仅做了少量改动。  
-感谢作者开源代码。
+     - 130
+   * - |huggingface| `OpenVLA-OFT (LoRA-base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_
+     - 50.20%
+     - 51.61%
+     - 49.40%
+     - 11.90%
+     - 42.67%
+     - 42.09%
+   * - |huggingface| `OpenVLA-OFT (RLinf-GRPO) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130>`_
+     - **99.60%**
+     - **98.69%**
+     - **98.09%**
+     - **93.45%**
+     - **98.02%**
+     - **97.85%**
+   * - 效果提升
+     - +49.40%
+     - +47.08%
+     - +48.69%
+     - +81.55%
+     - +55.35%
+     - +55.76%

@@ -45,6 +45,7 @@ class SupportedModel(Enum):
     # Reasoning models
     QWEN2_5 = ("qwen2.5", "reasoning")
     QWEN2_5_VL = ("qwen2.5_vl", "reasoning")
+    QWEN3 = ("qwen3", "reasoning")
     QWEN3_MOE = ("qwen3_moe", "reasoning")
 
     # Embodied models
@@ -72,7 +73,7 @@ def get_supported_model(model_type: str) -> SupportedModel:
 
 
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
-SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl"]
+SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl", "sft"]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
 
@@ -281,6 +282,7 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
 
         # MoE model
         cfg.model.num_moe_experts = getattr(hf_config, "num_experts", None)
+        cfg.model.num_experts = getattr(hf_config, "num_experts", None)
         cfg.model.moe_ffn_hidden_size = getattr(
             hf_config, "moe_intermediate_size", None
         )
@@ -603,6 +605,13 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
         cfg.optim.overlap_param_gather_with_optimizer_step = cfg.optim.get(
             "overlap_param_gather_with_optimizer_step", False
         )
+        cfg.optim.optimizer_cpu_offload = cfg.optim.get("optimizer_cpu_offload", False)
+        cfg.optim.optimizer_offload_fraction = cfg.optim.get(
+            "optimizer_offload_fraction", 0.0
+        )
+        cfg.optim.use_precision_aware_optimizer = cfg.optim.get(
+            "use_precision_aware_optimizer", False
+        )
 
         # learning rate
         cfg.lr_sched.lr = cfg.optim.get("lr", None)
@@ -690,28 +699,6 @@ def validate_embodied_cfg(cfg):
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
 
-    assert cfg.env.train.total_num_envs > 0, (
-        "Total number of parallel environments for training must be greater than 0"
-    )
-    assert cfg.env.train.total_num_envs % env_world_size == 0, (
-        "Total number of parallel environments for training must be divisible by the number of environment processes"
-    )
-    assert cfg.env.train.total_num_envs % env_world_size % stage_num == 0, (
-        "Total number of parallel environments for training must be divisible by the number of environment processes and the number of pipeline stages"
-    )
-    assert cfg.env.train.total_num_envs // env_world_size // stage_num > 0, (
-        "env.train.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
-    )
-    assert (
-        cfg.env.train.total_num_envs
-        // env_world_size
-        // stage_num
-        % cfg.env.train.group_size
-        == 0
-    ), (
-        "env.train.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
-    )
-
     if cfg.runner.val_check_interval > 0 or cfg.runner.only_eval:
         assert cfg.env.eval.total_num_envs > 0, (
             "Total number of parallel environments for evaluation must be greater than 0"
@@ -734,22 +721,41 @@ def validate_embodied_cfg(cfg):
         ), (
             "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
         )
+        assert (
+            cfg.env.eval.max_steps_per_rollout_epoch % cfg.actor.model.num_action_chunks
+            == 0
+        ), (
+            "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
+        )
 
-    assert (
-        cfg.env.train.max_steps_per_rollout_epoch % cfg.actor.model.num_action_chunks
-        == 0
-    ), (
-        "env.train.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
-    )
-    assert (
-        cfg.env.eval.max_steps_per_rollout_epoch % cfg.actor.model.num_action_chunks
-        == 0
-    ), (
-        "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
-    )
+    if not cfg.runner.only_eval:
+        assert cfg.env.train.total_num_envs > 0, (
+            "Total number of parallel environments for training must be greater than 0"
+        )
+        assert cfg.env.train.total_num_envs % env_world_size == 0, (
+            "Total number of parallel environments for training must be divisible by the number of environment processes"
+        )
+        assert cfg.env.train.total_num_envs % env_world_size % stage_num == 0, (
+            "Total number of parallel environments for training must be divisible by the number of environment processes and the number of pipeline stages"
+        )
+        assert cfg.env.train.total_num_envs // env_world_size // stage_num > 0, (
+            "env.train.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
+        )
+        assert (
+            cfg.env.train.total_num_envs
+            // env_world_size
+            // stage_num
+            % cfg.env.train.group_size
+            == 0
+        ), (
+            "env.train.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
+        )
 
     with open_dict(cfg):
-        if cfg.env.train.simulator_type == "maniskill":
+        if (
+            cfg.env.train.simulator_type == "maniskill"
+            or cfg.env.eval.simulator_type == "maniskill"
+        ):
 
             def get_robot_control_mode(robot: str):
                 if "google_robot_static" in robot:
@@ -767,7 +773,10 @@ def validate_embodied_cfg(cfg):
             cfg.env.eval.init_params.control_mode = get_robot_control_mode(
                 cfg.actor.model.policy_setup
             )
-        elif cfg.env.train.simulator_type == "behavior":
+        elif (
+            cfg.env.train.simulator_type == "behavior"
+            or cfg.env.eval.simulator_type == "behavior"
+        ):
             import omnigibson as og
 
             assert cfg.env.train.base_config_name == "r1pro_behavior", (
