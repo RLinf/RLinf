@@ -6,13 +6,13 @@ Introduction
 RLinf provides **out-of-the-box evaluation scripts** to evaluate the performance of embodied agents in both *in-distribution* and *out-of-distribution* tasks.
 List of currently supported evaluation environments:
 
-- :doc:`Behavior <../examples/behavior>`
-- :doc:`Calvin <../examples/calvin>`
-- :doc:`Isaaclab <../examples/isaaclab>`
-- :doc:`Libero <../examples/Libero>`
-- :doc:`ManiSkill <../examples/maniskill>`
-- :doc:`MetaWorld <../examples/metaworld>`
-- :doc:`RoboCasa <../examples/robocasa>`
+- :doc:`Behavior <examples/behavior>`
+- :doc:`Calvin <examples/calvin>`
+- :doc:`Isaaclab <examples/isaaclab>`
+- :doc:`Libero <examples/libero>`
+- :doc:`ManiSkill <examples/maniskill>`
+- :doc:`MetaWorld <examples/metaworld>`
+- :doc:`RoboCasa <examples/robocasa>`
 
 All startup scripts for evaluation are located in the ``examples/embodiment/`` directory.
 
