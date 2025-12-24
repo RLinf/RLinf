@@ -6,13 +6,19 @@
 RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* 与 *训练分布外* 的任务中评估具身智能体的表现。  
 目前支持的评估环境列表：
 
-- :doc:`Behavior <examples/behavior>`
-- :doc:`Calvin <examples/calvin>`
-- :doc:`Isaaclab <examples/isaaclab>`
-- :doc:`Libero <examples/libero>`
-- :doc:`ManiSkill <examples/maniskill>`
-- :doc:`MetaWorld <examples/metaworld>`
-- :doc:`RoboCasa <examples/robocasa>`
+:doc:`Behavior <../examples/behavior>`
+
+:doc:`Calvin <../examples/calvin>`
+
+:doc:`Isaaclab <../examples/isaaclab>`
+
+:doc:`Libero <../examples/libero>`
+
+:doc:`ManiSkill <../examples/maniskill>`
+
+:doc:`MetaWorld <../examples/metaworld>`
+
+:doc:`RoboCasa <../examples/robocasa>`
 
 所有关于eval的启动脚本均位于 ``examples/embodiment/`` 目录下；
 
@@ -27,18 +33,18 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
 **关键 YAML 配置字段**
 除了上面示例提到的 ``libero_10_grpo_openvlaoft_eval`` 其余的 yaml 均可直接使用。以 ``examples/embodiment/config/libero_10_ppo_openpi.yaml`` 为例，您可以按需修改配置文件中的：
 
-1. 调整模型路径（现在的代码逻辑需要我们同时修改actor和rollout的环境）：同时修改以下三个参数以加载待测评的模型；
-  1. ``rollout.model.model_path``
-  1. ``actor.model.model_path``
-  1. ``actor.tokenizer.tokenizer_model``
+1. 调整模型路径（现在的代码逻辑需要我们同时修改actor和rollout的环境）：同时修改以下三个参数以加载待测评的模型；\
+  1. ``rollout.model.model_path``\
+  1. ``actor.model.model_path``\
+  1. ``actor.tokenizer.tokenizer_model``\
 
 1. 控制环境的随机种子：我们可以调整 ``env.seed`` 来调整环境的随机函数的变化，以便复现结果等
 
 > 注：多个worker启动环境时，不同worker中的环境的 ``seed`` 都有固定的偏移 ``seed = seed + self._rank * self.stage_num + stage_id``；
 
-1. 调整环境数：我们有两种方式
-  1. 第一种是调大 ``env.eval.total_num_envs`` 以控制单轮测评的环境数，但是这在资源受限的环境下容易 OOM 例如您只有一张40g的显卡；
-  1. 所以我们有另一种，也就是打开 ``env.eval.auto_reset=True`` 然后，调整 ``max_steps_per_rollout_epoch`` 为 ``max_episode_steps`` 的N倍，那么总的环境将会是 ``N*env.eval.total_num_envs`` 个；
+1. 调整环境数：我们有两种方式\
+  1. 第一种是调大 ``env.eval.total_num_envs`` 以控制单轮测评的环境数，但是这在资源受限的环境下容易 OOM 例如您只有一张40g的显卡；\
+  1. 所以我们有另一种，也就是打开 ``env.eval.auto_reset=True`` 然后，调整 ``max_steps_per_rollout_epoch`` 为 ``max_episode_steps`` 的N倍，那么总的环境将会是 ``N*env.eval.total_num_envs`` 个；\
 
 1. 调整测评轮数：我们可以调整 ``algorithm.eval_rollout_epoch`` 以控制测评的轮数。由于每次测评的种子都是相同的，用于当 do_sample=True 时，测评结果等价于测评多轮取平均的结果；
 

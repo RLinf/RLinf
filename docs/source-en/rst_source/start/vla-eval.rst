@@ -6,13 +6,19 @@ Introduction
 RLinf provides **out-of-the-box evaluation scripts** to evaluate the performance of embodied agents in both *in-distribution* and *out-of-distribution* tasks.
 List of currently supported evaluation environments:
 
-- :doc:`Behavior <examples/behavior>`
-- :doc:`Calvin <examples/calvin>`
-- :doc:`Isaaclab <examples/isaaclab>`
-- :doc:`Libero <examples/libero>`
-- :doc:`ManiSkill <examples/maniskill>`
-- :doc:`MetaWorld <examples/metaworld>`
-- :doc:`RoboCasa <examples/robocasa>`
+:doc:`Behavior <../examples/behavior>`
+
+:doc:`Calvin <../examples/calvin>`
+
+:doc:`Isaaclab <../examples/isaaclab>`
+
+:doc:`Libero <../examples/libero>`
+
+:doc:`ManiSkill <../examples/maniskill>`
+
+:doc:`MetaWorld <../examples/metaworld>`
+
+:doc:`RoboCasa <../examples/robocasa>`
 
 All startup scripts for evaluation are located in the ``examples/embodiment/`` directory.
 
@@ -27,18 +33,18 @@ Quick Start
 **Key YAML Configuration Fields**
 Except for the ``libero_10_grpo_openvlaoft_eval`` mentioned in the example above, other YAML files can be used directly. Taking ``examples/embodiment/config/libero_10_ppo_openpi.yaml`` as an example, you can modify the following fields in the configuration file as needed:
 
-1. **Adjust model path** (Current code logic requires modifying both the actor and rollout environments simultaneously): Modify the following three parameters to load the model to be evaluated:
-  1. ``rollout.model.model_path``
-  1. ``actor.model.model_path``
-  1. ``actor.tokenizer.tokenizer_model``
+1. **Adjust model path** (Current code logic requires modifying both the actor and rollout environments simultaneously): Modify the following three parameters to load the model to be evaluated:\
+  1. ``rollout.model.model_path``\
+  1. ``actor.model.model_path``\
+  1. ``actor.tokenizer.tokenizer_model``\
 
 1. **Control environment random seed**: You can adjust ``env.seed`` to change the environment's random function for result reproducibility, etc.
 
 > Note: When multiple workers launch environments, the seeds in different workers have a fixed offset: ``seed = seed + self._rank * self.stage_num + stage_id``.
 
-1. **Adjust the number of environments**: There are two approaches:
-  1. The first is to increase ``env.eval.total_num_envs`` to control the number of environments per evaluation round. However, this may easily lead to OOM (Out Of Memory) issues in resource-constrained settings (e.g., if you only have a single 40GB GPU);
-  1. Therefore, we offer an alternative: enable ``env.eval.auto_reset=True`` and then adjust ``max_steps_per_rollout_epoch`` to be **N** times the value of ``max_episode_steps``. In this case, the total number of environments evaluated will be ``N * env.eval.total_num_envs``;
+1. **Adjust the number of environments**: There are two approaches:\
+  1. The first is to increase ``env.eval.total_num_envs`` to control the number of environments per evaluation round. However, this may easily lead to OOM (Out Of Memory) issues in resource-constrained settings (e.g., if you only have a single 40GB GPU);\
+  1. Therefore, we offer an alternative: enable ``env.eval.auto_reset=True`` and then adjust ``max_steps_per_rollout_epoch`` to be **N** times the value of ``max_episode_steps``. In this case, the total number of environments evaluated will be ``N * env.eval.total_num_envs``;\
 
 1. **Adjust evaluation epochs**: You can adjust ``algorithm.eval_rollout_epoch`` to control the number of evaluation rounds. Since the seed is the same for each evaluation, when ``do_sample=True``, the result is equivalent to the average of multiple evaluation rounds.
 
