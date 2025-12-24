@@ -31,7 +31,7 @@ runner:
   max_tokens_per_mbs: 1024
 
   resume_dir: null
-  experiment_name: grpo-moe-CI-test-seqmlp-2.5b
+  experiment_name: grpo-qwen3-4b-CI-test
   output_dir: /workspace/results
 
 algorithm:
@@ -85,9 +85,10 @@ rollout:
   gpu_memory_utilization: 0.55
 
   model:
-    model_path: /workspace/dataset/Qwen3-2.5B-A1B
-    model_type: qwen3_moe
+    model_path: /workspace/dataset/Qwen3-4B
+    model_type: qwen3
     precision: ${actor.model.precision}              # precision for rollout model, support [fp16, bf16, fp32]
+  
   enforce_eager: False         # if False, vllm will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
@@ -113,9 +114,9 @@ rollout:
 
   return_logprobs: ${not:${algorithm.recompute_logprobs}}
 
-  tensor_parallel_size: 2
+  tensor_parallel_size: 4
   pipeline_parallel_size: 1
-  
+
   validate_weight: False # whether to send all weights at first for weight comparison.
   validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
   print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
@@ -157,15 +158,11 @@ actor:
   seed: 1234
 
   model:
-    megatron_checkpoint: /workspace/dataset/Qwen3-2.5B-A1B-tp4-pp1-ep1-tpe4
     precision: fp16
     add_bias_linear: False
 
     tensor_model_parallel_size: 4
     pipeline_model_parallel_size: 1
-    expert_model_parallel_size: 1
-    expert_tensor_parallel_size: 4
-    moe_grouped_gemm: te # grouped_gemm type, avail in [null, te]. null means do not use grouped_gemm
 
     activation: swiglu
     sequence_parallel: True
@@ -194,12 +191,6 @@ actor:
     moe_token_dispatcher_type: alltoall
     use_cpu_initialization: False
 
-    # MoE related
-    moe_router_load_balancing_type: "aux_loss"
-    init_method_std: 0.008
-    moe_router_topk: 2
-    moe_router_pre_softmax: False
-    moe_aux_loss_coeff: 0.0
 
   optim:
     optimizer: adam
@@ -228,7 +219,7 @@ actor:
     lr_decay_iters: 10
 
   tokenizer:
-    tokenizer_model: /workspace/dataset/Qwen3-2.5B-A1B
+    tokenizer_model: /workspace/dataset/Qwen3-4B
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'
@@ -241,21 +232,18 @@ actor:
     use_dist_ckpt: False
     tp_comm_bootstrap_backend: nccl
     tp_comm_overlap_cfg: null # tp_comm_overlap_cfg.yaml
-    use_hf_ckpt: False # if true, will transfer hf model to generate megatron checkpoint and use it for training.
+    use_hf_ckpt: True # if true, will transfer hf model to generate megatron checkpoint and use it for training.
     use_profiler: False # if true, will enable torch profiler when training, pay attention it has influence on performance
 
     ckpt_convertor: # config for ckpt convertor
-      model: Qwen3-2.5B-A1B
-      hf_model_path: ${rollout.model.model_path} # path to the hf model
+      model: Qwen3-4B
+      hf_model_path: ${rollout.model.model_path} # path to the hf model # path to the hf model
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
       use_gpu_num : 0
       use_gpu_index: null
       process_num: 8 # number of processes to use for checkpointing
       tensor_model_parallel_size: ${actor.model.tensor_model_parallel_size}
       pipeline_model_parallel_size: ${actor.model.pipeline_model_parallel_size}
-      expert_model_parallel_size: ${actor.model.expert_model_parallel_size}
-      expert_tensor_parallel_size: ${actor.model.expert_tensor_parallel_size}
-      grouped_gemm: ${actor.model.moe_grouped_gemm}
       te_ln_linear_qkv: True
       te_ln_linear_mlp_fc1: True
       # avail in [None, 'none', 'tensor_pickle_none', 'tensor_0_dim'], and only 'tensor_pickle_none' can be used if transformer engine version  in [2.3, 2.5]

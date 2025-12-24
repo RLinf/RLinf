@@ -27,9 +27,9 @@ sys.path.insert(0, os.path.abspath("../../"))
 # -- Project Information -------------------------------------------------------
 
 project = "RLinf"
-author = "Zhexuan Xu"
-copyright = "2025 RLinf Team"
-release = "v1"
+author = "RLinf Team"
+copyright = "2025 RLinf Project"
+version = "latest"
 
 
 # -- General Configuration -----------------------------------------------------
@@ -134,8 +134,8 @@ html_theme_options = {
         },
     ],
     "switcher": {
-        "json_url": "_static/versions.json",
-        "version_match": release,
+        "json_url": "https://rlinf.readthedocs.io/zh-cn/latest/_static/versions.json",
+        "version_match": version,
     },
 }
 

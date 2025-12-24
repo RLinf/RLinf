@@ -147,9 +147,7 @@ Model Download
    # Method 1: Using git clone
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-Pi0-RoboCasa
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-RoboCasa
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-RoboCasa
-   hf download RLinf/RLinf-Pi0-RoboCasa
+   hf download RLinf/RLinf-Pi0-RoboCasa --local-dir RLinf-Pi0-RoboCasa

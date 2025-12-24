@@ -59,7 +59,7 @@ Environment
 **Data Structure**
 
 -  **Images**: Main-view and wrist-view RGB tensors, each of shape
-   ``[batch_size, 3, 224, 224]``
+   ``[batch_size, 224, 224, 3]``
 -  **States**: In LIBERO, states include end-effector pose (position + orientation) and gripper state. In ManiSkill3, states are robot joint angles.
 -  **Task Descriptions**: Natural-language instructions
 -  **Rewards**: Sparse success/failure rewards
@@ -124,7 +124,7 @@ Before starting training, you need to download the corresponding pretrained mode
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal
+   hf download RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal --local-dir RLinf-Pi0-SFT-Spatial-Object-Goal
 
 Alternatively, you can download the model from ModelScope: https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal.
 

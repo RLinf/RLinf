@@ -48,8 +48,8 @@ Environment
 
 **Data Structure**
 
--  **Images**: Main-view and wrist-view RGB tensors, respectively named as "images" and "wrist_images" with shape
-   ``[batch_size, 3, 224, 224]``
+-  **Images**: Main-view and wrist-view RGB tensors, respectively named as "full_images" and "wrist_images" with shape
+   ``[batch_size, 224, 224, 3]``
 -  **States**: End-effector position, orientation, and gripper state
 -  **Task Descriptions**: Natural-language instructions
 -  **Rewards**: Sparse success/failure rewards
@@ -112,7 +112,7 @@ In current stage, we support four libero tasks: Spatial, Object, Goal, and Long.
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Gr00t-SFT-Spatial
+   hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
 
 Models for other tasks:
 - `Libero-Object <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_

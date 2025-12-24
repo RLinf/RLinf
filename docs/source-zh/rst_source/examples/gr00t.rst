@@ -31,7 +31,7 @@ GR00T-N1.5直接将环境提供的自然语言任务描述作为语言模型的�
 
 **数据结构**
 
-- **图像**：主视角和手腕视角的RGB张量，分别命名为“images”和“wrist_images”，形状为``[batch_size, 3, 224, 224]``
+- **图像**：主视角和手腕视角的RGB张量，分别命名为“full_images”和“wrist_images”，形状为``[batch_size, 224, 224, 3]``
 - **状态**：末端执行器的位置、姿态和夹爪状态
 - **任务描述**：自然语言指令
 - **奖励**：稀疏的成功/失败奖励
@@ -89,7 +89,7 @@ GR00T-N1.5直接将环境提供的自然语言任务描述作为语言模型的�
 
    # 方法2：使用huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Gr00t-SFT-Spatial
+   hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
 
 其他任务的SFT模型下载: 
 - `Libero-Object <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_

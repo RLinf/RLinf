@@ -32,8 +32,8 @@
 
 - **任务描述**: 从 `behavior-1k` 任务中选择
 - **图像**: 多相机 RGB 张量
-  - 头部图像: ``[batch_size, 3, 224, 224]``
-  - 手腕图像: ``[batch_size, 2, 3, 224, 224]`` (左右相机)
+  - 头部图像: ``[batch_size, 224, 224, 3]``
+  - 手腕图像: ``[batch_size, 2, 224, 224, 3]`` (左右相机)
 
 
 算法
@@ -146,9 +146,7 @@ OpenVLA-OFT 提供了一个适用于 Behavior 环境中所有任务类型的统�
 
    # 方法 2: 使用 huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-OpenVLAOFT-Behavior
-
-或者，您也可以使用 ModelScope 从 https://www.modelscope.cn/models/RLinf/RLinf-OpenVLAOFT-Behavior 下载模型。
+   hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir RLinf-OpenVLAOFT-Behavior
 
 下载后，请确保在配置 yaml 文件中正确指定模型路径。
 

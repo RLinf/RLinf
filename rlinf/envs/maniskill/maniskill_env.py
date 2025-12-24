@@ -137,13 +137,14 @@ class ManiskillEnv(gym.Env):
         return wrapped_obs
 
     def _extract_obs_image(self, raw_obs):
-        obs_image = raw_obs["sensor_data"]["3rd_view_camera"]["rgb"].to(torch.uint8)
-        obs_image = obs_image.permute(0, 3, 1, 2)  # [B, C, H, W]
+        obs_image = raw_obs["sensor_data"]["3rd_view_camera"]["rgb"].to(
+            torch.uint8
+        )  # [B, H, W, C]
         proprioception: torch.Tensor = self.env.unwrapped.agent.robot.get_qpos().to(
             obs_image.device, dtype=torch.float32
         )
         extracted_obs = {
-            "images": obs_image,
+            "full_images": obs_image,
             "states": proprioception,
             "task_descriptions": self.instruction,
         }
@@ -377,7 +378,7 @@ class ManiskillEnv(gym.Env):
 
     def add_new_frames_from_obs(self, raw_obs):
         """For debugging render"""
-        raw_imgs = common.to_numpy(raw_obs["images"].permute(0, 2, 3, 1))
+        raw_imgs = common.to_numpy(raw_obs["full_images"])
         raw_full_img = tile_images(raw_imgs, nrows=int(np.sqrt(self.num_envs)))
         self.render_images.append(raw_full_img)
 

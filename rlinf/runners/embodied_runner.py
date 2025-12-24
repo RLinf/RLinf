@@ -17,6 +17,8 @@ import typing
 
 from tqdm import tqdm
 
+from rlinf.scheduler import Channel
+from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics
@@ -47,6 +49,11 @@ class EmbodiedRunner:
         self.env = env
         self.critic = critic
         self.reward = reward
+
+        # Data channels
+        self.env_channel = Channel.create("Env")
+        self.rollout_channel = Channel.create("Rollout")
+        self.actor_channel = Channel.create("Actor")
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -80,28 +87,22 @@ class EmbodiedRunner:
         self.global_step = int(resume_dir.split("global_step_")[-1])
 
     def update_rollout_weights(self):
-        rollout_futures = self.rollout.sync_model_from_actor()
-        actor_futures = self.actor.sync_model_to_rollout()
-        actor_futures.wait()
-        rollout_futures.wait()
-
-    def generate_rollouts(self):
-        env_futures = self.env.interact()
-        rollout_futures = self.rollout.generate()
-        actor_futures = self.actor.recv_rollout_batch()
-        env_results = env_futures.wait()
-        actor_futures.wait()
-        rollout_futures.wait()
-
-        env_results_list = [results for results in env_results if results is not None]
-        env_metrics = compute_evaluate_metrics(env_results_list)
-        return env_metrics
+        rollout_handle: Handle = self.rollout.sync_model_from_actor()
+        actor_handle: Handle = self.actor.sync_model_to_rollout()
+        actor_handle.wait()
+        rollout_handle.wait()
 
     def evaluate(self):
-        env_futures = self.env.evaluate()
-        rollout_futures = self.rollout.evaluate()
-        env_results = env_futures.wait()
-        rollout_futures.wait()
+        env_handle: Handle = self.env.evaluate(
+            input_channel=self.rollout_channel,
+            output_channel=self.env_channel,
+        )
+        rollout_handle: Handle = self.rollout.evaluate(
+            input_channel=self.env_channel,
+            output_channel=self.rollout_channel,
+        )
+        env_results = env_handle.wait()
+        rollout_handle.wait()
         eval_metrics_list = [results for results in env_results if results is not None]
         eval_metrics = compute_evaluate_metrics(eval_metrics_list)
         return eval_metrics
@@ -133,17 +134,28 @@ class EmbodiedRunner:
                 with self.timer("sync_weights"):
                     self.update_rollout_weights()
                 with self.timer("generate_rollouts"):
-                    env_metrics = self.generate_rollouts()
+                    env_handle: Handle = self.env.interact(
+                        input_channel=self.rollout_channel,
+                        output_channel=self.env_channel,
+                    )
+                    self.rollout.generate(
+                        input_channel=self.env_channel,
+                        output_channel=self.rollout_channel,
+                        actor_channel=self.actor_channel,
+                    )
+                    self.actor.recv_rollout_batch(
+                        input_channel=self.actor_channel
+                    ).wait()
 
                 # compute advantages and returns.
                 with self.timer("cal_adv_and_returns"):
-                    actor_futures = self.actor.compute_advantages_and_returns()
-                    actor_rollout_metrics = actor_futures.wait()
+                    actor_rollout_metrics = (
+                        self.actor.compute_advantages_and_returns().wait()
+                    )
 
                 # actor training.
                 with self.timer("actor_training"):
-                    actor_training_futures = self.actor.run_training()
-                    actor_training_metrics = actor_training_futures.wait()
+                    actor_training_metrics = self.actor.run_training().wait()
 
                 self.global_step += 1
 
@@ -160,6 +172,10 @@ class EmbodiedRunner:
                     self._save_checkpoint()
 
             time_metrics = self.timer.consume_durations()
+            env_results_list = [
+                results for results in env_handle.wait() if results is not None
+            ]
+            env_metrics = compute_evaluate_metrics(env_results_list)
 
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
             rollout_metrics = {

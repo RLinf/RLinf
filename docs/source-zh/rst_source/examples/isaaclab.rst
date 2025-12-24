@@ -106,7 +106,7 @@ ISAAC-SIM下载
 
    # 方法2：使用huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Gr00t-SFT-Spatial
+   hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
 
 运行脚本
 -------------------

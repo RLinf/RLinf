@@ -96,6 +96,32 @@ To enable LoRA fine-tuning, set ``actor.model.is_lora`` to True and configure ``
             is_lora: True
             lora_rank: 32
 
+Dependency Installation
+-----------------------
+
+This section describes the dependency for the SFT of OpenPI model. 
+For other models, please refer to the ``Dependency Installation`` section of the corresponding examples.
+
+**Option 1: Docker Image**
+
+Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` for the experiment.
+
+Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
+
+.. code:: bash
+
+   source switch_env openpi
+
+**Option 2: Custom Environment**
+
+Install dependencies directly in your environment by running the following command:
+
+.. code:: bash
+
+   pip install uv
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero
+   source .venv/bin/activate
+
 Launch scripts
 ----------------
 
@@ -103,10 +129,11 @@ First start the Ray cluster, then run the helper script:
 
 .. code:: bash
 
+   export RANK=0  # set the rank of the current node
    cd /path_to_RLinf/ray_utils
-   bash start_ray.sh                 # start head + workers
+   bash start_ray.sh
 
    # return to repo root
-   bash examples/sft/train_embodied_sft.py --config libero_sft_openpi.yaml
+   bash examples/sft/train_embodied_sft.sh --config libero_sft_openpi
 
 The same script works for generic text SFT; just swap the config file.

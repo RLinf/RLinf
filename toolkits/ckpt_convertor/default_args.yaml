@@ -70,6 +70,13 @@ explict_model:
     head_dim: 128
     num_layers: 28
     tie_word_embeddings: true
+  'Qwen3-4B':
+    model_type: qwen_3
+    num_attention_heads: 32
+    num_query_groups: 8
+    head_dim: 128
+    num_layers: 36
+    tie_word_embeddings: true
   'Qwen2.5-Coder-1.5B':
     model_type: qwen_2
     num_attention_heads: 12

@@ -334,25 +334,19 @@ class RobocasaEnv(gym.Env):
             list_of_dict_to_dict_of_list(images_and_states_list)
         )
 
-        # Convert images from (H, W, C) to (C, H, W) format like libero does
-        image_tensor = torch.stack(
-            [
-                value.clone().permute(2, 0, 1)
-                for value in images_and_states_tensor["base_image"]
-            ]
+        # Convert images from [H, W, C] -> [B, H, W, C]
+        full_image_tensor = torch.stack(
+            [value.clone() for value in images_and_states_tensor["base_image"]]
         )
         wrist_image_tensor = torch.stack(
-            [
-                value.clone().permute(2, 0, 1)
-                for value in images_and_states_tensor["wrist_image"]
-            ]
+            [value.clone() for value in images_and_states_tensor["wrist_image"]]
         )
 
         states = images_and_states_tensor["state"]
 
         # Flatten structure to match libero format
         obs = {
-            "images": image_tensor,
+            "full_images": full_image_tensor,
             "wrist_images": wrist_image_tensor,
             "states": states,
             "task_descriptions": [
@@ -377,10 +371,7 @@ class RobocasaEnv(gym.Env):
         raw_obs = self.env.reset(id=env_idx)
 
         obs = self._wrap_obs(raw_obs)
-        if env_idx is not None:
-            self._reset_metrics(env_idx)
-        else:
-            self._reset_metrics()
+        self._reset_metrics(env_idx)
         infos = {}
         return obs, infos
 
