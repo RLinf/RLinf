@@ -32,28 +32,36 @@ Quick Start
   bash examples/embodiment/eval_embodiment.sh libero_10_grpo_openvlaoft_eval
 
 **Key YAML Configuration Fields**
+
 Except for the ``libero_10_grpo_openvlaoft_eval`` mentioned in the example above, other YAML files can be used directly. Taking ``examples/embodiment/config/libero_10_ppo_openpi.yaml`` as an example, you can modify the following fields in the configuration file as needed:
 
-1. **Adjust model path** (Current code logic requires modifying both the actor and rollout environments simultaneously): Modify the following three parameters to load the model to be evaluated:\
-  1. ``rollout.model.model_path``\
-  1. ``actor.model.model_path``\
-  1. ``actor.tokenizer.tokenizer_model``\
+1. **Adjust model path** (Current code logic requires modifying both the actor and rollout environments simultaneously): Modify the following three parameters to load the model to be evaluated:
 
-1. **Control environment random seed**: You can adjust ``env.seed`` to change the environment's random function for result reproducibility, etc.
+  1. ``rollout.model.model_path``
+
+  2. ``actor.model.model_path``
+
+  3. ``actor.tokenizer.tokenizer_model``
+
+
+2. **Control environment random seed**: You can adjust ``env.seed`` to change the environment's random function for result reproducibility, etc.
 
 > Note: When multiple workers launch environments, the seeds in different workers have a fixed offset: ``seed = seed + self._rank * self.stage_num + stage_id``.
 
-1. **Adjust the number of environments**: There are two approaches:\
-  1. The first is to increase ``env.eval.total_num_envs`` to control the number of environments per evaluation round. However, this may easily lead to OOM (Out Of Memory) issues in resource-constrained settings (e.g., if you only have a single 40GB GPU);\
-  1. Therefore, we offer an alternative: enable ``env.eval.auto_reset=True`` and then adjust ``max_steps_per_rollout_epoch`` to be **N** times the value of ``max_episode_steps``. In this case, the total number of environments evaluated will be ``N * env.eval.total_num_envs``;\
+3. **Adjust the number of environments**: There are two approaches:
 
-1. **Adjust evaluation epochs**: You can adjust ``algorithm.eval_rollout_epoch`` to control the number of evaluation rounds. Since the seed is the same for each evaluation, when ``do_sample=True``, the result is equivalent to the average of multiple evaluation rounds.
+  1. The first is to increase ``env.eval.total_num_envs`` to control the number of environments per evaluation round. However, this may easily lead to OOM (Out Of Memory) issues in resource-constrained settings (e.g., if you only have a single 40GB GPU);
 
-1. **Adjust max interaction steps per trajectory**: You can adjust ``env.eval.max_episode_steps`` to control the maximum number of interaction steps in a single trajectory.
+  2. Therefore, we offer an alternative: enable ``env.eval.auto_reset=True`` and then adjust ``max_steps_per_rollout_epoch`` to be **N** times the value of ``max_episode_steps``. In this case, the total number of environments evaluated will be ``N * env.eval.total_num_envs``;
 
-1. **Record environment video**: You can set ``env.eval.video_cfg.save_video=True`` to record videos of the environment during evaluation.
 
-1. **Control evaluation sampling method**: You can adjust ``algorithm.sampling_params`` to control the sampling method during rollout evaluation.
+4. **Adjust evaluation epochs**: You can adjust ``algorithm.eval_rollout_epoch`` to control the number of evaluation rounds. Since the seed is the same for each evaluation, when ``do_sample=True``, the result is equivalent to the average of multiple evaluation rounds.
+
+5. **Adjust max interaction steps per trajectory**: You can adjust ``env.eval.max_episode_steps`` to control the maximum number of interaction steps in a single trajectory.
+
+6. **Record environment video**: You can set ``env.eval.video_cfg.save_video=True`` to record videos of the environment during evaluation.
+
+7. **Control evaluation sampling method**: You can adjust ``algorithm.sampling_params`` to control the sampling method during rollout evaluation.
 
 **Evaluation Launch Script**
 
@@ -120,7 +128,9 @@ Quick Start — ManiSkill3 OOD
 
 > Currently, only ManiSkill is supported for OOD test.
 
-**Launch Method**: Modify variables such as ``EVAL_NAME``, ``CKPT_PATH``, and ``CONFIG_NAME`` (which can be set to ``maniskill_ppo_openvlaoft_quickstart`` for a quick test) in ``examples/embodiment/eval_mani_ood.sh``.
+**Launch Method**
+
+Modify variables such as ``EVAL_NAME``, ``CKPT_PATH``, and ``CONFIG_NAME`` (which can be set to ``maniskill_ppo_openvlaoft_quickstart`` for a quick test) in ``examples/embodiment/eval_mani_ood.sh``.
 Then, execute the following command in the terminal to start the evaluation.
 
 .. code-block:: bash
