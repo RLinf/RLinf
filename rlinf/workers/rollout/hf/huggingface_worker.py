@@ -192,6 +192,20 @@ class MultiStepRolloutWorker(Worker):
                 for stage_id in range(self.num_pipeline_stages):
                     env_output = self.recv_env_output(input_channel)
 
+                    # ================== 【新增修改 A：截获图像】 ==================
+                    # 1. 尝试从 env_output["obs"] 中提取图像
+                    # OpenVLA 的 obs 通常包含 "images" 键
+                    # 注意：如果你的环境里 key 叫 "rgb" 或者别的，请在这里调整
+                    current_frame_batch = None
+                    if "images" in env_output["obs"]:
+                        img_tensor = env_output["obs"]["images"]
+                        # 2. 极其重要：转为 CPU numpy，断开计算图，节省显存
+                        if isinstance(img_tensor, torch.Tensor):
+                            current_frame_batch = img_tensor.detach().cpu().numpy() # [Batch, C, H, W]
+                        else:
+                            current_frame_batch = img_tensor
+                    # ===========================================================
+
                     dones, rewards = self.get_dones_and_rewards(env_output)
                     actions, result = self.predict(env_output["obs"])
                     chunk_step_result = ChunkStepResult(
@@ -200,6 +214,11 @@ class MultiStepRolloutWorker(Worker):
                         dones=dones,
                         rewards=rewards,  # the first step is reset step, reward is none, which will not be appended to the buffer
                         forward_inputs=result["forward_inputs"],
+
+                        # ================== 【新增修改 B：装车】 ==================
+                        # 把这一步的图像 batch 塞进小推车
+                        video_frame=current_frame_batch
+                        # ========================================================
                     )
                     self.buffer_list[stage_id].append_result(chunk_step_result)
 

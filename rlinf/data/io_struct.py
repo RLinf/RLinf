@@ -210,6 +210,7 @@ class SeqGroupInfo:
         return self.num_completed == self.group_size
 
 
+
 @dataclass(kw_only=True)
 class RolloutResult:
     """
@@ -231,6 +232,9 @@ class RolloutResult:
     image_data: Optional[Union[list[list[bytes]], list[list[str]]]] = None
     multi_modal_inputs: Optional[list[dict]] = None
     response_mask: Optional[list[list[int]]] = None
+    #daqi
+    video_frames: Optional[list[list[Any]]] = None
+
     # Inference
     # Logprobs returned by rollout engines
     rollout_logprobs: Optional[list[list[float]]] = None
@@ -492,6 +496,12 @@ class RolloutResult:
             merged_result.response_lengths.extend(res.response_lengths)
             merged_result.response_ids.extend(res.response_ids)
             merged_result.is_end.extend(res.is_end)
+            #daqi
+            if res.video_frames is not None:
+                merged_result.video_frames = merge_list(
+                    merged_result.video_frames, res.video_frames
+                )
+
             if res.answers is not None:
                 merged_result.answers = merge_list(merged_result.answers, res.answers)
             if res.advantages is not None:
@@ -594,6 +604,13 @@ class RolloutResult:
         response_ids_split = split_list(rollout_result.response_ids, num_groups)
         is_end_split = split_list(rollout_result.is_end, num_groups)
 
+
+        #daqi
+        video_frames_split = None
+        if rollout_result.video_frames is not None:
+            video_frames_split = split_list(rollout_result.video_frames, num_groups)
+
+
         # Handle optional fields
         answers_split = None
         if rollout_result.answers is not None:
@@ -663,6 +680,12 @@ class RolloutResult:
                 response_ids=response_ids_split[i],
                 is_end=is_end_split[i],
                 answers=answers_split[i] if answers_split is not None else None,
+
+                #daqi
+                video_frames=video_frames_split[i] 
+                if video_frames_split is not None 
+                else None,
+
                 image_data=image_data_split[i]
                 if image_data_split is not None
                 else None,
@@ -1060,7 +1083,7 @@ class EnvOutput:
         )
 
     def prepare_observations(self, obs: dict[str, Any]) -> dict[str, Any]:
-        image_tensor = obs["full_images"] if "full_images" in obs else None
+        image_tensor = obs["images"] if "images" in obs else None
         wrist_image_tensor = obs["wrist_images"] if "wrist_images" in obs else None
         states = obs["states"] if "states" in obs else None
         task_descriptions = (
@@ -1068,8 +1091,8 @@ class EnvOutput:
         )
 
         return {
-            "full_images": image_tensor,  # [N_ENV, H, W, C]
-            "wrist_images": wrist_image_tensor,  # [N_ENV, H, W, C] or [N_ENV, N_IMG, H, W, C]
+            "images": image_tensor,
+            "wrist_images": wrist_image_tensor,
             "states": states,
             "task_descriptions": task_descriptions,
         }
@@ -1097,6 +1120,9 @@ class ChunkStepResult:
     dones: torch.Tensor = None  # [B, 1]
     rewards: torch.Tensor = None  # [B, 1]
     forward_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
+
+    #daqi
+    video_frame: Any = None
 
     def __post_init__(self):
         if self.prev_logprobs is not None:
@@ -1130,6 +1156,9 @@ class EmbodiedRolloutResult:
     forward_inputs: list[dict[str, list[torch.Tensor]]] = field(
         default_factory=list
     )  # lens of results is rollout_epoch * n_chunk_steps
+
+    #daqi
+    video_frames: list[Any] = field(default_factory=list)
 
     def append_result(self, result: ChunkStepResult):
         if result.prev_logprobs is not None:
