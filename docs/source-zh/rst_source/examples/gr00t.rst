@@ -1,6 +1,11 @@
 GR00T-N1.5模型强化学习训练
 ==================================================================
 
+.. |huggingface| image:: /_static/svg/hf-logo.svg
+   :width: 16px
+   :height: 16px
+   :class: inline-icon
+
 本示例提供了一份完整指南，介绍如何在LIBERO环境中使用RLinf框架，通过强化学习对GR00T-N1.5算法进行微调。内容涵盖从环境设置、核心算法设计到训练配置、评估和可视化的全过程，并提供可复现的命令和配置片段。
 
 主要目标是开发一个能够执行机器人操作的模型，具体包括：
@@ -26,7 +31,7 @@ GR00T-N1.5直接将环境提供的自然语言任务描述作为语言模型的�
 
 **数据结构**
 
-- **图像**：主视角和手腕视角的RGB张量，分别命名为“images”和“wrist_images”，形状为``[batch_size, 3, 224, 224]``
+- **图像**：主视角和手腕视角的RGB张量，分别命名为“full_images”和“wrist_images”，形状为``[batch_size, 224, 224, 3]``
 - **状态**：末端执行器的位置、姿态和夹爪状态
 - **任务描述**：自然语言指令
 - **奖励**：稀疏的成功/失败奖励
@@ -84,7 +89,7 @@ GR00T-N1.5直接将环境提供的自然语言任务描述作为语言模型的�
 
    # 方法2：使用huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Gr00t-SFT-Spatial
+   hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
 
 其他任务的SFT模型下载: 
 - `Libero-Object <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_
@@ -281,7 +286,7 @@ LoRA设置正在测试中，即将推出。
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_openpi"
+       experiment_name: "libero_10_ppo_gr00t"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 --------------
@@ -304,18 +309,18 @@ LoRA设置正在测试中，即将推出。
      - Δ Avg.
 
    * - GR00T（少样本）
-     - `41.4% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial>`_
-     - `58.6% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Object>`_
-     - `48.2% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Goal>`_
-     - `61.9% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Long>`_
+     - |huggingface| `41.4% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial>`_
+     - |huggingface| `58.6% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Object>`_
+     - |huggingface| `48.2% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Goal>`_
+     - |huggingface| `61.9% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Long>`_
      - 52.5%
      - ---
 
    * - +PPO
-     - `92.5% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Spatial-Step400>`_
-     - `95.0% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Object-Step400>`_
-     - `84.3% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Goal-Step500>`_
-     - `86.3% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Long-Step300>`_
+     - |huggingface| `92.5% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Spatial-Step400>`_
+     - |huggingface| `95.0% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Object-Step400>`_
+     - |huggingface| `84.3% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Goal-Step500>`_
+     - |huggingface| `86.3% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Long-Step300>`_
      - **89.5%**
      - **+37.0%**
 

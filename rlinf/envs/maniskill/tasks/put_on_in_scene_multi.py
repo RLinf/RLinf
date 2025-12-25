@@ -34,7 +34,10 @@ from mani_skill.utils.structs.types import SimConfig
 from sapien.physx import PhysxMaterial
 from transforms3d.euler import euler2quat
 
-CARROT_DATASET_DIR = Path(__file__).parent / ".." / "assets" / "carrot"
+CARROT_DATASET_DIR = (
+    Path(os.getenv("MANISKILL_ASSET_DIR", Path(__file__).parent / ".." / "assets"))
+    / "carrot"
+)
 
 
 class PutOnPlateInScene25(BaseEnv):
@@ -806,8 +809,9 @@ class PutOnPlateInScene25(BaseEnv):
     asset_download_ids=["bridge_v2_real2sim"],
 )
 class PutOnPlateInScene25MainV3(PutOnPlateInScene25):
-    def __init__(self, obj_set, **kwargs):
+    def __init__(self, obj_set, use_multiple_plates=False, **kwargs):
         self.obj_set = obj_set
+        self.use_multiple_plates = use_multiple_plates
         self._prep_init()
 
         super().__init__(**kwargs)
@@ -822,11 +826,13 @@ class PutOnPlateInScene25MainV3(PutOnPlateInScene25):
         self.model_db_plate: dict[str, dict] = io_utils.load_json(
             CARROT_DATASET_DIR / "more_plate" / "model_db.json"
         )
-        only_plate_name = list(self.model_db_plate.keys())[0]
-        self.model_db_plate = {
-            k: v for k, v in self.model_db_plate.items() if k == only_plate_name
-        }
-        assert len(self.model_db_plate) == 1
+        # Allow using multiple plates during testing.
+        if not self.use_multiple_plates:
+            only_plate_name = list(self.model_db_plate.keys())[0]
+            self.model_db_plate = {
+                k: v for k, v in self.model_db_plate.items() if k == only_plate_name
+            }
+            assert len(self.model_db_plate) == 1
 
         # random configs
         self.carrot_names = list(self.model_db_carrot.keys())

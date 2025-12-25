@@ -81,10 +81,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  channel:
-    name: "env_buffer_list"
-    queue_name: "obs_buffer"
-    queue_size: 0
   enable_offload: True
 
   # Override the default values in env/manikill_put_carrot_on_plate_in_scene
@@ -108,11 +104,6 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "action_buffer"
-    queue_size: 0
-  mode: "colocate"
   backend: "huggingface"
   recompute_logprobs: False
   gpu_memory_utilization: 0.5
@@ -125,10 +116,6 @@ rollout:
     precision: ${actor.model.precision}
 
 actor:
-  channel:
-    name: ${env.channel.name}
-    queue_name: "replay_buffer"
-    queue_size: 0
   group_name: "ActorGroup"
   training_backend: "fsdp"
 
@@ -157,6 +144,7 @@ actor:
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-05
+    weight_decay: 0.01
     clip_grad: 1.0
     critic_warmup_steps: 5
 

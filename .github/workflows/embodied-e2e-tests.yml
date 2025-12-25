@@ -23,6 +23,7 @@ jobs:
       - name: ManiSkill PPO test
         timeout-minutes: 20
         run: |
+          unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openvla
@@ -51,6 +52,7 @@ jobs:
       - name: ManiSkill GRPO test
         timeout-minutes: 20
         run: |
+          unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
@@ -59,6 +61,7 @@ jobs:
       - name: Libero-Goal GRPO test
         timeout-minutes: 20
         run: |
+          unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_goal_grpo_openvlaoft
@@ -66,6 +69,7 @@ jobs:
       - name: Libero-130 GRPO test
         timeout-minutes: 20
         run: |
+          unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_130_grpo_openvlaoft
@@ -95,6 +99,7 @@ jobs:
       - name: BEHAVIOR-OpenVLA-OFT test
         timeout-minutes: 30
         run: |
+          unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
@@ -126,6 +131,7 @@ jobs:
       - name: Libero-Spatial PPO test
         timeout-minutes: 20
         run: |
+          unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_gr00t
@@ -155,6 +161,7 @@ jobs:
       - name: ISAACLAB PPO test
         timeout-minutes: 20
         run: |
+          unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           source /workspace/dataset/isaac-sim-5.1/setup_conda_env.sh
@@ -181,9 +188,18 @@ jobs:
           export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
+      - name: Maniskill PPO Pi05 test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openpi05
+
       - name: Libero-Spatial PPO test
         timeout-minutes: 20
         run: |
+          unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi
@@ -191,6 +207,7 @@ jobs:
       - name: Libero-Spatial PPO Pi05 test
         timeout-minutes: 20
         run: |
+          unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi05
@@ -218,6 +235,7 @@ jobs:
       - name: Metaworld PPO test
         timeout-minutes: 20
         run: |
+          unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh metaworld_50_ppo_openpi
@@ -246,9 +264,39 @@ jobs:
       - name: Calvin PPO test
         timeout-minutes: 20
         run: |
+          unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh calvin_ppo_openpi
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-openpi-robocasa-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export ROBOCASA_PATH=/workspace/dataset/robocasa
+          bash requirements/install.sh embodied --model openpi --env robocasa
+
+      - name: Robocasa GRPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh robocasa_grpo_openpi
 
       - name: Clean up
         run: |

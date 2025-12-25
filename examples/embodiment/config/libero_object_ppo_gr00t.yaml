@@ -22,7 +22,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "test_gr00t"
+    experiment_name: "libero_object_ppo_gr00t"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -42,7 +42,6 @@ algorithm:
   reward_coef: 1.0
   rollout_epoch: 8
   eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
-  rollout_epoch: 8
   reward_type: chunk_level
   logprob_type: chunk_level
   entropy_type: chunk_level
@@ -84,10 +83,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  channel:
-    name: "env_buffer_list"
-    queue_name: "obs_buffer"
-    queue_size: 0
   enable_offload: False
   train:
     total_num_envs: 64
@@ -111,11 +106,6 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "action_buffer"
-    queue_size: 0
-  mode: "colocate"
   backend: "huggingface"
   enable_offload: True
   pipeline_stage_num: 1
@@ -126,10 +116,6 @@ rollout:
 
 actor:
   group_name: "ActorGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "replay_buffer"
-    queue_size: 0
   training_backend: "fsdp"
   micro_batch_size: 128
   global_batch_size: 1024
@@ -148,6 +134,7 @@ actor:
     adam_beta2: 0.95
     adam_eps: 1.0e-05
     clip_grad: 1.0
+    weight_decay: 0.01
     critic_warmup_steps: 0
   
   fsdp_config:

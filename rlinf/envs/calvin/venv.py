@@ -19,7 +19,9 @@ from typing import Any, Callable, Optional, Union
 
 import gymnasium as gym
 import numpy as np
-from libero.libero.envs.venv import (
+
+from rlinf.envs.calvin import make_env
+from rlinf.envs.venv import (
     BaseVectorEnv,
     CloudpickleWrapper,
     EnvWorker,
@@ -28,8 +30,6 @@ from libero.libero.envs.venv import (
     SubprocVectorEnv,
     _setup_buf,
 )
-
-from rlinf.envs.calvin import make_env
 
 gym_old_venv_step_type = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 gym_new_venv_step_type = tuple[

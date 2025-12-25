@@ -139,6 +139,17 @@ RUN link_assets
 # Set default env
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
+FROM embodied-common-image AS embodied-robocasa-image
+
+# Install openpi env
+RUN bash requirements/install.sh embodied --venv openpi --model openpi --env robocasa
+
+RUN source switch_env openpi && download_assets --dir /opt/assets --assets openpi
+RUN link_assets
+
+# Set default env
+RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
+
 FROM embodied-common-image AS embodied-isaaclab-image
 
 # Install gr00t env
