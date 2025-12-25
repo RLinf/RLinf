@@ -18,6 +18,7 @@ from functools import partial
 import numpy as np
 import torch
 from omegaconf import DictConfig
+from torch import nn
 from torch.distributed.tensor import DTensor
 from torch.multiprocessing.reductions import reduce_tensor
 
@@ -660,31 +661,52 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self._env_group_name = cfg.env.group_name
         self._rollout_group_name = cfg.rollout.group_name
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
-        self._weight_dst_rank_in_rollout = self._rank
-        if self._weight_dst_rank_in_rollout >= self._component_placement.get_world_size(
-            "rollout"
-        ):
-            self._weight_dst_rank_in_rollout = None
 
         # stage_num: default to 2, use for pipeline rollout process
         self.stage_num = cfg.rollout.pipeline_stage_num
 
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
 
-    def init_worker(self):
+    def _setup_rollout_weight_dst_ranks(self) -> None:
+        """
+        Setup destination ranks for weight communication.
+        It can support any topology between actor and rollout workers.
+        Assuming there are M actor ranks and N rollout ranks, each actor rank
+        will send weights to most ceil(N/M) rollout ranks according to the modulo rule.
+        """
+        rollout_world_size = self._component_placement.get_world_size("rollout")
+        actor_world_size = self._world_size
+        rank = self._rank
+        self._weight_dst_rank_in_rollout = []
+        rollout_ranks_per_actor = (
+            rollout_world_size + actor_world_size - 1
+        ) // actor_world_size
+        for i in range(rollout_ranks_per_actor):
+            if i * actor_world_size + rank < rollout_world_size:
+                self._weight_dst_rank_in_rollout.append(i * actor_world_size + rank)
+
+    def init_worker(self) -> None:
+        """
+        Initialize the actor worker. build the model and use corresponding training backend,
+        if needed, offload model parameters and optimizer states to CPU.
+        """
         self.setup_model_and_optimizer()
 
         if self.enable_offload:
             self.offload_param_and_grad()
             self.offload_optimizer()
+        self._setup_rollout_weight_dst_ranks()
 
-    def model_provider_func(self):
+    def model_provider_func(self) -> nn.Module:
         model = get_model(self.cfg.actor.model)
         if model is not None:
             return model
         return super().model_provider_func()
 
-    def sync_model_to_rollout(self):
+    def sync_model_to_rollout(self) -> None:
+        """
+        Sync the model's full state dict to the rollout worker.
+        """
         if self.enable_offload and not self.is_optimizer_offloaded:
             self.offload_optimizer()
 
@@ -692,11 +714,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self.load_param_and_grad(self.device)
 
         state_dict = self.get_model_state_dict(cpu_offload=False, full_state_dict=True)
-        if self._weight_dst_rank_in_rollout is not None:
+        for rank in self._weight_dst_rank_in_rollout:
             self.send(
                 state_dict,
                 self._rollout_group_name,
-                self._weight_dst_rank_in_rollout,
+                rank,
                 async_op=True,
             )
         if self.enable_offload and not self.is_weight_offloaded:
@@ -705,6 +727,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
     def recv_rollout_batch(self, input_channel: Channel) -> None:
         """
         Receive rollout batch from rollout workers.
+
+        Args:
+            input_channel: The input channel to read from.
         """
         send_num = self._component_placement.get_world_size("rollout") * self.stage_num
         recv_num = self._component_placement.get_world_size("actor")
@@ -808,7 +833,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return rollout_batch
 
-    def compute_advantages_and_returns(self):
+    def compute_advantages_and_returns(self) -> dict[str, torch.Tensor]:
+        """
+        Compute the advantages and returns.
+        """
         kwargs = {
             "task_type": self.cfg.runner.task_type,
             "adv_type": self.cfg.algorithm.adv_type,
@@ -834,7 +862,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
         return rollout_metrics
 
-    def run_training(self):
+    def run_training(self) -> None:
+        """
+        Run the training process using the received rollout batch.
+        """
         if self.is_weight_offloaded:
             self.load_param_and_grad(self.device)
         if self.is_optimizer_offloaded:
@@ -1012,6 +1043,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return mean_metric_dict
 
-    def set_global_step(self, global_step):
+    def set_global_step(self, global_step) -> None:
+        """
+        Set the global step for the model, if needed.
+        """
         if hasattr(self.model, "set_global_step"):
             self.model.set_global_step(global_step)

@@ -41,6 +41,9 @@ class MultiStepRolloutWorker(Worker):
 
         self.placement = HybridComponentPlacement(cfg, Cluster())
 
+        actor_world_size = self.placement.get_world_size("actor")
+        self.actor_weight_src_rank = self._rank % actor_world_size
+
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
         with open_dict(rollout_model_config):
@@ -160,7 +163,9 @@ class MultiStepRolloutWorker(Worker):
 
     def sync_model_from_actor(self):
         """Sync model parameters from the actor worker."""
-        param_state_dict = self.recv(self.actor_group_name, src_rank=self._rank)
+        param_state_dict = self.recv(
+            self.actor_group_name, src_rank=self.actor_weight_src_rank
+        )
 
         self.hf_model.load_state_dict(param_state_dict)
         del param_state_dict
