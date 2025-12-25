@@ -142,16 +142,6 @@ class EmbodiedRunner:
             # set global step
             self.actor.set_global_step(self.global_step)
             self.rollout.set_global_step(self.global_step)
-            eval_metrics = {}
-            if (
-                _step % self.cfg.runner.val_check_interval == 0
-                and self.cfg.runner.val_check_interval > 0
-            ):
-                with self.timer("eval"):
-                    self.update_rollout_weights()
-                    eval_metrics = self.evaluate()
-                    eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
-                    self.metric_logger.log(data=eval_metrics, step=_step)
 
             with self.timer("step"):
                 with self.timer("sync_weights"):
@@ -161,7 +151,7 @@ class EmbodiedRunner:
                         input_channel=self.rollout_channel,
                         output_channel=self.env_channel,
                     )
-                    self.rollout.generate(
+                    rollout_handle: Handle = self.rollout.generate(
                         input_channel=self.env_channel,
                         output_channel=self.rollout_channel,
                         actor_channel=self.actor_channel,
@@ -169,6 +159,7 @@ class EmbodiedRunner:
                     self.actor.recv_rollout_batch(
                         input_channel=self.actor_channel
                     ).wait()
+                    rollout_handle.wait()
 
                 # compute advantages and returns.
                 with self.timer("cal_adv_and_returns"):
@@ -190,6 +181,14 @@ class EmbodiedRunner:
                     1.0,
                     run_time_exceeded=False,
                 )
+
+                eval_metrics = {}
+                if run_val:
+                    with self.timer("eval"):
+                        self.update_rollout_weights()
+                        eval_metrics = self.evaluate()
+                        eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
+                        self.metric_logger.log(data=eval_metrics, step=_step)
 
                 if save_model:
                     self._save_checkpoint()
