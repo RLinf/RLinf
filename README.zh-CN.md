@@ -113,8 +113,8 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
           </ul>
           <li><b>SFT</b></li>
           <ul>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/fine_tine.html">全量微调</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/fine_tine.html">LoRA微调</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/sft.html">全量微调</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/sft.html">LoRA微调</a> ✅</li>
           </ul>
         </ul>
       </td>
