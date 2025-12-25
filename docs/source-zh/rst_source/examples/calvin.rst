@@ -84,13 +84,13 @@
    # 下载模型（选择任一方法）
    # 方法 1: 使用 git clone
    git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT
+   git clone https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT
 
    # 方法 2: 使用 huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-CALVIN-ABC-D --local-dir RLinf-Pi0-CALVIN-ABC-D
-   hf download RLinf/RLinf-Pi05-CALVIN-ABC-D --local-dir RLinf-Pi05-CALVIN-ABC-D
+   hf download RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT --local-dir RLinf-Pi0-CALVIN-ABC-D-SFT
+   hf download RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT --local-dir RLinf-Pi05-CALVIN-ABC-D-SFT
 
 
 下载后，请确保在配置 yaml 文件中正确指定模型路径。

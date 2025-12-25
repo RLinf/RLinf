@@ -85,13 +85,13 @@ Before starting training, you need to download the corresponding pretrained mode
    # Download models (choose either method)
    # Method 1: Using git clone
    git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT
+   git clone https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-CALVIN-ABC-D --local-dir RLinf-Pi0-CALVIN-ABC-D
-   hf download RLinf/RLinf-Pi05-CALVIN-ABC-D --local-dir RLinf-Pi05-CALVIN-ABC-D
+   hf download RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT --local-dir RLinf-Pi0-CALVIN-ABC-D-SFT
+   hf download RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT --local-dir RLinf-Pi05-CALVIN-ABC-D-SFT
 
 After downloading, make sure to correctly specify the model path in the configuration yaml file.
 
