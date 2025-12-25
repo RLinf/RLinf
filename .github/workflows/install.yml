@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Maximize storage space
         run: |
@@ -90,11 +90,4 @@ jobs:
           pip install uv
           uv cache prune --ci
           bash requirements/install.sh embodied --model openvla-oft --env behavior
-          rm -rf .venv
-
-      - name: Install franka
-        run: |
-          pip install uv
-          uv cache prune --ci
-          bash requirements/install.sh embodied --env franka
           rm -rf .venv
