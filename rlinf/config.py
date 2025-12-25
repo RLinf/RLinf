@@ -750,6 +750,13 @@ def validate_embodied_cfg(cfg):
         ), (
             "env.train.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
         )
+        assert (
+            cfg.env.train.max_steps_per_rollout_epoch
+            % cfg.actor.model.num_action_chunks
+            == 0
+        ), (
+            "env.train.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
+        )
 
     with open_dict(cfg):
         if (
