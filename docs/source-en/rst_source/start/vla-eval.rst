@@ -123,7 +123,7 @@ If TensorBoard is enabled, these metrics will also be recorded in TensorBoard (T
 
 
 Quick Start — ManiSkill3 OOD
-------------------------
+--------------------------------
 
 > Currently, only ManiSkill is supported for OOD test.
 
