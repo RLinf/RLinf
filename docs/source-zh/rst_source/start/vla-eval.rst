@@ -50,13 +50,13 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
 
 > 注：多个worker启动环境时，不同worker中的环境的 ``seed`` 都有固定的偏移 ``seed = seed + self._rank * self.stage_num + stage_id``；
 
-3. 调整环境数：我们有两种方式
+3. 调整测评的轮数：我们可以调整 ``algorithm.eval_rollout_epoch`` 以控制测评的轮数。注意，我们认为每轮应该测评完整个测试集，并且由于每次测评的种子都是相同的，所以，最终的 **测评结果**等价于 Policy 在相同测试集上测评多轮取平均的结果；
 
-  1. 第一种是调大 ``env.eval.total_num_envs`` 以控制单轮测评的环境数，但是这在资源受限的环境下容易 OOM 例如您只有一张40g的显卡；
+4. 调整每一轮测评环境数：为了完整评估整个测试集（例如，libero-10 有500个 states 而 libero-90 有4500个 states）。我们可以通过如下两种方式调整加载环境的数量：
 
-  2. 所以我们有另一种，也就是打开 ``env.eval.auto_reset=True`` 然后，调整 ``max_steps_per_rollout_epoch`` 为 ``max_episode_steps`` 的N倍，那么总的环境将会是 ``N*env.eval.total_num_envs`` 个；
+  1. 第一种是调大 ``env.eval.total_num_envs`` 以控制同时并行加载的环境数（均匀分布在所有workers上），但是这在资源受限的环境下容易 OOM， 比如您只有一张40g的显卡；
 
-4. 调整测评轮数：我们可以调整 ``algorithm.eval_rollout_epoch`` 以控制测评的轮数。由于每次测评的种子都是相同的，用于当 do_sample=True 时，测评结果等价于测评多轮取平均的结果；
+  2. 所以我们有另一种，也就是打开 ``env.eval.auto_reset=True`` 然后，调整 ``max_steps_per_rollout_epoch`` 为 ``max_episode_steps`` 的N倍，那么每一轮 ``eval_rollout_epoch`` 中的总环境数量将会是 ``N*env.eval.total_num_envs`` 个；
 
 5. 调整单条轨迹交互步数：我们可以调整 ``env.eval.max_episode_steps`` 以控制单条轨迹的交互步数；
 
@@ -108,7 +108,7 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
   ${CMD} 2>&1 | tee ${MEGA_LOG_FILE}
 
 
-测评运行结束后在终端以及在日志文件中会输出 **结果**：
+测评运行结束后在终端以及在日志文件中会输出  **测评结果**：
 
 .. code-block:: javascript
 

@@ -48,14 +48,13 @@ Except for the ``libero_10_grpo_openvlaoft_eval`` mentioned in the example above
 
 > Note: When multiple workers launch environments, the seeds in different workers have a fixed offset: ``seed = seed + self._rank * self.stage_num + stage_id``.
 
-3. **Adjust the number of environments**: There are two approaches:
+3. **Adjust evaluation epochs**: We can adjust ``algorithm.eval_rollout_epoch`` to control the number of evaluation epochs. Note that we assume each epoch should complete the evaluation of the entire test set. Furthermore, since the random seeds are identical for each evaluation, the final **evaluation result** is equivalent to the average result of the Policy evaluated over multiple rounds on the same test set.
 
-  1. The first is to increase ``env.eval.total_num_envs`` to control the number of environments per evaluation round. However, this may easily lead to OOM (Out Of Memory) issues in resource-constrained settings (e.g., if you only have a single 40GB GPU);
+4. **Adjust the number of evaluation environments per epoch**: To fully evaluate the entire test set (for example, Libero-10 has 500 initial states while Libero-90 has 4500 initial states), we can adjust the number of loaded environments in the following two ways:
 
-  2. Therefore, we offer an alternative: enable ``env.eval.auto_reset=True`` and then adjust ``max_steps_per_rollout_epoch`` to be **N** times the value of ``max_episode_steps``. In this case, the total number of environments evaluated will be ``N * env.eval.total_num_envs``;
+  1. The first method is to increase ``env.eval.total_num_envs`` to control the number of environments loaded in parallel (distributed evenly across all workers). However, this can easily lead to OOM (Out Of Memory) issues in resource-constrained settings, for instance, if you only have a single 40GB GPU;
 
-
-4. **Adjust evaluation epochs**: You can adjust ``algorithm.eval_rollout_epoch`` to control the number of evaluation rounds. Since the seed is the same for each evaluation, when ``do_sample=True``, the result is equivalent to the average of multiple evaluation rounds.
+  2. Therefore, we offer an alternative: enable ``env.eval.auto_reset=True`` and then adjust ``max_steps_per_rollout_epoch`` to be **N** times the value of ``max_episode_steps``. In this case, the total number of environments in each ``eval_rollout_epoch`` evaluated will be ``N * env.eval.total_num_envs``;
 
 5. **Adjust max interaction steps per trajectory**: You can adjust ``env.eval.max_episode_steps`` to control the maximum number of interaction steps in a single trajectory.
 
@@ -107,7 +106,7 @@ Except for the ``libero_10_grpo_openvlaoft_eval`` mentioned in the example above
   ${CMD} 2>&1 | tee ${MEGA_LOG_FILE}
 
 
-After finish the evaluation, **results** will be output to the terminal and log files:
+After finish the evaluation, **Evaluation Results** will be output to the terminal and log files:
 
 .. code-block:: javascript
 
