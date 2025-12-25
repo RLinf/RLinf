@@ -62,6 +62,8 @@ Except for the ``libero_10_grpo_openvlaoft_eval`` mentioned in the example above
 
 7. **Control evaluation sampling method**: You can adjust ``algorithm.sampling_params`` to control the sampling method during rollout evaluation.
 
+8. **Eval is set True**: You can set the value ``cfg.runner.only_eval=True``, and we also set it automatically in ``eval_embodied_agent.py`` which is called by ``eval_embodimen.sh``.
+
 **Evaluation Launch Script**
 
 .. code-block:: bash

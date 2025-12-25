@@ -50,7 +50,7 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
 
 > 注：多个worker启动环境时，不同worker中的环境的 ``seed`` 都有固定的偏移 ``seed = seed + self._rank * self.stage_num + stage_id``；
 
-3. 调整测评的轮数：我们可以调整 ``algorithm.eval_rollout_epoch`` 以控制测评的轮数。注意，我们认为每轮应该测评完整个测试集，并且由于每次测评的种子都是相同的，所以，最终的 **测评结果**等价于 Policy 在相同测试集上测评多轮取平均的结果；
+3. 调整测评的轮数：我们可以调整 ``algorithm.eval_rollout_epoch`` 以控制测评的轮数。注意，我们认为每轮应该测评完整个测试集，并且由于每次测评的种子都是相同的，所以，最终的 **测评结果** 等价于 Policy 在相同测试集上测评多轮取平均的结果；
 
 4. 调整每一轮测评环境数：为了完整评估整个测试集（例如，libero-10 有500个 states 而 libero-90 有4500个 states）。我们可以通过如下两种方式调整加载环境的数量：
 
@@ -63,6 +63,8 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
 6. 录制环境视频：我们可以打开 ``env.eval.video_cfg.save_video=True`` 以录制测评时环境的视频；
 
 7. 控制测评的采样方式：我们可以调整 ``algorithm.sampling_params`` 以控制测评时 rollout 时的采样方式；
+
+8. 开启eval：在测评时，我们会开启 ``cfg.runner.only_eval=True``，在 ``eval_embodimen.sh`` 调用的 ``eval_embodied_agent.py`` 也会自动修改该值为 ``True``。
 
 **Eval启动脚本**
 
