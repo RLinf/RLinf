@@ -48,7 +48,7 @@ Environment
 
 **Data Structure**
 
--  **Images**: Main-view and wrist-view RGB tensors, respectively named as "full_images" and "wrist_images" with shape
+-  **Images**: Main-view and wrist-view RGB tensors, respectively named as "main_images" and "wrist_images" with shape
    ``[batch_size, 224, 224, 3]``
 -  **States**: End-effector position, orientation, and gripper state
 -  **Task Descriptions**: Natural-language instructions
@@ -178,11 +178,10 @@ Running Scripts
       pipeline_stage_num: 2
 
 Here you can flexibly configure the GPU count for env, rollout, and
-actor components. Using the above configuration, you can achieve
-pipeline overlap between env and rollout, and sharing with actor.
+actor components. 
 Additionally, by setting ``pipeline_stage_num = 2`` in the
 configuration, you can achieve pipeline overlap between rollout and
-actor, improving rollout efficiency.
+env, improving rollout efficiency.
 
 .. code:: yaml
 

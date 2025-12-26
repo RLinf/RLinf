@@ -46,7 +46,13 @@ __all__ = ["BehaviorEnv"]
 
 class BehaviorEnv(gym.Env):
     def __init__(
-        self, cfg, num_envs, seed_offset, total_num_processes, record_metrics=True
+        self,
+        cfg,
+        num_envs,
+        seed_offset,
+        total_num_processes,
+        worker_info,
+        record_metrics=True,
     ):
         self.cfg = cfg
 
@@ -54,6 +60,7 @@ class BehaviorEnv(gym.Env):
         self.ignore_terminations = cfg.ignore_terminations
         self.seed_offset = seed_offset
         self.total_num_processes = total_num_processes
+        self.worker_info = worker_info
         self.record_metrics = record_metrics
         self._is_start = True
 
@@ -120,7 +127,7 @@ class BehaviorEnv(gym.Env):
                     zed_image = v["rgb"].to(torch.uint8)[..., :3]
 
         return {
-            "full_images": zed_image,  # [H, W, C]
+            "main_images": zed_image,  # [H, W, C]
             "wrist_images": torch.stack(
                 [left_image, right_image], axis=0
             ),  # [N_IMG, H, W, C]
@@ -133,8 +140,8 @@ class BehaviorEnv(gym.Env):
             extracted_obs_list.append(extracted_obs)
 
         obs = {
-            "full_images": torch.stack(
-                [obs["full_images"] for obs in extracted_obs_list], axis=0
+            "main_images": torch.stack(
+                [obs["main_images"] for obs in extracted_obs_list], axis=0
             ),  # [N_ENV, H, W, C]
             "wrist_images": torch.stack(
                 [obs["wrist_images"] for obs in extracted_obs_list], axis=0

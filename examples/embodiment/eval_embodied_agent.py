@@ -29,8 +29,8 @@ mp.set_start_method("spawn", force=True)
     version_base="1.1", config_path="config", config_name="maniskill_ppo_openvlaoft"
 )
 def main(cfg) -> None:
-    cfg = validate_cfg(cfg)
     cfg.runner.only_eval = True
+    cfg = validate_cfg(cfg)
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = HybridComponentPlacement(cfg, cluster)

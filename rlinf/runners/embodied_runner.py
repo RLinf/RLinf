@@ -13,10 +13,12 @@
 # limitations under the License.
 
 import os
-import typing
+from typing import TYPE_CHECKING, Optional, Union
 
+from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
+from rlinf.data.replay_buffer import SACReplayBuffer
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.distributed import ScopedTimer
@@ -24,21 +26,30 @@ from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.utils.runner_utils import check_progress
 
-if typing.TYPE_CHECKING:
-    from omegaconf.dictconfig import DictConfig
-
+if TYPE_CHECKING:
+    from rlinf.workers.actor.async_fsdp_sac_policy_worker import (
+        AsyncEmbodiedSACFSDPPolicy,
+    )
     from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
+    from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
+    from rlinf.workers.env.async_env_worker import AsyncEnvWorker
     from rlinf.workers.env.env_worker import EnvWorker
+    from rlinf.workers.rollout.hf.async_huggingface_worker import (
+        AsyncMultiStepRolloutWorker,
+    )
     from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 
 class EmbodiedRunner:
     def __init__(
         self,
-        cfg: "DictConfig",
-        actor: "EmbodiedFSDPActor",
-        rollout: "MultiStepRolloutWorker",
-        env: "EnvWorker",
+        cfg: DictConfig,
+        actor: Union[
+            "EmbodiedFSDPActor", "EmbodiedSACFSDPPolicy", "AsyncEmbodiedSACFSDPPolicy"
+        ],
+        rollout: Union["MultiStepRolloutWorker", "AsyncMultiStepRolloutWorker"],
+        env: Union["EnvWorker", "AsyncEnvWorker"],
+        demo_buffer: Optional[SACReplayBuffer] = None,
         critic=None,
         reward=None,
         run_timer=None,
@@ -47,6 +58,7 @@ class EmbodiedRunner:
         self.actor = actor
         self.rollout = rollout
         self.env = env
+        self.demo_buffer = demo_buffer
         self.critic = critic
         self.reward = reward
 
@@ -54,6 +66,8 @@ class EmbodiedRunner:
         self.env_channel = Channel.create("Env")
         self.rollout_channel = Channel.create("Rollout")
         self.actor_channel = Channel.create("Actor")
+        if self.demo_buffer is not None:
+            self.demo_data_channel = Channel.create("DemoBufferChannel")
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -86,6 +100,14 @@ class EmbodiedRunner:
         self.actor.load_checkpoint(actor_checkpoint_path).wait()
         self.global_step = int(resume_dir.split("global_step_")[-1])
 
+    def send_demo_buffer(self):
+        if self.demo_buffer is not None:
+            sub_demo_buffer_ls = self.demo_buffer.split_to_dict(self.actor._world_size)
+
+            for sub_demo_buffer in sub_demo_buffer_ls:
+                self.demo_data_channel.put(sub_demo_buffer, async_op=True)
+            self.actor.recv_demo_data(self.demo_data_channel).wait()
+
     def update_rollout_weights(self):
         rollout_handle: Handle = self.rollout.sync_model_from_actor()
         actor_handle: Handle = self.actor.sync_model_to_rollout()
@@ -115,20 +137,11 @@ class EmbodiedRunner:
             desc="Global Step",
             ncols=800,
         )
+        self.send_demo_buffer()
         for _step in range(start_step, self.max_steps):
             # set global step
             self.actor.set_global_step(self.global_step)
             self.rollout.set_global_step(self.global_step)
-            eval_metrics = {}
-            if (
-                _step % self.cfg.runner.val_check_interval == 0
-                and self.cfg.runner.val_check_interval > 0
-            ):
-                with self.timer("eval"):
-                    self.update_rollout_weights()
-                    eval_metrics = self.evaluate()
-                    eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
-                    self.metric_logger.log(data=eval_metrics, step=_step)
 
             with self.timer("step"):
                 with self.timer("sync_weights"):
@@ -138,7 +151,7 @@ class EmbodiedRunner:
                         input_channel=self.rollout_channel,
                         output_channel=self.env_channel,
                     )
-                    self.rollout.generate(
+                    rollout_handle: Handle = self.rollout.generate(
                         input_channel=self.env_channel,
                         output_channel=self.rollout_channel,
                         actor_channel=self.actor_channel,
@@ -146,6 +159,7 @@ class EmbodiedRunner:
                     self.actor.recv_rollout_batch(
                         input_channel=self.actor_channel
                     ).wait()
+                    rollout_handle.wait()
 
                 # compute advantages and returns.
                 with self.timer("cal_adv_and_returns"):
@@ -167,6 +181,14 @@ class EmbodiedRunner:
                     1.0,
                     run_time_exceeded=False,
                 )
+
+                eval_metrics = {}
+                if run_val:
+                    with self.timer("eval"):
+                        self.update_rollout_weights()
+                        eval_metrics = self.evaluate()
+                        eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
+                        self.metric_logger.log(data=eval_metrics, step=_step)
 
                 if save_model:
                     self._save_checkpoint()

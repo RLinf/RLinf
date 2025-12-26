@@ -82,6 +82,7 @@ class AsyncFuncWork(AsyncWork):
         self._result = None
         self._next_work = None
         self._cuda_event = None
+        self._has_waited = False
 
     def __call__(self, future: Future):
         """Execute the function and set the done flag."""
@@ -123,6 +124,10 @@ class AsyncFuncWork(AsyncWork):
             Any: The result of the work if applicable, otherwise None.
 
         """
+        assert not self._has_waited, (
+            "AsyncFuncWork.async_wait() can only be called once"
+        )
+
         while not self._done.done():
             await asyncio.sleep(0.001)  # Yield control to the event loop
         if self._cuda_event is not None:
@@ -130,9 +135,15 @@ class AsyncFuncWork(AsyncWork):
         result = self._result
         if isinstance(result, AsyncWork):
             # If the result is another AsyncWork, wait for it to complete
-            return result.wait()
+            final_result = result.wait()
         else:
-            return result
+            final_result = result
+
+        self._has_waited = True
+        self._result = None
+        self._cuda_event = None
+
+        return final_result
 
     def wait(self):
         """Wait for the work to complete.
@@ -141,6 +152,8 @@ class AsyncFuncWork(AsyncWork):
             Any: The result of the work if applicable, otherwise None.
 
         """
+        assert not self._has_waited, "AsyncFuncWork.wait() can only be called once"
+
         while not self._done.done():
             time.sleep(0.001)
         if self._cuda_event is not None:
@@ -148,9 +161,15 @@ class AsyncFuncWork(AsyncWork):
         result = self._result
         if isinstance(result, AsyncWork):
             # If the result is another AsyncWork, wait for it to complete
-            return result.wait()
+            final_result = result.wait()
         else:
-            return result
+            final_result = result
+
+        self._has_waited = True
+        self._result = None
+        self._cuda_event = None
+
+        return final_result
 
     def done(self):
         """Query the completion state of the work."""

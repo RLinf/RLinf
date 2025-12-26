@@ -112,7 +112,11 @@ class FSDPSftWorker(FSDPModelManager, Worker):
 
             metrics = {}
 
-            for _ in range(self.gradient_accumulation):
+            for idx in range(self.gradient_accumulation):
+                backward_ctx = self.before_micro_batch(
+                    self.model,
+                    is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
+                )
                 observation, actions = next(self.data_iter)
 
                 observation = jax.tree.map(
@@ -124,11 +128,10 @@ class FSDPSftWorker(FSDPModelManager, Worker):
                 actions = actions.to(torch.float32)
                 actions = actions.to(self.device)
 
-                self.optimizer.zero_grad(set_to_none=True)
                 with self.amp_context:
                     losses = self.model(
+                        forward_type="sft_forward",
                         data={"observation": observation, "actions": actions},
-                        mode="sft",
                     )
                     if isinstance(losses, (list, tuple)):
                         losses = torch.stack(losses)
@@ -138,31 +141,30 @@ class FSDPSftWorker(FSDPModelManager, Worker):
                         )
                     loss = losses.mean()
 
-                self.grad_scaler.scale(loss).backward()
-                grad_norm, lr_list = self.optimizer_step()
-                self.optimizer.zero_grad(set_to_none=True)
+                loss = loss / self.gradient_accumulation
+                with backward_ctx:
+                    self.grad_scaler.scale(loss).backward()
 
-                # Collect stats
-                lr_value = (
-                    lr_list[0]
-                    if len(lr_list) > 0
-                    else self.optimizer.param_groups[0]["lr"]
-                )
-                grad_norm_value = (
-                    float(grad_norm)
-                    if isinstance(grad_norm, torch.Tensor)
-                    else grad_norm
-                )
-                append_to_dict(
-                    metrics,
-                    {
-                        "loss": loss.item(),
-                        "learning_rate": lr_value,
-                        "grad_norm": grad_norm_value,
-                    },
-                )
+            grad_norm, lr_list = self.optimizer_step()
+            self.optimizer.zero_grad(set_to_none=True)
 
-                self.lr_scheduler.step()
+            # Collect stats
+            lr_value = (
+                lr_list[0] if len(lr_list) > 0 else self.optimizer.param_groups[0]["lr"]
+            )
+            grad_norm_value = (
+                float(grad_norm) if isinstance(grad_norm, torch.Tensor) else grad_norm
+            )
+            append_to_dict(
+                metrics,
+                {
+                    "loss": loss.item(),
+                    "learning_rate": lr_value,
+                    "grad_norm": grad_norm_value,
+                },
+            )
+
+            self.lr_scheduler.step()
 
             clear_memory()
             train_metrics = {key: np.mean(value) for key, value in metrics.items()}

@@ -30,6 +30,7 @@ from prismatic.vla.constants import (
 )
 from transformers.generation import TopKLogitsWarper
 
+from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.models.embodiment.model_utils import (
     compute_entropy_from_logits,
     compute_logprobs_from_logits,
@@ -37,11 +38,11 @@ from rlinf.models.embodiment.model_utils import (
 from rlinf.models.embodiment.modules.value_head import ValueHead
 
 
-class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
+class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction):
     def __init__(
         self, config: OpenVLAOFTConfig, action_dim, num_action_chunks, add_value_head
     ) -> None:
-        super().__init__(config)
+        OpenVLAOFTForActionPrediction.__init__(self, config)
 
         self.action_dim = action_dim
         self.num_action_chunks = num_action_chunks
@@ -203,6 +204,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
         env_obs=None,
         calulate_logprobs=True,
         calulate_values=True,
+        return_obs=True,
         **kwargs,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         do_sample = kwargs.pop("do_sample")
@@ -212,12 +214,12 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
                 f"In: What action should the robot take to {t.lower()}?\nOut: "
                 for t in env_obs["task_descriptions"]
             ]
-            if env_obs["full_images"].ndim == 4:
-                env_obs["full_images"] = env_obs["full_images"].unsqueeze(1)
-            assert env_obs["full_images"].ndim == 5
+            if env_obs["main_images"].ndim == 4:
+                env_obs["main_images"] = env_obs["main_images"].unsqueeze(1)
+            assert env_obs["main_images"].ndim == 5
 
             all_images = [
-                env_obs["full_images"].permute(0, 1, 4, 2, 3)
+                env_obs["main_images"].permute(0, 1, 4, 2, 3)
             ]  # [B, 1, H, W, C] -> [B, 1, C, H, W]
             if self.vision_backbone.get_num_images_in_input() > 1:
                 if env_obs["wrist_images"].ndim == 4:
@@ -451,7 +453,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction):
 
         self.input_processor = input_processor
 
-    def forward(
+    def default_forward(
         self,
         input_ids: torch.LongTensor = None,
         attention_mask: torch.Tensor = None,

@@ -36,6 +36,7 @@ class IsaaclabBaseEnv(gym.Env):
         num_envs,
         seed_offset,
         total_num_processes,
+        worker_info,
     ):
         self.cfg = cfg
         self.isaaclab_env_id = self.cfg.init_params.id
@@ -45,6 +46,7 @@ class IsaaclabBaseEnv(gym.Env):
             cfg.init_params.num_envs = num_envs
         self.seed = self.cfg.seed + seed_offset
         self.total_num_processes = total_num_processes
+        self.worker_info = worker_info
         self.video_cfg = cfg.video_cfg
         self.video_cnt = 0
         self._init_isaaclab_env()

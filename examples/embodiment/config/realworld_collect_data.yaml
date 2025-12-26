@@ -1,0 +1,44 @@
+defaults:
+  - env/realworld_peg_insertion@env.eval
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env:
+      node_group: franka
+      placement: 0
+  node_groups:
+    - label: franka
+      node_ranks: 0
+      hardware:
+        type: Franka
+        configs:
+          - robot_ip: ROBOT_IP
+            node_rank: 0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: null
+    project_name: rlinf
+    experiment_name: "collect-data"
+    logger_backends: ["tensorboard"] # wandb, swanlab
+  num_data_episodes: 20
+  record_task_description: False
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    ignore_terminations: False
+    auto_reset: False
+    use_spacemouse: True
+    override_cfg:
+      target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]

@@ -1,4 +1,4 @@
-simulator_type: behavior
+env_type: behavior
 total_num_envs: null
 auto_reset: False
 ignore_terminations: False

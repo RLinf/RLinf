@@ -25,7 +25,6 @@ import torch.nn.functional as F
 import yaml
 from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
-from transformers import AutoConfig
 
 from rlinf.scheduler.cluster import Cluster
 from rlinf.utils.placement import (
@@ -54,6 +53,7 @@ class SupportedModel(Enum):
     OPENPI = ("openpi", "embodied")
     MLP_POLICY = ("mlp_policy", "embodied")
     GR00T = ("gr00t", "embodied")
+    CNN_POLICY = ("cnn_policy", "embodied")
 
     def __new__(cls, value, category):
         obj = object.__new__(cls)
@@ -230,6 +230,8 @@ def validate_rollout_cfg(cfg, algorithm_cfg):
 
 def validate_model_cfg_by_hf_config(cfg, hf_model_path):
     # validate by hf config
+    from transformers import AutoConfig
+
     hf_config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=True)
 
     if "Qwen2ForCausalLM" in hf_config.architectures:
@@ -694,7 +696,7 @@ def validate_embodied_cfg(cfg):
 
     # process num-envs
     component_placement = HybridComponentPlacement(
-        cfg, Cluster(num_nodes=cfg.cluster.num_nodes)
+        cfg, Cluster(cluster_cfg=cfg.cluster)
     )
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
@@ -750,20 +752,29 @@ def validate_embodied_cfg(cfg):
         ), (
             "env.train.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
         )
+        assert (
+            cfg.env.train.max_steps_per_rollout_epoch
+            % cfg.actor.model.num_action_chunks
+            == 0
+        ), (
+            "env.train.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
+        )
 
     with open_dict(cfg):
         if (
-            cfg.env.train.simulator_type == "maniskill"
-            or cfg.env.eval.simulator_type == "maniskill"
+            cfg.env.train.env_type == "maniskill"
+            or cfg.env.eval.env_type == "maniskill"
         ):
 
             def get_robot_control_mode(robot: str):
-                if "google_robot_static" in robot:
+                if robot == "panda-qpos":
+                    return "pd_joint_delta_pos"
+                elif robot == "panda-ee-dpos":
+                    return "pd_ee_delta_pos"
+                elif "google_robot_static" in robot:
                     return "arm_pd_ee_delta_pose_align_interpolate_by_planner_gripper_pd_joint_target_delta_pos_interpolate_by_planner"
                 elif "widowx" in robot:
                     return "arm_pd_ee_target_delta_pose_align2_gripper_pd_joint_pos"
-                elif "panda-qpos" in robot:
-                    return None
                 else:
                     raise NotImplementedError(f"Robot {robot} not supported")
 
@@ -774,8 +785,7 @@ def validate_embodied_cfg(cfg):
                 cfg.actor.model.policy_setup
             )
         elif (
-            cfg.env.train.simulator_type == "behavior"
-            or cfg.env.eval.simulator_type == "behavior"
+            cfg.env.train.env_type == "behavior" or cfg.env.eval.env_type == "behavior"
         ):
             import omnigibson as og
 

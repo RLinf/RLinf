@@ -84,13 +84,13 @@ Before starting training, you need to download the corresponding pretrained mode
    # Download the model (choose either method)
    # Method 1: Using git clone
    git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT
+   git clone https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-MetaWorld --local-dir RLinf-Pi0-MetaWorld
-   hf download RLinf/RLinf-Pi05-MetaWorld --local-dir RLinf-Pi05-MetaWorld
+   hf download RLinf/RLinf-Pi0-MetaWorld-SFT --local-dir RLinf-Pi0-MetaWorld-SFT
+   hf download RLinf/RLinf-Pi05-MetaWorld-SFT --local-dir RLinf-Pi05-MetaWorld-SFT
 
 Alternatively, you can also download the model from ModelScope at https://www.modelscope.cn/models/RLinf/RLinf-Pi0-MetaWorld.
 
@@ -113,10 +113,9 @@ Running the Script
    rollout:
       pipeline_stage_num: 2
 
-You can flexibly configure the GPU count for env, rollout, and actor components. Using the above configuration, you can achieve
-pipeline overlap between env and rollout, and sharing with actor.
+You can flexibly configure the GPU count for env, rollout, and actor components.
 Additionally, by setting ``pipeline_stage_num = 2`` in the configuration,
-you can achieve pipeline overlap between rollout and actor, improving rollout efficiency.
+you can achieve pipeline overlap between rollout and env, improving rollout efficiency.
 
 .. code:: yaml
 

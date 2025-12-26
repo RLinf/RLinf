@@ -1,6 +1,6 @@
 [project]
 name = "RLinf"
-version = "0.1.0"
+version = "0.2.0"
 readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.10,<=3.11.14"
 keywords = [
@@ -84,6 +84,18 @@ embodied = [
     "gym",
     "av",
 ]
+franka = [
+    "pyyaml",
+    "rospkg",
+    "empy==3.3.4",
+    "gymnasium==0.29.1",
+    "pyrealsense2",
+    "pyquaternion",
+    "opencv-python",
+    "defusedxml",
+    "pyspacemouse", 
+    "imageio[ffmpeg]",
+]
 
 [tool.uv]
 prerelease = "allow"
@@ -91,6 +103,7 @@ conflicts = [
     [
       { extra = "sglang-vllm" },
       { extra = "embodied" },
+      { extra = "franka" }
     ],
 ]
 override-dependencies = [

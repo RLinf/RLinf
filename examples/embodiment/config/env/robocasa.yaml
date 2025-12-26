@@ -1,4 +1,4 @@
-simulator_type: robocasa
+env_type: robocasa
 
 # Robot configuration
 robot_name: PandaOmron

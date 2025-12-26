@@ -64,6 +64,11 @@ def create_rl_dataset(
             tokenizer=tokenizer,
         )
         return train_dataset, val_dataset
+    elif config.data.type == "robot_demo":
+        from rlinf.data.replay_buffer import SACReplayBuffer
+
+        train_dataset = SACReplayBuffer.create_from_demo(config.data.path)
+        return train_dataset, None
     else:
         return None, None
 

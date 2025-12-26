@@ -30,6 +30,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 
 
 ## 最新动态
+- [2025/12] 🔥 RLinf v0.2-pre 发布！真机Franka的强化学习已经上线。 文档：[RL on Franka in the Real World](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/realworld.html)。
 - [2025/12] 🔥 基于[RoboCasa](https://github.com/robocasa/robocasa)的强化学习微调已经上线! 文档：[RL on RoboCasa](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/robocasa.html)。
 - [2025/12] 🎉 RLinf正式发布[v0.1](https://github.com/RLinf/RLinf/releases/tag/v0.1)版本。
 - [2025/11] 🔥 基于[CALVIN](https://github.com/mees/calvin)的强化学习微调已经上线! 文档：[RL on CALVIN](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/calvin.html)。
@@ -77,7 +78,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
       </td>
       <td>
         <ul style="margin-left: 0; padding-left: 16px;">
-          <li>Franka Arm</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/realworld.html">Franka Arm</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
@@ -98,6 +99,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
           <li><b>自定义模型</b></li>
           <ul>
             <li>MLP-Policy ✅</li>
+            <li>CNN-Policy ✅</li>
           </ul>
         </ul>
       </td>
@@ -109,20 +111,20 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/ppo.html">PPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/dapo.html">DAPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/reinforce.html">Reinforce++</a> ✅</li>
-            <li>SAC</li>
+            <li>SAC ✅</li>
+            <li>Cross-Q ✅</li>
+            <li>RLPD ✅</li>
           </ul>
           <li><b>SFT</b></li>
           <ul>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/fine_tine.html">全量微调</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/fine_tine.html">LoRA微调</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/sft.html">全量微调</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/sft.html">LoRA微调</a> ✅</li>
           </ul>
         </ul>
       </td>
     </tr>
   </tbody>
 </table>
-
-如上表所示，RLinf支持主流VLA模型，通过标准的Worker接口支持主流的CPU或者GPU并行的模拟器，首次实现对带有 flow-matching action expert 的 $\pi_{0}$ 和 $\pi_{0.5}$ 模型家族和Isaac-GR00T模型的RL微调。
 
 ### 智能体强化学习
 
@@ -569,7 +571,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
 - [ ] 支持更多VLA模型 (如[WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow))
 - [ ] 支持世界模型（World Model）
 
-- [ ] 支持真实世界的具身智能强化学习
+- [x] 支持真实世界的具身智能强化学习
 
 # 持续集成测试状态
 RLinf 具有全面的 CI 测试，涵盖核心组件（通过单元测试）和具身、智能体和推理场景的端到端 RL 训练工作流。

@@ -26,6 +26,7 @@ from openpi.models import model as _model
 from openpi.models.pi0_config import Pi0Config
 from openpi.models_pytorch.pi0_pytorch import PI0Pytorch, make_att_2d_masks
 
+from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
 from rlinf.models.embodiment.modules.value_head import ValueHead
 
@@ -64,7 +65,7 @@ class OpenPi0Config(Pi0Config):
     value_vlm_mode: str = "mean_token"  # last_token, mean_token, first_token
 
 
-class OpenPi0ForRLActionPrediction(PI0Pytorch):
+class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
     """
     Pi0 model for reinforcement learning action prediction.
     """
@@ -89,7 +90,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
     ):
         # Override `sample_actions` to prevent parent class polymorphic call
         sample_actions_func = self.sample_actions
-        super().__init__(config)
+        PI0Pytorch.__init__(self, config)
         self.sample_actions = sample_actions_func
         self.global_step = 0
         # assert
@@ -226,15 +227,24 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         outputs["actions"] = outputs["actions"][:, : self.config.action_chunk]
         return outputs
 
-    def forward(
+    def forward(self, forward_type="default_forward", **kwargs):
+        if forward_type == "sft_forward":
+            return self.sft_forward(**kwargs)
+        elif forward_type == "default_forward":
+            return self.default_forward(**kwargs)
+        else:
+            raise NotImplementedError
+
+    def sft_forward(self, data, **kwargs):
+        observation = data["observation"]
+        actions = data["actions"]
+        return PI0Pytorch.forward(self, observation, actions)
+
+    def default_forward(
         self,
         data: dict[str, torch.Tensor],
         **kwargs,
     ) -> dict[str, Any]:
-        if "mode" in kwargs and kwargs["mode"] == "sft":
-            observation = data["observation"]
-            actions = data["actions"]
-            return super().forward(observation, actions)
         # get kwargs
         compute_values = kwargs.get("compute_values", False)
         chains = data["chains"]
@@ -282,7 +292,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
     def obs_processor(self, env_obs):
         # base observation
         processed_obs = {
-            "observation/image": env_obs["full_images"],
+            "observation/image": env_obs["main_images"],
             "prompt": env_obs["task_descriptions"],
         }
         # state observation - ensure float32 to prevent BFloat16 conversion issues
@@ -323,7 +333,11 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch):
         return processed_obs
 
     def predict_action_batch(
-        self, env_obs, mode: Literal["train", "eval"] = "train", compute_values=True
+        self,
+        env_obs,
+        mode: Literal["train", "eval"] = "train",
+        compute_values=True,
+        return_obs=True,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         to_process_obs = self.obs_processor(env_obs)  # env obs -> policy input obs
         processed_obs = self.input_transform(

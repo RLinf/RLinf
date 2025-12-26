@@ -48,6 +48,7 @@ from transformers.tokenization_utils import (
 )
 from transformers.utils import TensorType
 
+from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.models.embodiment.model_utils import (
     compute_entropy_from_logits,
     compute_logprobs_from_logits,
@@ -470,7 +471,7 @@ class VLALogitsProcessor(LogitsProcessor):
         return scores_processed
 
 
-class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
+class OpenVLAForRLActionPrediction(BasePolicy, OpenVLAForBatchActionPrediction):
     def __init__(
         self,
         config,
@@ -480,7 +481,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         num_action_chunks,
         add_value_head,
     ):
-        super().__init__(config)
+        OpenVLAForBatchActionPrediction.__init__(self, config)
         self._init_logits_processor()
 
         action_norm_stats = self.get_action_stats(unnorm_key)
@@ -504,7 +505,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         self.logits_processors = LogitsProcessorList()
         self.logits_processors.append(VLALogitsProcessor(self.config.n_action_bins))
 
-    def forward(
+    def default_forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -533,7 +534,8 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         if compute_values:
             output_hidden_states = True
 
-        outputs = super().forward(
+        outputs = OpenVLAForBatchActionPrediction.forward(
+            self=self,
             input_ids=input_ids,
             attention_mask=attention_mask,
             pixel_values=pixel_values,
@@ -603,6 +605,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         env_obs=None,
         calulate_logprobs=True,
         calulate_values=True,
+        return_obs=True,
         **kwargs,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         do_sample = kwargs.pop("do_sample")
@@ -612,7 +615,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
                 f"In: What action should the robot take to {t.lower()}?\nOut: "
                 for t in env_obs["task_descriptions"]
             ]
-            image_tensor = env_obs["full_images"].permute(
+            image_tensor = env_obs["main_images"].permute(
                 0, 3, 1, 2
             )  # [B, H, W, C] -> [B, C, H, W]
             if image_tensor.ndim == 4:

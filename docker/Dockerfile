@@ -1,10 +1,19 @@
 ARG BUILD_TARGET=reason
 
-FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-reason
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-maniskill_libero
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-behavior
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-metaworld
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-calvin
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-robocasa
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-isaaclab
+# Franka depends on ros-noetic, which is not available on Ubuntu 22.04
+FROM ubuntu:20.04 AS base-image-embodied-franka
+
+FROM base-image-$BUILD_TARGET AS base-image
 
 ARG NO_MIRROR
 SHELL ["/bin/bash", "-c"]
-ENV PATH=/opt/conda/bin:$PATH
 ENV DEBIAN_FRONTEND=noninteractive
 RUN if [ -z "$NO_MIRROR" ]; then sed -i 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list; fi
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -157,6 +166,13 @@ RUN bash requirements/install.sh embodied --venv gr00t --model gr00t --env isaac
 
 # Set default env
 RUN echo "source ${UV_PATH}/gr00t/bin/activate" >> ~/.bashrc
+
+FROM embodied-common-image AS embodied-franka-image
+
+RUN bash requirements/install.sh embodied --venv franka --env franka
+
+# Set default env
+RUN echo "source ${UV_PATH}/franka/bin/activate" >> ~/.bashrc
 
 FROM ${BUILD_TARGET}-image AS final-image
 

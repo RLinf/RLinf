@@ -14,6 +14,7 @@
 
 import copy
 import gc
+from typing import Any
 
 import torch
 from omegaconf import DictConfig, OmegaConf, open_dict
@@ -24,7 +25,9 @@ from rlinf.data.io_struct import ChunkStepResult, EmbodiedRolloutResult
 from rlinf.models import get_model, get_vla_model_config_and_processor
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.metric_utils import compute_split_num
+from rlinf.utils.nested_dict_process import put_tensor_device
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.workers.rollout.hf.utils import init_real_obs
 
 
 class MultiStepRolloutWorker(Worker):
@@ -32,6 +35,7 @@ class MultiStepRolloutWorker(Worker):
         Worker.__init__(self)
 
         self.cfg = cfg
+        self.should_stop = False
 
         self.actor_group_name = cfg.actor.group_name
         self.device = torch.cuda.current_device()
@@ -40,6 +44,9 @@ class MultiStepRolloutWorker(Worker):
         self.enable_offload = self.cfg.rollout.get("enable_offload", False)
 
         self.placement = HybridComponentPlacement(cfg, Cluster())
+
+        actor_world_size = self.placement.get_world_size("actor")
+        self.actor_weight_src_rank = self._rank % actor_world_size
 
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
@@ -107,8 +114,11 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.OPENPI,
             SupportedModel.MLP_POLICY,
             SupportedModel.GR00T,
+            SupportedModel.CNN_POLICY,
         ]:
             kwargs = {"mode": mode}
+
+        kwargs["return_obs"] = not hasattr(self.hf_model, "q_head")
 
         with torch.no_grad():
             actions, result = self.hf_model.predict_action_batch(
@@ -119,8 +129,8 @@ class MultiStepRolloutWorker(Worker):
         return actions, result
 
     def get_dones_and_rewards(
-        self, env_output: dict[str, torch.Tensor]
-    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        self, env_output: dict[str, torch.Tensor], extracted_obs: dict[str, Any]
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None, dict[str, Any] | None]:
         """
         Get dones and rewards from environment batch, handling auto_reset if needed.
 
@@ -128,11 +138,18 @@ class MultiStepRolloutWorker(Worker):
             env_output: Environment batch containing dones, rewards, and optionally final_obs
 
         Returns:
-            Tuple of (dones, rewards) tensors.
+            Tuple of (dones, rewards, real_extracted_obs). dones and rewards are tensors.
         """
         # First step: no rewards yet, only dones
+        real_extracted_obs = None
         if env_output["rewards"] is None:
-            return env_output["dones"].bool().cpu().contiguous(), None
+            if hasattr(self.hf_model, "q_head"):
+                real_extracted_obs = init_real_obs(extracted_obs)
+            return (
+                env_output["dones"].bool().cpu().contiguous(),
+                None,
+                real_extracted_obs,
+            )
 
         dones = env_output["dones"].bool().cpu().contiguous()
         rewards = env_output["rewards"].cpu().contiguous()
@@ -140,10 +157,13 @@ class MultiStepRolloutWorker(Worker):
         # Handle auto_reset: add bootstrap value to rewards for done episodes
         # Note: currently this is not correct for chunk-size>1 with partial reset
         if dones.any() and self.cfg.env.train.auto_reset:
-            if hasattr(self.hf_model, "value_head"):
+            if hasattr(self.hf_model, "value_head") or hasattr(self.hf_model, "q_head"):
                 final_obs = env_output["final_obs"]
                 with torch.no_grad():
-                    actions, result = self.predict(final_obs)
+                    final_extracted_obs = self.hf_model.preprocess_env_obs(final_obs)
+                    if hasattr(self.hf_model, "q_head"):
+                        real_extracted_obs = init_real_obs(final_extracted_obs)
+                    actions, result = self.predict(final_extracted_obs)
                     if "prev_values" in result:
                         _final_values = result["prev_values"]
                     else:
@@ -156,18 +176,43 @@ class MultiStepRolloutWorker(Worker):
                 # Add bootstrap value to the last step of done episodes
                 rewards[:, -1] += self.cfg.algorithm.gamma * final_values.cpu()
 
-        return dones, rewards
+        if real_extracted_obs is None and hasattr(self.hf_model, "q_head"):
+            real_extracted_obs = init_real_obs(extracted_obs)
+        return dones, rewards, real_extracted_obs
 
-    def sync_model_from_actor(self):
+    async def sync_model_from_actor(self):
         """Sync model parameters from the actor worker."""
-        param_state_dict = self.recv(self.actor_group_name, src_rank=self._rank)
+        param_state_dict = await self.recv(
+            self.actor_group_name, src_rank=self.actor_weight_src_rank, async_op=True
+        ).async_wait()
 
         self.hf_model.load_state_dict(param_state_dict)
         del param_state_dict
         gc.collect()
         torch.cuda.empty_cache()
 
-    def generate(
+    def update_intervene_actions(self, env_output, forward_inputs):
+        intervene_actions = env_output["intervene_actions"]
+        intervene_flags = env_output["intervene_flags"]
+        if intervene_actions is not None:
+            if "action" in forward_inputs:
+                policy_action = forward_inputs["action"].to(intervene_actions.device)
+                policy_action = policy_action.reshape(
+                    policy_action.shape[0], self.hf_model.num_action_chunks, -1
+                )
+                intervene_actions = intervene_actions.reshape(
+                    intervene_actions.shape[0], self.hf_model.num_action_chunks, -1
+                )
+                action = intervene_actions * intervene_flags[
+                    ..., None
+                ] + policy_action * (~intervene_flags[..., None])
+                action = action.reshape(action.shape[0], -1)
+                forward_inputs["action"] = action
+            else:
+                raise NotImplementedError(f"{forward_inputs.keys()=}")
+        return forward_inputs
+
+    async def generate(
         self, input_channel: Channel, output_channel: Channel, actor_channel: Channel
     ):
         if self.enable_offload:
@@ -188,38 +233,78 @@ class MultiStepRolloutWorker(Worker):
             desc="Generating Rollout Epochs",
             disable=(self._rank != 0),
         ):
+            last_extracted_obs = [None for i in range(self.num_pipeline_stages)]
+            last_forward_inputs = [
+                None for i in range(self.num_pipeline_stages)
+            ]  # save actions
+
             for _ in range(n_chunk_steps):
                 for stage_id in range(self.num_pipeline_stages):
-                    env_output = self.recv_env_output(input_channel)
+                    env_output = await self.recv_env_output(input_channel)
 
-                    dones, rewards = self.get_dones_and_rewards(env_output)
-                    actions, result = self.predict(env_output["obs"])
+                    if last_forward_inputs[stage_id] is not None:
+                        last_forward_inputs[stage_id] = self.update_intervene_actions(
+                            env_output, last_forward_inputs[stage_id]
+                        )
+
+                    extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"])
+                    dones, rewards, real_extracted_obs = self.get_dones_and_rewards(
+                        env_output, extracted_obs
+                    )
+                    actions, result = self.predict(extracted_obs)
                     chunk_step_result = ChunkStepResult(
                         prev_logprobs=result["prev_logprobs"],
                         prev_values=result["prev_values"],
                         dones=dones,
+                        truncations=env_output["truncations"],
+                        terminations=env_output["terminations"],
                         rewards=rewards,  # the first step is reset step, reward is none, which will not be appended to the buffer
-                        forward_inputs=result["forward_inputs"],
+                        forward_inputs=last_forward_inputs[stage_id],
                     )
                     self.buffer_list[stage_id].append_result(chunk_step_result)
+                    if last_extracted_obs[stage_id] is not None and hasattr(
+                        self.hf_model, "q_head"
+                    ):
+                        self.buffer_list[stage_id].add_transition(
+                            last_extracted_obs[stage_id], real_extracted_obs
+                        )
+                    last_extracted_obs[stage_id] = extracted_obs
+                    last_forward_inputs[stage_id] = result["forward_inputs"]
 
                     self.send_chunk_actions(output_channel, actions)
 
             for stage_id in range(self.num_pipeline_stages):
-                env_output = self.recv_env_output(input_channel)
+                env_output = await self.recv_env_output(input_channel)
+                last_forward_inputs[stage_id] = self.update_intervene_actions(
+                    env_output, last_forward_inputs[stage_id]
+                )
 
+                extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"])
                 # Get dones and rewards from environment batch (final step of epoch)
-                dones, rewards = self.get_dones_and_rewards(env_output)
+                dones, rewards, real_extracted_obs = self.get_dones_and_rewards(
+                    env_output, extracted_obs
+                )
                 self.buffer_list[stage_id].dones.append(dones)
+                self.buffer_list[stage_id].truncations.append(env_output["truncations"])
+                self.buffer_list[stage_id].terminations.append(
+                    env_output["terminations"]
+                )
                 self.buffer_list[stage_id].rewards.append(rewards)
+                self.buffer_list[stage_id].forward_inputs.append(
+                    put_tensor_device(last_forward_inputs[stage_id], "cpu")
+                )
 
                 with self.worker_timer():
-                    actions, result = self.predict(env_output["obs"])
+                    actions, result = self.predict(extracted_obs)
                 # For the final step, we only need prev_values for bootstrapping
                 # This is a special case that doesn't create a full ChunkStepResult
                 if "prev_values" in result:
                     self.buffer_list[stage_id].prev_values.append(
                         result["prev_values"].cpu().contiguous()
+                    )
+                if hasattr(self.hf_model, "q_head"):
+                    self.buffer_list[stage_id].add_transition(
+                        last_extracted_obs[stage_id], real_extracted_obs
                     )
 
         for i in range(self.num_pipeline_stages):
@@ -228,7 +313,7 @@ class MultiStepRolloutWorker(Worker):
         if self.enable_offload:
             self.offload_model()
 
-    def evaluate(self, input_channel: Channel, output_channel: Channel):
+    async def evaluate(self, input_channel: Channel, output_channel: Channel):
         if self.enable_offload:
             self.reload_model()
 
@@ -243,9 +328,10 @@ class MultiStepRolloutWorker(Worker):
         ):
             for _ in range(n_chunk_steps):
                 for _ in range(self.num_pipeline_stages):
-                    env_output = self.recv_env_output(input_channel)
-                    actions, _ = self.predict(env_output["obs"], mode="eval")
-                    self.send_chunk_actions(output_channel, actions)
+                    env_output = await self.recv_env_output(input_channel, mode="eval")
+                    extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"])
+                    actions, _ = self.predict(extracted_obs, mode="eval")
+                    self.send_chunk_actions(output_channel, actions, mode="eval")
 
         if self.enable_offload:
             self.offload_model()
@@ -258,26 +344,34 @@ class MultiStepRolloutWorker(Worker):
     def reload_model(self):
         self.hf_model = self.hf_model.to(self.device)
 
-    def recv_env_output(self, input_channel: Channel) -> dict[str, torch.Tensor]:
-        env_output = input_channel.get(
-            key=f"{self._rank}",
-        )
+    async def recv_env_output(
+        self, input_channel: Channel, mode="train"
+    ) -> dict[str, torch.Tensor]:
+        assert mode in ["train", "eval"], f"{mode=} is not supported"
+        # Use asyncio so that it can run alongside async weight syncing
+        env_output = await input_channel.get(
+            key=f"{self._rank}_{mode}", async_op=True
+        ).async_wait()
         return env_output
 
-    def send_chunk_actions(self, output_channel: Channel, chunk_actions):
+    def send_chunk_actions(self, output_channel: Channel, chunk_actions, mode="train"):
+        assert mode in ["train", "eval"], f"{mode=} is not supported"
         output_channel.put(
-            item=chunk_actions,
-            key=f"{self._rank}",
+            item=chunk_actions, key=f"{self._rank}_{mode}", async_op=True
         )
 
     def send_rollout_batch(self, actor_channel: Channel, stage_id: int):
         # send rollout_batch to actor
+        split_num = self.get_actor_split_num()
+        splitted_rollout_result = self.buffer_list[stage_id].to_splitted_dict(split_num)
+        for i in range(split_num):
+            actor_channel.put(item=splitted_rollout_result[i], async_op=True)
+
+    def get_actor_split_num(self):
         send_num = self.placement.get_world_size("rollout") * self.num_pipeline_stages
         recv_num = self.placement.get_world_size("actor")
         split_num = compute_split_num(recv_num, send_num)
-        splited_rollout_result = self.buffer_list[stage_id].to_splited_dict(split_num)
-        for i in range(split_num):
-            actor_channel.put(item=splited_rollout_result[i])
+        return split_num
 
     def set_global_step(self, global_step):
         if hasattr(self.hf_model, "set_global_step"):

@@ -133,6 +133,11 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_openvla_model=Fa
     # Build policies list
     policies = []
 
+    from rlinf.models.embodiment.modules.resnet_utils import ResNet10
+
+    resnet_policy = functools.partial(_module_wrap_policy, module_classes={ResNet10})
+    policies.append(resnet_policy)
+
     # Add vision transformer policies for OpenVLA models
     if is_openvla_model:
         from prismatic.extern.hf.modeling_prismatic import PrismaticProjector
@@ -163,6 +168,19 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_openvla_model=Fa
             _module_wrap_policy, module_classes={ValueHead}
         )
         policies.append(value_head_policy)
+
+    if hasattr(module, "q_head"):
+        from rlinf.models.embodiment.modules.q_head import MultiCrossQHead, MultiQHead
+
+        if isinstance(module.q_head, MultiCrossQHead):
+            q_head_policy = functools.partial(
+                _module_wrap_policy, module_classes={MultiCrossQHead}
+            )
+        else:
+            q_head_policy = functools.partial(
+                _module_wrap_policy, module_classes={MultiQHead}
+            )
+        policies.append(q_head_policy)
 
     # Add transformer layer policies
     if fsdp_transformer_layer_cls_to_wrap is not None:

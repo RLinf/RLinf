@@ -16,7 +16,7 @@ import json
 import os
 
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from transformers import (
     AutoConfig,
     AutoImageProcessor,
@@ -258,9 +258,10 @@ def get_model(cfg: DictConfig, override_config_kwargs=None):
         model = MLPPolicy(
             cfg.obs_dim,
             cfg.action_dim,
-            cfg.hidden_dim,
             num_action_chunks=cfg.num_action_chunks,
             add_value_head=cfg.add_value_head,
+            add_q_head=cfg.get("add_q_head", False),
+            q_head_type=cfg.get("q_head_type", "default"),
         )
     elif model_type == SupportedModel.GR00T:
         from pathlib import Path
@@ -323,6 +324,12 @@ def get_model(cfg: DictConfig, override_config_kwargs=None):
 
         if cfg.rl_head_config.disable_dropout:
             replace_dropout_with_identity(model)
+    elif cfg.model_type == "cnn_policy":
+        from .embodiment.cnn_policy import CNNConfig, CNNPolicy
+
+        model_config = CNNConfig()
+        model_config.update_from_dict(OmegaConf.to_container(cfg, resolve=True))
+        model = CNNPolicy(model_config)
     else:
         return None
     if torch.cuda.is_available():

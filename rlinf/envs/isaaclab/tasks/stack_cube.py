@@ -27,12 +27,14 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
         num_envs,
         seed_offset,
         total_num_processes,
+        worker_info,
     ):
         super().__init__(
             cfg,
             num_envs,
             seed_offset,
             total_num_processes,
+            worker_info,
         )
 
     def _make_env_function(self):
@@ -79,7 +81,7 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
         )
 
         env_obs = {
-            "full_images": table_image,
+            "main_images": table_image,
             "task_descriptions": instruction,
             "states": states,
             "wrist_images": wrist_image,

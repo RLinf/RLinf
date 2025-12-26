@@ -15,7 +15,7 @@
 import bisect
 from dataclasses import dataclass
 
-from ..hardware import AcceleratorType
+from ..hardware import AcceleratorType, HardwareInfo
 from .manager import Manager
 
 
@@ -157,6 +157,9 @@ class WorkerInfo:
 
     available_accelerators: list[int]
     """List of global accelerator IDs available to the worker."""
+
+    hardware_infos: list[HardwareInfo]
+    """List of hardware information available to the worker."""
 
     def __hash__(self):
         """Hash function for WorkerInfo."""

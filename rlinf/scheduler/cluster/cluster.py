@@ -127,7 +127,14 @@ class Cluster:
                     )
                     Cluster.NAMESPACE = f"{Cluster.SYS_NAME}_{self._ray_instance_count}"
         else:
-            self._init_from_existing_managers()
+            try:
+                self._init_from_existing_managers()
+            except ConnectionError:
+                self._logger.warning(
+                    "Could not connect to an existing Ray cluster. Initializing a new cluster with 1 node."
+                )
+                return self.__init__(num_nodes=1)
+
         self._has_initialized = True
 
     def _setup_logger(self):
