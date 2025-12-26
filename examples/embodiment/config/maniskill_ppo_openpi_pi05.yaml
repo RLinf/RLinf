@@ -143,30 +143,20 @@ actor:
   enable_offload: False
   # Override the default values in model/pi0_5
   model:
+    model_path: "/path/to/model/RLinf-Pi05-ManiSkill-25Main-SFT"
     model_type: "openpi"
-    num_action_chunks: 5 # interface for the env
-    action_dim: 7
-    is_lora: False
-    lora_rank: 32
-    use_proprio: True
-    num_steps: 4
     add_value_head: True
+    num_action_chunks: 5 # interface for the env
+    num_steps: 4
     # openpi specific parameters
     openpi:
-      model_path: "/path/to/model/RLinf-Pi05-ManiSkill-25Main-SFT"
+      value_after_vlm: True
       config_name: "pi05_maniskill"
       num_images_in_input: 1
-      noise_level: 0.5
-      action_chunk: ${actor.model.num_action_chunks}
-      num_steps: ${actor.model.num_steps}
-      train_expert_only: True
-      action_env_dim: ${actor.model.action_dim}
       noise_method: "flow_noise"
       action_horizon: 8
       noise_params: [0.16, 0.12, 200]
       joint_logprob: True # False for flow_sde, True for flow_noise     
-      value_after_vlm: True
-      value_vlm_mode: "mean_token"
     policy_setup: widowx_bridge
 
   optim:
