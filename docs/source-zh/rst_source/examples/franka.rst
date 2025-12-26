@@ -459,9 +459,9 @@ RLinf 支持对多台 Franka 机器人进行统一管理，实现并行数据采
 - **环境指标**:
 
   - ``env/episode_len``：该回合实际经历的环境步数（单位：step）
-  - ``env/return``：回合总回报。在 LIBERO 的稀疏奖励设置中，该指标并不具有参考价值，因为奖励在回合中几乎始终为 0，只有在成功结束时才会给出 1
+  - ``env/return``：回合总回报
   - ``env/reward``：环境的 step-level 奖励
-  - ``env/success_once``：建议使用该指标来监控训练效果，它直接表示未归一化的任务成功率，更能反映策略的真实性能
+  - ``env/success_once``：回合中至少成功一次标志（0或1）
 
 - **Training Metrics**:
 
