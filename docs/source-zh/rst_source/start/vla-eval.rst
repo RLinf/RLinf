@@ -1,4 +1,4 @@
-评估 1：具身智能体场景
+如何评估？具身智能体场景
 ========================================
 
 简介
@@ -29,13 +29,12 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
 
 .. code-block:: bash
 
+  # 运行 eval 的实例：
   bash examples/embodiment/eval_embodiment.sh libero_10_grpo_openvlaoft_eval
 
 **关键 YAML 配置字段**
 
-除了上面示例提到的 ``libero_10_grpo_openvlaoft_eval`` 其余的 yaml 均可直接使用。
-
-以 ``examples/embodiment/config/libero_10_ppo_openpi.yaml`` 为例，您可以按需修改配置文件中的：
+所有yaml只要添加了 ``env.eval`` 的相关配置，均可使用 ``eval_embodiment.sh`` 脚本进行评测，在这里我们以 ``examples/embodiment/config/libero_10_grpo_openvlaoft_eval.yaml`` 为例，您可以按需修改配置文件中的：
 
 1. 调整模型路径（现在的代码逻辑需要我们同时修改actor和rollout的环境）：同时修改以下三个参数以加载待测评的模型；
 
@@ -48,7 +47,9 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
 
 2. 控制环境的随机种子：我们可以调整 ``env.seed`` 来调整环境的随机函数的变化，以便复现结果等；
 
-> 注：多个worker启动环境时，不同worker中的环境的 ``seed`` 都有固定的偏移 ``seed = seed + self._rank * self.stage_num + stage_id``；
+.. note::
+
+  注：多个worker启动环境时，不同worker中的环境的 ``seed`` 都有固定的偏移 ``seed = seed + self._rank * self.stage_num + stage_id``；
 
 3. 调整测评的轮数：我们可以调整 ``algorithm.eval_rollout_epoch`` 以控制测评的轮数。注意，我们认为每轮应该测评完整个测试集，并且由于每次测评的种子都是相同的，所以，最终的 **测评结果** 等价于 Policy 在相同测试集上测评多轮取平均的结果；
 
@@ -130,7 +131,9 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
 ---------------------------
 **OOD Eval启动命令**
 
-> 目前只支持 ManiSkill
+.. note::
+  
+  目前只支持 ManiSkill
 
 启动方式如下： 修改 ``examples/embodiment/eval_mani_ood.sh`` 中的 EVAL_NAME, CKPT_PATH, CONFIG_NAME(可改为maniskill_ppo_openvlaoft_quickstart进行一个快速测试)等
 然后在终端执行如下命令启动测评。
