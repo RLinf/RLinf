@@ -128,7 +128,7 @@ as well as reinforcement learning training examples on real robots.
        <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/realworld.html" target="_blank" style="text-decoration: underline; color: blue;">
+        <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/franka.html" target="_blank" style="text-decoration: underline; color: blue;">
          <b>Real-World RL with Franka</b>
          </a><br>
          RLinf worker seamlessly integrates with the Franka robotic arm
@@ -272,4 +272,4 @@ Thanks to this decoupled design, workers can be flexibly and dynamically schedul
    reasoning
    coding_online_rl
    sft
-   realworld
+   franka

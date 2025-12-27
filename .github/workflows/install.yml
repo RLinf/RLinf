@@ -91,3 +91,20 @@ jobs:
           uv cache prune --ci
           bash requirements/install.sh embodied --model openvla-oft --env behavior
           rm -rf .venv
+
+  build-franka:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:20.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Install franka
+        run: |
+          export UV_LINK_MODE=symlink
+          apt update -y
+          apt install -y python3-pip git
+          ln -fs /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+          for v in 0.10.0 0.13.3 0.14.1 0.15.0 0.18.0; do \
+            LIBFRANKA_VERSION="$v" FRANKA_ROS_VERSION=0.10.0 bash requirements/install.sh embodied --venv "franka-$v" --env franka; \
+          done

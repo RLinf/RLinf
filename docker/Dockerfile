@@ -169,10 +169,13 @@ RUN echo "source ${UV_PATH}/gr00t/bin/activate" >> ~/.bashrc
 
 FROM embodied-common-image AS embodied-franka-image
 
-RUN bash requirements/install.sh embodied --venv franka --env franka
+# Install multiple Franka environments with different libfranka versions
+RUN for v in 0.10.0 0.13.3 0.14.1 0.15.0 0.18.0; do \
+            LIBFRANKA_VERSION="$v" FRANKA_ROS_VERSION=0.10.0 bash requirements/install.sh embodied --venv "franka-$v" --env franka; \
+        done
 
-# Set default env
-RUN echo "source ${UV_PATH}/franka/bin/activate" >> ~/.bashrc
+# Set default env (recommended libfranka 0.15.0)
+RUN echo "source ${UV_PATH}/franka-0.15.0/bin/activate" >> ~/.bashrc
 
 FROM ${BUILD_TARGET}-image AS final-image
 
