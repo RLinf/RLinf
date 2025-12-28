@@ -327,6 +327,18 @@ If you still encounter OOM issues under the minimum parameter configuration, we 
 
    If you encounter a mismatch between ``micro_batch_size`` and ``global_batch_size``, ensure that ``global_batch_size`` is an integer multiple of ``micro_batch_size`` × number of GPUs.
 
+**2.5 Model Evaluation**
+
+For models after SFT or RL training, we provide two evaluation methods:
+
+- Use RLinf's unified evaluation script, refer to the `VLA Evaluation Documentation <https://rlinf.readthedocs.io/en/latest/rst_source/start/vla-eval.html>`__ for evaluation. This method supports parallel environment evaluation, which is fast, but only supports outputting the success rate of the entire task.
+
+.. note::
+
+   ``Metaworld`` and ``CALVIN`` currently do not support the evaluation mode with ``env.eval.auto_reset=True``. It is recommended to use individual script files for model evaluation.
+
+- Use individual script files for model evaluation, refer to the example `README.md <https://github.com/RLinf/RLinf/blob/main/rlinf/models/embodiment/openpi/eval_scripts/README.md>`__. This method's evaluation scripts are consistent with the official evaluation scripts provided by ``openpi``, supporting output of success rates for each subtask, but it is slower.
+
 **3. Configuration Files**
 
 Using libero-10 as an example, the configuration files for π\ :sub:`0`\  and π\ :sub:`0.5`\  are:

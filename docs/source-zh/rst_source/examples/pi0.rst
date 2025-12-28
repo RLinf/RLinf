@@ -295,6 +295,18 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
 
    如果遇到 ``micro_batch_size`` 和 ``global_batch_size`` 不匹配的问题，需要保证 ``global_batch_size`` 是 ``micro_batch_size`` × GPU数量 的整数倍。
 
+**2.5 模型评估** 
+
+针对SFT或RL训练后的模型，我们提供两种评估方式：
+
+- 使用RLinf统一的评估脚本，参考 `VLA评估文档 <https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/vla-eval.html>`__ 进行评估，这种方式支持并行环境评估，速度快，但是只支持输出整个任务的成功率。
+
+.. note::
+
+   ``Metaworld`` 以及 ``CALVIN`` 暂时不支持设置 ``env.eval.auto_reset=True`` 的评估模式，建议使用单个脚本文件进行模型评估。
+
+- 使用单个脚本文件进行模型评估，参考示例 `README.md <https://github.com/RLinf/RLinf/blob/main/rlinf/models/embodiment/openpi/eval_scripts/README.md>`__，这种方式的评估脚本和 ``openpi`` 官方提供的评估脚本一致，支持输出每个子任务的成功率，但是速度较慢。
+
 **3. 配置文件**
 
    以libero-10为例，对应π\ :sub:`0`\ 和π\ :sub:`0.5`\ 的配置文件：
