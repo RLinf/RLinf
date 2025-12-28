@@ -22,7 +22,7 @@ For more details, see the original SAC paper
 `SAC <https://arxiv.org/abs/1801.01290>`_.
 
 
-1. Objective Function
+2. Objective Function
 ----------------------
 
 Let the policy be :math:`\pi`. Then the Q function for :math:`\pi` is defined as: :math:`Q^{\pi}(s, a)`. In SAC, the Q function satisfies the following soft Bellman equation:
@@ -67,7 +67,7 @@ In practice, the temperature coefficient :math:`\alpha` is learnable. Then the a
 where :math:`H_{\text{targ}}` is a hyperparameter representing the target value for entropy. It is typically set to negative action dimension. 
 
 
-1. Configuration
+3. Configuration
 -----------------
 
 Currently, SAC is supported only for embodied tasks in our framework.  

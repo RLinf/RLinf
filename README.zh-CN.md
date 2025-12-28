@@ -111,9 +111,9 @@ RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进�
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/ppo.html">PPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/dapo.html">DAPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/reinforce.html">Reinforce++</a> ✅</li>
-            <li>SAC ✅</li>
-            <li>Cross-Q ✅</li>
-            <li>RLPD ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/sac.html">SAC</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/crossq.html">CrossQ</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/rlalg/rlpd.html">RLPD</a> ✅</li>
           </ul>
           <li><b>SFT</b></li>
           <ul>

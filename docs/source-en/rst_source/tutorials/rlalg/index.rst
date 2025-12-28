@@ -12,6 +12,8 @@ As of now, RLinf supports four widely-used reinforcement learning algorithms:
 - :doc:`Domain-Adaptive Policy Optimization (DAPO) <dapo>`
 - :doc:`REINFORCE++ <reinforce>` 
 - :doc:`Soft Actor-Critic (SAC) <sac>`
+- :doc:`Cross-Q <crossq>`
+- :doc:`RLPD <rlpd>`
 
 We are continuously working to expand the selection of supported algorithms in future releases. Stay tuned for upcoming additions!
 
@@ -24,3 +26,5 @@ We are continuously working to expand the selection of supported algorithms in f
    dapo
    reinforce
    sac
+   crossq
+   rlpd
