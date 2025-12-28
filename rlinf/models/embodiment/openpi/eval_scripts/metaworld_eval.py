@@ -14,15 +14,15 @@
 
 import collections
 import json
-import logging
 import os
 import pathlib
 
 import gymnasium as gym
 import imageio
-import numpy as np
 import metaworld
-from rlinf.models.embodiment.openpi.eval_scripts import setup_policy, setup_logger
+import numpy as np
+
+from rlinf.models.embodiment.openpi.eval_scripts import setup_logger, setup_policy
 
 metaworld.register_mw_envs()
 os.environ["MUJOCO_GL"] = "egl"
@@ -91,9 +91,9 @@ def main(args):
                 # Plan actions only if empty
                 if not action_plan:
                     action_chunk_result = policy.infer(batch)["actions"]
-                    assert (
-                        len(action_chunk_result) >= args.action_chunk
-                    ), f"We want to replan every {args.action_chunk} steps, but policy only predicts {len(action_chunk_result)} steps."
+                    assert len(action_chunk_result) >= args.action_chunk, (
+                        f"We want to replan every {args.action_chunk} steps, but policy only predicts {len(action_chunk_result)} steps."
+                    )
                     action_plan.extend(action_chunk_result[: args.action_chunk])
                 action = action_plan.popleft()
                 observation, reward, terminated, truncated, info = env.step(action)
@@ -106,11 +106,14 @@ def main(args):
             task_successes += success
             total_successes += success
             total_episodes += 1
-            
+
             # Save video only for first N episodes
             if total_episodes <= args.num_save_videos:
                 suffix = "success" if success else "failure"
-                out_path = pathlib.Path(f"{args.log_dir}/{args.exp_name}/") / f"{env_name}_{trial_id}_{suffix}.mp4"
+                out_path = (
+                    pathlib.Path(f"{args.log_dir}/{args.exp_name}/")
+                    / f"{env_name}_{trial_id}_{suffix}.mp4"
+                )
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 imageio.mimwrite(
                     out_path,

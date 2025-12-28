@@ -13,16 +13,17 @@
 # limitations under the License.
 
 import collections
-import logging
 import math
 import os
 import pathlib
-from libero.libero import benchmark, get_libero_path
-from libero.libero.envs import OffScreenRenderEnv
-from rlinf.models.embodiment.openpi.eval_scripts import setup_policy, setup_logger
+
 import imageio
 import numpy as np
 import tqdm
+from libero.libero import benchmark, get_libero_path
+from libero.libero.envs import OffScreenRenderEnv
+
+from rlinf.models.embodiment.openpi.eval_scripts import setup_logger, setup_policy
 
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -105,7 +106,7 @@ def main(args):
     # Start evaluation
     total_episodes, total_successes = 0, 0
     results_per_task = {}
-    
+
     for task_id in tqdm.tqdm(range(num_tasks_in_suite)):
         # Get task
         task = task_suite.get_task(task_id)
@@ -120,7 +121,7 @@ def main(args):
         task_episodes, task_successes = 0, 0
         for episode_idx in range(args.num_trials_per_task):
             logger.info(f"\nTask: {task_description}")
-            logger.info(f"Starting episode {task_episodes+1}...")
+            logger.info(f"Starting episode {task_episodes + 1}...")
 
             # Reset environment
             policy.reset()
@@ -168,9 +169,9 @@ def main(args):
                     # infer the action
                     action_chunk = policy.infer(observation)["actions"]
 
-                    assert (
-                        len(action_chunk) >= args.action_chunk
-                    ), f"We want to replan every {args.action_chunk} steps, but policy only predicts {len(action_chunk)} steps."
+                    assert len(action_chunk) >= args.action_chunk, (
+                        f"We want to replan every {args.action_chunk} steps, but policy only predicts {len(action_chunk)} steps."
+                    )
                     action_plan.extend(action_chunk[: args.action_chunk])
 
                 action = action_plan.popleft()
@@ -188,11 +189,17 @@ def main(args):
             if task_episodes <= args.num_save_videos:
                 suffix = "success" if done else "failure"
                 task_segment = task_description.replace(" ", "_")
-                out_path = pathlib.Path(f"{args.log_dir}/{args.exp_name}/") / f"rollout_{task_segment}_{episode_idx}_{suffix}.mp4"
+                out_path = (
+                    pathlib.Path(f"{args.log_dir}/{args.exp_name}/")
+                    / f"rollout_{task_segment}_{episode_idx}_{suffix}.mp4"
+                )
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 imageio.mimwrite(
                     out_path,
-                    [np.asarray(x) for x in replay_images[:: args.video_temp_subsample]],
+                    [
+                        np.asarray(x)
+                        for x in replay_images[:: args.video_temp_subsample]
+                    ],
                     fps=30 // args.video_temp_subsample,
                 )
 

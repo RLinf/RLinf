@@ -12,18 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from rlinf.models.embodiment.openpi import _CONFIGS_DICT
 import logging
 import os
 import pathlib
 from typing import Any
+
 import openpi.policies.policy as _policy
 import openpi.shared.download as download
+import openpi.transforms as transforms
+import safetensors
+from openpi.models_pytorch import pi0_pytorch
 from openpi.training import checkpoints as _checkpoints
 from openpi.training import config as _config
-import openpi.transforms as transforms
-from openpi.models_pytorch import pi0_pytorch
-import safetensors
+
+from rlinf.models.embodiment.openpi import _CONFIGS_DICT
+
 
 def setup_logger(exp_name, log_dir):
     os.makedirs(log_dir, exist_ok=True)
@@ -40,8 +43,9 @@ def setup_logger(exp_name, log_dir):
 
 def load_pytorch(train_config, weight_path: str):
     model = pi0_pytorch.PI0Pytorch(config=train_config.model)
-    safetensors.torch.load_model(model, weight_path,strict=False)
+    safetensors.torch.load_model(model, weight_path, strict=False)
     return model
+
 
 def create_trained_policy(
     train_config: _config.TrainConfig,
@@ -108,12 +112,16 @@ def create_trained_policy(
             *repack_transforms.inputs,
             transforms.InjectDefaultPrompt(default_prompt),
             *data_config.data_transforms.inputs,
-            transforms.Normalize(norm_stats, use_quantiles=data_config.use_quantile_norm),
+            transforms.Normalize(
+                norm_stats, use_quantiles=data_config.use_quantile_norm
+            ),
             *data_config.model_transforms.inputs,
         ],
         output_transforms=[
             *data_config.model_transforms.outputs,
-            transforms.Unnormalize(norm_stats, use_quantiles=data_config.use_quantile_norm),
+            transforms.Unnormalize(
+                norm_stats, use_quantiles=data_config.use_quantile_norm
+            ),
             *data_config.data_transforms.outputs,
             *repack_transforms.outputs,
         ],
@@ -122,6 +130,7 @@ def create_trained_policy(
         is_pytorch=is_pytorch,
         pytorch_device=pytorch_device if is_pytorch else None,
     )
+
 
 # setup the policy
 def setup_policy(args):

@@ -13,16 +13,17 @@
 # limitations under the License.
 
 import collections
-import logging
 import pathlib
-from calvin_agent.evaluation.utils import get_env_state_for_initial_condition
-from calvin_env.envs.play_table_env import get_env
-from rlinf.envs.calvin import _get_calvin_tasks_and_reward, ENV_CFG_DIR
-from rlinf.models.embodiment.openpi.eval_scripts import setup_policy, setup_logger
+
 import imageio
 import numpy as np
 import tqdm
-import os
+from calvin_agent.evaluation.utils import get_env_state_for_initial_condition
+from calvin_env.envs.play_table_env import get_env
+
+from rlinf.envs.calvin import ENV_CFG_DIR, _get_calvin_tasks_and_reward
+from rlinf.models.embodiment.openpi.eval_scripts import setup_logger, setup_policy
+
 
 # print performance
 def _calvin_print_performance(logger, episode_solved_subtasks, per_subtask_success):
@@ -33,12 +34,15 @@ def _calvin_print_performance(logger, episode_solved_subtasks, per_subtask_succe
     logger.info("Per sequence_length avg success:")
     for i in range(1, 6):
         # Compute fraction of episodes that have *at least* i successful subtasks
-        logger.info(f"{i}: {np.sum(np.array(episode_solved_subtasks) >= i) / len(episode_solved_subtasks) * 100}%")
+        logger.info(
+            f"{i}: {np.sum(np.array(episode_solved_subtasks) >= i) / len(episode_solved_subtasks) * 100}%"
+        )
 
     logger.info("\n Per subtask avg success:")
     for key in per_subtask_success:
         logger.info(f"{key}: \t\t\t {np.mean(per_subtask_success[key]) * 100}%")
     logger.info("#####################################################")
+
 
 # main function
 def main(args):
@@ -46,7 +50,9 @@ def main(args):
     logger = setup_logger(args.exp_name, args.log_dir)
     # env setup
     env = get_env(ENV_CFG_DIR, show_gui=False)
-    task_definitions, task_instructions, task_reward = _get_calvin_tasks_and_reward(args.num_trials)
+    task_definitions, task_instructions, task_reward = _get_calvin_tasks_and_reward(
+        args.num_trials
+    )
     # policy setup
     logger.info("policy setup start")
     policy = setup_policy(args)
@@ -55,7 +61,7 @@ def main(args):
     episode_solved_subtasks = []
     per_subtask_success = collections.defaultdict(list)
     for i, (initial_state, task_sequence) in enumerate(tqdm.tqdm(task_definitions)):
-        logger.info(f"Starting episode {i+1}...")
+        logger.info(f"Starting episode {i + 1}...")
         logger.info(f"Task sequence: {task_sequence}")
         # Reset env to initial position for task
         robot_obs, scene_obs = get_env_state_for_initial_condition(initial_state)
@@ -72,7 +78,7 @@ def main(args):
                 img = obs["rgb_obs"]["rgb_static"]
                 wrist_img = obs["rgb_obs"]["rgb_gripper"]
                 rollout_images.append(img)
-                
+
                 if not action_plan:
                     # Finished executing previous action chunk -- compute new chunk
                     state_ee_pos = obs["robot_obs"][:3]
@@ -89,20 +95,22 @@ def main(args):
                         "prompt": str(task_instructions[subtask][0]),
                     }
                     action_chunk_result = policy.infer(element)["actions"]
-                    assert (
-                        len(action_chunk_result) >= args.action_chunk
-                    ), f"We want to replan every {args.action_chunk} steps, but policy only predicts {len(action_chunk_result)} steps."
+                    assert len(action_chunk_result) >= args.action_chunk, (
+                        f"We want to replan every {args.action_chunk} steps, but policy only predicts {len(action_chunk_result)} steps."
+                    )
                     action_plan.extend(action_chunk_result[: args.action_chunk])
-                
+
                 action = action_plan.popleft().copy()
                 # Round gripper action since env expects gripper_action in (-1, 1)
                 action[-1] = 1 if action[-1] > 0 else -1
-                
+
                 # Step environment
                 obs, _, _, current_info = env.step(action)
 
                 # check if current step solves a task
-                current_task_info = task_reward.get_task_info_for_set(start_info, current_info, {subtask})
+                current_task_info = task_reward.get_task_info_for_set(
+                    start_info, current_info, {subtask}
+                )
                 if len(current_task_info) > 0:
                     done = True
                     solved_subtasks += 1
@@ -120,7 +128,10 @@ def main(args):
             # Determine success: all subtasks completed
             is_success = solved_subtasks == len(task_sequence)
             suffix = "success" if is_success else "failure"
-            out_path = pathlib.Path(f"{args.log_dir}/{args.exp_name}/") / f"rollout_{idx}_{suffix}.mp4"
+            out_path = (
+                pathlib.Path(f"{args.log_dir}/{args.exp_name}/")
+                / f"rollout_{idx}_{suffix}.mp4"
+            )
             out_path.parent.mkdir(parents=True, exist_ok=True)
             imageio.mimwrite(
                 out_path,
@@ -133,7 +144,7 @@ def main(args):
         _calvin_print_performance(logger, episode_solved_subtasks, per_subtask_success)
 
     env.close()
-    
+
     # Log final performance
     logger.info(f"results/avg_num_subtasks: {np.mean(episode_solved_subtasks)}")
     for i in range(1, 6):
