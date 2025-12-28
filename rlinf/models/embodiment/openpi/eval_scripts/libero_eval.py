@@ -185,8 +185,8 @@ def main(args):
             task_episodes += 1
             total_episodes += 1
 
-            # Save a replay video of the episode (only for first N episodes)
-            if task_episodes <= args.num_save_videos:
+            # Save a replay video of the episode (only for first N episodes across all tasks)
+            if total_episodes <= args.num_save_videos:
                 suffix = "success" if done else "failure"
                 task_segment = task_description.replace(" ", "_")
                 out_path = (
