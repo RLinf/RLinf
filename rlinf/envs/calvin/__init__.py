@@ -56,14 +56,14 @@ def _get_calvin_tasks_and_reward(num_sequences, use_random_seed=True):
     return eval_sequences, val_annotations, task_oracle
 
 
-def make_env():
+def make_env(**kwargs):
     # Get current file directory
     if not ENV_CFG_DIR.exists():
         raise FileNotFoundError(
             f"Environment configuration directory {ENV_CFG_DIR} does not exist. "
             "Please ensure that the calvin_env package is installed correctly."
         )
-    return get_env(ENV_CFG_DIR, show_gui=False)
+    return get_env(ENV_CFG_DIR, show_gui=False, **kwargs)
 
 
 class CalvinBenchmark:

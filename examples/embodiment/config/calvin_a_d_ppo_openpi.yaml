@@ -92,9 +92,11 @@ env:
     max_steps_per_rollout_epoch: 480
     group_size: ${algorithm.group_size}
     reward_coef: ${algorithm.reward_coef}
+    init_params:
+      scene: "calvin_scene_A"
 
   eval:
-    total_num_envs: 50
+    total_num_envs: 4
     max_episode_steps: 480
     max_steps_per_rollout_epoch: 480
     use_fixed_reset_state_ids: True

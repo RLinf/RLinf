@@ -79,10 +79,9 @@ class CalvinEnv(gym.Env):
         env_fn_params = self.get_env_fn_params()
         env_fns = []
         for env_fn_param in env_fn_params:
-
-            def env_fn():
+            def env_fn(params=env_fn_param):
                 os.environ["EGL_VISIBLE_DEVICES"] = str(self.seed_offset)
-                env = make_env()
+                env = make_env(**params)
                 return env
 
             env_fns.append(env_fn)
@@ -95,7 +94,7 @@ class CalvinEnv(gym.Env):
         for env_id in range(self.num_envs):
             if env_id not in env_idx:
                 continue
-            env_fn_params.append({})
+            env_fn_params.append({"scene": self.cfg.init_params.scene})
         return env_fn_params
 
     def _compute_total_num_group_envs(self):
