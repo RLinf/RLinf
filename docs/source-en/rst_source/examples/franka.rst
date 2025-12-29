@@ -125,12 +125,30 @@ Follow the instructions in `Franka documentation <https://frankarobotics.github.
 
 **Option 1: Docker Image**
 
-Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-franka-libfranka0.15-franka_ros0.10`` for the experiment.
+Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-franka`` for the experiment.
 
-.. warning::
+To access the robot, camera, and space mouse devices from within the docker container, it is recommended to run the container with the following additional flags:
 
-  Currently, the docker image only supports Franka firmware version ``>=5.7.2`` and ``<5.9.0``.
-  If you have a different firmware version, please let us know your requirements so that we can build a compatible docker image for you. Or you can follow **Option 2** to install the dependencies manually.
+.. code:: bash
+
+   docker run --rm -it --network host --privileged rlinf/rlinf:agentic-rlinf0.1-franka
+
+Currently, the docker image contains libfranka version ``0.10.0``, ``0.13.3``, ``0.14.1``, ``0.15.0``, and ``0.18.0`` with franka_ros version ``0.10.0``.
+
+These versions are selected based on the compatibility matrix in `Franka compatibility <https://frankarobotics.github.io/docs/compatibility.html>`_.
+Please check your Franka firmware version and find which libfranka version is compatible with it.
+
+Having determined the compatible libfranka version, you can switch to the corresponding virtual environment in the docker container by running:
+
+.. code:: bash
+
+   source switch_env franka-<libfranka_version>
+   # e.g., for libfranka version 0.15.0
+   # source switch_env franka-0.15.0
+
+.. note::
+
+  Currently, the docker image is only tested for Franka firmware version ``>=5.7.2`` and ``<5.9.0`` with libfranka 0.15.0, which are thus the recommended versions to use.
 
 **Option 2: Custom Environment**
 
@@ -153,13 +171,15 @@ Our installation script installs consists of the installation of two parts:
 
 .. warning::
 
-  Currently, the installation of ROS Noetic, libfranka, and franka_ros is only tested against Franka firmware version ``>=5.7.2`` and ``<5.9.0``, which requires libfranka version ``0.15`` and franka_ros version ``0.10``.
+  Currently, the installation of ROS Noetic, libfranka, and franka_ros is only tested against Franka firmware version ``>=5.7.2`` and ``<5.9.0`` with libfranka version ``0.15``.
 
   For other firmware versions, please first check the compatibility matrix in `Franka compatibility <https://frankarobotics.github.io/docs/compatibility.html>`_.
   For a desired libfranka and franka_ros version, you can use `export LIBFRANKA_VERSION=<version>` and `export FRANKA_ROS_VERSION=<version>` to specify the versions before running the installation script.
 
-  **The script is not tested against all versions, please use with caution** or refer to the official `ROS Noectic <https://wiki.ros.org/noetic/Installation/Ubuntu>`_ for ROS Noetic installation, and `Franka <https://frankarobotics.github.io/docs/libfranka/docs/installation.html>`_ for libfranka and franka_ros installation.
+.. note::
 
+  If the script does not work for you, please refer to the official `ROS Noectic <https://wiki.ros.org/noetic/Installation/Ubuntu>`_ for ROS Noetic installation, `Franka <https://frankarobotics.github.io/docs/libfranka/docs/installation.html>`_ for libfranka and franka_ros installation, and `serl_franka_controllers <https://github.com/rail-berkeley/serl_franka_controllers>`_ for serl_franka_controllers installation.
+  
 Execute the following command to install the dependencies:
 
 .. code:: bash
@@ -299,14 +319,15 @@ You can modify the script accordingly and source it before starting ray on each 
 
 Specifically, the script sets up the following important aspects:
 
-1. Source the correct virtual python environment (if using custom environment installation).
+1. Source the correct virtual python environment. See the section on Dependency Installation for details.
    
-2. Source the franka_ros and serl_franka_controllers packages setup scripts (if on the controller node), usually at ``<your_catkin_ws>/devel/setup.bash``.
+2. Source the franka_ros and serl_franka_controllers packages setup scripts (if on the controller node), usually at ``<your_catkin_ws>/devel/setup.bash``. **If you are using the docker image or the installation script, this is already done when you source the virtual python environment.**
 
 3. Setup RLinf environment variables on all nodes:
    
 .. code-block:: bash
 
+   export PYTHONPATH=<path_to_your_RLinf_repo>:$PYTHONPATH
    export RLINF_NODE_RANK=<node_rank_of_this_node>
    export RLINF_COMM_NET_DEVICES=<network_device_for_communication> # Optional if you do not have multiple network devices
 

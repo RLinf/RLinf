@@ -409,7 +409,7 @@ install_calvin_env() {
     calvin_dir=$(clone_or_reuse_repo CALVIN_PATH "$VENV_DIR/calvin" https://github.com/mees/calvin.git --recurse-submodules)
 
     uv pip install wheel cmake==3.18.4 setuptools==57.5.0
-    # NOTE: Use a forker version of pyfasthash that fixes install on Python 3.11
+    # NOTE: Use a fork version of pyfasthash that fixes install on Python 3.11
     uv pip install git+https://github.com/RLinf/pyfasthash.git --no-build-isolation
     uv pip install -e ${calvin_dir}/calvin_env/tacto
     uv pip install -e ${calvin_dir}/calvin_env
@@ -456,7 +456,8 @@ install_franka_env() {
         git clone -b "${LIBFRANKA_VERSION}" --recurse-submodules https://github.com/frankaemika/libfranka $ROS_CATKIN_PATH/libfranka
     fi
     if [ ! -d "$ROS_CATKIN_PATH/src/franka_ros" ]; then
-        git clone -b "${FRANKA_ROS_VERSION}" --recurse-submodules https://github.com/frankaemika/franka_ros
+        # Use a fork version that fixes compile issues with newer libfranka using C++17
+        git clone -b "${FRANKA_ROS_VERSION}" --recurse-submodules https://github.com/RLinf/franka_ros
     fi
     popd >/dev/null
 
@@ -477,7 +478,7 @@ install_franka_env() {
     catkin_make -DCMAKE_BUILD_TYPE=Release -DFranka_DIR:PATH=$ROS_CATKIN_PATH/libfranka/build --pkg franka_ros
 
     # Finally serl_franka_controllers
-    catkin_make --pkg serl_franka_controllers
+    catkin_make -DCMAKE_CXX_STANDARD=17 --pkg serl_franka_controllers
     popd >/dev/null
 
     echo "export LD_LIBRARY_PATH=$ROS_CATKIN_PATH/libfranka/build:/opt/openrobots/lib:\$LD_LIBRARY_PATH" >> "$VENV_DIR/bin/activate"

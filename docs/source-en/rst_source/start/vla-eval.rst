@@ -1,5 +1,5 @@
-Evaluation 1: Embodied Agent Scenarios
-========================================
+How to evaluate? Embodied Agent Scenarios
+============================================
 
 Introduction
 ------------
@@ -29,11 +29,12 @@ Quick Start
 
 .. code-block:: bash
 
+  # run eval：
   bash examples/embodiment/eval_embodiment.sh libero_10_grpo_openvlaoft_eval
 
 **Key YAML Configuration Fields**
 
-Except for the ``libero_10_grpo_openvlaoft_eval`` mentioned in the example above, other YAML files can be used directly. Taking ``examples/embodiment/config/libero_10_ppo_openpi.yaml`` as an example, you can modify the following fields in the configuration file as needed:
+Any YAML file can be used for evaluation with the ``eval_embodiment.sh`` script, provided it includes the relevant ``env.eval`` configuration. Taking ``examples/embodiment/config/libero_10_grpo_openvlaoft_eval.yaml`` as an example here, you can modify the following in the configuration file as needed:
 
 1. **Adjust model path** (Current code logic requires modifying both the actor and rollout environments simultaneously): Modify the following three parameters to load the model to be evaluated:
 
@@ -46,7 +47,9 @@ Except for the ``libero_10_grpo_openvlaoft_eval`` mentioned in the example above
 
 2. **Control environment random seed**: You can adjust ``env.seed`` to change the environment's random function for result reproducibility, etc.
 
-> Note: When multiple workers launch environments, the seeds in different workers have a fixed offset: ``seed = seed + self._rank * self.stage_num + stage_id``.
+.. Note::
+  
+   When multiple workers launch environments, the seeds in different workers have a fixed offset: ``seed = seed + self._rank * self.stage_num + stage_id``.
 
 3. **Adjust evaluation epochs**: We can adjust ``algorithm.eval_rollout_epoch`` to control the number of evaluation epochs. Note that we assume each epoch should complete the evaluation of the entire test set. Furthermore, since the random seeds are identical for each evaluation, the final **evaluation result** is equivalent to the average result of the Policy evaluated over multiple rounds on the same test set.
 
@@ -127,7 +130,9 @@ If TensorBoard is enabled, these metrics will also be recorded in TensorBoard (T
 Quick Start — ManiSkill3 OOD
 --------------------------------
 
-> Currently, only ManiSkill is supported for OOD test.
+.. note::
+  
+   Currently, only ManiSkill is supported for OOD test.
 
 **Launch Method**
 

@@ -121,6 +121,7 @@ rollout:
   model:
     model_path: "/path/to/model/RLinf-Pi0-ManiSkill-25Main-SFT"
     precision: ${actor.model.precision}
+
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
@@ -135,20 +136,11 @@ actor:
     precision: null    # bf16
     num_action_chunks: 5 # interface for the env
     action_dim: 7
-    is_lora: False
-    lora_rank: 32
-    use_proprio: True
-    num_steps: 4
     add_value_head: True
     # openpi specific parameters
     openpi:
       config_name: "pi0_maniskill"
       num_images_in_input: 1
-      noise_level: 0.5
-      action_chunk: ${actor.model.num_action_chunks}
-      num_steps: ${actor.model.num_steps}
-      train_expert_only: True
-      action_env_dim: ${actor.model.action_dim}
       noise_method: "flow_noise"
       action_horizon: 8
       noise_params: [0.16, 0.12, 200]
