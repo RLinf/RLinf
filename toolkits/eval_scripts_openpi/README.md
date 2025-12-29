@@ -34,7 +34,7 @@ For full eval scripts, please refer to `run.sh`.
 
 **Example: pi0 model**
 ```bash
-python rlinf/models/embodiment/openpi/eval_scripts/libero_eval.py \
+python toolkits/eval_scripts_openpi/libero_eval.py \
     --exp_name libero_spatial_pi0 \
     --config_name pi0_libero \
     --pretrained_path your_model_path/ \
@@ -48,7 +48,7 @@ python rlinf/models/embodiment/openpi/eval_scripts/libero_eval.py \
 
 **Example: pi05 model**
 ```bash
-python rlinf/models/embodiment/openpi/eval_scripts/libero_eval.py \
+python toolkits/eval_scripts_openpi/libero_eval.py \
     --exp_name libero_spatial_pi05 \
     --config_name pi05_libero \
     --pretrained_path your_model_path/ \
@@ -64,7 +64,7 @@ python rlinf/models/embodiment/openpi/eval_scripts/libero_eval.py \
 
 **Example: pi0 model**
 ```bash
-python rlinf/models/embodiment/openpi/eval_scripts/metaworld_eval.py \
+python toolkits/eval_scripts_openpi/metaworld_eval.py \
     --exp_name metaworld_pi0 \
     --config_name pi0_metaworld \
     --pretrained_path your_model_path/ \
@@ -78,7 +78,7 @@ python rlinf/models/embodiment/openpi/eval_scripts/metaworld_eval.py \
 
 **Example: pi05 model**
 ```bash
-python rlinf/models/embodiment/openpi/eval_scripts/metaworld_eval.py \
+python toolkits/eval_scripts_openpi/metaworld_eval.py \
     --exp_name metaworld_pi05 \
     --config_name pi05_metaworld \
     --pretrained_path your_model_path/ \
@@ -94,7 +94,7 @@ python rlinf/models/embodiment/openpi/eval_scripts/metaworld_eval.py \
 
 **Example: pi0 model**
 ```bash
-python rlinf/models/embodiment/openpi/eval_scripts/calvin_eval.py \
+python toolkits/eval_scripts_openpi/calvin_eval.py \
     --exp_name calvin_pi0 \
     --config_name pi0_calvin \
     --pretrained_path your_model_path/ \
@@ -108,7 +108,7 @@ python rlinf/models/embodiment/openpi/eval_scripts/calvin_eval.py \
 
 **Example: pi05 model**
 ```bash
-python rlinf/models/embodiment/openpi/eval_scripts/calvin_eval.py \
+python toolkits/eval_scripts_openpi/calvin_eval.py \
     --exp_name calvin_pi05 \
     --config_name pi05_calvin \
     --pretrained_path your_model_path/ \

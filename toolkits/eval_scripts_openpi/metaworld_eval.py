@@ -22,7 +22,7 @@ import imageio
 import metaworld
 import numpy as np
 
-from rlinf.models.embodiment.openpi.eval_scripts import setup_logger, setup_policy
+from toolkits.eval_scripts_openpi import setup_logger, setup_policy
 
 metaworld.register_mw_envs()
 os.environ["MUJOCO_GL"] = "egl"

@@ -1,6 +1,11 @@
 π\ :sub:`0`\和π\ :sub:`0.5`\ 模型强化学习训练
 ===============================================
 
+.. |huggingface| image:: /_static/svg/hf-logo.svg
+   :width: 16px
+   :height: 16px
+   :class: inline-icon
+
 本示例展示 RLinf 框架对 π\ :sub:`0`\和π\ :sub:`0.5`
 算法进行强化学习微调的完整指南。示例覆盖从环境输入、核心算法、训练脚本配置到评估与可视化的完整流程，并提供可复现的命令和配置片段。 
 
@@ -106,57 +111,80 @@
 
 当然，RLinf 也提供了针对其他环境的预训练模型。模型列表如下：
 
-.. list-table:: **π**\ :sub:`0` **预训练模型列表**
+.. list-table:: **π**\ :sub:`0` **模型列表**
    :header-rows: 1
-   :widths: 15 30 50
+   :widths: 15 25 15 12 12
 
    * - 环境
      - 任务说明
-     - HuggingFace 链接
+     - SFT Model
+     - Flow-SDE
+     - Flow-Noise
 
    * - LIBERO
-     - Spatial, Object, Goal 
-     - `RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT>`__
+     - Spatial, Object, Goal
+     - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT>`__
+     - -
+     - -
 
    * - LIBERO
-     - Long 
-     - `RLinf-Pi0-LIBERO-Long-SFT <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Long-SFT>`__
+     - Long
+     - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Long-SFT>`__
+     - -
+     - -
 
    * - ManiSkill3
      - 多任务
-     - `RLinf-Pi0-ManiSkill-25Main-SFT <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT>`__
+     - |huggingface| `38.4% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT>`__
+     - |huggingface| `78.8% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-RL-FlowSDE>`__
+     - |huggingface| `77.8% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-RL-FlowNoise>`__
 
    * - MetaWorld
      - MT50
-     - `RLinf-Pi0-MetaWorld-SFT <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT>`__
+     - |huggingface| `50.8% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT>`__
+     - |huggingface| `78.1% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-RL-FlowSDE>`__
+     - |huggingface| `85.8% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-RL-FlowNoise>`__
 
    * - CALVIN
      - ABC-D
-     - `RLinf-Pi0-CALVIN-ABC-D-SFT <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT>`__
+     - |huggingface| `57.5% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT>`__
+     - |huggingface| `61.7% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-RL-FlowSDE>`__
+     - |huggingface| `59.9% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-RL-FlowNoise>`__
 
-.. list-table:: **π**\ :sub:`0.5` **预训练模型列表**
+.. list-table:: **π**\ :sub:`0.5` **模型列表**
    :header-rows: 1
-   :widths: 15 30 50
+   :widths: 15 25 15 12 12
+   :align: left
 
    * - 环境
      - 任务说明
-     - HuggingFace 链接
+     - SFT Model
+     - Flow-SDE
+     - Flow-Noise
 
    * - LIBERO
      - Spatial, Object, Goal, Long
-     - `RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__
+     - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__
+     - -
+     - -
 
    * - ManiSkill3
      - 多任务
-     - `RLinf-Pi05-ManiSkill-25Main-SFT <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT>`__
+     - |huggingface| `40.1% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT>`__
+     - |huggingface| `90.9% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-RL-FlowSDE>`__
+     - |huggingface| `89.7% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-RL-FlowNoise>`__
 
    * - MetaWorld
      - MT50
-     - `RLinf-Pi05-MetaWorld-SFT <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT>`__
+     - |huggingface| `43.8% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT>`__
+     - |huggingface| `70.7% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-RL-FlowSDE>`__
+     - |huggingface| `66.1% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-RL-FlowNoise>`__
 
    * - CALVIN
      - ABC-D
-     - `RLinf-Pi05-CALVIN-ABC-D-SFT <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT>`__
+     - |huggingface| `61.3% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT>`__
+     - |huggingface| `87.0% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-RL-FlowSDE>`__
+     - |huggingface| `84.5% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-RL-FlowNoise>`__
 
 下载完成后，请确保在配置文件中正确指定模型路径。
 
@@ -305,7 +333,7 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
 
    ``Metaworld`` 以及 ``CALVIN`` 暂时不支持设置 ``env.eval.auto_reset=True`` 的评估模式，建议使用单个脚本文件进行模型评估。
 
-- 使用单个脚本文件进行模型评估，参考示例 `README.md <https://github.com/RLinf/RLinf/blob/main/rlinf/models/embodiment/openpi/eval_scripts/README.md>`__，这种方式的评估脚本和 ``openpi`` 官方提供的评估脚本一致，支持输出每个子任务的成功率，但是速度较慢。
+- 使用单个脚本文件进行模型评估，参考示例 `README.md <https://github.com/RLinf/RLinf/blob/main/toolkits/eval_scripts_openpi/README.md>`__，这种方式的评估脚本和 ``openpi`` 官方提供的评估脚本一致，支持输出每个子任务的成功率，但是速度较慢。
 
 **3. 配置文件**
 

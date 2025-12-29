@@ -5,7 +5,7 @@ export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 
 ## --------------- LIBERO ---------------
 # pi0
-python rlinf/models/embodiment/openpi/eval_scripts/libero_eval.py \
+python toolkits/eval_scripts_openpi/libero_eval.py \
     --exp_name libero_spatial_pi0 \
     --config_name pi0_libero \
     --pretrained_path your_model_path/ \
@@ -17,7 +17,7 @@ python rlinf/models/embodiment/openpi/eval_scripts/libero_eval.py \
     --video_temp_subsample 10
 
 # pi05
-python rlinf/models/embodiment/openpi/eval_scripts/libero_eval.py \
+python toolkits/eval_scripts_openpi/libero_eval.py \
     --exp_name libero_spatial_pi05 \
     --config_name pi05_libero \
     --pretrained_path your_model_path/ \
@@ -30,7 +30,7 @@ python rlinf/models/embodiment/openpi/eval_scripts/libero_eval.py \
 
 ## --------------- METAWORLD ---------------
 # pi0
-python rlinf/models/embodiment/openpi/eval_scripts/metaworld_eval.py \
+python toolkits/eval_scripts_openpi/metaworld_eval.py \
     --exp_name metaworld_pi0 \
     --config_name pi0_metaworld \
     --pretrained_path your_model_path/ \
@@ -42,7 +42,7 @@ python rlinf/models/embodiment/openpi/eval_scripts/metaworld_eval.py \
     --video_temp_subsample 10
 
 # pi05
-python rlinf/models/embodiment/openpi/eval_scripts/metaworld_eval.py \
+python toolkits/eval_scripts_openpi/metaworld_eval.py \
     --exp_name metaworld_pi05 \
     --config_name pi05_metaworld \
     --pretrained_path your_model_path/ \
@@ -55,7 +55,7 @@ python rlinf/models/embodiment/openpi/eval_scripts/metaworld_eval.py \
 
 ## --------------- CALVIN ---------------
 # pi0
-python rlinf/models/embodiment/openpi/eval_scripts/calvin_eval.py \
+python toolkits/eval_scripts_openpi/calvin_eval.py \
     --exp_name calvin_pi0 \
     --config_name pi0_calvin \
     --pretrained_path your_model_path/ \
@@ -67,7 +67,7 @@ python rlinf/models/embodiment/openpi/eval_scripts/calvin_eval.py \
     --video_temp_subsample 10
 
 # pi05
-python rlinf/models/embodiment/openpi/eval_scripts/calvin_eval.py \
+python toolkits/eval_scripts_openpi/calvin_eval.py \
     --exp_name calvin_pi05 \
     --config_name pi05_calvin \
     --pretrained_path your_model_path/ \

@@ -22,7 +22,7 @@ from calvin_agent.evaluation.utils import get_env_state_for_initial_condition
 from calvin_env.envs.play_table_env import get_env
 
 from rlinf.envs.calvin import ENV_CFG_DIR, _get_calvin_tasks_and_reward
-from rlinf.models.embodiment.openpi.eval_scripts import setup_logger, setup_policy
+from toolkits.eval_scripts_openpi import setup_logger, setup_policy
 
 
 # print performance

@@ -1,6 +1,11 @@
 RL on π\ :sub:`0`\  and π\ :sub:`0.5`\  Models
 ==================================================================
 
+.. |huggingface| image:: /_static/svg/hf-logo.svg
+   :width: 16px
+   :height: 16px
+   :class: inline-icon
+
 This example provides a complete guide to fine-tuning the 
 π\ :sub:`0`\  and π\ :sub:`0.5`\  algorithms with reinforcement learning
 using the **RLinf** framework. It covers the entire process—from
@@ -130,57 +135,80 @@ Alternatively, you can download the model from ModelScope: https://www.modelscop
 
 Of course, RLinf also provides pretrained models for other environments. The model list is as follows:
 
-.. list-table:: **π**\ :sub:`0`\  **Pretrained Model List**
+.. list-table:: **π**\ :sub:`0`\  **Model List**
    :header-rows: 1
-   :widths: 15 30 50
+   :widths: 15 25 15 12 12
 
    * - Environment
      - Task Description
-     - HuggingFace Link
+     - SFT Model
+     - Flow-SDE
+     - Flow-Noise
 
    * - LIBERO
-     - Spatial, Object, Goal 
-     - `RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT>`__
+     - Spatial, Object, Goal
+     - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT>`__
+     - -
+     - -
 
    * - LIBERO
-     - Long 
-     - `RLinf-Pi0-LIBERO-Long-SFT <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Long-SFT>`__
+     - Long
+     - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Long-SFT>`__
+     - -
+     - -
 
    * - ManiSkill3
      - Multi-task
-     - `RLinf-Pi0-ManiSkill-25Main-SFT <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT>`__
+     - |huggingface| `38.4% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT>`__
+     - |huggingface| `78.8% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-RL-FlowSDE>`__
+     - |huggingface| `77.8% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-RL-FlowNoise>`__
 
    * - MetaWorld
      - MT50
-     - `RLinf-Pi0-MetaWorld-SFT <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT>`__
+     - |huggingface| `50.8% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT>`__
+     - |huggingface| `78.1% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-RL-FlowSDE>`__
+     - |huggingface| `85.8% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-RL-FlowNoise>`__
 
    * - CALVIN
      - ABC-D
-     - `RLinf-Pi0-CALVIN-ABC-D-SFT <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT>`__
+     - |huggingface| `57.5% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT>`__
+     - |huggingface| `61.7% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-RL-FlowSDE>`__
+     - |huggingface| `59.9% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-RL-FlowNoise>`__
 
-.. list-table:: **π**\ :sub:`0.5`\  **Pretrained Model List**
+.. list-table:: **π**\ :sub:`0.5`\  **Model List**
    :header-rows: 1
-   :widths: 15 30 50
+   :widths: 15 25 15 12 12
+   :align: left
 
    * - Environment
      - Task Description
-     - HuggingFace Link
+     - SFT Model
+     - Flow-SDE
+     - Flow-Noise
 
    * - LIBERO
      - Spatial, Object, Goal, Long
-     - `RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__
+     - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__
+     - -
+     - -
 
    * - ManiSkill3
      - Multi-task
-     - `RLinf-Pi05-ManiSkill-25Main-SFT <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT>`__
+     - |huggingface| `40.1% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT>`__
+     - |huggingface| `90.9% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-RL-FlowSDE>`__
+     - |huggingface| `89.7% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-RL-FlowNoise>`__
 
    * - MetaWorld
      - MT50
-     - `RLinf-Pi05-MetaWorld-SFT <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT>`__
+     - |huggingface| `43.8% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT>`__
+     - |huggingface| `70.7% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-RL-FlowSDE>`__
+     - |huggingface| `66.1% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-RL-FlowNoise>`__
 
    * - CALVIN
      - ABC-D
-     - `RLinf-Pi05-CALVIN-ABC-D-SFT <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT>`__
+     - |huggingface| `61.3% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT>`__
+     - |huggingface| `87.0% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-RL-FlowSDE>`__
+     - |huggingface| `84.5% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-RL-FlowNoise>`__
 
 After downloading, please make sure to specify the model path correctly in your configuration file.
 
@@ -337,7 +365,7 @@ For models after SFT or RL training, we provide two evaluation methods:
 
    ``Metaworld`` and ``CALVIN`` currently do not support the evaluation mode with ``env.eval.auto_reset=True``. It is recommended to use individual script files for model evaluation.
 
-- Use individual script files for model evaluation, refer to the example `README.md <https://github.com/RLinf/RLinf/blob/main/rlinf/models/embodiment/openpi/eval_scripts/README.md>`__. This method's evaluation scripts are consistent with the official evaluation scripts provided by ``openpi``, supporting output of success rates for each subtask, but it is slower.
+- Use individual script files for model evaluation, refer to the example `README.md <https://github.com/RLinf/RLinf/blob/main/toolkits/eval_scripts_openpi/README.md>`__. This method's evaluation scripts are consistent with the official evaluation scripts provided by ``openpi``, supporting output of success rates for each subtask, but it is slower.
 
 **3. Configuration Files**
 

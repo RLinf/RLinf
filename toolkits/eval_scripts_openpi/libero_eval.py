@@ -23,7 +23,7 @@ import tqdm
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 
-from rlinf.models.embodiment.openpi.eval_scripts import setup_logger, setup_policy
+from toolkits.eval_scripts_openpi import setup_logger, setup_policy
 
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
