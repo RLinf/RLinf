@@ -17,6 +17,7 @@ import asyncio
 from typing import Any, Optional
 
 import pytest
+import ray
 import torch
 
 from rlinf.scheduler import (
@@ -79,6 +80,13 @@ class ProducerWorker(Worker):
 
     def put_nowait(self, channel: Channel, item: Any):
         channel.put_nowait(item, key="nowait")
+
+    def test_memory(self, channel: Channel):
+        large_tensor = torch.randn(512, 1024, 1024, device=get_device())
+        channel.put(large_tensor)
+        channel.put(large_tensor, async_op=True).wait()
+        channel.put_nowait(large_tensor)
+        channel.put(large_tensor, weight=1)
 
     async def stress(self, channel: Channel, num_items: int):
         data = []
@@ -160,6 +168,14 @@ class ConsumerWorker(Worker):
 
     def get_qsize(self, channel: Channel):
         return channel.qsize()
+
+    def test_memory(self, channel: Channel):
+        channel.get()
+        channel.get(async_op=True).wait()
+        while channel.empty():
+            pass
+        channel.get_nowait()
+        channel.get_batch(target_weight=1)
 
     def is_empty(self, channel: Channel):
         return channel.empty()
@@ -408,6 +424,49 @@ class TestChannel:
 
         data = producer.stress_multiple_queues(channel, num_items).wait()[0]
         assert data == list(range(num_items))
+
+    def test_peek_all(self, channel: Channel):
+        """Tests the peek_all method of the channel."""
+        while channel.qsize() > 0:
+            channel.get()
+
+        test_items = ["item1", "item2", "item3"]
+        for item in test_items:
+            channel.put(item)
+
+        item_str = str(channel)
+        assert all(item in item_str for item in test_items)
+
+    def test_memory(self, worker_groups, channel: Channel):
+        """Tests channel creation with memory leak."""
+        if not torch.cuda.is_available():
+            pytest.skip("Skipping CUDA test on CPU-only environment.")
+        while channel.qsize() > 0:
+            channel.get()
+
+        large_tensor = torch.randn(1024, device=get_device())
+        channel.put(large_tensor)
+        channel.get()
+        allocated, reserved = ray.get(
+            channel._channel_worker_actor.get_memory_usage.remote()
+        )
+        assert allocated == 0, (
+            f"Memory leak detected: {allocated} bytes still allocated."
+        )
+        assert reserved == 0, f"Memory leak detected: {reserved} bytes still reserved."
+
+        producer: ProducerWorker = worker_groups[0]
+        consumer: ConsumerWorker = worker_groups[1]
+        producer.test_memory(channel).wait()
+        consumer.test_memory(channel).wait()
+        assert channel.empty()
+        allocated, reserved = ray.get(
+            channel._channel_worker_actor.get_memory_usage.remote()
+        )
+        assert allocated == 0, (
+            f"Memory leak detected: {allocated} bytes still allocated."
+        )
+        assert reserved == 0, f"Memory leak detected: {reserved} bytes still reserved."
 
     def _assert_equal(self, received: Any, expected: Any):
         """Helper to compare various data types."""

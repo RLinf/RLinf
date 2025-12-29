@@ -107,7 +107,10 @@ class CollectiveWorkQueue:
                 self._logger.debug(
                     f"Async {'send' if self._type == CollectiveWorkQueue.SEND else 'recv'} ID {comm_id} begins"
                 )
+
                 work(None)
+                work = None  # The reference to work is released here to avoid potential memory leak
+
                 self._logger.debug(
                     f"Async {'send' if self._type == CollectiveWorkQueue.SEND else 'recv'} ID {comm_id} done"
                 )
