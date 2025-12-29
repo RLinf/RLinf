@@ -1,0 +1,51 @@
+_target_: calvin_env.scene.play_table_scene.PlayTableScene
+_recursive_: false
+data_path: ${data_path}
+global_scaling: 0.8
+euler_obs: ${robot.euler_obs}
+robot_base_position: [-0.34, -0.46, 0.24]
+robot_base_orientation: [0, 0, 0]
+robot_initial_joint_positions: [-1.21779206,  1.03987646,  2.11978261, -2.34205014, -0.87015947, 1.64119353,  0.55344866]
+surfaces:
+  table: [[-0.35, -0.15, 0.46], [0.15, -0.03, 0.46]]
+  slider_left: [[-0.12, 0.05, 0.46], [0.06, 0.12, 0.46]]
+  slider_right: [[0.15, 0.05, 0.46], [0.33, 0.12, 0.46]]
+objects:
+  fixed_objects:
+    table:
+      file: calvin_table_B/urdf/calvin_table_B.urdf
+      initial_pos: [0, 0, 0]
+      initial_orn: [0, 0, 0]
+      joints:
+        base__slide:
+          initial_state: 0 # Prismatic
+        base__drawer:
+          initial_state: 0 # Prismatic
+      buttons:
+        base__button:
+          initial_state: 0 # Prismatic
+          effect: led
+      switches:
+        base__switch:
+          initial_state: 0 # Revolute
+          effect: lightbulb
+      lights:
+        lightbulb:
+          link: light_link
+          color: [1, 1, 0, 1] # yellow
+        led:
+          link: led_link
+          color: [0, 1, 0, 1] # green
+  movable_objects:
+    block_red:
+      file: blocks/block_red_small.urdf
+      initial_pos: any
+      initial_orn: any
+    block_blue:
+      file: blocks/block_blue_big.urdf
+      initial_pos: any
+      initial_orn: any
+    block_pink:
+      file: blocks/block_pink_middle.urdf
+      initial_pos: any
+      initial_orn: any

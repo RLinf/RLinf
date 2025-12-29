@@ -52,7 +52,9 @@ class CalvinEnv(gym.Env):
         self._generator = np.random.default_rng(seed=self.seed)
         self._generator_ordered = np.random.default_rng(seed=0)
 
-        self.task_suite: CalvinBenchmark = CalvinBenchmark(self.cfg.task_suite_name)
+        self.task_suite: CalvinBenchmark = CalvinBenchmark(
+            self.cfg.task_suite_name, self._generator
+        )
         self.num_tasks = self.task_suite.get_num_tasks()
         self.task_num_trials = self.task_suite.get_task_num_trials()
         self._compute_total_num_group_envs()
@@ -79,6 +81,7 @@ class CalvinEnv(gym.Env):
         env_fn_params = self.get_env_fn_params()
         env_fns = []
         for env_fn_param in env_fn_params:
+
             def env_fn(params=env_fn_param):
                 os.environ["EGL_VISIBLE_DEVICES"] = str(self.seed_offset)
                 env = make_env(**params)
@@ -91,10 +94,26 @@ class CalvinEnv(gym.Env):
         env_fn_params = []
         if env_idx is None:
             env_idx = np.arange(self.num_envs)
+        if self.cfg.task_suite_name == "calvin_d":
+            candidated_scenes = ["calvin_scene_D"]
+        elif self.cfg.task_suite_name == "calvin_abc":
+            candidated_scenes = ["calvin_scene_A", "calvin_scene_B", "calvin_scene_C"]
+        elif self.cfg.task_suite_name == "calvin_abcd":
+            candidated_scenes = [
+                "calvin_scene_A",
+                "calvin_scene_B",
+                "calvin_scene_C",
+                "calvin_scene_D",
+            ]
+        else:
+            raise NotImplementedError(
+                f"task suite {self.cfg.task_suite_name} is not yet supported."
+            )
         for env_id in range(self.num_envs):
             if env_id not in env_idx:
                 continue
-            env_fn_params.append({"scene": self.cfg.init_params.scene})
+            scene_idx = env_id % len(candidated_scenes)
+            env_fn_params.append({"scene": candidated_scenes[scene_idx]})
         return env_fn_params
 
     def _compute_total_num_group_envs(self):

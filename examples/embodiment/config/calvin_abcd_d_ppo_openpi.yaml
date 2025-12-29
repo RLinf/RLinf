@@ -1,5 +1,5 @@
 defaults:
-  - env/calvin_d@env.train
+  - env/calvin_abcd@env.train
   - env/calvin_d@env.eval
   - model/pi0@actor.model
   - training_backend/fsdp@actor.fsdp_config
@@ -22,7 +22,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "calvin_d_d_ppo_openpi"
+    experiment_name: "calvin_abc_d_ppo_openpi"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -41,13 +41,13 @@ algorithm:
   group_size: 1
   reward_coef: 1.0
 
-  rollout_epoch: 8
+  rollout_epoch: 1
   eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
   reward_type: chunk_level
   logprob_type: chunk_level
   entropy_type: token_level
 
-  update_epoch: 4
+  update_epoch: 1
   adv_type: gae
   loss_type: actor_critic
   loss_agg_func: "token-mean" 
@@ -87,16 +87,14 @@ env:
   enable_offload: False
 
   train:
-    total_num_envs: 64
+    total_num_envs: 2
     max_episode_steps: 480
     max_steps_per_rollout_epoch: 480
     group_size: ${algorithm.group_size}
     reward_coef: ${algorithm.reward_coef}
-    init_params:
-      scene: "calvin_scene_A"
 
   eval:
-    total_num_envs: 4
+    total_num_envs: 50
     max_episode_steps: 480
     max_steps_per_rollout_epoch: 480
     use_fixed_reset_state_ids: True
@@ -105,8 +103,6 @@ env:
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
-    init_params:
-      scene: "calvin_scene_D"
 
 rollout:
   group_name: "RolloutGroup"
@@ -122,8 +118,8 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 128
-  global_batch_size: 2048
+  micro_batch_size: 1
+  global_batch_size: 4
   seed: 42
   enable_offload: False
 

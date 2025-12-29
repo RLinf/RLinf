@@ -35,6 +35,15 @@ Environment
 - **Task Descriptions**: Natural-language instructions  
 - **Actions**: Normalized continuous values
 - **Rewards**: 0/1 rewards based on subtask completion
+- **Scene**: According to the `Calvin paper <https://arxiv.org/pdf/2112.03227>`_, different environments feature distinct textures, and the positions of all static elements—such as sliding doors, drawers, light buttons, and switches—also vary. However, the positions of the table, robot, and static camera remain identical across all environments, and the colors and shapes of these objects are consistent.
+- **The CALVIN Challenge**: As described in the `Calvin paper <https://arxiv.org/pdf/2112.03227>`_,
+   The training set for the `Single Environment` setting is `scene D`, and the eval set is `scene D`, denoted as D→D;
+   The training set for the `Multi Environment` setting is `scene A B C D`, and the eval set is `scene D`, denoted as A,B,C,D→D;
+   The training set for the `Zero-Shot Multi Environment` setting is `scene A B C`, and the eval set is `scene D`, denoted as A,B,C→D;
+
+.. note::
+
+   Please note that we have modified the YAML files for scene A and scene C here. The original repository calvin contained some incorrect settings for these two configuration files, which we have corrected in RLinf. You can use them with confidence. See this `issue <https://github.com/mees/calvin/issues/41>`_ for details.
 
 Algorithm
 ---------
