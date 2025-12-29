@@ -62,11 +62,6 @@ class AlohaInputs(transforms.DataTransformFn):
         data = _decode_aloha(data, adapt_to_pi=self.adapt_to_pi)
 
         in_images = data["images"]
-        
-        if "cam_high" not in in_images:
-            raise ValueError(
-                f"Missing required camera 'cam_high'. Available keys: {list(in_images.keys())}"
-            )
 
         if set(in_images) - set(self.EXPECTED_CAMERAS):
             raise ValueError(
@@ -160,9 +155,9 @@ def _gripper_to_angular(value):
     # The constants are taken from the Interbotix code.
     value = linear_to_radian(value, arm_length=0.036, horn_radius=0.022)
 
-    # pi0 gripper data is normalized (0, 1) between encoder counts (2405, 3110).
-    # There are 4096 total encoder counts and aloha uses a zero of 2048.
-    # Converting this to radians means that the normalized inputs are between (0.5476, 1.6296)
+    # The Pi0 model expects gripper values normalized to [0, 1].
+    # The physical radian values corresponding to this range are [0.5476, 1.6296].
+    # (Derived from encoder counts 2405 and 3110).
     return _normalize(value, min_val=0.5476, max_val=1.6296)
 
 
