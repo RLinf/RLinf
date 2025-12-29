@@ -30,7 +30,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 
 ## What's NEW!
-- [2025/12] 🔥 RLinf v0.2-pre is open-sourced. We support real-world RL with Franka. Doc: [RL on Franka in the RealWorld](https://rlinf.readthedocs.io/en/latest/rst_source/examples/realworld.html).
+- [2025/12] 🔥 RLinf v0.2-pre is open-sourced. We support real-world RL with Franka. Doc: [RL on Franka in the RealWorld](https://rlinf.readthedocs.io/en/latest/rst_source/examples/franka.html).
 - [2025/12] 🔥 RLinf supports reinforcement learning fine-tuning for [RoboCasa](https://github.com/robocasa/robocasa). Doc: [RL on Robocasa](https://rlinf.readthedocs.io/en/latest/rst_source/examples/robocasa.html).
 - [2025/12] 🎉 RLinf official release of [v0.1](https://github.com/RLinf/RLinf/releases/tag/v0.1).
 - [2025/11] 🔥 RLinf supports reinforcement learning fine-tuning for [CALVIN](https://github.com/mees/calvin). Doc: [RL on CALVIN](https://rlinf.readthedocs.io/en/latest/rst_source/examples/calvin.html).
@@ -79,7 +79,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
       </td>
       <td>
         <ul style="margin-left: 0; padding-left: 16px;">
-          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/realworld.html">Franka Arm</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/franka.html">Franka Arm</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
@@ -112,9 +112,9 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/ppo.html">PPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/dapo.html">DAPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/reinforce.html">Reinforce++</a> ✅</li>
-            <li>SAC ✅</li>
-            <li>Cross-Q ✅</li>
-            <li>RLPD ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/sac.html">SAC</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/crossq.html">CrossQ</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/rlpd.html">RLPD</a> ✅</li>
           </ul>
           <li><b>SFT</b></li>
           <ul>

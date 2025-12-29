@@ -4,14 +4,14 @@
 /examples/embodiment @guozhen1997
 /examples/reasoning @guozhen1997 @andylin-hao @Lin-xs
 
-/ray_utils @Lin-xs
+/ray_utils @Lin-xs @andylin-hao
 /requirements @andylin-hao
 
 /rlinf/algorithms @guozhen1997
 
 /rlinf/data @guozhen1997 @Lin-xs @andylin-hao
 
-/rlinf/envs @guozhen1997 @XuS1994
+/rlinf/envs @guozhen1997 @XuS1994 @andylin-hao
 
 /rlinf/hybrid_engines/fsdp @guozhen1997
 /rlinf/hybrid_engines/megatron @guozhen1997
@@ -28,7 +28,7 @@
 
 /rlinf/workers/actor/fsdp_actor_worker.py @guozhen1997
 /rlinf/workers/actor/megatron_actor_worker.py @guozhen1997 @andylin-hao
-/rlinf/workers/env @guozhen1997 @XuS1994
+/rlinf/workers/env @guozhen1997 @XuS1994 @andylin-hao
 /rlinf/workers/inference @andylin-hao
 /rlinf/workers/rollout/hf @guozhen1997
 /rlinf/workers/rollout/sglang @Lin-xs @andylin-hao

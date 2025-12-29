@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import gc
 import os
 
 import pytest
@@ -163,6 +164,36 @@ class SenderWorker(Worker):
             work.wait()
         return None
 
+    def test_memory_leak(self):
+        """A test to check for memory leaks during send operations."""
+        device = get_device()
+        tensor_size = 1024
+        large_tensor = torch.randn(tensor_size, dtype=torch.float16, device=device)
+        peer_rank = get_send_peer_rank(self._rank, self._world_size)
+
+        self.send(large_tensor, RECEIVER_GROUP_NAME, peer_rank)
+        self.send(large_tensor, RECEIVER_GROUP_NAME, peer_rank, async_op=True).wait()
+        self.send_tensor(large_tensor, RECEIVER_GROUP_NAME, peer_rank)
+        self.send_tensor(
+            large_tensor, RECEIVER_GROUP_NAME, peer_rank, async_op=True
+        ).wait()
+
+        async def _async_send():
+            await self.send(
+                large_tensor, RECEIVER_GROUP_NAME, peer_rank, async_op=True
+            ).async_wait()
+            await self.send_tensor(
+                large_tensor, RECEIVER_GROUP_NAME, peer_rank, async_op=True
+            ).async_wait()
+
+        asyncio.run(_async_send())
+
+        large_tensor = None
+        gc.collect()
+        torch.cuda.empty_cache()
+        assert torch.cuda.memory_allocated() == 0
+        return True
+
 
 class ReceiverWorker(Worker):
     """Worker responsible for receiving data in tests."""
@@ -279,6 +310,33 @@ class ReceiverWorker(Worker):
     # Asyncio Tests
     def test_recv_tensor_asyncio(self, on_cpu):
         return self._recv_data_asyncio()
+
+    def test_memory_leak(self):
+        """A test to check for memory leaks during send operations."""
+        peer_rank = get_recv_peer_rank(self._rank, self._world_size)
+        recv_tensor_size = 1024
+        device = get_device()
+        recv_tensor = torch.randn(recv_tensor_size, dtype=torch.float16, device=device)
+
+        self.recv(SENDER_GROUP_NAME, peer_rank)
+        self.recv(SENDER_GROUP_NAME, peer_rank, async_op=True).wait()
+        self.recv_tensor(recv_tensor, SENDER_GROUP_NAME, peer_rank)
+        self.recv_tensor(
+            recv_tensor, SENDER_GROUP_NAME, peer_rank, async_op=True
+        ).wait()
+
+        async def _async_recv():
+            await self.recv(SENDER_GROUP_NAME, peer_rank, async_op=True).async_wait()
+            await self.recv_tensor(
+                recv_tensor, SENDER_GROUP_NAME, peer_rank, async_op=True
+            ).async_wait()
+
+        asyncio.run(_async_recv())
+
+        recv_tensor = None
+        gc.collect()
+        torch.cuda.empty_cache()
+        assert torch.cuda.memory_allocated() == 0
 
 
 # --- Pytest Setup ---
@@ -472,6 +530,16 @@ class TestCommunication:
         for i, res in enumerate(results):
             expected = torch.ones(5, 5) * get_recv_peer_rank(i, len(results))
             assert torch.equal(res.cpu(), expected)
+
+    def test_memory_leak(self, worker_groups):
+        """Tests unaligned sending and receiving of tensors."""
+        if not torch.cuda.is_available():
+            pytest.skip("Skipping CUDA test on CPU-only environment.")
+        self._run_test(
+            worker_groups,
+            "test_memory_leak",
+            "test_memory_leak",
+        )
 
 
 if __name__ == "__main__":

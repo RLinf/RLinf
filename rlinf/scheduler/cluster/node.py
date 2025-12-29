@@ -422,6 +422,11 @@ class NodeProbe:
             )
 
             self._nodes.sort(key=lambda x: x.node_rank)
+            # Handle num_nodes configuration mismatch with actual node number
+            if len(self._nodes) > cluster_num_nodes:
+                assert self.head_node.node_rank < cluster_num_nodes, (
+                    f"The cluster is initialized with {cluster_num_nodes} nodes, but detected {len(self._nodes)} nodes have joined the ray cluster. The head node where you run the main process has node rank {self.head_node.node_rank}, which is not within the configured number of nodes. Please check your cluster configuration."
+                )
 
         else:
             # Either all nodes set NODE_RANK, or none of them should have.
@@ -440,6 +445,10 @@ class NodeProbe:
             self._nodes = [
                 node for nodes in nodes_group_by_accel.values() for node in nodes
             ]
+            # Move head node to the front
+            head_node = self.head_node
+            self._nodes.remove(head_node)
+            self._nodes.insert(0, head_node)
 
             node_rank = 0
             for node in self._nodes:
