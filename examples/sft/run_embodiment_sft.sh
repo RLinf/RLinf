@@ -10,7 +10,7 @@ export PYOPENGL_PLATFORM="egl"
 export PYTHONPATH=${REPO_PATH}:${LIBERO_REPO_PATH}:$PYTHONPATH
 
 if [ -z "$1" ]; then
-    CONFIG_NAME="maniskill_ppo_openvlaoft"
+    CONFIG_NAME="robotwin_sft_openpi"
 else
     CONFIG_NAME=$1
 fi
