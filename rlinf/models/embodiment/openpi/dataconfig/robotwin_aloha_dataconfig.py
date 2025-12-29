@@ -70,8 +70,7 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
     @override
     def create(
         self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig
-    ) -> DataConfig:
-        # Apply Aloha-specific policy transforms (e.g. normalization).
+    ) -> DataConfig: # Apply Aloha-specific policy transforms (e.g. normalization).
         data_transforms = _transforms.Group(
             inputs=[aloha_policy.AlohaInputs(adapt_to_pi=self.adapt_to_pi)],
             outputs=[aloha_policy.AlohaOutputs(adapt_to_pi=self.adapt_to_pi)],
@@ -82,7 +81,10 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
         # [Left Arm (6 joints, 1 gripper), Right Arm (6 joints, 1 gripper)].
         # We apply deltas to joints (True) but keep grippers absolute (False).
         if self.extra_delta_transform:
-            delta_action_mask = _transforms.make_bool_mask(6, -1, 6, -1)
+            delta_action_mask = np.array(
+                [True] * 6 + [False] + [True] * 6 + [False],
+                dtype=bool,
+            )
 
             data_transforms = data_transforms.push(
                 inputs=[_transforms.DeltaActions(delta_action_mask)],

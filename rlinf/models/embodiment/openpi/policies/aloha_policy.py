@@ -62,6 +62,12 @@ class AlohaInputs(transforms.DataTransformFn):
         data = _decode_aloha(data, adapt_to_pi=self.adapt_to_pi)
 
         in_images = data["images"]
+        
+        if "cam_high" not in in_images:
+            raise ValueError(
+                f"Missing required camera 'cam_high'. Available keys: {list(in_images.keys())}"
+            )
+
         if set(in_images) - set(self.EXPECTED_CAMERAS):
             raise ValueError(
                 f"Expected images to contain {self.EXPECTED_CAMERAS}, got {tuple(in_images)}"
@@ -146,10 +152,10 @@ def _gripper_to_angular(value):
 
     # This is the inverse of the angular to linear transformation inside the Interbotix code.
     def linear_to_radian(linear_position, arm_length, horn_radius):
-        value = (horn_radius**2 + linear_position**2 - arm_length**2) / (
+        temp_val = (horn_radius**2 + linear_position**2 - arm_length**2) / (
             2 * horn_radius * linear_position
         )
-        return np.arcsin(np.clip(value, -1.0, 1.0))
+        return np.arcsin(np.clip(temp_val, -1.0, 1.0))
 
     # The constants are taken from the Interbotix code.
     value = linear_to_radian(value, arm_length=0.036, horn_radius=0.022)
@@ -164,7 +170,6 @@ def _gripper_from_angular(value):
     # Convert from the gripper position used by pi0 to the gripper position that is used by Aloha.
     # Note that the units are still angular but the range is different.
 
-    # We do not scale the output since the trossen model predictions are already in radians.
     # See the comment in _gripper_to_angular for a derivation of the constant
     value = value + 0.5476
 
