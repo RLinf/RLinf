@@ -114,7 +114,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/mnt/mnt/public/liuzhihao/openpi-main/checkpoints/sft/pi0_calvin/ABC_calvin_32_10k/10000"
+    model_path: "/path/to/model/RLinf-Pi0-SFT"
     precision: ${actor.model.precision}
 
 actor:
@@ -126,7 +126,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/mnt/mnt/public/liuzhihao/openpi-main/checkpoints/sft/pi0_calvin/ABC_calvin_32_10k/10000"
+    model_path: "/path/to/model/RLinf-Pi0-SFT"
     model_type: "openpi"
     num_action_chunks: 5
     num_steps: 5
