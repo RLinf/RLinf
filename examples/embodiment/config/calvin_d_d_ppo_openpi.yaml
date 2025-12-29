@@ -94,9 +94,11 @@ env:
     reward_coef: ${algorithm.reward_coef}
 
   eval:
-    total_num_envs: 500
+    total_num_envs: 50
+    auto_reset: True
+    ignore_terminations: True
     max_episode_steps: 480
-    max_steps_per_rollout_epoch: 480
+    max_steps_per_rollout_epoch: 9600
     use_fixed_reset_state_ids: True
     use_ordered_reset_state_ids: True
     is_eval: True

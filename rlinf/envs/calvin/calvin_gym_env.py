@@ -51,6 +51,7 @@ class CalvinEnv(gym.Env):
 
         self._generator = np.random.default_rng(seed=self.seed)
         self._generator_ordered = np.random.default_rng(seed=0)
+        self.start_idx = 0
 
         self.task_suite: CalvinBenchmark = CalvinBenchmark(
             self.cfg.task_suite_name, self._generator
@@ -147,12 +148,19 @@ class CalvinEnv(gym.Env):
         valid_size = len(reset_state_ids) - (
             len(reset_state_ids) % self.total_num_processes
         )
+        self._generator_ordered.shuffle(reset_state_ids)
         reset_state_ids = reset_state_ids[:valid_size]
         reset_state_ids = reset_state_ids.reshape(self.total_num_processes, -1)
         return reset_state_ids
 
     def _get_ordered_reset_state_ids(self, num_reset_states):
-        reset_state_ids = self.reset_state_ids_all[self.seed_offset]
+        if self.start_idx + num_reset_states > len(self.reset_state_ids_all[0]):
+            self.reset_state_ids_all = self.get_reset_state_ids_all()
+            self.start_idx = 0
+        reset_state_ids = self.reset_state_ids_all[self.seed_offset][
+            self.start_idx : self.start_idx + num_reset_states
+        ]
+        self.start_idx = self.start_idx + num_reset_states
         return reset_state_ids
 
     def _get_task_and_trial_ids_from_reset_state_ids(self, reset_state_ids):
@@ -421,6 +429,8 @@ class CalvinEnv(gym.Env):
         final_obs = copy.deepcopy(_final_obs)
         env_idx = np.arange(0, self.num_envs)[dones]
         final_info = copy.deepcopy(infos)
+        if self.cfg.is_eval:
+            self.update_reset_state_ids()
         obs, infos = self.reset(
             env_idx=env_idx,
             reset_state_ids=self.reset_state_ids[env_idx]
