@@ -22,17 +22,18 @@ from typing_extensions import override
 
 from rlinf.models.embodiment.openpi.policies import aloha_policy
 
+
 @dataclasses.dataclass(frozen=True)
 class LeRobotAlohaDataConfig(DataConfigFactory):
     """Data configuration for the RoboTwin (Aloha) dataset in LeRobot v2.1 Parquet format."""
-    
+
     # Default prompt to use if the dataset does not contain prompt information.
     default_prompt: str | None = None
-    
+
     # If True, converts absolute joint actions to delta actions (relative to the current state).
     # This is required for the Pi0 model which operates on relative actions.
     extra_delta_transform: bool = True
-    
+
     # If True, maps the data to the internal Pi0 space (e.g., flipping specific joints).
     # Set to False for standard Aloha data that does not require realignment.
     adapt_to_pi: bool = True
@@ -50,7 +51,7 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
                         },
                         "state": "observation.state",
                         "actions": "action",
-                        "prompt": "prompt", 
+                        "prompt": "prompt",
                     }
                 )
             ]
@@ -70,11 +71,10 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
     def create(
         self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig
     ) -> DataConfig:
-        
-       # Apply Aloha-specific policy transforms (e.g. normalization).
+        # Apply Aloha-specific policy transforms (e.g. normalization).
         data_transforms = _transforms.Group(
             inputs=[aloha_policy.AlohaInputs(adapt_to_pi=self.adapt_to_pi)],
-            outputs=[aloha_policy.AlohaOutputs(adapt_to_pi=self.adapt_to_pi)]
+            outputs=[aloha_policy.AlohaOutputs(adapt_to_pi=self.adapt_to_pi)],
         )
 
         # Apply Delta Action transformation if enabled.
@@ -83,7 +83,7 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
         # We apply deltas to joints (True) but keep grippers absolute (False).
         if self.extra_delta_transform:
             delta_action_mask = _transforms.make_bool_mask(6, -1, 6, -1)
-            
+
             data_transforms = data_transforms.push(
                 inputs=[_transforms.DeltaActions(delta_action_mask)],
                 outputs=[_transforms.AbsoluteActions(delta_action_mask)],
@@ -100,5 +100,5 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
             repack_transforms=self.repack_transforms,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
-            action_sequence_keys=("action",), 
+            action_sequence_keys=("action",),
         )

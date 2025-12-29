@@ -25,8 +25,12 @@ def make_aloha_example() -> dict:
         "state": np.ones((14,)),
         "images": {
             "cam_high": np.random.randint(256, size=(3, 224, 224), dtype=np.uint8),
-            "cam_left_wrist": np.random.randint(256, size=(3, 224, 224), dtype=np.uint8),
-            "cam_right_wrist": np.random.randint(256, size=(3, 224, 224), dtype=np.uint8),
+            "cam_left_wrist": np.random.randint(
+                256, size=(3, 224, 224), dtype=np.uint8
+            ),
+            "cam_right_wrist": np.random.randint(
+                256, size=(3, 224, 224), dtype=np.uint8
+            ),
         },
         "prompt": "do something",
     }
@@ -48,14 +52,20 @@ class AlohaInputs(transforms.DataTransformFn):
 
     # The expected cameras names. All input cameras must be in this set. Missing cameras will be
     # replaced with black images and the corresponding `image_mask` will be set to False.
-    EXPECTED_CAMERAS: ClassVar[tuple[str, ...]] = ("cam_high", "cam_left_wrist", "cam_right_wrist")
+    EXPECTED_CAMERAS: ClassVar[tuple[str, ...]] = (
+        "cam_high",
+        "cam_left_wrist",
+        "cam_right_wrist",
+    )
 
     def __call__(self, data: dict) -> dict:
         data = _decode_aloha(data, adapt_to_pi=self.adapt_to_pi)
 
         in_images = data["images"]
         if set(in_images) - set(self.EXPECTED_CAMERAS):
-            raise ValueError(f"Expected images to contain {self.EXPECTED_CAMERAS}, got {tuple(in_images)}")
+            raise ValueError(
+                f"Expected images to contain {self.EXPECTED_CAMERAS}, got {tuple(in_images)}"
+            )
 
         # Assume that base image always exists.
         base_image = in_images["cam_high"]
@@ -136,7 +146,9 @@ def _gripper_to_angular(value):
 
     # This is the inverse of the angular to linear transformation inside the Interbotix code.
     def linear_to_radian(linear_position, arm_length, horn_radius):
-        value = (horn_radius**2 + linear_position**2 - arm_length**2) / (2 * horn_radius * linear_position)
+        value = (horn_radius**2 + linear_position**2 - arm_length**2) / (
+            2 * horn_radius * linear_position
+        )
         return np.arcsin(np.clip(value, -1.0, 1.0))
 
     # The constants are taken from the Interbotix code.
@@ -206,7 +218,9 @@ def _encode_actions(actions: np.ndarray, *, adapt_to_pi: bool = False) -> np.nda
     return actions
 
 
-def _encode_actions_inv(actions: np.ndarray, *, adapt_to_pi: bool = False) -> np.ndarray:
+def _encode_actions_inv(
+    actions: np.ndarray, *, adapt_to_pi: bool = False
+) -> np.ndarray:
     if adapt_to_pi:
         actions = _joint_flip_mask() * actions
         actions[:, [6, 13]] = _gripper_from_angular_inv(actions[:, [6, 13]])
