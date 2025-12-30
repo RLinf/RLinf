@@ -14,21 +14,28 @@
 
 import asyncio
 import json
+import logging
 import os
 import time
 import typing
 from contextlib import contextmanager
 from dataclasses import dataclass
+from logging import Logger
+from typing import Callable, Optional, Union
 
 from omegaconf import DictConfig
 
-from rlinf.data.io_struct import SeqGroupInfo
+from rlinf.data.io_struct import RolloutRequest, RolloutResult, SeqGroupInfo
+from rlinf.scheduler.channel.channel import Channel
 from rlinf.scheduler.worker.worker import Worker
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
+from rlinf.utils.utils import create_task_with_callback
 
 if typing.TYPE_CHECKING:
     from vllm.outputs import RequestOutput
 
+    from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
+    from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
 
 COLOR_END = "\033[0m"
 
@@ -79,12 +86,6 @@ def print_sglang_outputs(prompts, outputs: list[dict], tokenizer):
         )
 
 
-def print_multi_sglang_outputs(prompts, outputs: list[list[dict]], tokenizer):
-    for i, resps in enumerate(outputs):
-        with sharp_cover(f"sglang dp {i}"):
-            print_sglang_outputs(prompts, resps, tokenizer)
-
-
 class RankMapper:
     @classmethod
     def get_actor_rank_to_rollout_rank_map(
@@ -124,7 +125,11 @@ class RankMapper:
         """
         if placement_mode == PlacementMode.COLLOCATED:
             return CollocateRankMapper
-        elif placement_mode in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]:
+        elif placement_mode in [
+            PlacementMode.DISAGGREGATED,
+            PlacementMode.AUTO,
+            PlacementMode.ASYNC,
+        ]:
             return DisaggRankMapper
         else:
             raise ValueError(f"Unsupported mode: {placement_mode}.")
@@ -399,6 +404,19 @@ class RunningStatusManager:
     def get_running_seq_groups(self) -> list[SeqGroupInfo]:
         return list(self._running_seq_group.keys())
 
+    def take_batched_done_seq_groups(self, batch_size: int) -> list[SeqGroupInfo]:
+        assert batch_size <= len(self._done_seq_group), (
+            f"Requested batch size {batch_size} exceeds done seq groups {len(self._done_seq_group)}."
+        )
+        returning_seq_groups = self._done_seq_group[:batch_size]
+        self._done_seq_group = self._done_seq_group[batch_size:]
+        return returning_seq_groups
+
+    def take_aborted_seq_groups(self) -> list[SeqGroupInfo]:
+        aborted_seq_groups = self._aborted_seq_group
+        self._aborted_seq_group = []
+        return aborted_seq_groups
+
     def get_done_seq_groups(self) -> list[SeqGroupInfo]:
         return self._done_seq_group
 
@@ -560,3 +578,141 @@ class MetaInfoStatsCollector:
         """Flush any remaining data and close"""
         self._flush_to_file()
         print(f"Finalized stats collection. Data saved to {self.output_file}")
+
+
+class AsyncRolloutManager:
+    def __init__(
+        self,
+        worker: Union["SGLangWorker", "VLLMWorker"],
+        logger: Optional[Logger] = None,
+    ) -> None:
+        self._worker = worker
+        self._status_manager = self._worker.status_manager
+        self._result_putting_tasks: set[asyncio.Task] = set()
+        self._pause_rollout_generation = asyncio.Event()
+        self.accepted_seq_count = 0
+        self._version = 0
+        self._logger = logger or logging.getLogger(__name__)
+
+    def set_version(self, version: int) -> None:
+        """
+        Set the current version for rollout manager.
+        Used for calculating the capacity for getting new rollout requests.
+        """
+        self._version = version
+
+    def pause_generation(self) -> None:
+        """
+        Pause to stop receiving new rollout requests.
+        Used for updating model weights only.
+        """
+        self._pause_rollout_generation.set()
+
+    def resume_generation(self) -> None:
+        """
+        Resume to enable receiving new rollout requests.
+        Used after updating model weights.
+        """
+        self._pause_rollout_generation.clear()
+
+    def on_result_putting_done(self, task: asyncio.Task) -> None:
+        """
+        Callback when a result putting task is done.
+        It will remove the task from the result putting tasks set.
+
+        Args:
+            task: The asyncio Task of result putting that finished.
+        """
+        if (exception := task.exception()) is not None:
+            # this should not happen normally
+            raise RuntimeError(
+                f"Result putting task failed with exception: {exception}"
+            ) from exception
+        self._result_putting_tasks.remove(task)
+
+    def on_trajectory_finished(self, task: asyncio.Task) -> None:
+        """
+        Callback when a trajectory task is finished(done or aborted).
+        It will update the accepted_seq_count and status_manager accordingly.
+
+        Args:
+            task: The asyncio Task of seq_group generation that finished.
+        """
+        if (exception := task.exception()) is not None:
+            # NOTE(daibo):
+            # whether here need to be re-rollout need to be ensured
+            # maybe we should know what exceptions could be caused.
+            self._logger.warning(f"Trajectory task failed with exception: {exception}")
+            return
+        seq_group: SeqGroupInfo = task.result()
+        if seq_group.all_completed:
+            # NOTE(daibo):
+            # also, here we need to add accepted_seq_count by group_size
+            # or just instead of 1?
+            self.accepted_seq_count += 1
+            self._status_manager.mark_done(seq_group)
+        else:
+            self._status_manager.mark_aborted(seq_group)
+
+    async def always_get_batch(
+        self,
+        input_channel: Channel,
+    ) -> None:
+        batch_size = self._worker.batch_size_per_dp
+        staleness_threshold = self._worker.staleness_threshold
+
+        def setup_generation_tasks(seq_groups: list[SeqGroupInfo]):
+            for seq_group in seq_groups:
+                generation_task = create_task_with_callback(
+                    self._worker._async_generate_group(seq_group_info=seq_group),
+                    self.on_trajectory_finished,
+                )
+                self._status_manager.add_task(seq_group, generation_task)
+
+        while True:
+            capacity = (self._version + 1 + staleness_threshold) * batch_size
+            if self._pause_rollout_generation.is_set():
+                await asyncio.sleep(0.01)
+                continue
+            if aborted_seq_groups := self._status_manager.take_aborted_seq_groups():
+                setup_generation_tasks(aborted_seq_groups)
+                await asyncio.sleep(0.01)
+                continue
+            running_seq_groups = self._status_manager.num_seq_group_running
+            if capacity - (running_seq_groups + self.accepted_seq_count) >= batch_size:
+                rollout_request: RolloutRequest = await input_channel.get(
+                    async_op=True
+                ).async_wait()
+                seq_group_infos = rollout_request.to_seq_group_infos()
+                setup_generation_tasks(seq_group_infos)
+            await asyncio.sleep(0.01)
+
+    def handle_finished_seq_groups(
+        self,
+        finished_seq_groups: list[SeqGroupInfo],
+        output_channel: Channel,
+        return_logprobs: bool,
+        rollout_result_builder: Callable[[SeqGroupInfo, bool], RolloutResult],
+    ) -> None:
+        """
+        Handle the finished SeqGroupInfo by sending RolloutResult to output_channel.
+
+        Args:
+            finished_seq_groups: The list of finished SeqGroupInfo.
+            output_channel: The output channel to send RolloutResult.
+            return_logprobs: Whether to return logprobs in RolloutResult.
+        """
+
+        rollout_results = [
+            rollout_result_builder(seq_group=seq_group, return_logprobs=return_logprobs)
+            for seq_group in finished_seq_groups
+        ]
+        self._result_putting_tasks.update(
+            [
+                create_task_with_callback(
+                    output_channel.put(item=rollout_result, async_op=True).async_wait(),
+                    self.on_result_putting_done,
+                )
+                for rollout_result in rollout_results
+            ]
+        )

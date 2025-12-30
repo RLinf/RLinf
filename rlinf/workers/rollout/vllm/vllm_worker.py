@@ -35,7 +35,11 @@ from rlinf.scheduler.dynamic_scheduler.manager import RolloutScalingScheduler
 from rlinf.scheduler.dynamic_scheduler.utils import get_scheduler_channel
 from rlinf.utils.data_process import process_image_data
 from rlinf.utils.placement import ModelParallelComponentPlacement
-from rlinf.workers.rollout.utils import RunningStatusManager, print_vllm_outputs
+from rlinf.workers.rollout.utils import (
+    AsyncRolloutManager,
+    RunningStatusManager,
+    print_vllm_outputs,
+)
 
 from . import VLLMExecutor
 
@@ -71,9 +75,32 @@ class VLLMWorker(Worker):
         self._running_generate_tasks: dict[str, asyncio.Task] = {}
         self.status_manager = RunningStatusManager()
         self._use_auto_scheduler = self._placement.is_auto
-
+        self._use_async_rollout = self._cfg.algorithm.get("async", False)
         if self._use_auto_scheduler:
             self._init_scheduler()
+
+        if self._use_async_rollout:
+            self._init_async_manager()
+
+    def _init_async_manager(self) -> None:
+        assert self._use_async_rollout, (
+            "AsyncRolloutManager is only initialized when async rollout is enabled."
+        )
+        assert self._placement.is_disaggregated, (
+            "AsyncRolloutManager is only supported in disaggregated mode."
+        )
+        rollout_batch_size = self._cfg.data.rollout_batch_size
+        rollout_dp_size = self._placement.rollout_dp_size
+        max_num_gen_batches = self._cfg.algorithm.get("max_num_gen_batches", 1)
+        assert (rollout_batch_size * max_num_gen_batches) % rollout_dp_size == 0, (
+            "rollout_batch_size * max_num_gen_batches must be divisible by rollout_dp_size."
+        )
+        self.batch_size_per_dp = (
+            rollout_batch_size * max_num_gen_batches // rollout_dp_size
+        )
+        self.staleness_threshold = self._cfg.algorithm.get("staleness_threshold", 0)
+        self._async_manager = AsyncRolloutManager(worker=self, logger=self._logger)
+        self._getting_batch_task: Optional[asyncio.Task] = None
 
     def _init_scheduler(self) -> None:
         self.schedule_channel = self.connect_channel(
@@ -124,6 +151,13 @@ class VLLMWorker(Worker):
                 trust_remote_code=trust_remote_code,
             )
         return tokenizer
+
+    def set_version(self, version: int):
+        """
+        Set the version for async rollout manager.
+        """
+        if self._use_async_rollout:
+            self._async_manager.set_version(version)
 
     def _get_sampling_params_from_config(self) -> SamplingParams:
         """
@@ -177,8 +211,16 @@ class VLLMWorker(Worker):
         """
         Sync model weights from actor to the vllm workers.
         """
+        # If use async rollout, we need to pause receiving new rollout requests
+        # and abort ongoing generations first
+        if self._use_async_rollout:
+            self._async_manager.pause_generation()
+            await self.abort_generation()
         await self._async_engine.collective_rpc("sync_hf_weight")
         await self._async_engine.reset_prefix_cache()
+        # After syncing weights, just resume receiving new rollout requests
+        if self._use_async_rollout:
+            self._async_manager.resume_generation()
 
     async def _get_output_from_async_generator(
         self, async_generator: AsyncGenerator[RequestOutput, None]
@@ -326,7 +368,7 @@ class VLLMWorker(Worker):
             if task is not None:
                 task.cancel()
 
-    async def init_worker(self) -> None:
+    async def init_worker(self, dataloader_channel: Optional[Channel] = None) -> None:
         """
         Use EngineArgs and VllmConfig to initialize VLLM async engine.
         If mode is collocated, it will additionally offload model weights,
@@ -377,6 +419,15 @@ class VLLMWorker(Worker):
             await self.offload_engine()
         if self._use_auto_scheduler:
             asyncio.create_task(self._scheduler.main_loop())
+        if self._use_async_rollout:
+            assert dataloader_channel is not None, (
+                "dataloader_channel must be provided when async rollout is enabled."
+            )
+            self._getting_batch_task = asyncio.create_task(
+                self._async_manager.always_get_batch(
+                    input_channel=dataloader_channel,
+                )
+            )
 
     async def _async_generate_group(self, seq_group_info: SeqGroupInfo) -> SeqGroupInfo:
         async def generate_with_idx(
@@ -451,6 +502,36 @@ class VLLMWorker(Worker):
             seq_group_info.record_vllm_result(idx, request_output, self._logger)
 
         return seq_group_info
+
+    async def async_rollout(self, output_channel: Channel) -> None:
+        assert self._async_manager is not None, (
+            "AsyncRolloutManager is not initialized but async_rollout is called, set algorithm.async to True in config to enable it."
+        )
+        assert self._getting_batch_task is not None, (
+            "Getting batch task is not initialized but async_rollout is called."
+        )
+        assert not self._getting_batch_task.done(), (
+            "Getting batch task is already done but async_rollout is called."
+        )
+        finished_group_count: int = 0
+        with self.device_lock, self.worker_timer():
+            while finished_group_count < self.batch_size_per_dp:
+                if self.status_manager.num_seq_group_done > 0:
+                    taken_count = min(
+                        self.batch_size_per_dp - finished_group_count,
+                        self.status_manager.num_seq_group_done,
+                    )
+                    finished_group = self.status_manager.take_batched_done_seq_groups(
+                        taken_count
+                    )
+                    finished_group_count += len(finished_group)
+                    self._async_manager.handle_finished_seq_groups(
+                        finished_seq_groups=finished_group,
+                        output_channel=output_channel,
+                        return_logprobs=self._return_logprobs,
+                        rollout_result_builder=RolloutResult.from_vllm_seq_group,
+                    )
+                await asyncio.sleep(0.1)
 
     async def rollout(self, input_channel: Channel, output_channel: Channel) -> None:
         rollout_request: RolloutRequest = await input_channel.get(

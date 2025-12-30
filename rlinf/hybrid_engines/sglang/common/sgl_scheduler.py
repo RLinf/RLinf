@@ -20,6 +20,7 @@ import torch
 from omegaconf import DictConfig
 from packaging.version import parse
 from sglang.srt.managers.io_struct import (
+    AbortReq,
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
 )
@@ -178,17 +179,24 @@ class Scheduler(_Scheduler):
         return TaskMethodOutput(method_name=obj.method_name, result=result)
 
     def abort_generation(self, recv_req: AbortGenerationInput):
-        # clear waiting reqs
         waiting_reqs = []
-        # waiting_reqs.append(self.waiting_queue)
-        for req in self.waiting_queue:
+        running_reqs = []
+        for i in reversed(range(len(self.waiting_queue))):
+            req = self.waiting_queue.pop(i)
             req.to_abort = True
+            waiting_reqs.append(req)
+            self.send_to_tokenizer.send_pyobj(AbortReq(req.rid))
+
+        if self.cur_batch is self.running_batch or self.cur_batch is None:
+            reqs = self.running_batch.reqs
+        else:
+            reqs = self.running_batch.reqs + self.cur_batch.reqs
 
         # abort every running req with no kvcache
-        running_reqs = []
-        running_reqs.append(self.running_batch.reqs)
-        for req in self.running_batch.reqs:
-            req.to_abort = True
+        for req in reqs:
+            if not req.finished():
+                running_reqs.append(req)
+                req.to_abort = True
         res = AbortGenerationOutput(
             waiting_reqs=waiting_reqs, running_reqs=running_reqs
         )

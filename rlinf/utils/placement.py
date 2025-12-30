@@ -27,6 +27,7 @@ from rlinf.scheduler import (
 class PlacementMode(Enum):
     COLLOCATED = auto()
     DISAGGREGATED = auto()
+    ASYNC = auto()
     HYBRID = auto()
     AUTO = auto()
 
@@ -100,6 +101,10 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         if self._is_auto():
             self._placement_mode = PlacementMode.AUTO
             logging.info("Running in auto mode")
+
+        elif self._is_async():
+            self._placement_mode = PlacementMode.ASYNC
+            logging.info("Running in asynchronous mode")
         elif self._is_collocated():
             assert self._inference_gpus is None, (
                 "Inference GPUs must not be specified in collocated mode."
@@ -156,6 +161,9 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             )
         return True
 
+    def _is_async(self):
+        return getattr(self._config.cluster, "async", False)
+
     def _is_collocated(self):
         if self._actor_gpus == self._rollout_gpus:
             return True
@@ -198,7 +206,10 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 self._placements["reward"] = PackedPlacementStrategy(
                     self._reward_gpus[0], self._reward_gpus[-1]
                 )
-        elif self._placement_mode == PlacementMode.DISAGGREGATED:
+        elif (
+            self._placement_mode == PlacementMode.DISAGGREGATED
+            or self._placement_mode == PlacementMode.ASYNC
+        ):
             num_gpus_per_rollout_dp = len(self._rollout_gpus) // self.rollout_dp_size
             self._placements["rollout"] = PackedPlacementStrategy(
                 self._rollout_gpus[0],
@@ -253,6 +264,10 @@ class ModelParallelComponentPlacement(ComponentPlacement):
     @property
     def is_collocated(self):
         return self._placement_mode == PlacementMode.COLLOCATED
+
+    @property
+    def is_async(self):
+        return self._placement_mode == PlacementMode.ASYNC
 
     @property
     def is_disaggregated(self):

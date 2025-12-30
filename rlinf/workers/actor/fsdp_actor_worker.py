@@ -163,6 +163,7 @@ class FSDPActor(FSDPModelManager, Worker):
         self._rollout_group_name = cfg.rollout.group_name
         self._component_placement = placement
         self.is_pipeline = self._component_placement.is_disaggregated
+        self.is_async = self._component_placement.is_async
         self.ref_policy_state_dict = None
         if self.is_pipeline:
             self._inference_group_name = cfg.inference.group_name
@@ -177,7 +178,7 @@ class FSDPActor(FSDPModelManager, Worker):
         self.loss_agg_func = get_loss_agg_func(self.cfg.algorithm.loss_agg_func)
         self.enable_offload = (
             self.cfg.actor.get("enable_offload", False) and not self.is_pipeline
-        )
+        ) and not self.is_async
         self.micro_batch_size = self.cfg.actor.micro_batch_size
         self.n_mini_batches = self.cfg.algorithm.n_minibatches
         self.task_type = self.cfg.runner.task_type
@@ -196,7 +197,7 @@ class FSDPActor(FSDPModelManager, Worker):
         ):
             self.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model)
 
-        if self.enable_offload and not self.is_pipeline:
+        if self.enable_offload:
             self.offload_param_and_grad()
             self.offload_optimizer()
         self._setup_rollout_weight_dst_ranks()
@@ -290,8 +291,12 @@ class FSDPActor(FSDPModelManager, Worker):
 
                     # elif name.startswith("model."):
                     #     name = name[6:]
-                state_dict[name] = reduce_tensor(v) if not self.is_pipeline else v
-            if not self.is_pipeline:
+                state_dict[name] = (
+                    reduce_tensor(v)
+                    if not self.is_pipeline and not self.is_async
+                    else v
+                )
+            if not self.is_pipeline and not self.is_async:
                 self.send(
                     state_dict,
                     self._rollout_group_name,
@@ -378,44 +383,53 @@ class FSDPActor(FSDPModelManager, Worker):
             compute_ref_logprobs: Whether to compute reference logprobs.
         """
         recv_batch_size = 0
+        results = []
         while recv_batch_size < self.total_batch_size_per_dp:
-            batch, rollout_result = self.get_batch(input_channel)
-            recv_batch_size += rollout_result.num_sequence
-            self._load_weight_and_optimizer()
+            result: RolloutResult = input_channel.get()
+            results.append(result)
+            recv_batch_size += result.num_sequence
+        self._load_weight_and_optimizer()
 
-            num_splits = (
-                rollout_result.num_sequence
-                // self.cfg.algorithm.logprob_forward_micro_batch_size
-            )
-            micro_batches_iter = get_iterator_k_split(
-                batch,
-                num_splits=num_splits,
-            )
-            micro_batches = list(micro_batches_iter)
+        rollout_result = RolloutResult.merge_result_list(results)
+        batch = rollout_result.to_actor_batch(
+            self.cfg.data.max_prompt_length,
+            self.cfg.actor.model.encoder_seq_length,
+            self.tokenizer.eos_token_id,
+        )
 
-            prev_logprobs = []
-            with self.worker_timer():
+        num_splits = (
+            rollout_result.num_sequence
+            // self.cfg.algorithm.logprob_forward_micro_batch_size
+        )
+        micro_batches_iter = get_iterator_k_split(
+            batch,
+            num_splits=num_splits,
+        )
+        micro_batches = list(micro_batches_iter)
+
+        prev_logprobs = []
+        with self.worker_timer():
+            for micro_batch in micro_batches:
+                prev_logprobs.append(self.inference_step(micro_batch).cpu())
+
+            if rollout_result.rollout_logprobs is not None:
+                # Rollout has returned logprobs, store the recomputed logprobs in recompute_prev_logprobs
+                rollout_result.recompute_prev_logprobs = torch.cat(prev_logprobs)
+            else:
+                # Otherwise, directly store the logprobs in prev_logprobs (the final logprobs used for training)
+                rollout_result.prev_logprobs = torch.cat(prev_logprobs)
+
+        if compute_ref_logprobs:
+            assert self.ref_policy_state_dict is not None, (
+                "Reference policy state dict is None but compute_ref_logprobs is True"
+            )
+            ref_logprobs = []
+            with cpu_weight_swap(self.model, self.ref_policy_state_dict):
                 for micro_batch in micro_batches:
-                    prev_logprobs.append(self.inference_step(micro_batch).cpu())
+                    ref_logprobs.append(self.inference_step(micro_batch).cpu())
+                rollout_result.ref_logprobs = torch.cat(ref_logprobs)
 
-                if rollout_result.rollout_logprobs is not None:
-                    # Rollout has returned logprobs, store the recomputed logprobs in recompute_prev_logprobs
-                    rollout_result.recompute_prev_logprobs = torch.cat(prev_logprobs)
-                else:
-                    # Otherwise, directly store the logprobs in prev_logprobs (the final logprobs used for training)
-                    rollout_result.prev_logprobs = torch.cat(prev_logprobs)
-
-            if compute_ref_logprobs:
-                assert self.ref_policy_state_dict is not None, (
-                    "Reference policy state dict is None but compute_ref_logprobs is True"
-                )
-                ref_logprobs = []
-                with cpu_weight_swap(self.model, self.ref_policy_state_dict):
-                    for micro_batch in micro_batches:
-                        ref_logprobs.append(self.inference_step(micro_batch).cpu())
-                    rollout_result.ref_logprobs = torch.cat(ref_logprobs)
-
-            output_channel.put(rollout_result)
+        output_channel.put(rollout_result)
 
         assert recv_batch_size == self.total_batch_size_per_dp, (
             f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
@@ -464,7 +478,6 @@ class FSDPActor(FSDPModelManager, Worker):
             input_ids = m_batch["input_ids"]
             attention_mask = m_batch["attention_mask"]
             position_ids = m_batch["position_ids"]
-            prev_logprobs = m_batch["prev_logprobs"]
             advantages = m_batch["advantages"]
             ref_logprobs = None
             if "ref_logprobs" in m_batch:
@@ -503,24 +516,35 @@ class FSDPActor(FSDPModelManager, Worker):
                 logprobs = compute_logprobs_from_logits(logits, responses)
 
                 if self.cfg.algorithm.get("importance_sampling_fix", False):
-                    rollout_prev_logprobs = prev_logprobs
-                    recompute_prev_logprobs = m_batch["recompute_prev_logprobs"]
+                    rollout_prev_logprobs = batch["prev_logprobs"]
+                    recompute_prev_logprobs = batch["recompute_prev_logprobs"]
                     advantages = advantages * torch.clamp(
                         (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
                         min=self.cfg.algorithm.importance_sampling_clip,
                     )
+                behave_weight_threshold = self.cfg.algorithm.get(
+                    "behave_weight_threshold", None
+                )
+                if self.cfg.algorithm.get("async", False):
+                    proximal_logprobs = m_batch["recompute_prev_logprobs"]
+                    old_logprobs = m_batch["prev_logprobs"]
+                else:
+                    proximal_logprobs = m_batch["prev_logprobs"]
+                    old_logprobs = m_batch["prev_logprobs"]
 
                 loss, mbs_metrics_data = policy_loss(
                     loss_type=self.cfg.algorithm.loss_type,
                     loss_agg_func=self.loss_agg_func,
                     logprobs=logprobs,
-                    old_logprobs=prev_logprobs,
+                    proximal_logprobs=proximal_logprobs,
+                    old_logprobs=old_logprobs,
                     advantages=advantages,
                     clip_ratio_low=clip_ratio_low,
                     clip_ratio_high=clip_ratio_high,
                     clip_ratio_c=clip_ratio_c,
                     loss_mask=loss_mask,
-                    task_type=self.task_type,
+                    task_type=self.cfg.runner.task_type,
+                    behave_weight_threshold=behave_weight_threshold,
                 )
 
                 entropy_loss = torch.tensor(0.0, device=torch.cuda.current_device())
@@ -615,7 +639,7 @@ class FSDPActor(FSDPModelManager, Worker):
 
     def run_training(self, input_channel: Channel) -> tuple[dict, list]:
         # Get all batches for this DP
-        if self.is_pipeline:
+        if self.is_pipeline and not self.is_async:
             with self.worker_timer():
                 return self.run_training_pipeline(input_channel)
 
@@ -993,7 +1017,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
                     )
                     advantages = data["advantages"]
-                    prev_logprobs = data["prev_logprobs"]
                     returns = data.get("returns", None)
                     prev_values = data.get("prev_values", None)
                     loss_mask = data.get("loss_mask", None)
@@ -1021,10 +1044,17 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                             use_cache=False,
                         )
 
+                    if self.cfg.algorithm.get("async", False):
+                        proximal_logprobs = data["recompute_prev_logprobs"]
+                        old_logprobs = data["prev_logprobs"]
+                    else:
+                        proximal_logprobs = data["prev_logprobs"]
+                        old_logprobs = data["prev_logprobs"]
+
                     if SupportedModel(self.cfg.actor.model.model_type) in [
                         SupportedModel.GR00T
                     ]:
-                        prev_logprobs = output_dict["prev_logprobs"]
+                        old_logprobs = output_dict["prev_logprobs"]
 
                     kwargs = {
                         "loss_type": self.cfg.algorithm.loss_type,
@@ -1033,7 +1063,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         "single_action_dim": self.cfg.actor.model.get("action_dim", 7),
                         "logprobs": output_dict["logprobs"],
                         "values": output_dict.get("values", None),
-                        "old_logprobs": prev_logprobs,
+                        "proximal_logprobs": proximal_logprobs,
+                        "old_logprobs": old_logprobs,
                         "advantages": advantages,
                         "returns": returns,
                         "prev_values": prev_values,
@@ -1055,7 +1086,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         self.cfg.algorithm.entropy_bonus > 0
                         and not kwargs["critic_warmup"]
                     ):
-                        entropy = output_dict["entropy"]
+                        entropy: torch.Tensor = output_dict["entropy"]
                         entropy = reshape_entropy(
                             entropy,
                             entropy_type=self.cfg.algorithm.entropy_type,

@@ -62,6 +62,19 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-fsdp-vllm
 
+      - name: FSDP SGLang Async mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-async-fsdp-sgl
+
+      - name: FSDP vLLM Async mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-async-fsdp-vllm
       - name: FSDP SGLang Pipeline mode
         timeout-minutes: 20
         run: |

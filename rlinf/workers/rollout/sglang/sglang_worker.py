@@ -36,6 +36,7 @@ from rlinf.scheduler.dynamic_scheduler.utils import (
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.sglang import Engine, io_struct
 from rlinf.workers.rollout.utils import (
+    AsyncRolloutManager,
     MetaInfoStatsCollector,
     RolloutEngineStats,
     RunningStatusManager,
@@ -71,11 +72,33 @@ class SGLangWorker(Worker):
             self._cfg.rollout, "collect_meta_stats", False
         )
         self._use_auto_scheduler = self._placement.is_auto
+        self._use_async_rollout = self._placement.is_async
 
         if self._collect_meta_stats:
             self._init_meta_stats_collector()
         if self._use_auto_scheduler:
             self._init_scheduler()
+        if self._use_async_rollout:
+            self._init_async_manager()
+
+    def _init_async_manager(self) -> None:
+        assert self._use_async_rollout, (
+            "AsyncRolloutManager is only initialized when async rollout is enabled."
+        )
+        rollout_batch_size = self._cfg.data.rollout_batch_size
+        rollout_dp_size = self._placement.rollout_dp_size
+        max_num_gen_batches = self._cfg.algorithm.get("max_num_gen_batches", 1)
+        assert (rollout_batch_size * max_num_gen_batches) % rollout_dp_size == 0, (
+            "rollout_batch_size * max_num_gen_batches must be divisible by rollout_dp_size."
+        )
+        self.batch_size_per_dp = (
+            rollout_batch_size * max_num_gen_batches // rollout_dp_size
+        )
+        self.staleness_threshold = self._cfg.algorithm.get("staleness_threshold", 0)
+        self._async_manager = AsyncRolloutManager(worker=self, logger=self._logger)
+        # need to wait utils params sync finished.
+        self._async_manager.pause_generation()
+        self._getting_batch_task: Optional[asyncio.Task] = None
 
     def _init_scheduler(self):
         self.schedule_channel = self.connect_channel(
@@ -85,6 +108,10 @@ class SGLangWorker(Worker):
         self._scheduler = RolloutScalingScheduler(
             self._rank, self.schedule_channel, self
         )
+
+    def set_version(self, version: int):
+        if self._use_async_rollout:
+            self._async_manager.set_version(version)
 
     def _init_meta_stats_collector(self):
         async_stats_file = getattr(
@@ -227,7 +254,7 @@ class SGLangWorker(Worker):
         )
         return result, request_info
 
-    async def init_worker(self):
+    async def init_worker(self, dataloader_channel: Optional[Channel] = None):
         self._init_engine()
         await self._engine.tokenizer_manager.run_task_method(
             io_struct.TaskMethodInput(
@@ -246,6 +273,15 @@ class SGLangWorker(Worker):
             await self.offload_engine()
         if self._use_auto_scheduler:
             asyncio.create_task(self._scheduler.main_loop())
+        if self._use_async_rollout:
+            assert dataloader_channel is not None, (
+                "dataloader_channel must be provided when async rollout is enabled."
+            )
+            self._getting_batch_task = asyncio.create_task(
+                self._async_manager.always_get_batch(
+                    input_channel=dataloader_channel,
+                )
+            )
 
     async def offload_engine(self):
         """
@@ -263,9 +299,14 @@ class SGLangWorker(Worker):
 
     async def sync_model_from_actor(self):
         """Update the weights of the SGLang engine."""
+        if self._use_async_rollout:
+            self._async_manager.pause_generation()
+            await self.abort_generation()
         await self._engine.tokenizer_manager.sync_hf_weight(
             obj=io_struct.SyncHFWeightInput()
         )
+        if self._use_async_rollout:
+            self._async_manager.resume_generation()
 
     async def check_running_state(self):
         state = await self._engine.tokenizer_manager.run_task_method(
@@ -314,7 +355,6 @@ class SGLangWorker(Worker):
                 params["max_new_tokens"] -= len(generated_ids)
                 sampling_params_list.append(params)
                 image_data_list.append(seq_group_info.image_data)
-
         tasks = [
             asyncio.create_task(
                 self.async_generate(
@@ -444,3 +484,33 @@ class SGLangWorker(Worker):
                     sampling_params=rollout_request.get("sampling_params", None),
                 )
             )
+
+    async def async_rollout(self, output_channel: Channel) -> None:
+        assert self._async_manager is not None, (
+            "AsyncRolloutManager is not initialized but async_rollout is called, set algorithm.async to True in config to enable it."
+        )
+        assert self._getting_batch_task is not None, (
+            "Getting batch task is not initialized but async_rollout is called."
+        )
+        assert not self._getting_batch_task.done(), (
+            "Getting batch task is already done but async_rollout is called."
+        )
+        finished_group_count: int = 0
+        with self.device_lock, self.worker_timer():
+            while finished_group_count < self.batch_size_per_dp:
+                if self.status_manager.num_seq_group_done > 0:
+                    taken_count = min(
+                        self.batch_size_per_dp - finished_group_count,
+                        self.status_manager.num_seq_group_done,
+                    )
+                    finished_group = self.status_manager.take_batched_done_seq_groups(
+                        taken_count
+                    )
+                    finished_group_count += len(finished_group)
+                    self._async_manager.handle_finished_seq_groups(
+                        finished_seq_groups=finished_group,
+                        output_channel=output_channel,
+                        return_logprobs=self._return_logprobs,
+                        rollout_result_builder=RolloutResult.from_sglang_seq_group,
+                    )
+                await asyncio.sleep(0.1)

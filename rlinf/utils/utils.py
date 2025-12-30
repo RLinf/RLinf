@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import atexit
 import gc
 import os
@@ -19,13 +20,20 @@ import random
 import sys
 from contextlib import contextmanager
 from functools import partial, wraps
-from typing import Callable
+from typing import Callable, Coroutine, Generator, Optional
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
+
+try:
+    from liger_kernel.transformers.cross_entropy import LigerCrossEntropyLoss
+
+    HAS_LIGER = True
+except ImportError:
+    HAS_LIGER = False
 
 
 def clear_memory(sync=True):
@@ -49,7 +57,7 @@ cuda_dict = partial(apply_func_to_dict, partial(move_to_device_if_tensor, "cuda"
 cpu_dict = partial(apply_func_to_dict, partial(move_to_device_if_tensor, "cpu"))
 
 
-def retrieve_model_state_dict_in_cpu(model):
+def retrieve_model_state_dict_in_cpu(model: torch.nn.Module) -> dict:
     """get a copy of the model states in CPU"""
     cpu_dict = {}
 
@@ -64,7 +72,9 @@ def retrieve_model_state_dict_in_cpu(model):
 
 
 @torch.no_grad()
-def swap_dict(resident_model, cpu_weights, offload_onto_cpu=True):
+def swap_dict(
+    resident_model: torch.nn.Module, cpu_weights: dict, offload_onto_cpu: bool = True
+) -> dict:
     """swap the state dict with a specified state dict, and offload the current state dict onto CPU
     if needed
     """
@@ -78,7 +88,7 @@ def swap_dict(resident_model, cpu_weights, offload_onto_cpu=True):
 
 
 @contextmanager
-def cpu_weight_swap(resident_model, cpu_weights):
+def cpu_weight_swap(resident_model: torch.nn.Module, cpu_weights: dict) -> Generator:
     """swap the weights into GPU, and then swap it out once return"""
     cpu_dict = swap_dict(resident_model, cpu_weights)
 
@@ -89,7 +99,7 @@ def cpu_weight_swap(resident_model, cpu_weights):
         swap_dict(resident_model, cpu_dict, offload_onto_cpu=False)
 
 
-def configure_batch_sizes(rank, mbs, gbs, dp=1):
+def configure_batch_sizes(rank: int, mbs: int, gbs: int, dp: int = 1) -> None:
     from megatron.core.num_microbatches_calculator import (
         reconfigure_num_microbatches_calculator,
     )
@@ -103,7 +113,7 @@ def configure_batch_sizes(rank, mbs, gbs, dp=1):
     )
 
 
-def masked_mean(values: torch.Tensor, mask: torch.Tensor, axis=None):
+def masked_mean(values: torch.Tensor, mask: torch.Tensor, axis=None) -> torch.Tensor:
     """Compute mean of tensor with a masked values."""
     if mask is None:
         return values.mean(axis=axis)
@@ -113,18 +123,17 @@ def masked_mean(values: torch.Tensor, mask: torch.Tensor, axis=None):
         return (values * mask).sum(axis=axis) / mask.sum(axis=axis)
 
 
-def masked_sum(values: torch.Tensor, mask: torch.Tensor, axis=None):
-    """Compute mean of tensor with a masked values."""
-    return (values * mask).sum(axis=axis)
-
-
-def seq_mean_token_sum(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
+def seq_mean_token_sum(
+    values: torch.Tensor, mask: torch.Tensor, dim: int = -1
+) -> torch.Tensor:
     seq_losses = torch.sum(values * mask, dim=-1)  # token-sum
     loss = torch.mean(seq_losses)  # seq-mean
     return loss
 
 
-def seq_mean_token_mean(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
+def seq_mean_token_mean(
+    values: torch.Tensor, mask: torch.Tensor, dim: int = -1
+) -> torch.Tensor:
     seq_losses = torch.sum(values * mask, dim=-1) / torch.sum(
         mask, dim=-1
     )  # token-mean
@@ -134,7 +143,7 @@ def seq_mean_token_mean(values: torch.Tensor, mask: torch.Tensor, dim: int = -1)
 
 def masked_mean_ratio(
     values: torch.Tensor, mask: torch.Tensor, loss_mask_ratio: torch.Tensor
-):
+) -> torch.Tensor:
     # for embodied tasks
     return (values / loss_mask_ratio * mask).mean()
 
@@ -142,6 +151,18 @@ def masked_mean_ratio(
 def get_loss_agg_func(
     loss_agg: str,
 ) -> Callable[[torch.Tensor, torch.Tensor, int], torch.Tensor]:
+    """
+    Get the loss aggregation function based on the specified method.
+
+    Args:
+        loss_agg (str): The loss aggregation method. Options are:
+            - "seq-mean-token-sum": Mean over sequences after summing over tokens.
+            - "seq-mean-token-mean": Mean over sequences after averaging over tokens.
+            - "token-mean": Mean over all tokens.
+
+    Returns:
+        Callable[[torch.Tensor, torch.Tensor, int], torch.Tensor]: The corresponding loss aggregation function.
+    """
     if loss_agg == "seq-mean-token-sum":
         return seq_mean_token_sum
     elif loss_agg == "seq-mean-token-mean":
@@ -152,7 +173,26 @@ def get_loss_agg_func(
         raise ValueError(f"Unsupported loss aggregation method: {loss_agg}")
 
 
-def reshape_entropy(entropy, entropy_type, action_dim=7, batch_size=1):
+def reshape_entropy(
+    entropy: Optional[torch.Tensor],
+    entropy_type: str,
+    action_dim: int = 7,
+    batch_size: int = 1,
+) -> Optional[torch.Tensor]:
+    """
+    Reshape the entropy tensor based on the specified entropy type. if entropy is None, return None.
+    if entropy_type is "action_level", reshape the entropy tensor to (batch_size, -1, action_dim) and sum over the last dimension.
+    if entropy_type is "chunk_level", sum the entropy tensor over the last dimension.
+
+    Args:
+        entropy (Optional[torch.Tensor]): The entropy tensor to reshape.
+        entropy_type (str): The type of entropy. Options are "action_level" or "chunk_level".
+        action_dim (int): The dimension of actions. Default is 7.
+        batch_size (int): The batch size. Default is 1.
+
+    Returns:
+        Optional[torch.Tensor]: The reshaped entropy tensor.
+    """
     if entropy is not None:
         if entropy_type == "action_level":
             entropy = entropy.reshape(batch_size, -1, action_dim).sum(dim=-1)
@@ -161,7 +201,21 @@ def reshape_entropy(entropy, entropy_type, action_dim=7, batch_size=1):
     return entropy
 
 
-def logprobs_from_logits_flash_attn(logits, labels, inplace_backward=True):
+def logprobs_from_logits_flash_attn(
+    logits: torch.Tensor, labels: torch.Tensor, inplace_backward: bool = True
+) -> torch.Tensor:
+    """
+    Compute log probabilities from logits using flash-attn's cross_entropy_loss.
+
+    Args:
+        logits: [B, vocab_size]
+        labels: [B]
+        inplace_backward: whether to use inplace backward to save memory
+
+    Returns:
+        logprobs: [B]
+    """
+
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
 
     output = cross_entropy_loss(logits, labels, inplace_backward=inplace_backward)
@@ -188,9 +242,13 @@ def compute_logprobs_from_logits(
     last_dim = logits.shape[-1]
     logits = logits.reshape(-1, last_dim)
     labels = target.reshape(-1)
-    logprobs = logprobs_from_logits_flash_attn(
-        logits, labels=labels, inplace_backward=False
-    )
+    if HAS_LIGER:
+        loss_func = LigerCrossEntropyLoss(reduction="none")
+        logprobs = -loss_func(logits, labels)
+    else:
+        logprobs = logprobs_from_logits_flash_attn(
+            logits, labels=labels, inplace_backward=False
+        )
     logprobs = logprobs.view(*batch_dim)
     return logprobs
 
@@ -380,3 +438,12 @@ def set_rng_state(rng_state: dict) -> None:
     random.setstate(rng_state["random"])
     if torch.cuda.is_available() and "cuda" in rng_state:
         torch.cuda.set_rng_state(rng_state["cuda"])
+
+
+def create_task_with_callback(
+    coro: Coroutine, callback: Callable[[asyncio.Task], None]
+) -> asyncio.Task:
+    """Create an asyncio Task with a callback function to be called upon completion."""
+    task = asyncio.create_task(coro)
+    task.add_done_callback(callback)
+    return task

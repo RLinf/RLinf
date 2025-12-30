@@ -139,10 +139,11 @@ class AgentRunner(ReasoningRunner):
             tool_worker.start_server()
         try:
             for _ in epoch_iter:
-                for batch in self.train_dataloader:
+                self.training_iter = iter(self.train_dataloader)
+                while True:
                     with self.timer("step"):
                         with self.timer("prepare_data"):
-                            self._put_batch(batch)
+                            self._put_batch()
 
                         with self.timer("sync_weights"):
                             self._sync_weights()
@@ -256,6 +257,8 @@ class AgentRunner(ReasoningRunner):
 
                     global_pbar.set_postfix(logging_metrics, refresh=False)
                     global_pbar.update(1)
+                    if self.global_steps % self.num_steps_per_epoch == 0:
+                        break
         finally:
             for tool_worker in self.tool_workers:
                 tool_worker.stop_server()
