@@ -29,15 +29,15 @@
   - 末端执行器三维位置控制（x, y, z）  
   - 三维旋转控制（roll, pitch, yaw）  
   - 夹爪控制（开/合）
-- **Scene**：根据 `Calvin 论文<https://arxiv.org/pdf/2112.03227>`_ 所说不同的环境有不同的纹理，滑动门、抽屉、灯按钮和开关等所有静态元素的位置也不同。但是，不同的环境中的桌子、机器人和静态摄像头在所有环境中的位置都是相同的，这些物体对象的颜色都是一样的、形状也是一样的。
-- **The CALVIN Challenge**：根据 `Calvin 论文<https://arxiv.org/pdf/2112.03227>`_ 所说，
+- **Scene**：根据 `Calvin 论文 <https://arxiv.org/pdf/2112.03227>`_ 所说不同的环境有不同的纹理，滑动门、抽屉、灯按钮和开关等所有静态元素的位置也不同。但是，不同的环境中的桌子、机器人和静态摄像头在所有环境中的位置都是相同的，这些物体对象的颜色都是一样的、形状也是一样的。
+- **The CALVIN Challenge**：根据 `Calvin 论文 <https://arxiv.org/pdf/2112.03227>`_ 所说，
    `Single Environment` 的训练集合为 `scene D` 、评估集合为 `scene D` 记为，D→D；
    `Multi Environment` 的训练集合为 `scene A B C D` 、评估集合为 `scene D` 记为，A,B,C,D→D；
    `Zero-Shot Multi Environment` 的训练集合为 `scene A B C` 、评估集合为 `scene D` 记为，A,B,C→D；
 
 .. note::
 
-   注意，这里我们修改了其中的 scene A 和 scene C 的yaml文件，因为原本的Calvin仓库中对于这两个配置文件有一些错误的设置，我们在rlinf中已经修正，大家可放心使用。参见这个 `问题<https://github.com/mees/calvin/issues/41>`_。
+   注意，这里我们修改了其中的 scene A 和 scene C 的yaml文件，因为原本的Calvin仓库中对于这两个配置文件有一些错误的设置，我们在rlinf中已经修正，大家可放心使用。参见这个 `问题 <https://github.com/mees/calvin/issues/41>`_。
 
 **数据结构**
 
