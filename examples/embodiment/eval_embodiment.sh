@@ -20,6 +20,24 @@ export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
 export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
 export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 
+# NOTE: set LIBERO_REPO_PATH to the path of the LIBERO repo
+LIBERO_STD_PATH="/opt/libero"
+LIBERO_PRO_PATH="/opt/LIBERO-PRO"
+LIBERO_PLUS_PATH="/opt/LIBERO-plus"
+
+if [ "$LIBERO_TYPE" == "pro" ]; then
+    echo "Using LIBERO-Pro Environment..."
+    export LIBERO_PATH=$LIBERO_PRO_PATH
+elif [ "$LIBERO_TYPE" == "plus" ]; then
+    echo "Using LIBERO-Plus Environment..."
+    export LIBERO_PATH=$LIBERO_PLUS_PATH
+else
+    echo "Using Standard LIBERO Environment..."
+    export LIBERO_PATH=$LIBERO_STD_PATH
+fi
+
+export PYTHONPATH=${LIBERO_PATH}:$PYTHONPATH
+
 export CUDA_LAUNCH_BLOCKING=1
 export HYDRA_FULL_ERROR=1
 
