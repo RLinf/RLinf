@@ -181,6 +181,7 @@ class FSDPActor(FSDPModelManager, Worker):
         self.micro_batch_size = self.cfg.actor.micro_batch_size
         self.n_mini_batches = self.cfg.algorithm.n_minibatches
         self.task_type = self.cfg.runner.task_type
+        self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "liger_kernel")
 
     def init_worker(self) -> None:
         """
@@ -360,7 +361,9 @@ class FSDPActor(FSDPModelManager, Worker):
         logits = logits / self.cfg.algorithm.sampling_params.temperature
 
         responses = input_ids[:, -self.response_len :]
-        logprobs = compute_logprobs_from_logits(logits, responses)
+        logprobs = compute_logprobs_from_logits(
+            logits=logits, target=responses, op_type=self.entropy_op_type
+        )
         return logprobs
 
     def run_inference(
@@ -500,7 +503,9 @@ class FSDPActor(FSDPModelManager, Worker):
                 logits = logits[
                     :, -self.response_len - 1 : -1, :
                 ]  # (bsz, response_length, vocab_size)
-                logprobs = compute_logprobs_from_logits(logits, responses)
+                logprobs = compute_logprobs_from_logits(
+                    logits, responses, self.entropy_op_type
+                )
 
                 if self.cfg.algorithm.get("importance_sampling_fix", False):
                     rollout_prev_logprobs = prev_logprobs
@@ -732,6 +737,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.stage_num = cfg.rollout.pipeline_stage_num
 
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
+        self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "torch")
 
     def _setup_rollout_weight_dst_ranks(self) -> None:
         """
