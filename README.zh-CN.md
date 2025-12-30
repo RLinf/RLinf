@@ -19,7 +19,7 @@
 </div>
 
 <h1 align="center">
-  <sub>RLinf: 为Post-training而生的强化学习框架</sub>
+  <sub>RLinf: 为具身智能和智能体而生的强化学习框架</sub>
 </h1>
 
 RLinf 是一个灵活且可扩展的开源框架，专为利用强化学习进行基础模型的后训练而设计。名称中的 “inf” 既代表 `Infrastructure`，强调其作为新一代训练坚实基础的作用；也代表 `Infinite`，寓意其支持开放式学习、持续泛化以及智能发展的无限可能。
