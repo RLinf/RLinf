@@ -28,7 +28,7 @@ from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 mp.set_start_method("spawn", force=True)
 
 
-@hydra.main(version_base="1.1", config_path="config", config_name="robotwin_sft_openpi")
+@hydra.main(version_base="1.1", config_path="config", config_name="maniskill_ppo_openvlaoft")
 def main(cfg) -> None:
     os.environ["HF_LEROBOT_HOME"] = cfg.data.data_path
 
