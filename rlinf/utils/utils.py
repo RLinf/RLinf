@@ -19,7 +19,7 @@ import random
 import sys
 from contextlib import contextmanager
 from functools import partial, wraps
-from typing import Callable
+from typing import Callable, Literal, Optional
 
 import numpy as np
 import torch
@@ -142,6 +142,18 @@ def masked_mean_ratio(
 def get_loss_agg_func(
     loss_agg: str,
 ) -> Callable[[torch.Tensor, torch.Tensor, int], torch.Tensor]:
+    """
+    Get loss aggregation function based on the loss_agg string.
+
+    Args:
+        loss_agg (str): The loss aggregation method. Options are:
+            - "seq-mean-token-sum": Sequence mean of token sums.
+            - "seq-mean-token-mean": Sequence mean of token means.
+            - "token-mean": Mean over tokens.
+
+    Returns:
+        Callable[[torch.Tensor, torch.Tensor, int], torch.Tensor]: A function that takes values, mask, and dim as inputs and returns the aggregated
+    """
     if loss_agg == "seq-mean-token-sum":
         return seq_mean_token_sum
     elif loss_agg == "seq-mean-token-mean":
@@ -152,7 +164,25 @@ def get_loss_agg_func(
         raise ValueError(f"Unsupported loss aggregation method: {loss_agg}")
 
 
-def reshape_entropy(entropy, entropy_type, action_dim=7, batch_size=1):
+def reshape_entropy(
+    entropy: Optional[torch.Tensor],
+    entropy_type: str,
+    action_dim: int = 7,
+    batch_size: int = 1,
+) -> Optional[torch.Tensor]:
+    """
+    Reshape entropy based on the entropy type.If entropy is None, return None.
+    If entropy_type is "action_level", reshape entropy to [batch_size, seq_len] by summing over action_dim.
+    If entropy_type is "chunk_level", reshape entropy to [batch_size, seq_len]
+
+    Args:
+        entropy(Optional[torch.Tensor]): [B, seq_len * action_dim] or [B, seq_len] or None
+        entropy_type(str): "action_level" or "chunk_level"
+        action_dim(int): action dimension, default is 7
+
+    Returns:
+        entropy(Optional[torch.Tensor]): reshaped entropy or None
+    """
     if entropy is not None:
         if entropy_type == "action_level":
             entropy = entropy.reshape(batch_size, -1, action_dim).sum(dim=-1)
@@ -161,7 +191,20 @@ def reshape_entropy(entropy, entropy_type, action_dim=7, batch_size=1):
     return entropy
 
 
-def logprobs_from_logits_flash_attn(logits, labels, inplace_backward=True):
+def logprobs_from_logits_flash_attn(
+    logits: torch.Tensor, labels: torch.Tensor, inplace_backward: bool = True
+) -> torch.Tensor:
+    """
+    Compute logprobs by logits using flash-attn's cross_entropy_loss.
+
+    Args:
+        logits(torch.Tensor): [B*seq-len, vocab-size]
+        labels(torch.Tensor): [B*seq-len]
+        inplace_backward(bool): whether to use inplace backward to save memory
+
+    Returns:
+        logprobs(torch.Tensor): [B*seq-len]
+    """
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
 
     output = cross_entropy_loss(logits, labels, inplace_backward=inplace_backward)
@@ -171,15 +214,39 @@ def logprobs_from_logits_flash_attn(logits, labels, inplace_backward=True):
     return -output[0]
 
 
-def compute_logprobs_from_logits(
-    logits: torch.Tensor, target: torch.Tensor
+def logprobs_from_logits_liger_kernel(
+    logits: torch.Tensor, labels: torch.Tensor
 ) -> torch.Tensor:
     """
-    Compute logprobs by logits. Using flash-attn cross_entropy for better efficiency.
+    Compute logprobs by logits using liger-kernel's cross_entropy_loss.
+
+    Args:
+        logits(torch.Tensor): [B*seq-len, vocab-size]
+        labels(torch.Tensor): [B*seq-len]
+
+    Returns:
+        logprobs(torch.Tensor): [B*seq-len]
+    """
+    from liger_kernel.transformers.cross_entropy import LigerCrossEntropyLoss
+
+    loss_func = LigerCrossEntropyLoss(reduction="none")
+    logprobs = -loss_func(logits, labels)
+    return logprobs
+
+
+def compute_logprobs_from_logits(
+    logits: torch.Tensor,
+    target: torch.Tensor,
+    op_type: Literal["torch", "flash_attn", "liger_kernel"] = "torch",
+) -> torch.Tensor:
+    """
+    Compute logprobs by logits.
 
     Args:
         logits(torch.Tensor): [B, seq-len, vocab-size]
         target(torch.Tensor): [B, seq-len]
+        op_type(str): the type of logprobs computation method, options are "torch", "flash_attn", "liger_kernel"
+            default is "torch"
 
     Returns:
         logprobs(torch.Tensor): [B, seq-len]
@@ -188,14 +255,23 @@ def compute_logprobs_from_logits(
     last_dim = logits.shape[-1]
     logits = logits.reshape(-1, last_dim)
     labels = target.reshape(-1)
-    logprobs = logprobs_from_logits_flash_attn(
-        logits, labels=labels, inplace_backward=False
+
+    assert op_type in ["torch", "flash_attn", "liger_kernel"], (
+        f"Unsupported op_type: {op_type} for logprobs computation. Supported types are 'torch', 'flash_attn', 'liger_kernel'."
     )
-    logprobs = logprobs.view(*batch_dim)
+    if op_type == "liger_kernel":
+        logprobs = logprobs_from_logits_liger_kernel(logits, labels)
+    elif op_type == "flash_attn":
+        logprobs = logprobs_from_logits_flash_attn(logits, labels)
+    elif op_type == "torch":
+        logprobs = -F.cross_entropy(logits, labels, reduction="none")
+
+    # reshape back to [B, seq-len]
+    logprobs = logprobs.view(*batch_dim).float()
     return logprobs
 
 
-def compute_entropy_from_logits(logits, dim: int = -1) -> torch.Tensor:
+def compute_entropy_from_logits(logits: torch.Tensor, dim: int = -1) -> torch.Tensor:
     """
     Compute entropy by logits,formula: H(X) = - sum(p(x) * log(p(x)))
     In case logits are too small to cause numerical instability(like downflow to zero after softmax),
@@ -208,7 +284,10 @@ def compute_entropy_from_logits(logits, dim: int = -1) -> torch.Tensor:
         - entropy(torch.Tensor): [B, seq-len]
     """
     logp = F.log_softmax(logits, dim=dim)
-    entropy = -(logp * logp.exp()).sum(dim=dim)
+    p = logp.exp()
+    # if some p are zero, p*logp will be nan, we set those terms to zero
+    entropy_term = torch.where(p > 0, p * logp, 0.0)
+    entropy = -entropy_term.sum(dim=dim)
     return entropy
 
 

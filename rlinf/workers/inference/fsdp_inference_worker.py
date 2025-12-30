@@ -71,6 +71,8 @@ class FSDPInference(FSDPModelManager, Worker):
         self._actor_world_size = self._component_placement.get_world_size("actor")
         # here key is actor ranks, value is dict of param name to (actor_shard_offset,inference_shard_offset,needed_size)
         self._actor_dst_map: dict[int, dict[str, tuple[int, int, int]]] = {}
+        # logprobs computation op type("torch", "flash_attn", "liger_kernel")
+        self._entropy_op_type = cfg.algorithm.get("entropy_op_type", "liger_kernel")
 
     def init_worker(self) -> None:
         """
@@ -207,7 +209,9 @@ class FSDPInference(FSDPModelManager, Worker):
         logits = logits / self.cfg.algorithm.sampling_params.temperature
 
         responses = input_ids[:, -self.response_len :]
-        logprobs = compute_logprobs_from_logits(logits, responses)
+        logprobs = compute_logprobs_from_logits(
+            logits, responses, op_type=self._entropy_op_type
+        )
         return logprobs
 
     def run_inference(
