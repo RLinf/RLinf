@@ -70,7 +70,7 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
     @override
     def create(
         self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig
-    ) -> DataConfig: # Apply Aloha-specific policy transforms (e.g. normalization).
+    ) -> DataConfig:  # Apply Aloha-specific policy transforms (e.g. normalization).
         data_transforms = _transforms.Group(
             inputs=[aloha_policy.AlohaInputs(adapt_to_pi=self.adapt_to_pi)],
             outputs=[aloha_policy.AlohaOutputs(adapt_to_pi=self.adapt_to_pi)],
