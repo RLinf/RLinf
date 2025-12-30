@@ -784,9 +784,23 @@ def validate_embodied_cfg(cfg):
             cfg.env.eval.init_params.control_mode = get_robot_control_mode(
                 cfg.actor.model.policy_setup
             )
-        elif (
-            cfg.env.train.env_type == "behavior" or cfg.env.eval.env_type == "behavior"
-        ):
+        elif cfg.env.train.simulator_type == "mixed":
+            # Set control_mode for each maniskill entry in simulator_list
+            if hasattr(cfg.env.train, "simulator_list"):
+                for simulator_entry in cfg.env.train.simulator_list:
+                    if simulator_entry.simulator_type == "maniskill":
+                        if hasattr(simulator_entry, "init_params"):
+                            simulator_entry.init_params.control_mode = get_robot_control_mode(
+                                cfg.actor.model.policy_setup
+                            )
+            if hasattr(cfg.env.eval, "simulator_list"):
+                for simulator_entry in cfg.env.eval.simulator_list:
+                    if simulator_entry.simulator_type == "maniskill":
+                        if hasattr(simulator_entry, "init_params"):
+                            simulator_entry.init_params.control_mode = get_robot_control_mode(
+                                cfg.actor.model.policy_setup
+                            )
+        elif cfg.env.train.simulator_type == "behavior":
             import omnigibson as og
 
             assert cfg.env.train.base_config_name == "r1pro_behavior", (

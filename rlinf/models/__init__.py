@@ -43,15 +43,15 @@ def get_vla_model_config_and_processor(cfg: DictConfig):
 
         model_config = AutoConfig.from_pretrained(cfg.tokenizer.tokenizer_model)
 
-        dataset_statistics_path = os.path.join(
-            cfg.tokenizer.tokenizer_model, "dataset_statistics.json"
-        )
-        if os.path.isfile(dataset_statistics_path):
-            with open(dataset_statistics_path, "r") as f:
-                new_norm_stats = json.load(f)
-                norm_stats = getattr(model_config, "norm_stats", {})
-                norm_stats.update(new_norm_stats)
-                setattr(model_config, "norm_stats", norm_stats)
+        # dataset_statistics_path = os.path.join(
+        #     cfg.tokenizer.tokenizer_model, "dataset_statistics.json"
+        # )
+        # if os.path.isfile(dataset_statistics_path):
+        #     with open(dataset_statistics_path, "r") as f:
+        #         new_norm_stats = json.load(f)
+        #         norm_stats = getattr(model_config, "norm_stats", {})
+        #         norm_stats.update(new_norm_stats)
+        #         setattr(model_config, "norm_stats", norm_stats)
         image_processor = PrismaticImageProcessor.from_pretrained(
             cfg.tokenizer.tokenizer_model, trust_remote_code=True
         )
@@ -108,13 +108,13 @@ def get_model(cfg: DictConfig, override_config_kwargs=None):
             model_path, trust_remote_code=cfg.trust_remote_code
         )
 
-        dataset_statistics_path = os.path.join(model_path, "dataset_statistics.json")
-        if os.path.isfile(dataset_statistics_path):
-            with open(dataset_statistics_path, "r") as f:
-                new_norm_stats = json.load(f)
-                norm_stats = getattr(actor_model_config, "norm_stats", {})
-                norm_stats.update(new_norm_stats)
-                setattr(actor_model_config, "norm_stats", norm_stats)
+        # dataset_statistics_path = os.path.join(model_path, "dataset_statistics.json")
+        # if os.path.isfile(dataset_statistics_path):
+        #     with open(dataset_statistics_path, "r") as f:
+        #         new_norm_stats = json.load(f)
+        #         norm_stats = getattr(actor_model_config, "norm_stats", {})
+        #         norm_stats.update(new_norm_stats)
+        #         setattr(actor_model_config, "norm_stats", norm_stats)
 
         from .embodiment.openvla_action_model import OpenVLAForRLActionPrediction
 
@@ -146,13 +146,13 @@ def get_model(cfg: DictConfig, override_config_kwargs=None):
             model_path, trust_remote_code=cfg.trust_remote_code
         )
 
-        dataset_statistics_path = os.path.join(model_path, "dataset_statistics.json")
-        if os.path.isfile(dataset_statistics_path):
-            with open(dataset_statistics_path, "r") as f:
-                new_norm_stats = json.load(f)
-                norm_stats = getattr(actor_model_config, "norm_stats", {})
-                norm_stats.update(new_norm_stats)
-                setattr(actor_model_config, "norm_stats", norm_stats)
+        # dataset_statistics_path = os.path.join(model_path, "dataset_statistics.json")
+        # if os.path.isfile(dataset_statistics_path):
+        #     with open(dataset_statistics_path, "r") as f:
+        #         new_norm_stats = json.load(f)
+        #         norm_stats = getattr(actor_model_config, "norm_stats", {})
+        #         norm_stats.update(new_norm_stats)
+        #         setattr(actor_model_config, "norm_stats", norm_stats)
 
         override_config_kwargs = cfg
         if override_config_kwargs is not None:
@@ -220,15 +220,15 @@ def get_model(cfg: DictConfig, override_config_kwargs=None):
         data_config = actor_train_config.data.create(
             actor_train_config.assets_dirs, actor_model_config
         )
-        norm_stats = None
-        if norm_stats is None:
-            # We are loading the norm stats from the checkpoint instead of the config assets dir to make sure
-            # that the policy is using the same normalization stats as the original training process.
-            if data_config.asset_id is None:
-                raise ValueError("Asset id is required to load norm stats.")
-            norm_stats = _checkpoints.load_norm_stats(
-                checkpoint_dir, data_config.asset_id
-            )
+        # norm_stats = None
+        # if norm_stats is None:
+        #     # We are loading the norm stats from the checkpoint instead of the config assets dir to make sure
+        #     # that the policy is using the same normalization stats as the original training process.
+        #     if data_config.asset_id is None:
+        #         raise ValueError("Asset id is required to load norm stats.")
+        #     norm_stats = _checkpoints.load_norm_stats(
+        #         checkpoint_dir, data_config.asset_id
+        #     )
         # wrappers
         repack_transforms = transforms.Group()
         default_prompt = None
@@ -237,16 +237,16 @@ def get_model(cfg: DictConfig, override_config_kwargs=None):
                 *repack_transforms.inputs,
                 transforms.InjectDefaultPrompt(default_prompt),
                 *data_config.data_transforms.inputs,
-                transforms.Normalize(
-                    norm_stats, use_quantiles=data_config.use_quantile_norm
-                ),
+                # transforms.Normalize(
+                #     norm_stats, use_quantiles=data_config.use_quantile_norm
+                # ),
                 *data_config.model_transforms.inputs,
             ],
             output_transforms=[
                 *data_config.model_transforms.outputs,
-                transforms.Unnormalize(
-                    norm_stats, use_quantiles=data_config.use_quantile_norm
-                ),
+                # transforms.Unnormalize(
+                #     norm_stats, use_quantiles=data_config.use_quantile_norm
+                # ),
                 *data_config.data_transforms.outputs,
                 *repack_transforms.outputs,
             ],
@@ -258,10 +258,9 @@ def get_model(cfg: DictConfig, override_config_kwargs=None):
         model = MLPPolicy(
             cfg.obs_dim,
             cfg.action_dim,
+            cfg.hidden_dim,
             num_action_chunks=cfg.num_action_chunks,
             add_value_head=cfg.add_value_head,
-            add_q_head=cfg.get("add_q_head", False),
-            q_head_type=cfg.get("q_head_type", "default"),
         )
     elif model_type == SupportedModel.GR00T:
         from pathlib import Path

@@ -16,7 +16,7 @@ import math
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 import jax
 import numpy as np
@@ -29,6 +29,152 @@ from openpi.models_pytorch.pi0_pytorch import PI0Pytorch, make_att_2d_masks
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
 from rlinf.models.embodiment.modules.value_head import ValueHead
+
+
+def normalize_openpi_state(state, state_norm_stats, use_quantiles=False):
+    """
+    Normalize state for OpenPI model using dataset statistics.
+    
+    This function normalizes state observations to the range [-1, 1] for OpenPI model input.
+    It supports both bounds-based and quantile-based normalization.
+    
+    Args:
+        state: Raw state observations from environment (can be torch.Tensor or np.ndarray)
+        state_norm_stats: Dictionary containing normalization statistics. Should contain:
+            - For bounds: "min" and "max" keys
+            - For quantiles: "q01" and "q99" keys (or "q10" and "q90")
+            - Optional: "mask" key for masking certain state dimensions
+        use_quantiles: If True, use quantile-based normalization (q01/q99), 
+                      otherwise use bounds-based normalization (min/max)
+    
+    Returns:
+        Normalized state in the range [-1, 1]
+    """
+    if state_norm_stats is None:
+        return state
+    
+    if use_quantiles:
+        # Use quantile-based normalization
+        if "q01" in state_norm_stats and "q99" in state_norm_stats:
+            mask = state_norm_stats.get(
+                "mask", np.ones_like(state_norm_stats["q01"], dtype=bool)
+            )
+            state_high = np.array(state_norm_stats["q99"])
+            state_low = np.array(state_norm_stats["q01"])
+        elif "q10" in state_norm_stats and "q90" in state_norm_stats:
+            mask = state_norm_stats.get(
+                "mask", np.ones_like(state_norm_stats["q10"], dtype=bool)
+            )
+            state_high = np.array(state_norm_stats["q90"])
+            state_low = np.array(state_norm_stats["q10"])
+        else:
+            raise ValueError(
+                "For quantile normalization, state_norm_stats must contain "
+                "either ('q01', 'q99') or ('q10', 'q90') keys"
+            )
+    else:
+        # Use bounds-based normalization
+        if "min" not in state_norm_stats or "max" not in state_norm_stats:
+            raise ValueError(
+                "For bounds normalization, state_norm_stats must contain 'min' and 'max' keys"
+            )
+        mask = state_norm_stats.get(
+            "mask", np.ones_like(state_norm_stats["min"], dtype=bool)
+        )
+        state_high = np.array(state_norm_stats["max"])
+        state_low = np.array(state_norm_stats["min"])
+    
+    if isinstance(state, torch.Tensor):
+        state = state.cpu().numpy()
+    
+    state_dim = state.shape[-1]
+    repeat_factor = state_dim // state_high.shape[0]
+    state_high = state_high.repeat(repeat_factor)
+    state_low = state_low.repeat(repeat_factor)
+    mask = mask.repeat(repeat_factor) if mask.ndim > 0 else mask
+    
+    # Normalize: convert from [state_low, state_high] to [-1, 1]
+    # Formula: normalized_state = 2 * (state - low) / (high - low) - 1
+    normalized_state = np.where(
+        mask,
+        2.0 * (state - state_low) / (state_high - state_low + 1e-8) - 1.0,
+        state,
+    )
+    
+    return normalized_state
+
+
+def unnormalize_openpi_actions(normalized_actions, action_norm_stats, use_quantiles=False):
+    """
+    Unnormalize actions for OpenPI model using dataset statistics.
+    
+    This function is designed specifically for OpenPI models.
+    It supports both bounds-based and quantile-based normalization.
+    
+    Args:
+        normalized_actions: Normalized actions from OpenPI model (expected to be in [-1, 1] range)
+        action_norm_stats: Dictionary containing normalization statistics. Should contain:
+            - For bounds: "min" and "max" keys
+            - For quantiles: "q01" and "q99" keys (or "q10" and "q90")
+            - Optional: "mask" key for masking certain action dimensions
+        use_quantiles: If True, use quantile-based normalization (q01/q99), 
+                      otherwise use bounds-based normalization (min/max)
+    
+    Returns:
+        Unnormalized actions in the original action space
+    """
+    if action_norm_stats is None:
+        return normalized_actions
+    
+    if use_quantiles:
+        # Use quantile-based normalization
+        if "q01" in action_norm_stats and "q99" in action_norm_stats:
+            mask = action_norm_stats.get(
+                "mask", np.ones_like(action_norm_stats["q01"], dtype=bool)
+            )
+            action_high = np.array(action_norm_stats["q99"])
+            action_low = np.array(action_norm_stats["q01"])
+        elif "q10" in action_norm_stats and "q90" in action_norm_stats:
+            mask = action_norm_stats.get(
+                "mask", np.ones_like(action_norm_stats["q10"], dtype=bool)
+            )
+            action_high = np.array(action_norm_stats["q90"])
+            action_low = np.array(action_norm_stats["q10"])
+        else:
+            raise ValueError(
+                "For quantile normalization, action_norm_stats must contain "
+                "either ('q01', 'q99') or ('q10', 'q90') keys"
+            )
+    else:
+        # Use bounds-based normalization
+        if "min" not in action_norm_stats or "max" not in action_norm_stats:
+            raise ValueError(
+                "For bounds normalization, action_norm_stats must contain 'min' and 'max' keys"
+            )
+        mask = action_norm_stats.get(
+            "mask", np.ones_like(action_norm_stats["min"], dtype=bool)
+        )
+        action_high = np.array(action_norm_stats["max"])
+        action_low = np.array(action_norm_stats["min"])
+    
+    if isinstance(normalized_actions, torch.Tensor):
+        normalized_actions = normalized_actions.cpu().numpy()
+    
+    action_dim = normalized_actions.shape[-1]
+    repeat_factor = action_dim // action_high.shape[0]
+    action_high = action_high.repeat(repeat_factor)
+    action_low = action_low.repeat(repeat_factor)
+    mask = mask.repeat(repeat_factor) if mask.ndim > 0 else mask
+    
+    # Unnormalize: convert from [-1, 1] to [action_low, action_high]
+    # Formula: action = 0.5 * (normalized_action + 1) * (high - low) + low
+    actions = np.where(
+        mask,
+        0.5 * (normalized_actions + 1) * (action_high - action_low + 1e-8) + action_low,
+        normalized_actions,
+    )
+    
+    return actions
 
 
 @dataclass(frozen=True)
@@ -114,7 +260,7 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
                 input_dim=proj_width,
                 hidden_sizes=value_head_hidden_sizes,
                 output_dim=1,
-                activation=value_head_activation,
+                activation="relu",
                 bias_last=True,
             )
             self.value_head = self.value_head.to(
@@ -159,6 +305,18 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
                 x_cpu = x_cpu.float()
             return np.asarray(x_cpu)
         return x[index]
+
+    def set_state_norm_stats(self, state_norm_stats: Optional[dict[str, Any]], use_quantiles: bool = False):
+        """
+        Set state normalization statistics for normalizing state inputs.
+        
+        Args:
+            state_norm_stats: Dictionary containing normalization statistics for state.
+                Should contain "min"/"max" for bounds normalization or "q01"/"q99" for quantile normalization.
+            use_quantiles: If True, use quantile-based normalization, otherwise use bounds-based.
+        """
+        self.state_norm_stats = state_norm_stats
+        self.use_state_quantiles = use_quantiles
 
     def setup_wrappers(
         self,
@@ -295,9 +453,33 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
             "observation/image": env_obs["main_images"],
             "prompt": env_obs["task_descriptions"],
         }
-        # state observation - ensure float32 to prevent BFloat16 conversion issues
+        # state observation
+        state = env_obs["states"]
+        
+        # Normalize state if state_norm_stats is set
+        if self.state_norm_stats is not None:
+            # Store original device and dtype
+            original_device = state.device if torch.is_tensor(state) else None
+            original_dtype = state.dtype if torch.is_tensor(state) else None
+            
+            # Normalize state (function expects numpy array)
+            state_normalized = normalize_openpi_state(
+                state, 
+                self.state_norm_stats, 
+                use_quantiles=self.use_state_quantiles
+            )
+            
+            # Convert back to torch tensor with original device and dtype
+            if isinstance(state_normalized, np.ndarray):
+                state = torch.from_numpy(state_normalized)
+                if original_device is not None:
+                    state = state.to(original_device)
+                if original_dtype is not None:
+                    state = state.to(original_dtype)
+            else:
+                state = state_normalized
+        
         if "calvin" in self.config.config_name:
-            state = env_obs["states"]
             processed_obs["observation/state_ee_pos"] = state[:, :3]
             processed_obs["observation/state_ee_rot"] = state[:, 3:6]
             processed_obs["observation/state_gripper"] = state[:, 6:7]

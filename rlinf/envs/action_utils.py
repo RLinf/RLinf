@@ -16,7 +16,11 @@ import numpy as np
 import torch
 
 from rlinf.config import SupportedModel
-
+# from prismatic.vla.constants import (
+#     ACTION_PROPRIO_NORMALIZATION_TYPE,
+#     STOP_INDEX,
+#     NormalizationType,
+# )
 
 def prepare_actions_for_maniskill(
     raw_chunk_actions,
@@ -137,6 +141,46 @@ def prepare_actions_for_robocasa(
 
         return chunk_actions
 
+def unnormalize_actions(normalized_actions, action_norm_stats):
+    """Unnormalize actions using dataset statistics"""
+    
+    # if ACTION_PROPRIO_NORMALIZATION_TYPE == NormalizationType.BOUNDS:
+    mask = action_norm_stats.get(
+        "mask", np.ones_like(action_norm_stats["min"], dtype=bool)
+    )
+    action_high, action_low = (
+        np.array(action_norm_stats["max"]),
+        np.array(action_norm_stats["min"]),
+    )
+    # elif ACTION_PROPRIO_NORMALIZATION_TYPE == NormalizationType.BOUNDS_Q99:
+    #     mask = action_norm_stats.get(
+    #         "mask", np.ones_like(action_norm_stats["q01"], dtype=bool)
+    #     )
+    #     action_high, action_low = (
+    #         np.array(action_norm_stats["q99"]),
+    #         np.array(action_norm_stats["q01"]),
+    #     )
+    # else:
+    #     raise ValueError("Unsupported action/proprio normalization type detected!")
+
+    if isinstance(normalized_actions, torch.Tensor):
+        normalized_actions = normalized_actions.cpu().numpy()
+
+    action_dim = normalized_actions.shape[-1]
+    repeat_factor = action_dim // action_high.shape[0]
+    action_high = action_high.repeat(repeat_factor)
+    action_low = action_low.repeat(repeat_factor)
+    mask = mask * repeat_factor
+
+    actions = np.where(
+        mask,
+        0.5 * (normalized_actions + 1) * (action_high - action_low + 1e-8)
+        + action_low,
+        normalized_actions,
+    )
+
+    return actions
+
 
 def prepare_actions(
     raw_chunk_actions,
@@ -146,6 +190,9 @@ def prepare_actions(
     action_dim,
     action_scale: float = 1.0,
     policy: str = "widowx_bridge",
+    action_norm_stats = None,
+    use_openpi_unnormalize: bool = None,
+    openpi_use_quantiles: bool = False,
 ) -> torch.Tensor | np.ndarray:
     if env_type == "libero":
         chunk_actions = prepare_actions_for_libero(
@@ -185,5 +232,24 @@ def prepare_actions(
         chunk_actions = raw_chunk_actions
     else:
         raise NotImplementedError
+
+    # Auto-detect OpenPI model if use_openpi_unnormalize is not explicitly set
+    if use_openpi_unnormalize is None:
+        try:
+            use_openpi_unnormalize = SupportedModel(model_type) == SupportedModel.OPENPI
+        except (ValueError, TypeError):
+            use_openpi_unnormalize = False
+
+    # Use OpenPI-specific unnormalization if specified
+    if use_openpi_unnormalize:
+        # Import OpenPI normalization function
+        from rlinf.models.embodiment.openpi_action_model import unnormalize_openpi_actions
+        chunk_actions = unnormalize_openpi_actions(
+            chunk_actions, 
+            action_norm_stats, 
+            use_quantiles=openpi_use_quantiles
+        )
+    else:
+        chunk_actions = unnormalize_actions(chunk_actions, action_norm_stats)
 
     return chunk_actions
