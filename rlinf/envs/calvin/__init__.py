@@ -24,9 +24,7 @@ from rlinf.envs.calvin.utils import get_sequences
 ENV_CFG_DIR = Path(__file__).parent / "calvin_cfg/"
 
 
-def _get_calvin_tasks_and_reward(
-    num_sequences, task_suite_name="calvin_d"
-):
+def _get_calvin_tasks_and_reward(num_sequences, task_suite_name="calvin_d"):
     conf_dir = (
         pathlib.Path(calvin_env.__file__).absolute().parents[2]
         / "calvin_models"

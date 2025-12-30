@@ -155,9 +155,9 @@ class CalvinEnv(gym.Env):
 
     def _get_ordered_reset_state_ids(self, num_reset_states):
         """
-        By constructing a 2D seed matrix (self.reset_state_ids_all) and applying a seed_offset, 
+        By constructing a 2D seed matrix (self.reset_state_ids_all) and applying a seed_offset,
         users can evenly distribute the initialization of environments (e.g., 1,000 states) across all available GPUs, ensuring each GPU runs a unique set of tasks.
-        
+
         Args:
             num_reset_states (int): The number of environment reset states to allocate to this env worker.
 
@@ -166,7 +166,7 @@ class CalvinEnv(gym.Env):
                 according to the current process's seed_offset.
 
         Notes:
-            Each row in `self.reset_state_ids_all` corresponds to the reset state IDs allocated to a specific 
+            Each row in `self.reset_state_ids_all` corresponds to the reset state IDs allocated to a specific
             process (distinguished by seed_offset), ensuring non-overlapping task subsets for parallel evaluation or training.
         """
         if self.start_idx + num_reset_states > len(self.reset_state_ids_all[0]):
