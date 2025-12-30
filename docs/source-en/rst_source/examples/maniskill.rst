@@ -139,8 +139,7 @@ Running the Script
       pipeline_stage_num: 2
 
 Here you can flexibly configure the GPU count for env, rollout, and actor components.
-Using the above configuration, you can achieve pipeline overlap between env and rollout, and sharing with actor.
-Additionally, by setting `pipeline_stage_num = 2` in the configuration, you can achieve pipeline overlap between rollout and actor, improving rollout efficiency.
+Additionally, by setting `pipeline_stage_num = 2` in the configuration, you can achieve pipeline overlap between rollout and env, improving rollout efficiency.
 
 .. code-block:: yaml
    

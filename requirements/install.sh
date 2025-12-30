@@ -15,7 +15,18 @@ SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 
 SUPPORTED_TARGETS=("embodied" "reason")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka")
+
+# Ensure uv is installed
+if ! command -v uv &> /dev/null; then
+    echo "uv command not found. Installing uv..."
+    # Check if pip is available
+    if ! command -v pip &> /dev/null; then
+        echo "pip command not found. Please install pip first." >&2
+        exit 1
+    fi
+    pip install uv
+fi
 
 #=======================Utility Functions=======================
 
@@ -223,8 +234,6 @@ install_common_embodied_deps() {
 
 install_openvla_model() {
     case "$ENV_NAME" in
-        "")
-            ;;
         maniskill_libero)
             create_and_sync_venv
             install_common_embodied_deps
@@ -242,8 +251,6 @@ install_openvla_model() {
 
 install_openvla_oft_model() {
     case "$ENV_NAME" in
-        "")
-            ;;
         behavior)
             PYTHON_VERSION="3.10"
             create_and_sync_venv
@@ -268,8 +275,6 @@ install_openvla_oft_model() {
 
 install_openpi_model() {
     case "$ENV_NAME" in
-        "")
-            ;;
         maniskill_libero)
             create_and_sync_venv
             install_common_embodied_deps
@@ -327,8 +332,6 @@ install_gr00t_model() {
     uv pip install -e "$gr00t_path" --no-deps
     uv pip install -r $SCRIPT_DIR/embodied/models/gr00t.txt
     case "$ENV_NAME" in
-        "")
-            ;;
         maniskill_libero)
             install_maniskill_libero_env
             install_prebuilt_flash_attn
@@ -345,6 +348,24 @@ install_gr00t_model() {
             ;;
     esac
     uv pip uninstall pynvml || true
+}
+
+install_env_only() {
+    create_and_sync_venv
+    SKIP_ROS=${SKIP_ROS:-0}
+    case "$ENV_NAME" in
+        franka)
+            uv sync --extra franka --active
+            if [ "$SKIP_ROS" -ne 1 ]; then
+                bash $SCRIPT_DIR/embodied/ros_install.sh
+                install_franka_env
+            fi
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for env-only installation." >&2
+            exit 1
+            ;;
+    esac
 }
 
 #=======================ENV INSTALLERS=======================
@@ -388,7 +409,7 @@ install_calvin_env() {
     calvin_dir=$(clone_or_reuse_repo CALVIN_PATH "$VENV_DIR/calvin" https://github.com/mees/calvin.git --recurse-submodules)
 
     uv pip install wheel cmake==3.18.4 setuptools==57.5.0
-    # NOTE: Use a forker version of pyfasthash that fixes install on Python 3.11
+    # NOTE: Use a fork version of pyfasthash that fixes install on Python 3.11
     uv pip install git+https://github.com/RLinf/pyfasthash.git --no-build-isolation
     uv pip install -e ${calvin_dir}/calvin_env/tacto
     uv pip install -e ${calvin_dir}/calvin_env
@@ -412,6 +433,58 @@ install_robocasa_env() {
     uv pip install -e "$robocasa_dir"
     uv pip install protobuf==6.33.0
     python -m robocasa.scripts.setup_macros
+}
+
+install_franka_env() {
+    # Install serl_franka_controller
+    # Check if ROS_CATKIN_PATH is set or serl_franka_controllers is already built
+    set +euo pipefail
+    source /opt/ros/noetic/setup.bash
+    set -euo pipefail
+    ROS_CATKIN_PATH=$(realpath "$VENV_DIR/franka_catkin_ws")
+    LIBFRANKA_VERSION=${LIBFRANKA_VERSION:-0.15.0}
+    FRANKA_ROS_VERSION=${FRANKA_ROS_VERSION:-0.10.0}
+
+    mkdir -p "$ROS_CATKIN_PATH/src"
+
+    # Clone necessary repositories
+    pushd "$ROS_CATKIN_PATH/src"
+    if [ ! -d "$ROS_CATKIN_PATH/src/serl_franka_controllers" ]; then
+        git clone https://github.com/rail-berkeley/serl_franka_controllers
+    fi
+    if [ ! -d "$ROS_CATKIN_PATH/libfranka" ]; then
+        git clone -b "${LIBFRANKA_VERSION}" --recurse-submodules https://github.com/frankaemika/libfranka $ROS_CATKIN_PATH/libfranka
+    fi
+    if [ ! -d "$ROS_CATKIN_PATH/src/franka_ros" ]; then
+        # Use a fork version that fixes compile issues with newer libfranka using C++17
+        git clone -b "${FRANKA_ROS_VERSION}" --recurse-submodules https://github.com/RLinf/franka_ros
+    fi
+    popd >/dev/null
+
+    # Build
+    pushd "$ROS_CATKIN_PATH"
+    # libfranka first
+    if [ ! -f "$ROS_CATKIN_PATH/libfranka/build/libfranka.so" ]; then
+        mkdir -p "$ROS_CATKIN_PATH/libfranka/build"
+        pushd "$ROS_CATKIN_PATH/libfranka/build" >/dev/null
+        cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/openrobots/lib/cmake -DBUILD_TESTS=OFF ..
+        make -j$(nproc)
+        popd >/dev/null
+    fi
+    export LD_LIBRARY_PATH=$ROS_CATKIN_PATH/libfranka/build:/opt/openrobots/lib:$LD_LIBRARY_PATH
+    export CMAKE_PREFIX_PATH=$ROS_CATKIN_PATH/libfranka/build:$CMAKE_PREFIX_PATH
+
+    # Then franka_ros
+    catkin_make -DCMAKE_BUILD_TYPE=Release -DFranka_DIR:PATH=$ROS_CATKIN_PATH/libfranka/build --pkg franka_ros
+
+    # Finally serl_franka_controllers
+    catkin_make -DCMAKE_CXX_STANDARD=17 --pkg serl_franka_controllers
+    popd >/dev/null
+
+    echo "export LD_LIBRARY_PATH=$ROS_CATKIN_PATH/libfranka/build:/opt/openrobots/lib:\$LD_LIBRARY_PATH" >> "$VENV_DIR/bin/activate"
+    echo "export CMAKE_PREFIX_PATH=$ROS_CATKIN_PATH/libfranka/build:\$CMAKE_PREFIX_PATH" >> "$VENV_DIR/bin/activate"
+    echo "source /opt/ros/noetic/setup.bash" >> "$VENV_DIR/bin/activate"
+    echo "source $ROS_CATKIN_PATH/devel/setup.bash" >> "$VENV_DIR/bin/activate"
 }
 
 #=======================REASONING INSTALLER=======================
@@ -441,14 +514,12 @@ main() {
 
     case "$TARGET" in
         embodied)
-            if [ -z "$MODEL" ]; then
-                echo "--model is required when target=embodied. Supported models: ${SUPPORTED_MODELS[*]}" >&2
-                exit 1
-            fi
-            # validate model
-            if [[ ! " ${SUPPORTED_MODELS[*]} " =~ " $MODEL " ]]; then
-                echo "Unknown embodied model: $MODEL. Supported models: ${SUPPORTED_MODELS[*]}" >&2
-                exit 1
+            # validate --model
+            if [ -n "$MODEL" ]; then
+                if [[ ! " ${SUPPORTED_MODELS[*]} " =~ " $MODEL " ]]; then
+                    echo "Unknown embodied model: $MODEL. Supported models: ${SUPPORTED_MODELS[*]}" >&2
+                    exit 1
+                fi
             fi
             # check --env is set and supported
             if [ -n "$ENV_NAME" ]; then
@@ -473,6 +544,9 @@ main() {
                     ;;
                 gr00t)
                     install_gr00t_model
+                    ;;
+                "")
+                    install_env_only
                     ;;
             esac
             ;;

@@ -85,10 +85,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  channel:
-    name: "env_buffer_list"
-    queue_name: "obs_buffer"
-    queue_size: 0
   enable_offload: False
   # Override the default values in env/train or env/eval
   train:
@@ -116,11 +112,6 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "action_buffer"
-    queue_size: 0
-  mode: "colocate"
   generation_backend: "huggingface"
   recompute_logprobs: False
   unnorm_key: libero_10
@@ -130,12 +121,9 @@ rollout:
   model:
     model_path: "/path/to/model/RLinf-Pi0-ManiSkill-25Main-SFT"
     precision: ${actor.model.precision}
+
 actor:
   group_name: "ActorGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "replay_buffer"
-    queue_size: 0
   training_backend: "fsdp"
   micro_batch_size: 32      # how many samples each GPU processes per sampling step
   global_batch_size: 5120   # after how many sampled examples we perform one loss backward pass. Requirement: global bz must be '_world_size' multiples of local bs.
@@ -148,20 +136,11 @@ actor:
     precision: null    # bf16
     num_action_chunks: 5 # interface for the env
     action_dim: 7
-    is_lora: False
-    lora_rank: 32
-    use_proprio: True
-    num_steps: 4
     add_value_head: True
     # openpi specific parameters
     openpi:
       config_name: "pi0_maniskill"
       num_images_in_input: 1
-      noise_level: 0.5
-      action_chunk: ${actor.model.num_action_chunks}
-      num_steps: ${actor.model.num_steps}
-      train_expert_only: True
-      action_env_dim: ${actor.model.action_dim}
       noise_method: "flow_noise"
       action_horizon: 8
       noise_params: [0.16, 0.12, 200]

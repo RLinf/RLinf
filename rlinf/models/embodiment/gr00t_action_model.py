@@ -31,6 +31,7 @@ from gr00t.model.gr00t_n1 import GR00T_N1_5, GR00T_N1_5_Config
 from torch.distributions import Normal
 from transformers.feature_extraction_utils import BatchFeature
 
+from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.models.embodiment.gr00t.simulation_io import (
     ACTION_CONVERSION,
     OBS_CONVERSION,
@@ -390,7 +391,7 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
         )
 
 
-class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5):
+class GR00T_N1_5_ForRLActionPrediction(BasePolicy, GR00T_N1_5):
     """
     GR00T_N1_5 model for reinforcement learning action prediction.
     It's a combination of the Gr00tPolicy and GR00T_N1_5 model.
@@ -423,7 +424,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5):
         obs_converter_type: str = "libero",
         output_action_chunks: int = 1,
     ):
-        super().__init__(config, local_model_path)
+        GR00T_N1_5.__init__(self, config, local_model_path)
         # The param loading is after construction in from_pretrained(), so it should be safe to to so.
         action_head_cfg = FlowmatchingActionHeadConfig(**config.action_head_cfg)
         self.action_head = FlowMatchingActionHeadForRLActionPrediction(
@@ -454,7 +455,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5):
 
     def eval(self):
         self._modality_transform.eval()
-        super().eval()
+        GR00T_N1_5.eval(self)
 
     def _check_state_is_batched(self, obs: dict[str, Any]) -> bool:
         for k, v in obs.items():
@@ -462,7 +463,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5):
                 return False
         return True
 
-    def forward(
+    def default_forward(
         self,
         data: dict[str, torch.Tensor],
         compute_logprobs: bool = True,

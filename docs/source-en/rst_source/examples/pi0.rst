@@ -1,6 +1,11 @@
 RL on π\ :sub:`0`\  and π\ :sub:`0.5`\  Models
 ==================================================================
 
+.. |huggingface| image:: /_static/svg/hf-logo.svg
+   :width: 16px
+   :height: 16px
+   :class: inline-icon
+
 This example provides a complete guide to fine-tuning the 
 π\ :sub:`0`\  and π\ :sub:`0.5`\  algorithms with reinforcement learning
 using the **RLinf** framework. It covers the entire process—from
@@ -120,67 +125,90 @@ Before starting training, you need to download the corresponding pretrained mode
    # Download the Spatial-Object-Goal model (choose either method)
    # Method 1: Using git clone
    git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 
    # Method 2: Using huggingface-hub
    pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal --local-dir RLinf-Pi0-SFT-Spatial-Object-Goal
+   hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 
 Alternatively, you can download the model from ModelScope: https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal.
 
 Of course, RLinf also provides pretrained models for other environments. The model list is as follows:
 
-.. list-table:: **π**\ :sub:`0`\  **Pretrained Model List**
+.. list-table:: **π**\ :sub:`0`\  **Model List**
    :header-rows: 1
-   :widths: 15 30 50
+   :widths: 15 25 15 12 12
 
    * - Environment
      - Task Description
-     - HuggingFace Link
+     - SFT Model
+     - Flow-SDE
+     - Flow-Noise
 
    * - LIBERO
-     - Spatial, Object, Goal 
-     - `RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT>`__
+     - Spatial, Object, Goal
+     - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT>`__
+     - -
+     - -
 
    * - LIBERO
-     - Long 
-     - `RLinf-Pi0-LIBERO-Long-SFT <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Long-SFT>`__
+     - Long
+     - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Long-SFT>`__
+     - -
+     - -
 
    * - ManiSkill3
      - Multi-task
-     - `RLinf-Pi0-ManiSkill-25Main-SFT <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT>`__
+     - |huggingface| `38.4% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT>`__
+     - |huggingface| `78.8% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-RL-FlowSDE>`__
+     - |huggingface| `77.8% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-RL-FlowNoise>`__
 
    * - MetaWorld
      - MT50
-     - `RLinf-Pi0-MetaWorld-SFT <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT>`__
+     - |huggingface| `50.8% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT>`__
+     - |huggingface| `78.1% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-RL-FlowSDE>`__
+     - |huggingface| `85.8% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-RL-FlowNoise>`__
 
    * - CALVIN
      - ABC-D
-     - `RLinf-Pi0-CALVIN-ABC-D-SFT <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT>`__
+     - |huggingface| `57.5% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT>`__
+     - |huggingface| `61.7% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-RL-FlowSDE>`__
+     - |huggingface| `59.9% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-RL-FlowNoise>`__
 
-.. list-table:: **π**\ :sub:`0.5`\  **Pretrained Model List**
+.. list-table:: **π**\ :sub:`0.5`\  **Model List**
    :header-rows: 1
-   :widths: 15 30 50
+   :widths: 15 25 15 12 12
+   :align: left
 
    * - Environment
      - Task Description
-     - HuggingFace Link
+     - SFT Model
+     - Flow-SDE
+     - Flow-Noise
 
    * - LIBERO
      - Spatial, Object, Goal, Long
-     - `RLinf-Pi05-LIBERO-SFT <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__
+     - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__
+     - -
+     - -
 
    * - ManiSkill3
      - Multi-task
-     - `RLinf-Pi05-ManiSkill-25Main-SFT <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT>`__
+     - |huggingface| `40.1% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT>`__
+     - |huggingface| `90.9% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-RL-FlowSDE>`__
+     - |huggingface| `89.7% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-RL-FlowNoise>`__
 
    * - MetaWorld
      - MT50
-     - `RLinf-Pi05-MetaWorld-SFT <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT>`__
+     - |huggingface| `43.8% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT>`__
+     - |huggingface| `70.7% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-RL-FlowSDE>`__
+     - |huggingface| `66.1% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-RL-FlowNoise>`__
 
    * - CALVIN
      - ABC-D
-     - `RLinf-Pi05-CALVIN-ABC-D-SFT <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT>`__
+     - |huggingface| `61.3% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT>`__
+     - |huggingface| `87.0% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-RL-FlowSDE>`__
+     - |huggingface| `84.5% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-RL-FlowNoise>`__
 
 After downloading, please make sure to specify the model path correctly in your configuration file.
 
@@ -202,11 +230,10 @@ Running Scripts
       pipeline_stage_num: 2
 
 Here you can flexibly configure the GPU count for env, rollout, and
-actor components. Using the above configuration, you can achieve
-pipeline overlap between env and rollout, and sharing with actor.
+actor components.
 Additionally, by setting ``pipeline_stage_num = 2`` in the
 configuration, you can achieve pipeline overlap between rollout and
-actor, improving rollout efficiency.
+env, improving rollout efficiency.
 
 .. code:: yaml
 
@@ -289,6 +316,56 @@ For example, for complete parameter settings of flow-sde, please refer to ``libe
 
 If you want to use LoRA (Low-Rank Adaptation) to fine-tune the VLM part, please set ``is_lora: True`` and configure the ``lora_rank`` parameter. Note that gradient checkpointing is currently **not supported**, please keep ``gradient_checkpointing: False``.
 
+⭐ **2.4 Minimum Test Case** ⭐
+
+If you encounter OOM errors or want to implement a minimum test case with as few resources as possible, you can refer to ``libero_spatial_ppo_openpi_quickstart.yaml``.
+Compared to the standard task configuration, we have made the following modifications:
+
+.. code:: yaml
+
+   rollout_epoch: 8 -> 2
+   total_num_envs: 64 -> 32
+   micro_batch_size: 128 -> 64
+   global_batch_size: 2048 -> 256
+   lr: 5e-6 -> 1e-6
+   actor.enable_offload: False -> True
+   rollout.enable_offload: False -> True
+
+On 4 H100 GPUs, we compared the results of standard parameters and minimum test parameters, and found that their performance is almost the same at the same time: (minimum test parameters optimize faster per round, but converge slower)
+
+.. image:: https://github.com/user-attachments/assets/80d098f6-5286-4ff4-89be-547f43a4dc86
+   :alt: Minimum test case comparison
+   :width: 95%
+   :align: center
+
+If you still encounter OOM issues under the minimum parameter configuration, we provide the following solutions:
+
+**If OOM occurs during the rollout stage:**
+
+- Try replacing the rendering engine from ``egl`` to ``osmesa``
+- Further reduce ``total_num_envs`` from 32 to 16, but increase ``rollout_epoch`` from 2 to 4 to ensure the total number of environments per rollout round remains consistent
+- Check if actor's ``enable_offload`` is enabled, and set it to ``True`` if it is ``False``
+
+**If OOM occurs during the actor stage:**
+
+- Try reducing ``micro_batch_size`` from 64 to 32, keeping ``global_batch_size`` at 256
+- Check if rollout's ``enable_offload`` is enabled, and set it to ``True`` if it is ``False``
+
+.. note::
+
+   If you encounter a mismatch between ``micro_batch_size`` and ``global_batch_size``, ensure that ``global_batch_size`` is an integer multiple of ``micro_batch_size`` × number of GPUs.
+
+**2.5 Model Evaluation**
+
+For models after SFT or RL training, we provide two evaluation methods:
+
+- Use RLinf's unified evaluation script, refer to the `VLA Evaluation Documentation <https://rlinf.readthedocs.io/en/latest/rst_source/start/vla-eval.html>`__ for evaluation. This method supports parallel environment evaluation, which is fast, but only supports outputting the success rate of the entire task.
+
+.. note::
+
+   ``Metaworld`` and ``CALVIN`` currently do not support the evaluation mode with ``env.eval.auto_reset=True``. It is recommended to use individual script files for model evaluation.
+
+- Use individual script files for model evaluation, refer to the example `README.md <https://github.com/RLinf/RLinf/blob/main/toolkits/eval_scripts_openpi/README.md>`__. This method's evaluation scripts are consistent with the official evaluation scripts provided by ``openpi``, supporting output of success rates for each subtask, but it is slower.
 
 **3. Configuration Files**
 

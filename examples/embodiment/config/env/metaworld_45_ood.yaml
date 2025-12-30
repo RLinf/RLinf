@@ -1,4 +1,4 @@
-simulator_type: metaworld
+env_type: metaworld
 task_suite_name: metaworld_45_ood
 
 total_num_envs: null

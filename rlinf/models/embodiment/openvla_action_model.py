@@ -48,11 +48,12 @@ from transformers.tokenization_utils import (
 )
 from transformers.utils import TensorType
 
-from rlinf.models.embodiment.model_utils import (
+from rlinf.models.embodiment.base_policy import BasePolicy
+from rlinf.models.embodiment.modules.value_head import ValueHead
+from rlinf.utils.utils import (
     compute_entropy_from_logits,
     compute_logprobs_from_logits,
 )
-from rlinf.models.embodiment.modules.value_head import ValueHead
 
 
 class OpenVLAForBatchActionPrediction(OpenVLAForActionPrediction):
@@ -470,7 +471,7 @@ class VLALogitsProcessor(LogitsProcessor):
         return scores_processed
 
 
-class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
+class OpenVLAForRLActionPrediction(BasePolicy, OpenVLAForBatchActionPrediction):
     def __init__(
         self,
         config,
@@ -480,7 +481,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         num_action_chunks,
         add_value_head,
     ):
-        super().__init__(config)
+        OpenVLAForBatchActionPrediction.__init__(self, config)
         self._init_logits_processor()
 
         action_norm_stats = self.get_action_stats(unnorm_key)
@@ -504,7 +505,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         self.logits_processors = LogitsProcessorList()
         self.logits_processors.append(VLALogitsProcessor(self.config.n_action_bins))
 
-    def forward(
+    def default_forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -533,7 +534,8 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         if compute_values:
             output_hidden_states = True
 
-        outputs = super().forward(
+        outputs = OpenVLAForBatchActionPrediction.forward(
+            self=self,
             input_ids=input_ids,
             attention_mask=attention_mask,
             pixel_values=pixel_values,
@@ -563,11 +565,11 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
                 )  # since here is logprob instead of logits, we use 0 instead of -inf
                 processed_logits_tensor = logits_warper(None, processed_logits_tensor)
 
-            action_logits = processed_logits_tensor.permute(
-                0, 2, 1
-            )  # [B, vocab-size, action-dim]
-            action_logits[:, : self.vocab_size - self.config.n_action_bins] = -torch.inf
-            action_logits[:, self.vocab_size :] = -torch.inf
+            action_logits = processed_logits_tensor
+            action_logits[
+                ..., : self.vocab_size - self.config.n_action_bins
+            ] = -torch.inf
+            action_logits[..., self.vocab_size :] = -torch.inf
 
             logprobs = compute_logprobs_from_logits(
                 logits=action_logits, target=action_tokens
@@ -603,6 +605,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
         env_obs=None,
         calulate_logprobs=True,
         calulate_values=True,
+        return_obs=True,
         **kwargs,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         do_sample = kwargs.pop("do_sample")
@@ -612,7 +615,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
                 f"In: What action should the robot take to {t.lower()}?\nOut: "
                 for t in env_obs["task_descriptions"]
             ]
-            image_tensor = env_obs["full_images"].permute(
+            image_tensor = env_obs["main_images"].permute(
                 0, 3, 1, 2
             )  # [B, H, W, C] -> [B, C, H, W]
             if image_tensor.ndim == 4:
@@ -708,11 +711,9 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction):
             normalized_actions,
         )
 
-        action_logits = token_logits_tensor.permute(
-            0, 2, 1
-        )  # [B, vocab-size, action-dim]
-        action_logits[:, : self.vocab_size - self.config.n_action_bins] = -torch.inf
-        action_logits[:, self.vocab_size :] = -torch.inf
+        action_logits = token_logits_tensor
+        action_logits[..., : self.vocab_size - self.config.n_action_bins] = -torch.inf
+        action_logits[..., self.vocab_size :] = -torch.inf
 
         chunk_logprobs = compute_logprobs_from_logits(
             logits=action_logits, target=action_tokens

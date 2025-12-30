@@ -129,10 +129,11 @@ First start the Ray cluster, then run the helper script:
 
 .. code:: bash
 
+   export RANK=0  # set the rank of the current node
    cd /path_to_RLinf/ray_utils
-   bash start_ray.sh                 # start head + workers
+   bash start_ray.sh
 
    # return to repo root
-   bash examples/sft/train_embodied_sft.py --config libero_sft_openpi.yaml
+   bash examples/sft/train_embodied_sft.sh --config libero_sft_openpi
 
 The same script works for generic text SFT; just swap the config file.

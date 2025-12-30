@@ -128,11 +128,12 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
 
 .. code:: bash
 
+   export RANK=0  # set the rank of the current node
    cd /path_to_RLinf/ray_utils
-   bash start_ray.sh                 # 启动 head + workers
+   bash start_ray.sh
 
-   # 回到仓库根目录
-   bash examples/sft/train_embodied_sft.py --config libero_sft_openpi.yaml
+   # return to repo root
+   bash examples/sft/train_embodied_sft.sh --config libero_sft_openpi
 
 同一脚本也适用于通用文本 SFT，只需替换配置文件。
 

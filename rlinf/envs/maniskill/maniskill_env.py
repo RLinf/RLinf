@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import os
-from typing import Optional, Union
+from typing import Optional, OrderedDict, Union
 
 import gymnasium as gym
 import numpy as np
@@ -49,11 +49,18 @@ def extract_termination_from_info(info, num_envs, device):
 
 class ManiskillEnv(gym.Env):
     def __init__(
-        self, cfg, num_envs, seed_offset, total_num_processes, record_metrics=True
+        self,
+        cfg,
+        num_envs,
+        seed_offset,
+        total_num_processes,
+        worker_info,
+        record_metrics=True,
     ):
         env_seed = cfg.seed
         self.seed = env_seed + seed_offset
         self.total_num_processes = total_num_processes
+        self.worker_info = worker_info
         self.auto_reset = cfg.auto_reset
         self.use_rel_reward = cfg.use_rel_reward
         self.ignore_terminations = cfg.ignore_terminations
@@ -130,8 +137,34 @@ class ManiskillEnv(gym.Env):
         ).to(self.device)
 
     def _wrap_obs(self, raw_obs):
-        if self.env.unwrapped.obs_mode == "state":
-            wrapped_obs = {"states": raw_obs}
+        if getattr(self.cfg, "wrap_obs_mode", "vla") == "simple":
+            if self.env.unwrapped.obs_mode == "state":
+                wrapped_obs = {
+                    "states": raw_obs,
+                }
+            elif self.env.unwrapped.obs_mode == "rgb":
+                sensor_data = raw_obs.pop("sensor_data")
+                raw_obs.pop("sensor_param")
+                state = common.flatten_state_dict(
+                    raw_obs, use_torch=True, device=self.device
+                )
+
+                main_images = sensor_data["base_camera"]["rgb"]
+                sorted_images = OrderedDict(sorted(sensor_data.items()))
+                sorted_images.pop("base_camera")
+                extra_view_images = (
+                    torch.stack([v["rgb"] for v in sorted_images.values()], dim=1)
+                    if sorted_images
+                    else None
+                )
+
+                wrapped_obs = {
+                    "main_images": main_images,
+                    "extra_view_images": extra_view_images,
+                    "states": state,
+                }
+            else:
+                raise NotImplementedError
         else:
             wrapped_obs = self._extract_obs_image(raw_obs)
         return wrapped_obs
@@ -144,7 +177,7 @@ class ManiskillEnv(gym.Env):
             obs_image.device, dtype=torch.float32
         )
         extracted_obs = {
-            "full_images": obs_image,
+            "main_images": obs_image,
             "states": proprioception,
             "task_descriptions": self.instruction,
         }
@@ -152,13 +185,14 @@ class ManiskillEnv(gym.Env):
 
     def _calc_step_reward(self, reward, info):
         if getattr(self.cfg, "reward_mode", "default") == "raw":
-            return reward
-        reward = torch.zeros(self.num_envs, dtype=torch.float32).to(
-            self.env.unwrapped.device
-        )  # [B, ]
-        reward += info["is_src_obj_grasped"] * 0.1
-        reward += info["consecutive_grasp"] * 0.1
-        reward += (info["success"] & info["is_src_obj_grasped"]) * 1.0
+            pass
+        else:
+            reward = torch.zeros(self.num_envs, dtype=torch.float32).to(
+                self.env.unwrapped.device
+            )  # [B, ]
+            reward += info["is_src_obj_grasped"] * 0.1
+            reward += info["consecutive_grasp"] * 0.1
+            reward += (info["success"] & info["is_src_obj_grasped"]) * 1.0
         # diff
         reward_diff = reward - self.prev_step_reward
         self.prev_step_reward = reward
@@ -378,7 +412,7 @@ class ManiskillEnv(gym.Env):
 
     def add_new_frames_from_obs(self, raw_obs):
         """For debugging render"""
-        raw_imgs = common.to_numpy(raw_obs["full_images"])
+        raw_imgs = common.to_numpy(raw_obs["main_images"])
         raw_full_img = tile_images(raw_imgs, nrows=int(np.sqrt(self.num_envs)))
         self.render_images.append(raw_full_img)
 

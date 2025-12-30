@@ -1,4 +1,4 @@
-simulator_type: robotwin
+env_type: robotwin
 total_num_envs: null
 auto_reset: False
 ignore_terminations: False

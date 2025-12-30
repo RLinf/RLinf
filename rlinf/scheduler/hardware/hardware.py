@@ -149,6 +149,10 @@ class Hardware:
         def hardware_policy_decorator(
             policy: type["Hardware" | HardwareType],
         ) -> type[HardwareType]:
+            if policy.HW_TYPE in cls.hw_types:
+                raise ValueError(
+                    f"Hardware type {policy.HW_TYPE} is already registered."
+                )
             cls.hw_types.add(policy.HW_TYPE)
             cls.policy_registry.append(policy)
             if is_default_hw:

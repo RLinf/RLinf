@@ -923,7 +923,7 @@ rollout
 
 ``rollout.backend``: Model backend (huggingface, vllm).
 
-``rollout.pipeline_stage_num``: Number of pipeline stages for model parallelism.
+``rollout.pipeline_stage_num``: Number of pipeline stages for rollout.
 
 actor
 ~~~~~~~~~~~~~~~
@@ -1085,10 +1085,10 @@ The path is
 
 .. code:: yaml
 
-  simulator_type: libero
+  env_type: libero
   task_suite_name: libero_10
 
-``simulator_type``: Specifies the simulator type (libero for Libero benchmark).
+``env_type``: Specifies the simulator type (libero for Libero benchmark).
 
 ``task_suite_name``: Specifies the task suite (libero_10 for 10-task benchmark).
 
@@ -1129,7 +1129,7 @@ The path is
 
 ``group_size``: Number of environments per group (inherits from algorithm.group_size).
 
-``use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO (inherits from algorithm.use_fixed_reset_state_ids).
+``use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO.
 
 **Environment Scaling**
 

@@ -12,6 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .franka import FrankaConfig
+from .franka import FrankaConfig, FrankaHWInfo
 
-__all__ = ["FrankaConfig"]
+__all__ = ["FrankaConfig", "FrankaHWInfo"]

@@ -26,7 +26,7 @@ def convert_libero_obs_to_gr00t_format(env_obs):
     groot_obs = {}
 
     # [B, H, W, C] -> [B, T, H, W, C]
-    groot_obs["video.image"] = env_obs["full_images"].unsqueeze(1).numpy()
+    groot_obs["video.image"] = env_obs["main_images"].unsqueeze(1).numpy()
     groot_obs["video.wrist_image"] = env_obs["wrist_images"].unsqueeze(1).numpy()
     # [B, 8] -> [B, T(1), 8]
     groot_obs["state.x"] = env_obs["states"].unsqueeze(1)[:, :, 0:1].numpy()
@@ -51,20 +51,20 @@ def convert_maniskill_obs_to_gr00t_format(env_obs):
     # video
     # TODO(lx): If we have a dataset on maniskill, resize can be avoided.
     # But now we have to resize images to libero data version.
-    env_obs["full_images"] = cut_and_resize_images(
-        env_obs["full_images"],
-        env_obs["full_images"].shape[-3],  # H
+    env_obs["main_images"] = cut_and_resize_images(
+        env_obs["main_images"],
+        env_obs["main_images"].shape[-3],  # H
         256,
     )
     # [B, H, W, C] -> [B, T, H, W, C]
-    groot_obs["video.ego_view"] = env_obs["full_images"].unsqueeze(1).numpy()
+    groot_obs["video.ego_view"] = env_obs["main_images"].unsqueeze(1).numpy()
     # state
     if "state" in env_obs:
         raise NotImplementedError("State from simulation are not unified yet.")
     else:
         # gr00t pad the state to input dimension
         # create state of [B, T, C]
-        groot_obs["state.left_arm"] = np.zeros((env_obs["full_images"].shape[0], 1, 7))
+        groot_obs["state.left_arm"] = np.zeros((env_obs["main_images"].shape[0], 1, 7))
     # annotation
     groot_obs["annotation.human.action.task_description"] = env_obs["task_descriptions"]
     return groot_obs

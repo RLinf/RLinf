@@ -1,10 +1,6 @@
 name: CI Test
 
 on:
-  push:
-    branches:
-      - "release/v[0-9]*.[0-9]*"
-      - main
   pull_request:
     branches:
       - "release/v[0-9]*.[0-9]*"
@@ -68,6 +64,8 @@ jobs:
               - '.github/workflows/docker-build.yml'
             shared_filter: &shared
               - *install
+              - 'rlinf/data/**'
+              - 'rlinf/algorithms/**'
               - 'rlinf/scheduler/**'
               - 'rlinf/utils/**'
               - 'rlinf/workers/actor/**'
@@ -86,7 +84,7 @@ jobs:
               - 'rlinf/workers/env/**'
               - 'rlinf/models/embodiment/**'
               - 'rlinf/models/worldmodel/**'
-              - 'rlinf/runners/embodied_*.py'
+              - 'rlinf/runners/*embodied*.py'
               - 'examples/embodiment/**'
               - 'tests/e2e_tests/embodied/**'
               - '.github/workflows/embodied-e2e-tests.yml'

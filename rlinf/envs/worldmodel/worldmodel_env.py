@@ -21,13 +21,13 @@ import torch
 from mani_skill.utils import common
 from mani_skill.utils.common import torch_clone_dict
 from mani_skill.utils.structs.types import Array
-from mani_skill.utils.visualization.misc import (
+from omegaconf.omegaconf import OmegaConf
+
+from rlinf.envs.utils import (
     images_to_video,
     put_info_on_image,
     tile_images,
 )
-from omegaconf.omegaconf import OmegaConf
-
 from rlinf.envs.worldmodel.dataset import LeRobotDatasetWrapper
 from rlinf.models.worldmodel.base_fake_model import BaseFakeModelInference
 

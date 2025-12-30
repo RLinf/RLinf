@@ -44,10 +44,11 @@ if not getattr(metaworld, "_has_registered_mw_envs", False):
 
 
 class MetaWorldEnv(gym.Env):
-    def __init__(self, cfg, num_envs, seed_offset, total_num_processes):
+    def __init__(self, cfg, num_envs, seed_offset, total_num_processes, worker_info):
         self.seed_offset = seed_offset
         self.cfg = cfg
         self.total_num_processes = total_num_processes
+        self.worker_info = worker_info
         self.seed = self.cfg.seed + seed_offset
         self._is_start = True
         self.num_envs = num_envs
@@ -271,7 +272,7 @@ class MetaWorldEnv(gym.Env):
         states = images_and_states["state"]
 
         obs = {
-            "full_images": full_image_tensor,
+            "main_images": full_image_tensor,
             "states": states,
             "task_descriptions": self.task_descriptions,
         }
@@ -454,7 +455,7 @@ class MetaWorldEnv(gym.Env):
 
     def add_new_frames(self, obs, plot_infos):
         images = []
-        obs_batch = obs["full_images"]
+        obs_batch = obs["main_images"]
         for env_id in range(obs_batch.shape[0]):
             info_item = {
                 k: v if np.size(v) == 1 else v[env_id] for k, v in plot_infos.items()

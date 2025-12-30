@@ -18,6 +18,7 @@ from functools import partial
 import numpy as np
 import torch
 from omegaconf import DictConfig
+from torch import nn
 from torch.distributed.tensor import DTensor
 from torch.multiprocessing.reductions import reduce_tensor
 
@@ -44,6 +45,11 @@ from rlinf.utils.metric_utils import (
     compute_rollout_metrics,
     compute_split_num,
 )
+from rlinf.utils.nested_dict_process import (
+    cat_list_of_dict_tensor,
+    put_tensor_device,
+    split_dict_to_chunk,
+)
 from rlinf.utils.placement import (
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
@@ -59,6 +65,67 @@ from rlinf.utils.utils import (
     retrieve_model_state_dict_in_cpu,
 )
 from rlinf.workers.rollout.utils import RankMapper
+
+
+def process_nested_dict_for_adv(nested_dict, rollout_epoch):
+    """
+    original shape: [rollout_epoch x n_chunk_steps, bsz, num_action_chunks, ...]
+    target shape: [n_chunk_steps, rollout_epoch x bsz, num_action_chunks, ...]
+    """
+    ret_dict = {}
+    for key, value in nested_dict.items():
+        if isinstance(value, torch.Tensor):
+            new_value = value.reshape(
+                rollout_epoch, -1, *value.shape[1:]
+            )  # [rollout_epoch, n_chunk_step, bsz, ...]
+            new_value = new_value.transpose(
+                0, 1
+            )  # [n_chunk_step, rollout_epoch, bsz, ...]
+            new_value = new_value.reshape(new_value.shape[0], -1, *new_value.shape[3:])
+            ret_dict[key] = new_value
+        elif isinstance(value, dict):
+            ret_dict[key] = process_nested_dict_for_adv(value, rollout_epoch)
+    return ret_dict
+
+
+def process_nested_dict_for_train(nested_dict, shuffle_id):
+    ret_dict = {}
+    for key, value in nested_dict.items():
+        if key in ["dones", "terminations", "truncations", "prev_values"]:
+            value = value[:-1]
+        if "env_info" in key:
+            raise NotImplementedError
+        if value is None:
+            ret_dict[key] = None
+        if isinstance(value, torch.Tensor):
+            ret_dict[key] = value.reshape(-1, *value.shape[2:])[shuffle_id]
+        elif isinstance(value, dict):
+            ret_dict[key] = process_nested_dict_for_train(value, shuffle_id)
+    return ret_dict
+
+
+def get_nested_k_split_for_specific_keys(nested_dict, num_splits, key_list):
+    """
+    Get k-split iterator for some keys in nested_dict.
+    """
+    extra_dict = {}
+    for key in key_list:
+        if key not in nested_dict.keys():
+            continue
+        value = nested_dict[key]
+        if isinstance(value, dict):
+            extra_dict[key] = split_dict_to_chunk(value, num_splits)
+        elif isinstance(value, torch.Tensor):
+            continue
+        else:
+            raise NotImplementedError(
+                f"Only support dict and tensor type, but got {type(value)}"
+            )
+    # {key1: [d1, d2, ...], key2: [d1, d2, ...]} -> [{key1: d1, key2: d1}, {key1: d2, key2: d2}, ...]
+    extra_list = [
+        {k: extra_dict[k][i] for k in extra_dict.keys()} for i in range(num_splits)
+    ]
+    return extra_list
 
 
 class FSDPActor(FSDPModelManager, Worker):
@@ -114,6 +181,7 @@ class FSDPActor(FSDPModelManager, Worker):
         self.micro_batch_size = self.cfg.actor.micro_batch_size
         self.n_mini_batches = self.cfg.algorithm.n_minibatches
         self.task_type = self.cfg.runner.task_type
+        self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "liger_kernel")
 
     def init_worker(self) -> None:
         """
@@ -293,7 +361,9 @@ class FSDPActor(FSDPModelManager, Worker):
         logits = logits / self.cfg.algorithm.sampling_params.temperature
 
         responses = input_ids[:, -self.response_len :]
-        logprobs = compute_logprobs_from_logits(logits, responses)
+        logprobs = compute_logprobs_from_logits(
+            logits=logits, target=responses, op_type=self.entropy_op_type
+        )
         return logprobs
 
     def run_inference(
@@ -433,7 +503,9 @@ class FSDPActor(FSDPModelManager, Worker):
                 logits = logits[
                     :, -self.response_len - 1 : -1, :
                 ]  # (bsz, response_length, vocab_size)
-                logprobs = compute_logprobs_from_logits(logits, responses)
+                logprobs = compute_logprobs_from_logits(
+                    logits, responses, self.entropy_op_type
+                )
 
                 if self.cfg.algorithm.get("importance_sampling_fix", False):
                     rollout_prev_logprobs = prev_logprobs
@@ -660,31 +732,53 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self._env_group_name = cfg.env.group_name
         self._rollout_group_name = cfg.rollout.group_name
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
-        self._weight_dst_rank_in_rollout = self._rank
-        if self._weight_dst_rank_in_rollout >= self._component_placement.get_world_size(
-            "rollout"
-        ):
-            self._weight_dst_rank_in_rollout = None
 
         # stage_num: default to 2, use for pipeline rollout process
         self.stage_num = cfg.rollout.pipeline_stage_num
 
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
+        self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "torch")
 
-    def init_worker(self):
+    def _setup_rollout_weight_dst_ranks(self) -> None:
+        """
+        Setup destination ranks for weight communication.
+        It can support any topology between actor and rollout workers.
+        Assuming there are M actor ranks and N rollout ranks, each actor rank
+        will send weights to most ceil(N/M) rollout ranks according to the modulo rule.
+        """
+        rollout_world_size = self._component_placement.get_world_size("rollout")
+        actor_world_size = self._world_size
+        rank = self._rank
+        self._weight_dst_rank_in_rollout = []
+        rollout_ranks_per_actor = (
+            rollout_world_size + actor_world_size - 1
+        ) // actor_world_size
+        for i in range(rollout_ranks_per_actor):
+            if i * actor_world_size + rank < rollout_world_size:
+                self._weight_dst_rank_in_rollout.append(i * actor_world_size + rank)
+
+    def init_worker(self) -> None:
+        """
+        Initialize the actor worker. build the model and use corresponding training backend,
+        if needed, offload model parameters and optimizer states to CPU.
+        """
         self.setup_model_and_optimizer()
 
         if self.enable_offload:
             self.offload_param_and_grad()
             self.offload_optimizer()
+        self._setup_rollout_weight_dst_ranks()
 
-    def model_provider_func(self):
+    def model_provider_func(self) -> nn.Module:
         model = get_model(self.cfg.actor.model)
         if model is not None:
             return model
         return super().model_provider_func()
 
-    def sync_model_to_rollout(self):
+    def sync_model_to_rollout(self) -> None:
+        """
+        Sync the model's full state dict to the rollout worker.
+        """
         if self.enable_offload and not self.is_optimizer_offloaded:
             self.offload_optimizer()
 
@@ -692,11 +786,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self.load_param_and_grad(self.device)
 
         state_dict = self.get_model_state_dict(cpu_offload=False, full_state_dict=True)
-        if self._weight_dst_rank_in_rollout is not None:
+        for rank in self._weight_dst_rank_in_rollout:
             self.send(
                 state_dict,
                 self._rollout_group_name,
-                self._weight_dst_rank_in_rollout,
+                rank,
                 async_op=True,
             )
         if self.enable_offload and not self.is_weight_offloaded:
@@ -705,6 +799,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
     def recv_rollout_batch(self, input_channel: Channel) -> None:
         """
         Receive rollout batch from rollout workers.
+
+        Args:
+            input_channel: The input channel to read from.
         """
         send_num = self._component_placement.get_world_size("rollout") * self.stage_num
         recv_num = self._component_placement.get_world_size("actor")
@@ -716,10 +813,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             recv_list.append(input_channel.get())
 
         # shape [num_chunk, bsz, chunk_size], cat dim 1
-        for key in recv_list[0].keys():
-            self.rollout_batch[key] = torch.cat(
-                [recv_list[i][key] for i in range(split_num)], dim=1
-            )
+        self.rollout_batch = cat_list_of_dict_tensor(recv_list, dim=1)
 
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
 
@@ -731,15 +825,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         target shape: [n_chunk_steps, rollout_epoch x bsz, num_action_chunks, ...]
         """
         rollout_epoch = self.cfg.algorithm.rollout_epoch
-        for key, value in rollout_batch.items():
-            new_value = value.reshape(
-                rollout_epoch, -1, *value.shape[1:]
-            )  # [rollout_epoch, n_chunk_step, bsz, ...]
-            new_value = new_value.transpose(
-                0, 1
-            )  # [n_chunk_step, rollout_epoch, bsz, ...]
-            new_value = new_value.reshape(new_value.shape[0], -1, *new_value.shape[3:])
-            rollout_batch[key] = new_value
+        rollout_batch = process_nested_dict_for_adv(rollout_batch, rollout_epoch)
 
         if (
             not self.cfg.env.train.auto_reset
@@ -762,7 +848,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             rewards = rollout_batch[
                 "rewards"
             ]  # [n_chunk_step, batch, num_action_chunks]
-            if self.rollout_batch.get("loss_mask", None) is not None:
+            if rollout_batch.get("loss_mask", None) is not None:
                 rewards = rewards * rollout_batch["loss_mask"]
             n_chunk_step, batch_size, num_action_chunks = rewards.shape
 
@@ -799,16 +885,19 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             )  # [n_chunk_step, batch, 1]
 
             # update loss_mask
-            if self.rollout_batch.get("loss_mask", None) is not None:
+            if rollout_batch.get("loss_mask", None) is not None:
                 rollout_batch["loss_mask"] = (
-                    reward_filter_mask & self.rollout_batch["loss_mask"]
+                    reward_filter_mask & rollout_batch["loss_mask"]
                 )
             else:
                 rollout_batch["loss_mask"] = reward_filter_mask
 
         return rollout_batch
 
-    def compute_advantages_and_returns(self):
+    def compute_advantages_and_returns(self) -> dict[str, torch.Tensor]:
+        """
+        Compute the advantages and returns.
+        """
         kwargs = {
             "task_type": self.cfg.runner.task_type,
             "adv_type": self.cfg.algorithm.adv_type,
@@ -834,7 +923,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
         return rollout_metrics
 
-    def run_training(self):
+    def run_training(self) -> None:
+        """
+        Run the training process using the received rollout batch.
+        """
         if self.is_weight_offloaded:
             self.load_param_and_grad(self.device)
         if self.is_optimizer_offloaded:
@@ -850,15 +942,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         shuffle_id = torch.randperm(rollout_size, generator=g)
 
         with torch.no_grad():
-            for key, value in self.rollout_batch.items():
-                if key in ["dones", "prev_values"]:
-                    value = value[:-1]
-                if "env_info" in key:
-                    continue
-                if value is None:
-                    continue
-                value = value.reshape(rollout_size, *value.shape[2:])
-                self.rollout_batch[key] = value[shuffle_id]
+            self.rollout_batch = process_nested_dict_for_train(
+                self.rollout_batch, shuffle_id
+            )
 
         assert (
             self.cfg.actor.global_batch_size
@@ -897,6 +983,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 assert train_global_batch_size % self.cfg.actor.micro_batch_size == 0, (
                     f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size}"
                 )
+
                 train_micro_batch = get_iterator_k_split(
                     train_global_batch,
                     train_global_batch_size // self.cfg.actor.micro_batch_size,
@@ -904,8 +991,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
                 self.optimizer.zero_grad()
                 for idx, data in enumerate(train_micro_batch):
-                    for k, v in data.items():
-                        data[k] = v.to(f"cuda:{int(os.environ['LOCAL_RANK'])}")
+                    data = put_tensor_device(
+                        data, f"cuda:{int(os.environ['LOCAL_RANK'])}"
+                    )
                     backward_ctx = self.before_micro_batch(
                         self.model,
                         is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
@@ -1012,6 +1100,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return mean_metric_dict
 
-    def set_global_step(self, global_step):
+    def set_global_step(self, global_step) -> None:
+        """
+        Set the global step for the model, if needed.
+        """
         if hasattr(self.model, "set_global_step"):
             self.model.set_global_step(global_step)

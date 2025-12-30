@@ -20,7 +20,7 @@ from .hardware import (
     HardwareResource,
     NodeHardwareConfig,
 )
-from .robots import FrankaConfig
+from .robots import FrankaConfig, FrankaHWInfo
 
 __all__ = [
     "AcceleratorUtil",
@@ -32,4 +32,5 @@ __all__ = [
     "HardwareResource",
     "NodeHardwareConfig",
     "FrankaConfig",
+    "FrankaHWInfo",
 ]

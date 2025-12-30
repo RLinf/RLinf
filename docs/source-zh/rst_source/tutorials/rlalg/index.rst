@@ -10,7 +10,10 @@
 - :doc:`近端策略优化 (PPO) <ppo>`  
 - :doc:`组相对策略优化 (GRPO) <grpo>`  
 - :doc:`解耦裁剪与动态采样策略优化 (DAPO) <dapo>`  
-- :doc:`REINFORCE++ <reinforce>`  
+- :doc:`REINFORCE++ <reinforce>` 
+- :doc:`SAC <sac>` 
+- :doc:`Cross-Q <crossq>` 
+- :doc:`RLPD <rlpd>`
 
 我们会持续扩展未来版本中支持的算法，敬请期待后续的更新！  
 
@@ -22,3 +25,6 @@
    grpo
    dapo
    reinforce
+   sac
+   crossq
+   rlpd

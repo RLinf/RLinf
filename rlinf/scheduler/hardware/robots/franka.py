@@ -96,6 +96,8 @@ class FrankaRobot(Hardware):
                         count=cls.ROBOT_PING_COUNT,
                         timeout=cls.ROBOT_PING_TIMEOUT,
                     )
+                    if not response.is_alive:
+                        raise ConnectionError
                 except ConnectionError as e:
                     raise ConnectionError(
                         f"Cannot reach Franka robot at IP {config.robot_ip} from node rank {node_rank}. Error: {e}"
@@ -108,10 +110,6 @@ class FrankaRobot(Hardware):
                 except Exception as e:
                     warnings.warn(
                         f"An unexpected error occurred while pinging Franka robot at IP {config.robot_ip} from node rank {node_rank}. Ignoring the ping test. Error: {e}"
-                    )
-                if not response.is_alive:
-                    raise ConnectionError(
-                        f"Cannot reach Franka robot at IP {config.robot_ip} from node rank {node_rank}."
                     )
 
                 # Validate camera serials

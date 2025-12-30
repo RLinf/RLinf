@@ -867,7 +867,7 @@ rollout
 
 ``rollout.backend``：模型后端（huggingface、vllm）。  
 
-``rollout.pipeline_stage_num``：模型并行的流水线阶段数。
+``rollout.pipeline_stage_num``：rollout 的流水线阶段数。
 
 actor
 ~~~~~~~~~~~~~~~
@@ -1016,10 +1016,10 @@ actor
 
 .. code:: yaml
 
-  simulator_type: libero
+  env_type: libero
   task_suite_name: libero_10
 
-``simulator_type``：模拟器类型（libero 表示 Libero 基准）。  
+``env_type``：模拟器类型（libero 表示 Libero 基准）。  
 
 ``task_suite_name``：任务集合（libero_10 表示 10 个任务的基准）。
 

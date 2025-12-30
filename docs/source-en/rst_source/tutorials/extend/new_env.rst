@@ -181,14 +181,14 @@ Add action processing utilities in ``action_utils.py``:
        pass
 
    def prepare_actions(
-       simulator_type,
+       env_type,
        raw_chunk_actions,
        num_action_chunks,
        action_dim,
        action_scale: float = 1.0,
        policy: str = "default",
    ):
-       if simulator_type == "your_env":
+       if env_type == "your_env":
            chunk_actions = prepare_actions_for_your_env(
                raw_chunk_actions=raw_chunk_actions,
                num_action_chunks=num_action_chunks,

@@ -133,9 +133,8 @@
    rollout:
       pipeline_stage_num: 2
 
-你可以灵活配置 env、rollout、actor 三个组件使用的 GPU 数量。  
-使用上述配置，可以让 env 与 rollout 之间流水线重叠，并与 actor 共享。  
-此外，在配置中设置 `pipeline_stage_num = 2`，可实现 **rollout 与 actor** 之间的流水线重叠，从而提升 rollout 效率。
+你可以灵活配置 env、rollout、actor 三个组件使用的 GPU 数量。   
+此外，在配置中设置 `pipeline_stage_num = 2`，可实现 **rollout 与 env** 之间的流水线重叠，从而提升 rollout 效率。
 
 .. code-block:: yaml
    

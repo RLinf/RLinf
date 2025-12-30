@@ -34,11 +34,16 @@ class EnvWorker(Worker):
         self.cfg = cfg
         self.train_video_cnt = 0
         self.eval_video_cnt = 0
+        self.should_stop = False
 
-        self.simulator_list = []
+        self.env_list: list[EnvManager] = []
+        self.eval_env_list: list[EnvManager] = []
+
         self.last_obs_list = []
         self.last_dones_list = []
-        self.eval_simulator_list = []
+        self.last_terminations_list = []
+        self.last_truncations_list = []
+        self.last_intervened_info_list = []
 
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
         assert (
@@ -68,14 +73,16 @@ class EnvWorker(Worker):
     def init_worker(self):
         enable_offload = self.cfg.env.enable_offload
 
-        train_env_cls = get_env_cls(
-            self.cfg.env.train.simulator_type, self.cfg.env.train
-        )
-        eval_env_cls = get_env_cls(self.cfg.env.eval.simulator_type, self.cfg.env.eval)
+        train_env_cls = get_env_cls(self.cfg.env.train.env_type, self.cfg.env.train)
+        eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
+
+        # This is a barrier to ensure all envs' initial setup upon import is done
+        # Essential for RealWorld env to ensure initial ROS node setup is done
+        self.broadcast(True, list(range(self._world_size)))
 
         if not self.only_eval:
             for stage_id in range(self.stage_num):
-                self.simulator_list.append(
+                self.env_list.append(
                     EnvManager(
                         self.cfg.env.train,
                         rank=self._rank,
@@ -83,12 +90,13 @@ class EnvWorker(Worker):
                         seed_offset=self._rank * self.stage_num + stage_id,
                         total_num_processes=self._world_size * self.stage_num,
                         env_cls=train_env_cls,
+                        worker_info=self.worker_info,
                         enable_offload=enable_offload,
                     )
                 )
         if self.enable_eval:
             for stage_id in range(self.stage_num):
-                self.eval_simulator_list.append(
+                self.eval_env_list.append(
                     EnvManager(
                         self.cfg.env.eval,
                         rank=self._rank,
@@ -96,18 +104,19 @@ class EnvWorker(Worker):
                         seed_offset=self._rank * self.stage_num + stage_id,
                         total_num_processes=self._world_size * self.stage_num,
                         env_cls=eval_env_cls,
+                        worker_info=self.worker_info,
                         enable_offload=enable_offload,
                     )
                 )
 
         if not self.only_eval:
-            self._init_simulator()
+            self._init_env()
 
-    def _init_simulator(self):
+    def _init_env(self):
         if self.cfg.env.train.auto_reset:
             for i in range(self.stage_num):
-                self.simulator_list[i].start_simulator()
-                extracted_obs, _ = self.simulator_list[i].reset()
+                self.env_list[i].start_env()
+                extracted_obs, _ = self.env_list[i].reset()
                 dones = (
                     torch.zeros((self.train_num_envs_per_stage,), dtype=bool)
                     .unsqueeze(1)
@@ -115,7 +124,10 @@ class EnvWorker(Worker):
                 )
                 self.last_obs_list.append(extracted_obs)
                 self.last_dones_list.append(dones)
-                self.simulator_list[i].stop_simulator()
+                self.last_terminations_list.append(dones.clone())
+                self.last_truncations_list.append(dones.clone())
+                self.last_intervened_info_list.append((None, None))
+                self.env_list[i].stop_env()
 
     def env_interact_step(
         self, chunk_actions: torch.Tensor, stage_id: int
@@ -125,7 +137,7 @@ class EnvWorker(Worker):
         """
         chunk_actions = prepare_actions(
             raw_chunk_actions=chunk_actions,
-            simulator_type=self.cfg.env.train.simulator_type,
+            env_type=self.cfg.env.train.env_type,
             model_type=self.cfg.actor.model.model_type,
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
             action_dim=self.cfg.actor.model.action_dim,
@@ -134,7 +146,7 @@ class EnvWorker(Worker):
         env_info = {}
 
         extracted_obs, chunk_rewards, chunk_terminations, chunk_truncations, infos = (
-            self.simulator_list[stage_id].chunk_step(chunk_actions)
+            self.env_list[stage_id].chunk_step(chunk_actions)
         )
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
         if not self.cfg.env.train.auto_reset:
@@ -154,6 +166,15 @@ class EnvWorker(Worker):
                 for key in final_info["episode"]:
                     env_info[key] = final_info["episode"][key][chunk_dones[:, -1]].cpu()
 
+        intervene_actions = (
+            infos["intervene_action"] if "intervene_action" in infos else None
+        )
+        intervene_flags = infos["intervene_flag"] if "intervene_flag" in infos else None
+        if self.cfg.env.train.auto_reset and chunk_dones.any():
+            if "intervene_action" in infos["final_info"]:
+                intervene_actions = infos["final_info"]["intervene_action"]
+                intervene_flags = infos["final_info"]["intervene_flag"]
+
         env_output = EnvOutput(
             obs=extracted_obs,
             final_obs=infos["final_observation"]
@@ -161,6 +182,10 @@ class EnvWorker(Worker):
             else None,
             rewards=chunk_rewards,
             dones=chunk_dones,
+            terminations=chunk_terminations,
+            truncations=chunk_truncations,
+            intervene_actions=intervene_actions,
+            intervene_flags=intervene_flags,
         )
         return env_output, env_info
 
@@ -172,7 +197,7 @@ class EnvWorker(Worker):
         """
         chunk_actions = prepare_actions(
             raw_chunk_actions=raw_actions,
-            simulator_type=self.cfg.env.train.simulator_type,
+            env_type=self.cfg.env.train.env_type,
             model_type=self.cfg.actor.model.model_type,
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
             action_dim=self.cfg.actor.model.action_dim,
@@ -181,7 +206,7 @@ class EnvWorker(Worker):
         env_info = {}
 
         extracted_obs, chunk_rewards, chunk_terminations, chunk_truncations, infos = (
-            self.eval_simulator_list[stage_id].chunk_step(chunk_actions)
+            self.eval_env_list[stage_id].chunk_step(chunk_actions)
         )
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
 
@@ -202,12 +227,13 @@ class EnvWorker(Worker):
         )
         return env_output, env_info
 
-    def recv_chunk_actions(self, input_channel: Channel) -> np.ndarray:
+    def recv_chunk_actions(self, input_channel: Channel, mode="train") -> np.ndarray:
+        assert mode in ["train", "eval"], f"{mode=} is not supported"
         chunk_action = []
         for gather_id in range(self.gather_num):
             chunk_action.append(
                 input_channel.get(
-                    key=f"{gather_id + self._rank * self.gather_num}",
+                    key=f"{gather_id + self._rank * self.gather_num}_{mode}",
                 )
             )
         chunk_action = np.concatenate(chunk_action, axis=0)
@@ -218,16 +244,16 @@ class EnvWorker(Worker):
         if mode == "train":
             if self.cfg.env.train.video_cfg.save_video:
                 for i in range(self.stage_num):
-                    self.simulator_list[i].flush_video()
+                    self.env_list[i].flush_video()
             for i in range(self.stage_num):
-                self.simulator_list[i].update_reset_state_ids()
+                self.env_list[i].update_reset_state_ids()
         elif mode == "eval":
             if self.cfg.env.eval.video_cfg.save_video:
                 for i in range(self.stage_num):
-                    self.eval_simulator_list[i].flush_video()
+                    self.eval_env_list[i].flush_video()
             if not self.cfg.env.eval.auto_reset:
                 for i in range(self.stage_num):
-                    self.eval_simulator_list[i].update_reset_state_ids()
+                    self.eval_env_list[i].update_reset_state_ids()
 
     def split_env_batch(self, env_batch, gather_id, mode):
         env_batch_i = {}
@@ -261,16 +287,17 @@ class EnvWorker(Worker):
 
     def send_env_batch(self, output_channel: Channel, env_batch, mode="train"):
         # split env_batch into num_processes chunks, each chunk contains gather_num env_batch
+        assert mode in ["train", "eval"], f"{mode=} is not supported"
         for gather_id in range(self.gather_num):
             env_batch_i = self.split_env_batch(env_batch, gather_id, mode)
             output_channel.put(
                 item=env_batch_i,
-                key=f"{gather_id + self._rank * self.gather_num}",
+                key=f"{gather_id + self._rank * self.gather_num}_{mode}",
             )
 
     def interact(self, input_channel: Channel, output_channel: Channel):
-        for simulator in self.simulator_list:
-            simulator.start_simulator()
+        for env in self.env_list:
+            env.start_env()
 
         n_chunk_steps = (
             self.cfg.env.train.max_steps_per_rollout_epoch
@@ -282,19 +309,26 @@ class EnvWorker(Worker):
             env_output_list = []
             if not self.cfg.env.train.auto_reset:
                 for stage_id in range(self.stage_num):
-                    self.simulator_list[stage_id].is_start = True
-                    extracted_obs, infos = self.simulator_list[stage_id].reset()
+                    self.env_list[stage_id].is_start = True
+                    extracted_obs, infos = self.env_list[stage_id].reset()
                     dones = (
                         torch.zeros((self.train_num_envs_per_stage,), dtype=bool)
                         .unsqueeze(1)
                         .repeat(1, self.cfg.actor.model.num_action_chunks)
                     )
+                    terminations = dones.clone()
+                    truncations = dones.clone()
+
                     env_output = EnvOutput(
                         obs=extracted_obs,
                         dones=dones,
+                        terminations=terminations,
+                        truncations=truncations,
                         final_obs=infos["final_observation"]
                         if "final_observation" in infos
                         else None,
+                        intervene_actions=None,
+                        intervene_flags=None,
                     )
                     env_output_list.append(env_output)
             else:
@@ -305,6 +339,10 @@ class EnvWorker(Worker):
                         obs=self.last_obs_list[stage_id],
                         rewards=None,
                         dones=self.last_dones_list[stage_id],
+                        terminations=self.last_terminations_list[stage_id],
+                        truncations=self.last_truncations_list[stage_id],
+                        intervene_actions=self.last_intervened_info_list[stage_id][0],
+                        intervene_flags=self.last_intervened_info_list[stage_id][1],
                     )
                     env_output_list.append(env_output)
 
@@ -334,10 +372,20 @@ class EnvWorker(Worker):
 
             self.last_obs_list = [env_output.obs for env_output in env_output_list]
             self.last_dones_list = [env_output.dones for env_output in env_output_list]
+            self.last_truncations_list = [
+                env_output.truncations for env_output in env_output_list
+            ]
+            self.last_terminations_list = [
+                env_output.terminations for env_output in env_output_list
+            ]
+            self.last_intervened_info_list = [
+                (env_output.intervene_actions, env_output.intervene_flags)
+                for env_output in env_output_list
+            ]
             self.finish_rollout()
 
-        for simulator in self.simulator_list:
-            simulator.stop_simulator()
+        for env in self.env_list:
+            env.stop_env()
 
         for key, value in env_metrics.items():
             env_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
@@ -348,7 +396,7 @@ class EnvWorker(Worker):
         eval_metrics = defaultdict(list)
 
         for stage_id in range(self.stage_num):
-            self.eval_simulator_list[stage_id].start_simulator()
+            self.eval_env_list[stage_id].start_env()
 
         n_chunk_steps = (
             self.cfg.env.eval.max_steps_per_rollout_epoch
@@ -356,8 +404,8 @@ class EnvWorker(Worker):
         )
         for _ in range(self.cfg.algorithm.eval_rollout_epoch):
             for stage_id in range(self.stage_num):
-                self.eval_simulator_list[stage_id].is_start = True
-                extracted_obs, infos = self.eval_simulator_list[stage_id].reset()
+                self.eval_env_list[stage_id].is_start = True
+                extracted_obs, infos = self.eval_env_list[stage_id].reset()
                 env_output = EnvOutput(
                     obs=extracted_obs,
                     final_obs=infos["final_observation"]
@@ -368,7 +416,9 @@ class EnvWorker(Worker):
 
             for eval_step in range(n_chunk_steps):
                 for stage_id in range(self.stage_num):
-                    raw_chunk_actions = self.recv_chunk_actions(input_channel)
+                    raw_chunk_actions = self.recv_chunk_actions(
+                        input_channel, mode="eval"
+                    )
                     env_output, env_info = self.env_evaluate_step(
                         raw_chunk_actions, stage_id
                     )
@@ -383,7 +433,7 @@ class EnvWorker(Worker):
 
             self.finish_rollout(mode="eval")
         for stage_id in range(self.stage_num):
-            self.eval_simulator_list[stage_id].stop_simulator()
+            self.eval_env_list[stage_id].stop_env()
 
         for key, value in eval_metrics.items():
             eval_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()

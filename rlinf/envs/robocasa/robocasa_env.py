@@ -35,10 +35,11 @@ from rlinf.envs.utils import (
 
 
 class RobocasaEnv(gym.Env):
-    def __init__(self, cfg, num_envs, seed_offset, total_num_processes):
+    def __init__(self, cfg, num_envs, seed_offset, total_num_processes, worker_info):
         self.seed_offset = seed_offset
         self.cfg = cfg
         self.total_num_processes = total_num_processes
+        self.worker_info = worker_info
         self.seed = self.cfg.seed + seed_offset
         self._is_start = True
         self.num_envs = num_envs
@@ -346,7 +347,7 @@ class RobocasaEnv(gym.Env):
 
         # Flatten structure to match libero format
         obs = {
-            "full_images": full_image_tensor,
+            "main_images": full_image_tensor,
             "wrist_images": wrist_image_tensor,
             "states": states,
             "task_descriptions": [

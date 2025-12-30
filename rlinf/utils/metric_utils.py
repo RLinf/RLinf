@@ -112,7 +112,7 @@ def compute_loss_mask(dones):
     n_chunk_step = dones.shape[0] - 1
     flattened_dones = dones.transpose(1, 2).reshape(
         -1, actual_bsz
-    )  # [n_chunk_step + 1, rollout_epoch x bsz]
+    )  # [(n_chunk_step + 1) * num_action_chunks, rollout_epoch x bsz]
     flattened_dones = flattened_dones[
         -(n_chunk_step * num_action_chunks + 1) :
     ]  # [n_steps+1, actual-bsz]
