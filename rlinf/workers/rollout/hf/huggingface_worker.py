@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import copy
 import gc
 from typing import Any
@@ -53,8 +54,14 @@ class MultiStepRolloutWorker(Worker):
         with open_dict(rollout_model_config):
             rollout_model_config.precision = self.cfg.rollout.model.precision
             rollout_model_config.path = self.cfg.rollout.model.model_path
-
-        self.hf_model = get_model(rollout_model_config)
+        
+        
+        old_world_size = os.environ.pop("WORLD_SIZE", None)
+        try:
+            self.hf_model = get_model(rollout_model_config)
+        finally:
+            if old_world_size is not None:
+                os.environ["WORLD_SIZE"] = old_world_size
 
         self.hf_model.eval()
 
