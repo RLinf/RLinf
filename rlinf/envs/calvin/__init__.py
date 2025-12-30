@@ -25,13 +25,18 @@ ENV_CFG_DIR = Path(__file__).parent / "calvin_cfg/"
 
 
 def _get_calvin_tasks_and_reward(
-    num_sequences, use_random_seed=True, task_suite_name="calvin_d"
+    num_sequences, task_suite_name="calvin_d"
 ):
     conf_dir = (
         pathlib.Path(calvin_env.__file__).absolute().parents[2]
         / "calvin_models"
         / "conf"
     )
+    if not conf_dir.exists():
+        raise FileNotFoundError(
+            f"Configuration directory {conf_dir} does not exist. "
+            "Please ensure that the calvin_models package is installed correctly."
+        )
     task_cfg_path = conf_dir / "callbacks/rollout/tasks/new_playtable_tasks.yaml"
     val_annotations_path_val = conf_dir / "annotations/new_playtable_validation.yaml"
     val_annotations_path_train = conf_dir / "annotations/new_playtable.yaml"
@@ -50,7 +55,7 @@ def _get_calvin_tasks_and_reward(
 
     task_cfg = OmegaConf.load(task_cfg_path)
     task_oracle = hydra.utils.instantiate(task_cfg)
-    eval_sequences = get_sequences(num_sequences, use_random_seed=use_random_seed)
+    eval_sequences = get_sequences(num_sequences)
     return eval_sequences, val_annotations, task_oracle
 
 
@@ -79,12 +84,10 @@ class CalvinBenchmark:
             f"task suite {self.cfg.task_suite_name} is not yet supported."
         )
         self.task_suite_name = task_suite_name
-        self.use_random_seed = True  # True for rollout and False for val
         self._generator = _generator
         self.eval_sequences, self.val_annotations, self.task_oracle = (
             _get_calvin_tasks_and_reward(
                 self.get_num_tasks() * self.get_task_num_trials(),
-                self.use_random_seed,
                 task_suite_name,
             )
         )
@@ -112,6 +115,7 @@ class CalvinBenchmark:
 
     def get_task_descriptions(self, task):
         if self.task_suite_name == "calvin_d":
+            # calvin_d using only the validation set(from annotations/new_playtable_validation.yaml), which has only one prompt for each task;
             return self.val_annotations[task][0]
         else:
             task_descriptions = self.val_annotations[task]
