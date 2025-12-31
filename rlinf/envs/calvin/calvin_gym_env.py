@@ -51,8 +51,11 @@ class CalvinEnv(gym.Env):
 
         self._generator = np.random.default_rng(seed=self.seed)
         self._generator_ordered = np.random.default_rng(seed=0)
+        self.start_idx = 0
 
-        self.task_suite: CalvinBenchmark = CalvinBenchmark(self.cfg.task_suite_name)
+        self.task_suite: CalvinBenchmark = CalvinBenchmark(
+            self.cfg.task_suite_name, self._generator
+        )
         self.num_tasks = self.task_suite.get_num_tasks()
         self.task_num_trials = self.task_suite.get_task_num_trials()
         self._compute_total_num_group_envs()
@@ -80,9 +83,9 @@ class CalvinEnv(gym.Env):
         env_fns = []
         for env_fn_param in env_fn_params:
 
-            def env_fn():
+            def env_fn(params=env_fn_param):
                 os.environ["EGL_VISIBLE_DEVICES"] = str(self.seed_offset)
-                env = make_env()
+                env = make_env(**params)
                 return env
 
             env_fns.append(env_fn)
@@ -92,10 +95,26 @@ class CalvinEnv(gym.Env):
         env_fn_params = []
         if env_idx is None:
             env_idx = np.arange(self.num_envs)
+        if self.cfg.task_suite_name == "calvin_d":
+            candidated_scenes = ["calvin_scene_D"]
+        elif self.cfg.task_suite_name == "calvin_abc":
+            candidated_scenes = ["calvin_scene_A", "calvin_scene_B", "calvin_scene_C"]
+        elif self.cfg.task_suite_name == "calvin_abcd":
+            candidated_scenes = [
+                "calvin_scene_A",
+                "calvin_scene_B",
+                "calvin_scene_C",
+                "calvin_scene_D",
+            ]
+        else:
+            raise NotImplementedError(
+                f"task suite {self.cfg.task_suite_name} is not yet supported."
+            )
         for env_id in range(self.num_envs):
             if env_id not in env_idx:
                 continue
-            env_fn_params.append({})
+            scene_idx = env_id % len(candidated_scenes)
+            env_fn_params.append({"scene": candidated_scenes[scene_idx]})
         return env_fn_params
 
     def _compute_total_num_group_envs(self):
@@ -129,12 +148,34 @@ class CalvinEnv(gym.Env):
         valid_size = len(reset_state_ids) - (
             len(reset_state_ids) % self.total_num_processes
         )
+        self._generator_ordered.shuffle(reset_state_ids)
         reset_state_ids = reset_state_ids[:valid_size]
         reset_state_ids = reset_state_ids.reshape(self.total_num_processes, -1)
         return reset_state_ids
 
     def _get_ordered_reset_state_ids(self, num_reset_states):
-        reset_state_ids = self.reset_state_ids_all[self.seed_offset]
+        """
+        By constructing a 2D seed matrix (self.reset_state_ids_all) and applying a seed_offset,
+        users can evenly distribute the initialization of environments (e.g., 1,000 states) across all available GPUs, ensuring each GPU runs a unique set of tasks.
+
+        Args:
+            num_reset_states (int): The number of environment reset states to allocate to this env worker.
+
+        Returns:
+            np.ndarray: An array of reset state IDs of length `num_reset_states`, assigned in an ordered fashion
+                according to the current process's seed_offset.
+
+        Notes:
+            Each row in `self.reset_state_ids_all` corresponds to the reset state IDs allocated to a specific
+            process (distinguished by seed_offset), ensuring non-overlapping task subsets for parallel evaluation or training.
+        """
+        if self.start_idx + num_reset_states > len(self.reset_state_ids_all[0]):
+            self.reset_state_ids_all = self.get_reset_state_ids_all()
+            self.start_idx = 0
+        reset_state_ids = self.reset_state_ids_all[self.seed_offset][
+            self.start_idx : self.start_idx + num_reset_states
+        ]
+        self.start_idx = self.start_idx + num_reset_states
         return reset_state_ids
 
     def _get_task_and_trial_ids_from_reset_state_ids(self, reset_state_ids):
@@ -403,6 +444,8 @@ class CalvinEnv(gym.Env):
         final_obs = copy.deepcopy(_final_obs)
         env_idx = np.arange(0, self.num_envs)[dones]
         final_info = copy.deepcopy(infos)
+        if self.cfg.is_eval:
+            self.update_reset_state_ids()
         obs, infos = self.reset(
             env_idx=env_idx,
             reset_state_ids=self.reset_state_ids[env_idx]

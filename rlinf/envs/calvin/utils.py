@@ -34,7 +34,7 @@ def f(l):
 
 
 @functools.lru_cache
-def get_sequences(num_sequences=1000, num_workers=None, use_random_seed=False):
+def get_sequences(num_sequences=1000, num_workers=None):
     possible_conditions = {
         "led": [0, 1],
         "lightbulb": [0, 1],
@@ -54,14 +54,8 @@ def get_sequences(num_sequences=1000, num_workers=None, use_random_seed=False):
     num_sequences_per_state = list(
         map(len, np.array_split(range(num_sequences), len(initial_states)))
     )
-    if use_random_seed:
-        import time
 
-        seed_value = int(time.time() * 1000000) % (2**31)
-    else:
-        seed_value = 0
-
-    with temp_seed(seed_value):
+    with temp_seed(0):
         num_workers = (
             multiprocessing.cpu_count() if num_workers is None else num_workers
         )

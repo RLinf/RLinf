@@ -1,7 +1,7 @@
 defaults:
-  - env/calvin_d@env.train
+  - env/calvin_abc@env.train
   - env/calvin_d@env.eval
-  - model/pi0@actor.model
+  - model/pi0_5@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
@@ -22,7 +22,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "calvin_d_d_ppo_openpi"
+    experiment_name: "calvin_abc_d_ppo_openpi_pi05"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -88,11 +88,13 @@ env:
 
   train:
     total_num_envs: 64
-    max_episode_steps: 480
+    max_episode_steps: 480 # for truncation
     max_steps_per_rollout_epoch: 480
     group_size: ${algorithm.group_size}
     reward_coef: ${algorithm.reward_coef}
-
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/train
   eval:
     total_num_envs: 50
     auto_reset: True
@@ -114,28 +116,31 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-Pi0-SFT"
+    model_path: "/path/to/model/RLinf-Pi05-SFT"
     precision: ${actor.model.precision}
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
+
   micro_batch_size: 128
-  global_batch_size: 2048
+  global_batch_size: 2048 # maximum : global batch size = micro batch size * actor num_processes.
   seed: 42
   enable_offload: False
 
   model:
-    model_path: "/path/to/model/RLinf-Pi0-SFT"
+    model_path: "/path/to/model/RLinf-Pi05-SFT"
     model_type: "openpi"
     num_action_chunks: 5
-    num_steps: 5
     add_value_head: True
     # openpi specific parameters
     openpi:
-      config_name: "pi0_calvin"
-      detach_critic_input: True
+      config_name: "pi05_calvin"
+      num_images_in_input: 2
+      noise_level: 0.5
       joint_logprob: False
+      value_after_vlm: True
+      value_vlm_mode: "mean_token"
 
   optim:
     lr: 5.0e-6
