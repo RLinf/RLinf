@@ -63,11 +63,11 @@ class FSDPVersion(str, Enum):
 def create_device_mesh(world_size, fsdp_size):
     if fsdp_size < 0 or fsdp_size >= world_size:
         device_mesh = init_device_mesh(
-            "cuda", mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
+            "musa", mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
         )
     else:
         device_mesh = init_device_mesh(
-            "cuda",
+            "musa",
             mesh_shape=(world_size // fsdp_size, fsdp_size),
             mesh_dim_names=["ddp", "fsdp"],
         )

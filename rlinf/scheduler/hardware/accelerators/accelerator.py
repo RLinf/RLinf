@@ -26,7 +26,7 @@ class AcceleratorType(str, Enum):
     INTEL_GPU = "INTEL_GPU"
     NPU = "NPU"  # Huawei Ascend
     NO_ACCEL = "NO_ACCEL"
-
+    MUSA_GPU = "MUSA_GPU"
 
 class AcceleratorManager:
     """Base Manager for accelerator-related operations."""
@@ -211,7 +211,7 @@ class AcceleratorUtil:
         Returns:
             str: The CCL backend.
         """
-        if accelerator_type == AcceleratorType.NO_ACCEL:
+        if accelerator_type == AcceleratorType.NO_ACCEL or accelerator_type == AcceleratorType.MUSA_GPU:
             return None
         elif accelerator_type in AcceleratorManager.manager_register:
             manager = AcceleratorManager.manager_register[accelerator_type]
@@ -228,7 +228,7 @@ class AcceleratorUtil:
         Returns:
             str: The network socket interface name environment variable.
         """
-        if accelerator_type == AcceleratorType.NO_ACCEL:
+        if accelerator_type == AcceleratorType.NO_ACCEL or accelerator_type == AcceleratorType.MUSA_GPU:
             return "GLOO_SOCKET_IFNAME"
         elif accelerator_type in AcceleratorManager.manager_register:
             manager = AcceleratorManager.manager_register[accelerator_type]

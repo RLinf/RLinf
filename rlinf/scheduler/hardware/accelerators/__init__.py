@@ -17,6 +17,7 @@ from .amd_gpu import AMDGPUManager  # Must be imported to register the managers
 from .ascend_npu import AscendNPUManager
 from .intel_gpu import IntelGPUManager
 from .nvidia_gpu import NvidiaGPUManager
+from .musa_gpu import MUSAGPUManager
 
 __all__ = [
     "AcceleratorUtil",
@@ -26,4 +27,5 @@ __all__ = [
     "AscendNPUManager",
     "IntelGPUManager",
     "NvidiaGPUManager",
+    "MUSAGPUManager"
 ]
