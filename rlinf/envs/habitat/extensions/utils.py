@@ -81,14 +81,12 @@ def observations_to_image(
             info[map_k]["fog_of_war_mask"],
             fog_of_war_desat_amount=0.75,
         )
-        cv2.imwrite(f"td_map_before.png", td_map)
         td_map = habitat_maps.draw_agent(
             image=td_map,
             agent_center_coord=info[map_k]["agent_map_coord"][0],
             agent_rotation=info[map_k]["agent_angle"][0],
             agent_radius_px=min(td_map.shape[0:2]) // 24,
         )
-        cv2.imwrite(f"td_map_after.png", td_map)
         if td_map.shape[1] < td_map.shape[0]:
             td_map = np.rot90(td_map, 1)
 

@@ -86,23 +86,40 @@ class HabitatEnv(gym.Env):
                 config.habitat.dataset.type, config=config.habitat.dataset
             )
 
+        # Global episode indices: unique across all scenes
+        # Example: scene0: [0, 1, 5, 3, 6], scene1: [2, 4, 7]
+        # scene_to_global_episodes[0] = [0, 1, 5, 3, 6]
+        # scene_to_global_episodes[1] = [2, 4, 7]
+        self.scene_to_global_episodes = {}  
+        # Ordered episode indices: sorted by global episode indices
+        # scene_to_ordered_episodes[0] = [0, 1, 2, 3, 4]
+        # scene_to_ordered_episodes[1] = [5, 6, 7]
+        self.scene_to_ordered_episodes = {}  
+
         self.scenes = []
-        self.scene_groups = {}  # scene_idx -> list of episode indices
         scene_id_to_idx = {}  # scene_id(str) -> scene_idx(int)
 
-        for ep_idx, episode in enumerate(dataset.episodes):
-            if hasattr(episode, "scene_id") and episode.scene_id is not None:
-                sid = episode.scene_id
-                if sid not in scene_id_to_idx:
-                    scene_idx = len(self.scenes)
-                    scene_id_to_idx[sid] = scene_idx
-                    self.scenes.append(sid)
-                    self.scene_groups[scene_idx] = []
-                else:
-                    scene_idx = scene_id_to_idx[sid]
-                self.scene_groups[scene_idx].append(ep_idx)
+        # Build global episode indices
+        for episode in dataset.episodes:
+            sid = episode.scene_id
+            eid = episode.episode_id
+            if sid not in scene_id_to_idx:
+                scene_idx = len(self.scenes)
+                scene_id_to_idx[sid] = scene_idx
+                self.scenes.append(sid)
+                self.scene_to_global_episodes[scene_idx] = []
             else:
-                raise ValueError(f"Episode {ep_idx} does not have scene_id!")
+                scene_idx = scene_id_to_idx[sid]
+            self.scene_to_global_episodes[scene_idx].append(eid)
+
+        # Build ordered (contiguous) episode indices
+        next_ordered_idx = 0
+        for scene_idx in sorted(self.scene_to_global_episodes.keys()):
+            num_eps = len(self.scene_to_global_episodes[scene_idx])
+            self.scene_to_ordered_episodes[scene_idx] = list(
+                range(next_ordered_idx, next_ordered_idx + num_eps)
+            )
+            next_ordered_idx += num_eps
 
     def _init_env(self):
         env_fns = self.get_env_fns()
@@ -179,8 +196,8 @@ class HabitatEnv(gym.Env):
         """
         self.scene_episode_counts = []
         self.cumsum_trial_id_bins = []
-        for scene_idx in self.scene_groups:
-            self.scene_episode_counts.append(len(self.scene_groups[scene_idx]))
+        for scene_idx in self.scene_to_ordered_episodes:
+            self.scene_episode_counts.append(len(self.scene_to_ordered_episodes[scene_idx]))
             # cumsum_trial_id_bins: cumulative sum for decoding reset_state_id
             # Example: [5, 3, 4] -> [5, 8, 12]
             # reset_state_id < 5 -> scene 0, < 8 -> scene 1, < 12 -> scene 2
@@ -199,14 +216,14 @@ class HabitatEnv(gym.Env):
         """
 
         # Shuffle scene order, but keep episodes within scenes together
-        scene_ids = list(self.scene_groups.keys())
+        scene_ids = list(self.scene_to_ordered_episodes.keys())
         self._generator_ordered.shuffle(scene_ids)
 
         # Flatten: all episodes from scene 0, then all from scene 1, etc.
         # This ensures same-scene episodes are consecutive
         reset_state_ids = []
         for scene_id in scene_ids:
-            reset_state_ids.extend(self.scene_groups[scene_id])
+            reset_state_ids.extend(self.scene_to_ordered_episodes[scene_id])
 
         reset_state_ids = np.array(reset_state_ids)
 
@@ -350,21 +367,18 @@ class HabitatEnv(gym.Env):
 
         image_tensor = to_tensor(list_of_dict_to_dict_of_list(image_list))
 
+        obs = {}
         rgb_image_tensor = torch.stack(
             [value.clone().permute(2, 0, 1) for value in image_tensor["rgb"]]
         )
-        if self.cfg.include_depth:
-            assert "depth" in image_tensor, (
-                "depth image is not included in the observation"
-            )
+        obs["rgb"] = rgb_image_tensor
+        
+        if "depth" in image_tensor:
             depth_image_tensor = torch.stack(
                 [value.clone().permute(2, 0, 1) for value in image_tensor["depth"]]
             )
+            obs["depth"] = depth_image_tensor
 
-        obs = {
-            "rgb": rgb_image_tensor,
-            "depth": depth_image_tensor,
-        }
         return obs
 
     def _get_reset_states(self, env_idx):
@@ -449,7 +463,8 @@ class HabitatEnv(gym.Env):
                     (frame["rgb"], frame["depth"], frame["top_down_map"]), axis=1
                 )
                 # self.render_images.append(frame_concat)
-                key = f"task{self.task_ids[i]}_trial{self.trial_ids[i]}"
+                episode_id = self.scene_to_global_episodes[self.task_ids[i]][self.trial_ids[i]]
+                key = f"episode_{episode_id}"
                 if key not in self.render_images:
                     self.render_images[key] = []
                 self.render_images[key].append(frame_concat)
