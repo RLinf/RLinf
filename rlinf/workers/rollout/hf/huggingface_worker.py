@@ -53,8 +53,15 @@ class MultiStepRolloutWorker(Worker):
         with open_dict(rollout_model_config):
             rollout_model_config.precision = self.cfg.rollout.model.precision
             rollout_model_config.path = self.cfg.rollout.model.model_path
-
-        self.hf_model = get_model(rollout_model_config)
+        
+        import os
+        
+        old_world_size = os.environ.pop("WORLD_SIZE", None)
+        try:
+            self.hf_model = get_model(rollout_model_config)
+        finally:
+            if old_world_size is not None:
+                os.environ["WORLD_SIZE"] = old_world_size
 
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.OPENVLA,
