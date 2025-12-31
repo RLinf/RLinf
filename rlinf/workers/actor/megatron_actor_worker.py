@@ -632,8 +632,14 @@ class MegatronActor(MegatronModelManager, Worker):
 
         self.log_debug(f"{total_seqlen=}, {num_microbatches=}")
 
-        if self.use_profiler and forward_only:
-            self.forward_only_record.start()
+        if self.use_profiler:
+            self.profiler.start(forward_only=forward_only)
+            forward_backward_record = (
+                self.forward_only_record
+                if forward_only
+                else self.megatron_forward_backward_record
+            )
+            forward_backward_record.start()
         forward_outputs = fwd_bwd_function(
             forward_step_func=self.get_forward_step_func(),
             data_iterator=self.make_data_iterator_list(batch_iter),
@@ -644,8 +650,9 @@ class MegatronActor(MegatronModelManager, Worker):
             micro_batch_size=1,
             collect_non_loss_data=forward_only,
         )
-        if self.use_profiler and forward_only:
-            self.forward_only_record.stop()
+        if self.use_profiler:
+            forward_backward_record.stop()
+            self.profiler.stop(forward_only=forward_only)
 
         outputs = self._process_fwd_bwd_outputs(forward_outputs, forward_only)
 
@@ -677,8 +684,14 @@ class MegatronActor(MegatronModelManager, Worker):
 
         self.log_debug(f"{total_seqlen=}, {num_microbatches=}")
 
-        if self.use_profiler and forward_only:
-            self.forward_only_record.start()
+        if self.use_profiler:
+            self.profiler.start(forward_only=forward_only)
+            forward_backward_record = (
+                self.forward_only_record
+                if forward_only
+                else self.megatron_forward_backward_record
+            )
+            forward_backward_record.start()
         forward_outputs = fwd_bwd_function(
             forward_step_func=self.get_forward_step_func(),
             data_iterator=self.make_data_iterator_list(batch_iterator),
@@ -689,8 +702,9 @@ class MegatronActor(MegatronModelManager, Worker):
             micro_batch_size=1,
             collect_non_loss_data=forward_only,
         )
-        if self.use_profiler and forward_only:
-            self.forward_only_record.stop()
+        if self.use_profiler:
+            forward_backward_record.stop()
+            self.profiler.stop(forward_only=forward_only)
 
         outputs = self._process_fwd_bwd_outputs(forward_outputs, forward_only)
 
