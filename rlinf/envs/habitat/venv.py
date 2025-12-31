@@ -30,13 +30,63 @@ from rlinf.envs.venv import (
     SubprocVectorEnv,
     _setup_buf,
 )
-from rlinf.envs.habitat.utils import HabitatRLEnv
+from habitat.core.env import RLEnv
 
 gym_old_venv_step_type = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 gym_new_venv_step_type = tuple[
     np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
 ]
 warnings.simplefilter("once", DeprecationWarning)
+
+
+class HabitatRLEnv(RLEnv):
+    def __init__(self, config):
+        super().__init__(config)
+
+    def reset(self):
+        observations = super().reset()
+
+        metrics = self.habitat_env.get_metrics()
+        self.previous_distance = metrics.get("geodesic_to_goal", 0)
+
+        return observations
+
+    def step(self, *args, **kwargs):
+        return super().step(*args, **kwargs)
+
+    def get_reward_range(self):
+        return (-np.inf, np.inf)
+
+    def get_reward(self, observations):
+        metrics = self.habitat_env.get_metrics()
+        current_distance = metrics.get("geodesic_to_goal", 0)
+
+        reward = self.previous_distance - current_distance
+
+        reward -= 0.01
+
+        if metrics.get("success", False):
+            reward += 10.0
+
+        self.previous_distance = current_distance
+
+        return reward
+
+    def get_done(self, observations):
+        done = False
+        # 1. if episode is over
+        if self.habitat_env.episode_over:
+            done = True
+        # 2. if collision is detected
+        metrics = self.habitat_env.get_metrics()
+        if metrics.get("collisions", 0) > 0:
+            done = True
+
+        return done
+
+    def get_info(self, observations):
+        info = self.habitat_env.get_metrics()
+        return info
 
 
 def _worker(
@@ -172,4 +222,3 @@ class ReconfigureSubprocEnv(SubprocVectorEnv):
 
         for j, i in enumerate(id):
             self.workers[i].reconfigure_env_fn(env_fns[j])
-

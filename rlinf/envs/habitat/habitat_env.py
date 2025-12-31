@@ -13,8 +13,6 @@
 # limitations under the License.
 
 import copy
-import os
-import cv2
 from typing import Optional, Union
 
 import gym
@@ -24,14 +22,16 @@ from omegaconf.omegaconf import OmegaConf
 
 import habitat
 from habitat_baselines.config.default import get_config as get_habitat_config
+from habitat.config.default_structured_configs import (
+    FogOfWarConfig,
+    TopDownMapMeasurementConfig,
+)
 
-from rlinf.envs.habitat.utils import get_habitat_rgb_image, get_habitat_state, HabitatRLEnv
-from rlinf.envs.habitat.venv import ReconfigureSubprocEnv
+from rlinf.envs.habitat.extensions.utils import observations_to_image
+from rlinf.envs.habitat.venv import ReconfigureSubprocEnv, HabitatRLEnv
 from rlinf.envs.utils import (
     list_of_dict_to_dict_of_list,
-    put_info_on_image,
     save_rollout_video,
-    tile_images,
     to_tensor,
 )
 
@@ -55,7 +55,7 @@ class HabitatEnv(gym.Env):
         self._generator = np.random.default_rng(seed=self.seed)
         self._generator_ordered = np.random.default_rng(seed=0)
         self.start_idx = 0
-        
+
         self._init_task_suite()
         self._compute_total_num_group_envs()
         self.reset_state_ids_all = self.get_reset_state_ids_all()
@@ -71,24 +71,24 @@ class HabitatEnv(gym.Env):
 
         self.video_cfg = cfg.video_cfg
         self.video_cnt = 0
-        self.render_images = []
+        self.render_images = {}
         self.current_raw_obs = None
 
     def _init_task_suite(self):
-        """Initialize Habitat task suite: load all scenes and episodes from config."""    
+        """Initialize Habitat task suite: load all scenes and episodes from config."""
         config_path = self.cfg.init_params.config_path
         config = get_habitat_config(config_path)
-        
+
         # Load dataset to get all scenes and episodes
         # Habitat stores scene and episode information in the dataset
-        if hasattr(config.habitat, 'dataset'):
+        if hasattr(config.habitat, "dataset"):
             dataset = habitat.datasets.make_dataset(
                 config.habitat.dataset.type, config=config.habitat.dataset
             )
 
-        self.scenes = []         
-        self.scene_groups = {}   # scene_idx -> list of episode indices
-        scene_id_to_idx = {}     # scene_id(str) -> scene_idx(int)
+        self.scenes = []
+        self.scene_groups = {}  # scene_idx -> list of episode indices
+        scene_id_to_idx = {}  # scene_id(str) -> scene_idx(int)
 
         for ep_idx, episode in enumerate(dataset.episodes):
             if hasattr(episode, "scene_id") and episode.scene_id is not None:
@@ -126,7 +126,7 @@ class HabitatEnv(gym.Env):
     def get_env_fn_params(self, env_idx=None):
         """
         Get environment function parameters.
-        
+
         For each environment, set the scene based on current task_id.
         This ensures same-scene episodes run in the same environment when possible.
         """
@@ -134,10 +134,31 @@ class HabitatEnv(gym.Env):
         base_env_args = OmegaConf.to_container(self.cfg.init_params, resolve=True)
         config_path = base_env_args.get("config_path", self.cfg.init_params.config_path)
         config = get_habitat_config(config_path)
-        
+
+        with habitat.config.read_write(config):
+            config.habitat.task.measurements.update(
+                {
+                    "top_down_map": TopDownMapMeasurementConfig(
+                        map_padding=3,
+                        map_resolution=1024,
+                        draw_source=True,
+                        draw_border=True,
+                        draw_shortest_path=True,
+                        draw_view_points=True,
+                        draw_goal_positions=True,
+                        draw_goal_aabbs=True,
+                        fog_of_war=FogOfWarConfig(
+                            draw=True,
+                            visibility_dist=5.0,
+                            fov=90,
+                        ),
+                    ),
+                }
+            )
+
         if env_idx is None:
             env_idx = np.arange(self.num_envs)
-        
+
         for env_id in range(self.num_envs):
             if env_id not in env_idx:
                 continue
@@ -152,7 +173,7 @@ class HabitatEnv(gym.Env):
     def _compute_total_num_group_envs(self):
         """
         Compute total number of group environments.
-        
+
         Total = sum of all episodes across all scenes.
         Each scene has multiple episodes (trials).
         """
@@ -163,37 +184,39 @@ class HabitatEnv(gym.Env):
             # cumsum_trial_id_bins: cumulative sum for decoding reset_state_id
             # Example: [5, 3, 4] -> [5, 8, 12]
             # reset_state_id < 5 -> scene 0, < 8 -> scene 1, < 12 -> scene 2
-            self.cumsum_trial_id_bins.append(np.sum(self.scene_episode_counts[:scene_idx+1]))
+            self.cumsum_trial_id_bins.append(
+                np.sum(self.scene_episode_counts[: scene_idx + 1])
+            )
         # Total number of episodes = sum of episodes in all scenes
         self.total_num_group_envs = np.sum(self.scene_episode_counts)
 
     def get_reset_state_ids_all(self):
         """
         Get all reset state IDs, organized to keep same-scene episodes together.
-        
+
         Strategy: Group episodes by scene, then distribute scenes across processes.
         Within each scene, episodes are kept together to minimize scene switching.
         """
-        
+
         # Shuffle scene order, but keep episodes within scenes together
         scene_ids = list(self.scene_groups.keys())
         self._generator_ordered.shuffle(scene_ids)
-        
+
         # Flatten: all episodes from scene 0, then all from scene 1, etc.
         # This ensures same-scene episodes are consecutive
         reset_state_ids = []
         for scene_id in scene_ids:
             reset_state_ids.extend(self.scene_groups[scene_id])
-        
+
         reset_state_ids = np.array(reset_state_ids)
-        
+
         # Adjust size to be divisible by total_num_processes
         valid_size = len(reset_state_ids) - (
             len(reset_state_ids) % self.total_num_processes
         )
         reset_state_ids = reset_state_ids[:valid_size]
         reset_state_ids = reset_state_ids.reshape(self.total_num_processes, -1)
-        
+
         return reset_state_ids
 
     def update_reset_state_ids(self):
@@ -237,13 +260,13 @@ class HabitatEnv(gym.Env):
     def _get_task_and_trial_ids_from_reset_state_ids(self, reset_state_ids):
         """
         Decode reset_state_id to (scene_id, episode_id).
-        
+
         reset_state_id is a global episode index.
         We decode it to (scene_id, episode_in_scene_id).
         """
         task_ids = []  # scene_id
         trial_ids = []  # episode_in_scene_id
-        
+
         # get task id and trial id from reset state ids
         for reset_state_id in reset_state_ids:
             start_pivot = 0
@@ -259,14 +282,14 @@ class HabitatEnv(gym.Env):
     def _update_task_and_trial_ids(self, reset_state_ids, env_idx):
         """
         Update task and trial IDs based on reset_state_ids.
-        
+
         Since Habitat environments load all scenes, we don't need to reconfigure
         when scene changes. Habitat's reset() will automatically handle scene switching.
         """
         task_ids, trial_ids = self._get_task_and_trial_ids_from_reset_state_ids(
             reset_state_ids
         )
-        
+
         # Update task and trial IDs for tracking
         for j, env_id in enumerate(env_idx):
             self.task_ids[env_id] = task_ids[j]
@@ -320,35 +343,27 @@ class HabitatEnv(gym.Env):
         infos["episode"] = to_tensor(episode_info)
         return infos
 
-    def _extract_image_and_state(self, obs):
-        """Extract image and state from Habitat observations."""
-        return {
-            "rgb_image": get_habitat_rgb_image(obs),    
-            "state": get_habitat_state(obs),
-        }
-
     def _wrap_obs(self, obs_list):
-        images_and_states_list = []
+        image_list = []
         for obs in obs_list:
-            images_and_states = self._extract_image_and_state(obs)
-            images_and_states_list.append(images_and_states)
+            image_list.append(observations_to_image(obs))
 
-        images_and_states = to_tensor(
-            list_of_dict_to_dict_of_list(images_and_states_list)
+        image_tensor = to_tensor(list_of_dict_to_dict_of_list(image_list))
+
+        rgb_image_tensor = torch.stack(
+            [value.clone().permute(2, 0, 1) for value in image_tensor["rgb"]]
         )
-
-        image_tensor = torch.stack(
-            [
-                value.clone().permute(2, 0, 1)
-                for value in images_and_states["rgb_image"]
-            ]
-        )
-
-        states = images_and_states["state"]
+        if self.cfg.include_depth:
+            assert "depth" in image_tensor, (
+                "depth image is not included in the observation"
+            )
+            depth_image_tensor = torch.stack(
+                [value.clone().permute(2, 0, 1) for value in image_tensor["depth"]]
+            )
 
         obs = {
-            "rgb_images": image_tensor,
-            "states": states,
+            "rgb": rgb_image_tensor,
+            "depth": depth_image_tensor,
         }
         return obs
 
@@ -397,9 +412,9 @@ class HabitatEnv(gym.Env):
         if reset_state_ids is None:
             num_reset_states = len(env_idx)
             reset_state_ids = self._get_random_reset_state_ids(num_reset_states)
-        
+
         raw_obs = self._reconfigure(reset_state_ids, env_idx)
-        
+
         # TODO: what if the reconfigure env_idx is not the same as the env_idx?
         if self.current_raw_obs is None:
             self.current_raw_obs = [None] * self.num_envs
@@ -418,23 +433,26 @@ class HabitatEnv(gym.Env):
             actions = actions.detach().cpu().numpy()
 
         self._elapsed_steps += 1
-        # Vectorized environment step - following LiberoEnv pattern
-        # Returns (obs, reward, done, info) for vectorized env
         raw_obs, _reward, terminations, info_lists = self.env.step(actions)
         self.current_raw_obs = raw_obs
+        obs = self._wrap_obs(raw_obs)
         infos = list_of_dict_to_dict_of_list(info_lists)
         truncations = self.elapsed_steps >= self.cfg.max_episode_steps
-        obs = self._wrap_obs(raw_obs)
 
         # TODO: what if termination means failure? (e.g. robot falling down)
         step_reward = self._calc_step_reward(terminations)
 
         if self.video_cfg.save_video:
-            plot_infos = {
-                "rewards": step_reward,
-                "terminations": terminations,
-            }
-            self.add_new_frames(raw_obs, plot_infos)
+            for i in range(len(raw_obs)):
+                frame = observations_to_image(raw_obs[i], info_lists[i])
+                frame_concat = np.concatenate(
+                    (frame["rgb"], frame["depth"], frame["top_down_map"]), axis=1
+                )
+                # self.render_images.append(frame_concat)
+                key = f"task{self.task_ids[i]}_trial{self.trial_ids[i]}"
+                if key not in self.render_images:
+                    self.render_images[key] = []
+                self.render_images[key].append(frame_concat)
 
         infos = self._record_metrics(step_reward, terminations, infos)
         if self.ignore_terminations:
@@ -450,6 +468,58 @@ class HabitatEnv(gym.Env):
             to_tensor(step_reward),
             to_tensor(terminations),
             to_tensor(truncations),
+            infos,
+        )
+
+    def chunk_step(self, chunk_actions):
+        # chunk_actions: [num_envs, chunk_step, action_dim]
+        chunk_size = chunk_actions.shape[1]
+
+        chunk_rewards = []
+
+        raw_chunk_terminations = []
+        raw_chunk_truncations = []
+        for i in range(chunk_size):
+            actions = chunk_actions[:, i]
+            extracted_obs, step_reward, terminations, truncations, infos = self.step(
+                actions, auto_reset=False
+            )
+
+            chunk_rewards.append(step_reward)
+            raw_chunk_terminations.append(terminations)
+            raw_chunk_truncations.append(truncations)
+
+        chunk_rewards = torch.stack(chunk_rewards, dim=1)  # [num_envs, chunk_steps]
+        raw_chunk_terminations = torch.stack(
+            raw_chunk_terminations, dim=1
+        )  # [num_envs, chunk_steps]
+        raw_chunk_truncations = torch.stack(
+            raw_chunk_truncations, dim=1
+        )  # [num_envs, chunk_steps]
+
+        past_terminations = raw_chunk_terminations.any(dim=1)
+        past_truncations = raw_chunk_truncations.any(dim=1)
+        past_dones = torch.logical_or(past_terminations, past_truncations)
+
+        if past_dones.any() and self.auto_reset:
+            extracted_obs, infos = self._handle_auto_reset(
+                past_dones.cpu().numpy(), extracted_obs, infos
+            )
+
+        if self.auto_reset or self.ignore_terminations:
+            chunk_terminations = torch.zeros_like(raw_chunk_terminations)
+            chunk_terminations[:, -1] = past_terminations
+
+            chunk_truncations = torch.zeros_like(raw_chunk_truncations)
+            chunk_truncations[:, -1] = past_truncations
+        else:
+            chunk_terminations = raw_chunk_terminations.clone()
+            chunk_truncations = raw_chunk_truncations.clone()
+        return (
+            extracted_obs,
+            chunk_rewards,
+            chunk_terminations,
+            chunk_truncations,
             infos,
         )
 
@@ -483,39 +553,10 @@ class HabitatEnv(gym.Env):
         else:
             return reward
 
-    def add_new_frames(self, raw_obs, plot_infos):
-        images = []
-        for env_id, raw_single_obs in enumerate(raw_obs):
-            info_item = {
-                k: v if np.size(v) == 1 else v[env_id] for k, v in plot_infos.items()
-            }
-            img = get_habitat_rgb_image(raw_single_obs)
-            img = put_info_on_image(img, info_item)
-            images.append(img)
-        full_image = tile_images(images, nrows=int(np.sqrt(self.num_envs)))
-        self.render_images.append(full_image)
-
-    def save_frames(self, raw_obs, plot_infos, output_dir):
-        os.makedirs(output_dir, exist_ok=True)
-        for env_id, raw_single_obs in enumerate(raw_obs):
-            info_item = {
-                k: v if np.size(v) == 1 else v[env_id] for k, v in plot_infos.items()
-            }
-            img = get_habitat_rgb_image(raw_single_obs)
-            img = put_info_on_image(img, info_item)
-            img_name = f"env_{env_id}_step_{self._elapsed_steps[env_id]}.png"
-            cv2.imwrite(os.path.join(output_dir, img_name), img)
-
-    def flush_video(self, video_sub_dir: Optional[str] = None):
-        output_dir = os.path.join(self.video_cfg.video_base_dir, f"seed_{self.seed}")
-        if video_sub_dir is not None:
-            output_dir = os.path.join(output_dir, f"{video_sub_dir}")
+    def flush_video(self, video_name, video_frames):
         save_rollout_video(
-            self.render_images,
-            output_dir=output_dir,
-            video_name=f"{self.video_cnt}",
+            video_frames,
+            output_dir=self.video_cfg.video_base_dir,
+            video_name=video_name,
+            fps=self.video_cfg.fps,
         )
-        self.video_cnt += 1
-        self.render_images = []
-
-
