@@ -136,13 +136,6 @@ actor:
     weight_decay: 0.01
     critic_warmup_steps: 0
 
-  tokenizer:
-    tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
-    use_fast: False
-    trust_remote_code: True
-    padding_side: "right"
-
   # Override the default values in training_backend/fsdp
   fsdp_config:
     strategy: "fsdp"

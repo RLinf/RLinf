@@ -54,7 +54,6 @@ Before running the script, you need to modify the ``./examples/embodiment/config
 
 - ``rollout.model.model_path``  
 - ``actor.model.model_path``  
-- ``actor.tokenizer.tokenizer_model``  
 
 
 
@@ -62,7 +61,6 @@ For **OpenVLA-OFT**, modify the ``maniskill_ppo_openvlaoft_quickstart.yaml`` fil
 
 - ``rollout.model.model_path``  
 - ``actor.model.model_path``  
-- ``actor.tokenizer.tokenizer_model``  
 - ``actor.model.lora_path``
 - ``actor.model.is_lora: True``
 

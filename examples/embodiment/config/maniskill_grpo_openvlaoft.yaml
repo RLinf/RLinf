@@ -130,13 +130,6 @@ actor:
     # aka RLinf-OpenVLAOFT-ManiSkill-Base-Lora. It can be downloaded from https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
     lora_path: /path/to/model/oft-sft/lora_004000
 
-  tokenizer:
-    tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
-    use_fast: False
-    trust_remote_code: True
-    padding_side: "right"
-
   optim:
     lr: 1.0e-4
     value_lr: 3.0e-3

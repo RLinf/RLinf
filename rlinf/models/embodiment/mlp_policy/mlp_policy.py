@@ -19,9 +19,8 @@ from torch.distributions.normal import Normal
 
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.models.embodiment.modules.q_head import MultiCrossQHead, MultiQHead
-
-from .modules.utils import get_act_func, layer_init
-from .modules.value_head import ValueHead
+from rlinf.models.embodiment.modules.utils import get_act_func, layer_init
+from rlinf.models.embodiment.modules.value_head import ValueHead
 
 
 class MLPPolicy(BasePolicy):

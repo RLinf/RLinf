@@ -31,7 +31,7 @@ YAML 配置
        env: 0-3
        rollout: 4-7
 
-**2. 模型、tokenizer、可选的 checkpoint 路径，以及输出路径**
+**2. 模型路径，tokenizer路径和输出路径**
 
 - ``rollout.model.model_path``  
 - ``actor.tokenizer.tokenizer_model``  

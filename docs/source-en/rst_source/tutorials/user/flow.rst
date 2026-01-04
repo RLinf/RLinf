@@ -36,7 +36,7 @@ these examples, then iterating toward your custom task. Key options include
        env: 0-3
        rollout: 4-7
 
-**2. Models, tokenizer, optional checkpoint paths, and output locations**
+**2. Models, tokenizer and output paths**
 
 - ``rollout.model.model_path``
 - ``actor.tokenizer.tokenizer_model``

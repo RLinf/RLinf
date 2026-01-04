@@ -131,14 +131,6 @@ actor:
     add_value_head: True
     is_lora: True
 
-  tokenizer:
-    tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/openvla-7b-rlvla-warmup/"
-    extra_vocab_size: 421
-    use_fast: False
-    trust_remote_code: True
-    padding_side: "right"
-
   optim:
     lr: 1.0e-4
     value_lr: 3.0e-3

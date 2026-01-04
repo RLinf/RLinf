@@ -145,13 +145,6 @@ actor:
     clip_grad: 10.0
     critic_warmup_steps: 0
 
-  tokenizer:
-    tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
-    use_fast: False
-    trust_remote_code: True
-    padding_side: "right"
-
   # Override the default values in training_backend/fsdp
   fsdp_config:
     strategy: "fsdp"

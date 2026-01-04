@@ -126,13 +126,6 @@ actor:
     lora_rank: 32
     lora_path: /workspace/dataset/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora/lora_adapter
 
-  tokenizer:
-    tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/workspace/dataset/Openvla-oft-SFT-libero-goal-traj1/"
-    use_fast: False
-    trust_remote_code: True
-    padding_side: "right"
-
   optim:
     lr: 1.0e-4
     value_lr: 3.0e-3

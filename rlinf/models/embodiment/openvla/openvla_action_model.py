@@ -480,6 +480,7 @@ class OpenVLAForRLActionPrediction(BasePolicy, OpenVLAForBatchActionPrediction):
         action_dim,
         num_action_chunks,
         add_value_head,
+        max_prompt_length,
     ):
         OpenVLAForBatchActionPrediction.__init__(self, config)
         self._init_logits_processor()
@@ -500,6 +501,8 @@ class OpenVLAForRLActionPrediction(BasePolicy, OpenVLAForBatchActionPrediction):
 
         self.action_dim = action_dim
         self.num_action_chunks = num_action_chunks
+        self.unnorm_key = unnorm_key
+        self.max_prompt_length = max_prompt_length
 
     def _init_logits_processor(self):
         self.logits_processors = LogitsProcessorList()
@@ -782,20 +785,17 @@ class OpenVLAForRLActionPrediction(BasePolicy, OpenVLAForBatchActionPrediction):
         data["action_tokens"] = action_tokens
         return data
 
-    def setup_config_and_processor(self, model_config, cfg, input_processor):
+    def setup_config_and_processor(self, model_config, input_processor):
         self.vocab_size = (
             model_config.text_config.vocab_size - model_config.pad_to_multiple_of
         )
         self.bins = np.linspace(-1, 1, model_config.n_action_bins)
         self.bin_centers = (self.bins[:-1] + self.bins[1:]) / 2.0
         self.norm_stats = model_config.norm_stats
-        self.unnorm_key = cfg.actor.model.unnorm_key
+
         action_norm_stats = self._get_action_stats()
         self.min_action = np.array(action_norm_stats["q01"])
         self.max_action = np.array(action_norm_stats["q99"])
         self.action_scale = 1.0
-        self.policy_setup = cfg.actor.model.get("policy_setup", None)
-        self.adv_type = cfg.algorithm.adv_type
-        self.max_prompt_length = cfg.runner.max_prompt_length
 
         self.input_processor = input_processor

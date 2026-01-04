@@ -124,14 +124,6 @@ actor:
   seed: 1234
   enable_offload: True
 
-  tokenizer:
-    tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
-    extra_vocab_size: 421
-    use_fast: False
-    trust_remote_code: True
-    padding_side: "right"
-
   # Override the default values in model/openvla_oft
   model:
     model_path: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"

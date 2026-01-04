@@ -123,13 +123,6 @@ actor:
   model:
     model_path: "/path/to/model/rl4vla/openvla-7b-rlvla-warmup/"
 
-  tokenizer:
-    tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/rl4vla/openvla-7b-rlvla-warmup/"
-    use_fast: False
-    trust_remote_code: True
-    padding_side: "right"
-
   optim:
     lr: 1.0e-5
     value_lr: 3.0e-3

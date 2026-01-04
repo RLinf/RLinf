@@ -142,13 +142,6 @@ actor:
     weight_decay: 0.01
     clip_grad: 1.0
 
-  tokenizer:
-    tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/workspace/dataset/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora"
-    use_fast: False
-    trust_remote_code: True
-    padding_side: "right"
-
   # Override the default values in training_backend/fsdp
   fsdp_config:
     strategy: "fsdp"
