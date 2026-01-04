@@ -31,7 +31,7 @@ from rlinf.data.io_struct import (
     RolloutResult,
     SeqGroupInfo,
 )
-from rlinf.scheduler import Channel, Cluster, Worker
+from rlinf.scheduler import Channel, Worker
 from rlinf.scheduler.dynamic_scheduler.manager import RolloutScalingScheduler
 from rlinf.scheduler.dynamic_scheduler.utils import (
     get_scheduler_channel,
@@ -182,7 +182,7 @@ class SGLangWorker(Worker):
             attention_backend=self._cfg_rollout.sglang.attention_backend,
             log_level="info",
             max_running_requests=self._cfg_rollout.max_running_requests,
-            dist_init_addr=f"127.0.0.1:{str(Cluster.find_free_port())}",
+            dist_init_addr=f"127.0.0.1:{str(self.acquire_free_port())}",
         )
 
         self.log_on_first_rank(f"{server_args=}")

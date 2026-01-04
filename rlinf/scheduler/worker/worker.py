@@ -423,6 +423,12 @@ class Worker(metaclass=WorkerMeta):
             os.environ["WORKER_NAME"] = self._worker_name
         self._group_name = self._worker_address.get_parent_address().get_name()
 
+        # Initialize global locks
+        from .lock import DeviceLock, PortLock
+
+        self._device_lock = DeviceLock(self)
+        self._port_lock = PortLock(self)
+
         # Setup local rank and world size
         self._setup_local_rank_world_size()
 
@@ -450,11 +456,6 @@ class Worker(metaclass=WorkerMeta):
         self._setup_comm_envs()
 
         self._lock = threading.Lock()
-
-        from .lock import DeviceLock
-
-        self._device_lock = DeviceLock(self)
-
         Worker.current_worker = self
         self._has_initialized = True
 
@@ -734,6 +735,16 @@ class Worker(metaclass=WorkerMeta):
         """
         return self._worker_address.get_parent_rank()
 
+    def acquire_free_port(self):
+        """Safely acquire a free port on the current node without causing conflicts within the node."""
+        max_tries = 10000  # Retry up to 10000 times to find a free port
+        for _ in range(max_tries):
+            port = Cluster.find_free_port()
+            success = self._port_lock.acquire(port)
+            if success:
+                return port
+        raise RuntimeError(f"Failed to acquire a free port after {max_tries} attempts.")
+
     def log_on_first_rank(self, msg):
         """Log a message only on the first rank of the worker group."""
         if self._rank == 0:
@@ -788,6 +799,22 @@ class Worker(metaclass=WorkerMeta):
         finally:
             duration = time.perf_counter() - start_time
             self._timer_metrics[tag] = self._timer_metrics.get(tag, 0.0) + duration
+
+    @staticmethod
+    def check_worker_alive(worker_name: str) -> bool:
+        """Check if a worker is alive.
+
+        Args:
+            worker_name (str): The name of the worker to check.
+
+        Returns:
+            bool: True if the worker is alive, False otherwise.
+        """
+        try:
+            ray.get_actor(worker_name)
+        except ValueError:
+            return False
+        return True
 
     def _check_initialized(self):
         """Check if the Worker has been initialized.
@@ -1004,7 +1031,7 @@ class Worker(metaclass=WorkerMeta):
             self._actor = ray.get_actor(self._worker_name, namespace=Cluster.NAMESPACE)
 
         node_ip = ray.util.get_node_ip_address()
-        node_port = Cluster.find_free_port()
+        node_port = self.acquire_free_port()
 
         from ..manager import WorkerInfo
 
