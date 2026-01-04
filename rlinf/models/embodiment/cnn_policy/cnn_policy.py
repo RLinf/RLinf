@@ -21,11 +21,11 @@ import torch
 import torch.nn as nn
 from torch.distributions.normal import Normal
 
-from .base_policy import BasePolicy
-from .modules.q_head import MultiCrossQHead, MultiQHead
-from .modules.resnet_utils import ResNetEncoder
-from .modules.utils import init_mlp_weights, layer_init, make_mlp
-from .modules.value_head import ValueHead
+from rlinf.models.embodiment.base_policy import BasePolicy
+from rlinf.models.embodiment.modules.q_head import MultiCrossQHead, MultiQHead
+from rlinf.models.embodiment.modules.resnet_utils import ResNetEncoder
+from rlinf.models.embodiment.modules.utils import init_mlp_weights, layer_init, make_mlp
+from rlinf.models.embodiment.modules.value_head import ValueHead
 
 
 @dataclass

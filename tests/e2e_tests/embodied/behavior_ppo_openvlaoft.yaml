@@ -33,8 +33,6 @@ runner:
   only_eval: False
   val_check_interval: -1
   save_interval: -1
-  seq_length: 1024
-  max_prompt_length: 30
 
 algorithm:
   normalize_advantages: True
@@ -120,6 +118,7 @@ actor:
     unnorm_key: behavior_turn_on_radio
     add_value_head: True
     num_images_in_input: 3
+    max_prompt_length: 30
 
   optim:
     lr: 1.0e-4
@@ -130,13 +129,6 @@ actor:
     weight_decay: 0.01
     clip_grad: 10.0
     critic_warmup_steps: 0
-
-  tokenizer:
-    tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/workspace/dataset/RLinf-OpenVLAOFT-Behavior/"
-    use_fast: False
-    trust_remote_code: True
-    padding_side: "right"
 
   # Override the default values in training_backend/fsdp
   fsdp_config:

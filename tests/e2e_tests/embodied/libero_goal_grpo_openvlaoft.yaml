@@ -31,8 +31,6 @@ runner:
   only_eval: False
   val_check_interval: -1
   save_interval: -1
-  seq_length: 4096
-  max_prompt_length: 128
 
 algorithm:
   normalize_advantages: True
@@ -129,6 +127,7 @@ actor:
     model_type: "openvla_oft"
 
     unnorm_key: libero_goal_no_noops
+    max_prompt_length: 128
 
   optim:
     lr: 2.0e-5
@@ -138,13 +137,6 @@ actor:
     adam_eps: 1.0e-05
     weight_decay: 0.01
     clip_grad: 1.0
-
-  tokenizer:
-    tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/workspace/dataset/Openvla-oft-SFT-libero-goal-traj1/"
-    use_fast: False
-    trust_remote_code: True
-    padding_side: "right"
 
   # Override the default values in training_backend/fsdp
   fsdp_config:

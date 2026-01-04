@@ -32,8 +32,6 @@ runner:
   eval_policy_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
   val_check_interval: -1
   save_interval: 25
-  seq_length: 4096
-  max_prompt_length: 128
 
   resume_dir: null
 
@@ -133,7 +131,7 @@ actor:
     model_type: "openvla_oft"
 
     unnorm_key: libero_130_no_noops_trajall
-
+    max_prompt_length: 128
 
   optim:
     lr: 2.0e-5
@@ -143,13 +141,6 @@ actor:
     adam_eps: 1.0e-05
     weight_decay: 0.01
     clip_grad: 1.0
-
-  tokenizer:
-    tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora/"
-    use_fast: False
-    trust_remote_code: True
-    padding_side: "right"
 
   # Override the default values in training_backend/fsdp
   fsdp_config:

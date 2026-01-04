@@ -1,5 +1,5 @@
 model_type: "openvla_oft"
-
+implement_version: "rlinf"
 model_path: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"  # Different paths used in different configs
 
 precision: "bf16"
@@ -12,6 +12,7 @@ use_proprio: False
 unnorm_key: libero_10_no_noops
 center_crop: True
 
+max_prompt_length: 50
 vocab_size: 32000
 hidden_size: 4096
 add_value_head: False

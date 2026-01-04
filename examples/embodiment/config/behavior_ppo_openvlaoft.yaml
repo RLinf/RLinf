@@ -34,8 +34,6 @@ runner:
   eval_policy_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
   val_check_interval: -1
   save_interval: 40
-  seq_length: 4096
-  max_prompt_length: 50
 
   resume_dir: null
 
@@ -135,13 +133,6 @@ actor:
     clip_grad: 10.0
     weight_decay: 0.01
     critic_warmup_steps: 0
-
-  tokenizer:
-    tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
-    use_fast: False
-    trust_remote_code: True
-    padding_side: "right"
 
   # Override the default values in training_backend/fsdp
   fsdp_config:
