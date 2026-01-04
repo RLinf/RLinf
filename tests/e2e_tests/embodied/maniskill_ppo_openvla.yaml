@@ -32,8 +32,6 @@ runner:
   only_eval: False
   val_check_interval: 1
   save_interval: -1
-  seq_length: 1024
-  max_prompt_length: 30
 
 algorithm:
   normalize_advantages: True
@@ -130,6 +128,7 @@ actor:
     model_type: "openvla"
     add_value_head: True
     is_lora: True
+    max_prompt_length: 30
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"

@@ -34,8 +34,6 @@ runner:
   eval_policy_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
   val_check_interval: -1
   save_interval: 40
-  seq_length: 4096
-  max_prompt_length: 50
 
   resume_dir: null
 
@@ -130,6 +128,7 @@ actor:
     unnorm_key: bridge_orig
 
     add_value_head: True
+    max_prompt_length: 50
 
   optim:
     lr: 1.0e-4

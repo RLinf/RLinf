@@ -32,8 +32,6 @@ runner:
 
   val_check_interval: -1
   save_interval: -1
-  seq_length: 4096
-  max_prompt_length: 50
 
   resume_dir: null
 
