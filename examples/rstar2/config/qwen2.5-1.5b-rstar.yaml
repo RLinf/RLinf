@@ -34,7 +34,7 @@ runner:
   enable_dynamic_batch_size: True
   max_tokens_per_mbs: 20480
 
-  resume_dir: null
+  resume_dir: Auto
   experiment_name: rstar-grpo-1.5b
   output_dir: ../output_0105
 
