@@ -57,12 +57,12 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
         self.rl_config = rl_head_config
         self.padding_value = rl_head_config.padding_value
         self.valid_action_dim = valid_action_dim
-        
+
         if self.rl_config.use_vlm_value:
             proj_width = 2048
         else:
             proj_width = 3584
-        
+
         if self.rl_config.add_value_head:
             self.value_head = ValueHead(
                 input_dim=proj_width,
@@ -315,7 +315,7 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
             values = self.get_value(vl_embs, state_features)
             values = values[:, None]
         else:
-            values = torch.zeros((batch_size, 1), device=device, dtype=vl_embs.dtype) 
+            values = torch.zeros((batch_size, 1), device=device, dtype=vl_embs.dtype)
 
         return BatchFeature(
             data={"action_pred": x_0}
@@ -379,7 +379,9 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
             chains_values = self.get_value(vl_embs, state_features)
             chains_values = chains_values[:, None]
         else:
-            chains_values = torch.zeros((batch_size, 1), device=device, dtype=vl_embs.dtype) # (B, 1)
+            chains_values = torch.zeros(
+                (batch_size, 1), device=chains_log_probs.device, dtype=vl_embs.dtype
+            )  # (B, 1)
         return chains_log_probs, chains_values
 
     def sample_noise(self, shape, device):
@@ -400,7 +402,7 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
         elif self.rl_config.value_vlm_mode == "last_token":
             prefix_mask = [False] * (mask_length - 1) + [True] * 1
         elif self.rl_config.value_vlm_mode == "first_token":
-            prefix_mask = [True] * 1 + [False] *  (mask_length - 1)
+            prefix_mask = [True] * 1 + [False] * (mask_length - 1)
         vl_embs_value = vl_embs[:, prefix_mask, :]
         vl_embs_value = vl_embs_value.mean(dim=1, keepdim=False)
         # vl_embs_value = vl_embs_value.to(dtype=torch.float32)
@@ -411,6 +413,7 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
             value_embs = torch.cat((vl_embs_value, state_features_value), dim=1)
         values_vlm = self.value_head(value_embs)[:, 0]
         return values_vlm
+
 
 class GR00T_N1_5_ForRLActionPrediction(BasePolicy, GR00T_N1_5):
     """
@@ -446,7 +449,7 @@ class GR00T_N1_5_ForRLActionPrediction(BasePolicy, GR00T_N1_5):
         output_action_chunks: int = 1,
     ):
         GR00T_N1_5.__init__(self, config, local_model_path)
-        
+
         self.padding_value = rl_head_config.padding_value
         self._modality_config = modality_config  # ModalityConfig(delta_indices=[0], modality_keys=['video.ego_view'])
         self._modality_transform = modality_transform
@@ -454,7 +457,6 @@ class GR00T_N1_5_ForRLActionPrediction(BasePolicy, GR00T_N1_5):
         self.compute_dtype = compute_dtype
         self.output_action_chunks = output_action_chunks
         self.model_path = Path(local_model_path)
-
 
         # Convert string embodiment tag to EmbodimentTag enum if needed
         if isinstance(embodiment_tag, str):
@@ -477,6 +479,7 @@ class GR00T_N1_5_ForRLActionPrediction(BasePolicy, GR00T_N1_5):
         self.action_head = FlowMatchingActionHeadForRLActionPrediction(
             action_head_cfg, rl_head_config, output_action_chunks, self.valid_action_dim
         )
+
     def eval(self):
         self._modality_transform.eval()
         GR00T_N1_5.eval(self)
@@ -589,7 +592,10 @@ class GR00T_N1_5_ForRLActionPrediction(BasePolicy, GR00T_N1_5):
         )
         normalized_input["eagle_attention_mask"] = torch.nn.functional.pad(
             normalized_input["eagle_attention_mask"],
-            pad=(0, self.padding_value - normalized_input["eagle_attention_mask"].shape[-1]),
+            pad=(
+                0,
+                self.padding_value - normalized_input["eagle_attention_mask"].shape[-1],
+            ),
             mode="constant",
             value=0,
         )
@@ -651,10 +657,14 @@ class GR00T_N1_5_ForRLActionPrediction(BasePolicy, GR00T_N1_5):
         bsize = normalized_input["state"].shape[0]
         forward_inputs["eagle_pixel_values"] = normalized_input[
             "eagle_pixel_values"
-        ].reshape(bsize, self.image_nums, *normalized_input["eagle_pixel_values"].shape[1:])
+        ].reshape(
+            bsize, self.image_nums, *normalized_input["eagle_pixel_values"].shape[1:]
+        )
         forward_inputs["eagle_image_sizes"] = normalized_input[
             "eagle_image_sizes"
-        ].reshape(bsize, self.image_nums, *normalized_input["eagle_image_sizes"].shape[1:])
+        ].reshape(
+            bsize, self.image_nums, *normalized_input["eagle_image_sizes"].shape[1:]
+        )
 
         result = {
             "prev_logprobs": rlinf_outputs["prev_logprobs"],
@@ -704,7 +714,7 @@ class GR00T_N1_5_ForRLActionPrediction(BasePolicy, GR00T_N1_5):
 
         # calculate real intput action dim for rl learning.
         valid_action_dim = 0
-        for k,v in metadata.modalities.action.items():
+        for v in metadata.modalities.action.values():
             valid_action_dim += v.shape[0]
         self.valid_action_dim = valid_action_dim
 
