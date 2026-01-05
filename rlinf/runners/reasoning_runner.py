@@ -168,6 +168,31 @@ class ReasoningRunner:
 
     def init_workers(self):
         # Must be done before actor init
+        if self.cfg.runner.resume_dir == "Auto":
+            checkpoints_dir = os.path.join(
+                self.cfg.runner.output_dir, 
+                self.cfg.runner.experiment_name, 
+                "checkpoints"
+            )
+            
+            # 获取所有符合格式的目录并提取步数
+            checkpoint_steps = []
+            if os.path.exists(checkpoints_dir):
+                checkpoint_steps = [
+                    int(d.split("global_step_")[-1]) 
+                    for d in os.listdir(checkpoints_dir) 
+                    if d.startswith("global_step_") and os.path.isdir(os.path.join(checkpoints_dir, d))
+                ]
+                
+            if checkpoint_steps:
+                max_step = max(checkpoint_steps)
+                self.cfg.runner.resume_dir = os.path.join(checkpoints_dir, f"global_step_{max_step}")
+                logging.info(f"Auto resume from checkpoint: {self.cfg.runner.resume_dir}")
+            else:
+                self.cfg.runner.resume_dir = None
+                logging.info("No checkpoints found, starting from scratch")
+                    
+
         if self.cfg.runner.resume_dir is None:
             logging.info("Training from scratch")
             if (

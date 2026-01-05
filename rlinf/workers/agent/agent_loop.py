@@ -70,7 +70,7 @@ class AgentLoopWorker(Worker):
         super().__init__()
         self.cfg = cfg
         self.print_outputs = cfg.agentloop.print_outputs
-
+        self.return_logprobs = cfg.rollout.get("return_logprobs", False)
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.rollout.model.model_path)
 
     def init_worker(
@@ -199,10 +199,14 @@ class AgentLoopWorker(Worker):
         response_texts = [r.response_text for r in task_results]
         prompt_lengths = [len(p) for p in prompt_ids]
         response_lengths = [len(o) for o in response_ids]
+        
         response_mask = None
         if all(r.response_mask is not None for r in task_results):
             response_mask = [r.response_mask[:max_resp_len] for r in task_results]
-
+            
+        response_logprobs = None
+        if self.return_logprobs:
+            response_logprobs = [r.response_logprobs[:max_resp_len] for r in task_results]
         # prompt_lengths and response_lengths should be clipped to max_prompt_len and max_resp_len to avoid mask/position size mismatch
         assert max(prompt_lengths) <= max_prompt_len, (
             "prompt_lengths should be clipped to max_prompt_len"
@@ -225,6 +229,7 @@ class AgentLoopWorker(Worker):
             is_end=is_end,
             answers=answers,
             response_mask=response_mask,
+            rollout_logprobs=response_logprobs,
         )
 
     async def run_one_query(self, prompt_ids: list[int], **kwargs) -> AgentLoopOutput:
