@@ -31,6 +31,7 @@ import functools
 import json
 import os
 import shutil
+from collections.abc import Iterable
 from enum import Enum
 from typing import Optional, Union
 
@@ -200,6 +201,19 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_openvla_model=Fa
             transformer_layer_cls=transformer_cls_to_wrap,
         )
         policies.append(llm_wrap_policy)
+
+    if hasattr(module, "_no_split_names"):
+        no_split_names = getattr(module, "_no_split_names", None)
+        if no_split_names is not None:
+            from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
+
+            def lambda_policy_fn(module):
+                return hasattr(module, "name") and module.name in no_split_names
+
+            lambda_policy = functools.partial(
+                lambda_auto_wrap_policy, lambda_fn=lambda_policy_fn
+            )
+            policies.append(lambda_policy)
 
     # Add LoRA lambda policy if enabled
     if is_lora:
@@ -487,6 +501,38 @@ def get_grad_norm(
         total_norm = total_norm.item() ** (1.0 / norm_type)  # type: ignore
 
     return float(total_norm)
+
+
+def get_grad_norm_for_mixed_precision(
+    params: Iterable[torch.nn.Parameter],
+    norm_type: float,
+    zero: torch.Tensor,
+    device: torch.device,
+) -> torch.Tensor:
+    """
+    Return the gradient norm of parameters ``param`` s, where the gradients are viewed as a single vector.
+
+    The returned norm is in FP32 even if parameters/gradients are in a low precision. This is because the downstream
+    use of this return value is a reduction across ranks.
+    """
+    params_with_grad = [param for param in params if param.grad is not None]
+    if len(params_with_grad) == 0:
+        # Reuse a tensor for zero to avoid a GPU sync
+        return zero
+    grads = [param.grad.detach().to(torch.float32) for param in params_with_grad]
+    # Compute the gradient norm in FP32, where we treat the gradients as a
+    # single vector
+    grad_norm = torch.linalg.vector_norm(
+        torch.stack(
+            [
+                torch.linalg.vector_norm(grad.detach(), norm_type, dtype=torch.float32)
+                for grad in grads
+            ],
+        ),
+        norm_type,
+        dtype=torch.float32,
+    )
+    return grad_norm.to(device=device)
 
 
 def get_sharding_strategy(strategy_str: str) -> ShardingStrategy:

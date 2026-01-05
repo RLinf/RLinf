@@ -378,7 +378,22 @@ def get_model(cfg: DictConfig, override_config_kwargs=None):
             for param in model.value_head.parameters():
                 param.requires_grad = True
 
+    # Set name attribute for all modules to enable FSDP wrap policy by name
+    _set_module_names(model)
+
     return model
+
+
+def _set_module_names(model):
+    """
+    Set the 'name' attribute for all modules in the model.
+    The name is set to the last part of the module's path (e.g., "action_in_proj").
+    This allows FSDP wrap policy to identify modules by name without using id() mapping.
+    """
+    for name, module in model.named_modules():
+        # Set name to the last part of the path (e.g., "model.action_in_proj" -> "action_in_proj")
+        path_parts = name.split(".")
+        module.name = path_parts[-1] if path_parts else name
 
 
 def tag_vlm_subtree(model, is_vlm: bool):

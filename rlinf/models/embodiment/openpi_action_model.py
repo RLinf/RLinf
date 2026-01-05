@@ -75,13 +75,34 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
     @property
     def _no_split_modules(self) -> list[str]:
         # Currently, PaliGemmaForConditionalGeneration only support DDP, as many of it's modules are called without forward
+        if self.config.train_expert_only:
+            return [
+                "GemmaDecoderLayer",
+                "SiglipVisionEmbeddings",
+                "GemmaRMSNorm",
+                "GemmaRotaryEmbedding",
+            ]
+        else:
+            return [
+                "GemmaMLP",
+                "SiglipVisionEmbeddings",
+                "GemmaRMSNorm",
+                "GemmaRotaryEmbedding",
+            ]
+
+    @property
+    def _no_split_names(self) -> list[str]:
         return [
-            "PaliGemmaForConditionalGeneration",
-            "GemmaDecoderLayer",
-            "SiglipVisionEmbeddings",
-            "GemmaRMSNorm",
-            "GemmaForCausalLM",
-            "GemmaRotaryEmbedding",
+            "action_in_proj",
+            "action_out_proj",
+            "lm_head",
+            # --pi0 only--
+            "state_proj",
+            "action_time_mlp_in",
+            "action_time_mlp_out",
+            # --pi05 only--
+            "time_mlp_in",
+            "time_mlp_out",
         ]
 
     def __init__(
