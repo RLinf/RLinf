@@ -101,9 +101,33 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
 
 本节介绍 OpenPI 模型进行 SFT 训练所需的依赖环境。对于其他模型，请参考各自示例文档中的「依赖安装」小节。
 
+1. 克隆 RLinf 仓库
+~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+    # 为提高国内下载速度，可以使用：
+    # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+    git clone https://github.com/RLinf/RLinf.git
+    cd RLinf
+
+2. 安装依赖
+~~~~~~~~~~~~~~~~
+
 **方式一：使用 Docker 镜像**
 
-推荐直接使用预构建的 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` 来运行实验。
+推荐直接使用预构建的 Docker 镜像运行实验。
+
+.. code:: bash
+
+    docker run -it --rm --gpus all \
+        --shm-size 20g \
+        --network host \
+        --name rlinf \
+        -v .:/workspace/RLinf \
+        rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+        # 如果需要国内加速下载镜像，可以使用：
+        # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
 
 进入容器后，请通过内置的 `switch_env` 工具切换到对应的虚拟环境：
 
@@ -117,7 +141,16 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
 
 .. code:: bash
 
-    pip install uv
+    # 为提高国内依赖安装速度，可以设置以下环境变量：
+    # export UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download
+    # export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
+    # export HF_ENDPOINT=https://hf-mirror.com
+
+    # 如果你在克隆 Git 仓库时遇到问题，可以设置：
+    # git config --global url."https://ghfast.top/github.com/".insteadOf "https://github.com/"
+    # 注意：安装完成后，建议取消该全局设置以免影响其他 Git 操作：
+    # git config --global --unset url."https://ghfast.top/github.com/".insteadOf
+
     bash requirements/install.sh embodied --model openpi --env maniskill_libero
     source .venv/bin/activate
 

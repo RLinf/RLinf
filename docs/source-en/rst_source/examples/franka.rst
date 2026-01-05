@@ -114,6 +114,12 @@ Please take a note of the firmware version for later use.
       <img src="https://github.com/RLinf/misc/blob/main/pic/franka_firmware.png?raw=true" style="width: 60%;"/>
   </div>
 
+.. warning::
+
+  Make sure that the Franka firmware version is ``<5.9.0`` for compatibility with the serl_franka_controllers.
+
+  Firmware version 5.7.2 is recommended for best compatibility.
+
 2. Real-time Kernel Installation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -123,15 +129,35 @@ Follow the instructions in `Franka documentation <https://frankarobotics.github.
 3. Installation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-**Option 1: Docker Image**
-
-Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-franka`` for the experiment.
-
-To access the robot, camera, and space mouse devices from within the docker container, it is recommended to run the container with the following additional flags:
+a. Clone RLinf Repository
+__________________________
 
 .. code:: bash
 
-   docker run --rm -it --network host --privileged rlinf/rlinf:agentic-rlinf0.1-franka
+   # For mainland China users, you can use the following for better download speed:
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+b. Install Dependencies
+__________________________
+
+**Option 1: Docker Image**
+
+Use Docker image for the experiment.
+
+To access the robot, camera, and space mouse devices from within the docker container, it is recommended to run the container in the **privileged** mode:
+
+.. code:: bash
+
+   docker run -it --rm \
+      --privileged \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.1-franka
+      # For mainland China users, you can use the following for better download speed:
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-franka
 
 Currently, the docker image contains libfranka version ``0.10.0``, ``0.13.3``, ``0.14.1``, ``0.15.0``, and ``0.18.0`` with franka_ros version ``0.10.0``.
 
@@ -146,13 +172,9 @@ Having determined the compatible libfranka version, you can switch to the corres
    # e.g., for libfranka version 0.15.0
    # source switch_env franka-0.15.0
 
-.. note::
-
-  Currently, the docker image is only tested for Franka firmware version ``>=5.7.2`` and ``<5.9.0`` with libfranka 0.15.0, which are thus the recommended versions to use.
-
 **Option 2: Custom Environment**
 
-Our installation script installs consists of the installation of two parts:
+Our installation script consists of the installation of two parts:
 
 - Python dependencies for RLinf framework and real-world RL training.
 - ROS Noetic, libfranka, franka_ros, and serl_franka_controllers for Franka control.
@@ -184,16 +206,48 @@ Execute the following command to install the dependencies:
 
 .. code:: bash
 
-   pip install uv
+   # For mainland China users, you can use the following for better download speed:
+   # export UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download
+   # export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
+   # export HF_ENDPOINT=https://hf-mirror.com
+
+   # If you have trouble cloning the git repos, you can also set:
+   # git config --global url."https://ghfast.top/github.com/".insteadOf "https://github.com/"
+   # WARNING: Remember to unset this config (git config --global --unset url."https://ghfast.top/github.com/".insteadOf) after installation to avoid affecting other git operations.
+
    bash requirements/install.sh embodied --env franka
    source .venv/bin/activate
 
-Training/rollout Nodes
+Training/Rollout Nodes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+a. Clone RLinf Repository
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. code:: bash
+
+   # For mainland China users, you can use the following for better download speed:
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+b. Install Dependencies
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 **Option 1: Docker Image**
 
-Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` for the experiment.
+Use Docker image for the experiment.
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+      # For mainland China users, you can use the following for better download speed:
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
 
 **Option 2: Custom Environment**
 
@@ -201,9 +255,17 @@ Install dependencies directly in your environment by running the following comma
 
 .. code:: bash
 
-   pip install uv
+   # For mainland China users, you can use the following for better download speed:
+   # export UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download
+   # export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
+   # export HF_ENDPOINT=https://hf-mirror.com
+
+   # If you have trouble cloning the git repos, you can also set:
+   # git config --global url."https://ghfast.top/github.com/".insteadOf "https://github.com/"
+   # WARNING: Remember to unset this config (git config --global --unset url."https://ghfast.top/github.com/".insteadOf) after installation to avoid affecting other git operations.
+
    bash requirements/install.sh embodied --model openvla --env maniskill_libero
-   source .venv/bin/
+   source .venv/bin/activate
    
 Model Download
 ---------------
@@ -219,6 +281,8 @@ Before starting training, you need to download the corresponding pretrained mode
    git clone https://huggingface.co/RLinf/RLinf-Reset10-pretrained
 
    # Method 2: Using huggingface-hub
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-Reset10-pretrained --local-dir RLinf-Reset10-pretrained
    hf download RLinf/RLinf-Reset10-pretrained --local-dir RLinf-Reset10-pretrained

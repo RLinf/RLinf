@@ -109,6 +109,11 @@ Franka真机强化学习
       <img src="https://github.com/RLinf/misc/blob/main/pic/franka_firmware.png?raw=true" style="width: 60%;"/>
   </div>
 
+.. warning::
+
+  请确保 Franka 固件版本 ``<5.9.0`` 以保证与 serl_franka_controllers 的兼容性。
+  推荐使用固件版本 5.7.2 以获得最佳兼容性。
+
 2. 实时内核安装
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -118,22 +123,35 @@ Franka真机强化学习
 3. 依赖安装
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+a. 克隆 RLinf 仓库
+____________________
+
+.. code:: bash
+
+  # 为了提高国内下载速度，也可以使用：
+  # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+  git clone https://github.com/RLinf/RLinf.git
+  cd RLinf
+
+b. 安装依赖
+____________
+
 **方式 1：Docker 镜像**
 
-使用 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-franka`` 进行实验。
+使用 Docker 镜像进行实验。
 
 为了从 Docker 容器内访问机器人、相机和空间鼠标设备，建议使用以下附加参数运行容器：
 
 .. code:: bash
 
-   docker run --rm -it --network host --privileged rlinf/rlinf:agentic-rlinf0.1-franka
-
-Currently, the docker image contains libfranka version ``0.10.0``, ``0.13.3``, ``0.14.1``, ``0.15.0``, and ``0.18.0`` with franka_ros version ``0.10.0``.
-
-These versions are selected based on the compatibility matrix in `Franka compatibility <https://frankarobotics.github.io/docs/compatibility.html>`_.
-Please check your Franka firmware version and find which libfranka version is compatible with it.
-
-Having determined the compatible libfranka version, you can switch to the corresponding virtual environment in the docker container by running:
+  docker run -it --rm \
+    --privileged \
+    --network host \
+    --name rlinf \
+    -v .:/workspace/RLinf \
+    rlinf/rlinf:agentic-rlinf0.1-franka
+    # 为了提高国内下载速度，也可以使用：
+    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-franka
 
 目前该 Docker 镜像包含 libfranka 版本 ``0.10.0``、``0.13.3``、``0.14.1``、``0.15.0`` 和 ``0.18.0``，以及 franka_ros 版本 ``0.10.0``。
 
@@ -148,13 +166,9 @@ Having determined the compatible libfranka version, you can switch to the corres
     # 例如，对于 libfranka 版本 0.15.0
     # source switch_env franka-0.15.0
 
-.. warning::
-
-  目前该 Docker 镜像只对固件版本 ``>=5.7.2`` 且 ``<5.9.0`` 的 Franka 机械臂（libfranka 0.15.0）进行过测试，因此推荐使用该版本进行实验。
-
 **方式 2：自定义环境**
 
-我们的安装脚本主要包含两部分内容：
+安装脚本主要包含两部分内容：
 
 - RLinf 框架及真实世界强化学习训练所需的 Python 依赖；
 - 用于 Franka 控制的 ROS Noetic、libfranka、franka_ros 以及 serl_franka_controllers 等依赖。
@@ -191,16 +205,48 @@ Having determined the compatible libfranka version, you can switch to the corres
 
 .. code:: bash
 
-   pip install uv
-   bash requirements/install.sh embodied --env franka
-   source .venv/bin/activate
+  # 为了提高国内下载速度，可以添加以下环境变量：
+  # export UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download
+  # export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
+  # export HF_ENDPOINT=https://hf-mirror.com
 
-训练 / rollout 节点
+  # 如果你在克隆 git 仓库时遇到问题，可以设置：
+  # git config --global url."https://ghfast.top/github.com/".insteadOf "https://github.com/"
+  # 警告：安装完成后请记得取消该配置（git config --global --unset url."https://ghfast.top/github.com/".insteadOf），以免影响其它 git 操作。
+
+  bash requirements/install.sh embodied --env franka
+  source .venv/bin/activate
+
+训练 / Rollout 节点
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+a. 克隆 RLinf 仓库
+^^^^^^^^^^^^^^^^^^^^^
+
+.. code:: bash
+
+  # 为了提高国内下载速度，也可以使用：
+  # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+  git clone https://github.com/RLinf/RLinf.git
+  cd RLinf
+
+b. 安装依赖
+^^^^^^^^^^^^^^^^^^^^^
 
 **方式 1：Docker 镜像**
 
-使用 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` 进行实验。
+使用 Docker 镜像进行实验。
+
+.. code:: bash
+
+  docker run -it --rm --gpus all \
+    --shm-size 20g \
+    --network host \
+    --name rlinf \
+    -v .:/workspace/RLinf \
+    rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+    # 为了提高国内下载速度，也可以使用：
+    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
 
 **方式 2：自定义环境（Custom Environment）**
 
@@ -208,9 +254,17 @@ Having determined the compatible libfranka version, you can switch to the corres
 
 .. code:: bash
 
-   pip install uv
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
-   source .venv/bin/activate
+  # 为了提高国内下载速度，可以添加以下环境变量：
+  # export UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download
+  # export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
+  # export HF_ENDPOINT=https://hf-mirror.com
+
+  # 如果你在克隆 git 仓库时遇到问题，可以设置：
+  # git config --global url."https://ghfast.top/github.com/".insteadOf "https://github.com/"
+  # 警告：安装完成后请记得取消该配置（git config --global --unset url."https://ghfast.top/github.com/".insteadOf），以免影响其它 git 操作。
+
+  bash requirements/install.sh embodied --model openvla --env maniskill_libero
+  source .venv/bin/activate
 
 模型下载
 ---------------
@@ -226,6 +280,8 @@ Having determined the compatible libfranka version, you can switch to the corres
    git clone https://huggingface.co/RLinf/RLinf-Reset10-pretrained
 
    # 方式 2：使用 huggingface-hub
+   # 为了提高国内下载速度，可以添加以下环境变量：
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-Reset10-pretrained --local-dir RLinf-Reset10-pretrained
    hf download RLinf/RLinf-Reset10-pretrained --local-dir RLinf-Reset10-pretrained
