@@ -1,5 +1,5 @@
 import asyncio
-from rlinf.workers.agent.agent_loop import SGLangClient
+from rlinf.agents.mas.sglang_client import SGLangClient
 
 async def main():
     client = SGLangClient(
