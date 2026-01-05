@@ -229,6 +229,20 @@ class AgentEvalRunner(ReasoningEvalRunner):
                     if rollout_result.response_texts
                     else None
                 )
+                origin_question = (
+                    rollout_result.origin_question[i]
+                    if rollout_result.origin_question
+                    else None
+                )
+
+                # Extract message_history from extra field
+                message_history = None
+                if rollout_result.trace_info is not None:
+                    # extra is expected to be a list of message_history for each sequence
+                    if isinstance(rollout_result.trace_info, list) and i < len(
+                        rollout_result.trace_info
+                    ):
+                        message_history = rollout_result.trace_info[i]
 
                 # Determine if the answer is correct based on reward
                 # Assuming reward > 0 means correct
@@ -244,8 +258,10 @@ class AgentEvalRunner(ReasoningEvalRunner):
                     "prompt_text": prompt_text,
                     "response_text": response_text,
                     "answer": answer,
+                    "origin_question": origin_question,
                     "reward": reward,
                     "is_correct": is_correct,
+                    "message_history": message_history,
                 }
 
                 batch_results.append(result_entry)

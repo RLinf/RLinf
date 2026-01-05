@@ -61,23 +61,34 @@ def concat_dict_list(list_of_dicts: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def split_list(
-    inputs: list, num_chunks: int, enforce_divisible_batch: Optional[bool] = True
+    inputs: list, num_chunks: Union[int, list[int]], enforce_divisible_batch: Optional[bool] = True
 ):
     """
     Split a list into equal sized chunks
     """
-    if enforce_divisible_batch:
-        chunk_size = len(inputs) // num_chunks
-        assert len(inputs) % chunk_size == 0, (
-            f"Issue with batch size configuration! inputs len:{len(inputs)} num_chunks:{num_chunks}"
+    if isinstance(num_chunks, list):
+        assert all((i > 0 for i in num_chunks)) and sum(num_chunks) == len(inputs), (
+            "Issue with batch size configuration!"
         )
-        return [inputs[i : i + chunk_size] for i in range(0, len(inputs), chunk_size)]
+        passd_num = 0
+        result = []
+        for length in num_chunks:
+            result.append(inputs[passd_num : passd_num + length])
+            passd_num += length
+        return result
     else:
-        k, m = divmod(len(inputs), num_chunks)
-        return [
-            inputs[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)]
-            for i in range(num_chunks)
-        ]
+        if enforce_divisible_batch:
+            chunk_size = len(inputs) // num_chunks
+            assert len(inputs) % chunk_size == 0, (
+                f"Issue with batch size configuration! inputs len:{len(inputs)} num_chunks:{num_chunks}"
+            )
+            return [inputs[i : i + chunk_size] for i in range(0, len(inputs), chunk_size)]
+        else:
+            k, m = divmod(len(inputs), num_chunks)
+            return [
+                inputs[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)]
+                for i in range(num_chunks)
+            ]
 
 
 def merge_tensor(dst_tensor: torch.Tensor, src_tensor: torch.Tensor):
@@ -105,7 +116,7 @@ def merge_list(dst_list: list, src_list: list):
 
 def get_iterator_k_split(
     batch: Union[dict, list[torch.Tensor]],
-    num_splits: int,
+    num_splits: Union[int, list[int]],
     enforce_divisible_batch: Optional[bool] = True,
     shuffle: bool = False,
     shuffle_seed: Optional[int] = None,
@@ -188,42 +199,49 @@ def get_iterator_k_split(
         list_items = {k: v for k, v in batch.items() if isinstance(v, list)}
 
         # Split tensor items
-        items = list(tensor_items.items())
-        if enforce_divisible_batch:
-            assert items[0][1].shape[0] % num_splits == 0, (
-                "Issue with batch size configuration!"
+        # items = list(tensor_items.items())
+        batch_size = next(iter(tensor_items.values())).shape[0]
+        if isinstance(num_splits, list):
+            assert all((i > 0 for i in num_splits)) and sum(num_splits) == batch_size, (
+                f"Issue with batch size configuration! batch_size = {batch_size}, num_splits = {num_splits}"
             )
-        split_batch = [torch.tensor_split(item[1], num_splits, dim=0) for item in items]
-        # handle the case where the batch size from dynamic bucketting is not divisible
-        if items[0][1].shape[0] % num_splits != 0:
-            chunk_size = split_batch[0][-1].shape[0]
-            split_batch = [[j[:chunk_size] for j in i] for i in split_batch]
-
-        if len(list_items) == 0:
-            # Only have tensor items
-            microbatches = [
-                [(items[i][0], split_batch[i][j]) for i in range(len(items))]
-                for j in range(num_splits)
-            ]
+            # split_batch = [torch.split(item[1], num_splits, dim=0) for item in items]
+            tensor_items = {k: torch.split(v, num_splits) for k, v in tensor_items.items()}
         else:
-            # Split list items
-            list_items = list(list_items.items())
-            split_list_batch = [
-                split_list(
-                    item[1],
-                    num_splits,
-                    enforce_divisible_batch=enforce_divisible_batch,
+            if enforce_divisible_batch:
+                assert batch_size % num_splits == 0, (
+                    "Issue with batch size configuration!"
                 )
-                for item in list_items
-            ]
-            # Merge tensor and list items
-            all_keys = [item[0] for item in items] + [item[0] for item in list_items]
-            all_split_batch = split_batch + split_list_batch
-            microbatches = [
-                [(all_keys[i], all_split_batch[i][j]) for i in range(len(all_keys))]
-                for j in range(num_splits)
-            ]
-        microbatches = [dict(elem) for elem in microbatches]
+            # split_batch = [torch.tensor_split(item[1], num_splits, dim=0) for item in items]
+            tensor_items = {k: torch.tensor_split(v, num_splits) for k, v in tensor_items.items()}
+            # handle the case where the batch size from dynamic bucketting is not divisible
+            if batch_size % num_splits != 0:
+                # chunk_size = split_batch[0][-1].shape[0]
+                # split_batch = [[j[:chunk_size] for j in i] for i in split_batch]
+                chunk_size = batch_size // num_splits
+                tensor_items = {k: v[:chunk_size] for i, (k, v) in enumerate(tensor_items.items())}
+
+        list_items = {
+            k: split_list(
+                v,
+                num_splits,
+                enforce_divisible_batch=enforce_divisible_batch,
+            )
+            for k, v in list_items.items()
+        }
+        # microbatches = [
+        #     {all_keys[i]: all_split_batch[i][j] for i in range(len(all_keys))}
+        #     for j in range(num_splits)
+        # ]
+        all_items = {**tensor_items, **list_items}
+        if isinstance(num_splits, list):
+            len_num_splits = len(num_splits)
+        else:
+            len_num_splits = num_splits
+        microbatches = [
+            {k: v[i] for k, v in all_items.items()}
+            for i in range(len_num_splits)
+        ]
     else:
         # Split a list of torch tensors
         assert batch[0].shape[0] % num_splits == 0, (

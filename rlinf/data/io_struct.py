@@ -253,6 +253,10 @@ class RolloutResult:
     # Reference logprobs for comparison
     ref_logprobs: Optional[torch.Tensor] = None
 
+    # evaluation
+    trace_info: Optional[Any] = None
+    origin_question: Optional[str] = None
+
     @property
     def batch_size(self):
         return self.num_sequence // self.group_size
@@ -974,6 +978,379 @@ class RolloutResult:
         return split_results
 
 
+@dataclass(kw_only=True)
+class DynamicRolloutResult:
+    """
+    Dynamic Rollout Result
+    For dynamic batch size of one trajectory. Used in multi-turn agent.
+    Only supports right padding
+    """
+
+    num_sequence: int
+    group_size: int
+
+    # index to trajectory.
+    # idx_to_traj[i] = j means the i-th sequence is in the j-th trajectory.
+    # 0 <= j < group_size.
+    idx_to_traj: list[int]
+
+    # size of belows are num_sequence
+    input_ids: list[list[int]]
+    rollout_logprobs: list[list[float]]
+    ref_logprobs: Optional[torch.Tensor] = None
+    prompt_lengths: list[int]
+    response_lengths: list[int]
+    is_end: list[bool]
+    # prompt_ids: list[list[int]]
+    # response_ids: list[list[int]]
+    # response_mask: Optional[list[list[int]]] = None
+
+    # size of belows are group_size
+    rewards: Optional[torch.Tensor | list[float]] = None
+    advantages: Optional[torch.Tensor] = None
+
+    # Tool call counts per turn (size: num_sequence)
+    turn_subtask_counts: Optional[list[int]] = None
+    turn_search_counts: Optional[list[int]] = None
+    turn_access_counts: Optional[list[int]] = None
+
+    # Number of valid turns (turns with actual tool calls)
+    num_valid_planner_turns: Optional[int] = None
+    num_valid_worker_turns: Optional[int] = None
+
+    # Evaluation metrics per trajectory (size: group_size)
+    # Each item is a dict with metric_type -> metric_dict mapping
+    eval_metrics: Optional[list[dict[str, Any]]] = None
+
+    # for reject sampling
+    # size of belows are group_size
+    # prompt_texts: Optional[list[str]] = None
+    # response_texts: Optional[list[str]] = None
+    # answers: Optional[list[str | dict]] = None
+
+    @staticmethod
+    def _get_attention_masks_and_position_ids(
+        prompt_lengths: torch.Tensor,
+        response_lengths: torch.Tensor,
+        total_len: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        B = prompt_lengths.size(0)
+
+        # =========================
+        # Attention Mask
+        # Response Mask
+        # =========================
+        arange_ids = (
+            torch.arange(total_len).unsqueeze(0).expand(B, -1)
+        )  # [B, total_len]
+
+        # Compute the start and end positions of the prompt and response tokens
+        prompt_end = prompt_lengths  # [B]
+        response_end = prompt_lengths + response_lengths  # [B]
+
+        # Broadcast [B, total_len]
+        prompt_end = prompt_end.unsqueeze(1)
+        response_end = response_end.unsqueeze(1)
+        attention_mask = (arange_ids < response_end)
+        response_mask = (arange_ids >= prompt_end) & (arange_ids < response_end)
+
+        # =========================
+        # Position IDs
+        # =========================
+        position_ids = torch.zeros_like(arange_ids)
+
+        for i in range(B):
+            position_ids[i, 0:] = torch.arange(total_len)
+
+        return attention_mask, response_mask, position_ids
+
+    def to_actor_batch(
+        self,
+        seq_length: int,
+        pad_token: int,
+    ) -> dict[str, torch.Tensor]:
+        """
+        Transform the rollout result into a format suitable for the actor.
+
+        Args:
+            seq_length (int): Total sequence length for training, e.g., 8192.
+            pad_token (int): Token used for padding, e.g., `tokenizer.pad_token_id`.
+
+        Returns:
+            Dict[str, torch.Tensor]: A dictionary with keys:
+
+            input_ids (torch.Tensor):
+                Concatenated prompt and response token IDs,
+                shape ``[num_sequence, seq_length]``.
+
+            attention_mask (torch.Tensor):
+                Attention mask for the input sequence,
+                shape ``[num_sequence, seq_length]``.
+
+            is_end (torch.Tensor):
+                Boolean tensor indicating whether the sequence ends,
+                shape ``[num_sequence]``.
+
+            position_ids (torch.Tensor):
+                Position IDs for the input sequence,
+                shape ``[num_sequence, seq_length]``.
+
+            prompt_lengths (torch.Tensor):
+                Lengths of the prompt sequences,
+                shape ``[num_sequence]``.
+
+            response_lengths (torch.Tensor):
+                Lengths of the response sequences,
+                shape ``[num_sequence]``.
+
+            advantages (torch.Tensor), optional:
+                Advantage values for the responses,
+                shape ``[num_sequence, seq_length]``.
+        """
+
+        # len = seq_length: input_ids, attention_mask, position_ids
+        #           [prompt_ids,    response_ids, ..., response_padding]
+        #           |<-- pmp len -->|<-- resp len --->|<-- padding --->|
+        #           |<------------------ cfg.runner.seq_length ------->|
+
+        # len = seq_length: advantage, prev_logprobs, ref_logprobs
+        #           [mask or response_ids, ...,        , response_padding]
+        #           |<----- true response length ----->|<--- padding --->|
+        #           |<------------------ cfg.runner.seq_length --------->|
+
+
+        prompt_lengths = torch.tensor(self.prompt_lengths, dtype=torch.int32)
+        response_lengths = torch.tensor(self.response_lengths, dtype=torch.int32)
+        is_end = torch.tensor(self.is_end, dtype=torch.bool)
+
+        attention_mask, response_mask, position_ids = self._get_attention_masks_and_position_ids(
+            prompt_lengths=prompt_lengths,
+            response_lengths=response_lengths,
+            total_len=seq_length,
+        )
+
+        input_ids = batch_pad_to_fixed_len(
+            [torch.as_tensor(ids, dtype=torch.long) for ids in self.input_ids],
+            max_batch_len=seq_length,
+            pad_token=pad_token,
+        )
+
+        prev_logprobs = batch_pad_to_fixed_len(
+            [
+                torch.as_tensor([0] * prompt_length + logprobs, dtype=torch.float)
+                for prompt_length, logprobs in zip(self.prompt_lengths, self.rollout_logprobs)
+            ],
+            max_batch_len=seq_length,
+            pad_token=0,
+        )
+
+        batch = {
+            "idx_to_traj": self.idx_to_traj,
+            "input_ids": input_ids.cuda(),
+            "attention_mask": attention_mask.cuda(),
+            "response_mask": response_mask.cuda(),
+            "position_ids": position_ids.cuda(),
+            "is_end": is_end.cuda(),
+            "prompt_lengths": prompt_lengths.cuda(),
+            "response_lengths": response_lengths.cuda(),
+            "prev_logprobs": prev_logprobs.cuda()
+        }
+
+        if self.advantages is not None:
+            batch["advantages"] = self.advantages.cuda()
+
+        if self.ref_logprobs is not None:
+            batch["ref_logprobs"] = self.ref_logprobs.cuda()
+
+        if self.rewards is not None:
+            if isinstance(self.rewards, torch.Tensor):
+                batch["rewards"] = self.rewards.cuda()
+            else:
+                batch["rewards"] = torch.as_tensor(self.rewards, dtype=torch.float).cuda().flatten()
+
+        # Add tool call metrics fields if available
+        if self.turn_subtask_counts is not None:
+            batch["turn_subtask_counts"] = self.turn_subtask_counts
+        if self.turn_search_counts is not None:
+            batch["turn_search_counts"] = self.turn_search_counts
+        if self.turn_access_counts is not None:
+            batch["turn_access_counts"] = self.turn_access_counts
+        if self.num_valid_planner_turns is not None:
+            batch["num_valid_planner_turns"] = self.num_valid_planner_turns
+        if self.num_valid_worker_turns is not None:
+            batch["num_valid_worker_turns"] = self.num_valid_worker_turns
+        if self.eval_metrics is not None:
+            batch["eval_metrics"] = self.eval_metrics
+
+        return batch
+
+    def get_batch_pad(seq_length: int) -> dict[str, torch.Tensor]:
+        """Get the batch pad for the dynamic rollout result."""
+        pad_seq_shape = (1, seq_length)
+        attention_mask = torch.zeros(*pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device())
+        attention_mask[:,:1] = True
+        return {
+            "input_ids": torch.zeros(*pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()),
+            "attention_mask": attention_mask,
+            "response_mask": torch.zeros(*pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()),
+            "position_ids": torch.zeros(*pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()),
+            "is_end": torch.zeros(1, dtype=torch.bool, device=torch.cuda.current_device()),
+            "prompt_lengths": torch.zeros(1, dtype=torch.int32, device=torch.cuda.current_device()),
+            "response_lengths": torch.zeros(1, dtype=torch.int32, device=torch.cuda.current_device()),
+            "prev_logprobs": torch.zeros(*pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()),
+            "rewards": torch.zeros(1, dtype=torch.float32, device=torch.cuda.current_device()),
+            "advantages": torch.zeros(*pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()),
+        }
+
+    @staticmethod
+    def merge_batches(
+        batches: list[dict[str, torch.Tensor]],
+        group_size: int,
+    ) -> dict[str, torch.Tensor]:
+        """Merge two batches into one."""
+        merged_batch = {}
+        if len(batches) == 0:
+            return merged_batch
+        if len(batches) == 1:
+            return batches[0]
+
+        for key in batches[0].keys():
+            if key == "idx_to_traj":
+                merged_batch[key] = []
+                for i, batch in enumerate(batches):
+                    merged_batch[key].extend([j + i * group_size for j in batch[key]])
+            elif torch.is_tensor(batches[0][key]):
+                merged_batch[key] = torch.cat([batch[key] for batch in batches], dim=0)
+            elif isinstance(batches[0][key], list):
+                merged_batch[key] = []
+                for batch in batches:
+                    merged_batch[key].extend(batch[key])
+            elif isinstance(batches[0][key], (int, float)):
+                # Sum scalar values (e.g., num_valid_planner_turns, num_valid_worker_turns)
+                merged_batch[key] = sum(batch[key] for batch in batches)
+            else:
+                raise ValueError(f"Unsupported batch key type: {type(batches[0][key])}")
+        return merged_batch
+
+    @staticmethod
+    def pack_traj_batch(
+        batch: dict[str, torch.Tensor],
+    ) -> tuple["DynamicRolloutResult", dict]:
+        """Merge two batches into one."""
+
+        # breakpoint()
+        traj_to_idx = {}
+        for idx, traj in enumerate(batch["idx_to_traj"]):
+            if traj not in traj_to_idx:
+                traj_to_idx[traj] = []
+            traj_to_idx[traj].append(idx)
+
+        prompt_lengths = batch["prompt_lengths"].tolist()
+        response_lengths = batch["response_lengths"].tolist()
+        pack_map = {}
+        passed_as_suffix = []
+        for traj, idxes in traj_to_idx.items():
+            idxes = sorted(idxes, key=lambda x: prompt_lengths[x])
+            for i in range(len(idxes)):
+                left = idxes[i]
+                for j in range(i + 1, len(idxes)):
+                    right = idxes[j]
+                    if right in passed_as_suffix:
+                        continue
+                    if prompt_lengths[left] + response_lengths[left] > prompt_lengths[right]:
+                        continue
+                    left_prompt_ids = batch["input_ids"][left][:prompt_lengths[left] + response_lengths[left]]
+                    right_total_ids = batch["input_ids"][right][:prompt_lengths[left] + response_lengths[left]]
+                    if torch.equal(left_prompt_ids, right_total_ids):
+                        pack_map[left] = right
+                        passed_as_suffix.append(right)
+                        break
+
+        num_sequence = len(batch["idx_to_traj"])
+        new_idx_to_traj = []
+        split_params = {}
+        tensor_keys = [
+            'input_ids',
+            'attention_mask',
+            'response_mask',
+            'position_ids',
+            'is_end',
+            'prompt_lengths',
+            'response_lengths',
+            'prev_logprobs',
+            'rewards',
+            'advantages',
+        ]
+        list_keys = [
+            # 'turn_subtask_counts',
+            # 'turn_search_counts',
+            # 'turn_access_counts',
+        ]
+        solid_keys = [
+            'idx_to_traj',
+            # 'num_valid_planner_turns',
+            # 'num_valid_worker_turns',
+        ]
+        for k, v in batch.items():
+            if k in list_keys:
+                assert len(v) == num_sequence
+                split_params[k] = v
+                # split_params[k] = split_list(v, num_sequence)
+            elif k in tensor_keys:
+                split_params[k] = list(torch.chunk(
+                    v.clone(), num_sequence, dim=0
+                ))
+            else:
+                assert k in solid_keys, f"bad key {k}"
+
+        pack_params = {
+            k: [] for k in batch.keys() if k in tensor_keys or k in list_keys
+        }
+        for i in range(num_sequence):
+            if i in pack_map:
+                prefix = i
+                suffix = pack_map[i]
+                assert split_params["rewards"][prefix] == split_params["rewards"][suffix]
+
+                # logprobs, advantages, response_mask
+                prev_logprobs_prefix = split_params["prev_logprobs"][prefix].masked_fill(~split_params["response_mask"][prefix], 0)
+                prev_logprobs_suffix = split_params["prev_logprobs"][suffix].masked_fill(~split_params["response_mask"][suffix], 0)
+                split_params["prev_logprobs"][suffix] = prev_logprobs_prefix + prev_logprobs_suffix
+
+                advantages_prefix = split_params["advantages"][prefix].masked_fill(~split_params["response_mask"][prefix], 0)
+                advantages_suffix = split_params["advantages"][suffix].masked_fill(~split_params["response_mask"][suffix], 0)
+                split_params["advantages"][suffix] = advantages_prefix + advantages_suffix
+
+                split_params["response_mask"][suffix] += split_params["response_mask"][prefix]
+
+                # prompt_lengths, response_lengths
+                # split_params["prompt_lengths"][suffix] = prompt_lengths[prefix]
+                # split_params["response_lengths"][suffix] += prompt_lengths[suffix] - prompt_lengths[prefix]
+                split_params["response_lengths"][suffix] += split_params["prompt_lengths"][suffix] - split_params["prompt_lengths"][prefix]
+                split_params["prompt_lengths"][suffix] = split_params["prompt_lengths"][prefix]
+
+                for k in list_keys:
+                    split_params[k][suffix] += split_params[k][prefix]
+            else:
+                for k in (*tensor_keys, *list_keys):
+                    pack_params[k].append(split_params[k][i])
+                new_idx_to_traj.append(batch["idx_to_traj"][i])
+        packed_batch = {}
+        for k, v in pack_params.items():
+            try:
+                if k in tensor_keys:
+                    packed_batch[k] = torch.cat(v, dim=0)
+                elif k in list_keys:
+                    packed_batch[k] = v
+                else:
+                    assert False, k
+            except:
+                assert False, k
+        # packed_batch["num_valid_planner_turns"] = batch["num_valid_planner_turns"]
+        # packed_batch["num_valid_worker_turns"] = batch["num_valid_worker_turns"]
+        packed_batch["idx_to_traj"] = new_idx_to_traj
+        print(f"length between pack_traj: {len(batch['idx_to_traj'])}->{len(new_idx_to_traj)}")
+        return packed_batch
 class BatchResizingIterator:
     """The iterator for handling getting a batch and split it as a batch iterator with optional dynamic batch size."""
 

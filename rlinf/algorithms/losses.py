@@ -18,7 +18,7 @@ import torch
 
 from rlinf.algorithms.registry import register_policy_loss
 from rlinf.algorithms.utils import huber_loss
-from rlinf.utils.utils import masked_mean, masked_mean_ratio
+from rlinf.utils.utils import masked_mean, masked_mean_ratio, masked_sum
 
 
 def compute_ppo_actor_loss(
@@ -52,6 +52,20 @@ def compute_ppo_actor_loss(
     Returns:
         Tuple[torch.Tensor, Dict]: (actor_loss, metrics_dict)
     """
+    # TODO：如果lossmask全0，为pad turn，直接特殊处理返回0.0
+    if loss_mask is not None and loss_mask[0].sum() == 0.0:
+        return torch.tensor(0.0, device=logprobs.device), {
+            "actor/token_num": torch.tensor(0, dtype=torch.long, device=logprobs.device),
+            "actor/policy_loss": torch.tensor(0.0, device=logprobs.device),
+            "actor/policy_loss_mbs_mean": torch.tensor(0.0, device=logprobs.device),
+            "actor/policy_loss_abs": torch.tensor(0.0, device=logprobs.device),
+            "actor/ratio": torch.tensor(0.0, device=logprobs.device),
+            # "actor/clipped_ratio": torch.tensor(1.0, device=logprobs.device),
+            "actor/clipped_ratio": torch.tensor(0.0, device=logprobs.device),
+            "actor/dual_cliped_ratio": torch.tensor(0.0, device=logprobs.device),
+            "actor/approx_kl": torch.tensor(0.0, device=logprobs.device),
+            "actor/clip_fraction": torch.tensor(0.0, device=logprobs.device),
+        }
 
     loss_mask_ratio = None
 
@@ -72,6 +86,11 @@ def compute_ppo_actor_loss(
 
     loss_mask_count = loss_mask.count_nonzero() or 1
     # For numerical stability.
+    # FIXME:
+    # logprobs_diff = torch.clamp(logprobs - old_logprobs, -20.0, 20.0)
+    # ratio = torch.where(loss_mask, torch.exp(logprobs_diff), 0)
+    # approx_kl = torch.where(loss_mask, logprobs_diff.detach(), 0.0)
+
     ratio = torch.where(loss_mask, torch.exp(logprobs - old_logprobs), 0)
     approx_kl = torch.where(loss_mask, (logprobs - old_logprobs).detach(), 0.0)
 
@@ -90,6 +109,7 @@ def compute_ppo_actor_loss(
     else:
         dual_clip_mask = torch.zeros_like(clip_mask)
 
+    policy_loss_metrics = policy_loss.clone()
     policy_loss = loss_agg_func(
         policy_loss, loss_mask, loss_mask_ratio
     )  # default max_episode_steps is None
@@ -117,17 +137,36 @@ def compute_ppo_actor_loss(
         # Broadcast loss_mask to match ratio's shape for metrics computation
         loss_mask_for_metrics = loss_mask.expand_as(ratio)
 
+    approx_kl = -approx_kl.sum() / loss_mask_count
+    clip_fraction = clip_mask.logical_and_(loss_mask).count_nonzero() / loss_mask_count
     metrics_data = {
-        "actor/policy_loss": policy_loss.detach(),
-        "actor/ratio": masked_mean(ratio_for_metrics, loss_mask_for_metrics),
-        "actor/clipped_ratio": masked_mean(
+        # "actor/policy_loss": policy_loss.detach(),
+        # "actor/ratio": masked_mean(ratio_for_metrics, loss_mask_for_metrics),
+        # "actor/clipped_ratio": masked_mean(
+        #     clipped_ratio_for_metrics, loss_mask_for_metrics
+        # ),
+        # "actor/dual_cliped_ratio": masked_mean(
+        #     dual_cliped_ratio_for_metrics, loss_mask_for_metrics
+        # ),
+        # "actor/approx_kl": approx_kl.detach(),
+        # "actor/clip_fraction": clip_fraction.detach(),
+        "actor/token_num": loss_mask.count_nonzero(),
+        "actor/policy_loss": masked_sum(policy_loss_metrics, loss_mask_for_metrics),
+        "actor/policy_loss_mbs_mean": policy_loss.detach(),
+        "actor/policy_loss_abs": masked_sum(policy_loss_metrics.abs(), loss_mask_for_metrics),
+        "actor/ratio": masked_sum(ratio_for_metrics, loss_mask_for_metrics),
+        "actor/clipped_ratio": masked_sum(
             clipped_ratio_for_metrics, loss_mask_for_metrics
         ),
-        "actor/dual_cliped_ratio": masked_mean(
+        "actor/dual_cliped_ratio": masked_sum(
             dual_cliped_ratio_for_metrics, loss_mask_for_metrics
         ),
-        "actor/approx_kl": approx_kl.detach(),
-        "actor/clip_fraction": clip_fraction.detach(),
+        "actor/approx_kl": -masked_sum(
+            approx_kl, loss_mask_for_metrics
+        ),
+        "actor/clip_fraction": masked_sum(
+            clip_mask.logical_and_(loss_mask) != 0, loss_mask_for_metrics
+        ),
     }
     return policy_loss, metrics_data
 

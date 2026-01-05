@@ -1,0 +1,57 @@
+defaults:
+  - mas_train
+
+runner:
+  experiment_name: train-mastest-3b-qdrant-wo_pack_traj
+  output_dir: /mnt/project_rlinf/zhuchunyang_rl/logs
+  seq_length: 12000  
+
+  enable_dynamic_batch_size: True
+  max_tokens_per_mbs: 12000
+
+  max_epochs: 1
+  max_steps: 10
+
+agentloop:
+  use_llm_judge_api: True
+  workflow: mas
+
+rollout:
+  model:
+    model_type: qwen2.5
+    model_path: /mnt/public/hf_models/Qwen2.5-3B-Instruct-search
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+
+tools:
+  online: False
+
+
+data:
+  type: mas
+  max_prompt_length: 4096
+  rollout_batch_size: 16
+  train_data_paths: ["/mnt/public/xzxuan/data/nq_hotpotqa_train/train_RLinf.jsonl"]
+  val_data_paths: ["/mnt/public/xzxuan/data/nq_hotpotqa_train/train_RLinf.jsonl"]
+  shuffle: False
+
+actor:
+  pack_traj: False
+  model:
+    # megatron_checkpoint: null
+    megatron_checkpoint: /mnt/project_rlinf/zhuchunyang_rl/logs/train-mastest-3b-qdrant/converted_ckpts/actor
+    recompute_num_layers: 36
+
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: False
+    # sequence_parallel: ${gt:${actor.model.tensor_model_parallel_size}, 1}
+
+  megatron:
+    use_hf_ckpt: False  
+    ckpt_convertor:
+      model: qwen_2.5_3b
+
+reward:
+  reward_type: 'em' # or em
+  eval_metric: []  

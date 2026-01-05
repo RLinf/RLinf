@@ -22,11 +22,12 @@ from transformers import AutoTokenizer
 
 from rlinf.data.datasets.item import DatasetItem
 from rlinf.data.datasets.math import MathDataset
+from rlinf.data.datasets.mas import MASDataset
 from rlinf.data.datasets.vlm import VLMDatasetRegistry
 
 
 def create_rl_dataset(
-    config: DictConfig, tokenizer: AutoTokenizer
+    config: DictConfig, tokenizer: AutoTokenizer, is_eval: bool = False
 ) -> tuple[Dataset, Dataset]:
     """Create rl datasets.
 
@@ -56,6 +57,9 @@ def create_rl_dataset(
         )
 
         return train_dataset, val_dataset
+        dataset_cls = MathDataset
+    elif config.data.type == "mas":
+        dataset_cls = MASDataset
     elif config.data.type == "vision_language":
         # Prefer new factory-based VLM datasets; fallback to legacy if requested
         dataset_name = getattr(config.data, "dataset_name", None)
@@ -84,9 +88,26 @@ def create_rl_dataset(
         train_dataset = SACReplayBuffer.create_from_demo(config.data.path)
         return train_dataset, None
     else:
-        raise NotImplementedError(
-            f"Unsupported dataset type {config.data.type}, only support ['math', 'vision_language', 'robot_demo']"
+        return None, None
+
+    logging.info(f"Using dataset class: {dataset_cls.__name__}")
+
+    # Instantiate the dataset using the determined dataset class
+    train_dataset = None
+    if not is_eval:
+        train_dataset = dataset_cls(
+            data_paths=config.data.train_data_paths,
+            config=config,
+            tokenizer=tokenizer,
         )
+    
+    val_dataset = dataset_cls(
+        data_paths=config.data.val_data_paths,
+        config=config,
+        tokenizer=tokenizer,
+    )
+
+    return train_dataset, val_dataset
 
 
 def collate_fn(data_list: list["DatasetItem"]) -> dict[str, Any]:

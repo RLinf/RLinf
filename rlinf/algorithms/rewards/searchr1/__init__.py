@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import random
 import re
 import string
 
@@ -98,15 +97,6 @@ def compute_score(
     """
     answer = extract_solution(solution_str=solution_str)
     open_count, close_count = count_answer_tags(solution_str)
-    do_print = random.randint(1, 64) == 1
-    if do_print:
-        print("--------------------------------")
-        print(f"Golden answers: {ground_truth}")
-        if answer is not None:
-            print(f"Extracted answer is not None: {answer}")
-        else:
-            print("Extracted answer: None!")
-        print(f"Solution string: {solution_str}")
 
     if answer is None:
         return 0
@@ -133,13 +123,6 @@ def compute_score_subem(
         score: the score for the correct answer
     """
     answer = extract_solution(solution_str=solution_str)
-    do_print = random.randint(1, 64) == 1
-
-    if do_print:
-        print("--------------------------------")
-        print(f"Golden answers: {ground_truth['target']}")
-        print(f"Extracted answer: {answer}")
-        print(f"Solution string: {solution_str}")
 
     if answer is None:
         return 0
