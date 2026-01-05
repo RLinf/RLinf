@@ -58,9 +58,33 @@ Algorithm
 Dependency Installation
 -----------------------
 
+1. Clone RLinf Repository
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+   # For mainland China users, you can use the following for better download speed:
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+2. Install Dependencies
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 **Option 1: Docker Image**
 
-Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-isaaclab`` for the experiment.
+Use Docker image for the experiment.
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.1-isaaclab
+      # For mainland China users, you can use the following for better download speed:
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-isaaclab
 
 **Option 2: Custom Environment**
 
@@ -68,7 +92,15 @@ Install dependencies directly in your environment by running the following comma
 
 .. code:: bash
 
-   pip install uv
+   # For mainland China users, you can use the following for better download speed:
+   # export UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download
+   # export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
+   # export HF_ENDPOINT=https://hf-mirror.com
+
+   # If you have trouble cloning the git repos, you can also set:
+   # git config --global url."https://ghfast.top/github.com/".insteadOf "https://github.com/"
+   # WARNING: Remember to unset this config (git config --global --unset url."https://ghfast.top/github.com/".insteadOf) after installation to avoid affecting other git operations.
+
    bash requirements/install.sh embodied --model gr00t --env isaaclab
    source .venv/bin/activate
 
@@ -107,6 +139,8 @@ Model Download
    git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
 
    # Method 2: Using huggingface-hub
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
 

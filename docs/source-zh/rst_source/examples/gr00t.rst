@@ -55,9 +55,33 @@ GR00T-N1.5直接将环境提供的自然语言任务描述作为语言模型的�
 依赖安装
 -----------------------
 
+1. 克隆 RLinf 仓库
+~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+   # 为提高国内下载速度，可以使用：
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+2. 安装依赖
+~~~~~~~~~~~~~~~~
+
 **选项 1：Docker 镜像**
 
-使用 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` 来运行实验。
+使用 Docker 镜像运行实验。
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+      # 如果需要国内加速下载镜像，可以使用：
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
 
 请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
 
@@ -69,7 +93,16 @@ GR00T-N1.5直接将环境提供的自然语言任务描述作为语言模型的�
 
 .. code:: bash
 
-   pip install uv
+   # 为提高国内依赖安装速度，可以设置以下环境变量：
+   # export UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download
+   # export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
+   # export HF_ENDPOINT=https://hf-mirror.com
+
+   # 如果你在克隆 Git 仓库时遇到问题，可以设置：
+   # git config --global url."https://ghfast.top/github.com/".insteadOf "https://github.com/"
+   # 注意：安装完成后，建议取消该全局设置以免影响其他 Git 操作：
+   # git config --global --unset url."https://ghfast.top/github.com/".insteadOf
+
    bash requirements/install.sh embodied --model gr00t --env maniskill_libero
    source .venv/bin/activate
 
@@ -88,6 +121,8 @@ GR00T-N1.5直接将环境提供的自然语言任务描述作为语言模型的�
    git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
 
    # 方法2：使用huggingface-hub
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
 

@@ -102,9 +102,33 @@ Dependency Installation
 This section describes the dependency for the SFT of OpenPI model. 
 For other models, please refer to the ``Dependency Installation`` section of the corresponding examples.
 
+1. Clone RLinf Repository
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+    # For mainland China users, you can use the following for better download speed:
+    # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+    git clone https://github.com/RLinf/RLinf.git
+    cd RLinf
+
+2. Install Dependencies
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 **Option 1: Docker Image**
 
-Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` for the experiment.
+Use Docker image for the experiment.
+
+.. code:: bash
+
+    docker run -it --rm --gpus all \
+        --shm-size 20g \
+        --network host \
+        --name rlinf \
+        -v .:/workspace/RLinf \
+        rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+        # For mainland China users, you can use the following for better download speed:
+        # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
 
 Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
 
@@ -118,9 +142,17 @@ Install dependencies directly in your environment by running the following comma
 
 .. code:: bash
 
-   pip install uv
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   source .venv/bin/activate
+    # For mainland China users, you can use the following for better download speed:
+    # export UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download
+    # export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
+    # export HF_ENDPOINT=https://hf-mirror.com
+
+    # If you have trouble cloning the git repos, you can also set:
+    # git config --global url."https://ghfast.top/github.com/".insteadOf "https://github.com/"
+    # WARNING: Remember to unset this config (git config --global --unset url."https://ghfast.top/github.com/".insteadOf) after installation to avoid affecting other git operations.
+
+    bash requirements/install.sh embodied --model openpi --env maniskill_libero
+    source .venv/bin/activate
 
 Launch scripts
 ----------------
@@ -128,10 +160,6 @@ Launch scripts
 First start the Ray cluster, then run the helper script:
 
 .. code:: bash
-
-   export RANK=0  # set the rank of the current node
-   cd /path_to_RLinf/ray_utils
-   bash start_ray.sh
 
    # return to repo root
    bash examples/sft/train_embodied_sft.sh --config libero_sft_openpi
