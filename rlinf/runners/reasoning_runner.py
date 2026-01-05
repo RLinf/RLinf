@@ -180,6 +180,13 @@ class ReasoningRunner:
                     self.cfg.actor.megatron.ckpt_convertor.hf_model_path,
                     self.cfg.actor.megatron.ckpt_convertor,
                 )
+        
+        if self.cfg.runner.resume_dir == "Auto":
+            #resume_dir: ${runner.output_dir}/${runner.experiment_name}/checkpoints/global_step_150
+            #get max step from ${runner.output_dir}/${runner.experiment_name}/checkpoints/
+            max_step = max(int(d.split("global_step_")[-1]) for d in os.listdir(os.path.join(self.cfg.runner.output_dir, self.cfg.runner.experiment_name, "checkpoints")))
+            self.cfg.runner.resume_dir = os.path.join(self.cfg.runner.output_dir, self.cfg.runner.experiment_name, "checkpoints", f"global_step_{max_step}")
+            logging.info(f"Auto resume from checkpoint: {self.cfg.runner.resume_dir}")
 
         # Init workers
         self.rollout.init_worker().wait()

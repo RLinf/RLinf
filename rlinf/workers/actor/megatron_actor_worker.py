@@ -190,7 +190,9 @@ class MegatronActor(MegatronModelManager, Worker):
             * self.cfg.algorithm.group_size
             // parallel_state.get_data_parallel_world_size()
         )
-
+        self.do_down_sampling = self.cfg.get("down_sampling", False) and self.cfg.down_sampling.do_down_sampling
+        if self.do_down_sampling:
+            self.down_sampling_config = self.cfg.down_sampling.down_sampling_config
         # Config validation
         if self.is_pipeline:
             assert not self.role_cfg.get("enable_dp_load_balance", False), (
@@ -541,13 +543,13 @@ class MegatronActor(MegatronModelManager, Worker):
                 # Logging and early stopping according to KL (logp vs ref) or importance ratio (new logp vs old logp).
                 _imp = metrics_data["actor/ratio"]
                 torch.distributed.all_reduce(
-                    _imp, group=parallel_state.get_data_parallel_group()
+                    _imp, group=parallel_state.get_data_parallel_group(), op=torch.distributed.ReduceOp.AVG
                 )
-                _n_valid_tokens = mask.count_nonzero().clone()
-                torch.distributed.all_reduce(
-                    _n_valid_tokens, group=parallel_state.get_data_parallel_group()
-                )
-                _imp /= _n_valid_tokens
+                # _n_valid_tokens = mask.count_nonzero().clone()
+                # torch.distributed.all_reduce(
+                #     _n_valid_tokens, group=parallel_state.get_data_parallel_group()
+                # )
+                # _imp /= _n_valid_tokens
 
                 # Early stopping.
                 if (
@@ -795,10 +797,10 @@ class MegatronActor(MegatronModelManager, Worker):
             return batch
 
     def _dp_load_balance(self, batch: dict[str, torch.Tensor]):
-        batch_size = batch["input_ids"].shape[0]
-        assert batch_size == self.total_batch_size_per_dp, (
-            f"DP Load balance is only available when a single batch contains all data, e.g., in collocated mode. But got {batch_size=} and {self.total_batch_size_per_dp=}."
-        )
+        # batch_size = batch["input_ids"].shape[0]
+        # assert batch_size == self.total_batch_size_per_dp, (
+        #     f"DP Load balance is only available when a single batch contains all data, e.g., in collocated mode. But got {batch_size=} and {self.total_batch_size_per_dp=}."
+        # )
         batch = RolloutDataBalance.from_rollout_batches(
             rollout_batches=batch,
             dp_world_size=parallel_state.get_data_parallel_world_size(),
@@ -849,7 +851,14 @@ class MegatronActor(MegatronModelManager, Worker):
         # Otherwise, loading model might cause OOM
         self._load_weight_and_optimizer()
         self._training_setup()
-
+        
+        # DP batch load balance
+        if self.cfg.actor.get("enable_dp_load_balance", False):
+            batch = self._dp_load_balance(batch)
+            
+        if batch is None:
+            return None, None
+            
         # Advantage normalization
         if self.cfg.algorithm.normalize_advantages:
             mask = batch["response_mask"][:, -self.response_len :]
@@ -862,10 +871,6 @@ class MegatronActor(MegatronModelManager, Worker):
         # Valid token scale
         if self.cfg.algorithm.use_valid_token_scale:
             self._setup_valid_token_scale(batch)
-
-        # DP batch load balance
-        if self.cfg.actor.get("enable_dp_load_balance", False):
-            batch = self._dp_load_balance(batch)
 
         if self.use_profiler:
             self.profiler.init_fwd_bwd_schedule(self.cfg.algorithm.n_minibatches)
@@ -881,6 +886,17 @@ class MegatronActor(MegatronModelManager, Worker):
         with self.worker_timer():
             training_metrics_list = []
             for global_batch in global_batches:
+                if self.do_down_sampling:
+                    global_batch_size_per_dp = global_batch['input_ids'].shape[0]
+                    dp_size = parallel_state.get_data_parallel_world_size()
+                    configure_batch_sizes(
+                        rank=torch.distributed.get_rank(),
+                        mbs=self.cfg.actor.micro_batch_size,
+                        gbs=global_batch_size_per_dp * dp_size,
+                        dp=dp_size,
+                    )
+                    num_microbatches = get_num_microbatches()
+                    assert num_microbatches == global_batch_size_per_dp
                 training_metrics = self.training_step(global_batch)
                 training_metrics_list.append(training_metrics)
 
@@ -1357,7 +1373,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     adv_type=self.cfg.algorithm.adv_type,
                     rewards=batch["rewards"].cuda(),
                     loss_mask=mask.cuda(),
-                    group_size=self.cfg.algorithm.group_size,
+                    group_size=self.down_sampling_config.down_sample_to_n if self.do_down_sampling else self.cfg.algorithm.group_size,
                     kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
                     kl_penalty_type=self.kl_penalty_type,
                     logprob=batch["prev_logprobs"].cuda()
