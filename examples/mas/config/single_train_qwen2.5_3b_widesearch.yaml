@@ -1,0 +1,88 @@
+defaults:
+  - mas_train
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,rollout,reward: all
+
+runner:
+  experiment_name: sa-qwen2.5-3b-widesearch
+  output_dir: /mnt/public/xzxuan/Multi-Agent/RLinf/test
+  seq_length: 16000  
+
+  enable_dynamic_batch_size: True
+  max_tokens_per_mbs: 16000  
+
+  max_epochs: 1000
+  max_steps: -1
+
+algorithm:
+  group_size: 8
+
+  n_minibatches: 1
+
+  # GRPO loss params
+  loss_type: actor
+  loss_agg_func: "token-mean"
+  kl_beta: 0.001 # 0.001
+  kl_penalty_type: low_var_kl
+  ratio_clip_eps: 0.2
+  entropy_bonus: 0.0
+
+  # params for rollout
+  # sampling_params:
+  #   do_sample: True
+  #   temperature: 0.6
+  #   top_k: 20
+  #   top_p: 0.96
+  #   repetition_penalty: 1.0
+  #   max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
+  #   min_new_tokens: 1
+
+agentloop:
+  use_llm_judge_api: True
+  workflow: sa
+
+rollout:
+  gpu_memory_utilization: 0.6
+  model:
+    model_type: qwen2.5
+    model_path: /mnt/public/hf_models/Qwen2.5-3B-Instruct-search
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+
+tools:
+  online: False
+
+
+data:
+  type: mas
+  max_prompt_length: 4096
+  rollout_batch_size: 128
+  prompt_key: question
+  answer_key: answer
+  is_markdown: True
+  unique_columns: unique_columns 
+  train_data_paths: ["/mnt/public/xzxuan/Multi-Agent/RLinf/examples/widesearch/widesearch/yushi2.jsonl"]
+  val_data_paths: ["/mnt/public/xzxuan/Multi-Agent/RLinf/examples/widesearch/widesearch/yushi2.jsonl"]
+  data_size: -1
+
+actor:
+  # checkpoint_load_path: '/mnt/public/xzxuan/Multi-Agent/RLinf/converted_ckpts/qwen3_8b_tp4_pp1'
+  model:
+    megatron_checkpoint: /mnt/public/xzxuan/Multi-Agent/RLinf/converted_ckpts/3b_tp1_pp1
+    recompute_num_layers: 36
+
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: ${gt:${actor.model.tensor_model_parallel_size}, 1}
+
+  megatron:
+    use_hf_ckpt: False  
+    ckpt_convertor:
+      model: Qwen3-8B
+
+reward:
+  reward_type: 'em' # or em
+  eval_metric: []  

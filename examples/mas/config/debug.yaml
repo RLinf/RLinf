@@ -1,0 +1,77 @@
+defaults:
+  - mas_train
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,rollout,reward: all
+
+runner:
+  experiment_name: debug
+  output_dir: /mnt/public/xzxuan/Multi-Agent/RLinf/test
+  seq_length: 15000  
+
+  enable_dynamic_batch_size: True
+  max_tokens_per_mbs: 15000
+
+  max_epochs: 1000
+  max_steps: -1  
+
+algorithm:
+  group_size: 8
+  n_minibatches: 1
+
+agentloop:
+  use_llm_judge_api: True
+  workflow: mas
+
+rollout:
+  model:
+    model_type: qwen3
+    model_path: /mnt/public/xzxuan/model/Qwen3-4B
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+
+tools:
+  online: False
+
+
+data:
+  type: mas
+  max_prompt_length: 4096
+  rollout_batch_size: 128
+  prompt_key: question
+  answer_key: answer
+  is_markdown: True
+  unique_columns: unique_columns 
+  train_data_paths: ["/mnt/public/xzxuan/Multi-Agent/RLinf/examples/widesearch/widesearch/yushi2.jsonl"]
+  val_data_paths: ["/mnt/public/xzxuan/Multi-Agent/RLinf/examples/widesearch/widesearch/yushi2.jsonl"]
+  data_size: -1
+  
+
+inference:
+  model:
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: ${gt:${inference.model.tensor_model_parallel_size}, 1}
+
+actor:
+  # checkpoint_load_path: /mnt/public/xzxuan/Multi-Agent/RLinf/converted_ckpts/7b_tp2_pp1
+  model:
+    megatron_checkpoint: null
+    recompute_num_layers: 36
+
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: ${gt:${actor.model.tensor_model_parallel_size}, 1}
+
+  megatron:
+    use_hf_ckpt: True  
+    ckpt_convertor:
+      model: Qwen3-4B
+
+reward:
+  reward_type: 'em' # or em
+  eval_metric: []  
+
+

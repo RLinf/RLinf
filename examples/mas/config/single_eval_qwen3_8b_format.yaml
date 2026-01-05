@@ -1,0 +1,56 @@
+defaults:
+  - mas_eval
+
+runner:
+  experiment_name: qwen3-8b-eval-test
+  output_dir: /mnt/public/xzxuan/Multi-Agent/RLinf/test/single-qwen3-8b
+  seq_length: 15000  
+
+  max_epochs: 1
+  max_steps: -1  
+
+algorithm:
+  group_size: 5
+
+agentloop:
+  use_llm_judge_api: True
+  workflow: sa
+
+rollout:
+  gpu_memory_utilization: 0.6
+  model:
+    model_type: qwen3
+    model_path: /mnt/public/xzxuan/model/qwen3_8b
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+
+tools:
+  online: False
+
+data:
+  type: mas
+  max_prompt_length: 4096
+  val_rollout_batch_size: 100
+  val_data_paths: ["/mnt/public/xzxuan/data/nq_hotpotqa_train/test_RLinf.jsonl"]
+  data_size: 100
+  
+actor:
+  # checkpoint_load_path: /mnt/public/xzxuan/Multi-Agent/RLinf/converted_ckpts/qwen3_8b_tp1_pp1
+  model:
+    megatron_checkpoint: /mnt/public/xzxuan/Multi-Agent/RLinf/converted_ckpts/qwen3_8b_tp1_pp1
+    recompute_num_layers: 36
+
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: ${gt:${actor.model.tensor_model_parallel_size}, 1}
+
+  megatron:
+    use_hf_ckpt: False  
+    ckpt_convertor:
+      model: Qwen3-8B
+      
+reward:
+  reward_type: 'em' # or em
+  eval_metric: ['em', 'f1', 'llm']
+
+

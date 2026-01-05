@@ -1,0 +1,62 @@
+defaults:
+  - mas_eval
+
+runner:
+  experiment_name: yushi1225_notrain_ID_eval
+  output_dir: /mnt/public/xzxuan/Multi-Agent/RLinf/test/mas-8b-format-yushi
+  seq_length: 12000  
+
+  max_epochs: 1
+  max_steps: -1  
+
+algorithm:
+  group_size: 5
+
+agentloop:
+  use_llm_judge_api: True
+  workflow: mas
+
+rollout:
+  gpu_memory_utilization: 0.5
+  model:
+    model_type: qwen3
+    model_path: /mnt/public/xzxuan/model/qwen3_8b
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+
+
+tools:
+  online: False
+
+
+data:
+  type: mas
+  max_prompt_length: 4096
+  val_rollout_batch_size: 143
+  prompt_key: question
+  answer_key: answer
+  is_markdown: True
+  unique_columns: unique_columns 
+  val_data_paths: ["/mnt/public/xzxuan/Multi-Agent/RLinf/examples/widesearch/widesearch/yushi2.jsonl"]
+  data_size: -1
+  
+actor:
+  # checkpoint_load_path: /mnt/public/xzxuan/Multi-Agent/RLinf/converted_ckpts/7b_tp2_pp1
+  model:
+    megatron_checkpoint: /mnt/public/xzxuan/Multi-Agent/RLinf/converted_ckpts/7b_tp2_pp1
+    recompute_num_layers: 36
+
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 1
+    sequence_parallel: ${gt:${actor.model.tensor_model_parallel_size}, 1}
+
+  megatron:
+    use_hf_ckpt: False  
+    ckpt_convertor:
+      model: qwen_2.5_7b
+      
+reward:
+  reward_type: 'em' # or em
+  eval_metric: ['em', 'f1', 'llm']
+
+

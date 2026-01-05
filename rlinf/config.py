@@ -942,7 +942,7 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         cfg = validate_reasoning_eval_cfg(cfg)
         return cfg
 
-    if cfg.algorithm.adv_type in ("grpo", "reinpp_baseline"):
+    if cfg.algorithm.adv_type in ("grpo", "grpo_dynamic", "reinpp_baseline"):
         assert cfg.algorithm.group_size > 1
 
     assert cfg.actor.training_backend in SUPPORTED_TRAINING_BACKENDS, (
