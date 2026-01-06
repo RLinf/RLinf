@@ -20,6 +20,7 @@ hidden_size: 4096
 policy_setup: "widowx_bridge"
 add_value_head: False
 image_size: [224, 224]
+max_prompt_length: 30
 
 # LoRA settings
 is_lora: False

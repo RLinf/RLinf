@@ -69,9 +69,33 @@
 依赖安装
 ---------------
 
+1. 克隆 RLinf 仓库
+~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+   # 为提高国内下载速度，可以使用：
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+2. 安装依赖
+~~~~~~~~~~~~~~~~
+
 **选项 1：Docker 镜像**
 
-使用 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` 来运行实验。
+使用 Docker 镜像运行实验。
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+      # 如果需要国内加速下载镜像，可以使用：
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
 
 对于不同模型上的实验，请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
 
@@ -86,10 +110,23 @@
 
 .. code:: bash
 
-   pip install uv
+   # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
+
    # 将 --model 参数改为 openvla-oft 可安装 OpenVLA-OFT 环境
    bash requirements/install.sh embodied --model openvla --env maniskill_libero
    source .venv/bin/activate
+
+资源下载
+----------------
+
+下载 ManiSkill 资源文件：
+
+.. code:: bash
+
+   cd <path_to_RLinf>/rlinf/envs/maniskill
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
+   hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
 
 模型下载
 --------------
@@ -104,6 +141,8 @@
    git clone https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup
 
    # 方法 2: 使用 huggingface-hub
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download gen-robot/openvla-7b-rlvla-warmup --local-dir openvla-7b-rlvla-warmup
 

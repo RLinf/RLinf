@@ -502,7 +502,7 @@ class CollectiveGroup:
             from ..cluster import Cluster
 
             if self._rank == 0:
-                master_port = Cluster.find_free_port()
+                master_port = self._worker.acquire_free_port()
                 self._coll_manager.set_master_port_info(
                     self._group_info.group_name, master_port
                 )

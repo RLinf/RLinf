@@ -36,13 +36,11 @@ Quick Start
 
 Any YAML file can be used for evaluation with the ``eval_embodiment.sh`` script, provided it includes the relevant ``env.eval`` configuration. Taking ``examples/embodiment/config/libero_10_grpo_openvlaoft_eval.yaml`` as an example here, you can modify the following in the configuration file as needed:
 
-1. **Adjust model path** (Current code logic requires modifying both the actor and rollout environments simultaneously): Modify the following three parameters to load the model to be evaluated:
+1. **Adjust model path** : Modify the following two parameters to load the model to be evaluated:
 
   1. ``rollout.model.model_path``
 
   2. ``actor.model.model_path``
-
-  3. ``actor.tokenizer.tokenizer_model``
 
 
 2. **Control environment random seed**: You can adjust ``env.seed`` to change the environment's random function for result reproducibility, etc.

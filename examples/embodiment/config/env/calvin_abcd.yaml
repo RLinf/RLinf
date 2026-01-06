@@ -1,4 +1,4 @@
-simulator_type: calvin
+env_type: calvin
 task_suite_name: calvin_abcd
 
 total_num_envs: null

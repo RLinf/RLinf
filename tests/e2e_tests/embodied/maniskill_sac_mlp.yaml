@@ -33,8 +33,7 @@ runner:
   only_eval: False
   val_check_interval: 200
   save_interval: -1
-  seq_length: 1024
-  max_prompt_length: 30
+
 
 algorithm:
   update_epoch: 32

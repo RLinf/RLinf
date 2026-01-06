@@ -1,2 +1,0 @@
-
-openpi @ git+https://github.com/RLinf/openpi

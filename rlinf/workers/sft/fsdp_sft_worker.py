@@ -68,7 +68,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
             import openpi.training.data_loader as openpi_data_loader
 
-            from rlinf.models.embodiment.openpi import get_openpi_config
+            from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
             config = get_openpi_config(
                 self.cfg.actor.model.openpi.config_name,

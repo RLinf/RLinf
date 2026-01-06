@@ -176,6 +176,7 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
+          find /tmp -type f -name "isaacsim_extscache_*.whl" -delete
 
   embodied-gr00t-maniskill-libero-test:
     runs-on: embodied
@@ -237,6 +238,7 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
+          find /tmp -type f -name "isaacsim_extscache_*.whl" -delete
 
   embodied-openpi-maniskill-libero-test:
     runs-on: embodied

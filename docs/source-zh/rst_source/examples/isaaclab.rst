@@ -58,15 +58,40 @@
 依赖安装
 ---------------
 
+1. 克隆 RLinf 仓库
+~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+   # 为提高国内下载速度，可以使用：
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+2. 安装依赖
+~~~~~~~~~~~~~~~~
+
 **选项 1：Docker 镜像**
 
-使用 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-isaaclab`` 来运行实验。
+使用 Docker 镜像运行实验。
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.1-isaaclab
+      # 如果需要国内加速下载镜像，可以使用：
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-isaaclab
 
 **选项 2：自定义环境**
 
 .. code:: bash
 
-   pip install uv
+   # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
+
    bash requirements/install.sh embodied --model gr00t --env isaaclab
    source .venv/bin/activate
 
@@ -105,6 +130,8 @@ ISAAC-SIM下载
    git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
 
    # 方法2：使用huggingface-hub
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
 
