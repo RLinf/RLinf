@@ -168,7 +168,9 @@ class MegatronActor(MegatronModelManager, Worker):
         self.is_weight_offloaded = False
         self.is_optimizer_offloaded = False
         self.ref_policy_state_dict = None
-        self.is_pipeline = self.component_placement.is_pipeline
+        self.is_pipeline = placement.is_pipeline
+        self.placement_mode = placement._placement_mode
+        self.enable_dp_load_balance = self.role_cfg.get("enable_dp_load_balance", False)
 
         # Rollout configurations
         self.rollout_group_name = self.cfg.rollout.group_name
@@ -193,7 +195,7 @@ class MegatronActor(MegatronModelManager, Worker):
 
         # Config validation
         if self.is_pipeline:
-            assert not self.role_cfg.get("enable_dp_load_balance", False), (
+            assert not self.enable_dp_load_balance, (
                 "DP load balance is not supported in pipeline mode."
             )
             assert not self.cfg.runner.enable_dynamic_batch_size, (
@@ -207,9 +209,7 @@ class MegatronActor(MegatronModelManager, Worker):
         self._init_auto_scheduler(role)
 
     def _init_auto_scheduler(self, role: str):
-        self.use_auto_scheduler = (
-            self.component_placement._placement_mode == PlacementMode.AUTO
-        )
+        self.use_auto_scheduler = self.placement_mode == PlacementMode.AUTO
         self.use_pre_process_policy = (
             getattr(self.cfg.cluster, "use_pre_process_policy", False)
             and self.use_auto_scheduler
@@ -864,7 +864,10 @@ class MegatronActor(MegatronModelManager, Worker):
             self._setup_valid_token_scale(batch)
 
         # DP batch load balance
-        if self.cfg.actor.get("enable_dp_load_balance", False):
+        if (
+            self.cfg.actor.get("enable_dp_load_balance", False)
+            and parallel_state.get_data_parallel_world_size() > 1
+        ):
             batch = self._dp_load_balance(batch)
 
         if self.use_profiler:
@@ -1423,52 +1426,59 @@ class MegatronActor(MegatronModelManager, Worker):
         self.model_state_offload_optimizer_and_grad()
 
         # send bucket size
-        if self.component_placement._placement_mode == PlacementMode.COLLOCATED:
-            send_handle = None
-            for bucket_weight in model_bucket_list:
-                reshard_state_dict = self._get_rollout_model_state_dict(bucket_weight)
-                buffer = {k: reduce_tensor(v) for k, v in reshard_state_dict.items()}
-                if send_handle is not None:
-                    send_handle.wait()
-                else:
-                    # add the bucket_length message in bucket 0
-                    buffer["bucket_length"] = len(model_bucket_list)
-                send_handle = self.send(
-                    buffer,
-                    self.rollout_group_name,
-                    self._weight_dst_rank_in_rollout,
-                    async_op=True,
-                )
-                del reshard_state_dict
-            send_handle.wait()
-        else:
-            send_handle_bucket = []
-            for bucket_weight in model_bucket_list:
-                reshard_state_dict = self._get_rollout_model_state_dict(bucket_weight)
+        if len(self._weight_dst_rank_in_rollout) > 0:
+            if self.placement_mode == PlacementMode.COLLOCATED:
+                send_handle = None
+                for bucket_weight in model_bucket_list:
+                    reshard_state_dict = self._get_rollout_model_state_dict(
+                        bucket_weight
+                    )
+                    buffer = {
+                        k: reduce_tensor(v) for k, v in reshard_state_dict.items()
+                    }
+                    if send_handle is not None:
+                        send_handle.wait()
+                    else:
+                        # add the bucket_length message in bucket 0
+                        buffer["bucket_length"] = len(model_bucket_list)
+                    send_handle = self.send(
+                        buffer,
+                        self.rollout_group_name,
+                        self._weight_dst_rank_in_rollout,
+                        async_op=True,
+                    )
+                    del reshard_state_dict
+                send_handle.wait()
+            else:
+                send_handle_bucket = []
+                for bucket_weight in model_bucket_list:
+                    reshard_state_dict = self._get_rollout_model_state_dict(
+                        bucket_weight
+                    )
+
+                    if len(send_handle_bucket) != 0:
+                        for send_handle in send_handle_bucket:
+                            send_handle.wait()
+                        send_handle_bucket = []
+                    else:
+                        # add the bucket_length message in bucket 0
+                        reshard_state_dict["bucket_length"] = len(model_bucket_list)
+
+                    for weight_dst_rank in self._weight_dst_rank_in_rollout:
+                        send_handle = self.send(
+                            reshard_state_dict,
+                            self.rollout_group_name,
+                            weight_dst_rank,
+                            async_op=True,
+                        )
+                        send_handle_bucket.append(send_handle)
 
                 if len(send_handle_bucket) != 0:
                     for send_handle in send_handle_bucket:
                         send_handle.wait()
-                    send_handle_bucket = []
-                else:
-                    # add the bucket_length message in bucket 0
-                    reshard_state_dict["bucket_length"] = len(model_bucket_list)
-
-                for weight_dst_rank in self._weight_dst_rank_in_rollout:
-                    send_handle = self.send(
-                        reshard_state_dict,
-                        self.rollout_group_name,
-                        weight_dst_rank,
-                        async_op=True,
-                    )
-                    send_handle_bucket.append(send_handle)
-
-            if len(send_handle_bucket) != 0:
-                for send_handle in send_handle_bucket:
-                    send_handle.wait()
 
         if (
-            self.component_placement._placement_mode == PlacementMode.COLLOCATED
+            self.placement_mode == PlacementMode.COLLOCATED
             or self.use_pre_process_policy
         ):
             if self.offload_weight:
@@ -1481,7 +1491,7 @@ class MegatronActor(MegatronModelManager, Worker):
         if not self.is_running:
             return
         if (
-            self.component_placement._placement_mode == PlacementMode.COLLOCATED
+            self.placement_mode == PlacementMode.COLLOCATED
             or self.use_pre_process_policy
         ):
             if self.offload_optimizer:
@@ -1491,7 +1501,7 @@ class MegatronActor(MegatronModelManager, Worker):
                 offload_grad=self.offload_grad, offload_weight=False
             )
         else:
-            assert self.component_placement._placement_mode in [
+            assert self.placement_mode in [
                 PlacementMode.DISAGGREGATED,
                 PlacementMode.AUTO,
             ], "Unsupported placement mode for sending weights."
