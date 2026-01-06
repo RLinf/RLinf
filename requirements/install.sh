@@ -309,6 +309,7 @@ install_openpi_model() {
             install_common_embodied_deps
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
             install_behavior_env
+            uv pip install protobuf==6.33.0
             ;;
         maniskill_libero)
             create_and_sync_venv
