@@ -89,6 +89,7 @@ class Manager:
     MANAGER_NAME = ""
     proxy: ManagerProxy = None
     PID = None
+    ENV_LIST = ["RAY_ADDRESS"]
 
     @classmethod
     def get_proxy(cls: type[ManagerClsType], no_wait: bool = False) -> ManagerClsType:
@@ -107,3 +108,16 @@ class Manager:
             cls.PID = os.getpid()
             cls.proxy = ManagerProxy(cls, no_wait)
         return cls.proxy
+
+    @classmethod
+    def get_runtime_env_vars(cls) -> dict:
+        """Get the runtime environment variables required for the manager.
+
+        Returns:
+            dict: A dictionary of environment variables.
+        """
+        runtime_env = {}
+        for var in cls.ENV_LIST:
+            if var in os.environ:
+                runtime_env[var] = os.environ[var]
+        return runtime_env

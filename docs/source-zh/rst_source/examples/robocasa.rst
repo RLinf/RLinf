@@ -149,15 +149,7 @@ RoboCasa Kitchen提供了涵盖多个类别的24个原子任务（不包含需�
 
 .. code:: bash
 
-   # 为提高国内依赖安装速度，可以设置以下环境变量：
-   # export UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download
-   # export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
-   # export HF_ENDPOINT=https://hf-mirror.com
-
-   # 如果你在克隆 Git 仓库时遇到问题，可以设置：
-   # git config --global url."https://ghfast.top/github.com/".insteadOf "https://github.com/"
-   # 注意：安装完成后，建议取消该全局设置以免影响其他 Git 操作：
-   # git config --global --unset url."https://ghfast.top/github.com/".insteadOf
+   # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
 
    bash requirements/install.sh embodied --model openpi --env robocasa
    source .venv/bin/activate

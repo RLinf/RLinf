@@ -31,6 +31,8 @@ from typing import (
 )
 
 import ray
+import ray.dashboard.utils
+import ray.util.state
 import torch
 from omegaconf import OmegaConf
 
@@ -811,10 +813,38 @@ class Worker(metaclass=WorkerMeta):
             bool: True if the worker is alive, False otherwise.
         """
         try:
-            ray.get_actor(worker_name)
-        except ValueError:
-            return False
-        return True
+            # Internally, Ray uses HTTP to query the actor states
+            # Set no-proxy for ray address in case HTTP_PROXY is set in the environment
+            ray_address = ray.dashboard.utils.get_address_for_submission_client(None)
+            if "http://" in ray_address:
+                ray_address = ray_address.replace("http://", "")
+            elif "https://" in ray_address:
+                ray_address = ray_address.replace("https://", "")
+            if ":" in ray_address:
+                ray_address = ray_address.split(":")[0]
+            prev_no_proxy_upper = os.environ.get("NO_PROXY", None)
+            prev_no_proxy_lower = os.environ.get("no_proxy", None)
+            os.environ["NO_PROXY"] = ray_address
+            os.environ["no_proxy"] = ray_address
+
+            actors = ray.util.state.list_actors(filters=[("NAME", "=", worker_name)])
+
+            if prev_no_proxy_upper is not None:
+                os.environ["NO_PROXY"] = prev_no_proxy_upper
+            else:
+                os.environ.pop("NO_PROXY", None)
+            if prev_no_proxy_lower is not None:
+                os.environ["no_proxy"] = prev_no_proxy_lower
+            else:
+                os.environ.pop("no_proxy", None)
+
+            if len(actors) == 0:
+                return False
+            actor_info = actors[0]
+            return actor_info.state != "DEAD"
+        except Exception:
+            # Simply treat the worker as alive if any unexpected error occurs during state query
+            return True
 
     def _check_initialized(self):
         """Check if the Worker has been initialized.

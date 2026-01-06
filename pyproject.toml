@@ -29,7 +29,7 @@ dependencies = [
     # Data processing
     "pylatexenc",
     "datasets==3.6.0",
-    "latex2sympy2 @ git+https://github.com/RLinf/latex2sympy2.git",
+    "latex2sympy2 @ git+https://ghfast.top/github.com/RLinf/latex2sympy2.git",
     "sentencepiece",
     "torchdata",
     "wandb",

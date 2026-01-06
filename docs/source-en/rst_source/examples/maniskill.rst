@@ -120,18 +120,23 @@ Install dependencies directly in your environment by running the following comma
 
 .. code:: bash
 
-   # For mainland China users, you can use the following for better download speed:
-   # export UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download
-   # export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
-   # export HF_ENDPOINT=https://hf-mirror.com
-
-   # If you have trouble cloning the git repos, you can also set:
-   # git config --global url."https://ghfast.top/github.com/".insteadOf "https://github.com/"
-   # WARNING: Remember to unset this config (git config --global --unset url."https://ghfast.top/github.com/".insteadOf) after installation to avoid affecting other git operations.
+   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
 
    # Change --model to openvla-oft for OpenVLA-OFT model experiment
    bash requirements/install.sh embodied --model openvla --env maniskill_libero
    source .venv/bin/activate
+
+Assets Download
+----------------
+
+Download the ManiSkill assets by running the following command:
+
+.. code:: bash
+
+   cd <path_to_RLinf>/rlinf/envs/maniskill
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
+   hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
 
 Model Download
 --------------

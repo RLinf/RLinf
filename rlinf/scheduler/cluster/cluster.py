@@ -235,35 +235,37 @@ class Cluster:
         from ..manager import (
             CollectiveManager,
             DeviceLockManager,
+            Manager,
             NodeManager,
             PortLockManager,
             WorkerManager,
         )
 
         try:
+            runtime_env = {"env_vars": Manager.get_runtime_env_vars()}
             self._worker_manager = (
                 ray.remote(WorkerManager)
-                .options(name=WorkerManager.MANAGER_NAME)
+                .options(name=WorkerManager.MANAGER_NAME, runtime_env=runtime_env)
                 .remote()
             )
             self._coll_manager = (
                 ray.remote(CollectiveManager)
-                .options(name=CollectiveManager.MANAGER_NAME)
+                .options(name=CollectiveManager.MANAGER_NAME, runtime_env=runtime_env)
                 .remote()
             )
             self._node_manager = (
                 ray.remote(NodeManager)
-                .options(name=NodeManager.MANAGER_NAME)
+                .options(name=NodeManager.MANAGER_NAME, runtime_env=runtime_env)
                 .remote(self._nodes, self._node_groups, self._cluster_cfg)
             )
             self._device_lock_manager = (
                 ray.remote(DeviceLockManager)
-                .options(name=DeviceLockManager.MANAGER_NAME)
+                .options(name=DeviceLockManager.MANAGER_NAME, runtime_env=runtime_env)
                 .remote()
             )
             self._port_lock_manager = (
                 ray.remote(PortLockManager)
-                .options(name=PortLockManager.MANAGER_NAME)
+                .options(name=PortLockManager.MANAGER_NAME, runtime_env=runtime_env)
                 .remote()
             )
         except ValueError:

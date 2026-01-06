@@ -184,4 +184,4 @@ class PortLockManager(Manager):
                 for key, worker_name in list(self._port_locks.items()):
                     if worker_name in dead_workers:
                         self._port_locks.pop(key)
-            time.sleep(5)
+            time.sleep(60)  # Check every 60 seconds
