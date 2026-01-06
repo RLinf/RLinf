@@ -422,9 +422,8 @@ class MegatronModelManager:
         if value_model and post_process:
             output = output[..., 0]
         return output
-    def _get_pinned_buffer(
-        self,tensor: torch.Tensor
-    ) -> torch.Tensor:
+
+    def _get_pinned_buffer(self, tensor: torch.Tensor) -> torch.Tensor:
         """
         Get or create a pinned CPU buffer for the given tensor.
         Creates a pinned memory buffer on first call and caches it as `cpu_data` on `tensor`.
@@ -434,15 +433,18 @@ class MegatronModelManager:
         Returns:
             A pinned CPU tensor with the same size, dtype, and layout as the input.
         """
-        
+
         needed_size = tensor.untyped_storage().size()
-        
+
         # check if there is a reusable buffer
-        if hasattr(tensor,"cpu_data"):
-            existing = getattr(tensor,"cpu_data")
-            if existing is not None and existing.untyped_storage().size() >= needed_size:
+        if hasattr(tensor, "cpu_data"):
+            existing = getattr(tensor, "cpu_data")
+            if (
+                existing is not None
+                and existing.untyped_storage().size() >= needed_size
+            ):
                 return existing
-        
+
         # create new buffer (slightly larger to reuse)
         new_buffer = torch.empty(
             tensor.shape,
@@ -450,7 +452,7 @@ class MegatronModelManager:
             pin_memory=True,
             device="cpu",
         )
-        
+
         setattr(tensor, "cpu_data", new_buffer)
         return new_buffer
 
@@ -471,8 +473,7 @@ class MegatronModelManager:
                         buffer.param_data.untyped_storage().resize_(0)
 
                         assert (
-                            buffer.param_data_size
-                            == cpu_data.untyped_storage().size()
+                            buffer.param_data_size == cpu_data.untyped_storage().size()
                         )
 
                     if offload_grad and buffer.grad_data.untyped_storage().size() > 0:
