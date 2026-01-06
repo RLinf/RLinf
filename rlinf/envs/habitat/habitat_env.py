@@ -22,10 +22,6 @@ from omegaconf.omegaconf import OmegaConf
 
 import habitat
 from habitat_baselines.config.default import get_config as get_habitat_config
-from habitat.config.default_structured_configs import (
-    FogOfWarConfig,
-    TopDownMapMeasurementConfig,
-)
 
 from rlinf.envs.habitat.extensions.utils import observations_to_image
 from rlinf.envs.habitat.venv import ReconfigureSubprocEnv, HabitatRLEnv
@@ -90,11 +86,11 @@ class HabitatEnv(gym.Env):
         # Example: scene0: [0, 1, 5, 3, 6], scene1: [2, 4, 7]
         # scene_to_global_episodes[0] = [0, 1, 5, 3, 6]
         # scene_to_global_episodes[1] = [2, 4, 7]
-        self.scene_to_global_episodes = {}  
+        self.scene_to_global_episodes = {}
         # Ordered episode indices: sorted by global episode indices
         # scene_to_ordered_episodes[0] = [0, 1, 2, 3, 4]
         # scene_to_ordered_episodes[1] = [5, 6, 7]
-        self.scene_to_ordered_episodes = {}  
+        self.scene_to_ordered_episodes = {}
 
         self.scenes = []
         scene_id_to_idx = {}  # scene_id(str) -> scene_idx(int)
@@ -152,27 +148,6 @@ class HabitatEnv(gym.Env):
         config_path = base_env_args.get("config_path", self.cfg.init_params.config_path)
         config = get_habitat_config(config_path)
 
-        with habitat.config.read_write(config):
-            config.habitat.task.measurements.update(
-                {
-                    "top_down_map": TopDownMapMeasurementConfig(
-                        map_padding=3,
-                        map_resolution=1024,
-                        draw_source=True,
-                        draw_border=True,
-                        draw_shortest_path=True,
-                        draw_view_points=True,
-                        draw_goal_positions=True,
-                        draw_goal_aabbs=True,
-                        fog_of_war=FogOfWarConfig(
-                            draw=True,
-                            visibility_dist=5.0,
-                            fov=90,
-                        ),
-                    ),
-                }
-            )
-
         if env_idx is None:
             env_idx = np.arange(self.num_envs)
 
@@ -197,7 +172,9 @@ class HabitatEnv(gym.Env):
         self.scene_episode_counts = []
         self.cumsum_trial_id_bins = []
         for scene_idx in self.scene_to_ordered_episodes:
-            self.scene_episode_counts.append(len(self.scene_to_ordered_episodes[scene_idx]))
+            self.scene_episode_counts.append(
+                len(self.scene_to_ordered_episodes[scene_idx])
+            )
             # cumsum_trial_id_bins: cumulative sum for decoding reset_state_id
             # Example: [5, 3, 4] -> [5, 8, 12]
             # reset_state_id < 5 -> scene 0, < 8 -> scene 1, < 12 -> scene 2
@@ -372,7 +349,7 @@ class HabitatEnv(gym.Env):
             [value.clone().permute(2, 0, 1) for value in image_tensor["rgb"]]
         )
         obs["rgb"] = rgb_image_tensor
-        
+
         if "depth" in image_tensor:
             depth_image_tensor = torch.stack(
                 [value.clone().permute(2, 0, 1) for value in image_tensor["depth"]]
@@ -463,7 +440,9 @@ class HabitatEnv(gym.Env):
                     (frame["rgb"], frame["depth"], frame["top_down_map"]), axis=1
                 )
                 # self.render_images.append(frame_concat)
-                episode_id = self.scene_to_global_episodes[self.task_ids[i]][self.trial_ids[i]]
+                episode_id = self.scene_to_global_episodes[self.task_ids[i]][
+                    self.trial_ids[i]
+                ]
                 key = f"episode_{episode_id}"
                 if key not in self.render_images:
                     self.render_images[key] = []
