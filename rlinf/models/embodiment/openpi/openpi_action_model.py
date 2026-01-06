@@ -364,6 +364,8 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
         }
         if env_obs["wrist_images"] is not None:
             forward_inputs["observation/wrist_image"] = env_obs["wrist_images"]
+        forward_inputs.update(to_process_obs)
+        forward_inputs.pop("prompt", None)
 
         result = {
             "prev_logprobs": outputs["prev_logprobs"],
@@ -387,7 +389,6 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
         if noise is None:
             actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
             noise = self.sample_noise(actions_shape, device)
-        # assert False, f"noise: {noise.shape}, action_dim: {self.config.action_dim}, action_env_dim: {self.config.action_env_dim}"
 
         images, img_masks, lang_tokens, lang_masks, state = (
             self._preprocess_observation(observation, train=False)
@@ -638,53 +639,6 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
         self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = (
             "eager"  # noqa: SLF001
         )
-
-        # Fix attention mask size mismatch when using past_key_values
-        # When past_key_values is not None, key_states will include cached keys,
-        # so we need to extend attention_mask to match the actual key_states length
-        if past_key_values is not None:
-            # Get the cached sequence length from past_key_values
-            if hasattr(past_key_values, "get_seq_length"):
-                cached_seq_len = past_key_values.get_seq_length()
-            elif (
-                isinstance(past_key_values, (list, tuple)) and len(past_key_values) > 0
-            ):
-                # past_key_values is a list of tuples (key, value) for each layer
-                if (
-                    isinstance(past_key_values[0], (list, tuple))
-                    and len(past_key_values[0]) >= 2
-                ):
-                    cached_seq_len = (
-                        past_key_values[0][0].shape[-2]
-                        if past_key_values[0][0] is not None
-                        else 0
-                    )
-                else:
-                    cached_seq_len = 0
-            else:
-                cached_seq_len = 0
-
-            # Current sequence length (prefix + suffix)
-            current_seq_len = full_att_2d_masks.shape[-1]
-            total_seq_len = cached_seq_len + current_seq_len
-
-            # Extend attention_mask to match total sequence length
-            if full_att_2d_masks_4d.shape[-1] < total_seq_len:
-                # Get the shape of the 4D mask
-                mask_shape = list(full_att_2d_masks_4d.shape)
-                mask_shape[-1] = total_seq_len
-
-                # Create extended mask: pad with large negative values (masked) for cached positions
-                extended_mask = torch.full(
-                    mask_shape,
-                    float("-inf"),
-                    dtype=full_att_2d_masks_4d.dtype,
-                    device=full_att_2d_masks_4d.device,
-                )
-
-                # Copy the original mask to the end (for new tokens)
-                extended_mask[..., -current_seq_len:] = full_att_2d_masks_4d
-                full_att_2d_masks_4d = extended_mask
 
         outputs_embeds, _ = self.paligemma_with_expert.forward(
             attention_mask=full_att_2d_masks_4d,
