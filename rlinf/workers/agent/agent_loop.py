@@ -314,18 +314,6 @@ class AgentLoopWorker(Worker):
 class MultiTurnAgentLoopWorker(AgentLoopWorker):
     """Multi-turn agent loop worker."""
 
-    def init_worker(
-        self,
-        generate_input_channel: Channel,
-        generate_output_channel: Channel,
-        tool_channel_info_map: dict[str, ToolChannelInfo],
-        tool_name_map: dict[str, str],
-        tool_worker_output_channel: Channel,
-        solid_generate_input_channels: dict[str, Channel] = {},
-    ):
-        super().init_worker(generate_input_channel, generate_output_channel, tool_channel_info_map, tool_name_map, tool_worker_output_channel)
-        self.solid_generate_input_channels = solid_generate_input_channels
-
     async def generate(
         self, prompt_ids: list[int], sampling_params: Optional[dict] = None, rollout_name: str = None
     ):
