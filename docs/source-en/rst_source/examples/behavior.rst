@@ -180,7 +180,7 @@ OpenVLA-OFT provides a unified model that is suitable for all task types in the 
    pip install huggingface-hub
    hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir RLinf-OpenVLAOFT-Behavior
 
-**OpenPI 模型下载**
+**OpenPI Model Download**
 
 .. code:: bash
 
