@@ -33,6 +33,7 @@ from rlinf.workers.agent.tool_worker import ToolWorkerInfo
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
 from rlinf.workers.reward.reward_worker import RewardWorker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
+from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
 
 """Script to start GRPO training"""
 mp.set_start_method("spawn", force=True)
@@ -131,9 +132,8 @@ def main(cfg) -> None:
         )
 
     # GRPO Actor group
-    actor_worker_cls = get_actor_worker(cfg)
     actor_placement_strategy = component_placement.get_strategy("actor")
-    actor_group = actor_worker_cls.create_group(cfg, component_placement).launch(
+    actor_group = MAMegatronActor.create_group(cfg, component_placement).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement_strategy
     )
 
