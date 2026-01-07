@@ -96,12 +96,14 @@ class AgentLoopWorker(Worker):
         super().__init__()
         self.cfg = cfg
         self.print_outputs = cfg.agentloop.print_outputs
-        self.return_logprobs = not cfg.algorithm.recompute_logprobs
-        assert self.return_logprobs
+        if cfg.runner.task_type == "reasoning_eval":
+            self.return_logprobs = False
+        else:
+            self.return_logprobs = not cfg.algorithm.recompute_logprobs
         self.is_dynamic_rollout_batch = cfg.agentloop.get("is_dynamic_rollout_batch", False)
         if self.is_dynamic_rollout_batch:
             assert isinstance(self, MultiTurnAgentLoopWorker), "agent loop worker must be MultiTurnAgentLoopWorker if is_dynamic_rollout_batch is True"
-            # assert not self.return_logprobs, "recompute_logprobs must be False if is_dynamic_rollout_batch is True"
+            assert self.return_logprobs, "recompute_logprobs must be False if is_dynamic_rollout_batch is True"
 
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.rollout.model.model_path)
 
@@ -162,7 +164,7 @@ class AgentLoopWorker(Worker):
         else:
             result_text = str(channel_response.result)
         return ToolResponse(text=result_text)
-    
+
     async def generate(
         self, prompt_ids: list[int], sampling_params: Optional[dict] = None
     ):
