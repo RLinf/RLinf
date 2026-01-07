@@ -1235,6 +1235,7 @@ class DynamicRolloutResult:
     @staticmethod
     def pack_traj_batch(
         batch: dict[str, torch.Tensor],
+        adv_turn_level_scale=False,
     ) -> tuple["DynamicRolloutResult", dict]:
         """Merge two batches into one."""
 
@@ -1268,7 +1269,7 @@ class DynamicRolloutResult:
 
         num_sequence = len(batch["idx_to_traj"])
         new_idx_to_traj = []
-        split_params = {}
+        split_params: dict[str, Union[torch.Tensor, list]] = {}
         tensor_keys = [
             'input_ids',
             'attention_mask',
@@ -1319,19 +1320,28 @@ class DynamicRolloutResult:
 
                 advantages_prefix = split_params["advantages"][prefix].masked_fill(~split_params["response_mask"][prefix], 0)
                 advantages_suffix = split_params["advantages"][suffix].masked_fill(~split_params["response_mask"][suffix], 0)
-                split_params["advantages"][suffix] = advantages_prefix + advantages_suffix
+                if adv_turn_level_scale:
+                    masked_count_prefix = split_params["response_mask"][prefix].sum().item()
+                    split_params["advantages"][suffix] = advantages_prefix / masked_count_prefix + advantages_suffix
+                else:
+                    split_params["advantages"][suffix] = advantages_prefix + advantages_suffix
 
                 split_params["response_mask"][suffix] += split_params["response_mask"][prefix]
 
                 # prompt_lengths, response_lengths
-                # split_params["prompt_lengths"][suffix] = prompt_lengths[prefix]
-                # split_params["response_lengths"][suffix] += prompt_lengths[suffix] - prompt_lengths[prefix]
                 split_params["response_lengths"][suffix] += split_params["prompt_lengths"][suffix] - split_params["prompt_lengths"][prefix]
                 split_params["prompt_lengths"][suffix] = split_params["prompt_lengths"][prefix]
 
                 for k in list_keys:
                     split_params[k][suffix] += split_params[k][prefix]
             else:
+                if adv_turn_level_scale:
+                    old_masked = batch["response_mask"][i]
+                    advantages_prefix = split_params["advantages"][i].masked_fill(old_masked, 0)
+                    advantages_suffix = split_params["advantages"][i].masked_fill(~old_masked, 0)
+                    old_masked_count = old_masked.sum().item()
+                    new_masked_count = split_params["response_mask"][i].sum().item()
+                    split_params["advantages"][i] = advantages_prefix * new_masked_count + advantages_suffix / old_masked_count * new_masked_count
                 for k in (*tensor_keys, *list_keys):
                     pack_params[k].append(split_params[k][i])
                 new_idx_to_traj.append(batch["idx_to_traj"][i])
