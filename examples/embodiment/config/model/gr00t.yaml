@@ -31,5 +31,7 @@ rl_head_config:
   add_value_head: ${actor.model.add_value_head}
   chunk_critic_input: False
   detach_critic_input: True
-  valid_action_dim: 7
   disable_dropout: True
+  use_vlm_value: False
+  value_vlm_mode: "mean_token"
+  padding_value: 570

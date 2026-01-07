@@ -47,7 +47,7 @@ algorithm:
   logprob_type: chunk_level
   entropy_type: chunk_level
 
-  update_epoch: 1
+  update_epoch: 4
   adv_type: gae
   loss_type: actor_critic
   loss_agg_func: "token-mean" 
@@ -128,8 +128,8 @@ actor:
     add_value_head: True
 
   optim:
-    lr: 2.0e-5
-    value_lr: 2.0e-5
+    lr: 5.0e-6
+    value_lr: 1.0e-4
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-05
