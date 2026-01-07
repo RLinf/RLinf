@@ -6,7 +6,6 @@ from habitat.core.simulator import Simulator
 
 try:
     from habitat.core.utils import try_cv2_import
-
     cv2 = try_cv2_import()
 except ImportError:
     import cv2

@@ -15,7 +15,8 @@ def create_minimal_habitat_cfg(config_path: str, **kwargs):
         "auto_reset": True,
         "use_rel_reward": True,
         "reward_coef": 5.0,
-        "max_episode_steps": 512,
+        "max_episode_steps": 30,
+        "num_action_chunks": 3,
         "is_eval": True,
         "specific_reset_id": None,
         "num_gpus": 1,
@@ -41,7 +42,7 @@ def create_minimal_habitat_cfg(config_path: str, **kwargs):
 def test_habitat_env():
     test_config_path = os.environ.get(
         "HABITAT_CONFIG_PATH",
-        "/data/RLinf/VLN-CE/config/vln_r2r.yaml",
+        "examples/embodiment/config/habitat_vlnce_r2r.yaml",
     )
     cfg = create_minimal_habitat_cfg(
         config_path=test_config_path,
@@ -59,10 +60,14 @@ def test_habitat_env():
     )
     env.reset()
 
+    n_chunk_steps = cfg.max_episode_steps // cfg.num_action_chunks
     action_space = ["turn_left", "turn_right", "move_forward"]
-    for i in range(10):
-        dummy_actions = np.random.choice(action_space, size=num_envs)
-        env.step(dummy_actions, auto_reset=False)
+
+    for i in range(n_chunk_steps):
+        dummy_actions = np.random.choice(
+            action_space, size=(num_envs, cfg.num_action_chunks)
+        )
+        env.chunk_step(dummy_actions)
         print(f"step {i} done")
 
     for video_name, video_frames in env.render_images.items():
