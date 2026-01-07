@@ -13,8 +13,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor, env: 0-0
-    rollout: 1-1
+    actor, env, rollout: all
 
 runner:
   task_type: embodied
@@ -96,7 +95,7 @@ rollout:
     queue_size: 0
   mode: "colocate"
   backend: "huggingface"
-  model_dir: "/mnt/public/xusi/models/py_openpi"
+  model_dir: "/path/to/model/RLinf-Pi0-SFT"
   enable_offload: True
   pipeline_stage_num: 1
 
@@ -107,7 +106,7 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: "/mnt/public/xusi/models/py_openpi"
+  checkpoint_load_path: "/path/to/model/RLinf-Pi0-SFTi"
   checkpoint_save_path: "../results"
   micro_batch_size: 2
   global_batch_size: 160
@@ -148,7 +147,7 @@ actor:
 
   tokenizer:
     tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/mnt/public/xusi/models/py_openpi"
+    tokenizer_model: "/path/to/model/RLinf-Pi0-SFT"
     use_fast: False
     trust_remote_code: True
     padding_side: "right"
