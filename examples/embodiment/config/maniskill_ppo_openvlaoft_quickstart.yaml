@@ -32,8 +32,6 @@ runner:
   eval_policy_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
   val_check_interval: -1
   save_interval: 40
-  seq_length: 4096
-  max_prompt_length: 30
 
   resume_dir: null
 
@@ -124,14 +122,6 @@ actor:
   seed: 1234
   enable_offload: True
 
-  tokenizer:
-    tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
-    extra_vocab_size: 421
-    use_fast: False
-    trust_remote_code: True
-    padding_side: "right"
-
   # Override the default values in model/openvla_oft
   model:
     model_path: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
@@ -143,6 +133,8 @@ actor:
     is_lora: True
     # aka RLinf-OpenVLAOFT-ManiSkill-Base-Lora. It can be downloaded from https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
     lora_path: /path/to/models/oft-sft/lora_004000/
+
+    max_prompt_length: 30
 
   optim:
     lr: 1.0e-4

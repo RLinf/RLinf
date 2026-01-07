@@ -40,7 +40,12 @@ from rlinf.utils.utils import (
 
 class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction):
     def __init__(
-        self, config: OpenVLAOFTConfig, action_dim, num_action_chunks, add_value_head
+        self,
+        config: OpenVLAOFTConfig,
+        action_dim,
+        num_action_chunks,
+        add_value_head,
+        max_prompt_length,
     ) -> None:
         OpenVLAOFTForActionPrediction.__init__(self, config)
 
@@ -69,6 +74,8 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
                 activation="gelu",
                 bias_last=False,
             )
+
+        self.max_prompt_length = max_prompt_length
 
     def _build_embedding(self, input_ids, attention_mask, pixel_values):
         assert torch.all(input_ids[:, -1] == STOP_INDEX)
@@ -436,7 +443,7 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
             )
         return data
 
-    def setup_config_and_processor(self, model_config, cfg, input_processor):
+    def setup_config_and_processor(self, model_config, input_processor):
         self.vocab_size = (
             model_config.text_config.vocab_size - model_config.pad_to_multiple_of
         )
@@ -446,8 +453,6 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
         self.min_action = np.array(action_norm_stats["q01"])
         self.max_action = np.array(action_norm_stats["q99"])
         self.action_scale = 1.0
-        self.policy_setup = cfg.actor.model.get("policy_setup", None)
-        self.max_prompt_length = cfg.runner.max_prompt_length
 
         self.input_processor = input_processor
 

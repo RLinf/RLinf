@@ -36,13 +36,11 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
 
 所有yaml只要添加了 ``env.eval`` 的相关配置，均可使用 ``eval_embodiment.sh`` 脚本进行评测，在这里我们以 ``examples/embodiment/config/libero_10_grpo_openvlaoft_eval.yaml`` 为例，您可以按需修改配置文件中的：
 
-1. 调整模型路径（现在的代码逻辑需要我们同时修改actor和rollout的环境）：同时修改以下三个参数以加载待测评的模型；
+1. 调整模型路径，同时修改以下两个参数以加载待测评的模型；
 
   1. ``rollout.model.model_path``
 
   2. ``actor.model.model_path``
-
-  3. ``actor.tokenizer.tokenizer_model``
 
 
 2. 控制环境的随机种子：我们可以调整 ``env.seed`` 来调整环境的随机函数的变化，以便复现结果等；

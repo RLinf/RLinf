@@ -32,8 +32,6 @@ runner:
   val_check_interval: -1
   eval_policy_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
   save_interval: 100
-  seq_length: 4096
-  max_prompt_length: 30
 
 algorithm:
   normalize_advantages: True

@@ -22,7 +22,7 @@ from tqdm import tqdm
 
 from rlinf.config import SupportedModel
 from rlinf.data.io_struct import ChunkStepResult, EmbodiedRolloutResult
-from rlinf.models import get_model, get_vla_model_config_and_processor
+from rlinf.models import get_model
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.nested_dict_process import put_tensor_device
@@ -55,17 +55,6 @@ class MultiStepRolloutWorker(Worker):
             rollout_model_config.path = self.cfg.rollout.model.model_path
 
         self.hf_model = get_model(rollout_model_config)
-
-        if SupportedModel(self.cfg.actor.model.model_type) in [
-            SupportedModel.OPENVLA,
-            SupportedModel.OPENVLA_OFT,
-        ]:
-            model_config, input_processor = get_vla_model_config_and_processor(
-                self.cfg.actor
-            )
-            self.hf_model.setup_config_and_processor(
-                model_config, self.cfg, input_processor
-            )
 
         self.hf_model.eval()
 
