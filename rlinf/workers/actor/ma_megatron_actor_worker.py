@@ -76,8 +76,7 @@ class MAMegatronActor(MegatronActor):
         self._init_auto_scheduler(role)
         self.is_dynamic_rollout_batch = self.cfg.agentloop.is_dynamic_rollout_batch
         assert self.is_dynamic_rollout_batch
-        if self.is_dynamic_rollout_batch:
-            assert self.enable_dp_load_balance, "enable_dp_load_balance must be True when is_dynamic_rollout_batch is True"
+        assert self.enable_dp_load_balance, "enable_dp_load_balance must be True when is_dynamic_rollout_batch is True"
 
         self.use_sub_worker = self.cfg.rollout.get('use_sub_worker', False) # FIXME: check
         assert self.placement_mode == PlacementMode.COLLOCATED
@@ -397,6 +396,7 @@ class MAMegatronActor(MegatronActor):
 
         # Advantage normalization
         if self.cfg.algorithm.normalize_advantages:
+            assert False, "not implemented in multi-agent"
             mask = batch["response_mask"][:, -self.response_len :]
             batch["advantages"] = masked_normalization(
                 batch["advantages"],
