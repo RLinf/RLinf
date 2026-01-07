@@ -124,41 +124,83 @@ class HabitatEnv(gym.Env):
     def get_env_fns(self):
         env_fn_params = self.get_env_fn_params()
         env_fns = []
-        for env_fn_param in env_fn_params:
 
-            def env_fn(param=env_fn_param):
-                config = param.pop("config")
-                seed = param.pop("seed")
-                env = HabitatRLEnv(config=config)
+        for param in env_fn_params:
+
+            def env_fn(p=param):
+                config_path = p["config_path"]
+                episode_ids = p["episode_ids"]
+                seed = p["seed"]
+
+                config = get_habitat_config(config_path)
+
+                dataset = habitat.datasets.make_dataset(
+                    config.habitat.dataset.type,
+                    config=config.habitat.dataset,
+                )
+
+                dataset.episodes = [
+                    ep for ep in dataset.episodes if ep.episode_id in episode_ids
+                ]
+
+                env = HabitatRLEnv(config=config, dataset=dataset)
                 env.seed(seed)
                 return env
 
             env_fns.append(env_fn)
+
         return env_fns
 
-    def get_env_fn_params(self, env_idx=None):
-        """
-        Get environment function parameters.
-
-        For each environment, set the scene based on current task_id.
-        This ensures same-scene episodes run in the same environment when possible.
-        """
+    def get_env_fn_params(self):
         env_fn_params = []
-        base_env_args = OmegaConf.to_container(self.cfg.init_params, resolve=True)
-        config_path = base_env_args.get("config_path", self.cfg.init_params.config_path)
-        config = get_habitat_config(config_path)
 
-        if env_idx is None:
-            env_idx = np.arange(self.num_envs)
+        config_path = self.cfg.init_params.config_path
+        base_config = get_habitat_config(config_path)
+
+        dataset_all = habitat.datasets.make_dataset(
+            base_config.habitat.dataset.type,
+            config=base_config.habitat.dataset,
+        )
+
+        scenes = []
+        episode_ids = []
+        scene_id_to_idx = {}  # scene_id(str) -> scene_idx(int)
+        scene_to_episodes = {}  # scene_idx(int) -> episode_ids(list[int])
+        for episode in dataset_all.episodes:
+            sid = episode.scene_id
+            eid = episode.episode_id
+            if sid not in scene_id_to_idx:
+                scene_idx = len(scenes)
+                scene_id_to_idx[sid] = scene_idx
+                scenes.append(sid)
+                scene_to_episodes[scene_idx] = []
+            else:
+                scene_idx = scene_id_to_idx[sid]
+            scene_to_episodes[scene_idx].append(eid)
+        for scene_idx in range(len(scenes)):
+            episode_ids.extend(scene_to_episodes[scene_idx])
+
+        num_episodes = len(episode_ids)
+        episodes_per_env = num_episodes // self.num_envs
+
+        episode_ranges = []
+        start = 0
+        for i in range(self.num_envs - 1):
+            episode_ranges.append((start, start + episodes_per_env))
+            start += episodes_per_env
+        episode_ranges.append((start, num_episodes))
 
         for env_id in range(self.num_envs):
-            if env_id not in env_idx:
-                continue
-            env_params = {
-                "config": config,
-                "seed": self.seed,
-            }
-            env_fn_params.append(env_params)
+            start, end = episode_ranges[env_id]
+            assigned_ids = episode_ids[start:end]
+
+            env_fn_params.append(
+                {
+                    "config_path": config_path,
+                    "episode_ids": assigned_ids,
+                    "seed": self.seed + env_id,
+                }
+            )
 
         return env_fn_params
 
@@ -389,24 +431,12 @@ class HabitatEnv(gym.Env):
     def reset(
         self,
         env_idx: Optional[Union[int, list[int], np.ndarray]] = None,
-        reset_state_ids=None,
     ):
         if env_idx is None:
             env_idx = np.arange(self.num_envs)
 
-        if self.is_start:
-            reset_state_ids = (
-                self.reset_state_ids if self.use_fixed_reset_state_ids else None
-            )
-            self._is_start = False
+        raw_obs = self.env.reset(env_idx)
 
-        if reset_state_ids is None:
-            num_reset_states = len(env_idx)
-            reset_state_ids = self._get_random_reset_state_ids(num_reset_states)
-
-        raw_obs = self._reconfigure(reset_state_ids, env_idx)
-
-        # TODO: what if the reconfigure env_idx is not the same as the env_idx?
         if self.current_raw_obs is None:
             self.current_raw_obs = [None] * self.num_envs
 
@@ -523,12 +553,7 @@ class HabitatEnv(gym.Env):
         final_info = copy.deepcopy(infos)
         if self.cfg.is_eval:
             self.update_reset_state_ids()
-        obs, infos = self.reset(
-            env_idx=env_idx,
-            reset_state_ids=self.reset_state_ids[env_idx]
-            if self.use_fixed_reset_state_ids
-            else None,
-        )
+        obs, infos = self.reset(env_idx=env_idx)
         # gymnasium calls it final observation but it really is just o_{t+1} or the true next observation
         infos["final_observation"] = final_obs
         infos["final_info"] = final_info

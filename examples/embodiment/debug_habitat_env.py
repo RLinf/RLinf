@@ -41,13 +41,13 @@ def create_minimal_habitat_cfg(config_path: str, **kwargs):
 def test_habitat_env():
     test_config_path = os.environ.get(
         "HABITAT_CONFIG_PATH",
-        "/data/RLinf/VLN-CE/config/vln_r2r.yaml",  
+        "/data/RLinf/VLN-CE/config/vln_r2r.yaml",
     )
     cfg = create_minimal_habitat_cfg(
         config_path=test_config_path,
     )
 
-    num_envs = 1
+    num_envs = 3
     seed_offset = 0
     total_num_processes = 1
 
@@ -59,7 +59,7 @@ def test_habitat_env():
     )
     env.reset()
 
-    action_space= ["turn_left", "turn_right", "move_forward"]
+    action_space = ["turn_left", "turn_right", "move_forward"]
     for i in range(10):
         dummy_actions = np.random.choice(action_space, size=num_envs)
         env.step(dummy_actions, auto_reset=False)

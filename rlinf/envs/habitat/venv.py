@@ -40,8 +40,8 @@ warnings.simplefilter("once", DeprecationWarning)
 
 
 class HabitatRLEnv(RLEnv):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, config, dataset):
+        super().__init__(config, dataset)
 
     def reset(self):
         observations = super().reset()
