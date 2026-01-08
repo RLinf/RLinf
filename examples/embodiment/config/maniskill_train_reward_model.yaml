@@ -38,8 +38,8 @@ reward_model_training:
   # Validation split ratio
   val_split: 0.1
 
-  # Save directory for checkpoints
-  save_dir: "${oc.env:EMBODIED_PATH}/reward_checkpoints"
+  # Save directory for checkpoints (logs/reward_checkpoints from project root)
+  save_dir: "${oc.env:EMBODIED_PATH}/../../logs/reward_checkpoints"
 
   # Save best model based on validation accuracy
   save_best: True

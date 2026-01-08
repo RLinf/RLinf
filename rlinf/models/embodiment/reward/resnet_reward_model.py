@@ -28,7 +28,7 @@ import torch.nn as nn
 from omegaconf import DictConfig
 from torchvision.models.resnet import BasicBlock, ResNet
 
-from rlinf.algorithms.rewards.embodiment.base_image_reward_model import (
+from rlinf.models.embodiment.reward.base_image_reward_model import (
     BaseImageRewardModel,
 )
 
@@ -145,17 +145,17 @@ class ResNetRewardModel(BaseImageRewardModel):
         # Load checkpoint if provided
         checkpoint_path = cfg.get("checkpoint_path")
         if checkpoint_path:
-            if os.path.exists(checkpoint_path):
-                self.load_checkpoint(checkpoint_path)
-            else:
-                import logging
-                logging.getLogger(__name__).warning(
-                    f"Checkpoint not found at {checkpoint_path}, using random weights"
+            if not os.path.exists(checkpoint_path):
+                raise FileNotFoundError(
+                    f"Checkpoint not found at {checkpoint_path}. "
+                    f"Please ensure the checkpoint file exists or train a new model."
                 )
+            self.load_checkpoint(checkpoint_path)
         else:
+            # No checkpoint = training mode with random weights
             import logging
             logging.getLogger(__name__).info(
-                "No checkpoint_path provided, using random weights (test mode)"
+                "No checkpoint_path provided, using random weights (training mode)"
             )
 
         # Move to device

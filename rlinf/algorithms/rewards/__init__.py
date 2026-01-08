@@ -20,14 +20,14 @@ from rlinf.algorithms.rewards.vqa import VQAReward
 # Embodiment reward models (used via RewardManager, not reward_registry)
 # These are exported for direct import convenience, but actual instantiation
 # should go through RewardManager which has its own internal registry.
-from rlinf.algorithms.rewards.embodiment import (
+from rlinf.models.embodiment.reward import (
     BaseRewardModel,
     BaseImageRewardModel,
     BaseVideoRewardModel,
     ResNetRewardModel,
     Qwen3VLRewardModel,
-    RewardManager,
 )
+from rlinf.algorithms.rewards.embodiment import RewardManager
 
 
 def register_reward(name: str, reward_class: type):

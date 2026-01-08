@@ -94,16 +94,12 @@ class MultiStepRolloutWorker(Worker):
         if not bool(use_model):
             return
 
-        try:
-            from rlinf.algorithms.rewards.embodiment import RewardManager
-            self.reward_manager = RewardManager(reward_cfg)
-            logger.info(
-                f"Initialized reward manager with model type: "
-                f"{self.reward_manager.model_type}"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to initialize reward manager: {e}")
-            self.reward_manager = None
+        from rlinf.algorithms.rewards.embodiment import RewardManager
+        self.reward_manager = RewardManager(reward_cfg)
+        logger.info(
+            f"Initialized reward manager with model type: "
+            f"{self.reward_manager.model_type}"
+        )
 
     def _init_data_collector(self) -> None:
         """Initialize the reward data collector if configured.

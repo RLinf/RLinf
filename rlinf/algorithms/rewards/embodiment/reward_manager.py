@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional, Type
 import torch
 from omegaconf import DictConfig
 
-from rlinf.algorithms.rewards.embodiment.base_reward_model import BaseRewardModel
+from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
 
 logger = logging.getLogger(__name__)
 
@@ -231,22 +231,20 @@ class RewardManager:
 # Import and register default models
 # This is done at module load time to populate the registry
 def _register_default_models():
-    """Register default reward models in the registry."""
-    try:
-        from rlinf.algorithms.rewards.embodiment.resnet_reward_model import (
-            ResNetRewardModel,
-        )
-        RewardManager.register_model("resnet", ResNetRewardModel)
-    except ImportError as e:
-        logger.warning(f"Failed to register ResNetRewardModel: {e}")
+    """Register default reward models in the registry.
+    
+    Raises:
+        ImportError: If required model modules cannot be imported.
+    """
+    from rlinf.models.embodiment.reward.resnet_reward_model import (
+        ResNetRewardModel,
+    )
+    RewardManager.register_model("resnet", ResNetRewardModel)
 
-    try:
-        from rlinf.algorithms.rewards.embodiment.qwen3_vl_reward_model import (
-            Qwen3VLRewardModel,
-        )
-        RewardManager.register_model("qwen3_vl", Qwen3VLRewardModel)
-    except ImportError as e:
-        logger.warning(f"Failed to register Qwen3VLRewardModel: {e}")
+    from rlinf.models.embodiment.reward.qwen3_vl_reward_model import (
+        Qwen3VLRewardModel,
+    )
+    RewardManager.register_model("qwen3_vl", Qwen3VLRewardModel)
 
 
 # Register default models when module is imported

@@ -44,17 +44,19 @@ Usage:
     ```
 """
 
-from rlinf.algorithms.rewards.embodiment.base_reward_model import BaseRewardModel
-from rlinf.algorithms.rewards.embodiment.base_image_reward_model import (
+# Model classes are now in rlinf/models/embodiment/reward/
+from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
+from rlinf.models.embodiment.reward.base_image_reward_model import (
     BaseImageRewardModel,
 )
-from rlinf.algorithms.rewards.embodiment.base_video_reward_model import (
+from rlinf.models.embodiment.reward.base_video_reward_model import (
     BaseVideoRewardModel,
 )
-from rlinf.algorithms.rewards.embodiment.resnet_reward_model import ResNetRewardModel
-from rlinf.algorithms.rewards.embodiment.qwen3_vl_reward_model import (
+from rlinf.models.embodiment.reward.resnet_reward_model import ResNetRewardModel
+from rlinf.models.embodiment.reward.qwen3_vl_reward_model import (
     Qwen3VLRewardModel,
 )
+# Manager and utilities remain in algorithms/
 from rlinf.algorithms.rewards.embodiment.reward_manager import RewardManager
 from rlinf.algorithms.rewards.embodiment.reward_data_collector import (
     RewardDataCollector,

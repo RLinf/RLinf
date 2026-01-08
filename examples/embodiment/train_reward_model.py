@@ -40,7 +40,7 @@ def run_reward_model_train(cfg: DictConfig) -> None:
     
     This is a standalone supervised learning task, separate from RL training.
     """
-    from rlinf.algorithms.rewards.embodiment.resnet_reward_model import ResNetRewardModel
+    from rlinf.models.embodiment.reward.resnet_reward_model import ResNetRewardModel
     from rlinf.algorithms.rewards.embodiment.reward_model_trainer import RewardModelTrainer
     
     logger.info("Starting reward model training...")

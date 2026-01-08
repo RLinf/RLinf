@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional, Literal
 import torch
 from omegaconf import DictConfig
 
-from rlinf.algorithms.rewards.embodiment.base_reward_model import BaseRewardModel
+from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
 
 
 # Type alias for frame sampling strategies
