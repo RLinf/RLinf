@@ -19,6 +19,7 @@ from typing import ContextManager, Union
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
+from peft import PeftModel
 from torch.amp.grad_scaler import GradScaler
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
@@ -93,6 +94,7 @@ class FSDPModelManager:
 
         self.is_weight_offloaded = False
         self.is_optimizer_offloaded = False
+        self.is_lora = False
 
     def _create_amp_context(self) -> ContextManager:
         """
@@ -246,6 +248,12 @@ class FSDPModelManager:
         else:
             self._logger.info("[FSDP] Gradient checkpointing is disabled")
 
+        if isinstance(module, PeftModel):
+            self._logger.info(
+                f"[FSDP] Detected PeftModel (LoRA enabled): base_model_class={module.get_base_model().__class__.__name__},  peft_config={module.peft_config}"
+            )
+            self.is_lora = True
+
         # build model, optimizer, lr_scheduler, grad_scaler
         self.model = self._strategy.wrap_model(
             model=module, device_mesh=self._device_mesh
@@ -295,11 +303,19 @@ class FSDPModelManager:
         Args:
             save_path: the directory to save checkpoint.
         """
+        if self.is_weight_offloaded:
+            self.load_param_and_grad(self.device)
+            self.is_weight_offloaded = False
+        if self.is_optimizer_offloaded:
+            self.load_optimizer(self.device)
+            self.is_optimizer_offloaded = False
+
         self._strategy.save_checkpoint(
             self.model_path,
             self.model,
             self.optimizer,
             self.lr_scheduler,
+            self.is_lora,
             save_path,
         )
 

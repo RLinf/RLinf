@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 from abc import ABC, abstractmethod
+from dataclasses import asdict
 from logging import Logger
 from typing import TYPE_CHECKING, ContextManager, Optional, Union
 
@@ -21,6 +23,7 @@ import torch
 import torch.distributed.checkpoint as dcp
 import torch.nn as nn
 from omegaconf import DictConfig
+from safetensors.torch import save_file
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
@@ -35,6 +38,7 @@ from rlinf.hybrid_engines.fsdp.strategy.checkpoint import Checkpoint
 from rlinf.hybrid_engines.fsdp.utils import (
     FSDPVersion,
     copy_model_config_and_code,
+    layered_summon_lora_params,
     save_state_dict_sharded_safetensors,
 )
 from rlinf.utils.utils import clear_memory
@@ -163,6 +167,7 @@ class FSDPStrategyBase(ABC):
         model: Union[FSDP, FSDPModule],
         optimizer: Optimizer,
         lr_scheduler: LRScheduler,
+        is_lora: bool,
         save_path: str,
     ) -> None:
         """
@@ -180,6 +185,7 @@ class FSDPStrategyBase(ABC):
             model (Union[FSDP, FSDPModule]): The model to be saved.
             optimizer (Optimizer): The optimizer to be saved.
             lr_scheduler (LRScheduler): The learning rate scheduler to be saved.
+            is_lora (bool): Whether the model is trained with PEFT.
             save_path (str): The path to save the checkpoint.
         """
         clear_memory()
@@ -205,7 +211,7 @@ class FSDPStrategyBase(ABC):
         torch.distributed.barrier()
 
         opts = StateDictOptions(full_state_dict=True, cpu_offload=True)
-        sd_save_path = os.path.join(save_path, "model")
+        sd_save_path = os.path.join(save_path, "huggingface_model")
         model_state_dict = get_model_state_dict(model=model, options=opts)
         if torch.distributed.get_rank() == 0:
             copy_model_config_and_code(model_path=model_path, save_path=sd_save_path)
@@ -213,6 +219,37 @@ class FSDPStrategyBase(ABC):
                 state_dict=model_state_dict, out_dir=sd_save_path
             )
         torch.distributed.barrier()
+
+        if is_lora:
+            lora_save_path = os.path.join(sd_save_path, "lora_adapter")
+            peft_model = model.module if isinstance(model, FSDP) else model
+            peft_config = {}
+
+            lora_sd = layered_summon_lora_params(model)
+            if torch.distributed.get_rank() == 0:
+                os.makedirs(lora_save_path, exist_ok=True)
+                peft_config = asdict(peft_model.peft_config.get("default", {}))
+                peft_config["task_type"] = (
+                    peft_config["task_type"].value
+                    if peft_config["task_type"] is not None
+                    else None
+                )
+                peft_config["peft_type"] = (
+                    peft_config["peft_type"].value
+                    if peft_config["peft_type"] is not None
+                    else None
+                )
+                peft_config["target_modules"] = list(peft_config["target_modules"])
+                save_file(
+                    lora_sd, os.path.join(lora_save_path, "adapter_model.safetensors")
+                )
+                with open(
+                    os.path.join(lora_save_path, "adapter_config.json"),
+                    "w",
+                    encoding="utf-8",
+                ) as f:
+                    json.dump(peft_config, f, ensure_ascii=False, indent=2)
+            torch.distributed.barrier()
 
     @classmethod
     def load_checkpoint(

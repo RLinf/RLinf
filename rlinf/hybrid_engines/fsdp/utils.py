@@ -31,6 +31,7 @@ import functools
 import json
 import os
 import shutil
+from collections import OrderedDict
 from enum import Enum
 from typing import Optional, Union
 
@@ -46,9 +47,11 @@ from torch.optim import Optimizer
 from transformers.trainer_pt_utils import get_module_class_from_name
 
 from rlinf.hybrid_engines.fsdp import (
+    FSDP,
     BackwardPrefetch,
     CPUOffloadPolicy,
     DTensor,
+    FSDPModule,
     MixedPrecisionPolicy,
     ShardingStrategy,
     fully_shard,
@@ -670,3 +673,51 @@ def copy_model_config_and_code(
 
                 os.makedirs(os.path.dirname(dst_file), exist_ok=True)
                 shutil.copy2(src_file, dst_file)
+
+
+def layered_summon_lora_params(fsdp_module) -> OrderedDict:
+    """
+    Taken and modified from: https://github.com/volcengine/verl/blob/main/verl/utils/fsdp_utils.py#L569
+    """
+
+    from peft.utils.save_and_load import get_peft_model_state_dict
+
+    def __prefix_submodules(module, prefix):
+        for name, submodule in module.named_modules():
+            if name.startswith(prefix) and "." not in name[len(prefix) :]:
+                yield name, submodule
+
+    lora_params = OrderedDict()
+    prefix_list = [
+        # fsdp
+        "_fsdp_wrapped_module.base_model.model.",
+        "_fsdp_wrapped_module.base_model.model.model.",
+        "_fsdp_wrapped_module.base_model.model.model.layers.",
+        # fsdp2
+        "base_model.model.",
+        "base_model.model.model.",
+        "base_model.model.model.layers.",
+    ]
+    peft_model = getattr(fsdp_module, "_fsdp_wrapped_module", fsdp_module)
+    for prefix in prefix_list:
+        for name, submodule in __prefix_submodules(fsdp_module, prefix):
+            prefix = name.replace(
+                "_fsdp_wrapped_module.base_model.model.", "base_model.model."
+            )
+            if name.endswith(".model") or name.endswith(".layers"):
+                continue
+            if isinstance(submodule, (FSDP, FSDPModule)):
+                with FSDP.summon_full_params(submodule, writeback=False):
+                    sub_lora_params = get_peft_model_state_dict(
+                        peft_model, state_dict=submodule.state_dict()
+                    )
+                    sub_lora_params = {
+                        f"{prefix}.{name}": param.full_tensor().detach().cpu()
+                        if hasattr(param, "full_tensor")
+                        else param.detach().cpu()
+                        for name, param in sub_lora_params.items()
+                    }
+                    lora_params.update(sub_lora_params)
+                    submodule._is_root = False
+                torch.cuda.empty_cache()
+    return lora_params

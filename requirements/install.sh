@@ -520,6 +520,9 @@ install_franka_env() {
 install_reason() {
     uv sync --extra sglang-vllm --active
 
+    # FSDP lora training
+    uv pip install peft==0.11.1
+
     # Megatron-LM
     # Prefer an existing checkout if MEGATRON_PATH is provided; otherwise clone into the venv.
     local megatron_dir

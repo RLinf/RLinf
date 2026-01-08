@@ -70,6 +70,10 @@ class AgentLoopWorker(Worker):
         super().__init__()
         self.cfg = cfg
         self.print_outputs = cfg.agentloop.print_outputs
+        if cfg.runner.task_type == "reasoning_eval":
+            self.return_logprobs = False
+        else:
+            self.return_logprobs = not cfg.algorithm.recompute_logprobs
 
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.rollout.model.model_path)
 
@@ -80,6 +84,7 @@ class AgentLoopWorker(Worker):
         tool_channel_info_map: dict[str, ToolChannelInfo],
         tool_name_map: dict[str, str],
         tool_worker_output_channel: Channel,
+        solid_generate_input_channels: dict[str, Channel] = {},
     ):
         self.generate_input_channel = generate_input_channel
         self.generate_output_channel = generate_output_channel
@@ -88,6 +93,9 @@ class AgentLoopWorker(Worker):
         # tool name to tool worker. a tool worker may have multiple tools.
         self.tool_name_map = tool_name_map
         self.tool_worker_output_channel = tool_worker_output_channel
+        # for multi agent model, use a different agent with no training.
+        # such as a 8b planner with training and a 4b worker without training.
+        self.solid_generate_input_channels = solid_generate_input_channels
 
     async def generate(
         self, prompt_ids: list[int], sampling_params: Optional[dict] = None
@@ -108,12 +116,14 @@ class AgentLoopWorker(Worker):
 
     def print_agent_outputs(
         self,
-        prompt_texts: str,
+        prompt_texts: Optional[str],
         trace_prints: list[Any],
     ):
-        print_texts = [
-            f"{green('Prompt')}         : {prompt_texts!r}",
-        ]
+        print_texts = []
+        if prompt_texts is not None:
+            print_texts = [
+                f"{green('Prompt')}         : {prompt_texts!r}",
+            ]
         for trace_print in trace_prints:
             print_texts.append(f"{green('Trace print')}    : {trace_print!r}")
         print(*print_texts, sep="\n")
@@ -136,7 +146,7 @@ class AgentLoopWorker(Worker):
     async def run_agentloop_rollout_group(
         self,
         input_ids: list[int],
-        answers: list[Any],
+        answer: str,
         group_size: int,
         output_channel: Channel,
     ):
@@ -150,7 +160,7 @@ class AgentLoopWorker(Worker):
             rollout_tasks.append(task)
 
         task_results = await asyncio.gather(*rollout_tasks)
-        rollout_result = self.get_rollout_result(task_results, answers)
+        rollout_result = self.get_rollout_result(task_results, answer)
         await output_channel.put(rollout_result, async_op=True).async_wait()
 
     async def run_agentloop_rollout(
@@ -163,13 +173,13 @@ class AgentLoopWorker(Worker):
             rollout_request: RolloutRequest = input_channel.get()
 
             send_output_tasks = []
-            for input_ids, answers in zip(
+            for input_ids, answer in zip(
                 rollout_request.input_ids, rollout_request.answers
             ):
                 send_output_tasks.append(
                     asyncio.create_task(
                         self.run_agentloop_rollout_group(
-                            input_ids, answers, rollout_request.n, output_channel
+                            input_ids, answer, rollout_request.n, output_channel
                         ),
                     )
                 )
@@ -177,7 +187,7 @@ class AgentLoopWorker(Worker):
             await asyncio.gather(*send_output_tasks)
 
     def get_rollout_result(
-        self, task_results: list[AgentLoopOutput], answers
+        self, task_results: list[AgentLoopOutput], answer: str
     ) -> RolloutResult:
         """
         Collect group task results into a RolloutResult.
@@ -210,9 +220,13 @@ class AgentLoopWorker(Worker):
         assert max(response_lengths) <= max_resp_len, (
             "response_lengths should be clipped to max_resp_len"
         )
-
+        response_logprobs = None
+        if self.return_logprobs:
+            response_logprobs = [
+                r.response_logprobs[:max_resp_len] for r in task_results
+            ]
         is_end = [True for _ in task_results]
-        answers = [answers] * len(task_results)
+        answers = [answer] * len(task_results)
         return RolloutResult(
             num_sequence=len(task_results),
             group_size=len(task_results),
@@ -225,6 +239,7 @@ class AgentLoopWorker(Worker):
             is_end=is_end,
             answers=answers,
             response_mask=response_mask,
+            rollout_logprobs=response_logprobs,
         )
 
     async def run_one_query(self, prompt_ids: list[int], **kwargs) -> AgentLoopOutput:

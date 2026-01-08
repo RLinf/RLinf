@@ -17,7 +17,7 @@ import json
 import logging
 import os
 import typing
-from typing import Union
+from typing import Optional, Union
 
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
@@ -51,9 +51,10 @@ class AgentEvalRunner(ReasoningEvalRunner):
         train_dataset: Dataset,
         val_dataset: Dataset,
         rollout: Union["SGLangWorker", "VLLMWorker"],
-        reward: RewardWorker,
+        reward: Optional[RewardWorker],
         agent_loop: AgentLoopWorker,
         tool_workers: dict[ToolWorker, ToolWorkerInfo] = {},
+        solid_rollouts: dict[str, Union["SGLangWorker", "VLLMWorker"]] = {},
     ):
         super().__init__(
             cfg,
@@ -81,8 +82,14 @@ class AgentEvalRunner(ReasoningEvalRunner):
         )
         self.agent_loop = agent_loop
         self.tool_workers = tool_workers
+        self.solid_rollouts = solid_rollouts
         self.generate_input_channel = Channel.create("GenerateInput")
         self.generate_output_channel = Channel.create("GenerateOutput")
+        self.solid_generate_input_channels = {}
+        for solid_rollout_name in self.solid_rollouts:
+            self.solid_generate_input_channels[solid_rollout_name] = Channel.create(
+                f"SolidRolloutInput-{solid_rollout_name}"
+            )
         # tool worker name to tool channel info.
         self.tool_channel_info_map = {}
         # tool name to tool worker. a tool worker may have multiple tools.
@@ -149,23 +156,30 @@ class AgentEvalRunner(ReasoningEvalRunner):
         logging.info(f"Evaluation results saved to: {output_file}")
         return output_file
 
-    def init_workers(self):
-        """init tool workers and agent loop worker."""
+    def init_rollout_workers(self):
+        """init rollout workers, tool workers and agent loop worker."""
+        rollout_handles = [self.rollout.init_worker()]
+        for solid_rollout in self.solid_rollouts.values():
+            rollout_handle = solid_rollout.init_worker()
+            rollout_handles.append(rollout_handle)
+
         for worker in self.tool_workers:
             input_channel = self.tool_channel_info_map[
                 worker.worker_group_name
             ].input_channel
-            worker.init_worker(input_channel, self.tool_output_channel).wait()
+            tool_handle = worker.init_worker(input_channel, self.tool_output_channel)
+            rollout_handles.append(tool_handle)
 
+        for rollout_handle in rollout_handles:
+            rollout_handle.wait()
         self.agent_loop.init_worker(
             self.generate_input_channel,
             self.generate_output_channel,
             self.tool_channel_info_map,
             self.tool_name_map,
             self.tool_output_channel,
+            self.solid_generate_input_channels,
         ).wait()
-
-        super().init_workers()
 
     def log_eval(self, input_channel):
         """Collect evaluation results and compute metrics for a single batch.
@@ -256,7 +270,7 @@ class AgentEvalRunner(ReasoningEvalRunner):
 
     def run(self):
         logging.info("=" * 80)
-        logging.info("Starting Multi-Agent System Evaluation")
+        logging.info("Starting Agent System Evaluation")
         logging.info("=" * 80)
         logging.info(f"Validation dataset size: {len(self.val_dataset)}")
         logging.info(f"Batch size: {self.cfg.data.rollout_batch_size}")
@@ -297,14 +311,18 @@ class AgentEvalRunner(ReasoningEvalRunner):
                     )
 
                     # Rewards
-                    reward_handle: Handle = self.reward.compute_rewards(
-                        input_channel=self.rollout_channel,
-                        output_channel=self.reward_channel,
-                    )
+                    if self.reward is not None:
+                        reward_handle: Handle = self.reward.compute_rewards(
+                            input_channel=self.rollout_channel,
+                            output_channel=self.reward_channel,
+                        )
+                        eval_input_channel = self.reward_channel
+                    else:
+                        eval_input_channel = self.rollout_channel
 
                     # Log evaluation
                     batch_accuracy, batch_count = self.log_eval(
-                        input_channel=self.reward_channel
+                        input_channel=eval_input_channel
                     )
 
                     # Wait for all handles to complete
