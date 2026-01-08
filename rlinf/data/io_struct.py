@@ -1167,6 +1167,7 @@ class EnvOutput:
     terminations: Optional[torch.Tensor] = None  # [B]
     truncations: Optional[torch.Tensor] = None  # [B]
     rewards: Optional[torch.Tensor] = None  # [B]
+    infos: Optional[dict[str, Any]] = None  # Additional info from env (includes "success")
 
     intervene_actions: Optional[torch.Tensor] = None  # [B]
     intervene_flags: Optional[torch.Tensor] = None  # [B]
@@ -1202,6 +1203,21 @@ class EnvOutput:
             if self.intervene_flags is not None
             else None
         )
+        # Process infos - move tensors to CPU
+        if self.infos is not None:
+            self.infos = self._process_infos(self.infos)
+
+    def _process_infos(self, infos: dict[str, Any]) -> dict[str, Any]:
+        """Move tensors in infos dict to CPU."""
+        processed = {}
+        for key, value in infos.items():
+            if isinstance(value, torch.Tensor):
+                processed[key] = value.cpu().contiguous()
+            elif isinstance(value, dict):
+                processed[key] = self._process_infos(value)
+            else:
+                processed[key] = value
+        return processed
 
     def prepare_observations(self, obs: dict[str, Any]) -> dict[str, Any]:
         image_tensor = obs["main_images"] if "main_images" in obs else None
@@ -1237,6 +1253,7 @@ class EnvOutput:
         env_output_dict["rewards"] = self.rewards
         env_output_dict["intervene_actions"] = self.intervene_actions
         env_output_dict["intervene_flags"] = self.intervene_flags
+        env_output_dict["infos"] = self.infos  # Include infos for success label
 
         return env_output_dict
 

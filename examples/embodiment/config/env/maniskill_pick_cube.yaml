@@ -22,7 +22,7 @@ init_params:
   id: "PickCube-v1"
   num_envs: null # will be set in ManiSkillEnv init
   obs_mode: "state"
-  control_mode: None
+  control_mode: "pd_joint_delta_pos"  # Default control mode for Panda robot
   sim_backend: "gpu"
   sim_config:
     sim_freq: 100

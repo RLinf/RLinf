@@ -63,6 +63,19 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             self.offload_optimizer()
         self._setup_rollout_weight_dst_ranks()
 
+    def load_checkpoint(self, load_path: str) -> None:
+        """
+        Load checkpoint and sync target model.
+        
+        For SAC, after loading the main model checkpoint, we need to sync
+        the target model to match the loaded weights.
+        """
+        super().load_checkpoint(load_path)
+        # Sync target model after loading checkpoint
+        if hasattr(self, 'target_model_initialized') and self.target_model_initialized:
+            self._logger.info("[SAC] Syncing target model after checkpoint load")
+            self.soft_update_target_model(tau=1.0)
+
     def setup_model_and_optimizer(self, initialize_target=False) -> None:
         """Setup model, lr_scheduler, optimizer and grad_scaler."""
         """Add initializing target model logic."""

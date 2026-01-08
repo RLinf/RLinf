@@ -17,6 +17,16 @@ from rlinf.algorithms.rewards.math import MathReward
 from rlinf.algorithms.rewards.searchr1 import SearchR1Reward
 from rlinf.algorithms.rewards.vqa import VQAReward
 
+# Embodiment reward models
+from rlinf.algorithms.rewards.embodiment import (
+    BaseRewardModel,
+    BaseImageRewardModel,
+    BaseVideoRewardModel,
+    ResNetRewardModel,
+    Qwen3VLRewardModel,
+    RewardManager,
+)
+
 
 def register_reward(name: str, reward_class: type):
     assert name not in reward_registry, f"Reward {name} already registered"
@@ -34,3 +44,7 @@ register_reward("math", MathReward)
 register_reward("vqa", VQAReward)
 register_reward("code_offline", CodeRewardOffline)
 register_reward("searchr1", SearchR1Reward)
+
+# Register embodiment reward models
+register_reward("resnet", ResNetRewardModel)
+register_reward("qwen3_vl", Qwen3VLRewardModel)
