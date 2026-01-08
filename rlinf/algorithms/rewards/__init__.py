@@ -17,7 +17,9 @@ from rlinf.algorithms.rewards.math import MathReward
 from rlinf.algorithms.rewards.searchr1 import SearchR1Reward
 from rlinf.algorithms.rewards.vqa import VQAReward
 
-# Embodiment reward models
+# Embodiment reward models (used via RewardManager, not reward_registry)
+# These are exported for direct import convenience, but actual instantiation
+# should go through RewardManager which has its own internal registry.
 from rlinf.algorithms.rewards.embodiment import (
     BaseRewardModel,
     BaseImageRewardModel,
@@ -45,6 +47,6 @@ register_reward("vqa", VQAReward)
 register_reward("code_offline", CodeRewardOffline)
 register_reward("searchr1", SearchR1Reward)
 
-# Register embodiment reward models
-register_reward("resnet", ResNetRewardModel)
-register_reward("qwen3_vl", Qwen3VLRewardModel)
+# Note: Embodiment reward models (resnet, qwen3_vl) are NOT registered here.
+# They use RewardManager which has its own internal registry.
+# Use RewardManager(cfg.reward) for embodiment tasks.

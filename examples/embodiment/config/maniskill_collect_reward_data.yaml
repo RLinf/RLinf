@@ -176,7 +176,7 @@ reward_data_collection:
   target_success: 5000      # Buffer size for success samples
   target_failure: 5000      # Buffer size for failure samples
   # Sampling rates (probability to collect each frame type)
-  sample_rate_fail: 0.01    # Sample 2% of fail frames (common)
+  sample_rate_fail: 0.01    # Sample 1% of fail frames (common)
   sample_rate_success: 1.0  # Sample 100% of success frames (rare)
   # Visualization (disabled - using ManiSkill's native goal_site instead)
   draw_goal_marker: False   # Draw green marker at goal position (post-process)
