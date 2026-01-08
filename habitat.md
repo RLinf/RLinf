@@ -45,15 +45,7 @@ uv pip install -e habitat-baselines
 ## VLN-CE dataset preparation
 
 Download the scene dataset:
-- For **R2R**, **RxR**: Download the MP3D scenes using following script, and put them into `VLN-CE/scene_dataset` folder:
-
-```sh
-mkdir VLN-CE
-cd examples/embodiment
-# requires running with python 2.7
-# NOTE: we only need to downlaod mp3d_habitat.zip by assign --task habitat
-python download_mp.py --task habitat -o ../../VLN-CE/scene_datasets/mp3d/
-```
+- For **R2R**, **RxR**: Download the MP3D scenes [here](http://kaldir.vc.in.tum.de/matterport/v1/tasks/mp3d_habitat.zip), and put them into `VLN-CE/scene_dataset` folder.
 
 Download the VLN-CE episodes:
  - [r2r](https://drive.google.com/file/d/18DCrNcpxESnps1IbXVjXSbGLDzcSOqzD/view) (Rename `R2R_VLNCE_v1/` -> `r2r/`)
