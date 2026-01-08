@@ -17,6 +17,8 @@ git clone https://github.com/facebookresearch/habitat-sim.git
 git clone https://github.com/facebookresearch/habitat-lab.git
 
 cd /opt/habitat-sim
+git submodule update --init --recursive
+git checkout v0.3,3
 # Correct the CMake File
 sed -i 's/^cmake_minimum_required.*$/cmake_minimum_required(VERSION 3.5)/' src/deps/zstd/build/cmake/CMakeLists.txt
 sed -i 's/^cmake_minimum_required.*$/cmake_minimum_required(VERSION 3.5)/' src/deps/assimp/CMakeLists.txt
@@ -34,6 +36,7 @@ uv pip install build/deps/magnum-bindings/src/python/
 
 # Habitat-lab Installation
 cd /opt/habitat-lab
+git checkout v0.3.3
 uv pip install -e habitat-lab
 uv pip install -e habitat-baselines
 
