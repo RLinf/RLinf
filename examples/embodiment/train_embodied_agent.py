@@ -28,22 +28,30 @@ from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 mp.set_start_method("spawn", force=True)
 
 
-def run_embodied(cfg, cluster, component_placement):
-    """Run standard embodied RL training or data collection."""
+@hydra.main(
+    version_base="1.1", config_path="config", config_name="maniskill_ppo_openvlaoft"
+)
+def main(cfg) -> None:
+    cfg = validate_cfg(cfg)
+    print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
+
+    cluster = Cluster(cluster_cfg=cfg.cluster)
+    component_placement = HybridComponentPlacement(cfg, cluster)
+
     # Create actor worker group
     actor_placement = component_placement.get_strategy("actor")
 
     if cfg.algorithm.loss_type == "embodied_sac":
         from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
+
         actor_worker_cls = EmbodiedSACFSDPPolicy
     else:
         from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
-        actor_worker_cls = EmbodiedFSDPActor
 
+        actor_worker_cls = EmbodiedFSDPActor
     actor_group = actor_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
     )
-
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
     rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
@@ -59,6 +67,7 @@ def run_embodied(cfg, cluster, component_placement):
     demo_buffer = None
     if cfg.get("data", None):
         from rlinf.data.datasets import create_rl_dataset
+
         demo_buffer, _ = create_rl_dataset(cfg, tokenizer=None)
 
     runner = EmbodiedRunner(
@@ -71,43 +80,6 @@ def run_embodied(cfg, cluster, component_placement):
 
     runner.init_workers()
     runner.run()
-
-
-def run_reward_data_collect(cfg, cluster, component_placement):
-    """Run RL training with reward data collection enabled.
-
-    Validates that reward_data_collection.enabled is True, then runs
-    standard embodied training which will collect labeled images.
-    """
-    if not cfg.get("reward_data_collection", {}).get("enabled", False):
-        raise ValueError(
-            "reward_data_collection.enabled must be True when using data collection config"
-        )
-    run_embodied(cfg, cluster, component_placement)
-
-
-@hydra.main(
-    version_base="1.1", config_path="config", config_name="maniskill_ppo_openvlaoft"
-)
-def main(cfg) -> None:
-    task_type = cfg.runner.task_type
-
-    # Validate config
-    cfg = validate_cfg(cfg)
-    print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
-
-    # Initialize cluster for other task types
-    cluster = Cluster(cluster_cfg=cfg.cluster)
-    component_placement = HybridComponentPlacement(cfg, cluster)
-
-    if task_type == "embodied":
-        # Check if reward data collection is enabled
-        if cfg.get("reward_data_collection", {}).get("enabled", False):
-            run_reward_data_collect(cfg, cluster, component_placement)
-        else:
-            run_embodied(cfg, cluster, component_placement)
-    else:
-        raise ValueError(f"Unsupported task_type: {task_type}")
 
 
 if __name__ == "__main__":
