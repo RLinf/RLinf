@@ -36,7 +36,7 @@ runner:
   save_interval: -1
 
   # TODO: Set to your maniskill_ppo_mlp checkpoint path (e.g., logs/<timestamp>-maniskill_ppo_mlp/.../global_step_100)
-  resume_dir: null
+  resume_dir: logs/20260108-00:32:37-maniskill_ppo_mlp/maniskill_ppo_mlp/checkpoints/global_step_100
 
 algorithm:
   update_epoch: 8
@@ -171,7 +171,7 @@ reward:
 
   resnet:
     # TODO: Set to your trained ResNet reward model checkpoint
-    checkpoint_path: "${oc.env:EMBODIED_PATH}/reward_checkpoints/best_model.pt"
+    checkpoint_path: "${oc.env:EMBODIED_PATH}/../../logs/reward_checkpoints/best_model.pt"
     image_size: [3, 224, 224]
     threshold: 0.5
     use_soft_reward: False

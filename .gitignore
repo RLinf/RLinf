@@ -18,4 +18,5 @@ outputs/*
 uv.lock
 rlinf/envs/maniskill/assets
 examples/embodiment/data/*
-examples/embodiment/reward_checkpoints/*
+outputs/*
+reward_checkpoints/*

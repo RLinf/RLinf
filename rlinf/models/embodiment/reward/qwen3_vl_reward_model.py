@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional
 import torch
 from omegaconf import DictConfig
 
-from rlinf.algorithms.rewards.embodiment.base_video_reward_model import (
+from rlinf.models.embodiment.reward.base_video_reward_model import (
     BaseVideoRewardModel,
 )
 

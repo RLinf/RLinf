@@ -79,10 +79,10 @@ Configuration (``maniskill_train_reward_model.yaml``)
       batch_size: 64
       lr: 1.0e-4
       val_split: 0.1
-      save_dir: "${oc.env:EMBODIED_PATH}/reward_checkpoints"
+      save_dir: "${oc.env:EMBODIED_PATH}/../../logs/reward_checkpoints"
       early_stopping_patience: 15
 
-The trained model will be saved to ``examples/embodiment/reward_checkpoints/best_model.pt``.
+The trained model will be saved to ``logs/reward_checkpoints/best_model.pt``.
 
 Stage 3 & 4: Policy Training with ResNet Reward
 -----------------------------------------------
@@ -139,7 +139,7 @@ Key Parameters (``maniskill_ppo_mlp_resnet_reward.yaml``)
       alpha: 1.0
       
       resnet:
-        checkpoint_path: "${oc.env:EMBODIED_PATH}/reward_checkpoints/best_model.pt"
+        checkpoint_path: "${oc.env:EMBODIED_PATH}/../../logs/reward_checkpoints/best_model.pt"
         threshold: 0.5
         use_soft_reward: False  # Binary 0/1 reward
 
@@ -173,4 +173,152 @@ Expected Results
 - After ~500-1000 steps, ``env/success_once`` should approach 100%
 - ``env/episode_len`` should decrease to ~15-20 steps
 - ``env/reward`` will show lower values (expected for sparse binary reward)
+
+Embodied Reward Models Architecture & API
+-----------------------------------------
+
+This module provides reward model implementations for embodied reinforcement learning tasks, supporting both image-based (single-frame) and video-based (multi-frame) reward models.
+
+Architecture
+~~~~~~~~~~~~
+
+.. code-block:: text
+
+    BaseRewardModel (Abstract Root)
+    │
+    ├── BaseImageRewardModel (Abstract)    # Single-frame reward
+    │   └── ResNetRewardModel              # Binary classifier (HIL-SERL style)
+    │
+    └── BaseVideoRewardModel (Abstract)    # Multi-frame/video reward
+        └── Qwen3VLRewardModel             # VLM-based reward (placeholder)
+
+File Structure
+~~~~~~~~~~~~~~
+
+.. code-block:: text
+
+    rlinf/models/embodiment/reward/
+    ├── __init__.py                    # Module exports
+    ├── base_reward_model.py           # BaseRewardModel (root abstract)
+    ├── base_image_reward_model.py     # BaseImageRewardModel (single-frame)
+    ├── base_video_reward_model.py     # BaseVideoRewardModel (multi-frame)
+    ├── resnet_reward_model.py         # ResNet binary classifier
+    └── qwen3_vl_reward_model.py       # Qwen3-VL (reserved implementation)
+
+    rlinf/algorithms/rewards/embodiment/
+    └── reward_manager.py              # RewardManager with registry pattern
+
+    examples/embodiment/config/reward/
+    ├── resnet_binary.yaml             # ResNet configuration
+    └── qwen3_vl.yaml                  # Qwen3-VL configuration
+
+Quick Start
+~~~~~~~~~~~
+
+Using RewardManager (Recommended)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The ``RewardManager`` provides a unified interface for all reward models:
+
+.. code-block:: python
+
+    from rlinf.algorithms.rewards.embodiment import RewardManager
+    from omegaconf import OmegaConf
+
+    # Load configuration
+    cfg = OmegaConf.load("examples/embodiment/config/reward/resnet_binary.yaml")
+    cfg.resnet.checkpoint_path = "/path/to/your/checkpoint.pt"
+
+    # Initialize reward manager
+    reward_manager = RewardManager(cfg)
+
+    # Compute rewards
+    observations = {
+        "images": images_tensor,  # [B, C, H, W] or [B, H, W, C]
+        "states": states_tensor,  # Optional [B, state_dim]
+    }
+    rewards = reward_manager.compute_rewards(observations)
+
+Using Models Directly
+^^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: python
+
+    from rlinf.models.embodiment.reward import ResNetRewardModel
+    from omegaconf import DictConfig
+
+    cfg = DictConfig({
+        "checkpoint_path": "/path/to/checkpoint.pt",
+        "image_size": [3, 224, 224],
+        "threshold": 0.5,
+        "use_soft_reward": False,
+    })
+
+    model = ResNetRewardModel(cfg)
+    rewards = model.compute_reward(observations)
+
+API Reference
+~~~~~~~~~~~~~
+
+BaseRewardModel
+^^^^^^^^^^^^^^^
+
+.. list-table::
+   :header-rows: 1
+
+   * - Method
+     - Description
+   * - ``compute_reward(observations, task_descriptions)``
+     - Compute rewards from observations
+   * - ``load_checkpoint(path)``
+     - Load model weights
+   * - ``scale_reward(reward)``
+     - Apply scaling factor
+   * - ``to_device(device)``
+     - Move model to device
+
+BaseImageRewardModel
+^^^^^^^^^^^^^^^^^^^^
+
+.. list-table::
+   :header-rows: 1
+
+   * - Method
+     - Description
+   * - ``preprocess_images(images)``
+     - Normalize and reorder channels
+   * - ``apply_threshold(probabilities)``
+     - Convert to binary rewards
+
+BaseVideoRewardModel
+^^^^^^^^^^^^^^^^^^^^
+
+.. list-table::
+   :header-rows: 1
+
+   * - Method
+     - Description
+   * - ``sample_frames(images, strategy, k)``
+     - Sample frames from video
+   * - ``preprocess_video(images)``
+     - Normalize video tensor
+   * - ``format_prompt(task_description)``
+     - Format VLM prompt
+
+RewardManager
+^^^^^^^^^^^^^
+
+.. list-table::
+   :header-rows: 1
+
+   * - Method
+     - Description
+   * - ``compute_rewards(observations, task_descriptions)``
+     - Unified reward computation
+   * - ``register_model(name, cls)``
+     - Register new model type
+   * - ``get_available_models()``
+     - List registered models
+   * - ``to_device(device)``
+     - Move model to device
 
