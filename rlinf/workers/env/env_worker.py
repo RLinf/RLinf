@@ -175,6 +175,18 @@ class EnvWorker(Worker):
                 intervene_actions = infos["final_info"]["intervene_action"]
                 intervene_flags = infos["final_info"]["intervene_flag"]
 
+        # Normalize infos: ensure "success" is at top level for data collection
+        # When auto_reset happens, success moves to infos["final_info"]["success"]
+        # IMPORTANT: Check final_info FIRST because after auto_reset, 
+        # infos["success"] is from the reset state (all False)
+        normalized_infos = {}
+        if "final_info" in infos and "success" in infos["final_info"]:
+            # Success from before auto_reset - this has the real success values
+            normalized_infos["success"] = infos["final_info"]["success"]
+        elif "success" in infos:
+            # Direct success (no auto_reset happened this step)
+            normalized_infos["success"] = infos["success"]
+        
         env_output = EnvOutput(
             obs=extracted_obs,
             final_obs=infos["final_observation"]
@@ -186,6 +198,7 @@ class EnvWorker(Worker):
             truncations=chunk_truncations,
             intervene_actions=intervene_actions,
             intervene_flags=intervene_flags,
+            infos=normalized_infos,  # Pass normalized infos with success at top level
         )
         return env_output, env_info
 
@@ -319,6 +332,8 @@ class EnvWorker(Worker):
                     terminations = dones.clone()
                     truncations = dones.clone()
 
+                    # For reset stage, success is always False (no action taken yet)
+                    reset_infos = {"success": torch.zeros(self.train_num_envs_per_stage, dtype=torch.bool)}
                     env_output = EnvOutput(
                         obs=extracted_obs,
                         dones=dones,
@@ -329,12 +344,15 @@ class EnvWorker(Worker):
                         else None,
                         intervene_actions=None,
                         intervene_flags=None,
+                        infos=reset_infos,  # Pass infos with success=False for reset stage
                     )
                     env_output_list.append(env_output)
             else:
                 self.num_done_envs = 0
                 self.num_succ_envs = 0
                 for stage_id in range(self.stage_num):
+                    # For reset stage, success is always False (no action taken yet)
+                    reset_infos = {"success": torch.zeros(self.train_num_envs_per_stage, dtype=torch.bool)}
                     env_output = EnvOutput(
                         obs=self.last_obs_list[stage_id],
                         rewards=None,
@@ -343,6 +361,7 @@ class EnvWorker(Worker):
                         truncations=self.last_truncations_list[stage_id],
                         intervene_actions=self.last_intervened_info_list[stage_id][0],
                         intervene_flags=self.last_intervened_info_list[stage_id][1],
+                        infos=reset_infos,  # Pass infos with success=False for reset stage
                     )
                     env_output_list.append(env_output)
 

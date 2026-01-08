@@ -346,8 +346,8 @@ def validate_fsdp_cfg(cfg: DictConfig, resume_dir: Optional[str] = None) -> Dict
             "enable_gradient_accumulation", False
         )
 
-        if resume_dir is not None:
-            cfg.fsdp_config.use_orig_params = True
+        # NOTE: Removed forced use_orig_params=True for resume_dir
+        # The checkpoint must be loaded with the same use_orig_params setting as it was saved
 
         assert cfg.fsdp_config.backward_prefetch in [
             None,

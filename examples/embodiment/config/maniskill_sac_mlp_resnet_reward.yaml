@@ -22,20 +22,18 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: "../results"
+    log_path: "${oc.env:EMBODIED_PATH}/logs"
     project_name: rlinf
-    experiment_name: "sac_mlp"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    experiment_name: "maniskill_sac_mlp_resnet_reward"
+    logger_backends: ["tensorboard"]
 
-  max_epochs: 8000
+  max_epochs: 16000
   max_steps: -1
 
   only_eval: False
   val_check_interval: 200
-  save_interval: 1000
-
-  resume_dir: null # Optional: path to a saved checkpoint directory, such as 'checkpoints/global_step_10'. If not None, it will be used to resume training.
-  ckpt_path: null  # Optional: path to a .pt checkpoint. If not None, it will be loaded after the model is instantiated (for evaluation).
+  save_interval: -1
+  resume_dir: null
 
 algorithm:
   update_epoch: 32
@@ -52,19 +50,17 @@ algorithm:
   
   bootstrap_type: always
   gamma: 0.8
-  tau: 0.01  # Soft update coefficient for target networks
-  auto_entropy_tuning: True  # Enable automatic entropy tuning
+  tau: 0.01
+  auto_entropy_tuning: True
   alpha_type: softplus
-  initial_alpha: 0.01  # Initial temperature value
-  target_entropy: -8  # Target entropy (-action_dim for pd_joint_delta_pos)
-  alpha_lr: 3.0e-4  # Learning rate for temperature parameter
+  initial_alpha: 0.01
+  target_entropy: -8
+  alpha_lr: 3.0e-4
   
-  # Replay buffer settings
   replay_buffer_capacity: 500000
-  min_buffer_size: 0  # Minimum buffer size before training starts
-  target_update_freq: 1  # Frequency of target network updates
+  min_buffer_size: 0
+  target_update_freq: 1
 
-  # params for rollout
   sampling_params:
     do_sample: True
     temperature_train: 1.0
@@ -73,7 +69,6 @@ algorithm:
     top_p: 1.0
     repetition_penalty: 1.0
 
-  # length argument for autoregressive sampling
   length_params:
     max_new_token: 7
     max_length: 1024
@@ -84,12 +79,23 @@ env:
   enable_offload: False
 
   train:
-    total_num_envs: 32
+    total_num_envs: 64
     auto_reset: True
     ignore_terminations: True
     use_fixed_reset_state_ids: False
-    max_episode_steps: 50 # max episode steps for truncation
+    max_episode_steps: 50
     max_steps_per_rollout_epoch: 2
+    reward_render_mode: "episode_end"
+    show_goal_site: True
+    init_params:
+      obs_mode: "state"
+      control_mode: "pd_joint_delta_pos"
+      render_mode: "rgb_array"
+      sensor_configs:
+        shader_pack: "default"
+        base_camera:
+          width: 224
+          height: 224
   
   eval:
     total_num_envs: 16
@@ -99,13 +105,24 @@ env:
     max_steps_per_rollout_epoch: 50
     use_fixed_reset_state_ids: True
     group_size: 1
+    reward_render_mode: "episode_end"
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
+    init_params:
+      obs_mode: "state"
+      control_mode: "pd_joint_delta_pos"
+      render_mode: "rgb_array"
+      sensor_configs:
+        shader_pack: "default"
+        base_camera:
+          width: 224
+          height: 224
 
 rollout:
   group_name: "RolloutGroup"
   backend: "huggingface"
+  model_dir: ""
   enable_offload: False
   pipeline_stage_num: 1
 
@@ -124,23 +141,22 @@ actor:
 
   model:
     model_name: "mlp_policy"
-    policy_setup: "panda-qpos"  # pd_joint_delta_pos - matches ResNet training data
+    policy_setup: "panda-qpos"
+    obs_dim: 42
     action_dim: 8
-    
+
     precision: "32"
     add_value_head: False
     add_q_head: True
 
-
   optim:
-    lr: 3.0e-4  # Lower learning rate for SAC
-    value_lr: 3.0e-4  # Q-network learning rate
+    lr: 3.0e-4
+    value_lr: 3.0e-4
     adam_beta1: 0.9
     adam_beta2: 0.999
     adam_eps: 1.0e-08
     clip_grad: 10.0
 
-  # Override the default values in training_backend/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
@@ -149,8 +165,22 @@ actor:
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
 
+# ResNet Reward Model Configuration
 reward:
-  use_reward_model: False
+  use_reward_model: True
+  reward_model_type: "resnet"
+  alpha: 1.0
+  mode: "replace"
+
+  resnet:
+    # TODO: Set to your trained ResNet reward model checkpoint
+    checkpoint_path: "${oc.env:EMBODIED_PATH}/reward_checkpoints/best_model.pt"
+    image_size: [3, 224, 224]
+    threshold: 0.5
+    use_soft_reward: False
+    freeze_backbone: True
+    hidden_dim: 256
+    device: "cuda"
 
 critic:
   use_critic_model: False

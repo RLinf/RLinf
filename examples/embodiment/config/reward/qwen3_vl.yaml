@@ -1,0 +1,56 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Qwen3-VL Video Reward Model Configuration
+#
+# This configuration file defines settings for the Qwen3-VL based video
+# reward model. It uses a Vision-Language Model to understand task progress
+# from video sequences and predict reward values.
+#
+# NOTE: This is a reserved interface. Actual usage requires:
+# - Qwen3-VL model weights
+# - transformers library with Qwen3-VL support
+# - Sufficient GPU memory for VLM inference
+
+# Enable model-based reward computation
+use_reward_model: True
+
+# Model type identifier (must match registry name)
+reward_model_type: "qwen3_vl"
+
+# Reward scaling factor: final_reward = raw_reward * alpha
+alpha: 1.0
+
+# Qwen3-VL specific configuration
+qwen3_vl:
+  # Path to Qwen3-VL model weights
+  # Example: "/path/to/Qwen3-VL-2B-Instruct"
+  model_path: null  # Required: set to your model path
+
+  # Optional path to fine-tuned checkpoint
+  # If provided, will load additional weights on top of base model
+  checkpoint_path: null
+
+  # Frame sampling configuration
+  # Number of frames to sample from video sequence
+  sample_k: 6
+
+  # Frame sampling strategy:
+  # - "uniform_k": Uniformly sample k frames across the sequence
+  # - "last_k": Take the last k frames
+  # - "first_last_k": First frame, last frame, and uniform middle
+  # - "random_k": Randomly sample k frames
+  sample_strategy: "uniform_k"
+
+  # Task prompt template
+  # {task} will be replaced with the actual task description
+  task_prompt_template: "Is the task '{task}' completed successfully in this video? Answer with a confidence score from 0 to 1."
+
+  # Use progress-based reward (continuous 0-1) vs binary success
+  use_progress_reward: True
+
+  # Maximum tokens for VLM generation
+  max_new_tokens: 32
+
+  # Device for inference
+  device: "cuda"
+

@@ -22,30 +22,30 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: "../results"
+    log_path: "${oc.env:EMBODIED_PATH}/logs"
     project_name: rlinf
-    experiment_name: "maniskill_ppo_mlp"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    experiment_name: "maniskill_ppo_mlp_resnet_reward"
+    logger_backends: ["tensorboard"]
 
-  max_epochs: 100  # Pre-train for 100 steps, then switch to ResNet reward
+  max_epochs: 1000
   max_steps: -1
 
   only_eval: False
   eval_policy_path: null
   val_check_interval: 50
-  save_interval: 100  # Save checkpoint at step 100 for ResNet reward training
+  save_interval: -1
 
-  resume_dir: null # Optional: path to a saved checkpoint directory, such as 'checkpoints/global_step_10'. If not None, it will be used to resume training.
-  ckpt_path: null  # Optional: path to a .pt checkpoint. If not None, it will be loaded after the model is instantiated (for evaluation).
+  # TODO: Set to your maniskill_ppo_mlp checkpoint path (e.g., logs/<timestamp>-maniskill_ppo_mlp/.../global_step_100)
+  resume_dir: null
 
 algorithm:
   update_epoch: 8
   normalize_advantages: True
-  kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
+  kl_penalty: kl
   group_size: 1
 
   rollout_epoch: 1
-  eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
+  eval_rollout_epoch: 1
 
   reward_type: action_level
   logprob_type: action_level
@@ -65,7 +65,6 @@ algorithm:
   gamma: 0.8
   gae_lambda: 0.9
 
-  # params for rollout
   sampling_params:
     do_sample: True
     temperature_train: 1.0
@@ -74,8 +73,6 @@ algorithm:
     top_p: 1.0
     repetition_penalty: 1.0
 
-  # length argument for autoregressive sampling
-  # max length means max amount of tokens to generate
   length_params:
     max_new_token: 7
     max_length: 1024
@@ -85,13 +82,23 @@ env:
   group_name: "EnvGroup"
   enable_offload: False
 
-  # Override the default values in env/maniskill_pick_cube
   train:
-    total_num_envs: 1024
+    total_num_envs: 256
     auto_reset: True
     use_fixed_reset_state_ids: False
-    max_episode_steps: 50 # max episode steps for truncation
+    max_episode_steps: 50
     max_steps_per_rollout_epoch: 50
+    reward_render_mode: "episode_end"  # Must match ResNet training data collection
+    show_goal_site: True
+    init_params:
+      obs_mode: "state"
+      control_mode: "pd_joint_delta_pos"  # Must match ResNet training data
+      render_mode: "rgb_array"
+      sensor_configs:
+        shader_pack: "default"
+        base_camera:
+          width: 224
+          height: 224
   eval:
     total_num_envs: 32
     auto_reset: True
@@ -100,6 +107,16 @@ env:
     max_steps_per_rollout_epoch: 50
     use_fixed_reset_state_ids: True
     group_size: 1
+    reward_render_mode: "episode_end"
+    init_params:
+      obs_mode: "state"
+      control_mode: "pd_joint_delta_pos"
+      render_mode: "rgb_array"
+      sensor_configs:
+        shader_pack: "default"
+        base_camera:
+          width: 224
+          height: 224
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
@@ -122,10 +139,11 @@ actor:
   seed: 1234
   enable_offload: False
 
-  # Override the default values in model/mlp_policy
   model:
     model_path: ""
     model_type: "mlp_policy"
+    obs_dim: 42
+    action_dim: 8  # pd_joint_delta_pos
 
   optim:
     lr: 3.0e-4
@@ -136,7 +154,6 @@ actor:
     weight_decay: 0.01
     clip_grad: 0.5
 
-  # Override the default values in training_backend/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
@@ -145,8 +162,23 @@ actor:
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
 
+# ResNet Reward Model Configuration
 reward:
-  use_reward_model: False
+  use_reward_model: True
+  reward_model_type: "resnet"
+  alpha: 1.0
+  mode: "replace"  # Replace env reward with ResNet reward
+
+  resnet:
+    # TODO: Set to your trained ResNet reward model checkpoint
+    checkpoint_path: "${oc.env:EMBODIED_PATH}/reward_checkpoints/best_model.pt"
+    image_size: [3, 224, 224]
+    threshold: 0.5
+    use_soft_reward: False
+    freeze_backbone: True
+    hidden_dim: 256
+    device: "cuda"
 
 critic:
   use_critic_model: False
+

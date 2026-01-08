@@ -1,0 +1,45 @@
+# Copyright 2025 The RLinf Authors.
+#
+# ResNet Binary Reward Model Configuration
+#
+# This configuration file defines settings for the ResNet-based binary
+# reward model, which predicts success/failure from single image frames.
+# Suitable for fast inference during online RL training.
+
+# Enable model-based reward computation
+use_reward_model: True
+
+# Model type identifier (must match registry name)
+reward_model_type: "resnet"
+
+# Reward scaling factor: final_reward = raw_reward * alpha
+alpha: 1.0
+
+# ResNet-specific configuration
+resnet:
+  # Path to trained reward model checkpoint
+  # The checkpoint should contain model weights for the ResNet binary classifier
+  checkpoint_path: null  # Required: set to your checkpoint path
+
+  # Expected input image size [channels, height, width]
+  image_size: [3, 224, 224]
+
+  # Classification threshold for binary reward
+  # Predictions >= threshold are considered success (reward=1)
+  # Predictions < threshold are considered failure (reward=0)
+  threshold: 0.5
+
+  # Use soft reward (probability) instead of binary 0/1
+  # If True: reward = probability of success
+  # If False: reward = 1 if probability >= threshold else 0
+  use_soft_reward: False
+
+  # Freeze backbone weights during inference (recommended for stability)
+  freeze_backbone: True
+
+  # Hidden dimension for classification head
+  hidden_dim: 256
+
+  # Device for inference
+  device: "cuda"
+
