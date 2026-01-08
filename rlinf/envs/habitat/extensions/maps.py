@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Optional, Union
 
 import networkx as nx
 import numpy as np
@@ -26,7 +26,6 @@ except ImportError:
     import cv2
 from habitat.tasks.vln.vln import VLNEpisode
 from habitat.utils.visualizations import maps as habitat_maps
-
 
 AGENT_SPRITE = habitat_maps.AGENT_SPRITE
 
@@ -102,9 +101,9 @@ def colorize_topdown_map(
 def static_to_grid(
     realworld_x: float,
     realworld_y: float,
-    grid_resolution: Tuple[int, int],
-    bounds: Dict[str, Tuple[float, float]],
-) -> Tuple[int, int]:
+    grid_resolution: tuple[int, int],
+    bounds: dict[str, tuple[float, float]],
+) -> tuple[int, int]:
     """Return gridworld index of realworld coordinates assuming top-left
     corner is the origin. The real world coordinates of lower left corner are
     (coordinate_min, coordinate_min) and of top right corner are
@@ -123,9 +122,9 @@ def static_to_grid(
 
 def drawline(
     img: np.ndarray,
-    pt1: Union[Tuple[float], List[float]],
-    pt2: Union[Tuple[float], List[float]],
-    color: List[int],
+    pt1: Union[tuple[float], list[float]],
+    pt2: Union[tuple[float], list[float]],
+    color: list[int],
     thickness: int = 1,
     style: str = "dotted",
     gap: int = 15,
@@ -162,8 +161,8 @@ def drawline(
 
 def drawpoint(
     img: np.ndarray,
-    position: Union[Tuple[int], List[int]],
-    color: List[int],
+    position: Union[tuple[int], list[int]],
+    color: list[int],
     meters_per_px: float,
     pad: float = 0.3,
 ) -> None:
@@ -176,8 +175,8 @@ def drawpoint(
 
 def draw_triangle(
     img: np.ndarray,
-    centroid: Union[Tuple[int], List[int]],
-    color: List[int],
+    centroid: Union[tuple[int], list[int]],
+    color: list[int],
     meters_per_px: float,
     pad: int = 0.35,
 ) -> None:
@@ -230,7 +229,7 @@ def draw_straight_shortest_path_points(
     img: np.ndarray,
     sim: Simulator,
     map_resolution: int,
-    shortest_path_points: List[List[float]],
+    shortest_path_points: list[list[float]],
 ) -> None:
     """Draws the shortest path from start to goal assuming a standard
     discrete action space.
@@ -271,9 +270,9 @@ def draw_source_and_target(
 
 def draw_waypoint_prediction(
     img: np.ndarray,
-    waypoint: Union[Tuple[float], List[float]],
+    waypoint: Union[tuple[float], list[float]],
     meters_per_px: float,
-    bounds: Dict[str, Tuple[float]],
+    bounds: dict[str, tuple[float]],
 ) -> None:
     w_x, w_y = static_to_grid(waypoint[1], waypoint[0], img.shape[0:2], bounds)
     if w_x < img.shape[0] and w_x > 0 and w_y < img.shape[1] and w_y > 0:
@@ -282,15 +281,15 @@ def draw_waypoint_prediction(
 
 def draw_oracle_waypoint(
     img: np.ndarray,
-    waypoint: Union[Tuple[float], List[float]],
+    waypoint: Union[tuple[float], list[float]],
     meters_per_px: float,
-    bounds: Dict[str, Tuple[float]],
+    bounds: dict[str, tuple[float]],
 ) -> None:
     w_x, w_y = static_to_grid(waypoint[1], waypoint[0], img.shape[0:2], bounds)
     draw_triangle(img, (w_x, w_y), MAP_ORACLE_WAYPOINT, meters_per_px, pad=0.2)
 
 
-def get_nearest_node(graph: nx.Graph, current_position: List[float]) -> str:
+def get_nearest_node(graph: nx.Graph, current_position: list[float]) -> str:
     """Determine the closest MP3D node to the agent's start position as given
     by a [x,z] position vector.
     Returns:

@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import os
-from omegaconf.omegaconf import OmegaConf
+
 import numpy as np
+from omegaconf.omegaconf import OmegaConf
+
 from rlinf.envs.habitat.habitat_env import HabitatEnv
 
 

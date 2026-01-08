@@ -14,7 +14,7 @@
 
 import textwrap
 from copy import deepcopy
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional, Union
 
 import habitat_sim
 import numpy as np
@@ -34,7 +34,6 @@ from habitat.utils.geometry_utils import (
     quaternion_to_list,
 )
 from habitat.utils.visualizations import maps as habitat_maps
-from habitat.utils.visualizations.utils import images_to_video
 
 # from habitat.habitat_baselines.common.tensorboard_utils import TensorboardWriter
 from numpy import ndarray
@@ -44,8 +43,9 @@ from rlinf.envs.habitat.extensions import maps
 
 
 def observations_to_image(
-    observation: Dict[str, Any], info: Dict[str, Any] = None
-) -> Dict[str, Any]:
+    observation: dict[str, Any],
+    info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Generate image of single frame from observation and info
     returned from a single environment step().
 
@@ -123,7 +123,7 @@ def observations_to_image(
 
 
 def pano_observations_to_image(
-    observation: Dict[str, Any], info: Dict[str, Any]
+    observation: dict[str, Any], info: dict[str, Any]
 ) -> ndarray:
     """Creates a rudimentary frame for a panoramic observation. Includes RGB,
     depth, and a top-down map.
@@ -305,10 +305,8 @@ def add_step_stats_on_img(
 
     y = 0
     max_width_to_center = max(
-        [
-            int(cv2.getTextSize(wt, font, font_size, thickness)[0][0] / 2)
-            for wt in wrapped_text
-        ]
+        int(cv2.getTextSize(wt, font, font_size, thickness)[0][0] / 2)
+        for wt in wrapped_text
     )
     start_x = int(img.shape[1] / 2) - max_width_to_center
     for line in wrapped_text:
@@ -380,26 +378,28 @@ def add_stop_prob_on_img(img: ndarray, stop: float, selected: bool) -> ndarray:
 
 
 def waypoint_observations_to_image(
-    observation: Dict[str, Any],
-    info: Dict[str, Any],
+    observation: dict[str, Any],
+    info: dict[str, Any],
     pano_distribution: ndarray = None,
-    agent_action_elements: Optional[Dict[str, float]] = None,
+    agent_action_elements: Optional[dict[str, float]] = None,
     agent_stop: bool = False,
-    distribution_modes: Optional[Dict[str, float]] = None,
+    distribution_modes: Optional[dict[str, float]] = None,
     predict_offset: bool = False,
     predict_distance: bool = False,
     agent_position: Optional[Tensor] = None,
     agent_heading: Optional[float] = None,
-    oracle_action_elements: Optional[Dict[str, float]] = None,
+    oracle_action_elements: Optional[dict[str, float]] = None,
     oracle_stop: bool = False,
     num_panos: int = 12,
 ) -> ndarray:
     """Generates an image frame that combines an instruction, RGB observation,
     top down map, and waypoint variables.
     """
-    preds_to_coords = lambda p, o, d: predictions_to_global_coordinates(
-        p, o, d, agent_position, agent_heading, num_panos
-    )
+
+    def preds_to_coords(p, o, d):
+        return predictions_to_global_coordinates(
+            p, o, d, agent_position, agent_heading, num_panos
+        )
 
     offset = None
     offset_mode = None
@@ -667,8 +667,8 @@ def navigator_video_frame(
 
 
 def compute_heading_to(
-    pos_from: Union[List[float], ndarray], pos_to: Union[List[float], ndarray]
-) -> Tuple[List[float], float]:
+    pos_from: Union[list[float], ndarray], pos_to: Union[list[float], ndarray]
+) -> tuple[list[float], float]:
     """Compute the heading that points from position `pos_from` to position `pos_to`
     in the global XZ coordinate frame.
 
@@ -730,7 +730,7 @@ def rtheta_to_global_coordinates(
     theta: float,
     y_delta: float = 0.0,
     dimensionality: int = 2,
-) -> List[float]:
+) -> list[float]:
     """Maps relative polar coordinates from an agent position to an updated
     agent position. The returned position is not validated for navigability.
     """

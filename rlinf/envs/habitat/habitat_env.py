@@ -16,15 +16,13 @@ import copy
 from typing import Optional, Union
 
 import gym
+import habitat
 import numpy as np
 import torch
-from omegaconf.omegaconf import OmegaConf
-
-import habitat
 from habitat_baselines.config.default import get_config as get_habitat_config
 
 from rlinf.envs.habitat.extensions.utils import observations_to_image
-from rlinf.envs.habitat.venv import ReconfigureSubprocEnv, HabitatRLEnv
+from rlinf.envs.habitat.venv import HabitatRLEnv, ReconfigureSubprocEnv
 from rlinf.envs.utils import (
     list_of_dict_to_dict_of_list,
     save_rollout_video,

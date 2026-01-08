@@ -19,7 +19,7 @@ from typing import Any, Callable, Optional, Union
 
 import gym
 import numpy as np
-from omegaconf.omegaconf import OmegaConf
+from habitat.core.env import RLEnv
 
 from rlinf.envs.venv import (
     BaseVectorEnv,
@@ -30,7 +30,6 @@ from rlinf.envs.venv import (
     SubprocVectorEnv,
     _setup_buf,
 )
-from habitat.core.env import RLEnv
 
 gym_old_venv_step_type = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 gym_new_venv_step_type = tuple[
