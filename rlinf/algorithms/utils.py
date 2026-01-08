@@ -204,6 +204,16 @@ def preprocess_reasoning_advantages_inputs(
             }
         )
 
+    elif kwargs["adv_type"] == "grpo_dynamic":
+        grouped_rewards = (
+            rewards.reshape(-1, kwargs["num_sequence"]).transpose(0, 1).contiguous()
+        )
+        kwargs.update(
+            {
+                "rewards": grouped_rewards,
+            }
+        )
+
     elif kwargs["adv_type"] == "reinpp":
         kwargs.update({"rewards": rewards.unsqueeze(0)})
 
@@ -232,7 +242,7 @@ def preprocess_reasoning_advantages_inputs(
         kwargs.update({"ref_logprob": ref_logprob})
 
     # Create done flags (episode ends at the last token)
-    dones = torch.zeros(seq_len + 1, bsz, dtype=torch.bool)
+    dones = torch.zeros(seq_len + 1, bsz, dtype=torch.bool, device=rewards.device)
     dones[-1] = True
     kwargs.update(
         {
