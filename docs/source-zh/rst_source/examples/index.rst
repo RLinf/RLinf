@@ -272,6 +272,7 @@ RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训
    isaaclab
    calvin
    robocasa
+   mujoco
    pi0
    gr00t
    reasoning

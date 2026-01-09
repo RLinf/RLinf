@@ -71,5 +71,9 @@ def get_env_cls(env_type, env_cfg=None):
         from rlinf.envs.realworld.realworld_env import RealWorldEnv
 
         return RealWorldEnv
+    elif env_type == "mujoco":
+        from rlinf.envs.mujoco.serl_franka_lift_cube import SERLFrankaEnv
+
+        return SERLFrankaEnv
     else:
         raise NotImplementedError(f"Environment type {env_type} not implemented")

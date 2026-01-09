@@ -278,6 +278,7 @@ Thanks to this decoupled design, workers can be flexibly and dynamically schedul
    isaaclab
    calvin
    robocasa
+   mujoco
    pi0
    gr00t
    reasoning

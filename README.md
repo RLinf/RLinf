@@ -75,6 +75,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/isaaclab.html">IsaacLab</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/calvin.html">CALVIN</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/robocasa.html">RoboCasa</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/mujoco.html">Mujoco</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>

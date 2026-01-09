@@ -138,6 +138,18 @@ def prepare_actions_for_robocasa(
         return chunk_actions
 
 
+def prepare_actions_for_mujoco(raw_chunk_actions, model_type):
+    if raw_chunk_actions.shape[-1] >= 7:
+        chunk_actions = np.concatenate(
+            [raw_chunk_actions[..., :3], raw_chunk_actions[..., 6:7]], axis=-1
+        )
+    else:
+        chunk_actions = raw_chunk_actions[..., :4]
+    if SupportedModel(model_type) == SupportedModel.OPENPI:
+        chunk_actions[..., -1] = np.clip(chunk_actions[..., -1], -1.0, 1.0)
+    return chunk_actions
+
+
 def prepare_actions(
     raw_chunk_actions,
     env_type,
@@ -183,6 +195,11 @@ def prepare_actions(
         )
     elif env_type == "realworld":
         chunk_actions = raw_chunk_actions
+    elif env_type == "mujoco":
+        chunk_actions = prepare_actions_for_mujoco(
+            raw_chunk_actions=raw_chunk_actions,
+            model_type=model_type,
+        )
     else:
         raise NotImplementedError
 
