@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Iterator, Optional
 import torch
 from omegaconf import DictConfig
 
+from megatron.core import tensor_parallel
+
 from rlinf.config import build_config, build_transformer_config
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.utils.flops import FLOPSCalculator, ModelConfig
@@ -105,6 +107,32 @@ def get_specs(spec_name, transformer_config=None, use_te=False):
         raise ValueError(f"Spec name '{spec_name}' is not recognized.")
     return name_spec_dict[spec_name]
 
+# copied from verl
+class LinearForLastLayer(torch.nn.Linear):
+    def __init__(
+        self,
+        input_size,
+        output_size,
+        *,
+        sequence_parallel,
+        bias=False, # TODO changed bias to False for temporary convenience
+    ):
+        super().__init__(in_features=input_size, out_features=output_size, bias=bias)
+        self.sequence_parallel = sequence_parallel
+        if self.sequence_parallel:
+            self.weight.sequence_parallel = True
+
+    def forward(
+        self,
+        input_,
+        weight=None,
+        runtime_gather_output=None,
+    ):
+        logits = super().forward(input_)
+        logits = logits.float()
+        if self.sequence_parallel:
+            logits = tensor_parallel.gather_from_sequence_parallel_region(logits, tensor_parallel_output_grad=False)
+        return logits, None
 
 class MegatronModelManager:
     """
@@ -140,6 +168,8 @@ class MegatronModelManager:
 
         # In AUTO mode, the actor will occupy all GPUs for initialization, but not all Megatron processes will be in the running state.
         self.is_running = True
+
+        self.is_dedicated_critic_model = self._cfg.get("use_critic_model", False)
 
     def setup_model_and_optimizer(self, model_type=ModelType.encoder_or_decoder):
         """Setup model and optimizer."""
@@ -188,6 +218,11 @@ class MegatronModelManager:
                 pre_process=pre_process,
                 post_process=post_process,
             )
+
+        if self.is_dedicated_critic_model:
+            # replace lm head with value head if this is a critic model
+            model.output_layer = LinearForLastLayer(input_size=self._cfg.model.hidden_size, output_size=1, sequence_parallel=self._cfg.model.sequence_parallel)
+
         return model
 
     def optimizer_step(self, increment):

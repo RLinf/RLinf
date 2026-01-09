@@ -14,7 +14,7 @@
 
 from collections import UserDict
 from contextlib import contextmanager
-from typing import Any, Callable, Optional, Sequence, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Union
 
 import numpy as np
 import torch
@@ -60,13 +60,20 @@ def compute_rollout_metrics(
         group=data_parallel_group,
     )
 
-    total_prompt_lengths = torch.tensor(sum(prompt_lengths_list, []), device=device)
-    total_decode_lengths = torch.tensor(sum(decode_lengths_list, []), device=device)
+    total_prompt_lengths = torch.tensor(sum(prompt_lengths_list, []), device='cpu')
+    total_decode_lengths = torch.tensor(sum(decode_lengths_list, []), device='cpu')
 
     sum_plen = prompt_lengths.sum().detach().item()
     sum_rlen = response_lengths.sum().detach().item()
     sum_rewards = reward_scores.sum().detach().item()
     sum_end = is_end.sum().detach().item()
+
+    mean_plen = total_prompt_lengths.float().mean().detach().item()
+    var_plen = total_prompt_lengths.float().var().detach().item()
+    mean_rlen = total_decode_lengths.float().mean().detach().item()
+    var_rlen = total_decode_lengths.float().var().detach().item()
+    min_rlen, max_rlen = total_decode_lengths.float().aminmax()
+    min_rlen, max_rlen = min_rlen.detach().item(), max_rlen.detach().item()
 
     valid_adv = torch.masked_select(advantages, mask)
     n_valid_token = mask.sum().detach().item()
@@ -101,10 +108,36 @@ def compute_rollout_metrics(
     )
     adv_min, adv_max = reduce_tensor.tolist()
 
+    values_metrics = None
+    if "values" in rollout_batch:
+        values = rollout_batch["values"].float().to(device=device)
+        values = torch.masked_select(values, mask)
+        mean_value = torch.mean(values)
+        torch.distributed.all_reduce(mean_value, op=torch.distributed.ReduceOp.AVG)
+        max_value = torch.max(values).detach().item()
+        min_value = torch.min(values).detach().item()
+        reduce_value_tensor = torch.as_tensor(
+            [-min_value, max_value], device=torch.cuda.current_device(), dtype=torch.float32
+        )
+        torch.distributed.all_reduce(
+            reduce_value_tensor, op=torch.distributed.ReduceOp.MAX
+        )
+        min_value, max_value = reduce_value_tensor.tolist()
+
+        values_metrics = {
+            "values_mean": mean_value.item(),
+            "values_max": max_value,
+            "values_min": -min_value,
+        }
+
     rollout_metrics = {
         "total_num_sequence": num_seq,
         "prompt_length": sum_plen / num_seq,
         "response_length": sum_rlen / num_seq,
+        "average_response_length": mean_rlen,
+        "variance_of_response_length": var_rlen,
+        "max_of_response_length": max_rlen,
+        "min_of_response_length": min_rlen,
         "total_length": (sum_plen + sum_rlen) / num_seq,
         "reward_scores": sum_rewards / num_seq,
         "fraction_of_samples_properly_ended": sum_end / num_seq,
@@ -112,6 +145,9 @@ def compute_rollout_metrics(
         "advantages_max": adv_max,
         "advantages_min": -adv_min,
     }
+    if values_metrics is not None:
+        rollout_metrics.update(values_metrics)
+
     return rollout_metrics, total_prompt_lengths, total_decode_lengths
 
 
