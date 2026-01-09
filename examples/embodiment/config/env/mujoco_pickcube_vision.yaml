@@ -1,0 +1,27 @@
+env_type: mujoco
+
+# SERL vision env id
+gym_id: PandaPickCubeVision-v0
+
+# observation mode
+obs_mode: image
+image_key: images
+camera: front     # front / wrist / both
+state_key: state
+
+mujoco_gl: egl
+render: false
+
+total_num_envs: null
+group_size: 1
+seed: 0
+
+auto_reset: True
+ignore_terminations: False
+max_steps_per_rollout_epoch: 256
+max_episode_steps: 200
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
