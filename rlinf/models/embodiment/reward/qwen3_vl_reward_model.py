@@ -23,7 +23,7 @@ the Qwen3-VL model weights and dependencies.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import torch
 from omegaconf import DictConfig
@@ -130,15 +130,14 @@ class Qwen3VLRewardModel(BaseVideoRewardModel):
         #     self.model.load_state_dict(state_dict, strict=False)
 
         logger.info(
-            f"Qwen3VLRewardModel placeholder initialized. "
-            f"Model path: {self.model_path}"
+            f"Qwen3VLRewardModel placeholder initialized. Model path: {self.model_path}"
         )
         self._initialized = True
 
     def compute_reward(
         self,
-        observations: Dict[str, Any],
-        task_descriptions: Optional[List[str]] = None,
+        observations: dict[str, Any],
+        task_descriptions: Optional[list[str]] = None,
     ) -> torch.Tensor:
         """Compute rewards from video observations using Qwen3-VL.
 
@@ -174,8 +173,8 @@ class Qwen3VLRewardModel(BaseVideoRewardModel):
         images = self.preprocess_video(images)
         batch_size = images.shape[0]
 
-        # Sample frames
-        sampled_frames = self.sample_frames(images)
+        # Sample frames (placeholder - will be used in actual implementation)
+        _ = self.sample_frames(images)
 
         # Placeholder: Return random rewards
         # In actual implementation, this should:
@@ -212,7 +211,7 @@ class Qwen3VLRewardModel(BaseVideoRewardModel):
         self,
         frames: torch.Tensor,
         task_description: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Format input for Qwen3-VL model.
 
         Args:
@@ -251,6 +250,7 @@ class Qwen3VLRewardModel(BaseVideoRewardModel):
         try:
             # Simple heuristic: look for numbers in the output
             import re
+
             numbers = re.findall(r"(\d+\.?\d*)", output)
             if numbers:
                 value = float(numbers[0])
@@ -263,7 +263,9 @@ class Qwen3VLRewardModel(BaseVideoRewardModel):
 
         # Default: check for success/failure keywords
         output_lower = output.lower()
-        if any(word in output_lower for word in ["yes", "success", "completed", "done"]):
+        if any(
+            word in output_lower for word in ["yes", "success", "completed", "done"]
+        ):
             return 1.0
         elif any(word in output_lower for word in ["no", "fail", "incomplete", "not"]):
             return 0.0
@@ -274,4 +276,3 @@ class Qwen3VLRewardModel(BaseVideoRewardModel):
     def is_initialized(self) -> bool:
         """Check if the model has been initialized."""
         return self._initialized
-

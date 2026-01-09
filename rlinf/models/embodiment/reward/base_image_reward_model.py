@@ -20,7 +20,7 @@ models like ResNet binary classifiers.
 """
 
 from abc import abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import torch
 from omegaconf import DictConfig
@@ -70,8 +70,8 @@ class BaseImageRewardModel(BaseRewardModel):
     @abstractmethod
     def compute_reward(
         self,
-        observations: Dict[str, Any],
-        task_descriptions: Optional[List[str]] = None,
+        observations: dict[str, Any],
+        task_descriptions: Optional[list[str]] = None,
     ) -> torch.Tensor:
         """Compute rewards from single-frame observations.
 
@@ -108,7 +108,9 @@ class BaseImageRewardModel(BaseRewardModel):
             images = images.float() / 255.0
 
         # Apply ImageNet normalization (same as training)
-        mean = torch.tensor([0.485, 0.456, 0.406], device=images.device).view(1, 3, 1, 1)
+        mean = torch.tensor([0.485, 0.456, 0.406], device=images.device).view(
+            1, 3, 1, 1
+        )
         std = torch.tensor([0.229, 0.224, 0.225], device=images.device).view(1, 3, 1, 1)
         images = (images - mean) / std
 
@@ -124,7 +126,11 @@ class BaseImageRewardModel(BaseRewardModel):
             torch.Tensor: If use_soft_reward is True, returns probabilities.
                 Otherwise, returns binary tensor (0 or 1) based on threshold.
         """
-        use_soft = bool(self.use_soft_reward) if hasattr(self.use_soft_reward, '__bool__') else self.use_soft_reward
+        use_soft = (
+            bool(self.use_soft_reward)
+            if hasattr(self.use_soft_reward, "__bool__")
+            else self.use_soft_reward
+        )
         if use_soft:
             return probabilities
         return (probabilities >= self.threshold).float()
@@ -133,4 +139,3 @@ class BaseImageRewardModel(BaseRewardModel):
     def model_type(self) -> str:
         """Return the type identifier of this reward model."""
         return "image"
-

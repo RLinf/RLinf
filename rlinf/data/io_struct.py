@@ -1167,7 +1167,9 @@ class EnvOutput:
     terminations: Optional[torch.Tensor] = None  # [B]
     truncations: Optional[torch.Tensor] = None  # [B]
     rewards: Optional[torch.Tensor] = None  # [B]
-    infos: Optional[dict[str, Any]] = None  # Additional info from env (includes "success")
+    infos: Optional[dict[str, Any]] = (
+        None  # Additional info from env (includes "success")
+    )
 
     intervene_actions: Optional[torch.Tensor] = None  # [B]
     intervene_flags: Optional[torch.Tensor] = None  # [B]

@@ -177,7 +177,7 @@ class EnvWorker(Worker):
 
         # Normalize infos: ensure "success" is at top level for data collection
         # When auto_reset happens, success moves to infos["final_info"]["success"]
-        # IMPORTANT: Check final_info FIRST because after auto_reset, 
+        # IMPORTANT: Check final_info FIRST because after auto_reset,
         # infos["success"] is from the reset state (all False)
         normalized_infos = {}
         if "final_info" in infos and "success" in infos["final_info"]:
@@ -186,7 +186,7 @@ class EnvWorker(Worker):
         elif "success" in infos:
             # Direct success (no auto_reset happened this step)
             normalized_infos["success"] = infos["success"]
-        
+
         env_output = EnvOutput(
             obs=extracted_obs,
             final_obs=infos["final_observation"]
@@ -333,7 +333,11 @@ class EnvWorker(Worker):
                     truncations = dones.clone()
 
                     # For reset stage, success is always False (no action taken yet)
-                    reset_infos = {"success": torch.zeros(self.train_num_envs_per_stage, dtype=torch.bool)}
+                    reset_infos = {
+                        "success": torch.zeros(
+                            self.train_num_envs_per_stage, dtype=torch.bool
+                        )
+                    }
                     env_output = EnvOutput(
                         obs=extracted_obs,
                         dones=dones,
@@ -352,7 +356,11 @@ class EnvWorker(Worker):
                 self.num_succ_envs = 0
                 for stage_id in range(self.stage_num):
                     # For reset stage, success is always False (no action taken yet)
-                    reset_infos = {"success": torch.zeros(self.train_num_envs_per_stage, dtype=torch.bool)}
+                    reset_infos = {
+                        "success": torch.zeros(
+                            self.train_num_envs_per_stage, dtype=torch.bool
+                        )
+                    }
                     env_output = EnvOutput(
                         obs=self.last_obs_list[stage_id],
                         rewards=None,

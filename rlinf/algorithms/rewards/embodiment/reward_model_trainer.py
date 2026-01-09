@@ -21,7 +21,7 @@ the RLinf framework. It can be used standalone or as part of the RL pipeline.
 import logging
 import os
 import pickle
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -44,7 +44,7 @@ class RewardDataset(Dataset):
     def __init__(
         self,
         data_path: str,
-        image_size: Tuple[int, int] = (224, 224),
+        image_size: tuple[int, int] = (224, 224),
         augment: bool = True,
     ):
         """Initialize the dataset.
@@ -58,7 +58,7 @@ class RewardDataset(Dataset):
         """
         self.image_size = image_size
         self.augment = augment
-        self.samples: List[Tuple[str, int]] = []  # (image_path, label) for PNG mode
+        self.samples: list[tuple[str, int]] = []  # (image_path, label) for PNG mode
         self._is_png_mode = False
 
         self._load_data(data_path)
@@ -82,7 +82,9 @@ class RewardDataset(Dataset):
                 if filename.endswith(".pkl"):
                     self._load_pickle(os.path.join(data_path, filename))
 
-        logger.info(f"Loaded {len(self.samples)} samples (PNG mode: {self._is_png_mode})")
+        logger.info(
+            f"Loaded {len(self.samples)} samples (PNG mode: {self._is_png_mode})"
+        )
 
     def _load_png_dirs(self, data_path: str) -> None:
         """Load PNG images from success/ and failure/ directories."""
@@ -113,15 +115,17 @@ class RewardDataset(Dataset):
     def __len__(self) -> int:
         return len(self.samples)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         item, label = self.samples[idx]
 
         if self._is_png_mode:
             # Load PNG image
             from PIL import Image
+
             image = Image.open(item).convert("RGB")
             image = image.resize(self.image_size)
             import numpy as np
+
             image = torch.from_numpy(np.array(image)).float() / 255.0
             image = image.permute(2, 0, 1)  # [H, W, C] -> [C, H, W]
         else:
@@ -235,7 +239,7 @@ class RewardModelTrainer:
         self.best_val_acc = 0.0
         self.epochs_without_improvement = 0
 
-    def prepare_data(self, data_path: str) -> Tuple[DataLoader, DataLoader]:
+    def prepare_data(self, data_path: str) -> tuple[DataLoader, DataLoader]:
         """Prepare training and validation data loaders.
 
         Args:
@@ -274,7 +278,7 @@ class RewardModelTrainer:
         logger.info(f"Train size: {train_size}, Val size: {val_size}")
         return train_loader, val_loader
 
-    def train_epoch(self, train_loader: DataLoader) -> Dict[str, float]:
+    def train_epoch(self, train_loader: DataLoader) -> dict[str, float]:
         """Train for one epoch.
 
         Args:
@@ -317,7 +321,7 @@ class RewardModelTrainer:
         }
 
     @torch.no_grad()
-    def validate(self, val_loader: DataLoader) -> Dict[str, float]:
+    def validate(self, val_loader: DataLoader) -> dict[str, float]:
         """Validate the model.
 
         Args:
@@ -348,7 +352,7 @@ class RewardModelTrainer:
             "val_acc": correct / total,
         }
 
-    def train(self, data_path: str) -> Dict[str, Any]:
+    def train(self, data_path: str) -> dict[str, Any]:
         """Run full training loop.
 
         Args:
@@ -450,5 +454,3 @@ class RewardModelTrainer:
         self.best_val_acc = checkpoint.get("best_val_acc", 0.0)
         self.best_val_loss = checkpoint.get("best_val_loss", float("inf"))
         logger.info(f"Loaded checkpoint from {checkpoint_path}")
-
-

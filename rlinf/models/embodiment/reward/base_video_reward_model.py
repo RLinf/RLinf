@@ -20,13 +20,12 @@ that can understand temporal context for reward prediction.
 """
 
 from abc import abstractmethod
-from typing import Any, Dict, List, Optional, Literal
+from typing import Any, Literal, Optional
 
 import torch
 from omegaconf import DictConfig
 
 from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
-
 
 # Type alias for frame sampling strategies
 SampleStrategy = Literal["uniform_k", "last_k", "first_last_k", "random_k"]
@@ -73,14 +72,14 @@ class BaseVideoRewardModel(BaseRewardModel):
         self.sample_strategy: SampleStrategy = cfg.get("sample_strategy", "uniform_k")
         self.task_prompt_template = cfg.get(
             "task_prompt_template",
-            "Is the task '{task}' completed successfully in this video?"
+            "Is the task '{task}' completed successfully in this video?",
         )
 
     @abstractmethod
     def compute_reward(
         self,
-        observations: Dict[str, Any],
-        task_descriptions: Optional[List[str]] = None,
+        observations: dict[str, Any],
+        task_descriptions: Optional[list[str]] = None,
     ) -> torch.Tensor:
         """Compute rewards from video observations.
 
@@ -136,11 +135,9 @@ class BaseVideoRewardModel(BaseRewardModel):
                 indices = torch.tensor([0, T - 1])[:k]
             else:
                 middle_indices = torch.linspace(1, T - 2, k - 2).long()
-                indices = torch.cat([
-                    torch.tensor([0]),
-                    middle_indices,
-                    torch.tensor([T - 1])
-                ])
+                indices = torch.cat(
+                    [torch.tensor([0]), middle_indices, torch.tensor([T - 1])]
+                )
         elif strategy == "random_k":
             # Randomly sample k frames
             indices = torch.randperm(T)[:k].sort().values
@@ -186,4 +183,3 @@ class BaseVideoRewardModel(BaseRewardModel):
     def model_type(self) -> str:
         """Return the type identifier of this reward model."""
         return "video"
-

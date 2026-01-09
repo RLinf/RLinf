@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .base_reward_model import BaseRewardModel
 from .base_image_reward_model import BaseImageRewardModel
+from .base_reward_model import BaseRewardModel
 from .base_video_reward_model import BaseVideoRewardModel
-from .resnet_reward_model import ResNetRewardModel, ResNet10Backbone
 from .qwen3_vl_reward_model import Qwen3VLRewardModel
+from .resnet_reward_model import ResNet10Backbone, ResNetRewardModel
 
 __all__ = [
     "BaseRewardModel",
@@ -26,4 +26,3 @@ __all__ = [
     "ResNet10Backbone",
     "Qwen3VLRewardModel",
 ]
-
