@@ -285,3 +285,4 @@ Thanks to this decoupled design, workers can be flexibly and dynamically schedul
    sft
    searchr1
    franka
+   resnet_reward

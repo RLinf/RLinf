@@ -279,3 +279,4 @@ RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训
    sft
    searchr1
    franka
+   resnet_reward
