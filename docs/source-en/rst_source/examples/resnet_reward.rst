@@ -216,7 +216,7 @@ Quick Start
 ~~~~~~~~~~~
 
 Using RewardManager (Recommended)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The ``RewardManager`` provides a unified interface for all reward models:
 
