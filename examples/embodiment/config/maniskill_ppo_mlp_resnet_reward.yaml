@@ -36,7 +36,7 @@ runner:
   save_interval: -1
 
   # TODO: Set to your maniskill_ppo_mlp checkpoint path (e.g., logs/<timestamp>-maniskill_ppo_mlp/.../global_step_100)
-  resume_dir: null
+  resume_dir: /workspace/resnet_rlinf/logs/20260109-02:39:15-maniskill_ppo_mlp/maniskill_ppo_mlp/checkpoints/global_step_100
 
 algorithm:
   update_epoch: 8
