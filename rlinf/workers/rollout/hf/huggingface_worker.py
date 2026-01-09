@@ -95,6 +95,7 @@ class MultiStepRolloutWorker(Worker):
             return
 
         from rlinf.algorithms.rewards.embodiment import RewardManager
+
         self.reward_manager = RewardManager(reward_cfg)
         logger.info(
             f"Initialized reward manager with model type: "
@@ -115,6 +116,7 @@ class MultiStepRolloutWorker(Worker):
             from rlinf.algorithms.rewards.embodiment.reward_data_collector import (
                 RewardDataCollector,
             )
+
             self.data_collector = RewardDataCollector(collect_cfg)
             logger.info(
                 f"Initialized reward data collector. "
@@ -175,7 +177,7 @@ class MultiStepRolloutWorker(Worker):
         return False
 
     def extract_goal_positions_2d(
-        self, 
+        self,
         raw_obs: dict[str, Any],
     ) -> Optional[list]:
         """Extract goal/cube positions and project to 2D pixel coordinates.
@@ -192,90 +194,104 @@ class MultiStepRolloutWorker(Worker):
         """
         try:
             import numpy as np
-            
+
             # Get images for batch size and dimensions
             images = raw_obs.get("images")
             if images is None:
                 images = raw_obs.get("main_images")
             if images is None:
                 return None
-            
+
             batch_size = images.shape[0]
-            
+
             # Determine image dimensions
             if images.shape[-1] in [1, 3, 4]:  # [B, H, W, C]
                 img_h, img_w = images.shape[1], images.shape[2]
             else:  # [B, C, H, W]
                 img_h, img_w = images.shape[2], images.shape[3]
-            
+
             # Get 3D goal position (extracted in maniskill_env from raw_obs["extra"])
             goal_pos_3d = raw_obs.get("goal_pos")
-            
+
             # Get camera parameters
             sensor_param = raw_obs.get("sensor_param")
-            
+
             goal_positions = []
-            
+
             for i in range(batch_size):
                 # Default position (center of image)
                 goal_x, goal_y = img_w // 2, img_h // 2
-                
-                if goal_pos_3d is not None and sensor_param is not None and "base_camera" in sensor_param:
+
+                if (
+                    goal_pos_3d is not None
+                    and sensor_param is not None
+                    and "base_camera" in sensor_param
+                ):
                     cam = sensor_param["base_camera"]
-                    
+
                     # Get intrinsic matrix
                     intrinsic = cam.get("intrinsic_cv")
                     if intrinsic is None:
                         intrinsic = cam.get("intrinsic")
-                    
+
                     # Get extrinsic (camera pose)
                     extrinsic = cam.get("extrinsic_cv")
                     if extrinsic is None:
                         extrinsic = cam.get("cam2world_gl")
-                    
+
                     if intrinsic is not None and extrinsic is not None:
                         try:
                             # Convert to numpy
                             if isinstance(intrinsic, torch.Tensor):
                                 K = intrinsic[i].cpu().numpy()
                             else:
-                                K = np.array(intrinsic[i]) if len(np.array(intrinsic).shape) > 2 else np.array(intrinsic)
-                                
+                                K = (
+                                    np.array(intrinsic[i])
+                                    if len(np.array(intrinsic).shape) > 2
+                                    else np.array(intrinsic)
+                                )
+
                             if isinstance(extrinsic, torch.Tensor):
                                 E = extrinsic[i].cpu().numpy()
                             else:
-                                E = np.array(extrinsic[i]) if len(np.array(extrinsic).shape) > 2 else np.array(extrinsic)
-                            
+                                E = (
+                                    np.array(extrinsic[i])
+                                    if len(np.array(extrinsic).shape) > 2
+                                    else np.array(extrinsic)
+                                )
+
                             # Get 3D position for this env
                             if isinstance(goal_pos_3d, torch.Tensor):
                                 pos_3d = goal_pos_3d[i].cpu().numpy()
                             else:
                                 pos_3d = np.array(goal_pos_3d[i])
-                            
+
                             # Project 3D -> 2D
                             # World to camera: p_cam = world2cam @ p_world
-                            p_world = np.append(pos_3d[:3], 1.0)  # Homogeneous [x,y,z,1]
-                            
+                            p_world = np.append(
+                                pos_3d[:3], 1.0
+                            )  # Homogeneous [x,y,z,1]
+
                             # Camera extrinsic: cam2world, need world2cam
                             world2cam = np.linalg.inv(E)
                             p_cam = world2cam @ p_world
-                            
+
                             # Camera to pixel: p_pixel = K @ p_cam[:3] / p_cam[2]
                             if p_cam[2] > 0:  # In front of camera
                                 p_proj = K @ p_cam[:3]
                                 goal_x = int(p_proj[0] / p_proj[2])
                                 goal_y = int(p_proj[1] / p_proj[2])
-                                
+
                                 # Clamp to image bounds
                                 goal_x = max(0, min(img_w - 1, goal_x))
                                 goal_y = max(0, min(img_h - 1, goal_y))
                         except Exception as proj_err:
                             logger.debug(f"Projection failed for env {i}: {proj_err}")
-                
+
                 goal_positions.append((goal_x, goal_y))
-            
+
             return goal_positions
-            
+
         except Exception as e:
             logger.debug(f"Failed to extract goal positions: {e}")
             return None
@@ -302,6 +318,7 @@ class MultiStepRolloutWorker(Worker):
             return self.reward_manager.compute_rewards(observations, task_descriptions)
         except Exception as e:
             import traceback
+
             logger.warning(f"Reward computation failed: {e}\n{traceback.format_exc()}")
             return None
 
@@ -311,7 +328,7 @@ class MultiStepRolloutWorker(Worker):
         model_rewards: torch.Tensor,
     ) -> None:
         """Save one success and one failure sample from ResNet predictions for debugging.
-        
+
         Saves one sample per step (overwrites previous to keep only latest).
         Args:
             observations: Dict with 'images' or 'main_images' key.
@@ -319,37 +336,42 @@ class MultiStepRolloutWorker(Worker):
         """
         if not hasattr(self, "_debug_step_count"):
             self._debug_step_count = 0
-        
+
         # Increment step counter
         self._debug_step_count += 1
-        
+
         images = observations.get("images")
         if images is None:
             images = observations.get("main_images")
         if images is None:
             return
-        
+
         # Threshold for success (default 0.5)
-        threshold = float(self.cfg.get("reward", {}).get("resnet", {}).get("threshold", 0.5))
-        
+        threshold = float(
+            self.cfg.get("reward", {}).get("resnet", {}).get("threshold", 0.5)
+        )
+
         # Ensure model_rewards is 1D
         rewards_1d = model_rewards.view(-1)
         success_mask = rewards_1d > threshold
         failure_mask = rewards_1d <= threshold
-        
+
         import os
-        from PIL import Image
+
         import numpy as np
-        
+        from PIL import Image
+
         # Save to project root logs/resnet_debug
         log_path = self.cfg.get("runner", {}).get("logger", {}).get("log_path", None)
-        
+
         if log_path:
             if "${oc.env:EMBODIED_PATH}" in log_path:
                 embodied_path = os.environ.get("EMBODIED_PATH", "")
                 if embodied_path:
-                    log_path = log_path.replace("${oc.env:EMBODIED_PATH}", embodied_path)
-            
+                    log_path = log_path.replace(
+                        "${oc.env:EMBODIED_PATH}", embodied_path
+                    )
+
             if os.path.isabs(log_path) and "logs" in log_path:
                 parts = log_path.split(os.sep)
                 if "logs" in parts:
@@ -374,15 +396,15 @@ class MultiStepRolloutWorker(Worker):
                 save_dir = os.path.join(project_root, "logs", "resnet_debug")
             else:
                 save_dir = os.path.join(os.getcwd(), "logs", "resnet_debug")
-        
+
         os.makedirs(save_dir, exist_ok=True)
-        
+
         # Save one success sample (overwrite to keep latest)
         has_success = bool(success_mask.any())
         has_failure = bool(failure_mask.any())
-        
+
         step = self._debug_step_count
-        
+
         if has_success:
             idx = int(success_mask.nonzero(as_tuple=True)[0][0])
             prob = float(rewards_1d[idx])
@@ -394,9 +416,13 @@ class MultiStepRolloutWorker(Worker):
             else:
                 img = img.astype(np.uint8)
             # Overwrite single file to keep latest
-            Image.fromarray(img).save(f"{save_dir}/latest_success_step{step}_p{prob:.3f}.png")
-            logger.info(f"Saved ResNet success sample (step={step}, p={prob:.3f}) to {save_dir}")
-        
+            Image.fromarray(img).save(
+                f"{save_dir}/latest_success_step{step}_p{prob:.3f}.png"
+            )
+            logger.info(
+                f"Saved ResNet success sample (step={step}, p={prob:.3f}) to {save_dir}"
+            )
+
         # Save one failure sample (overwrite to keep latest)
         if has_failure:
             idx = int(failure_mask.nonzero(as_tuple=True)[0][0])
@@ -409,8 +435,12 @@ class MultiStepRolloutWorker(Worker):
             else:
                 img = img.astype(np.uint8)
             # Overwrite single file to keep latest
-            Image.fromarray(img).save(f"{save_dir}/latest_failure_step{step}_p{prob:.3f}.png")
-            logger.info(f"Saved ResNet failure sample (step={step}, p={prob:.3f}) to {save_dir}")
+            Image.fromarray(img).save(
+                f"{save_dir}/latest_failure_step{step}_p{prob:.3f}.png"
+            )
+            logger.info(
+                f"Saved ResNet failure sample (step={step}, p={prob:.3f}) to {save_dir}"
+            )
 
     def load_checkpoint(self, load_path):
         model_dict = torch.load(load_path)
@@ -503,50 +533,70 @@ class MultiStepRolloutWorker(Worker):
         # Note: In "episode_end" mode, images are only available when episode ends
         if self.reward_manager is not None and self.reward_manager.is_enabled:
             reward_mode = self.cfg.get("reward", {}).get("mode", "replace")
-            render_mode = self.cfg.get("env", {}).get("train", {}).get("reward_render_mode", "always")
-            
+            render_mode = (
+                self.cfg.get("env", {})
+                .get("train", {})
+                .get("reward_render_mode", "always")
+            )
+
             # In episode_end mode with replace: sparse reward (0 for non-terminal, ResNet for terminal)
             if render_mode == "episode_end" and reward_mode == "replace":
                 # Zero out non-terminal rewards (sparse reward setting)
                 rewards = torch.zeros_like(rewards)
-            
+
             obs_for_reward = raw_obs if raw_obs is not None else env_output.get("obs")
-            has_images = (obs_for_reward is not None and 
-                         (obs_for_reward.get("images") is not None or 
-                          obs_for_reward.get("main_images") is not None))
-            
+            has_images = obs_for_reward is not None and (
+                obs_for_reward.get("images") is not None
+                or obs_for_reward.get("main_images") is not None
+            )
+
             if has_images:
                 if render_mode == "episode_end" and dones.any():
                     # Episode-end mode: only compute reward for done envs
                     done_mask = dones.squeeze(-1) if dones.dim() > 1 else dones
-                    
+
                     # Use final_obs for done envs (before auto_reset)
                     final_obs = env_output.get("final_obs")
                     if final_obs is not None:
                         images = final_obs.get("images") or final_obs.get("main_images")
                     else:
-                        images = obs_for_reward.get("images") or obs_for_reward.get("main_images")
-                    
+                        images = obs_for_reward.get("images") or obs_for_reward.get(
+                            "main_images"
+                        )
+
                     if images is not None and done_mask.sum() > 0:
                         done_images = images[done_mask]
                         done_obs = {"images": done_images}
                         done_rewards = self.compute_model_reward(done_obs)
                         if done_rewards is not None:
-                            model_rewards = torch.zeros(images.shape[0], device=done_rewards.device)
+                            model_rewards = torch.zeros(
+                                images.shape[0], device=done_rewards.device
+                            )
                             model_rewards[done_mask] = done_rewards
-                            
+
                             if reward_mode == "replace":
-                                rewards[done_mask] = model_rewards[done_mask].cpu().unsqueeze(-1)
+                                rewards[done_mask] = (
+                                    model_rewards[done_mask].cpu().unsqueeze(-1)
+                                )
                             elif reward_mode == "add":
-                                rewards[done_mask] = rewards[done_mask] + model_rewards[done_mask].cpu().unsqueeze(-1)
+                                rewards[done_mask] = rewards[done_mask] + model_rewards[
+                                    done_mask
+                                ].cpu().unsqueeze(-1)
                 else:
                     # Always mode: compute reward for all envs every step
                     model_rewards = self.compute_model_reward(obs_for_reward)
                     if model_rewards is not None:
                         if reward_mode == "replace":
-                            rewards = model_rewards.cpu().unsqueeze(-1).expand_as(rewards).contiguous()
+                            rewards = (
+                                model_rewards.cpu()
+                                .unsqueeze(-1)
+                                .expand_as(rewards)
+                                .contiguous()
+                            )
                         elif reward_mode == "add":
-                            rewards = rewards + model_rewards.cpu().unsqueeze(-1).expand_as(rewards)
+                            rewards = rewards + model_rewards.cpu().unsqueeze(
+                                -1
+                            ).expand_as(rewards)
 
         # Handle auto_reset: add bootstrap value to rewards for done episodes
         # Note: currently this is not correct for chunk-size>1 with partial reset
@@ -649,7 +699,10 @@ class MultiStepRolloutWorker(Worker):
 
                     # Collect data for reward model training if enabled
                     if self.data_collector is not None:
-                        prev_total = self.data_collector.success_count + self.data_collector.failure_count
+                        prev_total = (
+                            self.data_collector.success_count
+                            + self.data_collector.failure_count
+                        )
                         # In ManiSkill:
                         # - dones = terminations | truncations (episode ended)
                         # - infos["success"] = True when task actually succeeded
@@ -667,17 +720,18 @@ class MultiStepRolloutWorker(Worker):
                             successes = successes & infos["is_grasped"]
                         elif "grasp" in infos:
                             successes = successes & infos["grasp"]
-                        episode_dones = env_output["dones"]  # For resetting per-episode counters
-                        
+                        episode_dones = env_output[
+                            "dones"
+                        ]  # For resetting per-episode counters
+
                         # CRITICAL: Use final_obs for success frames (before auto_reset)
                         # Current raw_obs is AFTER reset, so success frames would have wrong images!
                         final_obs = env_output.get("final_obs")
-                        obs_for_collection = raw_obs  # Default to current obs
-                        
+
                         # If there are success frames and final_obs exists, we need to handle them separately
                         if successes.any() and final_obs is not None:
                             # Collect success frames from final_obs (pre-reset images)
-                            collection_complete = self.collect_reward_data(
+                            self.collect_reward_data(
                                 raw_obs=final_obs,
                                 terminations=None,
                                 successes=successes,
@@ -687,10 +741,12 @@ class MultiStepRolloutWorker(Worker):
                         else:
                             # No success this step, use current obs for failure frames
                             goal_positions = None
-                            if self.cfg.get("reward_data_collection", {}).get("draw_goal_marker", False):
+                            if self.cfg.get("reward_data_collection", {}).get(
+                                "draw_goal_marker", False
+                            ):
                                 goal_positions = self.extract_goal_positions_2d(raw_obs)
-                            
-                            collection_complete = self.collect_reward_data(
+
+                            self.collect_reward_data(
                                 raw_obs=raw_obs,
                                 terminations=None,
                                 successes=successes,
@@ -698,8 +754,13 @@ class MultiStepRolloutWorker(Worker):
                                 goal_positions_2d=goal_positions,
                             )
                         # Log progress when new samples collected (every 100 samples)
-                        curr_total = self.data_collector.success_count + self.data_collector.failure_count
-                        if curr_total > prev_total and (curr_total // 100) > (prev_total // 100):
+                        curr_total = (
+                            self.data_collector.success_count
+                            + self.data_collector.failure_count
+                        )
+                        if curr_total > prev_total and (curr_total // 100) > (
+                            prev_total // 100
+                        ):
                             stats = self.data_collector.get_statistics()
                             logger.info(
                                 f"Collected: {stats['success_count']}/{self.data_collector.target_success} success, "

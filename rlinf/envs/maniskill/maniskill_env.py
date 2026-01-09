@@ -77,7 +77,9 @@ class ManiskillEnv(gym.Env):
         # Rendering config for reward computation
         # render_mode options: "always", "episode_end", "probabilistic"
         self._reward_render_mode = getattr(cfg, "reward_render_mode", "probabilistic")
-        self._render_probability = getattr(cfg, "render_probability", 1.0)  # For probabilistic mode
+        self._render_probability = getattr(
+            cfg, "render_probability", 1.0
+        )  # For probabilistic mode
         self._should_render_this_step = True  # Will be set each step
         self._episode_ending_this_step = False  # For episode_end mode
 
@@ -85,7 +87,7 @@ class ManiskillEnv(gym.Env):
             cfg.init_params.num_envs = num_envs
         env_args = OmegaConf.to_container(cfg.init_params, resolve=True)
         self.env: BaseEnv = gym.make(**env_args)
-        
+
         self.prev_step_reward = torch.zeros(self.num_envs, dtype=torch.float32).to(
             self.device
         )  # [B, ]
@@ -130,7 +132,7 @@ class ManiskillEnv(gym.Env):
 
     def _show_goal_site(self):
         """Make goal_site visible in sensor renders.
-        
+
         ManiSkill's PickCube task creates a green sphere (goal_site) but hides it
         by default. This method uses show_visual() which is the correct way to
         unhide objects in ManiSkill's batched rendering.
@@ -138,20 +140,20 @@ class ManiskillEnv(gym.Env):
         unwrapped = self.env.unwrapped
         if not hasattr(unwrapped, "goal_site"):
             return
-            
+
         goal_site = unwrapped.goal_site
-        
+
         # Remove from _hidden_objects list so ManiSkill doesn't re-hide it
         if hasattr(unwrapped, "_hidden_objects"):
             while goal_site in unwrapped._hidden_objects:
                 unwrapped._hidden_objects.remove(goal_site)
-        
+
         # Use show_visual() - this is the correct ManiSkill API for batched envs
         if hasattr(goal_site, "show_visual"):
             goal_site.show_visual()
-        
+
         if not hasattr(self, "_goal_site_shown"):
-            print(f"[ManiskillEnv] goal_site.show_visual() called")
+            print("[ManiskillEnv] goal_site.show_visual() called")
             self._goal_site_shown = True
 
     def _init_reset_state_ids(self):
@@ -181,7 +183,7 @@ class ManiskillEnv(gym.Env):
                 # 2. "episode_end" - only render at episode end (fast)
                 # 3. "probabilistic" - render with probability (for data collection)
                 render_mode_cfg = getattr(self, "_reward_render_mode", "probabilistic")
-                
+
                 should_render = False
                 if render_mode_cfg == "always":
                     should_render = True
@@ -190,19 +192,25 @@ class ManiskillEnv(gym.Env):
                     should_render = getattr(self, "_episode_ending_this_step", False)
                 else:  # probabilistic
                     import random
+
                     force_render = getattr(self, "_force_render_this_step", False)
-                    should_render = force_render or (random.random() < self._render_probability)
-                
+                    should_render = force_render or (
+                        random.random() < self._render_probability
+                    )
+
                 self._should_render_this_step = should_render
-                
-                if should_render and getattr(self.env.unwrapped, "render_mode", None) == "rgb_array":
+
+                if (
+                    should_render
+                    and getattr(self.env.unwrapped, "render_mode", None) == "rgb_array"
+                ):
                     images = self.render_images_internal()
                     if images is not None:
                         wrapped_obs["main_images"] = images
             elif self.env.unwrapped.obs_mode == "rgb":
                 sensor_data = raw_obs.pop("sensor_data")
                 sensor_param = raw_obs.pop("sensor_param")  # Keep for 3D->2D projection
-                
+
                 # Extract goal/object positions before flattening (for visualization)
                 goal_pos = None
                 if "extra" in raw_obs:
@@ -213,7 +221,7 @@ class ManiskillEnv(gym.Env):
                     # Also try obj_pose for cube position
                     elif "obj_pose" in extra:
                         goal_pos = extra["obj_pose"][:, :3]  # xyz only
-                
+
                 state = common.flatten_state_dict(
                     raw_obs, use_torch=True, device=self.device
                 )
@@ -256,7 +264,7 @@ class ManiskillEnv(gym.Env):
 
     def _calc_step_reward(self, reward, info, dones=None):
         """Calculate step reward based on reward_mode.
-        
+
         Supported modes:
             - "raw": Use environment's original reward.
             - "sparse": Binary reward (1.0 for success, 0 otherwise) at every step.
@@ -265,7 +273,7 @@ class ManiskillEnv(gym.Env):
         """
         reward_mode = getattr(self.cfg, "reward_mode", "default")
         device = self.env.unwrapped.device
-        
+
         if reward_mode == "raw":
             pass
         elif reward_mode == "sparse":
@@ -344,15 +352,15 @@ class ManiskillEnv(gym.Env):
                 else {}
             )
         raw_obs, infos = self.env.reset(seed=seed, options=options)
-        
+
         # Show goal_site after first reset (setting is persistent after removing from _hidden_objects)
         # _wrap_obs will re-render and capture images, so goal_site will be visible
         show_goal = getattr(self.cfg, "show_goal_site", False)
         if show_goal and not hasattr(self, "_goal_site_initialized"):
-            print(f"[ManiskillEnv] Initializing goal_site visibility (one-time setup)")
+            print("[ManiskillEnv] Initializing goal_site visibility (one-time setup)")
             self._show_goal_site()
             self._goal_site_initialized = True
-        
+
         # Reset doesn't have success info, use probability-based rendering
         self._force_render_this_step = False
         extracted_obs = self._wrap_obs(raw_obs)
@@ -368,16 +376,16 @@ class ManiskillEnv(gym.Env):
     ) -> tuple[Array, Array, Array, Array, dict]:
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
         # Note: goal_site visibility is set once in reset and persists (removed from _hidden_objects)
-        
+
         # Check if episode is ending (for episode_end render mode)
         dones = terminations | truncations
         self._episode_ending_this_step = dones.any()
-        
+
         # Smart rendering: always render if any success, otherwise use probability
         # This ensures we don't miss success samples while skipping most failure frames
         has_success = "success" in infos and infos["success"].any()
         self._force_render_this_step = has_success  # Will be checked in _wrap_obs
-        
+
         extracted_obs = self._wrap_obs(raw_obs)
         step_reward = self._calc_step_reward(_reward, infos, dones)
 
@@ -466,25 +474,25 @@ class ManiskillEnv(gym.Env):
 
     def render_images_internal(self) -> Optional[torch.Tensor]:
         """Render RGB images on demand for data collection.
-        
+
         Only call this when you need images (e.g., for saving).
         Returns None if render_mode is not rgb_array.
-        
+
         Returns:
             Image tensor [B, H, W, C] or None
         """
         if getattr(self.env.unwrapped, "render_mode", None) != "rgb_array":
             return None
-        
+
         # Ensure goal_site is visible before rendering (auto_reset may have hidden it)
         show_goal = getattr(self.cfg, "show_goal_site", False)
         if show_goal:
             self._show_goal_site()
-        
+
         # Render and capture sensor data
         self.env.unwrapped.scene.update_render()
         self.env.unwrapped.capture_sensor_data()
-        
+
         # Get images from base_camera
         for name, sensor in self.env.unwrapped.scene.sensors.items():
             if name == "base_camera":

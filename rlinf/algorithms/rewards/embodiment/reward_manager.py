@@ -21,7 +21,7 @@ and add new ones.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Optional
 
 import torch
 from omegaconf import DictConfig
@@ -59,7 +59,7 @@ class RewardManager:
 
     # Registry of available reward model types
     # Maps model type string to model class
-    REGISTRY: Dict[str, Type[BaseRewardModel]] = {}
+    REGISTRY: dict[str, type[BaseRewardModel]] = {}
 
     def __init__(self, cfg: DictConfig):
         """Initialize the RewardManager.
@@ -69,13 +69,12 @@ class RewardManager:
                 - use_reward_model: Whether to use model-based reward (default: True).
                 - reward_model_type: Type of reward model ("resnet", "qwen3_vl", etc.).
                 - Model-specific configuration under the model type key.
-
-        Raises:
-            ValueError: If the specified reward model type is not registered.
         """
         self.cfg = cfg
         use_model = cfg.get("use_reward_model", True)
-        self.use_reward_model = bool(use_model) if hasattr(use_model, '__bool__') else use_model
+        self.use_reward_model = (
+            bool(use_model) if hasattr(use_model, "__bool__") else use_model
+        )
         self.model_type = cfg.get("reward_model_type", "resnet")
         self.model: Optional[BaseRewardModel] = None
 
@@ -99,13 +98,15 @@ class RewardManager:
                 pass
             ```
         """
-        def decorator(model_cls: Type[BaseRewardModel]) -> Type[BaseRewardModel]:
+
+        def decorator(model_cls: type[BaseRewardModel]) -> type[BaseRewardModel]:
             cls.REGISTRY[name] = model_cls
             return model_cls
+
         return decorator
 
     @classmethod
-    def register_model(cls, name: str, model_cls: Type[BaseRewardModel]) -> None:
+    def register_model(cls, name: str, model_cls: type[BaseRewardModel]) -> None:
         """Register a reward model class programmatically.
 
         Args:
@@ -115,7 +116,7 @@ class RewardManager:
         cls.REGISTRY[name] = model_cls
 
     @classmethod
-    def get_available_models(cls) -> List[str]:
+    def get_available_models(cls) -> list[str]:
         """Get list of registered model types.
 
         Returns:
@@ -140,10 +141,12 @@ class RewardManager:
         model_cfg = self.cfg.get(self.model_type, {})
 
         # Merge with common configuration
-        merged_cfg = DictConfig({
-            **self.cfg,
-            **model_cfg,
-        })
+        merged_cfg = DictConfig(
+            {
+                **self.cfg,
+                **model_cfg,
+            }
+        )
 
         # Instantiate model
         model_cls = self.REGISTRY[self.model_type]
@@ -153,8 +156,8 @@ class RewardManager:
 
     def compute_rewards(
         self,
-        observations: Dict[str, Any],
-        task_descriptions: Optional[List[str]] = None,
+        observations: dict[str, Any],
+        task_descriptions: Optional[list[str]] = None,
     ) -> torch.Tensor:
         """Compute rewards from observations.
 
@@ -188,7 +191,7 @@ class RewardManager:
 
         return self.model.compute_reward(observations, task_descriptions)
 
-    def _get_batch_size(self, observations: Dict[str, Any]) -> int:
+    def _get_batch_size(self, observations: dict[str, Any]) -> int:
         """Extract batch size from observations.
 
         Args:
@@ -231,22 +234,19 @@ class RewardManager:
 # Import and register default models
 # This is done at module load time to populate the registry
 def _register_default_models():
-    """Register default reward models in the registry.
-    
-    Raises:
-        ImportError: If required model modules cannot be imported.
-    """
+    """Register default reward models in the registry."""
     from rlinf.models.embodiment.reward.resnet_reward_model import (
         ResNetRewardModel,
     )
+
     RewardManager.register_model("resnet", ResNetRewardModel)
 
     from rlinf.models.embodiment.reward.qwen3_vl_reward_model import (
         Qwen3VLRewardModel,
     )
+
     RewardManager.register_model("qwen3_vl", Qwen3VLRewardModel)
 
 
 # Register default models when module is imported
 _register_default_models()
-

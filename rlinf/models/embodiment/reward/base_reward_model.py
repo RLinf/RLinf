@@ -20,7 +20,7 @@ models inherit from this class.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import torch
 import torch.nn as nn
@@ -60,8 +60,8 @@ class BaseRewardModel(ABC, nn.Module):
     @abstractmethod
     def compute_reward(
         self,
-        observations: Dict[str, Any],
-        task_descriptions: Optional[List[str]] = None,
+        observations: dict[str, Any],
+        task_descriptions: Optional[list[str]] = None,
     ) -> torch.Tensor:
         """Compute rewards from observations.
 
@@ -124,4 +124,3 @@ class BaseRewardModel(ABC, nn.Module):
             String identifier for the model type (e.g., "image", "video").
         """
         return "base"
-

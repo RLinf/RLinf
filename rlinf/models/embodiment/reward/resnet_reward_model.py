@@ -21,7 +21,7 @@ image frames for fast inference during online RL training.
 
 import os
 from functools import partial
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import torch
 import torch.nn as nn
@@ -154,6 +154,7 @@ class ResNetRewardModel(BaseImageRewardModel):
         else:
             # No checkpoint = training mode with random weights
             import logging
+
             logging.getLogger(__name__).info(
                 "No checkpoint_path provided, using random weights (training mode)"
             )
@@ -190,8 +191,8 @@ class ResNetRewardModel(BaseImageRewardModel):
 
     def compute_reward(
         self,
-        observations: Dict[str, Any],
-        task_descriptions: Optional[List[str]] = None,
+        observations: dict[str, Any],
+        task_descriptions: Optional[list[str]] = None,
     ) -> torch.Tensor:
         """Compute binary rewards from image observations.
 
@@ -219,7 +220,11 @@ class ResNetRewardModel(BaseImageRewardModel):
         images = self.preprocess_images(images)
 
         # Forward pass
-        freeze = bool(self.freeze_backbone) if hasattr(self.freeze_backbone, '__bool__') else self.freeze_backbone
+        freeze = (
+            bool(self.freeze_backbone)
+            if hasattr(self.freeze_backbone, "__bool__")
+            else self.freeze_backbone
+        )
         with torch.no_grad() if freeze else torch.enable_grad():
             features = self.backbone(images)
 
@@ -266,14 +271,17 @@ class ResNetRewardModel(BaseImageRewardModel):
             backbone_state_dict = {
                 k.replace("backbone.", ""): v
                 for k, v in state_dict.items()
-                if k.startswith("backbone.") or not any(
-                    k.startswith(prefix) for prefix in ["classifier.", "fc."]
-                )
+                if k.startswith("backbone.")
+                or not any(k.startswith(prefix) for prefix in ["classifier.", "fc."])
             }
             self.backbone.load_state_dict(backbone_state_dict, strict=False)
 
         # Freeze backbone if configured
-        freeze = bool(self.freeze_backbone) if hasattr(self.freeze_backbone, '__bool__') else self.freeze_backbone
+        freeze = (
+            bool(self.freeze_backbone)
+            if hasattr(self.freeze_backbone, "__bool__")
+            else self.freeze_backbone
+        )
         if freeze:
             for param in self.backbone.parameters():
                 param.requires_grad = False
@@ -289,4 +297,3 @@ class ResNetRewardModel(BaseImageRewardModel):
         """
         features = self.backbone(images)
         return self.classifier(features).squeeze(-1)
-

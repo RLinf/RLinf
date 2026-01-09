@@ -184,13 +184,13 @@ ResNet 奖励模型是一个基于图像的二分类器，用于预测机器人�
 
 .. code-block:: text
 
-    BaseRewardModel（抽象基类）
-    │
-    ├── BaseImageRewardModel（抽象类）    # 单帧奖励
-    │   └── ResNetRewardModel             # 二分类器（HIL-SERL 风格）
-    │
-    └── BaseVideoRewardModel（抽象类）    # 多帧/视频奖励
-        └── Qwen3VLRewardModel            # 基于 VLM 的奖励（预留实现）
+    BaseRewardModel (Abstract Root)
+    |
+    +-- BaseImageRewardModel (Abstract)     # Single-frame reward
+    |   +-- ResNetRewardModel               # Binary classifier (HIL-SERL style)
+    |
+    +-- BaseVideoRewardModel (Abstract)     # Multi-frame/video reward
+        +-- Qwen3VLRewardModel              # VLM-based reward (placeholder)
 
 文件结构
 ~~~~~~~~
@@ -198,19 +198,19 @@ ResNet 奖励模型是一个基于图像的二分类器，用于预测机器人�
 .. code-block:: text
 
     rlinf/models/embodiment/reward/
-    ├── __init__.py                    # 模块导出
-    ├── base_reward_model.py           # BaseRewardModel（根抽象类）
-    ├── base_image_reward_model.py     # BaseImageRewardModel（单帧）
-    ├── base_video_reward_model.py     # BaseVideoRewardModel（多帧）
-    ├── resnet_reward_model.py         # ResNet 二分类器
-    └── qwen3_vl_reward_model.py       # Qwen3-VL（预留实现）
+    +-- __init__.py                    # Module exports
+    +-- base_reward_model.py           # BaseRewardModel (root abstract)
+    +-- base_image_reward_model.py     # BaseImageRewardModel (single-frame)
+    +-- base_video_reward_model.py     # BaseVideoRewardModel (multi-frame)
+    +-- resnet_reward_model.py         # ResNet binary classifier
+    +-- qwen3_vl_reward_model.py       # Qwen3-VL (placeholder)
 
     rlinf/algorithms/rewards/embodiment/
-    └── reward_manager.py              # RewardManager 注册模式
+    +-- reward_manager.py              # RewardManager with registry pattern
 
     examples/embodiment/config/reward/
-    ├── resnet_binary.yaml             # ResNet 配置
-    └── qwen3_vl.yaml                  # Qwen3-VL 配置
+    +-- resnet_binary.yaml             # ResNet configuration
+    +-- qwen3_vl.yaml                  # Qwen3-VL configuration
 
 快速开始
 ~~~~~~~~
@@ -321,4 +321,5 @@ RewardManager
      - 列出已注册模型
    * - ``to_device(device)``
      - 移动模型到设备
+
 

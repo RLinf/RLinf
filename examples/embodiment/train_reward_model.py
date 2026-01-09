@@ -37,31 +37,35 @@ logger = logging.getLogger(__name__)
 
 def run_reward_model_train(cfg: DictConfig) -> None:
     """Train reward model from collected data.
-    
+
     This is a standalone supervised learning task, separate from RL training.
     """
+    from rlinf.algorithms.rewards.embodiment.reward_model_trainer import (
+        RewardModelTrainer,
+    )
     from rlinf.models.embodiment.reward.resnet_reward_model import ResNetRewardModel
-    from rlinf.algorithms.rewards.embodiment.reward_model_trainer import RewardModelTrainer
-    
+
     logger.info("Starting reward model training...")
-    
+
     train_cfg = cfg.get("reward_model_training", {})
-    
+
     if not train_cfg.get("data_path"):
         raise ValueError("reward_model_training.data_path must be specified")
-    
+
     # Create model
     model_cfg = cfg.get("reward", {}).get("resnet", {})
     model = ResNetRewardModel(DictConfig(model_cfg))
-    
+
     # Create trainer with config and model
     trainer = RewardModelTrainer(train_cfg, model)
-    
+
     # Train
     data_path = train_cfg.get("data_path")
     results = trainer.train(data_path)
-    
-    logger.info(f"Training completed! Best val accuracy: {results.get('best_val_acc', 'N/A')}")
+
+    logger.info(
+        f"Training completed! Best val accuracy: {results.get('best_val_acc', 'N/A')}"
+    )
 
 
 @hydra.main(
@@ -74,4 +78,3 @@ def main(cfg: DictConfig) -> None:
 
 if __name__ == "__main__":
     main()
-
