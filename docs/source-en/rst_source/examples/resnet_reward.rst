@@ -1,0 +1,324 @@
+ResNet Reward Model Training Guide
+===================================
+
+This guide explains how to train a ManiSkill PickCube task using a ResNet-based reward model.
+
+Overview
+--------
+
+The ResNet reward model is an image-based binary classifier that predicts whether the robot has successfully completed the grasping task. The complete pipeline consists of four stages:
+
+1. **Data Collection**: Collect RGB images with success/failure labels while training a policy
+2. **ResNet Training**: Train the ResNet binary classifier on collected data
+3. **Policy Pre-training**: Train an initial policy using the environment's dense reward
+4. **ResNet Reward Training**: Continue training using ResNet reward to replace the environment reward
+
+Prerequisites
+-------------
+
+- ManiSkill environment properly installed
+- GPU with sufficient memory for rendering and training
+
+Stage 1: Data Collection
+------------------------
+
+Collect RGB images labeled as success/failure while training a policy with dense reward.
+
+.. code-block:: bash
+
+    bash examples/embodiment/run_embodiment.sh maniskill_collect_reward_data
+
+This will:
+
+- Train a policy using dense reward (same as ``maniskill_ppo_mlp``)
+- Render RGB images during training
+- Save success/failure images to ``examples/embodiment/data/``
+
+Configuration (``maniskill_collect_reward_data.yaml``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: yaml
+
+    reward_data_collection:
+      enabled: True
+      save_dir: "${oc.env:EMBODIED_PATH}/data"
+      target_success: 5000      # Number of success samples to collect
+      target_failure: 5000      # Number of failure samples to collect
+      sample_rate_fail: 0.01    # Sample 1% of failure frames
+      sample_rate_success: 1.0  # Sample 100% of success frames
+
+Data will be saved as::
+
+    examples/embodiment/data/
+    ├── success/
+    │   ├── 0001.png
+    │   ├── 0002.png
+    │   └── ...
+    └── failure/
+        ├── 0001.png
+        ├── 0002.png
+        └── ...
+
+Stage 2: Train ResNet Reward Model
+----------------------------------
+
+Train the ResNet binary classifier on collected data.
+
+.. code-block:: bash
+
+    python examples/embodiment/train_reward_model.py --config-name maniskill_train_reward_model
+
+Configuration (``maniskill_train_reward_model.yaml``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: yaml
+
+    reward_model_training:
+      data_path: "${oc.env:EMBODIED_PATH}/data"
+      epochs: 100
+      batch_size: 64
+      lr: 1.0e-4
+      val_split: 0.1
+      save_dir: "${oc.env:EMBODIED_PATH}/../../logs/reward_checkpoints"
+      early_stopping_patience: 15
+
+The trained model will be saved to ``logs/reward_checkpoints/best_model.pt``.
+
+Stage 3 & 4: Policy Training with ResNet Reward
+-----------------------------------------------
+
+Stage 3: Pre-train Policy with Dense Reward (Optional)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Train an initial policy using the environment's native dense reward (100 steps by default):
+
+.. code-block:: bash
+
+    bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
+
+Checkpoints will be saved to ``logs/<timestamp>-maniskill_ppo_mlp/maniskill_ppo_mlp/checkpoints/``.
+
+Training will automatically stop at step 100.
+
+Stage 4: Continue Training with ResNet Reward
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Update ``resume_dir`` in ``maniskill_ppo_mlp_resnet_reward.yaml`` to point to the Stage 3 checkpoint:
+
+.. code-block:: yaml
+
+    runner:
+      # TODO: Set to your maniskill_ppo_mlp checkpoint path
+      resume_dir: "logs/<timestamp>-maniskill_ppo_mlp/maniskill_ppo_mlp/checkpoints/global_step_100"
+
+Then run:
+
+.. code-block:: bash
+
+    bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_resnet_reward
+
+Configuration
+-------------
+
+Key Parameters (``maniskill_ppo_mlp_resnet_reward.yaml``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: yaml
+
+    env:
+      train:
+        reward_render_mode: "episode_end"  # Must match data collection
+        show_goal_site: True               # Show green goal marker
+        init_params:
+          control_mode: "pd_joint_delta_pos"  # Must match data collection
+
+    reward:
+      use_reward_model: True
+      reward_model_type: "resnet"
+      mode: "replace"  # Replace env reward with ResNet reward
+      alpha: 1.0
+      
+      resnet:
+        checkpoint_path: "${oc.env:EMBODIED_PATH}/../../logs/reward_checkpoints/best_model.pt"
+        threshold: 0.5
+        use_soft_reward: False  # Binary 0/1 reward
+
+Critical Parameter Alignment
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The following parameters **must** match those used during data collection:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Parameter
+     - Value
+     - Description
+   * - ``control_mode``
+     - ``pd_joint_delta_pos``
+     - Control mode (8-dim action space)
+   * - ``reward_render_mode``
+     - ``episode_end``
+     - Only render images at episode end
+   * - ``show_goal_site``
+     - ``True``
+     - Show green goal marker
+   * - ``image_size``
+     - ``[3, 224, 224]``
+     - Image dimensions
+
+Expected Results
+----------------
+
+- After ~500-1000 steps, ``env/success_once`` should approach 100%
+- ``env/episode_len`` should decrease to ~15-20 steps
+- ``env/reward`` will show lower values (expected for sparse binary reward)
+
+Embodied Reward Models Architecture & API
+-----------------------------------------
+
+This module provides reward model implementations for embodied reinforcement learning tasks, supporting both image-based (single-frame) and video-based (multi-frame) reward models.
+
+Architecture
+~~~~~~~~~~~~
+
+.. code-block:: text
+
+    BaseRewardModel (Abstract Root)
+    │
+    ├── BaseImageRewardModel (Abstract)    # Single-frame reward
+    │   └── ResNetRewardModel              # Binary classifier (HIL-SERL style)
+    │
+    └── BaseVideoRewardModel (Abstract)    # Multi-frame/video reward
+        └── Qwen3VLRewardModel             # VLM-based reward (placeholder)
+
+File Structure
+~~~~~~~~~~~~~~
+
+.. code-block:: text
+
+    rlinf/models/embodiment/reward/
+    ├── __init__.py                    # Module exports
+    ├── base_reward_model.py           # BaseRewardModel (root abstract)
+    ├── base_image_reward_model.py     # BaseImageRewardModel (single-frame)
+    ├── base_video_reward_model.py     # BaseVideoRewardModel (multi-frame)
+    ├── resnet_reward_model.py         # ResNet binary classifier
+    └── qwen3_vl_reward_model.py       # Qwen3-VL (reserved implementation)
+
+    rlinf/algorithms/rewards/embodiment/
+    └── reward_manager.py              # RewardManager with registry pattern
+
+    examples/embodiment/config/reward/
+    ├── resnet_binary.yaml             # ResNet configuration
+    └── qwen3_vl.yaml                  # Qwen3-VL configuration
+
+Quick Start
+~~~~~~~~~~~
+
+Using RewardManager (Recommended)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The ``RewardManager`` provides a unified interface for all reward models:
+
+.. code-block:: python
+
+    from rlinf.algorithms.rewards.embodiment import RewardManager
+    from omegaconf import OmegaConf
+
+    # Load configuration
+    cfg = OmegaConf.load("examples/embodiment/config/reward/resnet_binary.yaml")
+    cfg.resnet.checkpoint_path = "/path/to/your/checkpoint.pt"
+
+    # Initialize reward manager
+    reward_manager = RewardManager(cfg)
+
+    # Compute rewards
+    observations = {
+        "images": images_tensor,  # [B, C, H, W] or [B, H, W, C]
+        "states": states_tensor,  # Optional [B, state_dim]
+    }
+    rewards = reward_manager.compute_rewards(observations)
+
+Using Models Directly
+^^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: python
+
+    from rlinf.models.embodiment.reward import ResNetRewardModel
+    from omegaconf import DictConfig
+
+    cfg = DictConfig({
+        "checkpoint_path": "/path/to/checkpoint.pt",
+        "image_size": [3, 224, 224],
+        "threshold": 0.5,
+        "use_soft_reward": False,
+    })
+
+    model = ResNetRewardModel(cfg)
+    rewards = model.compute_reward(observations)
+
+API Reference
+~~~~~~~~~~~~~
+
+BaseRewardModel
+^^^^^^^^^^^^^^^
+
+.. list-table::
+   :header-rows: 1
+
+   * - Method
+     - Description
+   * - ``compute_reward(observations, task_descriptions)``
+     - Compute rewards from observations
+   * - ``load_checkpoint(path)``
+     - Load model weights
+   * - ``scale_reward(reward)``
+     - Apply scaling factor
+   * - ``to_device(device)``
+     - Move model to device
+
+BaseImageRewardModel
+^^^^^^^^^^^^^^^^^^^^
+
+.. list-table::
+   :header-rows: 1
+
+   * - Method
+     - Description
+   * - ``preprocess_images(images)``
+     - Normalize and reorder channels
+   * - ``apply_threshold(probabilities)``
+     - Convert to binary rewards
+
+BaseVideoRewardModel
+^^^^^^^^^^^^^^^^^^^^
+
+.. list-table::
+   :header-rows: 1
+
+   * - Method
+     - Description
+   * - ``sample_frames(images, strategy, k)``
+     - Sample frames from video
+   * - ``preprocess_video(images)``
+     - Normalize video tensor
+   * - ``format_prompt(task_description)``
+     - Format VLM prompt
+
+RewardManager
+^^^^^^^^^^^^^
+
+.. list-table::
+   :header-rows: 1
+
+   * - Method
+     - Description
+   * - ``compute_rewards(observations, task_descriptions)``
+     - Unified reward computation
+   * - ``register_model(name, cls)``
+     - Register new model type
+   * - ``get_available_models()``
+     - List registered models
+   * - ``to_device(device)``
+     - Move model to device
+

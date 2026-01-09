@@ -64,9 +64,10 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                             )
                         )
 
-                    extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"])
+                    raw_obs = env_output["obs"]
+                    extracted_obs = self.hf_model.preprocess_env_obs(raw_obs)
                     dones, rewards, real_extracted_obs = self.get_dones_and_rewards(
-                        env_output, extracted_obs
+                        env_output, extracted_obs, raw_obs
                     )
 
                     actions, result = self.predict(extracted_obs)
@@ -101,9 +102,10 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
 
             for i in range(self.num_pipeline_stages):
                 env_output = await self.recv_env_output(input_channel)
-                extracted_obs = self.hf_model.preprocess_env_obs(env_output["obs"])
+                raw_obs = env_output["obs"]
+                extracted_obs = self.hf_model.preprocess_env_obs(raw_obs)
                 dones, rewards, real_extracted_obs = self.get_dones_and_rewards(
-                    env_output, extracted_obs
+                    env_output, extracted_obs, raw_obs
                 )
                 await self.buffer_list[i].add(
                     "truncations", env_output["truncations"].bool().cpu().contiguous()

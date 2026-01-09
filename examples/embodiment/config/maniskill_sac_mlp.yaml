@@ -32,7 +32,7 @@ runner:
 
   only_eval: False
   val_check_interval: 200
-  save_interval: -1
+  save_interval: 1000
 
 algorithm:
   update_epoch: 32
@@ -53,7 +53,7 @@ algorithm:
   auto_entropy_tuning: True  # Enable automatic entropy tuning
   alpha_type: softplus
   initial_alpha: 0.01  # Initial temperature value
-  target_entropy: -4  # Target entropy (-action_dim)
+  target_entropy: -8  # Target entropy (-action_dim for pd_joint_delta_pos)
   alpha_lr: 3.0e-4  # Learning rate for temperature parameter
   
   # Replay buffer settings
@@ -122,8 +122,8 @@ actor:
 
   model:
     model_name: "mlp_policy"
-    policy_setup: "panda-ee-dpos"
-    action_dim: 4
+    policy_setup: "panda-qpos"  # pd_joint_delta_pos - matches ResNet training data
+    action_dim: 8
     
     precision: "32"
     add_value_head: False

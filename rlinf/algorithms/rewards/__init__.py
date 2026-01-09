@@ -13,9 +13,29 @@
 # limitations under the License.
 
 from rlinf.algorithms.rewards.code import CodeRewardOffline
+from rlinf.algorithms.rewards.embodiment import RewardManager as RewardManager
 from rlinf.algorithms.rewards.math import MathReward
 from rlinf.algorithms.rewards.searchr1 import SearchR1Reward
 from rlinf.algorithms.rewards.vqa import VQAReward
+
+# Embodiment reward models (used via RewardManager, not reward_registry)
+# These are exported for direct import convenience, but actual instantiation
+# should go through RewardManager which has its own internal registry.
+from rlinf.models.embodiment.reward import (
+    BaseImageRewardModel as BaseImageRewardModel,
+)
+from rlinf.models.embodiment.reward import (
+    BaseRewardModel as BaseRewardModel,
+)
+from rlinf.models.embodiment.reward import (
+    BaseVideoRewardModel as BaseVideoRewardModel,
+)
+from rlinf.models.embodiment.reward import (
+    Qwen3VLRewardModel as Qwen3VLRewardModel,
+)
+from rlinf.models.embodiment.reward import (
+    ResNetRewardModel as ResNetRewardModel,
+)
 
 
 def register_reward(name: str, reward_class: type):
@@ -34,3 +54,7 @@ register_reward("math", MathReward)
 register_reward("vqa", VQAReward)
 register_reward("code_offline", CodeRewardOffline)
 register_reward("searchr1", SearchR1Reward)
+
+# Note: Embodiment reward models (resnet, qwen3_vl) are NOT registered here.
+# They use RewardManager which has its own internal registry.
+# Use RewardManager(cfg.reward) for embodiment tasks.
