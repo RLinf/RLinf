@@ -33,6 +33,13 @@ explict_model:
     num_query_groups: 4
     head_dim: 128
     num_layers: 28    
+  qwen_2.5_14b:
+    num_layers: 48
+    tie_word_embeddings: false
+    model_type: qwen_2
+    num_attention_heads: 40
+    num_query_groups: 8
+    head_dim: 128
   'Qwen2.5-32B':
     model_type: qwen_2
     num_attention_heads: 40

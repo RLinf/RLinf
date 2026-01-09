@@ -14,6 +14,7 @@
 
 import logging
 from enum import Enum, auto
+from typing import Dict, List, overload
 
 from omegaconf import DictConfig
 
@@ -68,7 +69,11 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         self._actor_gpus = self._get_component_hardware("actor")
         self._rollout_gpus = self._get_component_hardware("rollout")
         self._inference_gpus = self._get_component_hardware("inference")
+        if self._inference_gpus is None: # try 'inference' then 'actor_inference'
+            self._inference_gpus = self._get_component_hardware("actor_inference")
+        self._critic_inference_gpus = self._get_component_hardware("critic_inference")
         self._reward_gpus = self._get_component_hardware("reward")
+        self._critic_gpus = self._get_component_hardware("critic")
         self._cluster_num_gpus = cluster.num_accelerators
         assert self._actor_gpus is not None, (
             "Actor GPUs must be specified in the component_placement config."
@@ -89,13 +94,26 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             assert self._inference_gpus == list(
                 range(self._inference_gpus[0], self._inference_gpus[-1] + 1)
             ), f"Inference GPUs {self._inference_gpus} must be continuous."
+        if self._critic_inference_gpus is not None:
+            assert self._critic_inference_gpus == list(
+                range(self._critic_inference_gpus[0], self._critic_inference_gpus[-1] + 1)
+            ), f"Critic inference GPUs {self._critic_inference_gpus} must be continuous."
+
+        if self._critic_gpus is not None:
+            assert self._critic_gpus == list(
+                range(self._critic_gpus[0], self._critic_gpus[-1] + 1)
+            ), f"Critic GPUs {self._critic_gpus} must be continuous."
 
         self._actor_num_gpus = len(self._actor_gpus)
         self._inference_num_gpus = (
             len(self._inference_gpus) if self._inference_gpus else 0
         )
+        self._critic_inference_num_gpus = (
+            len(self._critic_inference_gpus) if self._critic_inference_gpus else 0
+        )
         self._rollout_num_gpus = len(self._rollout_gpus)
         self._reward_num_gpus = len(self._reward_gpus) if self._reward_gpus else 0
+        self._critic_num_gpus = len(self._critic_gpus) if self._critic_gpus else 0
 
         if self._is_auto():
             self._placement_mode = PlacementMode.AUTO
@@ -103,6 +121,9 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         elif self._is_collocated():
             assert self._inference_gpus is None, (
                 "Inference GPUs must not be specified in collocated mode."
+            )
+            assert self._critic_inference_gpus is None, (
+                "Critic inference GPUs must not be specified in collocated mode."
             )
             self._placement_mode = PlacementMode.COLLOCATED
             logging.info("Running in collocated mode")
@@ -114,6 +135,12 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 assert self._config.algorithm.recompute_logprobs, (
                     f"algorithm.recompute_logprobs has been set to false, which disables inference. So inference GPUs {self._inference_gpus} must not be specified."
                 )
+
+            if self._critic_inference_gpus is not None:
+                assert self.critic_inference_tp_size <= self.critic_inference_world_size, (
+                    f"Inference TP size {self.critic_inference_tp_size} must be less than or equal to Inference world size {self.critic_inference_world_size}."
+                )
+
             self._placement_mode = PlacementMode.DISAGGREGATED
             logging.info("Running in disaggregated mode")
         else:
@@ -133,6 +160,10 @@ class ModelParallelComponentPlacement(ComponentPlacement):
 
     def _is_auto(self):
         if not getattr(self._config.cluster, "auto_scheduler", False):
+            return False
+
+        # TODO for now critic model is not supported in auto scheduling mode
+        if self._critic_gpus is not None:
             return False
 
         assert self._is_disaggregated(), (
@@ -163,14 +194,23 @@ class ModelParallelComponentPlacement(ComponentPlacement):
 
     def _is_disaggregated(self):
         actor_gpu_set = set(self._actor_gpus)
+        critic_gpu_set = set(self._critic_gpus)
         rollout_gpu_set = set(self._rollout_gpus)
         inference_gpu_set = (
             [] if self._inference_gpus is None else set(self._inference_gpus)
         )
+        critic_inference_gpu_set = (
+            [] if self._critic_inference_gpus is None else set(self._critic_inference_gpus)
+        )
+
         return (
             actor_gpu_set.isdisjoint(rollout_gpu_set)
             and actor_gpu_set.isdisjoint(inference_gpu_set)
             and rollout_gpu_set.isdisjoint(inference_gpu_set)
+            and critic_gpu_set.isdisjoint(actor_gpu_set)
+            and critic_gpu_set.isdisjoint(rollout_gpu_set)
+            and critic_gpu_set.isdisjoint(critic_inference_gpu_set)
+            and rollout_gpu_set.isdisjoint(critic_inference_gpu_set)
         )
 
     def _generate_placements(self):
@@ -198,6 +238,10 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 self._placements["reward"] = PackedPlacementStrategy(
                     self._reward_gpus[0], self._reward_gpus[-1]
                 )
+            if self._critic_gpus is not None:
+                self._placements["critic"] = PackedPlacementStrategy(
+                    self._critic_gpus[0], self._critic_gpus[-1]
+                )
         elif self._placement_mode == PlacementMode.DISAGGREGATED:
             num_gpus_per_rollout_dp = len(self._rollout_gpus) // self.rollout_dp_size
             self._placements["rollout"] = PackedPlacementStrategy(
@@ -206,8 +250,15 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 num_hardware_per_process=num_gpus_per_rollout_dp,
             )
             if self._inference_gpus is not None:
-                self._placements["inference"] = PackedPlacementStrategy(
-                    self._inference_gpus[0], self._inference_gpus[-1]
+                # TODO check the placement name
+                self._placements["inference" if self._critic_inference_gpus is None
+                                 else "actor_inference"] \
+                    = PackedPlacementStrategy(
+                        self._inference_gpus[0], self._inference_gpus[-1]
+                    )
+            if self._critic_inference_gpus is not None:
+                self._placements["critic_inference"] = PackedPlacementStrategy(
+                    self._critic_inference_gpus[0], self._critic_inference_gpus[-1]
                 )
             self._placements["actor"] = PackedPlacementStrategy(
                 self._actor_gpus[0], self._actor_gpus[-1]
@@ -216,11 +267,18 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 self._placements["reward"] = PackedPlacementStrategy(
                     self._reward_gpus[0], self._reward_gpus[-1]
                 )
+            if self._critic_gpus is not None:
+                self._placements["critic"] = PackedPlacementStrategy(
+                    self._critic_gpus[0], self._critic_gpus[-1]
+                )
         elif self._placement_mode == PlacementMode.AUTO:
             # In AUTO mode, actor will be placed on all GPUs
             self._placements["actor"] = PackedPlacementStrategy(
                 0, self._cluster_num_gpus - 1
             )
+
+            if self._critic_gpus is not None:
+                assert False, "auto placement is not supported when having critic model for now"
 
             use_pre_process_policy = getattr(
                 self._config.cluster, "use_pre_process_policy", False
@@ -266,11 +324,33 @@ class ModelParallelComponentPlacement(ComponentPlacement):
     def is_pipeline(self):
         return self.is_disaggregated or self.is_auto
 
+    def has_dedicated_inference_for_role(self, role):
+        if role == 'actor':
+            return self.has_dedicated_actor_inference
+        elif role == 'critic':
+            return self.has_dedicated_critic_inference
+        else:
+            assert False, f"Unknown role {role} while calling has_dedicated_inference_for_role"
+
     @property
     def has_dedicated_inference(self):
         return (
             self._placement_mode in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]
             and self._inference_gpus is not None
+        )
+
+    @property
+    def has_dedicated_actor_inference(self):
+        return (
+            self._placement_mode in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]
+            and self._inference_gpus is not None
+        )
+
+    @property
+    def has_dedicated_critic_inference(self):
+        return (
+            self._placement_mode in [PlacementMode.DISAGGREGATED, PlacementMode.AUTO]
+            and self._critic_inference_gpus is not None
         )
 
     @property
@@ -282,38 +362,72 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         )
 
     @property
+    def critic_dp_size(self) -> int:
+        return self._critic_num_gpus // (
+            self._config.critic.model.get("tensor_model_parallel_size", 1)
+            * self._config.critic.model.get("context_parallel_size", 1)
+            * self._config.critic.model.get("pipeline_model_parallel_size", 1)
+        )
+
+    @property
     def actor_tp_size(self) -> int:
         return self._config.actor.model.get("tensor_model_parallel_size", 1)
+
+    @property
+    def critic_tp_size(self) -> int:
+        return self._config.critic.model.get("tensor_model_parallel_size", 1)
 
     @property
     def actor_pp_size(self) -> int:
         return self._config.actor.model.get("pipeline_model_parallel_size", 1)
 
     @property
+    def critic_pp_size(self) -> int:
+        return self._config.critic.model.get("pipeline_model_parallel_size", 1)
+
+    @property
     def actor_world_size(self) -> int:
         return self._actor_num_gpus
 
     @property
+    def critic_world_size(self) -> int:
+        return self._critic_num_gpus
+
+    @property
     def inference_tp_size(self) -> int:
-        if (
-            hasattr(self._config, "inference")
-            and hasattr(self._config.inference, "model")
-            and hasattr(self._config.inference.model, "tensor_model_parallel_size")
-        ):
-            return self._config.inference.model.get("tensor_model_parallel_size", 1)
+        if hasattr(self._config, "inference"):
+            infer_cfg = self._config.inference
+        elif hasattr(self._config, "actor_inference"):
+            infer_cfg = self._config.actor_inference
         else:
             return self.actor_tp_size
 
+        return infer_cfg.model.get("tensor_model_parallel_size", 1)
+
+    @property
+    def critic_inference_tp_size(self) -> int:
+        if (
+            hasattr(self._config, "critic_inference")
+            and hasattr(self._config.critic_inference, "model")
+            and hasattr(self._config.critic_inference.model, "tensor_model_parallel_size")
+        ):
+            return self._config.critic_inference.model.get("tensor_model_parallel_size", 1)
+        else:
+            return self.critic_tp_size
+
     @property
     def inference_pp_size(self) -> int:
-        if (
-            hasattr(self._config, "inference")
-            and hasattr(self._config.inference, "model")
-            and hasattr(self._config.inference.model, "pipeline_model_parallel_size")
-        ):
-            return self._config.inference.model.get("pipeline_model_parallel_size", 1)
+        if hasattr(self._config, "inference"):
+            infer_cfg = self._config.inference
+        elif hasattr(self._config, "actor_inference"):
+            infer_cfg = self._config.actor_inference
         else:
             return self.actor_pp_size
+        return infer_cfg.model.get("pipeline_model_parallel_size", 1)
+
+    @property
+    def critic_inference_pp_size(self) -> int:
+        return self._config.critic_inference.model.get("pipeline_model_parallel_size", 1)
 
     @property
     def inference_dp_size(self) -> int:
@@ -322,8 +436,18 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         )
 
     @property
+    def critic_inference_dp_size(self) -> int:
+        return self._critic_inference_num_gpus // (
+            self.critic_inference_tp_size * self.critic_inference_pp_size
+        )
+
+    @property
     def inference_world_size(self) -> int:
         return self._inference_num_gpus
+
+    @property
+    def critic_inference_world_size(self) -> int:
+        return self._critic_inference_num_gpus
 
     @property
     def rollout_dp_size(self) -> int:
