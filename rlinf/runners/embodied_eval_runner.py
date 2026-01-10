@@ -52,22 +52,9 @@ class EmbodiedEvalRunner:
 
         self.logger = get_logger()
 
-    def _load_eval_policy(self):
-        self.rollout.load_checkpoint(self.cfg.runner.eval_policy_path).wait()
-
     def init_workers(self):
         self.rollout.init_worker().wait()
         self.env.init_worker().wait()
-
-        if self.cfg.runner.eval_policy_path is not None:
-            self.logger.info(
-                f"Using checkpoint for evaluation (from runner.eval_policy_path): {self.cfg.runner.eval_policy_path}"
-            )
-            self._load_eval_policy()
-        else:
-            self.logger.info(
-                f"Using checkpoint for evaluation (from rollout.model.model_path): {self.cfg.rollout.model.model_path}"
-            )
 
     def evaluate(self):
         env_handle: Handle = self.env.evaluate(

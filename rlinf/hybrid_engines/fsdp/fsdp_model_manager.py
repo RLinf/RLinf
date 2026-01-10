@@ -19,7 +19,6 @@ from typing import ContextManager, Union
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
-from peft import PeftModel
 from torch.amp.grad_scaler import GradScaler
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
@@ -71,7 +70,6 @@ class FSDPModelManager:
             self.critic_warmup_steps = self._cfg.optim.critic_warmup_steps
         self.store_requires_grad_param_name = []
 
-        self.model_path = self._cfg.model.model_path
         if cfg.get("tokenizer", {}).get("tokenizer_model", None) is not None:
             self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
 
@@ -94,7 +92,6 @@ class FSDPModelManager:
 
         self.is_weight_offloaded = False
         self.is_optimizer_offloaded = False
-        self.is_lora = False
 
     def _create_amp_context(self) -> ContextManager:
         """
@@ -248,12 +245,6 @@ class FSDPModelManager:
         else:
             self._logger.info("[FSDP] Gradient checkpointing is disabled")
 
-        if isinstance(module, PeftModel):
-            self._logger.info(
-                f"[FSDP] Detected PeftModel (LoRA enabled): base_model_class={module.get_base_model().__class__.__name__},  peft_config={module.peft_config}"
-            )
-            self.is_lora = True
-
         # build model, optimizer, lr_scheduler, grad_scaler
         self.model = self._strategy.wrap_model(
             model=module, device_mesh=self._device_mesh
@@ -311,11 +302,9 @@ class FSDPModelManager:
             self.is_optimizer_offloaded = False
 
         self._strategy.save_checkpoint(
-            self.model_path,
             self.model,
             self.optimizer,
             self.lr_scheduler,
-            self.is_lora,
             save_path,
         )
 
