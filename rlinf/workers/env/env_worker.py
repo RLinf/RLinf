@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+import os
 from collections import defaultdict
 from typing import Any, Optional
 
@@ -19,11 +21,10 @@ import numpy as np
 import torch
 from omegaconf import DictConfig
 from omegaconf.omegaconf import OmegaConf
-import json, os
 
 from rlinf.data.io_struct import EnvOutput
 from rlinf.envs import get_env_cls
-from rlinf.envs.action_utils import prepare_actions
+from rlinf.envs.action_utils import normalize_openpi_state, prepare_actions
 from rlinf.envs.env_manager import EnvManager
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.placement import HybridComponentPlacement
@@ -75,113 +76,200 @@ class EnvWorker(Worker):
     def _check_unnorm_key(
         self, norm_stats: dict[str, dict[str, Any]], unnorm_key: Optional[str]
     ) -> str:
-        if (
-            unnorm_key not in norm_stats
-            and f"{unnorm_key}_no_noops" in norm_stats
-        ):
+        if unnorm_key not in norm_stats and f"{unnorm_key}_no_noops" in norm_stats:
             unnorm_key = f"{unnorm_key}_no_noops"
         assert unnorm_key in norm_stats, (
             f"Action un-norm key {unnorm_key} not found in VLA `norm_stats`!"
         )
 
         if unnorm_key is None:
-            assert len(norm_stats) == 1, (
-                f"Your model was trained on more than one dataset, "
-                f"please pass a `unnorm_key` from the following options to choose the statistics "
-                f"used for un-normalizing actions: {norm_stats.keys()}"
-            )
-            unnorm_key = next(iter(norm_stats.keys()))
+            if len(norm_stats) == 1:
+                unnorm_key = next(iter(norm_stats.keys()))
+            else:
+                raise ValueError(
+                    f"Your model was trained on more than one dataset, "
+                    f"please pass a `unnorm_key` from the following options to choose the statistics "
+                    f"used for un-normalizing actions: {list(norm_stats.keys())}"
+                )
 
-        assert unnorm_key in norm_stats, (
-            f"The `unnorm_key` you chose is not in the set of available dataset statistics, "
-            f"please choose from: {norm_stats.keys()}"
-        )
+        # Try to find the key, with fallback to _no_noops variant
+        if unnorm_key not in norm_stats:
+            if f"{unnorm_key}_no_noops" in norm_stats:
+                unnorm_key = f"{unnorm_key}_no_noops"
+            else:
+                # Provide helpful error message with available keys
+                available_keys = list(norm_stats.keys())
+                raise ValueError(
+                    f"Action un-norm key '{unnorm_key}' not found in norm_stats! "
+                    f"Available keys: {available_keys}. "
+                    f"Please check your configuration and use one of the available keys."
+                )
 
         return unnorm_key
 
-    def _get_action_stats(self, dataset_statistics_path: str, unnorm_key: Optional[str]) -> dict[str, Any]:
-        """Get all the logged statistics for the given dataset."""
+    def _get_norm_stats(
+        self, stats_file_path: str, unnorm_key: Optional[str]
+    ) -> dict[str, Any]:
+        """Get all the logged statistics for the given dataset.
 
-        if os.path.isfile(dataset_statistics_path):
-            with open(dataset_statistics_path, "r") as f:
-                norm_stats = json.load(f)
+        Supports two formats:
+        1. config.json: reads from config["norm_stats"]
+        2. dataset_statistics.json or norm_stats.json: reads the entire file as norm_stats
+        """
 
+        if not os.path.isfile(stats_file_path):
+            raise FileNotFoundError(
+                f"Stats file not found: {stats_file_path}. "
+                f"Please check the path in your configuration file."
+            )
+
+        with open(stats_file_path, "r") as f:
+            data = json.load(f)
+
+        # Check if this is a config.json file (has norm_stats field)
+        if "norm_stats" in data:
+            norm_stats = data["norm_stats"]
+        else:
+            # Assume this is a dataset_statistics.json or norm_stats.json file
+            norm_stats = data
+
+        # Check if this is OpenPI format (directly contains 'state' and 'actions' keys)
+        # In this case, we don't need unnorm_key
+        if "state" in norm_stats or "actions" in norm_stats or "action" in norm_stats:
+            # OpenPI format: norm_stats directly contains state and actions
+            if "state" in norm_stats:
+                state_norm_stats = norm_stats["state"]
+            else:
+                state_norm_stats = None
+            if "action" in norm_stats:
+                action_norm_stats = norm_stats["action"]
+            elif "actions" in norm_stats:
+                action_norm_stats = norm_stats["actions"]
+            else:
+                raise ValueError(
+                    f"Neither 'action' nor 'actions' key found in norm_stats file: {stats_file_path}"
+                )
+            return action_norm_stats, state_norm_stats
+
+        # Otherwise, treat as nested format (e.g., {"libero_10": {"state": ..., "actions": ...}})
         unnorm_key = self._check_unnorm_key(norm_stats, unnorm_key)
-        return norm_stats[unnorm_key]["action"]
+        if "state" in norm_stats[unnorm_key]:
+            state_norm_stats = norm_stats[unnorm_key]["state"]
+        else:
+            state_norm_stats = None
+        if "action" in norm_stats[unnorm_key]:
+            action_norm_stats = norm_stats[unnorm_key]["action"]
+        else:
+            action_norm_stats = norm_stats[unnorm_key]["actions"]
+        return action_norm_stats, state_norm_stats
 
     def init_worker(self):
         enable_offload = self.cfg.env.enable_offload
 
         self.broadcast(True, list(range(self._world_size)))
-        if self.cfg.env.train.simulator_type == "mixed":
+        if self.cfg.env.train.env_type == "mixed":
             train_simulator_id = self._rank % len(self.cfg.env.train.simulator_list)
             eval_simulator_id = self._rank % len(self.cfg.env.eval.simulator_list)
-            self.train_simulator_type = self.cfg.env.train.simulator_list[train_simulator_id].simulator_type
-            self.eval_simulator_type = self.cfg.env.eval.simulator_list[eval_simulator_id].simulator_type
+            self.train_env_type = self.cfg.env.train.simulator_list[
+                train_simulator_id
+            ].env_type
+            self.eval_env_type = self.cfg.env.eval.simulator_list[
+                eval_simulator_id
+            ].env_type
 
             # merge simulator_list entry into cfg.env.train
             train_env_cfg = self.cfg.env.train.copy()
-            env_train_resolved = OmegaConf.to_container(self.cfg.env.train, resolve=True)
+            env_train_resolved = OmegaConf.to_container(
+                self.cfg.env.train, resolve=True
+            )
             # Get the entire simulator_list entry and convert to dict
-            simulator_config = OmegaConf.to_container(self.cfg.env.train.simulator_list[train_simulator_id], resolve=True)
+            simulator_config = OmegaConf.to_container(
+                self.cfg.env.train.simulator_list[train_simulator_id], resolve=True
+            )
             # Extract init_params (keep as nested field, don't expand)
-            init_params = simulator_config.pop('init_params', None)
+            init_params = simulator_config.pop("init_params", None)
             # Remove fields that should not be merged into env config
-            simulator_config.pop('simulator_type', None)
-            simulator_config.pop('unnorm_key', None)
-            simulator_config.pop('unnorm_key_file', None)
+            simulator_config.pop("env_type", None)
+            simulator_config.pop("unnorm_key", None)
+            simulator_config.pop("unnorm_key_file", None)
             # Merge: first env_train, then simulator_config fields (like task_suite_name)
             merged_dict = {**env_train_resolved, **simulator_config}
             # Add init_params as nested field if it exists
             if init_params is not None:
-                merged_dict['init_params'] = init_params
+                merged_dict["init_params"] = init_params
             train_env_cfg = OmegaConf.create(merged_dict)
-            train_env_cfg.simulator_type = self.train_simulator_type
-            train_env_cls = get_env_cls(self.train_simulator_type, train_env_cfg)
+            train_env_cfg.env_type = self.train_env_type
+            train_env_cls = get_env_cls(self.train_env_type, train_env_cfg)
 
-            # get unnorm_keys for each simulator_type
-            unnorm_key = self.cfg.env.train.simulator_list[train_simulator_id].unnorm_key
-            unnorm_key_file = self.cfg.env.train.simulator_list[train_simulator_id].unnorm_key_file
+            # get unnorm_keys for each env_type
+            unnorm_key = self.cfg.env.train.simulator_list[
+                train_simulator_id
+            ].unnorm_key
+            unnorm_key_file = self.cfg.env.train.simulator_list[
+                train_simulator_id
+            ].unnorm_key_file
 
-            self.train_action_norm_stats = self._get_action_stats(unnorm_key_file, unnorm_key)
+            self.train_action_norm_stats, self.train_state_norm_stats = (
+                self._get_norm_stats(unnorm_key_file, unnorm_key)
+            )
 
             eval_env_cfg = self.cfg.env.eval.copy()
             env_eval_resolved = OmegaConf.to_container(self.cfg.env.eval, resolve=True)
             # Get the entire simulator_list entry and convert to dict
-            simulator_config = OmegaConf.to_container(self.cfg.env.eval.simulator_list[eval_simulator_id], resolve=True)
+            simulator_config = OmegaConf.to_container(
+                self.cfg.env.eval.simulator_list[eval_simulator_id], resolve=True
+            )
             # Extract init_params (keep as nested field, don't expand)
-            init_params = simulator_config.pop('init_params', None)
+            init_params = simulator_config.pop("init_params", None)
             # Remove fields that should not be merged into env config
-            simulator_config.pop('simulator_type', None)
-            simulator_config.pop('unnorm_key', None)
-            simulator_config.pop('unnorm_key_file', None)
+            simulator_config.pop("env_type", None)
+            simulator_config.pop("unnorm_key", None)
+            simulator_config.pop("unnorm_key_file", None)
             # Merge: first env_eval, then simulator_config fields (like task_suite_name)
             merged_dict = {**env_eval_resolved, **simulator_config}
             # Add init_params as nested field if it exists
             if init_params is not None:
-                merged_dict['init_params'] = init_params
+                merged_dict["init_params"] = init_params
             eval_env_cfg = OmegaConf.create(merged_dict)
-            eval_env_cfg.simulator_type = self.eval_simulator_type
-            eval_env_cls = get_env_cls(self.eval_simulator_type, eval_env_cfg)
+            eval_env_cfg.env_type = self.eval_env_type
+            eval_env_cls = get_env_cls(self.eval_env_type, eval_env_cfg)
 
             unnorm_key = self.cfg.env.eval.simulator_list[eval_simulator_id].unnorm_key
-            unnorm_key_file = self.cfg.env.eval.simulator_list[eval_simulator_id].unnorm_key_file
+            unnorm_key_file = self.cfg.env.eval.simulator_list[
+                eval_simulator_id
+            ].unnorm_key_file
 
-            self.eval_action_norm_stats = self._get_action_stats(unnorm_key_file, unnorm_key)
+            self.eval_action_norm_stats, self.eval_state_norm_stats = (
+                self._get_norm_stats(unnorm_key_file, unnorm_key)
+            )
 
         else:
-            train_env_cls = get_env_cls(self.cfg.env.train.simulator_type, self.cfg.env.train)
-            eval_env_cls = get_env_cls(self.cfg.env.eval.simulator_type, self.cfg.env.eval)
+            train_env_cls = get_env_cls(self.cfg.env.train.env_type, self.cfg.env.train)
+            eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
             train_env_cfg = self.cfg.env.train
             eval_env_cfg = self.cfg.env.eval
-            self.train_simulator_type = self.cfg.env.train.simulator_type
-            self.eval_simulator_type = self.cfg.env.eval.simulator_type
+            self.train_env_type = self.cfg.env.train.env_type
+            self.eval_env_type = self.cfg.env.eval.env_type
 
             unnorm_key = self.cfg.actor.model.unnorm_key
-            unnorm_key_file = os.path.join(self.cfg.actor.model.model_path, "dataset_statistics.json")
-            stats = self._get_action_stats(unnorm_key_file, unnorm_key)
-            self.train_action_norm_stats = stats
-            self.eval_action_norm_stats = stats
+            # Use lora_path's config.json if lora_path exists, otherwise use model_path's config.json
+            if (
+                hasattr(self.cfg.actor.model, "lora_path")
+                and self.cfg.actor.model.lora_path is not None
+            ):
+                config_path = os.path.join(
+                    self.cfg.actor.model.lora_path, "config.json"
+                )
+            else:
+                config_path = os.path.join(
+                    self.cfg.actor.model.model_path, "config.json"
+                )
+            self.train_action_norm_stats, self.train_state_norm_stats = (
+                self._get_norm_stats(config_path, unnorm_key)
+            )
+            self.eval_action_norm_stats, self.eval_state_norm_stats = (
+                self._get_norm_stats(config_path, unnorm_key)
+            )
 
         if not self.only_eval:
             for stage_id in range(self.stage_num):
@@ -220,6 +308,16 @@ class EnvWorker(Worker):
             for i in range(self.stage_num):
                 self.env_list[i].start_env()
                 extracted_obs, _ = self.env_list[i].reset()
+                if "states" in extracted_obs:
+                    # print(f"Normalizing state with stats: {self.train_state_norm_stats}")
+                    # print(extracted_obs.keys())
+                    extracted_obs["states"] = normalize_openpi_state(
+                        extracted_obs["states"], self.train_state_norm_stats
+                    )
+                    # print(extracted_obs["states"])
+                    # for i in range(extracted_obs["states"].shape[-1]):
+                    #     print(f"State {i}: {extracted_obs['states'][..., i]}")
+                    # exit(0)
                 dones = (
                     torch.zeros((self.train_num_envs_per_stage,), dtype=bool)
                     .unsqueeze(1)
@@ -240,7 +338,7 @@ class EnvWorker(Worker):
         """
         chunk_actions = prepare_actions(
             raw_chunk_actions=chunk_actions,
-            env_type=self.train_simulator_type,
+            env_type=self.train_env_type,
             model_type=self.cfg.actor.model.model_type,
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
             action_dim=self.cfg.actor.model.action_dim,
@@ -252,6 +350,10 @@ class EnvWorker(Worker):
         extracted_obs, chunk_rewards, chunk_terminations, chunk_truncations, infos = (
             self.env_list[stage_id].chunk_step(chunk_actions)
         )
+        if "states" in extracted_obs:
+            extracted_obs["states"] = normalize_openpi_state(
+                extracted_obs["states"], self.train_state_norm_stats
+            )
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
         if not self.cfg.env.train.auto_reset:
             if self.cfg.env.train.ignore_terminations:
@@ -301,7 +403,7 @@ class EnvWorker(Worker):
         """
         chunk_actions = prepare_actions(
             raw_chunk_actions=raw_actions,
-            env_type=self.eval_simulator_type,
+            env_type=self.eval_env_type,
             model_type=self.cfg.actor.model.model_type,
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
             action_dim=self.cfg.actor.model.action_dim,
@@ -313,6 +415,10 @@ class EnvWorker(Worker):
         extracted_obs, chunk_rewards, chunk_terminations, chunk_truncations, infos = (
             self.eval_env_list[stage_id].chunk_step(chunk_actions)
         )
+        if "states" in extracted_obs:
+            extracted_obs["states"] = normalize_openpi_state(
+                extracted_obs["states"], self.eval_state_norm_stats
+            )
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
 
         if chunk_dones.any():
@@ -416,6 +522,10 @@ class EnvWorker(Worker):
                 for stage_id in range(self.stage_num):
                     self.env_list[stage_id].is_start = True
                     extracted_obs, infos = self.env_list[stage_id].reset()
+                    if "states" in extracted_obs:
+                        extracted_obs["states"] = normalize_openpi_state(
+                            extracted_obs["states"], self.train_state_norm_stats
+                        )
                     dones = (
                         torch.zeros((self.train_num_envs_per_stage,), dtype=bool)
                         .unsqueeze(1)
@@ -465,15 +575,18 @@ class EnvWorker(Worker):
                     env_output_list[stage_id] = env_output
                     for key, value in env_info.items():
                         # Add simulator type prefix in mixed mode
-                        if self.cfg.env.train.simulator_type == "mixed":
-                            prefixed_key = f"{self.train_simulator_type}/{key}"
+                        if self.cfg.env.train.env_type == "mixed":
+                            prefixed_key = f"{self.train_env_type}/{key}"
                         else:
                             prefixed_key = key
                         if (
                             not self.cfg.env.train.auto_reset
                             and not self.cfg.env.train.ignore_terminations
                         ):
-                            if prefixed_key in env_metrics and len(env_metrics[prefixed_key]) > epoch:
+                            if (
+                                prefixed_key in env_metrics
+                                and len(env_metrics[prefixed_key]) > epoch
+                            ):
                                 env_metrics[prefixed_key][epoch] = value
                             else:
                                 env_metrics[prefixed_key].append(value)
@@ -516,6 +629,10 @@ class EnvWorker(Worker):
             for stage_id in range(self.stage_num):
                 self.eval_env_list[stage_id].is_start = True
                 extracted_obs, infos = self.eval_env_list[stage_id].reset()
+                if "states" in extracted_obs:
+                    extracted_obs["states"] = normalize_openpi_state(
+                        extracted_obs["states"], self.eval_state_norm_stats
+                    )
                 env_output = EnvOutput(
                     obs=extracted_obs,
                     final_obs=infos["final_observation"]
@@ -535,8 +652,8 @@ class EnvWorker(Worker):
 
                     for key, value in env_info.items():
                         # Add simulator type prefix in mixed mode
-                        if self.cfg.env.train.simulator_type == "mixed":
-                            prefixed_key = f"{self.eval_simulator_type}/{key}"
+                        if self.cfg.env.train.env_type == "mixed":
+                            prefixed_key = f"{self.eval_env_type}/{key}"
                         else:
                             prefixed_key = key
                         eval_metrics[prefixed_key].append(value)

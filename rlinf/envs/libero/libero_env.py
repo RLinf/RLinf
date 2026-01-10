@@ -334,7 +334,7 @@ class LiberoEnv(gym.Env):
         self._reconfigure(reset_state_ids, env_idx)
         for _ in range(15):
             zero_actions = np.zeros((len(env_idx), 7))
-            if self.cfg.reset_gripper_open:
+            if self.cfg.get("reset_gripper_open", True):
                 zero_actions[:, -1] = -1
             raw_obs, _reward, terminations, info_lists = self.env.step(
                 zero_actions, env_idx

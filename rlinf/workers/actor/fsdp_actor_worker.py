@@ -877,6 +877,12 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             reward_filter_mask = (
                 reward_filter_mask.unsqueeze(0).expand(n_chunk_step, -1).unsqueeze(-1)
             )  # [n_chunk_step, batch, 1]
+            # reward_filter_mask = reward_filter_mask.unsqueeze(0).expand(
+            #     n_chunk_step, -1
+            # )  # [n_chunk_step, batch]
+            # reward_filter_mask = reward_filter_mask.unsqueeze(-1).expand(
+            #     -1, -1, num_action_chunks
+            # )  # [n_chunk_step, batch, num_action_chunks]
 
             # update loss_mask
             if rollout_batch.get("loss_mask", None) is not None:

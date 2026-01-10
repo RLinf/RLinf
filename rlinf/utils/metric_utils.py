@@ -27,22 +27,25 @@ def compute_evaluate_metrics(eval_metrics_list):
     List of evaluate metrics, list length stands for rollout process
     """
     all_eval_metrics = {}
-    
+
     # Handle empty list or empty dictionaries
     if not eval_metrics_list or len(eval_metrics_list) == 0:
         return all_eval_metrics
-    
+
     # Filter out empty dictionaries
-    non_empty_metrics = [metrics for metrics in eval_metrics_list if metrics and len(metrics) > 0]
-    
+    non_empty_metrics = [
+        metrics for metrics in eval_metrics_list if metrics and len(metrics) > 0
+    ]
+
     if not non_empty_metrics:
         return all_eval_metrics
-    
+
     env_info_keys = set().union(*[metrics.keys() for metrics in non_empty_metrics])
 
     for env_info_key in env_info_keys:
         all_eval_metrics[env_info_key] = [
-            eval_metrics[env_info_key] for eval_metrics in non_empty_metrics
+            eval_metrics[env_info_key]
+            for eval_metrics in non_empty_metrics
             if env_info_key in eval_metrics
         ]
 

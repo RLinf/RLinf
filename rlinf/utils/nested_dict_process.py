@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numpy as np
 import torch
 
 
@@ -36,8 +37,11 @@ def put_tensor_device(data_dict, device):
     for key, value in data_dict.items():
         if isinstance(value, dict):
             data_dict[key] = put_tensor_device(value, device)
-        if isinstance(value, torch.Tensor):
+        elif isinstance(value, torch.Tensor):
             data_dict[key] = value.to(device=device).contiguous()
+        elif isinstance(value, np.ndarray):
+            # Convert numpy array to torch tensor
+            data_dict[key] = torch.from_numpy(value).to(device=device).contiguous()
     return data_dict
 
 
@@ -81,6 +85,20 @@ def stack_list_of_dict_tensor(list_of_dict: list, dim=0):
         if isinstance(_v0, torch.Tensor):
             v_list = [d[key] for d in list_of_dict]
             ret[key] = torch.stack(v_list, dim=dim)
+        elif isinstance(_v0, np.ndarray):
+            # Convert numpy arrays to torch tensors and then stack
+            v_list = []
+            for d in list_of_dict:
+                v = d[key]
+                if isinstance(v, np.ndarray):
+                    v_list.append(torch.from_numpy(v))
+                elif isinstance(v, torch.Tensor):
+                    v_list.append(v)
+                else:
+                    raise ValueError(
+                        f"{key=}, mixed types in list: {type(_v0)} and {type(v)}"
+                    )
+            ret[key] = torch.stack(v_list, dim=dim)
         elif isinstance(_v0, dict):
             v_list = [d[key] for d in list_of_dict]
             ret[key] = stack_list_of_dict_tensor(v_list)
@@ -99,6 +117,20 @@ def cat_list_of_dict_tensor(list_of_dict: list, dim=0):
         _v0 = list_of_dict[0][key]
         if isinstance(_v0, torch.Tensor):
             v_list = [d[key] for d in list_of_dict]
+            ret[key] = torch.cat(v_list, dim=dim)
+        elif isinstance(_v0, np.ndarray):
+            # Convert numpy arrays to torch tensors and then cat
+            v_list = []
+            for d in list_of_dict:
+                v = d[key]
+                if isinstance(v, np.ndarray):
+                    v_list.append(torch.from_numpy(v))
+                elif isinstance(v, torch.Tensor):
+                    v_list.append(v)
+                else:
+                    raise ValueError(
+                        f"{key=}, mixed types in list: {type(_v0)} and {type(v)}"
+                    )
             ret[key] = torch.cat(v_list, dim=dim)
         elif isinstance(_v0, dict):
             v_list = [d[key] for d in list_of_dict]

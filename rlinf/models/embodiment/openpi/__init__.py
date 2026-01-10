@@ -40,6 +40,9 @@ from rlinf.models.embodiment.openpi.dataconfig.maniskill_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.metaworld_dataconfig import (
     LeRobotMetaworldDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.mixed_dataconfig import (
+    LeRobotLiberoManiSkillDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
     LeRobotRobocasaDataConfig,
 )
@@ -124,6 +127,44 @@ _CONFIGS = [
         num_train_steps=5_000,
         log_interval=5,
         save_interval=250,
+    ),
+    TrainConfig(
+        name="pi05_libero_maniskill",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=False
+        ),
+        data=LeRobotLiberoManiSkillDataConfig(
+            libero_config=LeRobotLiberoDataConfig(
+                repo_id="physical-intelligence/libero",
+                base_config=DataConfig(prompt_from_task=True),
+                assets=AssetsConfig(
+                    assets_dir="checkpoints/torch/pi05_libero_maniskill/assets"
+                ),
+                extra_delta_transform=False,
+            ),
+            maniskill_config=LeRobotManiSkillDataConfig(
+                repo_id="physical-intelligence/maniskill",
+                base_config=DataConfig(prompt_from_task=True),
+                assets=AssetsConfig(
+                    assets_dir="checkpoints/torch/pi05_libero_maniskill/assets"
+                ),
+                extra_delta_transform=False,  # Changed to False to match pi05_maniskill config
+            ),
+        ),
+        batch_size=256,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=10_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=0.999,
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+        num_train_steps=30_000,
     ),
     TrainConfig(
         name="pi0_metaworld",

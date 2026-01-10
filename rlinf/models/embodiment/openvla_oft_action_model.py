@@ -24,9 +24,7 @@ from prismatic.extern.hf.modeling_prismatic import (
     OpenVLAForActionPrediction as OpenVLAOFTForActionPrediction,
 )
 from prismatic.vla.constants import (
-    ACTION_PROPRIO_NORMALIZATION_TYPE,
     STOP_INDEX,
-    NormalizationType,
 )
 from transformers.generation import TopKLogitsWarper
 
@@ -424,6 +422,12 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
             "prev_values": chunk_values,
             "forward_inputs": forward_inputs,
         }
+
+        # torch.save(forward_inputs, "forward_inputs.pt")
+        # torch.save(inputs, "inputs.pt")
+        # torch.save(chunk_actions, "chunk_actions.pt")
+        # torch.save(normalized_actions, "normalized_actions.pt")
+        # exit(0)
 
         return chunk_actions, result
 
