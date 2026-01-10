@@ -113,12 +113,7 @@ def compute_ppo_actor_loss(
 
     # Only broadcast when ratio has action_dim dimension and loss_mask's last dim is 1
     # This handles token_level mode: ratio [bsz, num_chunks, action_dim], loss_mask [bsz, num_chunks, 1]
-    if (
-        len(ratio.shape) > 2
-        and ratio.shape[:-1] == loss_mask.shape[:-1]
-        and loss_mask.shape[-1] == 1
-        and ratio.shape[-1] > 1
-    ):
+    if len(ratio.shape) > 2 and loss_mask.shape[-1] == 1 and ratio.shape[-1] > 1:
         # Broadcast loss_mask to match ratio's shape for metrics computation
         loss_mask_for_metrics = loss_mask.expand_as(ratio)
 

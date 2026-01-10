@@ -208,6 +208,8 @@ class FSDPStrategyBase(ABC):
             os.makedirs(sd_save_path, exist_ok=True)
             torch.save(model_state_dict, os.path.join(sd_save_path, "full_weights.pt"))
 
+        torch.distributed.barrier()
+
     @classmethod
     def load_checkpoint(
         cls,

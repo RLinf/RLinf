@@ -77,15 +77,18 @@ class MultiStepRolloutWorker(Worker):
         )
         self._train_sampling_params = {
             "do_sample": self._sampling_params["do_sample"],
-            "temperature": self._sampling_params["temperature_train"],
+            "temperature": self._sampling_params["temperature_train"]
+            if self._sampling_params["do_sample"]
+            else 1.0,
             "top_k": self._sampling_params["top_k"],
             "top_p": self._sampling_params["top_p"],
             "max_new_tokens": self._length_params["max_new_token"],
-            "use_cache": True,
         }
 
         self._eval_sampling_params = {
-            "do_sample": self._sampling_params["do_sample"],
+            "do_sample": True
+            if self._sampling_params.get("temperature_eval", -1) > 0
+            else False,
             "temperature": self._sampling_params["temperature_eval"],
             "top_k": self._sampling_params["top_k"],
             "top_p": self._sampling_params["top_p"],

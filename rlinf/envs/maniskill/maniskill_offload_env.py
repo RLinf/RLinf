@@ -16,16 +16,16 @@ import io
 
 import torch
 
-from rlinf.envs.maniskill.maniskill_env import ManiskillEnv as BaseManiskillEnv
-from rlinf.envs.offload_wrapper.base import (
-    EnvOffloadMixin,
+from rlinf.envs.env_manager import EnvOffloadMixin
+from rlinf.envs.maniskill.maniskill_env import ManiskillEnv
+from rlinf.envs.maniskill.utils import (
     get_batch_rng_state,
     recursive_to_device,
     set_batch_rng_state,
 )
 
 
-class ManiskillEnv(BaseManiskillEnv, EnvOffloadMixin):
+class ManiskillOffloadEnv(ManiskillEnv, EnvOffloadMixin):
     def get_state(self) -> bytes:
         env_state = self.env.get_state()
         rng_state = {
@@ -161,6 +161,3 @@ class ManiskillEnv(BaseManiskillEnv, EnvOffloadMixin):
             self.success_once = state["success_once"].to(self.device)
             self.fail_once = state["fail_once"].to(self.device)
             self.returns = state["returns"].to(self.device)
-
-
-__all__ = ["ManiskillEnv"]

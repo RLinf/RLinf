@@ -25,6 +25,14 @@ import torch.multiprocessing as mp
 from rlinf.scheduler import WorkerInfo
 
 
+class EnvOffloadMixin:
+    def get_state(self) -> bytes:
+        pass
+
+    def load_state(self, state: bytes):
+        pass
+
+
 def force_gc_tensor(tensor):
     if not torch.is_tensor(tensor):
         return
@@ -168,7 +176,6 @@ class EnvManager:
         total_num_processes: int,
         env_cls: str,
         worker_info: WorkerInfo,
-        enable_offload: bool = False,
     ):
         self.cfg = cfg
         self.rank = rank
@@ -181,24 +188,10 @@ class EnvManager:
         self.result_queue: Optional[mp.Queue] = None
         self.state_buffer: Optional[bytes] = None
 
-        if enable_offload:
-            import importlib
-
-            class_name = env_cls.__name__
-            offload_module = importlib.import_module("rlinf.envs.offload_wrapper")
-            if hasattr(offload_module, class_name):
-                offload_env_cls = getattr(offload_module, class_name)
-                self.env_cls = offload_env_cls
-            else:
-                raise RuntimeError(
-                    f"Environment class {class_name} does not support offload"
-                )
-            self.env = None
-        else:
-            self.env_cls = env_cls
-            self.env = self.env_cls(
-                self.cfg, num_envs, seed_offset, total_num_processes, worker_info
-            )
+        self.env_cls = env_cls
+        self.env = self.env_cls(
+            self.cfg, num_envs, seed_offset, total_num_processes, worker_info
+        )
 
     def start_env(self):
         """Start environment process with shared memory queues"""
@@ -355,8 +348,6 @@ def _env_worker(
     bind_numa=True,
 ):
     """Worker process for Environment"""
-    from rlinf.envs.offload_wrapper.base import EnvOffloadMixin
-
     # Set NUMA affinity for the process to match the GPU rank
     if bind_numa:
         set_process_numa_affinity(rank)

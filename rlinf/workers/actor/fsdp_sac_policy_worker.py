@@ -22,12 +22,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from omegaconf import DictConfig
 
-# import rlinf.algorithms.advantages_sac  # noqa: F401
+from rlinf.config import SupportedModel
 from rlinf.data.replay_buffer import SACReplayBuffer
 from rlinf.hybrid_engines.fsdp import (
     FSDP,
     FSDPModule,
 )
+from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
@@ -261,17 +262,20 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         next_obs = batch["transitions"]["next_obs"]
         with torch.no_grad():
             kwargs = {}
-            if self.cfg.actor.model.model_type in ["openvla", "openvla_oft"]:
+            if SupportedModel(self.cfg.actor.model.model_type) in [
+                SupportedModel.OPENVLA,
+                SupportedModel.OPENVLA_OFT,
+            ]:
                 kwargs["temperature"] = (
                     self.cfg.algorithm.sampling_params.temperature_train
                 )
             next_state_actions, next_state_log_pi, shared_feature = self.model(
-                "sac_forward", obs=next_obs, **kwargs
+                forward_type=ForwardType.SAC, obs=next_obs, **kwargs
             )
             next_state_log_pi = next_state_log_pi.sum(dim=-1, keepdim=True)
             if not use_crossq:
                 all_qf_next_target = self.target_model(
-                    "sac_q_forward",
+                    forward_type=ForwardType.SAC_Q,
                     obs=next_obs,
                     actions=next_state_actions,
                     shared_feature=shared_feature,
@@ -315,7 +319,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
 
         if not use_crossq:
             all_data_q_values = self.model(
-                "sac_q_forward",
+                forward_type=ForwardType.SAC_Q,
                 obs=curr_obs,
                 actions=batch["action"]
                 if "action" in batch
@@ -323,7 +327,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             )
         else:
             all_data_q_values, all_qf_next = self.model(
-                "crossq_q_forward",
+                forward_type=ForwardType.CROSSQ_Q,
                 obs=curr_obs,
                 actions=batch["action"]
                 if "action" in batch
@@ -368,11 +372,13 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         kwargs = {}
         if self.cfg.actor.model.model_type in ["openvla", "openvla_oft"]:
             kwargs["temperature"] = self.cfg.algorithm.sampling_params.temperature_train
-        pi, log_pi, shared_feature = self.model("sac_forward", obs=curr_obs, **kwargs)
+        pi, log_pi, shared_feature = self.model(
+            forward_type=ForwardType.SAC, obs=curr_obs, **kwargs
+        )
         log_pi = log_pi.sum(dim=-1, keepdim=True)  # sum over the chunk dimension
         if not use_crossq:
             all_qf_pi = self.model(
-                "sac_q_forward",
+                forward_type=ForwardType.SAC_Q,
                 obs=curr_obs,
                 actions=pi,
                 shared_feature=shared_feature,
@@ -380,7 +386,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             )
         else:
             all_qf_pi, _ = self.model(
-                "crossq_q_forward",
+                forward_type=ForwardType.CROSSQ_Q,
                 obs=curr_obs,
                 actions=pi,
                 next_obs=None,
@@ -406,7 +412,9 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 kwargs["temperature"] = (
                     self.cfg.algorithm.sampling_params.temperature_train
                 )
-            _, log_pi, _ = self.model("sac_forward", obs=curr_obs, **kwargs)
+            _, log_pi, _ = self.model(
+                forward_type=ForwardType.SAC, obs=curr_obs, **kwargs
+            )
             log_pi = log_pi.sum(dim=-1, keepdim=True)
 
         alpha = self.compute_alpha()

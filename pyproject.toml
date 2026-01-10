@@ -83,6 +83,9 @@ embodied = [
     "cloudpickle",
     "gym",
     "av",
+    "open3d",
+    "zarr",
+    "openai",
 ]
 franka = [
     "pyyaml",

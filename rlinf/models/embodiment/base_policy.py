@@ -12,15 +12,42 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch.nn as nn
+from abc import ABC, abstractmethod
+from enum import Enum
 
 
-class BasePolicy(nn.Module):
+class ForwardType(Enum):
+    DEFAULT = "default"
+    SFT = "sft"
+    SAC = "sac"
+    SAC_Q = "sac_q"
+    CROSSQ = "crossq"
+    CROSSQ_Q = "crossq_q"
+
+
+class BasePolicy(ABC):
+    """
+    Base interface for all policies.
+
+    Subclasses must implement:
+        - forward
+        - default_forward
+        - predict_action_batch
+
+    Optional overrides:
+        - sft_forward
+        - sac_forward
+        - sac_q_forward
+        - crossq_forward
+        - crossq_q_forward
+        - preprocess_env_obs
+    """
+
     def preprocess_env_obs(self, env_obs):
         return env_obs
 
-    def forward(self, forward_type="default_forward", **kwargs):
-        if forward_type == "default_forward":
+    def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
+        if forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
         else:
             raise NotImplementedError
@@ -37,5 +64,10 @@ class BasePolicy(nn.Module):
     def crossq_q_forward(self, **kwargs):
         raise NotImplementedError
 
+    @abstractmethod
     def default_forward(self, **kwargs):
+        raise NotImplementedError
+
+    @abstractmethod
+    def predict_action_batch(self, **kwargs):
         raise NotImplementedError
