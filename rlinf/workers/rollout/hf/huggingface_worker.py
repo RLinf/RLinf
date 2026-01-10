@@ -56,15 +56,15 @@ class MultiStepRolloutWorker(Worker):
 
         self.hf_model = get_model(rollout_model_config)
 
+        if self.cfg.runner.get("ckpt_path", None):
+            model_dict = torch.load(self.cfg.runner.ckpt_path)
+            self.hf_model.load_state_dict(model_dict)
+
         self.hf_model.eval()
 
         self.setup_sample_params()
         if self.enable_offload:
             self.offload_model()
-
-    def load_checkpoint(self, load_path):
-        model_dict = torch.load(load_path)
-        self.hf_model.load_state_dict(model_dict)
 
     def setup_sample_params(self):
         # length parameters for rollout
