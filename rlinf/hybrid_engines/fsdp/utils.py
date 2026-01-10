@@ -343,7 +343,7 @@ def get_fsdp2_full_state_dict_all_ranks(
 
 
 def get_lr_scheduler(
-    warmup_style: str,
+    lr_scheduler: str,
     optimizer: Optimizer,
     num_warmup_steps: int,
     num_training_steps: int,
@@ -355,7 +355,7 @@ def get_lr_scheduler(
     # only one of min_lr and min_lr_rate should be set. If min_lr_rate is set, min_lr will be ignored.
     if min_lr_rate is not None:
         min_lr = None
-    if warmup_style == "constant":
+    if lr_scheduler == "constant":
         from torch.optim.lr_scheduler import LambdaLR
 
         def lr_lambda(current_step):
@@ -364,7 +364,7 @@ def get_lr_scheduler(
             return 1.0
 
         return LambdaLR(optimizer, lr_lambda, last_epoch=last_epoch)
-    elif warmup_style == "cosine":
+    elif lr_scheduler == "cosine":
         from transformers.optimization import (
             get_cosine_with_min_lr_schedule_with_warmup,
         )
@@ -379,7 +379,7 @@ def get_lr_scheduler(
             min_lr=min_lr,
         )
     else:
-        raise NotImplementedError(f"Scheduler type {warmup_style} is not supported")
+        raise NotImplementedError(f"Scheduler type {lr_scheduler} is not supported")
 
 
 def to_local_if_dtensor(tensor: Union[torch.Tensor, DTensor]) -> torch.Tensor:

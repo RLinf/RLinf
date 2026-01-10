@@ -145,7 +145,7 @@ actor:
     critic_warmup_steps: 0
     total_training_steps: ${runner.max_epochs}
     lr_warmup_steps: -1
-    warmup_style: cosine
+    lr_scheduler: "cosine" # Learning rate scheduler type. Choices: ["constant", "cosine"]. Default: "constant".
     num_cycles: 0.5
 
   # Override the default values in training_backend/fsdp
