@@ -29,7 +29,6 @@ runner:
   max_steps: -1
 
   only_eval: False
-  eval_policy_path: null
   val_check_interval: 50
   save_interval: -1
 
@@ -37,6 +36,7 @@ runner:
   max_prompt_length: 1
 
   resume_dir: null
+  ckpt_path: null
 
 algorithm:
   update_epoch: 8
