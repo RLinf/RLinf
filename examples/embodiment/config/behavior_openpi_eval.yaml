@@ -106,7 +106,7 @@ actor:
     queue_name: "replay_buffer"
     queue_size: 0
   training_backend: "fsdp"
-  checkpoint_load_path: "/path/to/model/RLinf-Pi0-SFTi"
+  checkpoint_load_path: "/path/to/model/RLinf-Pi0-SFT"
   checkpoint_save_path: "../results"
   micro_batch_size: 2
   global_batch_size: 160
