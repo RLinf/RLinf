@@ -52,7 +52,7 @@ class MultiStepRolloutWorker(Worker):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
         with open_dict(rollout_model_config):
             rollout_model_config.precision = self.cfg.rollout.model.precision
-            rollout_model_config.path = self.cfg.rollout.model.model_path
+            rollout_model_config.model_path = self.cfg.rollout.model.model_path
 
         self.hf_model = get_model(rollout_model_config)
 

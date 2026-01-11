@@ -54,8 +54,8 @@ pt 格式转换到 safetensors 格式
 运行转换脚本前，请您修改 ``RLinf/toolkits/ckpt_convertor/fsdp_convertor/config/fsdp_model_convertor.yaml`` 文件。
 请检查以下7个参数是否正确： 
 
-    ``defaults``， ``convertor.save_path``， ``convertor.merge_lora_weighs``， ``model.model_type``，
-    ``model.model_path``， ``model.is_lora``， ``model.ckpt_path``，
+    ``defaults``， ``convertor.save_path``， ``convertor.merge_lora_weighs``， ``convertor.ckpt_path``， 
+    ``model.model_type``， ``model.model_path``， ``model.is_lora``
 
 .. code-block:: yaml
 
@@ -66,13 +66,13 @@ pt 格式转换到 safetensors 格式
     convertor:
         save_path: /path/to/save                                     # 转换后的文件保存路径
         merge_lora_weighs: True                                      # 是否保存merge lora后的权重，如果设置为False则仅保存Lora权重
+        ckpt_path: /path/to/model_state_dict/full_weights.pt         # 完整的模型权重文件
 
     # Override the default values in model/openvla_oft
     model:
         model_type: "openvla_oft"                                    # 模型类型，根据需要转换的模型类型指定
         model_path: "/path/to/Openvla-oft-SFT-libero-goal-traj1/"    # 初始模型权重
         is_lora: True                                                # 是否开启Lora
-        ckpt_path: /path/to/model_state_dict/full_weights.pt         # 完整的模型权重文件
 
 
 2. **（Optional）新增model_save_helper**

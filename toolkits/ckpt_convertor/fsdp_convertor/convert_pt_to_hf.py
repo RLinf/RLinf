@@ -15,6 +15,7 @@
 import os
 
 import hydra
+import torch
 
 from rlinf.models import get_model
 from toolkits.ckpt_convertor.fsdp_convertor.utils import (
@@ -29,6 +30,9 @@ from toolkits.ckpt_convertor.fsdp_convertor.utils import (
 )
 def main(cfg) -> None:
     model = get_model(cfg.model)
+
+    model_dict = torch.load(cfg.convertor.ckpt_path)
+    model.load_state_dict(model_dict)
 
     save_path = cfg.convertor.save_path
 
