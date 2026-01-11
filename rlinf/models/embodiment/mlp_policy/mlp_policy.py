@@ -179,8 +179,8 @@ class MLPPolicy(BasePolicy):
     def predict_action_batch(
         self,
         env_obs,
-        calulate_logprobs=True,
-        calulate_values=True,
+        calculate_logprobs=True,
+        calculate_values=True,
         return_obs=True,
         mode="train",
         **kwargs,
@@ -224,7 +224,7 @@ class MLPPolicy(BasePolicy):
         chunk_actions = action.reshape(-1, self.num_action_chunks, self.action_dim)
         chunk_actions = chunk_actions.cpu().numpy()
 
-        if hasattr(self, "value_head") and calulate_values:
+        if hasattr(self, "value_head") and calculate_values:
             chunk_values = self.value_head(env_obs["states"])
         else:
             chunk_values = torch.zeros_like(chunk_logprobs[..., :1])

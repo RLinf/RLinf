@@ -14,7 +14,7 @@ SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 USE_MIRRORS=0
 GITHUB_PREFIX=""
-
+NO_ROOT=0
 SUPPORTED_TARGETS=("embodied" "reason" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim")
@@ -49,6 +49,7 @@ Common options:
     -h, --help             Show this help message and exit.
     --venv <dir>           Virtual environment directory name (default: .venv).
     --use-mirror           Use mirrors for faster downloads.
+    --no-root              Avoid system dependency installation for non-root users. Only use this if you are certain system dependencies are already installed.
 EOF
 }
 
@@ -90,6 +91,10 @@ parse_args() {
                 ;;
             --use-mirror)
                 USE_MIRRORS=1
+                shift
+                ;;
+            --no-root)
+                NO_ROOT=1
                 shift
                 ;;
             --*)
@@ -252,7 +257,9 @@ clone_or_reuse_repo() {
 
 install_common_embodied_deps() {
     uv sync --extra embodied --active
-    bash $SCRIPT_DIR/embodied/sys_deps.sh
+    if [ "$NO_ROOT" -eq 0 ]; then
+        bash $SCRIPT_DIR/embodied/sys_deps.sh
+    fi
     {
         echo "export NVIDIA_DRIVER_CAPABILITIES=all"
         echo "export VK_DRIVER_FILES=/etc/vulkan/icd.d/nvidia_icd.json"
@@ -390,7 +397,9 @@ install_env_only() {
         franka)
             uv sync --extra franka --active
             if [ "$SKIP_ROS" -ne 1 ]; then
-                bash $SCRIPT_DIR/embodied/ros_install.sh
+                if [ "$NO_ROOT" -eq 0 ]; then
+                    bash $SCRIPT_DIR/embodied/ros_install.sh
+                fi
                 install_franka_env
             fi
             ;;

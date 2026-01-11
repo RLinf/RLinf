@@ -209,8 +209,8 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
         attention_mask: torch.Tensor = None,
         pixel_values: torch.FloatTensor = None,
         env_obs=None,
-        calulate_logprobs=True,
-        calulate_values=True,
+        calculate_logprobs=True,
+        calculate_values=True,
         return_obs=True,
         **kwargs,
     ) -> tuple[np.ndarray, dict[str, Any]]:
@@ -410,7 +410,7 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
 
         chunk_logprobs = compute_logprobs_from_logits(logits=action_logits, target=idxs)
 
-        if hasattr(self, "value_head") and calulate_values:
+        if hasattr(self, "value_head") and calculate_values:
             hidden_features = last_hidden_states[
                 :, -self.action_dim * self.num_action_chunks
             ]  # [batch_size, hidden_dim]

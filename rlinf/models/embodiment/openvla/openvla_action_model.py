@@ -606,8 +606,8 @@ class OpenVLAForRLActionPrediction(BasePolicy, OpenVLAForBatchActionPrediction):
         attention_mask=None,
         pixel_values=None,
         env_obs=None,
-        calulate_logprobs=True,
-        calulate_values=True,
+        calculate_logprobs=True,
+        calculate_values=True,
         return_obs=True,
         **kwargs,
     ) -> tuple[np.ndarray, dict[str, Any]]:
@@ -722,7 +722,7 @@ class OpenVLAForRLActionPrediction(BasePolicy, OpenVLAForBatchActionPrediction):
             logits=action_logits, target=action_tokens
         )
 
-        if hasattr(self, "value_head") and calulate_values:
+        if hasattr(self, "value_head") and calculate_values:
             hidden_features = last_hidden_states[
                 :, -self.action_dim * self.num_action_chunks
             ]  # [batch_size, hidden_dim]

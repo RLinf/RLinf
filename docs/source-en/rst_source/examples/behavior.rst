@@ -88,7 +88,7 @@ Dependency Installation
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-1. Install Dependencies
+2. Install Dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Option 1: Docker Image**
@@ -148,6 +148,8 @@ Assets Download
 
    # Make sure you are inside the correct Python virtual environment (venv) before running below commands
    # For our Docker image, you need to switch to the `openvla-oft` venv via `source switch_env openvla-oft`
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
    python -c "from omnigibson.utils.asset_utils import download_omnigibson_robot_assets; download_omnigibson_robot_assets()"
    python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets(accept_license=True)" 
    python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
