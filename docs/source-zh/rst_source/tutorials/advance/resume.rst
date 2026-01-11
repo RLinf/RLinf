@@ -64,46 +64,37 @@ FSDP/FSDP2 检查点文件结构如下：
 
 .. code-block:: text
 
-   -- global_step_2
-      -- actor
-         |-- __0_0.distcp
-         |-- __1_0.distcp
-         |-- __2_0.distcp
-            -- __3_0.distcp
+   experiment_name/checkpoints/
+   ├── global_step_10/
+   │   └── actor/
+   │       ├── dcp_checkpoint/
+   │       │   ├── __0_0.distcp
+   │       │   ├── __1_0.distcp
+   │       │   ├── __2_0.distcp
+   │       │   └── __3_0.distcp
+   │       └── model_state_dict/
+   │           └── full_weigths.pt
+   └── global_step_20/
+       └── …
 
 
 FSDP/FSDP2 通过 DCP (torch.distributed.checkpoint) 保存和加载检查点，其结果为一组分布式检查点文件(.distcp)。  
 每个文件包含模型参数、优化器状态和 RNG 状态的分片。
 
-检查点文件向Pytorch State Dict文件转换
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-如果你需要将 FSDP/FSDP2 检查点转换为标准的 Pytorch State Dict 文件用于模型评估或是其他用途, 可以在
-检查点保存文件夹下的`model`子文件夹找到以safetensors格式保存的模型 state dict文件。例如，
-对于检查点目录 `global_step_2`，模型 state dict 文件位于 `global_step_2/model/`。我们会递归地复制模型的配置文件（*.json）和代码文件（*.py，如果存在的话），
-以便你之后可以轻松地重新加载模型。
-
-
-.. code-block:: bash
-
-   convert_dcp_to_state_dict.py [-h] --dcp_path DCP_PATH --output_path OUTPUT_PATH
-
-
-其中 ``DCP_PATH`` 是包含 DCP 文件的目录，``OUTPUT_PATH`` 是保存转换后模型 State Dict 文件的路径。
 
 恢复训练
 -----------------
 
 1. **选择最新的检查点**
 
-   如果 ``global_step_150/`` 是编号最高的目录，它就是最新的快照。  
+   如果 ``global_step_10/`` 是编号最高的目录，它就是最新的快照。  
 
 2. **修改 YAML**
 
    .. code-block:: yaml
 
       runner:
-        resume_dir: ${runner.output_dir}/${runner.experiment_name}/checkpoints/global_step_150
+        resume_dir: ${runner.output_dir}/${runner.experiment_name}/checkpoints/global_step_10
 
 3. **完全按原方式重新启动**
 
@@ -111,9 +102,9 @@ FSDP/FSDP2 通过 DCP (torch.distributed.checkpoint) 保存和加载检查点，
    RLinf 会自动检测到 ``resume_dir`` 并：  
 
    * 在每个节点/rank 上恢复模型分片、优化器、RNG 和 dataloader 状态。  
-   * 从 ``global_step_150`` 继续计数 —— 下一个保存的检查点将是 ``global_step_200`` （因为 ``save_interval`` 为 50）。  
+   * 从 ``global_step_10`` 继续计数 —— 下一个保存的检查点将是 ``global_step_20`` （因为 ``save_interval`` 为 10）。  
 
 .. tip::
 
    想验证恢复是否成功，可以查看日志行。  
-   如果下一次训练从 step 150 开始，就说明恢复正常！  
+   如果下一次训练从 step 30 开始，就说明恢复正常！  

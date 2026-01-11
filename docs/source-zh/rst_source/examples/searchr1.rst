@@ -129,12 +129,12 @@ Wiki配置文件
 测试
 ----
 
-运行toolkits/ckpt_convertor/mg2hf_3b.sh将megatron
+运行toolkits/ckpt_convertor/megatron_convertor/mg2hf_3b.sh将megatron
 checkpoint转换为huggingface model
 
 .. code-block:: bash
 
-   sh toolkits/ckpt_convertor/mg2hf_3b.sh {your_output_dir}/{exp_name}/checkpoints/global_step_xxx/actor {path/to/save/huggingface/model} {path/to/model/Qwen2.5-3B-Instruct}
+   sh toolkits/ckpt_convertor/megatron_convertor/mg2hf_3b.sh {your_output_dir}/{exp_name}/checkpoints/global_step_xxx/actor {path/to/save/huggingface/model} {path/to/model/Qwen2.5-3B-Instruct}
 
 将转换得到的huggingface
 model路径填入examples/searchr1/config/qwen2.5-3b-tool-1node-eval.yaml

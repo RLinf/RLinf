@@ -134,11 +134,11 @@ Run `examples/searchr1/run_main_searchr1_single.sh` to start training.
 Evaluation
 ----------
 
-Run `toolkits/ckpt_convertor/mg2hf_3b.sh` to convert a Megatron checkpoint into a HuggingFace model:
+Run `toolkits/ckpt_convertor/megatron_convertor/mg2hf_3b.sh` to convert a Megatron checkpoint into a HuggingFace model:
 
 .. code-block:: bash
 
-   sh toolkits/ckpt_convertor/mg2hf_3b.sh {your_output_dir}/{exp_name}/checkpoints/global_step_xxx/actor {path/to/save/huggingface/model} {path/to/model/Qwen2.5-3B-Instruct}
+   sh toolkits/ckpt_convertor/megatron_convertor/mg2hf_3b.sh {your_output_dir}/{exp_name}/checkpoints/global_step_xxx/actor {path/to/save/huggingface/model} {path/to/model/Qwen2.5-3B-Instruct}
 
 Fill the converted HuggingFace model path into  
 `examples/searchr1/config/qwen2.5-3b-tool-1node-eval.yaml`:
