@@ -17,7 +17,7 @@ GITHUB_PREFIX=""
 
 SUPPORTED_TARGETS=("embodied" "reason" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim")
 
 # Ensure uv is installed
 if ! command -v uv &> /dev/null; then
@@ -267,6 +267,11 @@ install_openvla_model() {
             install_common_embodied_deps
             install_maniskill_libero_env
             ;;
+        frankasim)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_frankasim_env
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenVLA model." >&2
             exit 1
@@ -513,6 +518,13 @@ install_franka_env() {
     echo "export CMAKE_PREFIX_PATH=$ROS_CATKIN_PATH/libfranka/build:\$CMAKE_PREFIX_PATH" >> "$VENV_DIR/bin/activate"
     echo "source /opt/ros/noetic/setup.bash" >> "$VENV_DIR/bin/activate"
     echo "source $ROS_CATKIN_PATH/devel/setup.bash" >> "$VENV_DIR/bin/activate"
+}
+
+install_frankasim_env() {
+    local serldir
+    serldir=$(clone_or_reuse_repo SERL_PATH "$VENV_DIR/serl" https://github.com/RLinf/serl.git -b RLinf/franka-sim)
+    uv pip install -e "$serldir/franka_sim"
+    uv pip install -r "$serldir/franka_sim/requirements.txt"
 }
 
 #=======================REASONING INSTALLER=======================
