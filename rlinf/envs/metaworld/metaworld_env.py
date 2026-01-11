@@ -335,6 +335,9 @@ class MetaWorldEnv(gym.Env):
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
 
+        if actions.shape[-1] == 7:
+            actions = np.concatenate([actions[..., :3], actions[..., -1:]], axis=-1)
+            
         self._elapsed_steps += 1
 
         if self.use_async_vector_env:

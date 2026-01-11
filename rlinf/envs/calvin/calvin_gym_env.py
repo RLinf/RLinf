@@ -348,9 +348,17 @@ class CalvinEnv(gym.Env):
         infos = {}
         return obs, infos
 
+    def sanitize_action(self, actions):
+        actions = actions.copy()
+        g = actions[..., -1]
+        actions[..., -1] = np.where(g > 0, 1, -1)
+        return actions
+
     def step(self, actions=None, auto_reset=True):
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
+
+        actions = self.sanitize_action(actions)
 
         self._elapsed_steps += 1
         raw_obs, _, _, info_lists = self.env.step(actions)
