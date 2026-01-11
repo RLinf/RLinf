@@ -54,8 +54,8 @@ Converting pt Format to safetensors Format
 Before running the convertor script, please modify the ``RLinf/toolkits/ckpt_convertor/fsdp_convertor/config/fsdp_model_convertor.yaml`` file.
 Please check that the following 7 parameters are correct:
 
-    ``defaults``, ``convertor.save_path``, ``convertor.merge_lora_weighs``, ``model.model_type``,
-    ``model.model_path``, ``model.is_lora``, ``model.ckpt_path``,
+    ``defaults``, ``convertor.save_path``, ``convertor.merge_lora_weighs``, ``convertor.ckpt_path``, 
+    ``model.model_type``, ``model.model_path``, ``model.is_lora``
 
 .. code-block:: yaml
 
@@ -66,13 +66,13 @@ Please check that the following 7 parameters are correct:
     convertor:
         save_path: /path/to/save                                     # Path to save converted files
         merge_lora_weighs: True                                      # Whether to save merged LoRA weights, if set to False, only LoRA weights will be saved
+        ckpt_path: /path/to/model_state_dict/full_weights.pt         # Complete model weights file
 
     # Override the default values in model/openvla_oft
     model:
         model_type: "openvla_oft"                                    # Model type, specify according to the model type to be converted
         model_path: "/path/to/Openvla-oft-SFT-libero-goal-traj1/"    # Initial model weights
         is_lora: True                                                # Whether LoRA is enabled
-        ckpt_path: /path/to/model_state_dict/full_weights.pt         # Complete model weights file
 
 
 2. **（Optional）Add model_save_helper**

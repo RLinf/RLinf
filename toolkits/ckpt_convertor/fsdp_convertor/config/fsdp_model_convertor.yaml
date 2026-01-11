@@ -13,6 +13,8 @@ convertor:
   save_path: /path/to/save
   merge_lora_weighs: True
 
+  ckpt_path: /path/to/full_weights.pt
+
 # Override the default values in model/openvla_oft
 model:
   model_type: "openvla_oft"
@@ -23,5 +25,3 @@ model:
   lora_rank: 32
   lora_path: /path/to/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora/lora_adapter
   max_prompt_length: 30
-
-  ckpt_path: /path/to/full_weights.pt
