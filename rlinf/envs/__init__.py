@@ -71,5 +71,9 @@ def get_env_cls(env_type, env_cfg=None):
         from rlinf.envs.realworld.realworld_env import RealWorldEnv
 
         return RealWorldEnv
+    elif env_type == "habitat":
+        from rlinf.envs.habitat.habitat_env import HabitatEnv
+
+        return HabitatEnv
     else:
         raise NotImplementedError(f"Environment type {env_type} not implemented")
