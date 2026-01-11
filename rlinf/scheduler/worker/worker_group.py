@@ -17,8 +17,9 @@ import os
 import signal
 import sys
 import threading
+import time
 from dataclasses import dataclass
-from typing import Generic, Optional
+from typing import Generic, Optional, TypeVar
 
 import numpy as np
 import ray
@@ -26,7 +27,6 @@ import ray.remote_function
 
 from ..cluster import Cluster, ClusterEnvVar
 from ..hardware import AcceleratorUtil
-from ..manager import WorkerInfo
 from ..placement import (
     NodePlacementStrategy,
     PackedPlacementStrategy,
@@ -34,9 +34,18 @@ from ..placement import (
 )
 from .worker import Worker, WorkerAddress, WorkerClsType
 
+ClsType = TypeVar("ClsType")
+
 
 class WorkerGroup(Generic[WorkerClsType]):
     """The class that enables a worker to become a group of workers that can be executed collectively."""
+
+    @dataclass
+    class WorkerRank:
+        """A class that represents the ray actor and its rank in the worker group."""
+
+        worker: ray.ObjectRef
+        rank: int
 
     def __init__(self, worker_cls: type[Worker], args, kwargs):
         """Initialize the WorkerGroup with a worker class. Used as a decorator to create a worker group.
@@ -52,7 +61,7 @@ class WorkerGroup(Generic[WorkerClsType]):
         self._worker_cls_kwargs = kwargs
         self._worker_group_name = f"worker_group_{worker_cls.__name__}"
 
-        self._workers = []
+        self._workers: list[WorkerGroup.WorkerRank] = []
         self._cluster = None
 
         self._group_size = None
@@ -75,9 +84,62 @@ class WorkerGroup(Generic[WorkerClsType]):
         return self._worker_group_name
 
     @property
-    def worker_info_list(self) -> list[WorkerInfo]:
+    def worker_info_list(self):
         """Get the list of workers in the group."""
         return self._workers
+
+    @classmethod
+    def from_group_name(
+        cls, worker_cls: type[ClsType], group_name: str
+    ) -> "WorkerGroup[ClsType] | ClsType":
+        """Retrieve an existing worker group based on its worker class and group name."""
+        from ..manager import WorkerManager
+
+        assert issubclass(worker_cls, Worker), (
+            "Worker class must be a subclass of Worker."
+        )
+        assert group_name is not None, "Group name must be provided."
+        assert ray.is_initialized(), (
+            "The Cluster has not been initialized. Cannot retrieve any worker groups."
+        )
+
+        worker_address = WorkerAddress(root_group_name=group_name, ranks=0)
+        worker_manager = WorkerManager.get_proxy()
+        worker_info = worker_manager.get_worker_info(worker_address)
+        assert worker_info is not None, f"Worker group {group_name} not found."
+        group_world_size = worker_info.group_world_size
+        assert group_world_size > 0, (
+            f"Group world size is not correctly setup for worker group {group_name}"
+        )
+
+        workers: list[WorkerGroup.WorkerRank] = []
+        for rank in range(group_world_size):
+            actor_name = WorkerAddress(
+                root_group_name=group_name, ranks=rank
+            ).get_name()
+
+            count = 0
+            while True:
+                try:
+                    actor: ray.ObjectRef = ray.get_actor(
+                        name=actor_name, namespace=Cluster.NAMESPACE
+                    )
+                    workers.append(WorkerGroup.WorkerRank(actor, rank))
+                    break
+                except ValueError:
+                    time.sleep(0.001)
+                    count += 1
+                    if count % Cluster.TIMEOUT_WARN_TIME == 0:
+                        Worker.logger.warning(
+                            f"Retrieving worker group {group_name}. Waiting for its rank {rank} to be up for {count // 1000} seconds..."
+                        )
+
+        worker_group = worker_cls.create_group()
+        worker_group._worker_group_name = group_name
+        worker_group._group_size = group_world_size
+        worker_group._workers = workers
+        worker_group._attach_cls_func()
+        return worker_group
 
     def launch(
         self: "WorkerGroup[WorkerClsType]",
@@ -87,7 +149,7 @@ class WorkerGroup(Generic[WorkerClsType]):
         max_concurrency: Optional[int] = None,
         isolate_gpu: bool = True,
         catch_system_failure: Optional[bool] = None,
-    ) -> "type[WorkerGroup | WorkerClsType]":
+    ) -> "WorkerGroup[WorkerClsType] | WorkerClsType":
         """Create a worker group with the specified cluster and options.
 
         Args:
@@ -131,7 +193,9 @@ class WorkerGroup(Generic[WorkerClsType]):
 
         return self
 
-    def execute_on(self, *ranks: int):
+    def execute_on(
+        self: "WorkerGroup[WorkerClsType]", *ranks: int
+    ) -> "WorkerGroup[WorkerClsType] | WorkerClsType":
         """Set the ranks to execute functions on in the worker group. This function only affects the immediately subsequent call of any remote function of the WorkerGroup. After one call, the execute_on state is reset to execute on all ranks.
 
         Args:
@@ -212,12 +276,9 @@ class WorkerGroup(Generic[WorkerClsType]):
                 cls_kwargs=self._worker_cls_kwargs,
             )
 
-            @dataclass
-            class WorkerRank:
-                worker: ray.ObjectRef
-                rank: int
-
-            self._workers.append(WorkerRank(rank=placement.rank, worker=worker))
+            self._workers.append(
+                WorkerGroup.WorkerRank(rank=placement.rank, worker=worker)
+            )
 
             node_group = self._cluster.get_node_group(placement.node_group_label)
             node = self._cluster.get_node_info(placement.cluster_node_rank)

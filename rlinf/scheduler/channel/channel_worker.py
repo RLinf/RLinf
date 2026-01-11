@@ -243,6 +243,7 @@ class ChannelWorker(Worker):
         super().__init__()
         self._queue_map: dict[str, PeekQueue] = {}
         self._queue_map[DEFAULT_KEY] = PeekQueue(maxsize=maxsize)
+        self._key_to_channel_rank: dict[Any, int] = {}
 
         self._mem_cleaner_task = asyncio.create_task(self._mem_cleaner())
 
@@ -520,3 +521,14 @@ class ChannelWorker(Worker):
         """
         self.create_queue(key, self.maxsize())
         return self._queue_map[key].peek_all()
+
+    async def ensure_key_replica(self, key: Any, src_node_rank: int = -1) -> int:
+        """Assign (or fetch) the replica rank that should host the given key.
+
+        If the key is new, choose the replica whose rank matches the source node rank
+        (given NodePlacementStrategy launches workers in node order). If out of range,
+        fall back to rank 0.
+        """
+        # Fallback to rank 0 if out of range
+        default_rank = src_node_rank if 0 <= src_node_rank < self._world_size else 0
+        return self._key_to_channel_rank.setdefault(key, default_rank)
