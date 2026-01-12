@@ -143,7 +143,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
                 loss = loss / self.gradient_accumulation
                 with backward_ctx:
                     self.grad_scaler.scale(loss).backward()
-            
+
             # Manual gradient sync (temporary fix)
             torch.cuda.synchronize()
             if torch.distributed.is_initialized():
@@ -160,7 +160,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
                 torch.distributed.barrier(
                     group=process_group, device_ids=[torch.cuda.current_device()]
                 )
-            
+
             avg_loss = total_loss / self.gradient_accumulation
             grad_norm, lr_list = self.optimizer_step()
             self.optimizer.zero_grad(set_to_none=True)
