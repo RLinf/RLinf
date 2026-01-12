@@ -60,7 +60,7 @@ runner:
   ckpt_path: null  # Optional: path to a .pt checkpoint. If not None, it will be loaded after the model is instantiated (for evaluation).
 
 algorithm:
-  update_epoch: 30
+  update_epoch: 8
   group_size: 1
   agg_q: mean
 
