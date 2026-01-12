@@ -125,12 +125,11 @@ env:
 rollout:
   group_name: "RolloutGroup"
   backend: "huggingface"
-  model_dir: ""
   enable_offload: False
   pipeline_stage_num: 1
 
   model:
-    model_path: ""
+    model_path: "/workspace/dataset/resnet"
     precision: ${actor.model.precision}
 
 actor:
