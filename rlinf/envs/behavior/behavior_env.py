@@ -87,14 +87,13 @@ class BehaviorEnv(gym.Env):
             # Determine video resolution based on camera settings
             use_high_res = getattr(self.cfg.video_cfg, "use_high_res_cameras", False)
             if use_high_res:
-                # With RGBWrapper: WRIST=480x480, HEAD resized to 960x960 to match stacked wrists
+                # With RGBWrapper: WRIST=480x480, HEAD=960x960 (resized to match layout)
                 wrist_size = 480
                 head_width = 960
             else:
-                # Default or with upscaling
-                scale = getattr(self.cfg.video_cfg, "video_resolution_scale", 2)
-                wrist_size = 224 * scale
-                head_width = wrist_size * 2
+                # Without RGBWrapper: Native low-res (128x128 wrist, 128x128 head)
+                wrist_size = 128
+                head_width = 256  # Resize head to match stacked wrist height
             
             video_height = wrist_size * 2  # Two wrist cameras stacked vertically
             video_width = wrist_size + head_width  # Wrist + head horizontally
@@ -286,8 +285,9 @@ class BehaviorEnv(gym.Env):
 
     def _write_video(self, raw_obs) -> None:
         """
-        Write observations to video at native resolution (with RGBWrapper) or upscaled.
-        When use_high_res_cameras=True: observations are ALREADY 720x720/480x480 - use directly!
+        Write observations to video at native resolution.
+        - With RGBWrapper (use_high_res_cameras=True): 720x720/480x480 - TRUE high quality
+        - Without RGBWrapper: 128x128 - native low-res (no artificial upscaling)
         """
         # Skip if video writer is not initialized
         if self.video_writer is None:
@@ -302,30 +302,21 @@ class BehaviorEnv(gym.Env):
                 if not isinstance(v, dict) or "rgb" not in v:
                     continue
                 
-                # v is a dict with "rgb" key, v["rgb"] is a torch tensor with shape [H, W, 4]
+                # v["rgb"] is a torch tensor with shape [H, W, 4]
                 rgb = v["rgb"].cpu().numpy()[..., :3]  # Take only RGB channels, drop alpha
                 
                 if "left_realsense_link:Camera:0" in k:
-                    if use_high_res:
-                        left_wrist_rgb = rgb  # Use native 480x480 directly - no quality loss!
-                    else:
-                        scale = getattr(self.cfg.video_cfg, "video_resolution_scale", 2)
-                        left_wrist_rgb = cv2.resize(rgb, (224*scale, 224*scale))
+                    left_wrist_rgb = rgb  # Native resolution (480x480 or 128x128)
                         
                 elif "right_realsense_link:Camera:0" in k:
-                    if use_high_res:
-                        right_wrist_rgb = rgb  # Use native 480x480 directly - no quality loss!
-                    else:
-                        scale = getattr(self.cfg.video_cfg, "video_resolution_scale", 2)
-                        right_wrist_rgb = cv2.resize(rgb, (224*scale, 224*scale))
+                    right_wrist_rgb = rgb  # Native resolution (480x480 or 128x128)
                         
                 elif "zed_link:Camera:0" in k:
+                    # Resize head to match stacked wrist height for video layout
                     if use_high_res:
-                        # Native 720x720 - only resize to 960x960 to match stacked wrist height
-                        head_rgb = cv2.resize(rgb, (960, 960))
+                        head_rgb = cv2.resize(rgb, (960, 960))  # 720→960 (match 480*2)
                     else:
-                        scale = getattr(self.cfg.video_cfg, "video_resolution_scale", 2)
-                        head_rgb = cv2.resize(rgb, (448*scale*2, 448*scale*2))
+                        head_rgb = cv2.resize(rgb, (256, 256))  # 128→256 (match 128*2)
 
         write_video(
             np.expand_dims(

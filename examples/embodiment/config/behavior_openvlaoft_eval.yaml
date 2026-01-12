@@ -93,9 +93,7 @@ env:
       save_video: True  # Set to False to disable video recording
       video_base_dir: ${runner.logger.log_path}/video/eval
       # Use high-res cameras (like OpenPI-Comet's RGBWrapper)
-      use_high_res_cameras: True  # True: native 720x720(head)/480x480(wrist) - best quality
-      # Only used if use_high_res_cameras=False:
-      video_resolution_scale: 2  # 1=224/448, 2=448/896, 3=672/1344 (upscaled)
+      use_high_res_cameras: False  # True: native 720x720(head)/480x480(wrist), False: native 128x128
 
 rollout:
   group_name: "RolloutGroup"
