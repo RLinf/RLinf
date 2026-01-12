@@ -151,11 +151,15 @@ class FSDPSftWorker(FSDPModelManager, Worker):
                 for name, param in self.model.named_parameters():
                     if param.grad is not None:
                         all_grads.append((name, param.grad))
-                process_group = getattr(self.model, 'process_group', None)
+                process_group = getattr(self.model, "process_group", None)
                 for name, grad in all_grads:
-                    torch.distributed.all_reduce(grad, op=torch.distributed.ReduceOp.AVG, group=process_group)
-                process_group = getattr(self.model, 'process_group', None)
-                torch.distributed.barrier(group=process_group, device_ids=[torch.cuda.current_device()])
+                    torch.distributed.all_reduce(
+                        grad, op=torch.distributed.ReduceOp.AVG, group=process_group
+                    )
+                process_group = getattr(self.model, "process_group", None)
+                torch.distributed.barrier(
+                    group=process_group, device_ids=[torch.cuda.current_device()]
+                )
             
             avg_loss = total_loss / self.gradient_accumulation
             grad_norm, lr_list = self.optimizer_step()
