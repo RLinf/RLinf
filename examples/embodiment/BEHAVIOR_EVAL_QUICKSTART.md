@@ -60,7 +60,7 @@ python examples/embodiment/eval_embodied_agent.py \
     env.eval.total_num_envs=2 \
     env.eval.video_cfg.save_video=True \
     algorithm.eval_rollout_epoch=10 \
-    actor.model.action_chunk=32
+    actor.model.num_action_chunks=32
 ```
 
 ### Example 2: Quick Evaluation with Shell Script

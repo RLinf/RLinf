@@ -15,6 +15,10 @@ video_cfg:
   save_video: False
   info_on_video: True
   video_base_dir: ${runner.logger.log_path}/video/train
+  # High-res camera settings (like OpenPI-Comet's RGBWrapper)
+  use_high_res_cameras: False  # True: 720x720 (head), 480x480 (wrist) - best quality but slower
+  # Only used if use_high_res_cameras=False:
+  video_resolution_scale: 2  # Resolution multiplier: 1=224/448, 2=448/896, 3=672/1344
 
 base_config_name: r1pro_behavior
 

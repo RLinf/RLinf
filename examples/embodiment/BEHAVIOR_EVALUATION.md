@@ -202,7 +202,7 @@ env:
 
 actor:
   model:
-    action_chunk: 32  # Must match training config
+    num_action_chunks: 32  # Must match training config
     num_images_in_input: 3  # Head + 2 wrist cameras
 ```
 
@@ -352,7 +352,7 @@ Key differences:
 4. **Action Chunk Mismatch**
    ```
    Error: Action chunk size mismatch
-   Solution: Ensure actor.model.action_chunk matches training config
+   Solution: Ensure actor.model.num_action_chunks matches training config
    ```
 
 ## Advanced Usage

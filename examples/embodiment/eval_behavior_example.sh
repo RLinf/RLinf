@@ -13,7 +13,8 @@ set -e
 
 # Configuration
 TASK_NAME="turning_on_radio"  # Task name from BEHAVIOR-1K
-MODEL_PATH="/mnt/public/quanlu/pi05-turning_on_radio-sft"  # Path to your trained model
+# MODEL_PATH="/mnt/public/quanlu/pi05-b1kpt12-cs32"  # Path to your trained model
+MODEL_PATH="/mnt/public/quanlu/RLinf-OpenVLAOFT-Behavior/"
 EVAL_CONFIG="behavior_openvlaoft_eval"  # Evaluation config file
 LOG_PATH="./logs/behavior_eval"  # Output directory
 
@@ -38,16 +39,12 @@ export REPO_PATH=$(dirname "$EMBODIED_PATH")
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 
 # Run evaluation using RLinf's embodied eval runner
+# Note: Most configurations are in the YAML file. Override only what's needed here.
 python ${EMBODIED_PATH}/eval_embodied_agent.py \
     --config-name ${EVAL_CONFIG} \
     runner.logger.log_path=${LOG_PATH} \
-    runner.eval_policy_path=${MODEL_PATH}/model.pt \
-    env.eval.task_idx=0 \
-    env.eval.total_num_envs=2 \
-    env.eval.max_steps_per_rollout_epoch=2000 \
-    env.eval.video_cfg.save_video=True \
-    algorithm.eval_rollout_epoch=10 \
-    actor.model.action_chunk=32
+    rollout.model.model_path=${MODEL_PATH} \
+    env.eval.task_idx=0
 
 echo ""
 echo "Evaluation completed! Results saved to: ${LOG_PATH}"
@@ -92,7 +89,7 @@ echo ""
 #   algorithm.eval_rollout_epoch: Number of evaluation epochs
 #
 # Model Configuration:
-#   actor.model.action_chunk: Action chunk size (must match training)
+#   actor.model.num_action_chunks: Action chunk size (must match training)
 #   runner.eval_policy_path: Path to model checkpoint
 #
 # Video Configuration:

@@ -2,6 +2,7 @@ defaults:
   - env/behavior_r1pro@env.train
   - env/behavior_r1pro@env.eval
   - model/openvla_oft@actor.model
+  - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
 hydra:
@@ -14,7 +15,9 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor, env, rollout: 0-0
+    actor: 0-0    # Not used in eval-only mode, but required by validator
+    env: 0        # Environment workers on GPU 0
+    rollout: 1    # Rollout workers on GPU 1 (to avoid OOM)
 
 runner:
   task_type: embodied
@@ -83,12 +86,16 @@ env:
   
   # Override the default values in env/behavior_r1pro
   eval:
-    total_num_envs: 2
+    total_num_envs: 1  # Reduced to avoid OOM (increase if you have enough GPU memory)
     max_episode_steps: 2000 # max episode steps for truncation
-    max_steps_per_rollout_epoch: 2000
+    max_steps_per_rollout_epoch: 1024  # Must be divisible by num_action_chunks (32)
     video_cfg:
-      save_video: True
+      save_video: True  # Set to False to disable video recording
       video_base_dir: ${runner.logger.log_path}/video/eval
+      # Use high-res cameras (like OpenPI-Comet's RGBWrapper)
+      use_high_res_cameras: True  # True: native 720x720(head)/480x480(wrist) - best quality
+      # Only used if use_high_res_cameras=False:
+      video_resolution_scale: 2  # 1=224/448, 2=448/896, 3=672/1344 (upscaled)
 
 rollout:
   group_name: "RolloutGroup"
@@ -97,7 +104,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
+    model_path: "/mnt/public/quanlu/RLinf-OpenVLAOFT-Behavior/"
     precision: ${actor.model.precision}
 
 actor:
@@ -110,12 +117,13 @@ actor:
 
   # Override the default values in model/openvla_oft
   model:
-    model_path: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
+    model_path: "/mnt/public/quanlu/RLinf-OpenVLAOFT-Behavior/"
     model_type: "openvla_oft"
     value_type: ${algorithm.reward_type}
     action_dim: 23
     unnorm_key: behavior_turn_on_radio
     num_images_in_input: 3
+    num_action_chunks: 32  # Action chunk size (must match training config)
     add_value_head: True
   
   optim:
