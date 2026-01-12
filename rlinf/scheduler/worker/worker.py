@@ -520,7 +520,7 @@ class Worker(metaclass=WorkerMeta):
     @classmethod
     def create_group(
         cls: type[WorkerClsType], *args, **kwargs
-    ) -> "WorkerGroup[WorkerClsType]":
+    ) -> "WorkerGroup[WorkerClsType] | WorkerClsType":
         """Create a worker group with the class arguments.
 
         Args:
@@ -665,17 +665,19 @@ class Worker(metaclass=WorkerMeta):
     def create_channel(
         self,
         channel_name: str,
-        node_rank: int = 0,
         maxsize: int = 0,
+        distributed: bool = False,
+        node_rank: int = 0,
         local: bool = False,
     ):
         """Create a new channel with the specified placement rank and maximum size.
 
         Args:
             channel_name (str): The name of the channel.
-            node_rank (int): The global rank of the node in the cluster where the channel will be created.
             maxsize (int): The maximum size of the channel queue. Defaults to 0 (unbounded).
-            local (bool): Create the channel for intra-process communication. Cannot be connected by other workers.
+            distributed (bool): Whether the channel should be distributed. A distributed channel creates a distributed worker on each node, and routes communications to the channel worker on the same node as the current worker, benefitting from the locality of the data. The routing is based on the key of the put/get APIs. So if you expect the key to be randomly distributed, you should set this to False to avoid unnecessary routing overhead.
+            node_rank (int): The node rank of the current worker. Only valid when distributed is False.
+            local (bool): Create the channel for intra-process communication. A local channel cannot be connected by other workers, and its data cannot be shared among different processes.
 
         Returns:
             Channel: A new instance of the Channel class.
@@ -684,7 +686,11 @@ class Worker(metaclass=WorkerMeta):
         from ..channel.channel import Channel
 
         return Channel.create(
-            name=channel_name, node_rank=node_rank, maxsize=maxsize, local=local
+            name=channel_name,
+            maxsize=maxsize,
+            distributed=distributed,
+            node_rank=node_rank,
+            local=local,
         )
 
     def connect_channel(self, channel_name: str):
@@ -699,7 +705,7 @@ class Worker(metaclass=WorkerMeta):
         """
         from ..channel.channel import Channel
 
-        return Channel.connect(channel_name=channel_name, current_worker=self)
+        return Channel.connect(name=channel_name, current_worker=self)
 
     def broadcast(self, object: Optional[Any], ranks: list[int]):
         """Broadcast an object inside the current worker group.
@@ -1068,6 +1074,7 @@ class Worker(metaclass=WorkerMeta):
         self._worker_info = WorkerInfo(
             address=self._worker_address,
             rank=self._rank,
+            group_world_size=self._world_size,
             cluster_node_rank=self._cluster_node_rank,
             accelerator_type=self._accelerator_type,
             accelerator_rank=self._local_accelerator_rank,
