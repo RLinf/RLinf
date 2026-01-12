@@ -50,6 +50,7 @@ actor:
     openpi:
       config_name: "pi0_maniskill"
       detach_critic_input: True
+      train_expert_only: False
 
   optim:
     lr: 5.0e-6

@@ -20,7 +20,7 @@ import torch
 from torch.distributed.checkpoint.format_utils import dcp_to_torch_save
 
 """
-python convert_dcp_to_state_dict.py --dcp_path /path/to/dcp_checkpoint --output_path /path/to/save_path/model.pt
+python convert_dcp_to_pt.py --dcp_path /path/to/dcp_checkpoint --output_path /path/to/save_path/model.pt
 """
 
 

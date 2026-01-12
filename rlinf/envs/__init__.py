@@ -71,5 +71,9 @@ def get_env_cls(env_type, env_cfg=None):
         from rlinf.envs.realworld.realworld_env import RealWorldEnv
 
         return RealWorldEnv
+    elif env_type == "frankasim":
+        from rlinf.envs.frankasim.frankasim_env import FrankaSimEnv
+
+        return FrankaSimEnv
     else:
         raise NotImplementedError(f"Environment type {env_type} not implemented")

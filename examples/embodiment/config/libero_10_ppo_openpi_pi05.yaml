@@ -142,6 +142,9 @@ actor:
     weight_decay: 0.01
     clip_grad: 1.0
     critic_warmup_steps: 0
+    total_training_steps: 1000
+    min_lr_rate: 0.1
+    lr_scheduler: "cosine" # Learning rate scheduler type. Choices: ["constant", "cosine"]. Default: "constant".
 
   # Override the default values in training_backend/fsdp
   fsdp_config:

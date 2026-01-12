@@ -74,14 +74,37 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
 
     @property
     def _no_split_modules(self) -> list[str]:
-        # Currently, PaliGemmaForConditionalGeneration only support DDP, as many of it's modules are called without forward
+        if self.config.train_expert_only:
+            no_split_modules = [
+                "GemmaDecoderLayer",
+                "SiglipVisionEmbeddings",
+                "GemmaRMSNorm",
+                "GemmaRotaryEmbedding",
+            ]
+        else:
+            no_split_modules = [
+                "GemmaMLP",
+                "SiglipVisionEmbeddings",
+                "GemmaRMSNorm",
+                "GemmaRotaryEmbedding",
+            ]
+        if self.config.noise_method == "flow_noise":
+            no_split_modules.append("ExploreNoiseNet")
+        return no_split_modules
+
+    @property
+    def _no_split_names(self) -> list[str]:
         return [
-            "PaliGemmaForConditionalGeneration",
-            "GemmaDecoderLayer",
-            "SiglipVisionEmbeddings",
-            "GemmaRMSNorm",
-            "GemmaForCausalLM",
-            "GemmaRotaryEmbedding",
+            "action_in_proj",
+            "action_out_proj",
+            "lm_head",
+            # --pi0 only--
+            "state_proj",
+            "action_time_mlp_in",
+            "action_time_mlp_out",
+            # --pi05 only--
+            "time_mlp_in",
+            "time_mlp_out",
         ]
 
     def __init__(
@@ -136,6 +159,11 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
             self.noise_head = self.noise_head.to(
                 dtype=self.action_out_proj.weight.dtype
             )
+
+        for name, module in self.named_modules():
+            # Set _fsdp_wrap_name to the last part of the path (e.g., "model.action_in_proj" -> "action_in_proj")
+            path_parts = name.split(".")
+            setattr(module, "_fsdp_wrap_name", path_parts[-1] if path_parts else name)
 
     def set_global_step(self, global_step):
         self.global_step = global_step
