@@ -26,7 +26,7 @@ from openpi.models import model as _model
 from openpi.models.pi0_config import Pi0Config
 from openpi.models_pytorch.pi0_pytorch import PI0Pytorch, make_att_2d_masks
 
-from rlinf.models.embodiment.base_policy import BasePolicy
+from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
 from rlinf.models.embodiment.modules.value_head import ValueHead
 
@@ -65,7 +65,7 @@ class OpenPi0Config(Pi0Config):
     value_vlm_mode: str = "mean_token"  # last_token, mean_token, first_token
 
 
-class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
+class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
     """
     Pi0 model for reinforcement learning action prediction.
     """
@@ -113,7 +113,7 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
     ):
         # Override `sample_actions` to prevent parent class polymorphic call
         sample_actions_func = self.sample_actions
-        PI0Pytorch.__init__(self, config)
+        super().__init__(config)
         self.sample_actions = sample_actions_func
         self.global_step = 0
         # assert
@@ -255,10 +255,10 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
         outputs["actions"] = outputs["actions"][:, : self.config.action_chunk]
         return outputs
 
-    def forward(self, forward_type="default_forward", **kwargs):
-        if forward_type == "sft_forward":
+    def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
+        if forward_type == ForwardType.SFT:
             return self.sft_forward(**kwargs)
-        elif forward_type == "default_forward":
+        elif forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
         else:
             raise NotImplementedError
@@ -266,7 +266,7 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
     def sft_forward(self, data, **kwargs):
         observation = data["observation"]
         actions = data["actions"]
-        return PI0Pytorch.forward(self, observation, actions)
+        return super().forward(observation, actions)
 
     def default_forward(
         self,

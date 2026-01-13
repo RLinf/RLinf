@@ -1,5 +1,11 @@
 model_type: "openvla_oft"
-implement_version: "rlinf"
+implement_version: "rlinf" # supported versions: ['rlinf', 'offical']
+# rlinf: refers to the models for LIBERO and ManiSkill released on Hugging Face by RLinf, 
+#        trained with RLinf's modified OpenVLA-OFT repository.
+# official: refers to the models for RoboTwin released on Hugging Face by RLinf 
+#        and any other resources trained from the official OpenVLA-OFT repository,
+#        which supports use_film and use_proprio.
+
 model_path: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"  # Different paths used in different configs
 
 precision: "bf16"
@@ -9,6 +15,7 @@ value_type: action_level
 action_dim: 7
 num_action_chunks: 8
 use_proprio: False
+use_film: False
 unnorm_key: libero_10_no_noops
 center_crop: True
 

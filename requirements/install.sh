@@ -17,7 +17,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 SUPPORTED_TARGETS=("embodied" "reason" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin")
 
 # Ensure uv is installed
 if ! command -v uv &> /dev/null; then
@@ -305,6 +305,13 @@ install_openvla_oft_model() {
             install_prebuilt_flash_attn
             uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git  --no-build-isolation
             ;;
+        robotwin)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_prebuilt_flash_attn
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openvla-oft.git@RLinf/v0.1  --no-build-isolation
+            install_robotwin_env
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenVLA-OFT model." >&2
             exit 1
@@ -342,6 +349,13 @@ install_openpi_model() {
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
             install_prebuilt_flash_attn
             install_robocasa_env
+            ;;
+        robotwin)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_prebuilt_flash_attn
+            install_robotwin_env
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
@@ -527,6 +541,50 @@ install_franka_env() {
     echo "export CMAKE_PREFIX_PATH=$ROS_CATKIN_PATH/libfranka/build:\$CMAKE_PREFIX_PATH" >> "$VENV_DIR/bin/activate"
     echo "source /opt/ros/noetic/setup.bash" >> "$VENV_DIR/bin/activate"
     echo "source $ROS_CATKIN_PATH/devel/setup.bash" >> "$VENV_DIR/bin/activate"
+}
+
+install_robotwin_env() {
+    uv pip install mplib==0.2.1
+    uv pip install gymnasium==0.29.1
+
+    uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git  --no-build-isolation
+    uv pip install warp-lang
+    uv pip install git+${GITHUB_PREFIX}https://github.com/NVlabs/curobo.git  --no-build-isolation
+
+    # patch sapien and mplib for robotwin
+    SAPIEN_LOCATION=$(uv pip show sapien | grep 'Location' | awk '{print $2}')/sapien
+    # Adjust some code in wrapper/urdf_loader.py
+    URDF_LOADER=$SAPIEN_LOCATION/wrapper/urdf_loader.py
+    # ----------- before -----------
+    # 667         with open(urdf_file, "r") as f:
+    # 668             urdf_string = f.read()
+    # 669 
+    # 670         if srdf_file is None:
+    # 671             srdf_file = urdf_file[:-4] + "srdf"
+    # 672         if os.path.isfile(srdf_file):
+    # 673             with open(srdf_file, "r") as f:
+    # 674                 self.ignore_pairs = self.parse_srdf(f.read())
+    # ----------- after  -----------
+    # 667         with open(urdf_file, "r", encoding="utf-8") as f:
+    # 668             urdf_string = f.read()
+    # 669 
+    # 670         if srdf_file is None:
+    # 671             srdf_file = urdf_file[:-4] + ".srdf"
+    # 672         if os.path.isfile(srdf_file):
+    # 673             with open(srdf_file, "r", encoding="utf-8") as f:
+    # 674                 self.ignore_pairs = self.parse_srdf(f.read())
+    sed -i -E 's/("r")(\))( as)/\1, encoding="utf-8") as/g' $URDF_LOADER
+
+    MPLIB_LOCATION=$(uv pip show mplib | grep 'Location' | awk '{print $2}')/mplib
+    # Adjust some code in planner.py
+    # ----------- before -----------
+    # 807             if np.linalg.norm(delta_twist) < 1e-4 or collide or not within_joint_limit:
+    # 808                 return {"status": "screw plan failed"}
+    # ----------- after  ----------- 
+    # 807             if np.linalg.norm(delta_twist) < 1e-4 or not within_joint_limit:
+    # 808                 return {"status": "screw plan failed"}
+    PLANNER=$MPLIB_LOCATION/planner.py
+    sed -i -E 's/(if np.linalg.norm\(delta_twist\) < 1e-4 )(or collide )(or not within_joint_limit:)/\1\3/g' $PLANNER
 }
 
 install_frankasim_env() {
