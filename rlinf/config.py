@@ -26,6 +26,7 @@ import yaml
 from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
 
+from rlinf.envs import SupportedEnvType
 from rlinf.scheduler.cluster import Cluster
 from rlinf.utils.placement import (
     HybridComponentPlacement,
@@ -769,8 +770,8 @@ def validate_embodied_cfg(cfg):
 
     with open_dict(cfg):
         if (
-            cfg.env.train.env_type == "maniskill"
-            or cfg.env.eval.env_type == "maniskill"
+            SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.MANISKILL
+            or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.MANISKILL
         ):
 
             def get_robot_control_mode(robot: str):
@@ -792,7 +793,8 @@ def validate_embodied_cfg(cfg):
                 cfg.actor.model.policy_setup
             )
         elif (
-            cfg.env.train.env_type == "behavior" or cfg.env.eval.env_type == "behavior"
+            SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.BEHAVIOR
+            or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.BEHAVIOR
         ):
             import omnigibson as og
 

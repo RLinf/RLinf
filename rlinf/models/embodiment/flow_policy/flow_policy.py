@@ -19,7 +19,7 @@ from typing import Any, Optional
 import torch
 import torch.nn as nn
 
-from rlinf.models.embodiment.base_policy import BasePolicy
+from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.modules.flow_actor import FlowTActor, JaxFlowTActor
 from rlinf.models.embodiment.modules.q_head import MultiQHead
 from rlinf.models.embodiment.modules.resnet_utils import ResNetEncoder
@@ -97,7 +97,7 @@ class FlowConfig:
         self.encoder_config["ckpt_path"] = ckpt_path
 
 
-class FlowPolicy(BasePolicy):
+class FlowPolicy(nn.Module, BasePolicy):
     def __init__(self, cfg: FlowConfig):
         super().__init__()
         self.cfg = cfg
@@ -259,16 +259,12 @@ class FlowPolicy(BasePolicy):
 
         return full_feature, visual_feature
 
-    def forward(self, forward_type="default_forward", **kwargs):
-        if forward_type == "sac_forward":
+    def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
+        if forward_type == ForwardType.SAC:
             return self.sac_forward(**kwargs)
-        elif forward_type == "sac_q_forward":
+        elif forward_type == ForwardType.SAC_Q:
             return self.sac_q_forward(**kwargs)
-        elif forward_type == "crossq_forward":
-            return self.crossq_forward(**kwargs)
-        elif forward_type == "crossq_q_forward":
-            return self.crossq_q_forward(**kwargs)
-        elif forward_type == "default_forward":
+        elif forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
         else:
             raise NotImplementedError
@@ -432,7 +428,7 @@ class FlowStateConfig:
             self.final_tanh = True
 
 
-class FlowStatePolicy(BasePolicy):
+class FlowStatePolicy(nn.Module, BasePolicy):
     def __init__(self, cfg: FlowStateConfig):
         super().__init__()
         self.cfg = cfg
@@ -550,16 +546,12 @@ class FlowStatePolicy(BasePolicy):
         return self.q_head(obs["states"], actions)
 
     # 10. add unified forward()
-    def forward(self, forward_type="default_forward", **kwargs):
-        if forward_type == "sac_forward":
+    def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
+        if forward_type == ForwardType.SAC:
             return self.sac_forward(**kwargs)  # originally exists
-        elif forward_type == "sac_q_forward":
+        elif forward_type == ForwardType.SAC_Q:
             return self.sac_q_forward(**kwargs)  # use get_q_values()
-        elif forward_type == "crossq_forward":
-            return self.crossq_forward(**kwargs)  # NOT IMPLEMENTED
-        elif forward_type == "crossq_q_forward":
-            return self.crossq_q_forward(**kwargs)  # NOT IMPLEMENTED
-        elif forward_type == "default_forward":
+        elif forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)  # NOT USED (NO get_feature)
         else:
             raise NotImplementedError

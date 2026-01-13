@@ -25,6 +25,7 @@ from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
 )
 from rlinf.models import get_model
+from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
@@ -127,7 +128,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
 
                 with self.amp_context:
                     losses = self.model(
-                        forward_type="sft_forward",
+                        forward_type=ForwardType.SFT,
                         data={"observation": observation, "actions": actions},
                     )
                     if isinstance(losses, (list, tuple)):
