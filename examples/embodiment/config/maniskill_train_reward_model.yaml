@@ -26,7 +26,7 @@ runner:
 # Reward model training configuration
 reward_model_training:
   # Path to collected reward data directory containing success/ and failure/ subdirs
-  # Can also be directory with .pkl files from RewardDataCollector
+  # Each subdir contains episode pkl files with frames[]["obs"]["main_images"]
   data_path: "${oc.env:EMBODIED_PATH}/data"
 
   # Training hyperparameters
@@ -49,6 +49,13 @@ reward_model_training:
 
   # Image size for the model [C, H, W]
   image_size: [3, 224, 224]
+
+  # Maximum samples per class (to balance dataset)
+  max_success: 5000
+  max_failure: 5000
+
+  # Use only last frame of each episode (True) or all frames (False)
+  use_last_frame: True
 
 # ResNet model configuration (used during training)
 reward:

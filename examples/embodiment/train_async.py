@@ -72,12 +72,27 @@ def main(cfg) -> None:
 
         demo_buffer, _ = create_rl_dataset(cfg, tokenizer=None)
 
+    # Create reward worker group if reward model is configured
+    reward_group = None
+    if cfg.get("reward", {}).get("use_reward_model", False):
+        from rlinf.workers.reward.reward_worker import RewardWorker
+
+        # Use actor placement for reward worker if reward placement not defined
+        try:
+            reward_placement = component_placement.get_strategy("reward")
+        except (KeyError, AttributeError):
+            reward_placement = actor_placement
+        reward_group = RewardWorker.create_group(cfg).launch(
+            cluster, name="RewardGroup", placement_strategy=reward_placement
+        )
+
     runner = AsyncEmbodiedRunner(
         cfg=cfg,
         actor=actor_group,
         rollout=rollout_group,
         env=env_group,
         demo_buffer=demo_buffer,
+        reward=reward_group,
     )
 
     runner.init_workers()

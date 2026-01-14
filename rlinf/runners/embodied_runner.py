@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
     from rlinf.workers.env.async_env_worker import AsyncEnvWorker
     from rlinf.workers.env.env_worker import EnvWorker
+    from rlinf.workers.reward.reward_worker import RewardWorker
     from rlinf.workers.rollout.hf.async_huggingface_worker import (
         AsyncMultiStepRolloutWorker,
     )
@@ -68,6 +69,10 @@ class EmbodiedRunner:
         self.actor_channel = Channel.create("Actor")
         if self.demo_buffer is not None:
             self.demo_data_channel = Channel.create("DemoBufferChannel")
+        
+        # Reward channel for reward model training
+        if self.reward is not None:
+            self.reward_channel = Channel.create("RewardChannel")
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -88,6 +93,10 @@ class EmbodiedRunner:
         self.actor.init_worker().wait()
         self.rollout.init_worker().wait()
         self.env.init_worker().wait()
+        
+        # Initialize reward worker if configured
+        if self.reward is not None:
+            self.reward.init_worker().wait()
 
         resume_dir = self.cfg.runner.get("resume_dir", None)
         if resume_dir is None:
@@ -99,6 +108,12 @@ class EmbodiedRunner:
         )
         self.actor.load_checkpoint(actor_checkpoint_path).wait()
         self.global_step = int(resume_dir.split("global_step_")[-1])
+        
+        # Load reward model checkpoint if exists
+        if self.reward is not None:
+            reward_checkpoint_path = os.path.join(resume_dir, "reward")
+            if os.path.exists(reward_checkpoint_path):
+                self.reward.load_checkpoint(reward_checkpoint_path).wait()
 
     def send_demo_buffer(self):
         if self.demo_buffer is not None:
@@ -171,6 +186,12 @@ class EmbodiedRunner:
                 with self.timer("actor_training"):
                     actor_training_metrics = self.actor.run_training().wait()
 
+                # reward model training (if enabled)
+                reward_training_metrics = [{}]
+                if self.reward is not None and self.cfg.get("reward_training", {}).get("enabled", False):
+                    with self.timer("reward_training"):
+                        reward_training_metrics = self.reward.run_training().wait()
+
                 self.global_step += 1
 
                 run_val, save_model, is_train_end = check_progress(
@@ -204,20 +225,26 @@ class EmbodiedRunner:
                 f"rollout/{k}": v for k, v in actor_rollout_metrics[0].items()
             }
             env_metrics = {f"env/{k}": v for k, v in env_metrics.items()}
-            time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
             training_metrics = {
                 f"train/{k}": v for k, v in actor_training_metrics[0].items()
             }
+            reward_metrics = {
+                f"reward/{k}": v for k, v in reward_training_metrics[0].items()
+            } if reward_training_metrics and reward_training_metrics[0] else {}
+            
             self.metric_logger.log(env_metrics, _step)
             self.metric_logger.log(rollout_metrics, _step)
             self.metric_logger.log(time_metrics, _step)
             self.metric_logger.log(training_metrics, _step)
+            if reward_metrics:
+                self.metric_logger.log(reward_metrics, _step)
 
             logging_metrics = time_metrics
             logging_metrics.update(eval_metrics)
             logging_metrics.update(env_metrics)
             logging_metrics.update(rollout_metrics)
             logging_metrics.update(training_metrics)
+            logging_metrics.update(reward_metrics)
 
             global_pbar.set_postfix(logging_metrics, refresh=False)
             global_pbar.update(1)
@@ -233,6 +260,12 @@ class EmbodiedRunner:
         actor_save_path = os.path.join(base_output_dir, "actor")
         os.makedirs(actor_save_path, exist_ok=True)
         self.actor.save_checkpoint(actor_save_path, self.global_step).wait()
+        
+        # Save reward model checkpoint if configured
+        if self.reward is not None and self.cfg.get("reward_training", {}).get("enabled", False):
+            reward_save_path = os.path.join(base_output_dir, "reward")
+            os.makedirs(reward_save_path, exist_ok=True)
+            self.reward.save_checkpoint(reward_save_path, self.global_step).wait()
 
     def set_max_steps(self):
         self.num_steps_per_epoch = 1

@@ -93,12 +93,11 @@ env:
     use_fixed_reset_state_ids: False
     max_episode_steps: 50
     max_steps_per_rollout_epoch: 50
-    # Smart lazy rendering: always render on success, otherwise use probability
-    # This skips most failure frames while keeping all success samples
-    render_probability: 0.02  # Render 2% of non-success frames for failure samples
-    # Use state+rgb mode: state for policy, rgb for data collection
+    # Render every frame for data collection (required for RGB images)
+    reward_render_mode: "always"  # "always" to render every frame
+    # Use state+rgb mode: state for policy (42-dim), rgb for data collection
     init_params:
-      obs_mode: "state"        # Same as mlp_ppo (policy uses state)
+      obs_mode: "state"        # Policy uses state (42-dim)
       render_mode: "rgb_array" # Enable RGB rendering for data collection
       sensor_configs:
         shader_pack: "default"
@@ -146,7 +145,8 @@ actor:
   model:
     model_path: ""
     model_type: "mlp_policy"
-    # Use default obs_dim/action_dim from mlp_policy (same as mlp_ppo)
+    obs_dim: 42  # Fixed: state dimension for PickCube-v1
+    action_dim: 8
 
   optim:
     lr: 3.0e-4

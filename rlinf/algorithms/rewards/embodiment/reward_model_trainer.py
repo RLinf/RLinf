@@ -36,9 +36,10 @@ logger = logging.getLogger(__name__)
 class RewardDataset(Dataset):
     """Dataset for reward model training.
 
-    Supports two data formats:
+    Supports data formats:
     1. PNG images in success/ and failure/ subdirectories
-    2. Pickle files created by RewardDataCollector
+    2. Episode pkl files in success/ and failure/ subdirectories
+       Each pkl contains frames with obs["main_images"]
     """
 
     def __init__(
@@ -46,19 +47,27 @@ class RewardDataset(Dataset):
         data_path: str,
         image_size: tuple[int, int] = (224, 224),
         augment: bool = True,
+        max_success: int = 5000,
+        max_failure: int = 5000,
+        use_last_frame: bool = True,
     ):
         """Initialize the dataset.
 
         Args:
-            data_path: Path to data directory containing:
-                - success/ and failure/ subdirs with PNG images, OR
-                - .pkl files from RewardDataCollector
+            data_path: Path to data directory containing success/ and failure/ subdirs.
             image_size: Target image size (H, W).
             augment: Whether to apply data augmentation.
+            max_success: Maximum number of success samples.
+            max_failure: Maximum number of failure samples.
+            use_last_frame: If True, only use last frame of each episode.
+                           If False, use all frames with per-frame labels.
         """
         self.image_size = image_size
         self.augment = augment
-        self.samples: list[tuple[str, int]] = []  # (image_path, label) for PNG mode
+        self.max_success = max_success
+        self.max_failure = max_failure
+        self.use_last_frame = use_last_frame
+        self.samples: list[tuple[Any, int]] = []  # (image_data or path, label)
         self._is_png_mode = False
 
         self._load_data(data_path)
@@ -68,54 +77,87 @@ class RewardDataset(Dataset):
         if not os.path.isdir(data_path):
             raise ValueError(f"Invalid data path: {data_path}")
 
-        # Check for PNG mode (success/ and failure/ subdirectories)
         success_dir = os.path.join(data_path, "success")
         failure_dir = os.path.join(data_path, "failure")
 
-        if os.path.isdir(success_dir) or os.path.isdir(failure_dir):
-            self._is_png_mode = True
-            self._load_png_dirs(data_path)
-        else:
-            # Fallback to pickle mode
-            self._is_png_mode = False
-            for filename in os.listdir(data_path):
-                if filename.endswith(".pkl"):
-                    self._load_pickle(os.path.join(data_path, filename))
+        success_samples = []
+        failure_samples = []
+
+        # Load success samples
+        if os.path.isdir(success_dir):
+            success_samples = self._load_from_dir(success_dir, label=1)
+            logger.info(f"Found {len(success_samples)} success samples")
+
+        # Load failure samples
+        if os.path.isdir(failure_dir):
+            failure_samples = self._load_from_dir(failure_dir, label=0)
+            logger.info(f"Found {len(failure_samples)} failure samples")
+
+        # Limit to max samples
+        import random
+        if len(success_samples) > self.max_success:
+            success_samples = random.sample(success_samples, self.max_success)
+            logger.info(f"Limited success samples to {self.max_success}")
+        if len(failure_samples) > self.max_failure:
+            failure_samples = random.sample(failure_samples, self.max_failure)
+            logger.info(f"Limited failure samples to {self.max_failure}")
+
+        self.samples = success_samples + failure_samples
+        random.shuffle(self.samples)
 
         logger.info(
-            f"Loaded {len(self.samples)} samples (PNG mode: {self._is_png_mode})"
+            f"Loaded {len(self.samples)} samples "
+            f"({len(success_samples)} success, {len(failure_samples)} failure)"
         )
 
-    def _load_png_dirs(self, data_path: str) -> None:
-        """Load PNG images from success/ and failure/ directories."""
+    def _load_from_dir(self, dir_path: str, label: int) -> list[tuple[Any, int]]:
+        """Load samples from a directory (PNG or pkl files)."""
         from glob import glob
+        import numpy as np
 
-        # Load success samples (label=1)
-        success_dir = os.path.join(data_path, "success")
-        if os.path.isdir(success_dir):
-            success_files = glob(os.path.join(success_dir, "*.png"))
-            self.samples.extend([(f, 1) for f in success_files])
-            logger.info(f"Found {len(success_files)} success samples")
+        samples = []
 
-        # Load failure samples (label=0)
-        failure_dir = os.path.join(data_path, "failure")
-        if os.path.isdir(failure_dir):
-            failure_files = glob(os.path.join(failure_dir, "*.png"))
-            self.samples.extend([(f, 0) for f in failure_files])
-            logger.info(f"Found {len(failure_files)} failure samples")
+        # Check for PNG files
+        png_files = glob(os.path.join(dir_path, "*.png"))
+        if png_files:
+            self._is_png_mode = True
+            samples.extend([(f, label) for f in png_files])
+            return samples
 
-    def _load_pickle(self, path: str) -> None:
-        """Load samples from a pickle file."""
-        with open(path, "rb") as f:
-            data = pickle.load(f)
-        # Convert to (path, label) format for consistency
-        for sample in data["samples"]:
-            self.samples.append((sample, -1))  # -1 means inline data
+        # Load pkl files (episode format)
+        pkl_files = sorted(glob(os.path.join(dir_path, "*.pkl")))
+        for pkl_path in pkl_files:
+            with open(pkl_path, "rb") as f:
+                episode = pickle.load(f)
+
+            frames = episode.get("frames", [])
+            if not frames:
+                continue
+
+            if self.use_last_frame:
+                # Only use last frame with episode-level label
+                last_frame = frames[-1]
+                if "main_images" in last_frame.get("obs", {}):
+                    img = last_frame["obs"]["main_images"]
+                    if isinstance(img, np.ndarray):
+                        samples.append((img.copy(), label))
+            else:
+                # Use all frames with per-frame labels
+                for frame in frames:
+                    if "main_images" in frame.get("obs", {}):
+                        img = frame["obs"]["main_images"]
+                        frame_label = 1 if frame.get("success", False) else 0
+                        if isinstance(img, np.ndarray):
+                            samples.append((img.copy(), frame_label))
+
+        return samples
 
     def __len__(self) -> int:
         return len(self.samples)
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        import numpy as np
+
         item, label = self.samples[idx]
 
         if self._is_png_mode:
@@ -124,12 +166,31 @@ class RewardDataset(Dataset):
 
             image = Image.open(item).convert("RGB")
             image = image.resize(self.image_size)
-            import numpy as np
-
             image = torch.from_numpy(np.array(image)).float() / 255.0
             image = image.permute(2, 0, 1)  # [H, W, C] -> [C, H, W]
+        elif isinstance(item, np.ndarray):
+            # Numpy array from pkl (main_images format)
+            image = torch.from_numpy(item)
+
+            # Handle channel ordering: ensure [C, H, W]
+            if image.dim() == 3:
+                if image.shape[-1] in [1, 3, 4]:  # [H, W, C]
+                    image = image.permute(2, 0, 1)
+
+            # Normalize to [0, 1]
+            if image.dtype == torch.uint8:
+                image = image.float() / 255.0
+
+            # Resize if needed
+            if image.shape[1:] != self.image_size:
+                image = F.interpolate(
+                    image.unsqueeze(0),
+                    size=self.image_size,
+                    mode="bilinear",
+                    align_corners=False,
+                ).squeeze(0)
         else:
-            # Pickle mode - item is the sample dict
+            # Legacy pickle mode - item is the sample dict
             sample = item
             image = torch.from_numpy(sample["image"])
             label = sample["label"]
@@ -249,10 +310,17 @@ class RewardModelTrainer:
             Tuple of (train_loader, val_loader).
         """
         image_size = self.cfg.get("image_size", [3, 224, 224])
+        max_success = self.cfg.get("max_success", 5000)
+        max_failure = self.cfg.get("max_failure", 5000)
+        use_last_frame = self.cfg.get("use_last_frame", True)
+
         dataset = RewardDataset(
             data_path,
             image_size=(image_size[1], image_size[2]),
             augment=True,
+            max_success=max_success,
+            max_failure=max_failure,
+            use_last_frame=use_last_frame,
         )
 
         # Split into train/val

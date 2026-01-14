@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from collections import defaultdict
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 import torch
@@ -23,8 +24,11 @@ from rlinf.data.io_struct import EnvOutput
 from rlinf.envs import get_env_cls
 from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.env_manager import EnvManager
+from rlinf.envs.wrappers import DataCollectorWrapper
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.placement import HybridComponentPlacement
+
+logger = logging.getLogger(__name__)
 
 
 class EnvWorker(Worker):
@@ -44,6 +48,13 @@ class EnvWorker(Worker):
         self.last_terminations_list = []
         self.last_truncations_list = []
         self.last_intervened_info_list = []
+
+        # Data collector for reward model training
+        self.data_collector: Optional[DataCollectorWrapper] = None
+        # Episode buffers for each parallel env (to collect full trajectories)
+        self._episode_buffers: list[list[dict]] = []
+        self._episode_grasp_flags: list[bool] = []
+        self._episode_success_flags: list[bool] = []
 
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
         assert (
@@ -108,6 +119,26 @@ class EnvWorker(Worker):
                         enable_offload=enable_offload,
                     )
                 )
+
+        # Initialize data collector if enabled
+        data_collection_cfg = self.cfg.get("reward_data_collection", {})
+        if data_collection_cfg.get("enabled", False):
+            self.data_collector = DataCollectorWrapper(
+                env=None,  # Not wrapping env directly, using as standalone collector
+                save_dir=data_collection_cfg.get("save_dir", "./reward_data"),
+                max_frames=self.cfg.env.train.get("max_episode_steps", 50),
+                target_episodes=data_collection_cfg.get("target_success", 5000)
+                + data_collection_cfg.get("target_failure", 5000),
+            )
+            # Initialize episode buffers for each parallel environment
+            total_envs = self.train_num_envs_per_stage * self.stage_num
+            self._episode_buffers = [[] for _ in range(total_envs)]
+            self._episode_grasp_flags = [False] * total_envs
+            self._episode_success_flags = [False] * total_envs
+            logger.info(
+                f"DataCollector initialized. Save dir: {self.data_collector.save_dir}, "
+                f"Tracking {total_envs} parallel envs"
+            )
 
         if not self.only_eval:
             self._init_env()
@@ -187,6 +218,62 @@ class EnvWorker(Worker):
             # Direct success (no auto_reset happened this step)
             normalized_infos["success"] = infos["success"]
 
+        # Data collection: collect every frame for each parallel env
+        if self.data_collector is not None:
+            batch_size = extracted_obs[list(extracted_obs.keys())[0]].shape[0]
+            env_offset = stage_id * self.train_num_envs_per_stage
+            
+            for env_idx in range(batch_size):
+                global_idx = env_offset + env_idx
+                
+                # Get obs for this env
+                obs_to_save = {
+                    k: v[env_idx].cpu().numpy() if isinstance(v, torch.Tensor) else v
+                    for k, v in extracted_obs.items()
+                }
+                
+                # Get success/grasp status for this step
+                step_success = False
+                if "success" in normalized_infos:
+                    success_val = normalized_infos["success"]
+                    if isinstance(success_val, torch.Tensor):
+                        step_success = bool(success_val[env_idx].item())
+                    else:
+                        step_success = bool(success_val)
+                
+                step_grasp = False
+                if "is_grasped" in infos:
+                    grasp_val = infos["is_grasped"]
+                    if isinstance(grasp_val, torch.Tensor):
+                        step_grasp = bool(grasp_val[env_idx].item())
+                
+                # Update episode-level flags
+                if step_success:
+                    self._episode_success_flags[global_idx] = True
+                if step_grasp:
+                    self._episode_grasp_flags[global_idx] = True
+                
+                # Build frame data
+                frame = {
+                    "obs": obs_to_save,
+                    "action": chunk_actions[env_idx].cpu().numpy() if isinstance(chunk_actions, torch.Tensor) else chunk_actions[env_idx],
+                    "reward": float(chunk_rewards[env_idx, -1]) if chunk_rewards is not None else 0.0,
+                    "terminated": bool(chunk_terminations[env_idx, -1]),
+                    "truncated": bool(chunk_truncations[env_idx, -1]),
+                    "done": bool(chunk_dones[env_idx, -1]),
+                    "grasp": step_grasp,
+                    "success": step_success,
+                }
+                self._episode_buffers[global_idx].append(frame)
+                
+                # If episode done, save full trajectory and reset buffer
+                if chunk_dones[env_idx, -1]:
+                    self._save_episode_trajectory(global_idx)
+                    # Reset buffer for this env
+                    self._episode_buffers[global_idx] = []
+                    self._episode_grasp_flags[global_idx] = False
+                    self._episode_success_flags[global_idx] = False
+
         env_output = EnvOutput(
             obs=extracted_obs,
             final_obs=infos["final_observation"]
@@ -201,6 +288,38 @@ class EnvWorker(Worker):
             infos=normalized_infos,  # Pass normalized infos with success at top level
         )
         return env_output, env_info
+
+    def _save_episode_trajectory(self, env_idx: int) -> None:
+        """Save full episode trajectory to pkl file.
+        
+        Args:
+            env_idx: Index of the parallel environment.
+        """
+        if self.data_collector is None:
+            return
+        
+        frames = self._episode_buffers[env_idx]
+        if not frames:
+            return
+        
+        episode_success = self._episode_success_flags[env_idx]
+        episode_grasp = self._episode_grasp_flags[env_idx]
+        
+        # Use DataCollectorWrapper's internal counter and save logic
+        self.data_collector._current_episode = frames
+        self.data_collector._episode_success = episode_success
+        self.data_collector._episode_grasp = episode_grasp
+        self.data_collector._save_episode()
+        
+        # Log periodically
+        if self.data_collector.episode_count % 50 == 0:
+            logger.info(
+                f"Saved episode {self.data_collector.episode_count}: "
+                f"{'success' if episode_success else 'failure'}, "
+                f"frames={len(frames)}, grasp={episode_grasp}. "
+                f"Total: {self.data_collector.success_episode_count} success, "
+                f"{self.data_collector.failure_episode_count} failure"
+            )
 
     def env_evaluate_step(
         self, raw_actions: torch.Tensor, stage_id: int
