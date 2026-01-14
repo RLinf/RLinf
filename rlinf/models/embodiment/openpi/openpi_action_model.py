@@ -761,10 +761,10 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             entropy = self.gaussian_entropy(x_t_std)
             chains_log_probs.append(log_probs)
             chains_entropy.append(entropy)
-            if self.use_vlm_value:
-                chains_values.append(self.get_value_from_vlm(prefix_output))
-            else:
+            if not self.use_vlm_value:
                 chains_values.append(value_t)
+        if self.use_vlm_value:
+            chains_values.append(self.get_value_from_vlm(prefix_output))
         chains_log_probs = torch.stack(chains_log_probs, dim=1)
         chains_values = torch.stack(chains_values, dim=1)
 
