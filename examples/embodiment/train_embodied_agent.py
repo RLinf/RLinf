@@ -38,48 +38,56 @@ def main(cfg) -> None:
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = HybridComponentPlacement(cfg, cluster)
 
-    # Create actor worker group
-    actor_placement = component_placement.get_strategy("actor")
-
-    if cfg.algorithm.loss_type == "embodied_sac":
-        from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
-
-        actor_worker_cls = EmbodiedSACFSDPPolicy
-    else:
-        from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
-
-        actor_worker_cls = EmbodiedFSDPActor
-    actor_group = actor_worker_cls.create_group(cfg).launch(
-        cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
-    )
-    # Create rollout worker group
-    rollout_placement = component_placement.get_strategy("rollout")
-    rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
-        cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
-    )
-
-    # Create env worker group
-    env_placement = component_placement.get_strategy("env")
-    env_group = EnvWorker.create_group(cfg).launch(
-        cluster, name=cfg.env.group_name, placement_strategy=env_placement
-    )
-
+    # Check if we're in reward-training-only mode
+    reward_training_only = cfg.get("reward_training", {}).get("only", False)
+    
+    actor_group = None
+    rollout_group = None
+    env_group = None
     demo_buffer = None
-    if cfg.get("data", None):
-        from rlinf.data.datasets import create_rl_dataset
+    reward_group = None
+    
+    if not reward_training_only:
+        # Create actor worker group
+        actor_placement = component_placement.get_strategy("actor")
 
-        demo_buffer, _ = create_rl_dataset(cfg, tokenizer=None)
+        if cfg.algorithm.loss_type == "embodied_sac":
+            from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
+
+            actor_worker_cls = EmbodiedSACFSDPPolicy
+        else:
+            from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
+
+            actor_worker_cls = EmbodiedFSDPActor
+        actor_group = actor_worker_cls.create_group(cfg).launch(
+            cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
+        )
+        # Create rollout worker group
+        rollout_placement = component_placement.get_strategy("rollout")
+        rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
+            cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
+        )
+
+        # Create env worker group
+        env_placement = component_placement.get_strategy("env")
+        env_group = EnvWorker.create_group(cfg).launch(
+            cluster, name=cfg.env.group_name, placement_strategy=env_placement
+        )
+
+        if cfg.get("data", None):
+            from rlinf.data.datasets import create_rl_dataset
+
+            demo_buffer, _ = create_rl_dataset(cfg, tokenizer=None)
 
     # Create reward worker group if reward model is configured
-    reward_group = None
-    if cfg.get("reward", {}).get("use_reward_model", False):
+    if cfg.get("reward", {}).get("use_reward_model", False) or reward_training_only:
         from rlinf.workers.reward.reward_worker import RewardWorker
 
         # Use actor placement for reward worker if reward placement not defined
         try:
             reward_placement = component_placement.get_strategy("reward")
         except (KeyError, AttributeError):
-            reward_placement = actor_placement
+            reward_placement = component_placement.get_strategy("actor")
         reward_group = RewardWorker.create_group(cfg).launch(
             cluster, name="RewardGroup", placement_strategy=reward_placement
         )

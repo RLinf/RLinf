@@ -16,7 +16,7 @@
 
 import logging
 import os
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import numpy as np
 import torch
@@ -542,12 +542,12 @@ class RewardWorker(FSDPModelManager, Worker):
         
         return self.reward_manager.compute_rewards(observations, task_descriptions)
 
-    def save_checkpoint(self, save_path: str, step: int = 0):
+    def save_checkpoint(self, save_path: str, step: Union[int, str] = 0):
         """Save reward model checkpoint.
         
         Args:
             save_path: Path to save the checkpoint.
-            step: Current training step.
+            step: Current training step or identifier (e.g., "best").
         """
         if self.reward_manager is None or self.reward_manager.model is None:
             logger.warning("No reward model to save")
@@ -571,8 +571,9 @@ class RewardWorker(FSDPModelManager, Worker):
         if hasattr(self, 'lr_scheduler'):
             checkpoint["scheduler_state_dict"] = self.lr_scheduler.state_dict()
         
-        torch.save(checkpoint, os.path.join(save_path, f"reward_model_step_{step}.pt"))
-        logger.info(f"Saved reward model checkpoint to {save_path}")
+        filename = f"reward_model_{step}.pt" if isinstance(step, str) else f"reward_model_step_{step}.pt"
+        torch.save(checkpoint, os.path.join(save_path, filename))
+        logger.info(f"Saved reward model checkpoint to {save_path}/{filename}")
 
     def load_checkpoint(self, load_path: str):
         """Load reward model checkpoint.

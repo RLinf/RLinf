@@ -552,9 +552,9 @@ class FSDPActor(FSDPModelManager, Worker):
 
             mbs_metrics_data.update(
                 {
-                    "final_loss": loss.detach(),
-                    "entropy_loss": entropy_loss.detach(),
-                    "kl_loss": kl_loss.detach(),
+                    "actor/final_loss": loss.detach(),
+                    "actor/entropy_loss": entropy_loss.detach(),
+                    "actor/kl_loss": kl_loss.detach(),
                 }
             )
 

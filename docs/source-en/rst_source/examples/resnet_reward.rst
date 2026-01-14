@@ -125,34 +125,28 @@ Each pkl file contains::
 Stage 2: Train ResNet Reward Model
 ----------------------------------
 
-Train the ResNet binary classifier.
+Train the ResNet binary classifier using the integrated ``RewardWorker``.
 
 .. code-block:: bash
 
-    bash examples/embodiment/run_reward_training.sh
+    ./run_embodiment.sh maniskill_train_resnet_reward
 
-Or directly:
-
-.. code-block:: bash
-
-    cd examples/embodiment
-    python train_reward_model.py
-
-Configuration (``maniskill_train_reward_model.yaml``)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Configuration (``maniskill_train_resnet_reward.yaml``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: yaml
 
-    reward_model_training:
+    reward_training:
+      enabled: True
+      only: True  # Skip env interaction, train reward model only
       data_path: "${oc.env:EMBODIED_PATH}/data"
       epochs: 100
-      batch_size: 64
+      micro_batch_size: 64
+      global_batch_size: 64
       lr: 1.0e-4
-      max_success: 5000
-      max_failure: 5000
-      use_last_frame: True  # Use last frame of each episode
+      save_dir: "${oc.env:EMBODIED_PATH}/../../logs/reward_checkpoints"
 
-The trained model will be saved to ``logs/reward_checkpoints/best_model.pt``.
+The trained model will be saved to ``logs/reward_checkpoints/reward_model_best.pt``.
 
 Stage 3: Policy Training with ResNet Reward
 -------------------------------------------

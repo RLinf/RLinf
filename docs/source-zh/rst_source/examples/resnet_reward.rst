@@ -125,34 +125,28 @@ ResNet reward model 是一个基于图像的二分类器，用于预测机器人
 阶段 2: 训练 ResNet Reward Model
 --------------------------------
 
-训练 ResNet 二分类器。
+使用集成的 ``RewardWorker`` 训练 ResNet 二分类器。
 
 .. code-block:: bash
 
-    bash examples/embodiment/run_reward_training.sh
+    ./run_embodiment.sh maniskill_train_resnet_reward
 
-或直接运行：
-
-.. code-block:: bash
-
-    cd examples/embodiment
-    python train_reward_model.py
-
-配置 (``maniskill_train_reward_model.yaml``)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+配置 (``maniskill_train_resnet_reward.yaml``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: yaml
 
-    reward_model_training:
+    reward_training:
+      enabled: True
+      only: True  # 跳过环境交互，仅训练 reward model
       data_path: "${oc.env:EMBODIED_PATH}/data"
       epochs: 100
-      batch_size: 64
+      micro_batch_size: 64
+      global_batch_size: 64
       lr: 1.0e-4
-      max_success: 5000
-      max_failure: 5000
-      use_last_frame: True  # 使用每个 episode 的最后一帧
+      save_dir: "${oc.env:EMBODIED_PATH}/../../logs/reward_checkpoints"
 
-训练好的模型将保存到 ``logs/reward_checkpoints/best_model.pt``。
+训练好的模型将保存到 ``logs/reward_checkpoints/reward_model_best.pt``。
 
 阶段 3: 使用 ResNet Reward 训练策略
 -----------------------------------

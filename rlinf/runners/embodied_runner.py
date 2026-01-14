@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 from typing import TYPE_CHECKING, Optional, Union
+
+logger = logging.getLogger(__name__)
 
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
@@ -89,7 +92,17 @@ class EmbodiedRunner:
         self.metric_logger = MetricLogger(cfg)
 
     def init_workers(self):
-        # create worker in order to decrease the maximum memory usage
+        # Check if we're in reward-training-only mode
+        reward_training_only = self.cfg.get("reward_training", {}).get("only", False)
+        
+        if reward_training_only:
+            # Only initialize reward worker for reward model training
+            if self.reward is not None:
+                self.reward.init_worker().wait()
+                logger.info("Initialized reward worker for training-only mode")
+            return
+        
+        # Normal mode: create worker in order to decrease the maximum memory usage
         self.actor.init_worker().wait()
         self.rollout.init_worker().wait()
         self.env.init_worker().wait()
@@ -185,6 +198,12 @@ class EmbodiedRunner:
         return eval_metrics
 
     def run(self):
+        # Check if we're in reward-model-training-only mode
+        reward_training_only = self.cfg.get("reward_training", {}).get("only", False)
+        
+        if reward_training_only:
+            return self._run_reward_training_only()
+        
         start_step = self.global_step
         global_pbar = tqdm(
             initial=start_step,
@@ -295,6 +314,71 @@ class EmbodiedRunner:
             global_pbar.update(1)
 
         self.metric_logger.finish()
+
+    def _run_reward_training_only(self):
+        """Run reward model training only, without environment interaction.
+        
+        This mode is for training the reward model from pre-collected data.
+        """
+        if self.reward is None:
+            raise RuntimeError("Reward worker not initialized for reward training")
+        
+        training_cfg = self.cfg.get("reward_training", {})
+        epochs = training_cfg.get("epochs", 100)
+        save_interval = training_cfg.get("save_interval", 10)
+        save_dir = training_cfg.get("save_dir", "./reward_checkpoints")
+        
+        os.makedirs(save_dir, exist_ok=True)
+        
+        logger.info(f"Starting reward model training for {epochs} epochs")
+        
+        best_acc = 0.0
+        global_pbar = tqdm(
+            total=epochs,
+            desc="Training Reward Model",
+            ncols=100,
+        )
+        
+        for epoch in range(epochs):
+            # Run one training epoch (internally iterates over full dataset)
+            metrics = self.reward.run_training().wait()
+            
+            # Handle list return from worker group
+            if isinstance(metrics, list):
+                metrics = metrics[0] if metrics else {}
+            
+            loss = metrics.get("loss", 0.0)
+            acc = metrics.get("accuracy", 0.0)
+            lr = metrics.get("learning_rate", 0.0)
+            
+            # Log metrics
+            self.metric_logger.log({
+                "reward/loss": loss,
+                "reward/accuracy": acc,
+                "reward/learning_rate": lr,
+            }, epoch)
+            
+            global_pbar.set_postfix({
+                "loss": f"{loss:.4f}",
+                "acc": f"{acc:.4f}",
+            })
+            global_pbar.update(1)
+            
+            # Save best model
+            if acc > best_acc:
+                best_acc = acc
+                self.reward.save_checkpoint(save_dir, "best").wait()
+                logger.info(f"New best model saved: acc={acc:.4f}")
+            
+            # Periodic checkpoint
+            if (epoch + 1) % save_interval == 0:
+                ckpt_dir = os.path.join(save_dir, f"epoch_{epoch + 1}")
+                os.makedirs(ckpt_dir, exist_ok=True)
+                self.reward.save_checkpoint(ckpt_dir, epoch).wait()
+        
+        global_pbar.close()
+        self.metric_logger.finish()
+        logger.info(f"Reward model training completed. Best accuracy: {best_acc:.4f}")
 
     def _save_checkpoint(self):
         base_output_dir = os.path.join(
