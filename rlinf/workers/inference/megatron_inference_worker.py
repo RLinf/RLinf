@@ -21,7 +21,7 @@ from rlinf.utils.utils import retrieve_model_state_dict_in_cpu
 from ..actor.megatron_actor_worker import MegatronActor
 from ..critic.megatron_critic_worker import MegatronCritic
 
-def make_megatron_inference(base_class):
+def make_megatron_inference(base_class, trainer_role):
     class MegatronInference(base_class):
         """The class for running inference using Megatron.
 
@@ -30,7 +30,7 @@ def make_megatron_inference(base_class):
         """
 
         def __init__(
-            self, cfg: DictConfig, placement: ComponentPlacement, train_role: str = ""
+                self, cfg: DictConfig, placement: ComponentPlacement,
         ):
             """Initialize the Megatron inference task.
 
@@ -39,17 +39,17 @@ def make_megatron_inference(base_class):
             """
 
             self.cfg = cfg
-            self.train_role = train_role if len(train_role) > 0 else 'actor'
-            self.train_role_cfg = getattr(self.cfg, self.train_role)
-            self.role = '_'.join([train_role, "inference"])
+            self.trainer_role = trainer_role if len(trainer_role) > 0 else 'actor'
+            self.trainer_role_cfg = getattr(self.cfg, self.trainer_role)
+            self.role = '_'.join([trainer_role, "inference"])
             self.role_cfg = getattr(self.cfg, self.role)
 
             self._build_inference_cfg()
-            super().__init__(self.cfg, placement, role=train_role)
+            super().__init__(self.cfg, placement, role=trainer_role)
             self._iteration = 0
 
             # Actor information
-            self._train_group_name = self.train_role_cfg.group_name
+            self._train_group_name = self.trainer_role_cfg.group_name
             self._weight_sync_train_src_rank = self._rank
             self.offload_weight = False
             self.offload_optimizer = False
@@ -63,7 +63,7 @@ def make_megatron_inference(base_class):
             if (
                 self.cfg.algorithm.kl_beta > 0
                 or self.cfg.algorithm.get("reinpp_kl_beta", 0) > 0
-            ) and self.train_role_cfg.get("combine_reference_model", True):
+            ) and self.trainer_role_cfg.get("combine_reference_model", True):
                 ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model[0])
             self.ref_policy_state_dict = ref_policy_state_dict
 
@@ -75,7 +75,7 @@ def make_megatron_inference(base_class):
         def _build_inference_cfg(self):
             """Build the configuration for inference based on the actor config."""
             inference_cfg = self.role_cfg
-            train_cfg = self.train_role_cfg
+            train_cfg = self.trainer_role_cfg
             merged_cfg = copy.deepcopy(train_cfg)
             with open_dict(merged_cfg):
                 # Override with inference configs
@@ -112,5 +112,5 @@ def make_megatron_inference(base_class):
 
     return MegatronInference
 
-MegatronInference = make_megatron_inference(MegatronActor)
-MegatronCriticInference = make_megatron_inference(MegatronCritic)
+MegatronInference = make_megatron_inference(MegatronActor, 'actor')
+MegatronCriticInference = make_megatron_inference(MegatronCritic, 'critic')
