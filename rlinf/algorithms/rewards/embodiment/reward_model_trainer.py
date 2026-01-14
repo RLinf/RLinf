@@ -74,6 +74,8 @@ class RewardDataset(Dataset):
 
     def _load_data(self, data_path: str) -> None:
         """Load data from path."""
+        import random
+        
         if not os.path.isdir(data_path):
             raise ValueError(f"Invalid data path: {data_path}")
 
@@ -83,50 +85,54 @@ class RewardDataset(Dataset):
         success_samples = []
         failure_samples = []
 
-        # Load success samples
+        # Load success samples (with file-level sampling)
         if os.path.isdir(success_dir):
-            success_samples = self._load_from_dir(success_dir, label=1)
-            logger.info(f"Found {len(success_samples)} success samples")
+            success_samples = self._load_from_dir(success_dir, label=1, max_samples=self.max_success)
+            logger.info(f"Loaded {len(success_samples)} success samples")
 
-        # Load failure samples
+        # Load failure samples (with file-level sampling)
         if os.path.isdir(failure_dir):
-            failure_samples = self._load_from_dir(failure_dir, label=0)
-            logger.info(f"Found {len(failure_samples)} failure samples")
-
-        # Limit to max samples
-        import random
-        if len(success_samples) > self.max_success:
-            success_samples = random.sample(success_samples, self.max_success)
-            logger.info(f"Limited success samples to {self.max_success}")
-        if len(failure_samples) > self.max_failure:
-            failure_samples = random.sample(failure_samples, self.max_failure)
-            logger.info(f"Limited failure samples to {self.max_failure}")
+            failure_samples = self._load_from_dir(failure_dir, label=0, max_samples=self.max_failure)
+            logger.info(f"Loaded {len(failure_samples)} failure samples")
 
         self.samples = success_samples + failure_samples
         random.shuffle(self.samples)
 
         logger.info(
-            f"Loaded {len(self.samples)} samples "
+            f"Total: {len(self.samples)} samples "
             f"({len(success_samples)} success, {len(failure_samples)} failure)"
         )
 
-    def _load_from_dir(self, dir_path: str, label: int) -> list[tuple[Any, int]]:
+    def _load_from_dir(self, dir_path: str, label: int, max_samples: int = None) -> list[tuple[Any, int]]:
         """Load samples from a directory (PNG or pkl files)."""
         from glob import glob
         import numpy as np
+        import random
 
         samples = []
+        label_name = "success" if label == 1 else "failure"
 
         # Check for PNG files
         png_files = glob(os.path.join(dir_path, "*.png"))
         if png_files:
             self._is_png_mode = True
+            # Sample files first if too many
+            if max_samples and len(png_files) > max_samples:
+                png_files = random.sample(png_files, max_samples)
+                logger.info(f"Sampled {max_samples} from {len(png_files)} {label_name} PNG files")
             samples.extend([(f, label) for f in png_files])
             return samples
 
         # Load pkl files (episode format)
         pkl_files = sorted(glob(os.path.join(dir_path, "*.pkl")))
-        for pkl_path in pkl_files:
+        total_files = len(pkl_files)
+        
+        # Sample files first if too many (avoid loading all)
+        if max_samples and total_files > max_samples:
+            pkl_files = random.sample(pkl_files, max_samples)
+            logger.info(f"Sampled {max_samples} from {total_files} {label_name} episode files")
+        
+        for pkl_path in tqdm(pkl_files, desc=f"Loading {label_name} episodes", unit="file"):
             with open(pkl_path, "rb") as f:
                 episode = pickle.load(f)
 
@@ -135,12 +141,13 @@ class RewardDataset(Dataset):
                 continue
 
             if self.use_last_frame:
-                # Only use last frame with episode-level label
+                # Only use last frame with frame-level success label
                 last_frame = frames[-1]
                 if "main_images" in last_frame.get("obs", {}):
                     img = last_frame["obs"]["main_images"]
+                    frame_label = 1 if last_frame.get("success", False) else 0
                     if isinstance(img, np.ndarray):
-                        samples.append((img.copy(), label))
+                        samples.append((img.copy(), frame_label))
             else:
                 # Use all frames with per-frame labels
                 for frame in frames:

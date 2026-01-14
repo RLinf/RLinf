@@ -82,12 +82,12 @@ class RewardWorker(FSDPModelManager, Worker):
             self._component_placement = HybridComponentPlacement(cfg, Cluster())
         else:
             # Rule-based rewards don't need FSDP
-            self.tokenizer = hf_tokenizer(cfg.reward.tokenizer.tokenizer_model)
-            self.total_batch_size_per_dp = (
-                self.cfg.data.rollout_batch_size
-                * self.cfg.algorithm.get("group_size", 1)
-                // self._world_size
-            )
+        self.tokenizer = hf_tokenizer(cfg.reward.tokenizer.tokenizer_model)
+        self.total_batch_size_per_dp = (
+            self.cfg.data.rollout_batch_size
+            * self.cfg.algorithm.get("group_size", 1)
+            // self._world_size
+        )
         
         # Reward manager for model-based rewards
         self.reward_manager = None
@@ -140,7 +140,7 @@ class RewardWorker(FSDPModelManager, Worker):
 
     def _init_rule_based_reward(self):
         """Initialize rule-based reward function."""
-        self.reward = get_reward_class(self.cfg.reward.reward_type)(self.cfg.reward)
+            self.reward = get_reward_class(self.cfg.reward.reward_type)(self.cfg.reward)
 
     def _init_model_based_reward(self):
         """Initialize model-based reward with RewardManager."""
@@ -405,9 +405,9 @@ class RewardWorker(FSDPModelManager, Worker):
             recv_batch_size += rollout_result.num_sequence
             with self.worker_timer():
                 if rollout_result.rewards is None:
-                    rollout_result.rewards = self._compute_rule_based_rewards(
-                        rollout_result
-                    )
+                        rollout_result.rewards = self._compute_rule_based_rewards(
+                            rollout_result
+                        )
 
             output_channel.put(rollout_result, async_op=True)
 

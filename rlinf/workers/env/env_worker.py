@@ -138,7 +138,7 @@ class EnvWorker(Worker):
             logger.info(
                 f"DataCollector initialized. Save dir: {self.data_collector.save_dir}, "
                 f"Tracking {total_envs} parallel envs"
-            )
+                )
 
         if not self.only_eval:
             self._init_env()
@@ -223,14 +223,28 @@ class EnvWorker(Worker):
             batch_size = extracted_obs[list(extracted_obs.keys())[0]].shape[0]
             env_offset = stage_id * self.train_num_envs_per_stage
             
+            # Check if we have final_observation (for episodes that just ended)
+            has_final_obs = "final_observation" in infos and infos["final_observation"] is not None
+            final_obs_dict = infos.get("final_observation", {}) if has_final_obs else {}
+            
             for env_idx in range(batch_size):
                 global_idx = env_offset + env_idx
+                is_done = bool(chunk_dones[env_idx, -1])
                 
-                # Get obs for this env
-                obs_to_save = {
-                    k: v[env_idx].cpu().numpy() if isinstance(v, torch.Tensor) else v
-                    for k, v in extracted_obs.items()
-                }
+                # CRITICAL: When episode ends with auto_reset, extracted_obs is already
+                # the NEW episode's initial state. Use final_observation for the TRUE
+                # last frame observation of the completed episode.
+                if is_done and has_final_obs and final_obs_dict:
+                    obs_to_save = {
+                        k: v[env_idx].cpu().numpy() if isinstance(v, torch.Tensor) else v
+                        for k, v in final_obs_dict.items()
+                        if isinstance(v, torch.Tensor) and v.shape[0] > env_idx
+                    }
+                else:
+                    obs_to_save = {
+                        k: v[env_idx].cpu().numpy() if isinstance(v, torch.Tensor) else v
+                        for k, v in extracted_obs.items()
+                    }
                 
                 # Get success/grasp status for this step
                 step_success = False
@@ -260,14 +274,14 @@ class EnvWorker(Worker):
                     "reward": float(chunk_rewards[env_idx, -1]) if chunk_rewards is not None else 0.0,
                     "terminated": bool(chunk_terminations[env_idx, -1]),
                     "truncated": bool(chunk_truncations[env_idx, -1]),
-                    "done": bool(chunk_dones[env_idx, -1]),
+                    "done": is_done,
                     "grasp": step_grasp,
                     "success": step_success,
                 }
                 self._episode_buffers[global_idx].append(frame)
                 
                 # If episode done, save full trajectory and reset buffer
-                if chunk_dones[env_idx, -1]:
+                if is_done:
                     self._save_episode_trajectory(global_idx)
                     # Reset buffer for this env
                     self._episode_buffers[global_idx] = []
