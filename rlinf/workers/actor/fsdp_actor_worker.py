@@ -822,6 +822,38 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
 
+    def get_rollout_batch(self) -> dict:
+        """Get the current rollout batch for reward model computation.
+        
+        Returns:
+            Dictionary containing rollout batch data.
+        """
+        return self.rollout_batch
+
+    def update_rewards(self, model_rewards: "torch.Tensor", mode: str = "replace"):
+        """Update rewards in rollout batch with model rewards.
+        
+        Args:
+            model_rewards: Tensor of model-computed rewards.
+            mode: "replace" to replace env rewards, "add" to add to env rewards.
+        """
+        if self.rollout_batch is None or "rewards" not in self.rollout_batch:
+            return
+        
+        # Ensure model_rewards is on the same device
+        device = self.rollout_batch["rewards"].device
+        model_rewards = model_rewards.to(device)
+        
+        # Match shape if needed
+        if model_rewards.shape != self.rollout_batch["rewards"].shape:
+            # Try to broadcast
+            model_rewards = model_rewards.view_as(self.rollout_batch["rewards"])
+        
+        if mode == "replace":
+            self.rollout_batch["rewards"] = model_rewards
+        else:  # "add"
+            self.rollout_batch["rewards"] = self.rollout_batch["rewards"] + model_rewards
+
     def _process_received_rollout_batch(
         self, rollout_batch: dict[str, torch.Tensor]
     ) -> dict[str, torch.Tensor]:

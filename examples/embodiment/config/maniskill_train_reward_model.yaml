@@ -1,70 +1,26 @@
 # Configuration for training ResNet reward model
-# Run with: python train_reward_model.py --config-name maniskill_train_reward_model
+# Run with: ./run_reward_training.sh
 
-defaults:
-  - override hydra/job_logging: stdout
-
-hydra:
-  run:
-    dir: .
-  output_subdir: null
-  searchpath:
-    - file://${oc.env:EMBODIED_PATH}/config/
-
-cluster:
-  num_nodes: 1
-  component_placement:
-    actor: 0-0
-
-runner:
-  logger:
-    log_path: "../results"
-    project_name: rlinf
-    experiment_name: "reward_model_training"
-    logger_backends: ["tensorboard"]
-
-# Reward model training configuration
 reward_model_training:
-  # Path to collected reward data directory containing success/ and failure/ subdirs
-  # Each subdir contains episode pkl files with frames[]["obs"]["main_images"]
   data_path: "${oc.env:EMBODIED_PATH}/data"
-
-  # Training hyperparameters
   epochs: 100
   batch_size: 64
   lr: 1.0e-4
   weight_decay: 1.0e-5
-
-  # Validation split ratio
   val_split: 0.1
-
-  # Save directory for checkpoints (logs/reward_checkpoints from project root)
   save_dir: "${oc.env:EMBODIED_PATH}/../../logs/reward_checkpoints"
-
-  # Save best model based on validation accuracy
   save_best: True
-
-  # Early stopping patience (epochs without improvement)
   early_stopping_patience: 15
-
-  # Image size for the model [C, H, W]
   image_size: [3, 224, 224]
-
-  # Maximum samples per class (to balance dataset)
   max_success: 5000
   max_failure: 5000
-
-  # Use only last frame of each episode (True) or all frames (False)
   use_last_frame: True
 
-# ResNet model configuration (used during training)
 reward:
   resnet:
     image_size: [3, 224, 224]
     threshold: 0.5
     use_soft_reward: True
-    freeze_backbone: False  # Train full model
+    freeze_backbone: False
     hidden_dim: 256
     device: "cuda"
-
-

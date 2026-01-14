@@ -1,6 +1,5 @@
 # Configuration for collecting reward model training data
 # Run with: ./run_embodiment.sh maniskill_collect_reward_data
-# Training is identical to mlp_ppo, but also collects RGB images for reward model
 
 defaults:
   - env/maniskill_pick_cube@env.train
@@ -30,30 +29,22 @@ runner:
     project_name: rlinf
     experiment_name: "reward_data_collection"
     logger_backends: ["tensorboard"]
-
   max_epochs: 1000
   max_steps: -1
-
   only_eval: False
-  eval_policy_path: null
   val_check_interval: 50
-  save_interval: 50   # Save checkpoint every 50 epochs
-
-  resume_dir: null    # Set to checkpoint dir to resume training
+  save_interval: 50
 
 algorithm:
   update_epoch: 8
   normalize_advantages: True
   kl_penalty: kl
   group_size: 1
-
   rollout_epoch: 1
   eval_rollout_epoch: 1
-
   reward_type: action_level
   logprob_type: action_level
   entropy_type: action_level
-
   adv_type: gae
   loss_type: actor_critic
   loss_agg_func: "token-mean"
@@ -64,10 +55,8 @@ algorithm:
   clip_ratio_c: 3.0
   value_clip: 1.0
   huber_delta: 10.0
-
   gamma: 0.8
   gae_lambda: 0.9
-
   sampling_params:
     do_sample: True
     temperature_train: 1.0
@@ -75,7 +64,6 @@ algorithm:
     top_k: 0
     top_p: 1.0
     repetition_penalty: 1.0
-
   length_params:
     max_new_token: 7
     max_length: 1024
@@ -84,21 +72,16 @@ algorithm:
 env:
   group_name: "EnvGroup"
   enable_offload: False
-
-  # Aligned with mlp_ppo - use state for training, but render RGB for data collection
   train:
     total_num_envs: 256
     auto_reset: True
-    show_goal_site: True  # Show green sphere for RGB collection
-    use_fixed_reset_state_ids: False
+    show_goal_site: True
     max_episode_steps: 50
     max_steps_per_rollout_epoch: 50
-    # Render every frame for data collection (required for RGB images)
-    reward_render_mode: "always"  # "always" to render every frame
-    # Use state+rgb mode: state for policy (42-dim), rgb for data collection
+    reward_render_mode: "always"  # Always render RGB for data collection
     init_params:
-      obs_mode: "state"        # Policy uses state (42-dim)
-      render_mode: "rgb_array" # Enable RGB rendering for data collection
+      obs_mode: "state"
+      render_mode: "rgb_array"
       sensor_configs:
         shader_pack: "default"
         base_camera:
@@ -110,8 +93,6 @@ env:
     ignore_terminations: True
     max_episode_steps: 50
     max_steps_per_rollout_epoch: 50
-    use_fixed_reset_state_ids: True
-    group_size: 1
     init_params:
       obs_mode: "state"
       render_mode: "rgb_array"
@@ -129,7 +110,6 @@ rollout:
   backend: "huggingface"
   enable_offload: False
   pipeline_stage_num: 1
-
   model:
     model_path: ""
     precision: ${actor.model.precision}
@@ -137,17 +117,15 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 6400   # Same as mlp_ppo
-  global_batch_size: 6400  # Same as mlp_ppo
+  micro_batch_size: 6400
+  global_batch_size: 6400
   seed: 1234
   enable_offload: False
-
   model:
     model_path: ""
     model_type: "mlp_policy"
-    obs_dim: 42  # Fixed: state dimension for PickCube-v1
+    obs_dim: 42
     action_dim: 8
-
   optim:
     lr: 3.0e-4
     value_lr: 3.0e-4
@@ -156,7 +134,6 @@ actor:
     adam_eps: 1.0e-05
     weight_decay: 0.01
     clip_grad: 0.5
-
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
@@ -165,25 +142,17 @@ actor:
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
 
-# Reward data collection configuration
-# Strategy: Sample fail frames throughout (low rate), sample success frames when they occur
-# Maintains fixed-size buffer, replaces old samples to keep distribution balanced
-# Saves images as PNG files for easy inspection
+# Data collection for reward model training
 reward_data_collection:
   enabled: True
   save_dir: "${oc.env:EMBODIED_PATH}/data"
-  # Buffer sizes (will maintain this many samples of each type)
-  target_success: 5000      # Buffer size for success samples
-  target_failure: 5000      # Buffer size for failure samples
-  # Sampling rates (probability to collect each frame type)
-  sample_rate_fail: 0.01    # Sample 1% of fail frames (common)
-  sample_rate_success: 1.0  # Sample 100% of success frames (rare)
-  # Visualization (disabled - using ManiSkill's native goal_site instead)
-  draw_goal_marker: False   # Draw green marker at goal position (post-process)
+  target_success: 5000
+  target_failure: 5000
+  sample_rate_fail: 0.01
+  sample_rate_success: 1.0
 
 reward:
   use_reward_model: False
 
 critic:
   use_critic_model: False
-

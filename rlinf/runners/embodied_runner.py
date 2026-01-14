@@ -129,6 +129,46 @@ class EmbodiedRunner:
         actor_handle.wait()
         rollout_handle.wait()
 
+    def _apply_reward_model(self):
+        """Apply reward model to replace/add rewards in actor's rollout batch.
+        
+        Computes model rewards for all timesteps in parallel for efficiency.
+        """
+        reward_mode = self.cfg.get("reward", {}).get("mode", "replace")
+        
+        # Get rollout batch from actor
+        rollout_batch = self.actor.get_rollout_batch().wait()
+        if rollout_batch is None or "obs" not in rollout_batch:
+            return
+        
+        obs = rollout_batch["obs"]
+        if not isinstance(obs, dict) or "main_images" not in obs:
+            return
+        
+        # obs["main_images"] shape: [n_chunk_steps, batch, C, H, W]
+        images = obs["main_images"]
+        n_steps, batch_size = images.shape[0], images.shape[1]
+        
+        # Flatten all timesteps for parallel processing: [n_steps * batch, C, H, W]
+        flat_images = images.reshape(n_steps * batch_size, *images.shape[2:])
+        flat_obs = {"main_images": flat_images}
+        
+        # Compute rewards for all timesteps in one batch
+        model_rewards = self.reward.compute_batch_rewards(
+            observations=flat_obs,
+        ).wait()
+        
+        if model_rewards is not None:
+            # Reshape back: [n_steps * batch] -> [n_steps, batch, 1]
+            model_rewards = model_rewards.reshape(n_steps, batch_size, 1)
+            
+            # Expand to match rewards shape [n_steps, batch, num_action_chunks]
+            if "rewards" in rollout_batch:
+                num_chunks = rollout_batch["rewards"].shape[-1]
+                model_rewards = model_rewards.expand(n_steps, batch_size, num_chunks)
+            
+            self.actor.update_rewards(model_rewards, mode=reward_mode).wait()
+
     def evaluate(self):
         env_handle: Handle = self.env.evaluate(
             input_channel=self.rollout_channel,
@@ -175,6 +215,11 @@ class EmbodiedRunner:
                         input_channel=self.actor_channel
                     ).wait()
                     rollout_handle.wait()
+                
+                # Compute model rewards and update actor's rollout batch
+                if self.reward is not None and self.cfg.get("reward", {}).get("use_reward_model", False):
+                    with self.timer("compute_model_rewards"):
+                        self._apply_reward_model()
 
                 # compute advantages and returns.
                 with self.timer("cal_adv_and_returns"):

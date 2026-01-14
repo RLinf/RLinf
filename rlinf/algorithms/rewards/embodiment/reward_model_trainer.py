@@ -141,21 +141,40 @@ class RewardDataset(Dataset):
                 continue
 
             if self.use_last_frame:
-                # Only use last frame with frame-level success label
-                last_frame = frames[-1]
-                if "main_images" in last_frame.get("obs", {}):
-                    img = last_frame["obs"]["main_images"]
-                    frame_label = 1 if last_frame.get("success", False) else 0
-                    if isinstance(img, np.ndarray):
-                        samples.append((img.copy(), frame_label))
-            else:
-                # Use all frames with per-frame labels
-                for frame in frames:
-                    if "main_images" in frame.get("obs", {}):
-                        img = frame["obs"]["main_images"]
-                        frame_label = 1 if frame.get("success", False) else 0
+                # Find the frame where success=True, but use PREVIOUS frame's obs
+                # because old data has obs-success offset due to auto_reset
+                for i, frame in enumerate(frames):
+                    if frame.get("success", False) and i > 0:
+                        # Use previous frame's obs with success=True label
+                        prev_frame = frames[i - 1]
+                        if "main_images" in prev_frame.get("obs", {}):
+                            img = prev_frame["obs"]["main_images"]
+                            if isinstance(img, np.ndarray):
+                                samples.append((img.copy(), 1))  # success
+                        break
+                else:
+                    # No success frame found, use last frame as failure
+                    last_frame = frames[-1]
+                    if "main_images" in last_frame.get("obs", {}):
+                        img = last_frame["obs"]["main_images"]
                         if isinstance(img, np.ndarray):
-                            samples.append((img.copy(), frame_label))
+                            samples.append((img.copy(), 0))  # failure
+            else:
+                # Use all frames with per-frame labels (also apply offset fix)
+                for i, frame in enumerate(frames):
+                    frame_success = frame.get("success", False)
+                    if frame_success and i > 0:
+                        # Use previous frame's obs for success
+                        prev_frame = frames[i - 1]
+                        if "main_images" in prev_frame.get("obs", {}):
+                            img = prev_frame["obs"]["main_images"]
+                            if isinstance(img, np.ndarray):
+                                samples.append((img.copy(), 1))
+                    elif not frame_success:
+                        if "main_images" in frame.get("obs", {}):
+                            img = frame["obs"]["main_images"]
+                            if isinstance(img, np.ndarray):
+                                samples.append((img.copy(), 0))
 
         return samples
 

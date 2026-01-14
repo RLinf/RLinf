@@ -1,3 +1,6 @@
+# ResNet Reward Model Training Config
+# Inherits from maniskill_ppo_mlp.yaml, with modifications for ResNet reward
+
 defaults:
   - env/maniskill_pick_cube@env.train
   - env/maniskill_pick_cube@env.eval
@@ -18,6 +21,7 @@ cluster:
     actor: 0-0
     env: 0-0
     rollout: 0-0
+    reward: 0-1  # Reward worker on GPU 1
 
 runner:
   task_type: embodied
@@ -29,28 +33,23 @@ runner:
 
   max_epochs: 1000
   max_steps: -1
-
   only_eval: False
-  eval_policy_path: null
   val_check_interval: 50
   save_interval: -1
 
-  # TODO: Set to your maniskill_ppo_mlp checkpoint path (e.g., logs/<timestamp>-maniskill_ppo_mlp/.../global_step_100)
-  resume_dir: /workspace/resnet_rlinf/logs/20260109-02:39:15-maniskill_ppo_mlp/maniskill_ppo_mlp/checkpoints/global_step_100
+  # Resume from pre-trained PPO checkpoint
+  resume_dir: logs/20260114-09:54:05-maniskill_collect_reward_data/reward_data_collection/checkpoints/global_step_400  # Set to your checkpoint path, e.g., checkpoints/global_step_350
 
 algorithm:
   update_epoch: 8
   normalize_advantages: True
   kl_penalty: kl
   group_size: 1
-
   rollout_epoch: 1
   eval_rollout_epoch: 1
-
   reward_type: action_level
   logprob_type: action_level
   entropy_type: action_level
-
   adv_type: gae
   loss_type: actor_critic
   loss_agg_func: "token-mean"
@@ -61,10 +60,8 @@ algorithm:
   clip_ratio_c: 3.0
   value_clip: 1.0
   huber_delta: 10.0
-
   gamma: 0.8
   gae_lambda: 0.9
-
   sampling_params:
     do_sample: True
     temperature_train: 1.0
@@ -72,7 +69,6 @@ algorithm:
     top_k: 0
     top_p: 1.0
     repetition_penalty: 1.0
-
   length_params:
     max_new_token: 7
     max_length: 1024
@@ -81,18 +77,14 @@ algorithm:
 env:
   group_name: "EnvGroup"
   enable_offload: False
-
   train:
     total_num_envs: 256
     auto_reset: True
-    use_fixed_reset_state_ids: False
     max_episode_steps: 50
     max_steps_per_rollout_epoch: 50
-    reward_render_mode: "episode_end"  # Must match ResNet training data collection
-    show_goal_site: True
+    reward_render_mode: "always"  # Always render RGB for ResNet reward
     init_params:
       obs_mode: "state"
-      control_mode: "pd_joint_delta_pos"  # Must match ResNet training data
       render_mode: "rgb_array"
       sensor_configs:
         shader_pack: "default"
@@ -105,12 +97,8 @@ env:
     ignore_terminations: True
     max_episode_steps: 50
     max_steps_per_rollout_epoch: 50
-    use_fixed_reset_state_ids: True
-    group_size: 1
-    reward_render_mode: "episode_end"
     init_params:
       obs_mode: "state"
-      control_mode: "pd_joint_delta_pos"
       render_mode: "rgb_array"
       sensor_configs:
         shader_pack: "default"
@@ -126,7 +114,6 @@ rollout:
   backend: "huggingface"
   enable_offload: False
   pipeline_stage_num: 1
-
   model:
     model_path: ""
     precision: ${actor.model.precision}
@@ -138,13 +125,11 @@ actor:
   global_batch_size: 6400
   seed: 1234
   enable_offload: False
-
   model:
     model_path: ""
     model_type: "mlp_policy"
     obs_dim: 42
-    action_dim: 8  # pd_joint_delta_pos
-
+    action_dim: 8
   optim:
     lr: 3.0e-4
     value_lr: 3.0e-4
@@ -153,7 +138,6 @@ actor:
     adam_eps: 1.0e-05
     weight_decay: 0.01
     clip_grad: 0.5
-
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
@@ -162,15 +146,12 @@ actor:
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
 
-# ResNet Reward Model Configuration
+# ResNet Reward Model
 reward:
   use_reward_model: True
   reward_model_type: "resnet"
-  alpha: 1.0
-  mode: "replace"  # Replace env reward with ResNet reward
-
+  mode: "replace"
   resnet:
-    # TODO: Set to your trained ResNet reward model checkpoint
     checkpoint_path: "${oc.env:EMBODIED_PATH}/../../logs/reward_checkpoints/best_model.pt"
     image_size: [3, 224, 224]
     threshold: 0.5
@@ -181,4 +162,3 @@ reward:
 
 critic:
   use_critic_model: False
-

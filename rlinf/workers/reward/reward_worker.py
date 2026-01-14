@@ -82,12 +82,22 @@ class RewardWorker(FSDPModelManager, Worker):
             self._component_placement = HybridComponentPlacement(cfg, Cluster())
         else:
             # Rule-based rewards don't need FSDP
-        self.tokenizer = hf_tokenizer(cfg.reward.tokenizer.tokenizer_model)
-        self.total_batch_size_per_dp = (
-            self.cfg.data.rollout_batch_size
-            * self.cfg.algorithm.get("group_size", 1)
-            // self._world_size
-        )
+            pass
+        
+        # Tokenizer is only needed for LLM-based rewards, not embodied RL
+        self.tokenizer = None
+        if hasattr(cfg.reward, 'tokenizer') and cfg.reward.tokenizer is not None:
+            self.tokenizer = hf_tokenizer(cfg.reward.tokenizer.tokenizer_model)
+        
+        # Batch size for LLM rewards (may not exist for embodied RL)
+        if hasattr(cfg, 'data') and hasattr(cfg.data, 'rollout_batch_size'):
+            self.total_batch_size_per_dp = (
+                self.cfg.data.rollout_batch_size
+                * self.cfg.algorithm.get("group_size", 1)
+                // self._world_size
+            )
+        else:
+            self.total_batch_size_per_dp = 1
         
         # Reward manager for model-based rewards
         self.reward_manager = None
@@ -140,7 +150,7 @@ class RewardWorker(FSDPModelManager, Worker):
 
     def _init_rule_based_reward(self):
         """Initialize rule-based reward function."""
-            self.reward = get_reward_class(self.cfg.reward.reward_type)(self.cfg.reward)
+        self.reward = get_reward_class(self.cfg.reward.reward_type)(self.cfg.reward)
 
     def _init_model_based_reward(self):
         """Initialize model-based reward with RewardManager."""
@@ -467,6 +477,51 @@ class RewardWorker(FSDPModelManager, Worker):
             .view(-1, 1)
             .flatten()
         )
+
+    def compute_batch_rewards(
+        self,
+        observations: dict[str, Any],
+        task_descriptions: Optional[list[str]] = None,
+        mini_batch_size: int = 256,
+    ) -> torch.Tensor:
+        """Compute rewards using the reward model (direct call interface).
+        
+        Uses mini-batching to avoid OOM for large batches.
+        
+        Args:
+            observations: Dictionary containing observation data (images, states).
+            task_descriptions: Optional task descriptions for VLM models.
+            mini_batch_size: Size of mini-batches for processing (default 256).
+            
+        Returns:
+            Reward tensor of shape matching input batch.
+        """
+        if self.reward_manager is None:
+            raise RuntimeError("RewardManager not initialized")
+        
+        images = observations.get("main_images") or observations.get("images")
+        if images is None:
+            raise ValueError("Observations must contain 'main_images' or 'images'")
+        
+        total_size = images.shape[0]
+        
+        # If batch is small enough, process in one go
+        if total_size <= mini_batch_size:
+            with self.worker_timer():
+                with torch.no_grad():
+                    return self.reward_manager.compute_rewards(observations, task_descriptions)
+        
+        # Mini-batch processing for large batches
+        all_rewards = []
+        with self.worker_timer():
+            with torch.no_grad():
+                for start_idx in range(0, total_size, mini_batch_size):
+                    end_idx = min(start_idx + mini_batch_size, total_size)
+                    mini_obs = {"main_images": images[start_idx:end_idx]}
+                    mini_rewards = self.reward_manager.compute_rewards(mini_obs, task_descriptions)
+                    all_rewards.append(mini_rewards)
+        
+        return torch.cat(all_rewards, dim=0)
 
     def compute_batch_rewards_with_model(
         self,
