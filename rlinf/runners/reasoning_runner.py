@@ -58,8 +58,8 @@ class ReasoningRunner:
         train_dataset: Dataset,
         val_dataset: Dataset,
         rollout: Union["SGLangWorker", "VLLMWorker"],
-        actor_inference: Optional["MegatronActorInference", "FSDPInference"],
-        critic_inference: Optional["MegatronCriticInference", "FSDPInference"],
+        actor_inference: Optional[Union["MegatronActorInference", "FSDPInference"]],
+        critic_inference: Optional[Union["MegatronCriticInference", "FSDPInference"]],
         actor: Union["FSDPActor", "MegatronActor"],
         reward: Optional["RewardWorker"],
         critic: Optional["MegatronCritic"] = None,
@@ -349,13 +349,18 @@ class ReasoningRunner:
             self.cfg.runner.experiment_name,
             f"checkpoints/global_step_{self.global_steps}",
         )
-        actor_save_path = os.path.join(base_output_dir, "actor")
-        data_save_path = os.path.join(base_output_dir, "data")
 
         # actor
+        actor_save_path = os.path.join(base_output_dir, "actor")
         self.actor.save_checkpoint(actor_save_path, self.global_steps).wait()
 
+        # critic
+        if self.critic:
+            critic_save_path = os.path.join(base_output_dir, "critic")
+            self.critic.save_checkpoint(critic_save_path, self.global_steps).wait()
+
         # data
+        data_save_path = os.path.join(base_output_dir, "data")
         local_mkdir_safe(data_save_path)
         dataloader_local_path = os.path.join(data_save_path, "data.pt")
         dataloader_state_dict = self.train_dataloader.state_dict()

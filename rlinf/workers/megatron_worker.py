@@ -29,12 +29,9 @@ from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig
 from torch.multiprocessing.reductions import reduce_tensor
 
-import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import (
     calculate_adv_and_returns,
-    policy_loss,
 )
-from rlinf.algorithms.utils import kl_penalty
 from rlinf.data.io_struct import (
     BatchResizingIterator,
     RolloutResult,
@@ -63,8 +60,6 @@ from rlinf.utils.distributed import (
     broadcast_tensor_within_pp,
     compute_rollout_metrics,
     masked_normalization,
-    vocab_parallel_entropy_and_log_probs,
-    vocab_parallel_log_probs_from_logits,
 )
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.resharding.mcore_weight_reshard import MegatronCoreWeightReshard
@@ -80,13 +75,12 @@ from rlinf.utils.utils import (
     cpu_dict,
     cpu_weight_swap,
     masked_mean,
-    retrieve_model_state_dict_in_cpu,
     seq_mean_token_mean,
     seq_mean_token_sum,
 )
 
 try:
-    from params_resharding import nccl_group_recreate, resharding_init
+    from params_resharding import resharding_init
 
     HAVE_RESHARDING = True
 except ImportError:
@@ -94,7 +88,7 @@ except ImportError:
 
 # base model for MegatronActor and MegatronCritic
 class MegatronWorker(MegatronModelManager, Worker):
-    """The class for running the actor training using Megatron."""
+    """The class for running the actor/critic training using Megatron."""
 
     def __init__(
         self, cfg: DictConfig, placement: ModelParallelComponentPlacement, role
@@ -149,8 +143,8 @@ class MegatronWorker(MegatronModelManager, Worker):
         self.offload_optimizer = self.role_cfg.offload_optimizer
         self.offload_weight = self.role_cfg.offload_weight
         self.offload_grad = self.role_cfg.offload_grad
-        self.is_weight_offloaded = False
-        self.is_optimizer_offloaded = False
+        # self.is_weight_offloaded = False
+        # self.is_optimizer_offloaded = False
         self.ref_policy_state_dict = None
         self.is_pipeline = self.component_placement.is_pipeline
         self.placement_mode = placement._placement_mode
@@ -183,7 +177,7 @@ class MegatronWorker(MegatronModelManager, Worker):
                 "Dynamic batch size is not supported in pipeline mode."
             )
 
-        self.use_profiler = self.cfg.actor.megatron.use_profiler
+        self.use_profiler = self.role_cfg.megatron.use_profiler
         if self.use_profiler:
             self.init_profiler()
 
@@ -216,9 +210,7 @@ class MegatronWorker(MegatronModelManager, Worker):
         if not self.is_running:
             return
         with self.device_lock:
-            if self.is_weight_offloaded:
-                self.onload_model_weights_and_grad(load_grad=self.offload_grad)
-                self.is_weight_offloaded = False
+            self.onload_model_weights_and_grad(load_grad=self.offload_grad)
 
     def _load_weight_and_optimizer(self):
         # Acquire the GPUs to ensure that no one is using them before loading models
@@ -226,23 +218,17 @@ class MegatronWorker(MegatronModelManager, Worker):
         if not self.is_running:
             return
         with self.device_lock:
-            if self.is_weight_offloaded:
-                self.onload_model_weights_and_grad(load_grad=self.offload_grad)
-                self.is_weight_offloaded = False
-            if self.is_optimizer_offloaded:
-                self.onload_megatron_optimizer()
-                self.is_optimizer_offloaded = False
+            self.onload_model_weights_and_grad(load_grad=self.offload_grad)
+            self.onload_megatron_optimizer()
 
     def _offload_weight_and_optimizer(self):
         if not self.is_running:
             return
         with self.device_lock:
-            if self.offload_weight and not self.is_weight_offloaded:
+            if self.offload_weight:
                 self.offload_model_weights_and_grad(offload_grad=self.offload_grad)
-                self.is_weight_offloaded = True
-            if self.offload_optimizer and not self.is_optimizer_offloaded:
+            if self.offload_optimizer:
                 self.offload_megatron_optimizer()
-                self.is_optimizer_offloaded = True
 
     def init_worker(self):
         self.setup_model_and_optimizer()
@@ -323,25 +309,29 @@ class MegatronWorker(MegatronModelManager, Worker):
         )
         return obj_tensor.item()
 
+    def _get_sample_count_from_rollout_results(self, rollout_results : list[RolloutResult]):
+        return sum([r.num_sequence for r in rollout_results])
+
     def get_dynamic_batch_as_much(
         self,
         input_channel: Channel,
-        min_result_len: int,
-        max_result_len: int,
+        min_num_samples: int,
+        max_num_samples: int,
         cliped_results=[],
         unfinished_result=None,
     ):
         assert not input_channel.is_local
         rollout_results = cliped_results
         if self.is_data_io_rank:
-            # get min_result_len
-            while len(rollout_results) < min_result_len:
+            # get min_num_samples
+            while self._get_sample_count_from_rollout_results(rollout_results) < min_num_samples:
                 if unfinished_result is not None:
                     rollout_result: RolloutResult = unfinished_result.wait()
                     unfinished_result = None
                 else:
                     rollout_result: RolloutResult = input_channel.get()
                 rollout_results.append(rollout_result)
+                # print(f'run_inference: rollout_result append, {sum([len(r.prompt_ids) for r in rollout_results])}, {min_num_samples}')
 
             # try to get result as much
             # get result in every 0.1s and do all reduce to get the min result between dp (result_len)
@@ -350,7 +340,7 @@ class MegatronWorker(MegatronModelManager, Worker):
             result_len = len(rollout_results)
             time_until = time.time() + 0.1
             while last_result_len < result_len:
-                if len(rollout_results) < max_result_len:
+                if self._get_sample_count_from_rollout_results(rollout_results) < max_num_samples:
                     if unfinished_result is None:
                         unfinished_result = input_channel.get(async_op=True)
                     else:
@@ -395,7 +385,7 @@ class MegatronWorker(MegatronModelManager, Worker):
         for rollout_result in rollout_results:
             batch = rollout_result.to_actor_batch(
                 self.cfg.data.max_prompt_length,
-                self.cfg.actor.model.encoder_seq_length,
+                self.role_cfg.model.encoder_seq_length,
                 self.tokenizer.eos_token_id,
             )
             batches.append(batch)
@@ -699,7 +689,7 @@ class MegatronWorker(MegatronModelManager, Worker):
 
         # DP batch load balance
         if (
-            self.cfg.actor.get("enable_dp_load_balance", False)
+            self.role_cfg.get("enable_dp_load_balance", False)
             and parallel_state.get_data_parallel_world_size() > 1
         ):
             batch = self._dp_load_balance(batch)
@@ -1087,7 +1077,7 @@ class MegatronWorker(MegatronModelManager, Worker):
 
     @torch.no_grad()
     def inference_step(self, batch):
-        # set the megatron actor in inference step
+        # set the megatron worker in inference step
         set_sync_funcs(self, forward_only=True)
         set_eval(self)
         return self.run_forward_backward(batch, forward_only=True)
@@ -1109,49 +1099,44 @@ class MegatronWorker(MegatronModelManager, Worker):
             compute_ref_logprobs: Whether to compute reference logprobs.
             do_offload: Whether offload weights after inference done
         """
-        inference_split = self.cfg.actor.get("inference_split", None)
+        inference_split = self.role_cfg.get("inference_split", None)
         if inference_split is None:
             if not self.is_pipeline:
                 inference_split = 1
             else:
-                inference_split = self.cfg.algorithm.n_minibatches
+                inference_split = self.total_batch_size_per_dp // self.micro_batch_size
         assert self.total_batch_size_per_dp % inference_split == 0, (
-            f"MegatronActor: total_batch_size_per_dp[{self.total_batch_size_per_dp}] should be divisible by inference_split[{inference_split}]"
+            f"MegatronWorker: total_batch_size_per_dp[{self.total_batch_size_per_dp}] should be divisible by inference_split[{inference_split}]"
         )
 
-        min_result_len = 1
-        max_result_len = (
-            self.cfg.data.rollout_batch_size
-            // parallel_state.get_data_parallel_world_size()
-            // inference_split
-        )
+        min_num_samples = 1
+        max_num_samples = self.total_batch_size_per_dp // inference_split
         if not self.is_pipeline:
-            min_result_len = max_result_len
+            min_num_samples = max_num_samples
             coll_rollout_results = []
+        total_num_samples = 0
         total_result_len = 0
-        total_result_len_per_dp = (
-            self.cfg.data.rollout_batch_size
-            // parallel_state.get_data_parallel_world_size()
-        )
+
         cliped_results, unfinished_result = [], None
-        while total_result_len < total_result_len_per_dp:
+        while total_num_samples < self.total_batch_size_per_dp:
             batch, rollout_result, result_len, cliped_results, unfinished_result = (
                 self.get_dynamic_batch_as_much(
                     input_channel,
-                    min(min_result_len, total_result_len_per_dp - total_result_len),
-                    min(max_result_len, total_result_len_per_dp - total_result_len),
+                    min(min_num_samples, self.total_batch_size_per_dp - total_num_samples),
+                    min(max_num_samples, self.total_batch_size_per_dp - total_num_samples),
                     cliped_results,
                     unfinished_result,
                 )
             )
             total_result_len += result_len
+            total_num_samples += rollout_result.num_sequence
             self.log_info(
-                f"[dynamic inference rank-{self._rank}] inference result_len={result_len}, total_result_len={total_result_len}/{total_result_len_per_dp}"
+                f"[dynamic inference rank-{self._rank}] inference result_len={result_len}, total_num_samples={total_num_samples}/{self.total_batch_size_per_dp}"
             )
             self._load_weight_and_optimizer()
 
             with self.worker_timer():
-                # Prev logprobs
+                # prev logprobs for actor, values for critic
                 infer_out = self.inference_step(batch).cpu()
                 if self.role == 'actor':
                     prev_logprobs = infer_out
@@ -1165,7 +1150,7 @@ class MegatronWorker(MegatronModelManager, Worker):
                     values = infer_out
                     rollout_result.values = values
                 else:
-                    assert False, f"unknown role {self.role} for MegatronWorker"
+                    assert False, f"Unknown role '{self.role}' for MegatronWorker"
 
                 # Ref logprobs
                 if compute_ref_logprobs:
@@ -1194,9 +1179,10 @@ class MegatronWorker(MegatronModelManager, Worker):
                 min(total_result_len, self.cfg.algorithm.n_minibatches),
             )
             for split_result in split_results:
+                # print(f'run_inference: put_result, {len(split_result.prompt_ids)}')
                 self.put_result(split_result, output_channel)
-        assert total_result_len == total_result_len_per_dp, (
-            f"Expected {total_result_len_per_dp} sequences from channel, but got {total_result_len}"
+        assert total_num_samples == self.total_batch_size_per_dp, (
+            f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {total_result_len}"
         )
         self.scheduler_offload_sync()
         if do_offload:

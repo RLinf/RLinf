@@ -13,9 +13,6 @@
 # limitations under the License.
 
 import copy
-import time
-from functools import partial
-from typing import Callable, Optional
 
 import torch
 import torch.distributed
@@ -40,6 +37,14 @@ from rlinf.utils.utils import retrieve_model_state_dict_in_cpu
 from rlinf.workers.rollout.utils import RankMapper
 from rlinf.workers.megatron_worker import MegatronWorker
 
+try:
+    from params_resharding import nccl_group_recreate, resharding_init
+
+    HAVE_RESHARDING = True
+except ImportError:
+    HAVE_RESHARDING = False
+
+
 class MegatronActor(MegatronWorker):
     def __init__(
         self, cfg: DictConfig, placement: ModelParallelComponentPlacement, role='actor'
@@ -51,6 +56,7 @@ class MegatronActor(MegatronWorker):
         """
         super().__init__(cfg, placement, role)
 
+        self.dst_tp_rank = self._rank % placement.rollout_tp_size
         assert placement.rollout_tp_size <= placement.actor_tp_size, (
             f" rollout tensor parallel size {placement.rollout_tp_size} must be less than or equal to actor tensor parallel size {placement.actor_tp_size}."
         )
