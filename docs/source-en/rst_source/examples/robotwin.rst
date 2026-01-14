@@ -23,7 +23,7 @@ RoboTwinEnv Environment
 **RoboTwinEnv Environment**
 
 - **Environment**: RLinf framework provides the RoboTwinEnv environment for reinforcement learning training based on the RoboTwin 2.0 simulation platform.
-- **Task**: Control a robotic arm to perform various manipulation tasks. RLinf RoboTwinEnv currently supports **47 tasks**, and users can select tasks for training as needed.
+- **Task**: Control a robotic arm to perform various manipulation tasks. RLinf RoboTwinEnv currently supports **46 tasks**, and users can select tasks for training as needed.
 
   **Placement Tasks**
 
@@ -37,7 +37,6 @@ RoboTwinEnv Environment
   - ``place_cans_plasticbox``: Use dual arm to pick and place cans into plasticbox.
   - ``place_container_plate``: Place the container onto the plate.
   - ``place_empty_cup``: Use an arm to place the empty cup on the coaster.
-  - ``place_fan``: Grab the fan and place it on a colored mat, and make sure the fan is facing the robot.
   - ``place_mouse_pad``: Grab the mouse and place it on a colored mat.
   - ``place_object_basket``: Use one arm to grab the target object and put it in the basket, then use the other arm to grab the basket, and finally move the basket slightly away.
   - ``place_object_stand``: Use appropriate arm to place the object on the stand.
@@ -96,7 +95,7 @@ RoboTwinEnv Environment
   - ``rotate_qrcode``: Pick up the QR code board and rotate it so that the QR code faces the robot.
 
   .. note::
-     Currently three tasks are not yet supported: ``open_laptop``, ``place_object_scale``, and ``put_object_cabinet``. Additionally, dense reward functions are still under development and will gradually be extended to all tasks.
+     Currently four tasks are not yet supported:  ``place_fan``, ``open_laptop``, ``place_object_scale``, and ``put_object_cabinet``. Additionally, dense reward functions are still under development and will gradually be extended to all tasks.
 
 - **Observation**: The observation returned by RLinf RoboTwinEnv environment is a dictionary (dict) containing the following fields:
 
@@ -344,18 +343,22 @@ Evaluation Results
      - beat_block_hammer
      - pick_dual_bottles
      - place_empty_cup
+     - Average
+     - Δ Avg.
+
    * - OpenVLA-OFT (SFT)
-     - 10.15%
-     - 20.31%
-     - 75.78%
+     - |huggingface| `10.15% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-beat_block_hammer>`_
+     - |huggingface| `20.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles>`_
+     - |huggingface| `75.78% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
+     - 35.41%
+     - ---
+
    * - OpenVLA-OFT (RLinf-GRPO)
-     - **90.63%**
-     - **92.96%**
-     - **94.53%**
-   * - Improvement
-     - +80.48%
-     - +72.65%
-     - +18.75%
+     - |huggingface| `96.09% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-beat_block_hammer>`_
+     - |huggingface| `92.96% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-pick_dual_bottles>`_
+     - |huggingface| `94.53% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_empty_cup>`_
+     - **94.52%**
+     - **+59.11%**
 
 .. note::
    

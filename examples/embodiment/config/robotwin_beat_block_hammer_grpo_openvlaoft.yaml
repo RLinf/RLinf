@@ -62,7 +62,7 @@ algorithm:
   gae_lambda: 0.95
 
   reward_coef: 5.0
-  filter_rewards: False
+  filter_rewards: True
   rewards_lower_bound: 0.5
   rewards_upper_bound: 4.5
 
@@ -105,6 +105,7 @@ env:
     max_steps_per_rollout_epoch: 200
     group_size: 1
     use_fixed_reset_state_ids: True
+    is_eval: True
     assets_path: "/path/to/robotwin_assets"
     seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/eval_seeds.json
     video_cfg:
@@ -149,7 +150,7 @@ actor:
     max_prompt_length: 512
 
   optim:
-    lr: 1.0e-4
+    lr: 2.0e-4
     value_lr: 1.0e-5
     adam_beta1: 0.9
     adam_beta2: 0.999
