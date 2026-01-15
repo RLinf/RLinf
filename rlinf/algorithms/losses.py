@@ -72,8 +72,10 @@ def compute_ppo_actor_loss(
 
     loss_mask_count = loss_mask.count_nonzero() or 1
     # For numerical stability.
-    ratio = torch.where(loss_mask, torch.exp(logprobs - old_logprobs), 0)
-    approx_kl = torch.where(loss_mask, (logprobs - old_logprobs).detach(), 0.0)
+    negative_approx_kl = logprobs - old_logprobs
+    negative_approx_kl = torch.clamp(negative_approx_kl, min=-20.0, max=20.0)
+    ratio = torch.where(loss_mask, torch.exp(negative_approx_kl), 0)
+    approx_kl = torch.where(loss_mask, negative_approx_kl.detach(), 0.0)
 
     clipped_ratio = torch.clamp(ratio, 1.0 - clip_ratio_low, 1.0 + clip_ratio_high)
     policy_loss1 = -advantages * ratio
