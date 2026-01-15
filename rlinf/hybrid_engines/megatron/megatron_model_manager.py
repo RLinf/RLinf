@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Iterator, Optional
 
 import torch
 from omegaconf import DictConfig
+from contextlib import contextmanager
 
 from megatron.core import tensor_parallel
 
@@ -329,6 +330,20 @@ class MegatronModelManager:
             checkpointing_context = {}
         return checkpointing_context
 
+    @contextmanager
+    def ensure_onloaded_and_then_offload(self):
+        # if weights and opt states are offloaded, recover them first
+        if self.is_weight_offloaded:
+            self.onload_model_weights_and_grad()
+        if self.is_optimizer_offloaded:
+            self.onload_megatron_optimizer()
+
+        yield
+
+        self.offload_model_weights_and_grad()
+        self.offload_megatron_optimizer()
+
+
     def save_checkpoint(
         self,
         save_path: str,
@@ -337,45 +352,30 @@ class MegatronModelManager:
     ) -> None:
         if not self.is_running:
             return
-        args = get_args()
-        args.save = save_path
-        save_checkpoint(
-            iteration=step,
-            model=self.model,
-            optimizer=self.optimizer,
-            opt_param_scheduler=self.lr_scheduler,
-            num_floating_point_operations_so_far=num_floating_point_operations_so_far,
-            checkpointing_context=self.checkpoint_context,
-            preprocess_common_state_dict_fn=preprocess_common_state_dict,
-        )
+
+        with self.ensure_onloaded_and_then_offload():
+            args = get_args()
+            args.save = save_path
+            save_checkpoint(
+                iteration=step,
+                model=self.model,
+                optimizer=self.optimizer,
+                opt_param_scheduler=self.lr_scheduler,
+                num_floating_point_operations_so_far=num_floating_point_operations_so_far,
+                checkpointing_context=self.checkpoint_context,
+                preprocess_common_state_dict_fn=preprocess_common_state_dict,
+            )
 
     def load_checkpoint(self, load_path):
-        # if weights and opt states are offloaded, recover them first
-        need_offload_weight = False
-        need_offload_optimizer = False
-        if self.is_weight_offloaded:
-            self.onload_model_weights_and_grad()
-            need_offload_weight = True
-        if self.is_optimizer_offloaded:
-            self.onload_megatron_optimizer()
-            need_offload_optimizer = True
-
-        # do load_checkpoint
-        args = get_args()
-        args.load = load_path
-        load_checkpoint(
-            self.model,
-            self.optimizer,
-            self.lr_scheduler,
-            checkpointing_context=self.checkpoint_context,
-        )
-
-        # if weights and opt states were offloaded before load_checkpoint,
-        # offload them after load_checkpoint is done
-        if need_offload_weight:
-            self.offload_model_weights_and_grad()
-        if need_offload_optimizer:
-            self.offload_megatron_optimizer()
+        with self.ensure_onloaded_and_then_offload():
+            args = get_args()
+            args.load = load_path
+            load_checkpoint(
+                self.model,
+                self.optimizer,
+                self.lr_scheduler,
+                checkpointing_context=self.checkpoint_context,
+            )
 
     def load_state_dict(self, state_dict, strict=True):
         if len(self.model) == 1:
