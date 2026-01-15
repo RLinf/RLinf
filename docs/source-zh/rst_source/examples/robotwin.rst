@@ -22,7 +22,7 @@ RoboTwinEnv 环境介绍
 **RoboTwinEnv 环境**
 
 - **Environment**：RLinf 框架基于 RoboTwin 2.0 仿真环境提供了用于强化学习训练的 RoboTwinEnv 环境。  
-- **Task**：控制机械臂完成多种操作任务。RLinf RoboTwinEnv 目前支持以下 **47 个任务** ，用户可以根据需要选择任务进行训练。
+- **Task**：控制机械臂完成多种操作任务。RLinf RoboTwinEnv 目前支持以下 **46 个任务** ，用户可以根据需要选择任务进行训练。
 
   **放置类任务（Placement Tasks）**
 
@@ -36,7 +36,6 @@ RoboTwinEnv 环境介绍
   - ``place_cans_plasticbox``：使用双臂将易拉罐抓取并放入塑料箱
   - ``place_container_plate``：将容器放置到盘子上
   - ``place_empty_cup``：使用单臂将空杯放置到杯垫上
-  - ``place_fan``：抓取风扇并放到彩色垫子上，且风扇朝向机器人
   - ``place_mouse_pad``：抓取鼠标并放置到彩色垫子上
   - ``place_object_basket``：一只手臂将目标物体放入篮子，另一只手臂抓起篮子并向外移动
   - ``place_object_stand``：使用合适的手臂将物体放置到支架上
@@ -95,7 +94,7 @@ RoboTwinEnv 环境介绍
   - ``rotate_qrcode``：抓取二维码板并旋转，使二维码朝向机器人
 
   .. note::
-     目前有三个任务尚未支持，分别是 ``open_laptop``， ``place_object_scale`` 和 ``put_object_cabinet`` 。另外，dense reward 奖励函数还在开发中，后续将逐步扩展到所有任务。
+     目前有四个任务尚未支持，分别是 ``place_fan``， ``open_laptop``， ``place_object_scale`` 和 ``put_object_cabinet`` 。另外，dense reward 奖励函数还在开发中，后续将逐步扩展到所有任务。
 
 - **Observation**：RLinf RoboTwinEnv 环境返回的观测信息是一个字典（dict），包含以下字段：
 
@@ -343,18 +342,22 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
      - beat_block_hammer
      - pick_dual_bottles
      - place_empty_cup
+     - Average
+     - Δ Avg.
+
    * - OpenVLA-OFT (SFT)
-     - 10.15%
-     - 20.31%
-     - 75.78%
+     - |huggingface| `10.15% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-beat_block_hammer>`_
+     - |huggingface| `20.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles>`_
+     - |huggingface| `75.78% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
+     - 35.41%
+     - ---
+
    * - OpenVLA-OFT (RLinf-GRPO)
-     - **90.63%**
-     - **92.96%**
-     - **94.53%**
-   * - 提升幅度
-     - +80.48%
-     - +72.65%
-     - +18.75%
+     - |huggingface| `96.09% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-beat_block_hammer>`_
+     - |huggingface| `92.96% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-pick_dual_bottles>`_
+     - |huggingface| `94.53% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_empty_cup>`_
+     - **94.52%**
+     - **+59.11%**
 
 .. note::
    
