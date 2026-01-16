@@ -38,16 +38,6 @@ runner:
   experiment_name: rstar2-7b
   output_dir: ../results
 
-down_sampling:
-  do_down_sampling: true
-  down_sampling_config:
-    reject_equal_reward: true
-    roc_error_ratio: true
-    roc_answer_format: true
-    min_zero_reward_trace_num: 2
-    min_non_zero_reward_trace_num: 2
-    down_sample_to_n: 16
-
 algorithm:
   group_size: 32
 
@@ -92,6 +82,16 @@ algorithm:
     repetition_penalty: 1.0
     max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
     min_new_tokens: 1
+  
+  down_sampling:
+    do_down_sampling: true
+    down_sampling_config:
+      reject_equal_reward: true
+      roc_error_ratio: true
+      roc_answer_format: true
+      min_zero_reward_trace_num: 2
+      min_non_zero_reward_trace_num: 2
+      down_sample_to_n: 16
   
 inference:
   model_type: ${rollout.model.model_type}

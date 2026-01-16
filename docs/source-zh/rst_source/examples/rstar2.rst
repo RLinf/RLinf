@@ -46,7 +46,7 @@ Reward计算工具
 在8*H100上训练
 --------------
 
-通过toolkits/rstar2/data_process/process_train_dataset.py下载训练集，并将路径写入examples/rstar2/config/rstar2-qwen2.5-7b-megatron.yaml
+通过examples/rstar2/data_process/process_train_dataset.py下载训练集，并将路径写入examples/rstar2/config/rstar2-qwen2.5-7b-megatron.yaml
 
 .. code-block:: yaml
 
@@ -64,7 +64,7 @@ Reward计算工具
 
      gpu_memory_utilization: 0.5
      model:
-       model_path: /path/to/model/Qwen2.5-3B-Instruct
+       model_path: /path/to/model/Qwen2.5-7B-Instruct
        model_type: qwen2.5
 
 由于down sample逻辑不适配目前inference逻辑，recompute_logprobs应当设置为False
