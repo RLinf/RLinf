@@ -237,9 +237,6 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
             if self.return_logprobs:
                 response_logprobs += generate_logprobs
             assistant_turns += 1
-            # if self.print_outputs:
-            #     # add anything you want to print
-            #     trace_prints.append({"uuid": trace_uuid, "generate": response_text, "assistant_turns": assistant_turns})
             if len(response_ids) == max_resp_len:
                 break
             if self.max_assistant_turns and assistant_turns >= self.max_assistant_turns:
@@ -294,10 +291,6 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
             response_mask += [0] * len(tool_response_ids)  # 0 for tool response tokens
             if self.return_logprobs:
                 response_logprobs += [0.0] * len(tool_response_ids)
-            # if self.print_outputs:
-            #     trace_prints[-1].update(
-            #         {"tool_resp": self.tokenizer.decode(tool_response_ids)}
-            #     )
 
             user_turns += 1
         data = {
