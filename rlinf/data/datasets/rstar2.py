@@ -27,16 +27,14 @@ from rlinf.data.utils import batch_pad_to_fixed_len
 
 def get_tool_schemas():
     """
-    从配置文件获取工具模式列表
+    Load tool schemas from a configuration file.
     
     Args:
-        tools_config_file: 工具配置文件路径
+        tools_config_file: Path to the tools configuration file.
         
     Returns:
-        List[Dict[str, Any]]: 工具模式列表
+        List[Dict[str, Any]]: List of tool schema dictionaries.
     """
-    # logger.info(f"Loading tool schemas from config file: {tools_config_file}")
-    
     return [{
         "type": "function",
         "function": {

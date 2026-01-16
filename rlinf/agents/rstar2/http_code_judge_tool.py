@@ -277,10 +277,7 @@ class PythonTool(CodeJudgeToolBase):
                 raise e
             assert len(results) == 1, f"{results}"
             return self._postprocess(results[0])
-        # except Exception as e:
-        #     print(f"Tool exception: {e}")
-        #     return ToolChannelResponse(success=False, result=f"Error: send request failed: {str(e)}")
-
+        
     def tool_schema(self) -> Dict:
         return {
             "type": "function",
@@ -346,14 +343,6 @@ class PythonTool(CodeJudgeToolBase):
                 success=False,
                 result=f"Error when executing tool: run_tool_calls_on_server_async failed for1 tool calls after 4 attempts."
             )
-    
-        # required_param_msg = ""
-        # for required_name in self.tool_schema()["function"]["parameters"]["required"]:
-        #     if required_name not in tool_args:
-        #         return ToolChannelResponse(
-        #             success=False,
-        #             result=f"Error when executing tool: run_tool_calls_on_server_async failed for1 tool calls after 4 attempts."
-        #         )
 
         if "code" in tool_args and not isinstance(tool_args["code"], str):
             return ToolChannelResponse(
