@@ -76,7 +76,7 @@ algorithm:
   auto_entropy_tuning: True  # Enable automatic entropy tuning
   alpha_type: softplus
   initial_alpha: 0.01  # Initial temperature value
-  target_entropy: -4  # Target entropy (-action_dim)
+  target_entropy: -4  # Target entropy
   alpha_lr: 3.0e-4  # Learning rate for temperature parameter
   
   # Replay buffer settings
@@ -128,8 +128,8 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
 
-  micro_batch_size: 1024
-  global_batch_size: 1024
+  micro_batch_size: 256
+  global_batch_size: 256
   seed: 1234
   enable_offload: False
 
