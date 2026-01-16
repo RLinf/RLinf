@@ -25,6 +25,7 @@ from habitat.core.registry import registry
 from habitat_baselines.config.default import get_config
 from hydra.core.global_hydra import GlobalHydra
 
+from rlinf.envs.habitat.extensions import measures
 from rlinf.envs.habitat.extensions.utils import observations_to_image
 from rlinf.envs.habitat.venv import HabitatRLEnv, ReconfigureSubprocEnv
 from rlinf.envs.utils import (
@@ -32,6 +33,8 @@ from rlinf.envs.utils import (
     save_rollout_video,
     to_tensor,
 )
+
+measures.pass_format_check()
 
 
 @registry.register_task_action
@@ -61,7 +64,6 @@ class HabitatEnv(gym.Env):
         self._generator_ordered = np.random.default_rng(seed=0)
 
         self._init_env()
-        self._init_metrics()
 
         self.video_cfg = cfg.video_cfg
         self.video_cnt = 0
@@ -188,35 +190,16 @@ class HabitatEnv(gym.Env):
     def is_start(self, value):
         self._is_start = value
 
-    def _init_metrics(self):
-        self.success_once = np.zeros(self.num_envs, dtype=bool)
-        self.fail_once = np.zeros(self.num_envs, dtype=bool)
-        self.returns = np.zeros(self.num_envs)
-
-    def _reset_metrics(self, env_idx=None):
-        if env_idx is not None:
-            mask = np.zeros(self.num_envs, dtype=bool)
-            mask[env_idx] = True
-            self.prev_step_reward[mask] = 0.0
-            self.success_once[mask] = False
-            self.fail_once[mask] = False
-            self.returns[mask] = 0
-            self._elapsed_steps[env_idx] = 0
-        else:
-            self.prev_step_reward[:] = 0
-            self.success_once[:] = False
-            self.fail_once[:] = False
-            self.returns[:] = 0.0
-            self._elapsed_steps[:] = 0
-
-    def _record_metrics(self, step_reward, terminations, infos):
+    def _record_metrics(self, infos):
         episode_info = {}
-        self.returns += step_reward
-        self.success_once = self.success_once | terminations
-        episode_info["success_once"] = self.success_once.copy()
-        episode_info["return"] = self.returns.copy()
-        episode_info["episode_len"] = self.elapsed_steps.copy()
-        episode_info["reward"] = episode_info["return"] / episode_info["episode_len"]
+        episode_info["distance_to_goal"] = infos["distance_to_goal"].copy()
+        episode_info["success"] = infos["success"].copy()
+        episode_info["spl"] = infos["spl"].copy()
+        episode_info["trajectory_Length"] = infos["trajectory_Length"].copy()
+        episode_info["oracle_success"] = infos["oracle_success"].copy()
+        episode_info["oracle_navigation_error"] = infos[
+            "oracle_navigation_error"
+        ].copy()
         infos["episode"] = to_tensor(episode_info)
         return infos
 
@@ -277,6 +260,7 @@ class HabitatEnv(gym.Env):
 
         # TODO: what if termination means failure? (e.g. robot falling down)
         step_reward = self._calc_step_reward(terminations)
+        infos = self._record_metrics(infos)
 
         if self.video_cfg.save_video:
             episode_ids = self.env.get_current_episode_ids()
@@ -368,10 +352,10 @@ class HabitatEnv(gym.Env):
         obs, infos = self.reset(env_idx=env_idx)
         # gymnasium calls it final observation but it really is just o_{t+1} or the true next observation
         infos["final_observation"] = final_obs
-        infos["final_info"] = final_info
         infos["_final_info"] = dones
         infos["_final_observation"] = dones
         infos["_elapsed_steps"] = dones
+        infos["episode"] = final_info["episode"].copy()
         return obs, infos
 
     def _calc_step_reward(self, terminations):
