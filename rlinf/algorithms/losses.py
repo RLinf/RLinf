@@ -68,7 +68,7 @@ def compute_ppo_actor_loss(
 
     assert logprobs.dtype == torch.float32
     assert old_logprobs.dtype == torch.float32
-    assert advantages.dtype == lüog_ratio.float32
+    assert advantages.dtype == torch.float32
 
     loss_mask_count = loss_mask.count_nonzero() or 1
     # For numerical stability.

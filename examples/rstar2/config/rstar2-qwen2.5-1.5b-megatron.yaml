@@ -35,11 +35,11 @@ runner:
   max_tokens_per_mbs: 16384
 
   resume_dir: auto
-  experiment_name: test_1_5
-  output_dir: ../test
+  experiment_name: rstar2-1.5b
+  output_dir: ../results
 
 down_sampling:
-  do_down_sampling: True
+  do_down_sampling: true
   down_sampling_config:
     reject_equal_reward: true
     roc_error_ratio: true
@@ -119,7 +119,7 @@ rollout:
   gpu_memory_utilization: 0.5
 
   model:
-    model_path: /mnt/project_rlinf/hf_models/Qwen2.5-1.5B-Instruct
+    model_path: /path/to/model/Qwen2.5-1.5B-Instruct
     model_type: qwen2.5
     precision: ${actor.model.precision}              # precision for rollout model, support [fp16, bf16, fp32]
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
@@ -172,8 +172,8 @@ data:
   shuffle: True
   validation_shuffle: True
   seed: 1234
-  train_data_paths: ["/mnt/project_rlinf/wangxiangyuan/datasets/rstar2/new_train.jsonl"]
-  val_data_paths: ["/mnt/project_rlinf/wangxiangyuan/datasets/rstar2/new_train.jsonl"]
+  train_data_paths: ["/path/to/train.jsonl"]
+  val_data_paths: ["/path/to/train.jsonl"]
   apply_chat_template_kwargs: {}
 
 # Tools configuration for AgentLoop
