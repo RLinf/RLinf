@@ -230,19 +230,18 @@ class ReasoningRunner:
         if self.reward is not None:
             self.reward.init_worker().wait()
 
-        actor_handle = self.actor.init_worker()
+        actor_handle = self.actor.init_worker().wait()
         if self.has_dedicated_actor_inference:
             actor_inference_handle = self.actor_inference.init_worker()
+
         if self.critic is not None:
-            critic_handle = self.critic.init_worker()
+            critic_handle = self.critic.init_worker().wait()
             if self.has_dedicated_critic_inference:
                 critic_inference_handle = self.critic_inference.init_worker()
 
-        actor_handle.wait()
         if self.has_dedicated_actor_inference:
             actor_inference_handle.wait()
         if self.critic is not None:
-            critic_handle.wait()
             if self.has_dedicated_critic_inference:
                 critic_inference_handle.wait()
 
