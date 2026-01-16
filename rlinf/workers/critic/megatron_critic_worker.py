@@ -14,29 +14,15 @@
 
 import copy
 
-import torch
-import torch.distributed
-
 from megatron.training.training import unwrap_model
 from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig
-from torch.multiprocessing.reductions import reduce_tensor
 
 from rlinf.workers.megatron_worker import MegatronWorker
 from rlinf.algorithms.losses import compute_ppo_critic_loss
 
-try:
-    from params_resharding import nccl_group_recreate
+from rlinf.utils.placement import ModelParallelComponentPlacement
 
-    HAVE_RESHARDING = True
-except ImportError:
-    HAVE_RESHARDING = False
-
-
-from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
-from rlinf.workers.megatron_worker import MegatronWorker
-
-import sys
 
 class MegatronCritic(MegatronWorker):
     def __init__(

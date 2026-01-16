@@ -33,7 +33,6 @@ from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.resharding.mcore_weight_reshard import MegatronCoreWeightReshard
 from rlinf.utils.resharding.reshard_config import ReshardConfig
 from rlinf.utils.utils import retrieve_model_state_dict_in_cpu
-
 from rlinf.workers.rollout.utils import RankMapper
 from rlinf.workers.megatron_worker import MegatronWorker
 
@@ -270,3 +269,132 @@ class MegatronActor(MegatronWorker):
             return output, loss_func
 
         return forward_output_and_loss_func
+
+    def _get_rollout_model_state_dict(self, bucket_weight):
+        """Get the state dictionary of the model for rollout."""
+        return self.rollout_weights_reshard.gather_and_reshard_model(
+            bucket_weight, self.dst_tp_rank
+        )
+
+    def _setup_rollout_weight_dst_ranks(self):
+        """Setup destination ranks for token and weight communication."""
+        rank_map = RankMapper.get_actor_rank_to_rollout_rank_map(
+            self.component_placement
+        )
+        self._weight_dst_rank_in_rollout = rank_map[self._rank]
+        self.log_info(
+            f"Actor rank {self._rank} will send weights to {self._weight_dst_rank_in_rollout}"
+        )
+
+    def divide_model_to_bucket(self):
+        model_bucket_list = self.rollout_weights_reshard.divide_model_to_bucket(
+            self.model
+        )
+        return model_bucket_list
+
+    def sync_model_to_rollout(self):
+        """Send the model weights to the destination ranks in the rollout task."""
+        if self.recreate_nccl_groups:
+            nccl_group_recreate()
+        if not self.is_running:
+            return
+
+        # ensure weights are on GPU before reshard
+        self._load_weight()
+
+        model_bucket_list = self.divide_model_to_bucket()
+        if not hasattr(self, "sync_model_bucket_length"):
+            self.sync_model_bucket_length = len(model_bucket_list)
+        else:
+            assert self.sync_model_bucket_length == len(model_bucket_list), (
+                f"last sync_model_bucket_length {self.sync_model_bucket_length} don't equal now the len(model_bucket_list) {len(model_bucket_list)}"
+            )
+            assert self.sync_model_bucket_length != 0, (
+                "error the self.sync_model_bucket_length is 0"
+            )
+
+        self.model_state_offload_optimizer_and_grad()
+
+        # send bucket size
+        if len(self._weight_dst_rank_in_rollout) > 0:
+            if self.placement_mode == PlacementMode.COLLOCATED:
+                send_handle = None
+                for bucket_weight in model_bucket_list:
+                    reshard_state_dict = self._get_rollout_model_state_dict(
+                        bucket_weight
+                    )
+                    buffer = {
+                        k: reduce_tensor(v) for k, v in reshard_state_dict.items()
+                    }
+                    if send_handle is not None:
+                        send_handle.wait()
+                    else:
+                        # add the bucket_length message in bucket 0
+                        buffer["bucket_length"] = len(model_bucket_list)
+                    send_handle = self.send(
+                        buffer,
+                        self.rollout_group_name,
+                        self._weight_dst_rank_in_rollout,
+                        async_op=True,
+                    )
+                    del reshard_state_dict
+                send_handle.wait()
+            else:
+                send_handle_bucket = []
+                for bucket_weight in model_bucket_list:
+                    reshard_state_dict = self._get_rollout_model_state_dict(
+                        bucket_weight
+                    )
+
+                    if len(send_handle_bucket) != 0:
+                        for send_handle in send_handle_bucket:
+                            send_handle.wait()
+                        send_handle_bucket = []
+                    else:
+                        # add the bucket_length message in bucket 0
+                        reshard_state_dict["bucket_length"] = len(model_bucket_list)
+
+                    for weight_dst_rank in self._weight_dst_rank_in_rollout:
+                        send_handle = self.send(
+                            reshard_state_dict,
+                            self.rollout_group_name,
+                            weight_dst_rank,
+                            async_op=True,
+                        )
+                        send_handle_bucket.append(send_handle)
+
+                if len(send_handle_bucket) != 0:
+                    for send_handle in send_handle_bucket:
+                        send_handle.wait()
+
+        if (
+            self.placement_mode == PlacementMode.COLLOCATED
+            or self.use_pre_process_policy
+        ):
+            if self.offload_weight:
+                self.offload_model_weights_and_grad(
+                    offload_grad=False, offload_weight=True
+                )
+                self.is_weight_offloaded = True
+
+    def model_state_offload_optimizer_and_grad(self):
+        if not self.is_running:
+            return
+        if (
+            self.placement_mode == PlacementMode.COLLOCATED
+            or self.use_pre_process_policy
+        ):
+            if self.offload_optimizer:
+                self.offload_megatron_optimizer()
+                self.is_optimizer_offloaded = True
+            self.offload_model_weights_and_grad(
+                offload_grad=self.offload_grad, offload_weight=False
+            )
+        else:
+            assert self.placement_mode in [
+                PlacementMode.DISAGGREGATED,
+                PlacementMode.AUTO,
+            ], "Unsupported placement mode for sending weights."
+            assert isinstance(self._weight_dst_rank_in_rollout, list), (
+                f"In disaggregated mode, weight_dst_rank_in_rollout should be a list of ranks, got {type(self._weight_dst_rank_in_rollout)}"
+            )
