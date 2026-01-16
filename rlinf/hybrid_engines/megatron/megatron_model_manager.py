@@ -375,6 +375,7 @@ class MegatronModelManager:
                 self.optimizer,
                 self.lr_scheduler,
                 checkpointing_context=self.checkpoint_context,
+                strict=not self.is_dedicated_critic_model,
             )
 
     def load_state_dict(self, state_dict, strict=True):
