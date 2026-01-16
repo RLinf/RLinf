@@ -193,9 +193,9 @@ class MegatronActor(MegatronModelManager, Worker):
             * self.cfg.algorithm.group_size
             // parallel_state.get_data_parallel_world_size()
         )
-        self.do_down_sampling = self.cfg.get("down_sampling", False) and self.cfg.down_sampling.do_down_sampling
+        self.do_down_sampling = self.cfg.algorithm.get("down_sampling", False) and self.cfg.algorithm.down_sampling.do_down_sampling
         if self.do_down_sampling:
-            self.down_sampling_config = self.cfg.down_sampling.down_sampling_config
+            self.down_sampling_config = self.cfg.algorithm.down_sampling.down_sampling_config
 
         # Config validation
         if self.is_pipeline:

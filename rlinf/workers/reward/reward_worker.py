@@ -38,11 +38,11 @@ class RewardWorker(Worker):
         )
         print(f"total_batch_size_per_dp: {self.total_batch_size_per_dp}")
         self.do_down_sampling = (
-            hasattr(self.cfg, "down_sampling")
-            and getattr(self.cfg.down_sampling, "do_down_sampling", False)
+            hasattr(self.cfg.algorithm, "down_sampling")
+            and getattr(self.cfg.algorithm.down_sampling, "do_down_sampling", False)
         )
         if self.do_down_sampling:
-            self.down_sampling_config = getattr(self.cfg.down_sampling, "down_sampling_config", {})
+            self.down_sampling_config = getattr(self.cfg.algorithm.down_sampling, "down_sampling_config", {})
         else:
             self.down_sampling_config = None
 
