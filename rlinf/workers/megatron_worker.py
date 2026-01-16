@@ -143,8 +143,7 @@ class MegatronWorker(MegatronModelManager, Worker):
         self.offload_optimizer = self.role_cfg.offload_optimizer
         self.offload_weight = self.role_cfg.offload_weight
         self.offload_grad = self.role_cfg.offload_grad
-        # self.is_weight_offloaded = False
-        # self.is_optimizer_offloaded = False
+
         self.ref_policy_state_dict = None
         self.is_pipeline = self.component_placement.is_pipeline
         self.placement_mode = placement._placement_mode
