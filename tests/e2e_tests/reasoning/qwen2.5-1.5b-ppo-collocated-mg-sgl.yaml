@@ -34,7 +34,7 @@ runner:
   experiment_name: ppo-1.5b-mg-sgl
   output_dir: /workspace/results
 
-  algorithm:
+algorithm:
   group_size: 1
 
   n_minibatches: 1
