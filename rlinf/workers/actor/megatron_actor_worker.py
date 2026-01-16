@@ -107,6 +107,7 @@ class MegatronActor(MegatronWorker):
         )
         self.rollout_weights_reshard = MegatronCoreWeightReshard(rollout_reshard_config)
         self._setup_rollout_weight_dst_ranks()
+        torch.distributed.barrier()
 
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
