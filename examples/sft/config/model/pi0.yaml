@@ -25,7 +25,7 @@ openpi:
   noise_level: 0.5
   action_chunk: ${actor.model.num_action_chunks}
   num_steps: ${actor.model.num_steps}
-  train_expert_only: True
+  train_expert_only: False
   action_env_dim: ${actor.model.action_dim}
   noise_method: "flow_sde"
   add_value_head: ${actor.model.add_value_head}

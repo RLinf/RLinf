@@ -21,22 +21,14 @@ from omegaconf import DictConfig
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.config import SupportedModel
-from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
-    FSDPModelManager,
-)
+from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict
-from rlinf.utils.metric_utils import (
-    append_to_dict,
-)
-from rlinf.utils.placement import (
-    HybridComponentPlacement,
-)
-from rlinf.utils.utils import (
-    clear_memory,
-)
+from rlinf.utils.metric_utils import append_to_dict
+from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.utils import clear_memory
 
 
 class FSDPSftWorker(FSDPModelManager, Worker):
@@ -110,6 +102,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
 
             metrics = {}
 
+            avg_loss = 0.0
             for idx in range(self.gradient_accumulation):
                 backward_ctx = self.before_micro_batch(
                     self.model,
@@ -140,6 +133,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
                     loss = losses.mean()
 
                 loss = loss / self.gradient_accumulation
+                avg_loss += loss.item()
                 with backward_ctx:
                     self.grad_scaler.scale(loss).backward()
 
@@ -156,7 +150,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             append_to_dict(
                 metrics,
                 {
-                    "loss": loss.item(),
+                    "loss": avg_loss,
                     "learning_rate": lr_value,
                     "grad_norm": grad_norm_value,
                 },
