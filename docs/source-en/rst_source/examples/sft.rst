@@ -155,6 +155,6 @@ First start the Ray cluster, then run the helper script:
 .. code:: bash
 
    # return to repo root
-   bash examples/sft/train_embodied_sft.sh --config libero_sft_openpi
+   bash examples/sft/train_embodiment_sft.sh --config libero_sft_openpi
 
 The same script works for generic text SFT; just swap the config file.

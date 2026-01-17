@@ -385,11 +385,16 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         forward_inputs = {
             "chains": outputs["chains"],
             "denoise_inds": outputs["denoise_inds"],
+            "observation/image": env_obs["main_images"],
+            "observation/state": env_obs["states"],
             "tokenized_prompt": processed_obs["tokenized_prompt"],
             "tokenized_prompt_mask": processed_obs["tokenized_prompt_mask"],
         }
+        if env_obs["wrist_images"] is not None:
+            forward_inputs["observation/wrist_image"] = env_obs["wrist_images"]
         forward_inputs.update(to_process_obs)
         forward_inputs.pop("prompt", None)
+
         result = {
             "prev_logprobs": outputs["prev_logprobs"],
             "prev_values": outputs["prev_values"],

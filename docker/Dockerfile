@@ -6,7 +6,8 @@ ARG BUILD_TARGET=reason
 ##################################################################################################
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-reason
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-maniskill_libero
-FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-behavior
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-behavior-openvlaoft
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-behavior-openpi
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-metaworld
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-calvin
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS base-image-embodied-robocasa
@@ -156,16 +157,21 @@ RUN link_assets
 # Set default env
 RUN echo "source ${UV_PATH}/openvla/bin/activate" >> ~/.bashrc
 
-
-##################################################################################################
-# Embodied: BEHAVIOR
-##################################################################################################
-FROM embodied-common-image AS embodied-behavior-image
+FROM embodied-common-image AS embodied-behavior-openvlaoft-image
 
 # Install openvla-oft env
 RUN bash requirements/install.sh embodied --venv openvla-oft --model openvla-oft --env behavior
+
 # omnigibson downloads assets to /tmp during initialization
 RUN source switch_env openvla-oft && python -c "import omnigibson as og; cfg={}; og.Environment(cfg); og.shutdown()" || exit 0
+
+FROM embodied-common-image AS embodied-behavior-openpi-image
+
+# Install openpi env
+RUN bash requirements/install.sh embodied --venv openpi --model openpi --env behavior
+
+# omnigibson downloads assets to /tmp during initialization
+RUN source switch_env openpi && python -c "import omnigibson as og; cfg={}; og.Environment(cfg); og.shutdown()" || exit 0
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc

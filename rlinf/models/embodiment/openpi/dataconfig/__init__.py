@@ -26,6 +26,9 @@ from openpi.training.config import (
     TrainConfig,
 )
 
+from rlinf.models.embodiment.openpi.dataconfig.behavior_dataconfig import (
+    LeRobotBehaviorDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.calvin_dataconfig import (
     LeRobotCalvinDataConfig,
 )
@@ -222,6 +225,21 @@ _CONFIGS = [
             extra_delta_transform=True,  # True for delta action, False for abs_action
         ),
         pytorch_weight_path="checkpoints/torch/pi0_base",
+    ),
+    TrainConfig(
+        name="pi0_behavior",
+        model=pi0_config.Pi0Config(),
+        data=LeRobotBehaviorDataConfig(
+            repo_id="physical-intelligence/behavior",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_behavior/assets"),
+            extra_delta_transform=True,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi0_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_base",
+        num_train_steps=30_000,
     ),
     TrainConfig(
         name="pi0_custom",

@@ -254,6 +254,38 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-openpi-behavior-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export BEHAVIOR_PATH=/workspace/dataset/BEHAVIOR-1K
+          export ISAAC_SIM_WHEEL_PATH=/workspace/dataset/isaac_sim_wheels
+          bash requirements/install.sh embodied --model openpi --env behavior
+
+      - name: BEHAVIOR-OpenPI test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
+          export ISAAC_PATH=/workspace/dataset/isaac-sim
+          bash tests/e2e_tests/embodied/run.sh behavior_ppo_openpi
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-gr00t-maniskill-libero-test:
     runs-on: embodied
     steps:
