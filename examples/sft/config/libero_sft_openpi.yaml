@@ -23,10 +23,10 @@ runner:
     experiment_name: "test_openpi"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 1000
+  max_epochs: 30000
   max_steps: -1
   val_check_interval: -1
-  save_interval: 10
+  save_interval: 2000
 
 data:
   data_path: "/path/to/libero-data"
@@ -37,8 +37,8 @@ algorithm:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 1
-  global_batch_size: 1024
+  micro_batch_size: 4
+  global_batch_size: 128
   seed: 0
 
   # Override the default values in model/pi0
@@ -52,19 +52,22 @@ actor:
       detach_critic_input: True
 
   optim:
-    lr: 7.91e-6
+    lr: 2.5e-5  
     value_lr: 1.55e-4
     adam_beta1: 0.9
     adam_beta2: 0.95
-    adam_eps: 1.0e-05
-    weight_decay: 0.01
+    adam_eps: 1.0e-08  
+    weight_decay: 1.0e-10  
     clip_grad: 1.0
+    warmup_style: "cosine"  
+    lr_warmup_steps: 1000  
+    total_training_steps: 30000  # for lr scheduler cosine decay
 
   # Override the default values in training_backend/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
-    use_orig_params: True
+    use_orig_params: False
     gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
     mixed_precision:
       param_dtype: ${actor.model.precision}
