@@ -127,3 +127,39 @@ Gloo 超时 / “Global rank x is not part of group”
 
 - 确认所选 IP 能被其他节点访问（例如使用 ping 测试）。  
 - 如有需要，请显式选择正确网卡对应的 IP 作为 Ray head，并将该 IP 告知各 Worker。
+
+如何debug RLinf
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**说明：** 方便各位同学在使用过程中进行调试。
+
+1. 首先在想 debug 的位置设置断点，如下所示：
+
+.. code-block:: python
+
+   chains = data["chains"]
+   denoise_inds = data["denoise_inds"]
+   
+   import ray
+   ray.util.pdb.set_trace()
+   
+   # input transform
+   observation = self.input_transform(data, transpose=False)
+   observation = _model.Observation.from_dict(observation)
+
+2. 然后运行对应的程序,比如ppo pi05
+
+.. code-block:: bash
+
+   export RAY_DEBUG=legacy && bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
+
+3. 运行程序直到出现 ``use 'ray debug' to connect ...`` 提示，然后使用另起一个终端执行 ``ray debug`` 连接到调试器。
+
+.. code-block:: bash
+
+   ray debug
+
+
+**引用：** 
+
+- 参考 Ray 的官方文档 https://verl.readthedocs.io/zh-cn/latest/start/ray_debug_tutorial.html 。

@@ -132,5 +132,41 @@ interface is chosen).
 **Fix:**
 
 - Confirm that the chosen IP is reachable from other nodes (e.g., ping it).
-- If needed, choose the correct interface’s IP address explicitly for the Ray
+- If needed, choose the correct interface's IP address explicitly for the Ray
   head and share that IP with workers.
+
+------------------------------------
+
+How to Debug RLinf
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Description:** This section helps users debug RLinf during usage.
+
+1. First, set a breakpoint at the location where you want to debug, as shown below:
+
+.. code-block:: python
+
+   chains = data["chains"]
+   denoise_inds = data["denoise_inds"]
+   
+   import ray
+   ray.util.pdb.set_trace()
+   
+   # input transform
+   observation = self.input_transform(data, transpose=False)
+   observation = _model.Observation.from_dict(observation)
+
+2. Then run the corresponding program, for example, PPO Pi05:
+
+.. code-block:: bash
+
+   export RAY_DEBUG=legacy && bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
+
+3. Run the program until you see the ``use 'ray debug' to connect ...`` prompt, then open a new terminal and execute ``ray debug`` to connect to the debugger.
+
+.. code-block:: bash
+
+   ray debug
+
+
+**Reference:** See Ray's official documentation at https://verl.readthedocs.io/en/latest/start/ray_debug_tutorial.html.
