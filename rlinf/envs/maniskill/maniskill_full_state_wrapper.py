@@ -16,16 +16,14 @@ import gymnasium as gym
 
 
 class ManiskillFullStateWrapper(gym.Wrapper):
-    """
-    Wrapper that replaces partial states with full 42-dim states in rgb mode.
+    """Wrapper that replaces partial states with full states in rgb mode.
 
-    In rgb mode, ManiSkill returns partial state (29 dim) in obs["states"].
-    This wrapper replaces it with full state (42 dim) by directly querying
-    robot qpos, qvel, and object poses from the env.
+    In rgb mode, ManiSkill returns partial state in obs["states"]. This wrapper
+    replaces it with full state by querying robot and object poses from the env.
 
-    Usage:
-        In env_worker.py or config, enable this wrapper for rgb mode.
-        Then use obs_dim: 42 in mlp_policy config.
+    Args:
+        env: The ManiSkill environment to wrap.
+        num_envs: Number of parallel environments.
     """
 
     def __init__(self, env: gym.Env, num_envs: int = 1):
@@ -43,25 +41,10 @@ class ManiskillFullStateWrapper(gym.Wrapper):
         return unwrapped
 
     def _get_full_state(self):
-        """
-        Get full 42-dim state directly from ManiSkill env.
-
-        State composition (PickCube-v1):
-        - robot qpos: 9 dim (7 arm joints + 2 gripper)
-        - robot qvel: 9 dim
-        - tcp_pose: 7 dim (3 pos + 4 quat)
-        - goal_pos: 3 dim
-        - obj_pose: 7 dim (3 pos + 4 quat)
-        - tcp_to_obj_pos: 3 dim
-        - obj_to_goal_pos: 3 dim
-        Total: ~42 dim (may vary slightly by task)
-        """
-        import torch
+        """Get full state observation by temporarily switching to state mode."""
         from mani_skill.utils import common
 
         env = self._unwrapped
-
-        # Temporarily get state observation
         original_mode = env._obs_mode
         env._obs_mode = "state"
         try:
@@ -69,13 +52,9 @@ class ManiskillFullStateWrapper(gym.Wrapper):
         finally:
             env._obs_mode = original_mode
 
-        # Flatten if dict
         if isinstance(state_obs, dict):
-            state = common.flatten_state_dict(state_obs, use_torch=True, device=env.device)
-        else:
-            state = state_obs
-
-        return state
+            return common.flatten_state_dict(state_obs, use_torch=True, device=env.device)
+        return state_obs
 
     def _replace_states(self, obs):
         """Replace partial states with full states."""

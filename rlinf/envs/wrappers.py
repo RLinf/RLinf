@@ -12,32 +12,44 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Environment wrappers for data collection and trajectory recording."""
+
 import os
 import pickle
+import random
 from typing import Any, Optional
 
 import gymnasium as gym
 
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
+
 
 class DataCollectorWrapper(gym.Wrapper):
-    """
-    A transparent wrapper that collects environment interaction data.
+    """Wrapper for collecting environment interaction data during rollouts.
 
-    This wrapper records observations, actions, rewards, termination flags,
-    and info dicts for each step. Each env's episode is saved to a separate
-    pkl file when that env's episode ends.
+    This wrapper transparently records observations, actions, rewards, termination
+    flags, and info dicts at each step. Episode data is saved to separate pickle
+    files when episodes terminate, supporting both single and vectorized environments.
+
+    Attributes:
+        save_dir: Directory path where episode data will be saved.
+        enabled: Whether data collection is currently active.
+        rank: Worker rank identifier for distributed training.
+        collect_mode: Collection mode - "train", "eval", or "all".
+        num_envs: Number of parallel environments being wrapped.
 
     Args:
-        env: The environment to wrap.
-        save_dir: Directory path where episode data will be saved.
-        enabled: Whether data collection is enabled. If False, the wrapper
-            acts as a pass-through.
-        rank: The worker rank for file naming (default: 0).
-        mode: Data collection mode - "train", "eval", or "all".
-        num_envs: Number of parallel environments (default: 1).
-        show_goal_site: Whether to show goal_site (green target marker) in renders.
-        sample_rate_success: Sampling rate for successful episodes (default: 1.0).
-        sample_rate_fail: Sampling rate for failed episodes (default: 0.1).
+        env: The gymnasium environment to wrap.
+        save_dir: Directory path for saving collected episode data.
+        enabled: Whether to enable data collection. Defaults to True.
+        rank: Worker rank for file naming in distributed settings. Defaults to 0.
+        mode: Collection mode - "train", "eval", or "all". Defaults to "all".
+        num_envs: Number of parallel environments. Defaults to 1.
+        show_goal_site: Whether to show goal visualization in renders. Defaults to True.
+        sample_rate_success: Probability of saving successful episodes. Defaults to 1.0.
+        sample_rate_fail: Probability of saving failed episodes. Defaults to 0.1.
     """
 
     def __init__(
@@ -55,71 +67,74 @@ class DataCollectorWrapper(gym.Wrapper):
         super().__init__(env)
         self.save_dir = save_dir
         self.rank = rank
-        self.collect_mode = mode  # "all", "train", or "eval"
+        self.collect_mode = mode
         self.num_envs = num_envs
         self.show_goal_site = show_goal_site
         self.sample_rate_success = sample_rate_success
         self.sample_rate_fail = sample_rate_fail
-        
-        # Detect actual env mode by checking env's is_eval attribute
+
         self.env_mode = self._detect_env_mode()
-        
-        # Enable collection only if collect_mode matches
-        should_collect = (self.collect_mode == "all") or (self.collect_mode == self.env_mode)
+
+        should_collect = (self.collect_mode == "all") or (
+            self.collect_mode == self.env_mode
+        )
         self.enabled = enabled and should_collect
-        
-        # Debug info
-        print(f"[DataCollector] env_mode={self.env_mode}, collect_mode={self.collect_mode}, enabled={self.enabled}")
 
-        # Per-env episode counters
+        logger.info(
+            f"DataCollectorWrapper initialized: env_mode={self.env_mode}, "
+            f"collect_mode={self.collect_mode}, enabled={self.enabled}"
+        )
+
         self._episode_ids = [0] * num_envs
-        
-        # Per-env success status for current episode
         self._episode_success = [False] * num_envs
-        
-        # Per-env next episode initial obs (set when auto_reset occurs)
         self._next_episode_obs = [None] * num_envs
-
-        # Per-env episode buffers
         self._buffers = [self._create_empty_buffer() for _ in range(num_envs)]
 
-        # Create save directory if enabled
         if self.enabled:
             self._setup_save_dir()
-    
+
     def _detect_env_mode(self) -> str:
-        """Detect if this is a train or eval environment."""
-        # Walk through wrapper chain, checking each level for cfg.is_eval
+        """Detect whether this environment is configured for training or evaluation.
+
+        Traverses the wrapper chain to find configuration attributes that indicate
+        the environment mode.
+
+        Returns:
+            "train" or "eval" based on detected configuration, defaults to "train".
+        """
         current = self.env
         visited = set()
-        
+
         while current is not None and id(current) not in visited:
             visited.add(id(current))
-            
-            # Check cfg.is_eval at this level
+
             if hasattr(current, "cfg"):
                 cfg = current.cfg
                 is_eval = getattr(cfg, "is_eval", None)
                 if is_eval is not None:
                     return "eval" if is_eval else "train"
-            
-            # Check direct is_eval attribute
-            if hasattr(current, "is_eval") and not callable(getattr(current, "is_eval")):
+
+            if hasattr(current, "is_eval") and not callable(
+                getattr(current, "is_eval")
+            ):
                 return "eval" if current.is_eval else "train"
-            
-            # Move to inner env
+
             if hasattr(current, "env"):
                 current = current.env
             elif hasattr(current, "unwrapped") and current.unwrapped is not current:
                 current = current.unwrapped
             else:
                 break
-        
-        # Fallback: assume train
+
         return "train"
 
     def _create_empty_buffer(self) -> dict[str, list]:
-        """Create an empty episode buffer."""
+        """Create an empty buffer for storing episode data.
+
+        Returns:
+            Dictionary with empty lists for observations, actions, rewards,
+            terminated flags, truncated flags, and info dicts.
+        """
         return {
             "observations": [],
             "actions": [],
@@ -130,37 +145,33 @@ class DataCollectorWrapper(gym.Wrapper):
         }
 
     def _setup_save_dir(self):
-        """Create the save directory."""
+        """Create the save directory if it does not exist."""
         os.makedirs(self.save_dir, exist_ok=True)
 
     def _show_goal_site_visual(self):
-        """
-        Make goal_site visible in sensor renders.
-        
-        ManiSkill's PickCube task creates a green sphere (goal_site) but hides it
-        by default. This method uses show_visual() which is the correct way to
-        unhide objects in ManiSkill's batched rendering.
+        """Make goal site visualization visible in rendered observations.
+
+        Some environments hide goal indicators by default. This method attempts
+        to unhide them for data collection with visual observations.
         """
         if not self.show_goal_site:
             return
-            
-        # Get the unwrapped ManiSkill env
+
         unwrapped = self.env
         while hasattr(unwrapped, "env"):
             unwrapped = unwrapped.env
         if hasattr(unwrapped, "unwrapped"):
             unwrapped = unwrapped.unwrapped
-            
+
         if not hasattr(unwrapped, "goal_site"):
             return
-            
+
         goal_site = unwrapped.goal_site
-        
-        # Remove from _hidden_objects list so ManiSkill doesn't re-hide it
+
         if hasattr(unwrapped, "_hidden_objects"):
             while goal_site in unwrapped._hidden_objects:
                 unwrapped._hidden_objects.remove(goal_site)
-        
+
         if hasattr(goal_site, "show_visual"):
             goal_site.show_visual()
 
@@ -170,40 +181,46 @@ class DataCollectorWrapper(gym.Wrapper):
         seed: Optional[int] = None,
         options: Optional[dict[str, Any]] = None,
     ):
+        """Reset the environment and initialize episode buffers.
+
+        Args:
+            seed: Optional random seed for environment reset.
+            options: Optional dictionary of reset options.
+
+        Returns:
+            Tuple of (observation, info) from the underlying environment.
         """
-        Reset the environment and clear the episode buffers.
-        """
-        # Clear all buffers and success status for new episodes
         self._buffers = [self._create_empty_buffer() for _ in range(self.num_envs)]
         self._episode_success = [False] * self.num_envs
 
-        # Call the underlying environment's reset
-        # Try with seed and options first, fall back if not supported
         try:
             obs, info = self.env.reset(seed=seed, options=options)
         except TypeError:
-            # Fallback for environments that don't support seed/options
             obs, info = self.env.reset()
-        
-        # Show goal_site after reset (ManiSkill hides it by default)
+
         self._show_goal_site_visual()
 
         if self.enabled:
-            # Record the initial observation for each env
             self._record_initial_obs(obs)
 
         return obs, info
 
     def _record_initial_obs(self, obs):
-        """Record initial observation for each env."""
+        """Record initial observation for each environment after reset.
+
+        Args:
+            obs: Observation returned from environment reset.
+        """
         import torch
 
         if isinstance(obs, dict):
-            # Extract per-env observations
             for env_idx in range(self.num_envs):
                 env_obs = {}
                 for key, value in obs.items():
-                    if isinstance(value, (torch.Tensor,)) and value.shape[0] == self.num_envs:
+                    if (
+                        isinstance(value, (torch.Tensor,))
+                        and value.shape[0] == self.num_envs
+                    ):
                         env_obs[key] = self._copy_data(value[env_idx])
                     elif isinstance(value, list) and len(value) == self.num_envs:
                         env_obs[key] = self._copy_data(value[env_idx])
@@ -211,14 +228,23 @@ class DataCollectorWrapper(gym.Wrapper):
                         env_obs[key] = self._copy_data(value)
                 self._buffers[env_idx]["observations"].append(env_obs)
         else:
-            # Tensor observation
             for env_idx in range(self.num_envs):
                 self._buffers[env_idx]["observations"].append(
-                    self._copy_data(obs[env_idx] if obs.shape[0] == self.num_envs else obs)
+                    self._copy_data(
+                        obs[env_idx] if obs.shape[0] == self.num_envs else obs
+                    )
                 )
 
     def step(self, action, **kwargs):
-        """Execute a step in the environment and record the transition."""
+        """Execute a step and record the transition data.
+
+        Args:
+            action: Action to execute in the environment.
+            **kwargs: Additional arguments passed to the underlying step.
+
+        Returns:
+            Tuple of (obs, reward, terminated, truncated, info).
+        """
         obs, reward, terminated, truncated, info = self.env.step(action, **kwargs)
 
         if self.enabled:
@@ -228,41 +254,51 @@ class DataCollectorWrapper(gym.Wrapper):
         return obs, reward, terminated, truncated, info
 
     def chunk_step(self, chunk_actions):
-        """
-        Execute a chunk of actions (for embodied environments like ManiSkill).
+        """Execute a chunk of actions for embodied control environments.
 
-        Each env's episode is saved separately when that env's episode ends.
+        Args:
+            chunk_actions: Sequence of actions to execute as a chunk.
+
+        Returns:
+            Tuple of (obs, rewards, terminations, truncations, infos).
         """
         obs, rewards, terminations, truncations, infos = self.env.chunk_step(
             chunk_actions
         )
 
         if self.enabled:
-            self._record_chunk_data(chunk_actions, obs, rewards, terminations, truncations, infos)
+            self._record_chunk_data(
+                chunk_actions, obs, rewards, terminations, truncations, infos
+            )
             self._check_and_flush_episodes(terminations, truncations)
 
         return obs, rewards, terminations, truncations, infos
 
     def _record_step_data(self, action, obs, reward, terminated, truncated, info):
-        """Record step data for each env."""
-        import torch
+        """Record transition data for each environment.
+
+        Handles auto-reset by extracting final_observation from info when available.
+
+        Args:
+            action: Action taken.
+            obs: Resulting observation (may be reset obs if auto-reset occurred).
+            reward: Reward received.
+            terminated: Termination flag.
+            truncated: Truncation flag.
+            info: Info dictionary (may contain final_observation).
+        """
 
         for env_idx in range(self.num_envs):
-            # Extract per-env data
             env_action = self._extract_env_data(action, env_idx)
             env_reward = self._extract_env_data(reward, env_idx)
             env_terminated = self._extract_env_data(terminated, env_idx)
             env_truncated = self._extract_env_data(truncated, env_idx)
             env_info = self._extract_env_data(info, env_idx)
-            
-            # Handle auto_reset: use final_observation for terminal obs
-            # When auto_reset occurs, obs is the reset obs, not terminal obs
-            # final_observation contains the true terminal observation
+
             has_final_obs = isinstance(info, dict) and "final_observation" in info
             if has_final_obs:
                 final_obs = info["final_observation"]
                 env_obs = self._extract_env_data(final_obs, env_idx)
-                # Store reset obs for next episode
                 self._next_episode_obs[env_idx] = self._extract_env_data(obs, env_idx)
             else:
                 env_obs = self._extract_env_data(obs, env_idx)
@@ -273,26 +309,33 @@ class DataCollectorWrapper(gym.Wrapper):
             self._buffers[env_idx]["terminated"].append(env_terminated)
             self._buffers[env_idx]["truncated"].append(env_truncated)
             self._buffers[env_idx]["infos"].append(env_info)
-            
-            # Track success status
+
             self._update_success_status(env_idx, info)
 
-    def _record_chunk_data(self, chunk_actions, obs, rewards, terminations, truncations, infos):
-        """Record chunk data for each env."""
+    def _record_chunk_data(
+        self, chunk_actions, obs, rewards, terminations, truncations, infos
+    ):
+        """Record chunk transition data for each environment.
+
+        Args:
+            chunk_actions: Actions executed in the chunk.
+            obs: Resulting observation.
+            rewards: Rewards received.
+            terminations: Termination flags.
+            truncations: Truncation flags.
+            infos: Info dictionaries.
+        """
         for env_idx in range(self.num_envs):
-            # Extract per-env data
             env_actions = self._extract_env_data(chunk_actions, env_idx)
             env_rewards = self._extract_env_data(rewards, env_idx)
             env_terminated = self._extract_env_data(terminations, env_idx)
             env_truncated = self._extract_env_data(truncations, env_idx)
             env_info = self._extract_env_data(infos, env_idx)
-            
-            # Handle auto_reset: use final_observation for terminal obs
+
             has_final_obs = isinstance(infos, dict) and "final_observation" in infos
             if has_final_obs:
                 final_obs = infos["final_observation"]
                 env_obs = self._extract_env_data(final_obs, env_idx)
-                # Store reset obs for next episode
                 self._next_episode_obs[env_idx] = self._extract_env_data(obs, env_idx)
             else:
                 env_obs = self._extract_env_data(obs, env_idx)
@@ -303,39 +346,38 @@ class DataCollectorWrapper(gym.Wrapper):
             self._buffers[env_idx]["terminated"].append(env_terminated)
             self._buffers[env_idx]["truncated"].append(env_truncated)
             self._buffers[env_idx]["infos"].append(env_info)
-            
-            # Track success status
+
             self._update_success_status(env_idx, env_info)
 
-    def _update_success_status(self, env_idx, info):
-        """Update success status for an env based on info dict.
-        
-        Priority order:
-        1. info["episode"]["success_at_end"] - ManiSkill's official end-of-episode success
-        2. info["success_once"] - whether success was achieved at any point
-        3. info["success"] - current step success (fallback)
+    def _update_success_status(self, env_idx: int, info):
+        """Update episode success status based on info dictionary.
+
+        Checks for success indicators in the following priority order:
+        1. info["episode"]["success_once"] - cumulative success flag
+        2. info["episode"]["success_at_end"] - end-of-episode success
+        3. info["success"] - current step success
+
+        Args:
+            env_idx: Index of the environment to update.
+            info: Info dictionary from the environment step.
         """
         import torch
-        
+
         success = None
-        
-        # Priority 1: episode.success_once (cumulative - any step succeeded)
-        # This is best for data collection: trajectories that ever succeeded are valuable
+
         if isinstance(info, dict) and "episode" in info:
             episode_info = info["episode"]
             if isinstance(episode_info, dict) and "success_once" in episode_info:
                 success = episode_info["success_once"]
-        
-        # Priority 2: episode.success_at_end (final step success)
+
         if success is None and isinstance(info, dict) and "episode" in info:
             episode_info = info["episode"]
             if isinstance(episode_info, dict) and "success_at_end" in episode_info:
                 success = episode_info["success_at_end"]
-        
-        # Priority 3: current step success (fallback)
+
         if success is None and isinstance(info, dict) and "success" in info:
             success = info["success"]
-        
+
         if success is not None:
             if isinstance(success, torch.Tensor):
                 if success.dim() == 0:
@@ -345,11 +387,21 @@ class DataCollectorWrapper(gym.Wrapper):
             else:
                 self._episode_success[env_idx] = bool(success)
 
-    def _get_episode_success(self, buffer, env_idx) -> bool:
-        """Get episode success from buffer, checking final_info or second-to-last info."""
+    def _get_episode_success(self, buffer: dict, env_idx: int) -> bool:
+        """Determine episode success from buffer data.
+
+        Searches through info dictionaries to find success indicators,
+        handling auto-reset scenarios where the final info may be in final_info.
+
+        Args:
+            buffer: Episode buffer containing recorded data.
+            env_idx: Index of the environment.
+
+        Returns:
+            True if the episode was successful, False otherwise.
+        """
         import torch
-        
-        # First try: check last info's final_info field (set during auto_reset)
+
         if buffer["infos"]:
             last_info = buffer["infos"][-1]
             if isinstance(last_info, dict) and "final_info" in last_info:
@@ -358,9 +410,10 @@ class DataCollectorWrapper(gym.Wrapper):
                     episode = final_info["episode"]
                     if "success_once" in episode:
                         val = episode["success_once"]
-                        return bool(val.item() if isinstance(val, torch.Tensor) else val)
-        
-        # Second try: check second-to-last info (before auto_reset overwrote last)
+                        return bool(
+                            val.item() if isinstance(val, torch.Tensor) else val
+                        )
+
         if len(buffer["infos"]) >= 2:
             prev_info = buffer["infos"][-2]
             if isinstance(prev_info, dict) and "episode" in prev_info:
@@ -368,20 +421,26 @@ class DataCollectorWrapper(gym.Wrapper):
                 if "success_once" in episode:
                     val = episode["success_once"]
                     return bool(val.item() if isinstance(val, torch.Tensor) else val)
-        
-        # Third try: check any info with episode.success_once (scan backwards)
+
         for info in reversed(buffer["infos"]):
             if isinstance(info, dict) and "episode" in info:
                 episode = info["episode"]
                 if "success_once" in episode:
                     val = episode["success_once"]
                     return bool(val.item() if isinstance(val, torch.Tensor) else val)
-        
-        # Fallback to stored success status
+
         return self._episode_success[env_idx]
 
-    def _extract_env_data(self, data, env_idx):
-        """Extract data for a specific env from batched data."""
+    def _extract_env_data(self, data, env_idx: int):
+        """Extract data for a specific environment from batched data.
+
+        Args:
+            data: Potentially batched data (tensor, array, dict, or list).
+            env_idx: Index of the environment to extract.
+
+        Returns:
+            Data corresponding to the specified environment index.
+        """
         import numpy as np
         import torch
 
@@ -403,15 +462,17 @@ class DataCollectorWrapper(gym.Wrapper):
             return self._copy_data(data)
 
     def _check_and_flush_episodes(self, terminated, truncated):
-        """Check each env's done status and flush finished episodes."""
+        """Check termination status and save completed episodes.
+
+        Args:
+            terminated: Termination flags for each environment.
+            truncated: Truncation flags for each environment.
+        """
         import torch
 
         for env_idx in range(self.num_envs):
-            # Get done status for this env
             if isinstance(terminated, torch.Tensor):
-                # For chunk_step, check the last step's done status
                 if terminated.dim() > 1:
-                    # Shape: [num_envs, chunk_size]
                     env_term = terminated[env_idx, -1].item()
                     env_trunc = truncated[env_idx, -1].item()
                 else:
@@ -425,27 +486,28 @@ class DataCollectorWrapper(gym.Wrapper):
                 self._flush_env_episode(env_idx)
 
     def _flush_env_episode(self, env_idx: int):
-        """Save one env's episode buffer to disk and reset its buffer."""
-        import random
-        
+        """Save episode data to disk and reset the buffer.
+
+        Applies sampling rate filtering based on episode success status.
+
+        Args:
+            env_idx: Index of the environment whose episode to save.
+        """
         buffer = self._buffers[env_idx]
         if not buffer["actions"]:
             return
 
-        # Check final_info or second-to-last info for episode.success_once
-        # (last info is from new episode after auto_reset)
         is_success = self._get_episode_success(buffer, env_idx)
         sample_rate = self.sample_rate_success if is_success else self.sample_rate_fail
-        
-        should_save = random.random() < sample_rate
-        
-        if should_save:
-            # Construct the file path: rank_X_env_Y_episode_Z.pkl
+
+        if random.random() < sample_rate:
             label = "success" if is_success else "fail"
-            filename = f"rank_{self.rank}_env_{env_idx}_episode_{self._episode_ids[env_idx]}_{label}.pkl"
+            filename = (
+                f"rank_{self.rank}_env_{env_idx}_"
+                f"episode_{self._episode_ids[env_idx]}_{label}.pkl"
+            )
             save_path = os.path.join(self.save_dir, filename)
 
-            # Add metadata to the episode data
             episode_data = {
                 "mode": self.env_mode,
                 "rank": self.rank,
@@ -460,24 +522,28 @@ class DataCollectorWrapper(gym.Wrapper):
                 "infos": buffer["infos"],
             }
 
-            # Save the episode data
             with open(save_path, "wb") as f:
                 pickle.dump(episode_data, f)
 
-        # Increment episode counter for this env
         self._episode_ids[env_idx] += 1
-
-        # Clear the buffer and reset success status
         self._buffers[env_idx] = self._create_empty_buffer()
         self._episode_success[env_idx] = False
-        
-        # Use next episode obs (from auto_reset) as initial obs for new episode
+
         if self._next_episode_obs[env_idx] is not None:
-            self._buffers[env_idx]["observations"].append(self._next_episode_obs[env_idx])
+            self._buffers[env_idx]["observations"].append(
+                self._next_episode_obs[env_idx]
+            )
             self._next_episode_obs[env_idx] = None
 
     def _copy_data(self, data):
-        """Create a copy of the data to avoid reference issues."""
+        """Create a deep copy of data to avoid reference issues.
+
+        Args:
+            data: Data to copy (tensor, array, dict, list, tuple, or scalar).
+
+        Returns:
+            Deep copy of the input data.
+        """
         import numpy as np
         import torch
 
@@ -495,16 +561,23 @@ class DataCollectorWrapper(gym.Wrapper):
             return data
 
     def set_mode(self, mode: str):
-        """Change the collection mode (train/eval)."""
+        """Change the collection mode.
+
+        Args:
+            mode: New collection mode - "train", "eval", or "all".
+        """
         self.collect_mode = mode
-        # Re-evaluate if collection should be enabled
-        should_collect = (self.collect_mode == "all") or (self.collect_mode == self.env_mode)
+        should_collect = (self.collect_mode == "all") or (
+            self.collect_mode == self.env_mode
+        )
         self.enabled = should_collect
 
     def set_enabled(self, enabled: bool):
-        """Enable or disable data collection."""
+        """Enable or disable data collection.
+
+        Args:
+            enabled: Whether to enable data collection.
+        """
         self.enabled = enabled
         if enabled:
             self._setup_save_dir()
-
-
