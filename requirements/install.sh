@@ -322,6 +322,14 @@ install_openvla_oft_model() {
 
 install_openpi_model() {
     case "$ENV_NAME" in
+        behavior)
+            PYTHON_VERSION="3.10"
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_behavior_env
+            uv pip install protobuf==6.33.0
+            ;;
         maniskill_libero)
             create_and_sync_venv
             install_common_embodied_deps
