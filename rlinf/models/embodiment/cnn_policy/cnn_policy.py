@@ -21,7 +21,7 @@ import torch
 import torch.nn as nn
 from torch.distributions.normal import Normal
 
-from rlinf.models.embodiment.base_policy import BasePolicy
+from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.modules.q_head import MultiCrossQHead, MultiQHead
 from rlinf.models.embodiment.modules.resnet_utils import ResNetEncoder
 from rlinf.models.embodiment.modules.utils import init_mlp_weights, layer_init, make_mlp
@@ -77,9 +77,10 @@ class CNNConfig:
         self.encoder_config["ckpt_path"] = ckpt_path
 
 
-class CNNPolicy(BasePolicy):
+class CNNPolicy(nn.Module, BasePolicy):
     def __init__(self, cfg: CNNConfig):
         super().__init__()
+
         self.cfg = cfg
         self.in_channels = self.cfg.image_size[0]
 
@@ -199,16 +200,16 @@ class CNNPolicy(BasePolicy):
         x = torch.cat([visual_feature, state_embed], dim=1)
         return x, visual_feature
 
-    def forward(self, forward_type="default_forward", **kwargs):
-        if forward_type == "sac_forward":
+    def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
+        if forward_type == ForwardType.SAC:
             return self.sac_forward(**kwargs)
-        elif forward_type == "sac_q_forward":
+        elif forward_type == ForwardType.SAC_Q:
             return self.sac_q_forward(**kwargs)
-        elif forward_type == "crossq_forward":
+        elif forward_type == ForwardType.CROSSQ:
             return self.crossq_forward(**kwargs)
-        elif forward_type == "crossq_q_forward":
+        elif forward_type == ForwardType.CROSSQ_Q:
             return self.crossq_q_forward(**kwargs)
-        elif forward_type == "default_forward":
+        elif forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
         else:
             raise NotImplementedError
@@ -286,8 +287,8 @@ class CNNPolicy(BasePolicy):
     def predict_action_batch(
         self,
         env_obs,
-        calulate_logprobs=True,
-        calulate_values=True,
+        calculate_logprobs=True,
+        calculate_values=True,
         return_obs=True,
         return_shared_feature=False,
         mode="train",
@@ -334,7 +335,7 @@ class CNNPolicy(BasePolicy):
         )
         chunk_actions = chunk_actions.cpu().numpy()
 
-        if hasattr(self, "value_head") and calulate_values:
+        if hasattr(self, "value_head") and calculate_values:
             chunk_values = self.value_head(mix_feature)
         else:
             chunk_values = torch.zeros_like(chunk_logprobs[..., :1])

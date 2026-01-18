@@ -40,14 +40,17 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
 
   1. ``rollout.model.model_path``
 
-  2. ``actor.model.model_path``
+  2. ``runner.ckpt_path`` （Optional）- ``.pt`` 格式文件路径，如果需要评测指定checkpoint，可以设置该参数。
 
+.. note::
+
+  如果需要将 checkpoint 文件从 ``.distcp`` 格式转换为 ``.pt`` 格式，请参考 :doc:`Checkpoint 转换 <../tutorials/advance/convertor>` 文档中的详细说明。
 
 2. 控制环境的随机种子：我们可以调整 ``env.seed`` 来调整环境的随机函数的变化，以便复现结果等；
 
 .. note::
 
-  注：多个worker启动环境时，不同worker中的环境的 ``seed`` 都有固定的偏移 ``seed = seed + self._rank * self.stage_num + stage_id``；
+  多个worker启动环境时，不同worker中的环境的 ``seed`` 都有固定的偏移 ``seed = seed + self._rank * self.stage_num + stage_id``；
 
 3. 调整测评的轮数：我们可以调整 ``algorithm.eval_rollout_epoch`` 以控制测评的轮数。注意，我们认为每轮应该测评完整个测试集，并且由于每次测评的种子都是相同的，所以，最终的 **测评结果** 等价于 Policy 在相同测试集上测评多轮取平均的结果；
 
@@ -179,7 +182,7 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
           env.eval.total_num_envs=${TOTAL_NUM_ENVS} \
           env.eval.init_params.id=${env_id} \
           env.eval.init_params.obj_set=${obj_set} \
-          runner.eval_policy_path=${CKPT_PATH}"
+          runner.ckpt_path=${CKPT_PATH}"
 
       echo ${CMD} > ${MEGA_LOG_FILE}
       ${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
@@ -200,7 +203,7 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
           env.eval.total_num_envs=${TOTAL_NUM_ENVS} \
           env.eval.init_params.id=${env_id} \
           env.eval.init_params.obj_set=${obj_set} \
-          runner.eval_policy_path=${CKPT_PATH}"
+          runner.ckpt_path=${CKPT_PATH}"
       echo ${CMD}  > ${MEGA_LOG_FILE}
       ${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
   done

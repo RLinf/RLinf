@@ -31,7 +31,7 @@ from gr00t.model.gr00t_n1 import GR00T_N1_5, GR00T_N1_5_Config
 from torch.distributions import Normal
 from transformers.feature_extraction_utils import BatchFeature
 
-from rlinf.models.embodiment.base_policy import BasePolicy
+from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.gr00t.simulation_io import (
     ACTION_CONVERSION,
     OBS_CONVERSION,
@@ -415,7 +415,7 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
         return values_vlm
 
 
-class GR00T_N1_5_ForRLActionPrediction(BasePolicy, GR00T_N1_5):
+class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
     """
     GR00T_N1_5 model for reinforcement learning action prediction.
     It's a combination of the Gr00tPolicy and GR00T_N1_5 model.
@@ -448,7 +448,7 @@ class GR00T_N1_5_ForRLActionPrediction(BasePolicy, GR00T_N1_5):
         obs_converter_type: str = "libero",
         output_action_chunks: int = 1,
     ):
-        GR00T_N1_5.__init__(self, config, local_model_path)
+        super().__init__(config, local_model_path)
 
         self.padding_value = rl_head_config.padding_value
         self._modality_config = modality_config  # ModalityConfig(delta_indices=[0], modality_keys=['video.ego_view'])
@@ -482,13 +482,19 @@ class GR00T_N1_5_ForRLActionPrediction(BasePolicy, GR00T_N1_5):
 
     def eval(self):
         self._modality_transform.eval()
-        GR00T_N1_5.eval(self)
+        super().eval()
 
     def _check_state_is_batched(self, obs: dict[str, Any]) -> bool:
         for k, v in obs.items():
             if "state" in k and len(v.shape) < 3:  # (B, Time, Dim)
                 return False
         return True
+
+    def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
+        if forward_type == ForwardType.DEFAULT:
+            return self.default_forward(**kwargs)
+        else:
+            raise NotImplementedError
 
     def default_forward(
         self,

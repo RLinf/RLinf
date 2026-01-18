@@ -552,9 +552,9 @@ class FSDPActor(FSDPModelManager, Worker):
 
             mbs_metrics_data.update(
                 {
-                    "final_loss": loss.detach(),
-                    "entropy_loss": entropy_loss.detach(),
-                    "kl_loss": kl_loss.detach(),
+                    "actor/final_loss": loss.detach(),
+                    "actor/entropy_loss": entropy_loss.detach(),
+                    "actor/kl_loss": kl_loss.detach(),
                 }
             )
 
@@ -771,9 +771,14 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
     def model_provider_func(self) -> nn.Module:
         model = get_model(self.cfg.actor.model)
-        if model is not None:
-            return model
-        return super().model_provider_func()
+        if model is None:
+            model = super().model_provider_func()
+
+        if self.cfg.runner.get("ckpt_path", None):
+            model_dict = torch.load(self.cfg.runner.ckpt_path)
+            model.load_state_dict(model_dict)
+
+        return model
 
     def sync_model_to_rollout(self) -> None:
         """

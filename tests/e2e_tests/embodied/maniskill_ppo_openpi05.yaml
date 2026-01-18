@@ -29,7 +29,7 @@ runner:
   max_steps: -1
 
   only_eval: False
-  eval_policy_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
+  ckpt_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
   val_check_interval: -1
   save_interval: 50
 
@@ -46,7 +46,7 @@ algorithm:
   reward_type: chunk_level
   logprob_type: chunk_level
   entropy_type: chunk_level
-  update_epoch: 2
+  update_epoch: 1
   
   adv_type: gae
   loss_type: actor_critic
@@ -88,7 +88,7 @@ env:
 
   # Override the default values in env/train or env/eval
   train:
-    total_num_envs: 16
+    total_num_envs: 8
     auto_reset: True
     use_fixed_reset_state_ids: False
     max_episode_steps: 20 # max episode steps for truncation
@@ -116,7 +116,6 @@ rollout:
   group_name: "RolloutGroup"
   generation_backend: "huggingface"
   recompute_logprobs: False
-  unnorm_key: libero_10
   enable_offload: False
   pipeline_stage_num: 1
 

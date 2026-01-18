@@ -56,6 +56,9 @@ runner:
   val_check_interval: -1
   save_interval: -1
 
+  resume_dir: null # Optional: path to a saved checkpoint directory, such as 'checkpoints/global_step_10'. If not None, it will be used to resume training.
+  ckpt_path: null  # Optional: path to a .pt checkpoint. If not None, it will be loaded after the model is instantiated (for evaluation).
+
 algorithm:
   update_epoch: 32
   group_size: 1
@@ -73,7 +76,7 @@ algorithm:
   auto_entropy_tuning: True  # Enable automatic entropy tuning
   alpha_type: softplus
   initial_alpha: 0.01  # Initial temperature value
-  target_entropy: -4  # Target entropy (-action_dim)
+  target_entropy: -4  # Target entropy
   alpha_lr: 3.0e-4  # Learning rate for temperature parameter
   
   # Replay buffer settings
@@ -107,14 +110,13 @@ env:
       use_dense_reward: True
       target_ee_pose: TARGET_EE_POSE
       random_xy_range: 0.02
-      random_z_range_low: -0.005
+      random_z_range_low: 0.005
       random_z_range_high: 0.05
       random_rz_range: 0.35 # About np.pi/9
 
 rollout:
   group_name: "RolloutGroup"
   backend: "huggingface"
-  model_dir: ""
   enable_offload: False
   pipeline_stage_num: 1
 
@@ -126,8 +128,8 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
 
-  micro_batch_size: 1024
-  global_batch_size: 1024
+  micro_batch_size: 256
+  global_batch_size: 256
   seed: 1234
   enable_offload: False
 
