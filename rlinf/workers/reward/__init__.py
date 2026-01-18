@@ -12,21 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib
-import pathlib
-import pkgutil
+"""Reward workers for RLinf."""
 
-from .maniskill_full_state_wrapper import (
-    ManiskillFullStateWrapper as ManiskillFullStateWrapper,
+from rlinf.workers.reward.reward_worker import (
+    FSDPRewardWorker,
+    RewardBinaryDataset,
+    RewardWorker,
 )
 
-
-def import_all_tasks():
-    package_name = __name__ + ".tasks"
-    package_path = pathlib.Path(__file__).parent / "tasks"
-
-    for _, module_name, _ in pkgutil.iter_modules([str(package_path)]):
-        importlib.import_module(f"{package_name}.{module_name}")
-
-
-import_all_tasks()
+__all__ = [
+    "RewardWorker",
+    "FSDPRewardWorker",
+    "RewardBinaryDataset",
+]

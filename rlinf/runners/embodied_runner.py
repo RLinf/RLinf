@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 from typing import TYPE_CHECKING, Optional, Union
 
+import torch
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
@@ -25,6 +27,8 @@ from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.utils.runner_utils import check_progress
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from rlinf.workers.actor.async_fsdp_sac_policy_worker import (
@@ -123,13 +127,104 @@ class EmbodiedRunner:
         rollout_handle.wait()
 
     def compute_rewards_with_model(self):
+        """Compute rewards using the reward model via channel communication.
+
+        Data flow:
+        1. Get main_images from env worker (collected during rollout)
+        2. Flatten and send to reward_input_channel
+        3. Reward worker computes rewards
+        4. Receive from reward_output_channel
+        5. Reshape and update actor's rollout_batch rewards
+
+        Supports two modes (configured via reward.reward_mode):
+        - "per_step": Compute reward for every frame (default)
+        - "terminal": Only compute reward at episode end (last frame)
+        """
         if self.reward is None:
             return None
-        reward_handle: Handle = self.reward.compute_rewards(
-            input_channel=self.reward_input_channel,
-            output_channel=self.reward_output_channel,
-        )
-        return reward_handle
+
+        # Get main_images from env worker (collected during rollout)
+        images_result = self.env.get_rollout_images().wait()
+        images = images_result[0] if images_result else None
+        if images is None:
+            return None
+
+        # images shape: (n_steps, n_envs, H, W, C)
+        n_steps, n_envs = images.shape[0], images.shape[1]
+
+        # Check reward mode
+        reward_mode = self.cfg.reward.get("reward_mode", "per_step")
+
+        if reward_mode == "terminal":
+            # Terminal mode: only use the last frame of each episode
+            last_frame_images = images[-1]  # Shape: (n_envs, H, W, C)
+
+            # Send only last frame images to reward worker
+            self.reward_input_channel.put(
+                {"main_images": last_frame_images}, async_op=False
+            )
+
+            # Start reward computation
+            reward_handle: Handle = self.reward.compute_rewards(
+                input_channel=self.reward_input_channel,
+                output_channel=self.reward_output_channel,
+            )
+
+            # Wait for reward computation and get results
+            reward_handle.wait()
+            reward_data = self.reward_output_channel.get()
+
+            if reward_data is not None and "rewards" in reward_data:
+                terminal_rewards = reward_data[
+                    "rewards"
+                ]  # Shape: (n_envs,), prob in [0,1]
+
+                # Asymmetric reward mapping: success gets big reward, fail gets small penalty
+                success_reward = self.cfg.reward.get("success_reward", 1.0)
+                fail_reward = self.cfg.reward.get("fail_reward", 0.0)
+                threshold = self.cfg.reward.get("reward_threshold", 0.5)
+
+                # Binary classification: prob > threshold = success, else fail
+                is_success = terminal_rewards > threshold
+                mapped_rewards = torch.where(
+                    is_success,
+                    torch.tensor(success_reward, device=terminal_rewards.device),
+                    torch.tensor(fail_reward, device=terminal_rewards.device),
+                )
+
+                # Create full reward tensor: zeros except for the last step
+                rewards = torch.zeros(n_steps, n_envs, 1)
+                rewards[-1, :, 0] = mapped_rewards  # Only last step gets reward
+
+                # Update actor's rollout_batch with computed rewards (remote call)
+                self.actor.update_rewards(rewards).wait()
+        else:
+            # Per-step mode: compute reward for every frame (original behavior)
+            flat_images = images.view(n_steps * n_envs, *images.shape[2:])
+
+            # Send images to reward worker via channel
+            self.reward_input_channel.put({"main_images": flat_images}, async_op=False)
+
+            # Start reward computation
+            reward_handle: Handle = self.reward.compute_rewards(
+                input_channel=self.reward_input_channel,
+                output_channel=self.reward_output_channel,
+            )
+
+            # Wait for reward computation and get results
+            reward_handle.wait()
+            reward_data = self.reward_output_channel.get()
+
+            if reward_data is not None and "rewards" in reward_data:
+                rewards = reward_data["rewards"]
+
+                # Reshape rewards to (n_steps, n_envs, 1) to match rollout_batch
+                rewards = rewards.view(n_steps, n_envs, 1)
+
+                # Update actor's rollout_batch with computed rewards (remote call)
+                self.actor.update_rewards(rewards).wait()
+
+        return None  # Already waited
 
     def evaluate(self):
         env_handle: Handle = self.env.evaluate(

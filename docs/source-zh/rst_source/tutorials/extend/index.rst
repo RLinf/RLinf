@@ -9,6 +9,7 @@
 - 添加一个使用 FSDP + HuggingFace 后端的 :doc:`新模型 <new_model_fsdp>`  
 - 添加一个使用 Megatron + SGLang 后端的 :doc:`新模型 <new_model_megatron>`  
 - 配置 :doc:`数据采集 <data_collection>` 用于离线学习和奖励模型训练  
+- 集成 :doc:`奖励模型 <reward_model>` 用于基于图像的奖励学习  
 
 RLinf 支持多种模型训练后端，每种后端都有自己的初始化逻辑和执行流程。  
 本指南提供了逐步说明，帮助你完成以下任务：
@@ -30,3 +31,4 @@ RLinf 支持多种模型训练后端，每种后端都有自己的初始化逻�
    new_model_fsdp
    new_model_megatron
    data_collection
+   reward_model

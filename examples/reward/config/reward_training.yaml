@@ -1,0 +1,124 @@
+# Copyright 2025 The RLinf Authors.
+# ResNet Reward Model Training Configuration (same structure as SFT)
+
+defaults:
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+# -----------------------------------------------------------------------------
+# Cluster Configuration
+# -----------------------------------------------------------------------------
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: 0-0
+
+# -----------------------------------------------------------------------------
+# Runner Configuration
+# -----------------------------------------------------------------------------
+runner:
+  task_type: sft  # Use SFT runner for reward training
+  logger:
+    log_path: "logs/reward_model"
+    project_name: rlinf
+    experiment_name: "reward_training"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 800
+  max_steps: -1
+  val_check_interval: 50
+  save_interval: 50  # Save checkpoint every 50 epochs
+
+# -----------------------------------------------------------------------------
+# Data Configuration
+# -----------------------------------------------------------------------------
+data:
+  # Path to collected data with .pkl files
+  # Labels are determined per-frame using info['is_obj_placed']
+  data_path: ""
+  val_split: 0.2  # 20% of EPISODES for validation (prevents data leakage)
+  num_workers: 4
+  # Number of frames to sample per episode (evenly spaced)
+  # Set to 0 to use ALL frames from each episode
+  num_samples_per_episode: 0
+  # Ratio of fail:success frames (e.g., 2.0 means 2 fail per 1 success)
+  fail_success_ratio: 2.0
+  # Debug: save training images to verify data pipeline (set to null to disable)
+  debug_save_dir: "logs/training_data_debug"
+
+# -----------------------------------------------------------------------------
+# Actor (Reward Model) Configuration
+# -----------------------------------------------------------------------------
+actor:
+  group_name: "RewardActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 32
+  global_batch_size: 64
+  seed: 42
+  enable_offload: false
+
+  # Model configuration
+  model:
+    model_type: "resnet_reward"
+    model_path: "resnet18"  # Required by FSDPModelManager base class
+    arch: "resnet18"
+    pretrained: true
+    hidden_dim: 256
+    dropout: 0.1
+    image_size: [3, 128, 128]
+    normalize: true
+    precision: "bf16"
+    checkpoint_path: null
+    # Required by FSDPModelManager base class
+    add_value_head: false
+    is_lora: false
+    freeze_vit: false
+    use_flash_attention: false
+
+  # Optimizer
+  optim:
+    lr: 1.0e-4
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-5
+    clip_grad: 1.0
+    lr_warmup_steps: 100
+    warmup_style: "constant"  # Use "constant" to avoid scipy/transformers import issues
+    total_training_steps: 10000
+
+  # FSDP configuration
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: true
+    gradient_checkpointing: false
+    grad_clip: 1.0
+    amp:
+      enabled: true
+      precision: "bf16"
+    mixed_precision:
+      param_dtype: "bf16"
+      reduce_dtype: "bf16"
+      buffer_dtype: "bf16"
+
+# -----------------------------------------------------------------------------
+# Reward & Critic (not used for reward model training)
+# -----------------------------------------------------------------------------
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false
+
+# -----------------------------------------------------------------------------
+# Algorithm (minimal config for SFT runner compatibility)
+# -----------------------------------------------------------------------------
+algorithm:
+  adv_type: gae
+

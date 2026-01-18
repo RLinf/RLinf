@@ -1,0 +1,46 @@
+# Reward Model Inference Configuration
+# Uses trained checkpoint for computing rewards via channel communication
+
+reward:
+  use_reward_model: true
+  
+  model:
+    # Model architecture (must match training config)
+    model_type: "resnet_reward"
+    arch: "resnet18"
+    hidden_dim: 512
+    dropout: 0.1
+    image_size: [128, 128]
+    normalize: true
+    
+    # Trained checkpoint path (update this to your actual checkpoint)
+    checkpoint_path: "logs/reward_training/checkpoints/reward_model_epoch_100.pt"
+    
+    # Inference settings
+    precision: "fp16"  # fp16 for faster inference
+
+# Channel configuration for communication with RL training
+channels:
+  # Input channel: receives images from rollout collector
+  input:
+    name: "rollout_to_reward"
+    buffer_size: 16
+    
+  # Output channel: sends rewards back to trainer
+  output:
+    name: "reward_to_trainer"
+    buffer_size: 16
+
+# Worker settings
+worker:
+  worker_type: "ImageRewardWorker"
+  batch_size: 64  # Process images in batches
+
+# Cluster settings (for distributed inference)
+cluster:
+  num_nodes: 1
+  component_placement:
+    reward:
+      node_rank: 0
+      gpu_ids: [0]
+

@@ -1,0 +1,16 @@
+# Test configuration for reward model evaluation
+
+checkpoint_path: "/workspace/RLinf/logs/reward_model/reward_training/checkpoints/global_step_500/actor/huggingface_model/model-00001-of-00001.safetensors"
+debug_dir: "/workspace/RLinf/logs/20260117-22:25:32-maniskill_ppo_rgb_reward/debug_images"
+training_data_path: "/workspace/RLinf/logs/20260117-14:40:45-maniskill_ppo_mlp_collect/collected_data"
+
+model:
+  arch: "resnet18"
+  pretrained: true
+  hidden_dim: 256
+  dropout: 0.1
+  normalize: true
+
+test:
+  max_debug_images: 50
+  max_training_images: 50
