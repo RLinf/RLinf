@@ -203,9 +203,9 @@ def compute_ppo_critic_loss(
 
     # Compile metrics for logging
     metrics_data = {
-        "critic/value_loss": value_loss.detach().item(),
-        "critic/value_clip_ratio": value_clip_ratio.detach().item(),
-        "critic/explained_variance": explained_variance.detach().item(),
+        "critic/value_loss": value_loss.detach(),
+        "critic/value_clip_ratio": value_clip_ratio.detach(),
+        "critic/explained_variance": explained_variance.detach(),
     }
     return value_loss, metrics_data
 

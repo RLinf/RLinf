@@ -71,7 +71,7 @@ def parse_rank_config(
                     raise ValueError
             except (ValueError, IndexError):
                 raise ValueError(
-                    f'Invalid rank format {rank_config}, expected format: "a,b,c-d" or "all"'
+                    f'Invalid rank format {rank_config} for rank_type {rank_type}, expected format: "a,b,c-d" or "all"'
                 )
             assert end_rank >= start_rank, (
                 f"Start rank {start_rank} must be less than or equal to end rank {end_rank} in rank config {rank_config}."

@@ -38,8 +38,9 @@ if typing.TYPE_CHECKING:
     from rlinf.utils.placement import ModelParallelComponentPlacement
     from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
     from rlinf.workers.actor.megatron_actor_worker import MegatronActor
+    from rlinf.workers.actor.megatron_critic_worker import MegatronCritic
     from rlinf.workers.inference.fsdp_inference_worker import FSDPInference
-    from rlinf.workers.inference.megatron_inference_worker import MegatronInference
+    from rlinf.workers.inference.megatron_inference_worker import MegatronActorInference, MegatronCriticInference
     from rlinf.workers.reward.reward_worker import RewardWorker
     from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
     from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
@@ -57,22 +58,28 @@ class ReasoningRunner:
         train_dataset: Dataset,
         val_dataset: Dataset,
         rollout: Union["SGLangWorker", "VLLMWorker"],
-        inference: Optional[Union["FSDPInference", "MegatronInference"]],
+        actor_inference: Optional[Union["MegatronActorInference", "FSDPInference"]],
+        critic_inference: Optional[Union["MegatronCriticInference", "FSDPInference"]],
         actor: Union["FSDPActor", "MegatronActor"],
         reward: Optional["RewardWorker"],
+        critic: Optional["MegatronCritic"] = None,
         scheduler: "SchedulerWorker" = None,
     ):
         self.cfg = cfg
         self.component_placement = placement
         self.is_pipeline = self.component_placement.is_pipeline
-        self.has_dedicated_inference = inference is not None
+        self.has_dedicated_actor_inference = actor_inference is not None
+        self.has_dedicated_critic_inference = critic_inference is not None
 
         # Workers
         self.rollout = rollout
         self.actor = actor
-        # Collocated mode uses actor as inference
-        self.inference = inference if self.has_dedicated_inference else self.actor
         self.reward = reward
+        self.critic = critic
+
+        # Collocated mode reuses actor worker and critic worker as inference workers
+        self.actor_inference = actor_inference if self.has_dedicated_actor_inference else self.actor
+        self.critic_inference = critic_inference if self.has_dedicated_actor_inference else self.critic
 
         # Scheduler task
         self.scheduler = scheduler
@@ -85,11 +92,24 @@ class ReasoningRunner:
         self.rollout_channel = Channel.create("Rollout")
         # Create a local channel (i.e., a channel that is different in every process)
         # if inference is not a dedicated worker
-        self.inference_channel = Channel.create("Inference")
+        self.actor_inference_channel = Channel.create("ActorInference")
         if self.reward is not None:
             self.reward_channel = Channel.create("Reward")
         else:
             self.reward_channel = self.rollout_channel
+
+        if self.critic:
+            if self.is_pipeline:
+                self.critic_inference_channel_to_actor_train = Channel.create("CriticInferenceToActor")
+                self.critic_inference_channel_to_critic_train = Channel.create("CriticInferenceToCritic")
+                self.value_channel = [self.critic_inference_channel_to_actor_train,
+                                      self.critic_inference_channel_to_critic_train]
+            else:
+                self.value_channel = Channel.create("Value")
+            self.critic_output_channel = Channel.create("CriticOutput")
+        else:
+            self.value_channel = None
+            self.critic_output_channel = None
 
         # Configurations
         self.compute_ref_logprobs = (
@@ -189,22 +209,41 @@ class ReasoningRunner:
                     self.cfg.actor.megatron.ckpt_convertor,
                 )
 
+            if (
+                self.critic is not None
+                and self.cfg.critic.training_backend == "megatron"
+                and self.cfg.critic.megatron.use_hf_ckpt
+            ):
+                from toolkits.ckpt_convertor.convert_hf_to_mg import convert_hf_to_mg
+
+                convert_hf_to_mg(
+                    self.cfg.critic.megatron.ckpt_convertor.hf_model_path,
+                    self.cfg.critic.megatron.ckpt_convertor,
+                )
+
         rollout_handle.wait()
         if self.use_pre_process_policy:
             self.rollout.offload_engine().wait()
 
-    def init_actor_workers(self):
-        """init actor worker and reward worker."""
+    def init_actor_critic_workers(self):
+        """init actor worker, critic worker and reward worker."""
         if self.reward is not None:
             self.reward.init_worker().wait()
 
-        actor_handle = self.actor.init_worker()
-        if self.has_dedicated_inference:
-            inference_handle = self.inference.init_worker()
+        actor_handle = self.actor.init_worker().wait()
+        if self.has_dedicated_actor_inference:
+            actor_inference_handle = self.actor_inference.init_worker()
 
-        actor_handle.wait()
-        if self.has_dedicated_inference:
-            inference_handle.wait()
+        if self.critic is not None:
+            critic_handle = self.critic.init_worker().wait()
+            if self.has_dedicated_critic_inference:
+                critic_inference_handle = self.critic_inference.init_worker()
+
+        if self.has_dedicated_actor_inference:
+            actor_inference_handle.wait()
+        if self.critic is not None:
+            if self.has_dedicated_critic_inference:
+                critic_inference_handle.wait()
 
         if self.cfg.runner.resume_dir is None:
             return
@@ -217,6 +256,11 @@ class ReasoningRunner:
 
         actor_checkpoint_path = os.path.join(self.cfg.runner.resume_dir, "actor")
         self.actor.load_checkpoint(actor_checkpoint_path).wait()
+
+        if self.critic is not None:
+            critic_checkpoint_path = os.path.join(self.cfg.runner.resume_dir, "critic")
+            self.critic.load_checkpoint(critic_checkpoint_path).wait()
+
         # load data
         dataloader_local_path = os.path.join(self.cfg.runner.resume_dir, "data/data.pt")
         if os.path.exists(dataloader_local_path):
@@ -259,7 +303,7 @@ class ReasoningRunner:
                 self.cfg.runner.resume_dir = None
                 logging.info("No checkpoints found, starting from scratch")
         self.init_rollout_workers()
-        self.init_actor_workers()
+        self.init_actor_critic_workers()
 
     def _compute_flops_metrics(self, time_metrics, act_rollout_metrics) -> dict:
         rollout_time = time_metrics.get("rollout")
@@ -304,13 +348,18 @@ class ReasoningRunner:
             self.cfg.runner.experiment_name,
             f"checkpoints/global_step_{self.global_steps}",
         )
-        actor_save_path = os.path.join(base_output_dir, "actor")
-        data_save_path = os.path.join(base_output_dir, "data")
 
         # actor
+        actor_save_path = os.path.join(base_output_dir, "actor")
         self.actor.save_checkpoint(actor_save_path, self.global_steps).wait()
 
+        # critic
+        if self.critic:
+            critic_save_path = os.path.join(base_output_dir, "critic")
+            self.critic.save_checkpoint(critic_save_path, self.global_steps).wait()
+
         # data
+        data_save_path = os.path.join(base_output_dir, "data")
         local_mkdir_safe(data_save_path)
         dataloader_local_path = os.path.join(data_save_path, "data.pt")
         dataloader_state_dict = self.train_dataloader.state_dict()
@@ -354,9 +403,13 @@ class ReasoningRunner:
             self.dataloader_channel.put(request, async_op=True)
 
     def _sync_weights(self):
-        if self.has_dedicated_inference:
+        if self.has_dedicated_actor_inference:
             self.actor.sync_model_to_inference()
-            self.inference.sync_model_from_actor().wait()
+            self.actor_inference.sync_model_from_actor().wait()
+
+        if self.has_dedicated_critic_inference:
+            self.critic.sync_model_to_inference()
+            self.critic_inference.sync_model_from_actor().wait() # TODO change this name
 
         self.actor.sync_model_to_rollout()
         self.rollout.sync_model_from_actor().wait()
@@ -372,7 +425,7 @@ class ReasoningRunner:
             initial=self.global_steps,
             total=self.max_steps,
             desc="Global Step",
-            ncols=620,
+            ncols=1240,
         )
 
         self.run_timer.start_time()
@@ -402,27 +455,81 @@ class ReasoningRunner:
 
                     if self.recompute_logprobs:
                         # Inference prev/ref logprobs
-                        infer_handle: Handle = self.inference.run_inference(
+                        actor_infer_handle: Handle = self.actor_inference.run_inference(
                             input_channel=self.reward_channel,
-                            output_channel=self.inference_channel,
+                            output_channel=self.actor_inference_channel,
                             compute_ref_logprobs=self.compute_ref_logprobs,
                         )
-                        inference_channel = self.inference_channel
+                        actor_inference_channel = self.actor_inference_channel
                     else:
-                        infer_handle = None
-                        inference_channel = self.reward_channel
+                        actor_infer_handle = None
+                        actor_inference_channel = self.reward_channel
 
-                    # Actor training
-                    actor_handle: Handle = self.actor.run_training(
-                        input_channel=inference_channel,
-                    )
+                    if self.critic:
+                        critic_infer_handle: Handle = self.critic_inference.run_inference(
+                            input_channel=actor_inference_channel, # TODO the channel contains generated trajetories
+                            output_channel=self.value_channel,
+                            do_offload=False,
+                        )
+                        training_input_channel = self.value_channel
+                    else:
+                        critic_infer_handle = None
+                        training_input_channel = actor_inference_channel
 
-                    metrics = actor_handle.wait()
+                    critic_warmup_steps = self.cfg.algorithm.get('critic_warmup_steps', 0)
+                    critic_warmup = (critic_warmup_steps > 0
+                                      and self.global_steps < critic_warmup_steps)
+                    if critic_warmup:
+                        assert False, "critic warm up is not implemented yet"
+                        assert self.critic is not None, \
+                            "critic_warmup_steps is configured but no critic model is provided"
+                        logging.info(f'critic model is warming up at step {self.global_steps}')
+
+                    if self.is_pipeline:
+                        if self.critic:
+                            actor_training_input_channel = training_input_channel[0]
+                            critic_training_input_channel = training_input_channel[1]
+                        else:
+                            actor_training_input_channel = training_input_channel
+                    else:
+                        if self.critic:
+                            critic_training_input_channel = training_input_channel
+                            critic_training_output_channel = self.critic_output_channel
+                            actor_training_input_channel = critic_training_output_channel
+                        else:
+                            actor_training_input_channel = training_input_channel
+
+                    # Critic training
+                    if self.critic:
+                        critic_train_handle: Handle = self.critic.run_training(
+                            input_channel=critic_training_input_channel,
+                            output_channel=critic_training_output_channel,
+                            compute_rollout_metrics=False,
+                        )
+                    else:
+                        critic_train_handle = None
+
+                    # actor training
+                    if not critic_warmup:
+                        actor_handle: Handle = self.actor.run_training(
+                            input_channel=actor_training_input_channel,
+                            do_offload=False
+                        )
+                    else:
+                        actor_handle = None
+
+                    actor_metrics = None
+                    if actor_handle:
+                        actor_metrics = actor_handle.wait()
+                    critic_training_metrics = None
+                    if critic_train_handle is not None:
+                        critic_metrics = critic_train_handle.wait()
+                        _, critic_training_metrics = critic_metrics[0]
 
                     if self.scheduler is not None:
                         scheduler_handle.wait()
-                    actor_rollout_metrics = metrics[0][0]
-                    actor_training_metrics = metrics[0][1]
+                    actor_rollout_metrics = actor_metrics[0][0]
+                    actor_training_metrics = actor_metrics[0][1]
                     self.global_steps += 1
 
                     run_time_exceeded = self.run_timer.is_finished()
@@ -451,16 +558,23 @@ class ReasoningRunner:
                         return
 
                 time_metrics = self.timer.consume_durations()
-                time_metrics["training"] = actor_handle.consume_duration()
+
+                time_metrics["actor/training"] = actor_handle.consume_duration()
                 time_metrics["rollout"] = rollout_handle.consume_duration()
                 time_metrics["reward"] = reward_handle.consume_duration()
-                if infer_handle is not None:
+                if actor_infer_handle is not None:
+                    actor_infer_handle.wait()
                     # Inference time should be the min time across ranks, because different DP receive the rollout results differently
                     # But at the begin of the pp schedule, there is a timer barrier
                     # This makes all DP end at the same time, while they start at differnt times, and thus only the min time is correct
-                    time_metrics["inference"] = infer_handle.consume_duration(
+                    time_metrics["actor/inference"] = actor_infer_handle.consume_duration(
                         reduction_type="min"
                     )
+                if critic_infer_handle is not None:
+                    critic_infer_handle.wait()
+                    time_metrics["critic/inference"] = critic_infer_handle.consume_duration()
+                if critic_train_handle is not None:
+                    time_metrics["critic/training"] = critic_train_handle.consume_duration()
 
                 logging_steps = (
                     self.global_steps - 1
@@ -474,9 +588,14 @@ class ReasoningRunner:
                 self.metric_logger.log(log_time_metrics, logging_steps)
                 self.metric_logger.log(rollout_metrics, logging_steps)
                 for i in range(self.cfg.algorithm.n_minibatches):
-                    training_metrics = {
-                        f"train/{k}": v for k, v in actor_training_metrics[i].items()
-                    }
+                    training_metrics = {}
+                    if actor_training_metrics is not None:
+                        for k, v in actor_training_metrics[i].items():
+                            training_metrics[f"actor/training/{k}"] = v
+                    if critic_training_metrics is not None:
+                        for k, v in critic_training_metrics[i].items():
+                            training_metrics[f"critic/training/{k}"] = v
+                        
                     self.metric_logger.log(training_metrics, logging_steps + i)
 
                 logging_metrics = {f"{k}_time": v for k, v in time_metrics.items()}
@@ -490,7 +609,10 @@ class ReasoningRunner:
                     logging_metrics.update(flops_metrics)
 
                 logging_metrics.update(actor_rollout_metrics)
-                logging_metrics.update(actor_training_metrics[-1])
+                if actor_training_metrics is not None:
+                    logging_metrics.update(actor_training_metrics[-1])
+                if critic_training_metrics is not None:
+                    logging_metrics.update(critic_training_metrics[-1])
 
                 global_pbar.set_postfix(logging_metrics, refresh=False)
                 global_pbar.update(1)
