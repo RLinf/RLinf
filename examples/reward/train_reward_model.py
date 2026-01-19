@@ -28,7 +28,7 @@ import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import validate_cfg
-from rlinf.runners.sft_runner import SFTRunner
+from rlinf.runners.reward_training_runner import RewardTrainingRunner
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.reward.reward_worker import FSDPRewardWorker
@@ -42,21 +42,21 @@ def main(cfg) -> None:
     print("ResNet Reward Model Training")
     print("=" * 60)
 
-    # Validate config (same as SFT)
+    # Validate config
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = HybridComponentPlacement(cfg, cluster)
 
-    # Create reward worker group (same pattern as SFT actor)
+    # Create reward worker group
     actor_placement = component_placement.get_strategy("actor")
     actor_group = FSDPRewardWorker.create_group(cfg).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
     )
 
-    # Use SFTRunner to drive training
-    runner = SFTRunner(
+    # Use RewardTrainingRunner with early stopping support
+    runner = RewardTrainingRunner(
         cfg=cfg,
         actor=actor_group,
     )

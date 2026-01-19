@@ -46,7 +46,16 @@ class RewardTrainingRunner:
         self.run_timer = run_timer
 
         self.global_step = 0
+        self.best_val_loss = float("inf")
         self.best_val_acc = 0.0
+
+        # Early stopping state
+        early_stop_cfg = cfg.runner.get("early_stop", {})
+        self.early_stop_enabled = early_stop_cfg.get("enabled", False)
+        self.early_stop_patience = early_stop_cfg.get("patience", 5)
+        self.early_stop_min_delta = early_stop_cfg.get("min_delta", 0.001)
+        self.early_stop_monitor = early_stop_cfg.get("monitor", "val_loss")
+        self.early_stop_counter = 0
 
         # Compute max_steps from config
         self.set_max_steps()
@@ -101,12 +110,40 @@ class RewardTrainingRunner:
                 if save_model:
                     self._save_checkpoint()
 
-                # Track best validation accuracy
+                # Track best validation metrics and early stopping
+                improved = False
+                if "val_loss" in actor_metrics[0]:
+                    val_loss = actor_metrics[0]["val_loss"]
+                    if val_loss < self.best_val_loss - self.early_stop_min_delta:
+                        self.best_val_loss = val_loss
+                        if self.early_stop_monitor == "val_loss":
+                            improved = True
+
                 if "val_accuracy" in actor_metrics[0]:
                     val_acc = actor_metrics[0]["val_accuracy"]
-                    if val_acc > self.best_val_acc:
+                    if val_acc > self.best_val_acc + self.early_stop_min_delta:
                         self.best_val_acc = val_acc
                         self._save_checkpoint(is_best=True)
+                        if self.early_stop_monitor == "val_accuracy":
+                            improved = True
+
+                # Early stopping check
+                if self.early_stop_enabled and (
+                    "val_loss" in actor_metrics[0] or "val_accuracy" in actor_metrics[0]
+                ):
+                    if improved:
+                        self.early_stop_counter = 0
+                    else:
+                        self.early_stop_counter += 1
+                        logger.info(
+                            f"Early stop counter: {self.early_stop_counter}/{self.early_stop_patience}"
+                        )
+
+                    if self.early_stop_counter >= self.early_stop_patience:
+                        logger.info(
+                            f"Early stopping triggered! No improvement for {self.early_stop_patience} checks."
+                        )
+                        break
 
             # Log metrics
             time_metrics = self.timer.consume_durations()
@@ -133,14 +170,15 @@ class RewardTrainingRunner:
 
     def _save_checkpoint(self, is_best: bool = False) -> None:
         """Save model checkpoint."""
+        log_dir = self.cfg.runner.logger.log_path
         if is_best:
             save_dir = os.path.join(
-                self.cfg.runner.log_dir,
+                log_dir,
                 "checkpoints/best_model",
             )
         else:
             save_dir = os.path.join(
-                self.cfg.runner.log_dir,
+                log_dir,
                 f"checkpoints/global_step_{self.global_step}",
             )
 
@@ -156,8 +194,16 @@ class RewardTrainingRunner:
             logger.info(f"Saved checkpoint at step {self.global_step}")
 
     def set_max_steps(self) -> None:
-        """Set maximum training steps from config."""
-        self.max_steps = self.cfg.runner.get("max_steps", 10000)
+        """Set maximum training steps from config.
+
+        If max_steps is -1, use max_epochs as max_steps (1 epoch = 1 step for reward training).
+        """
+        max_steps = self.cfg.runner.get("max_steps", -1)
+        if max_steps <= 0:
+            # Use max_epochs as max_steps
+            self.max_steps = self.cfg.runner.get("max_epochs", 800)
+        else:
+            self.max_steps = max_steps
 
 
 @hydra.main(version_base=None, config_path=".", config_name="config")

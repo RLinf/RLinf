@@ -488,6 +488,51 @@ class EnvWorker(Worker):
         # Concatenate along env dimension to get (n_steps, total_envs, H, W, C)
         return torch.cat(all_images, dim=1)
 
+    def get_episode_final_images(self):
+        """Get episode-ending images for terminal reward mode.
+
+        For each env, returns the image from when its episode actually ended,
+        NOT the last rollout image (which might be from a new episode after reset).
+
+        Returns:
+            torch.Tensor or None: Images with shape (total_envs, H, W, C)
+        """
+        all_images = []
+        for env_wrapper in self.env_list:
+            env = env_wrapper.env
+            if hasattr(env, "get_episode_final_images"):
+                images = env.get_episode_final_images()
+                if images is not None:
+                    all_images.append(images)
+
+        if len(all_images) == 0:
+            return None
+
+        # Each has shape (envs_per_stage, H, W, C)
+        # Concatenate along env dimension to get (total_envs, H, W, C)
+        return torch.cat(all_images, dim=0)
+
+    def get_episode_final_steps(self):
+        """Get the step at which each env's episode ended.
+
+        Returns:
+            torch.Tensor: Step indices with shape (total_envs,), -1 means no episode ended.
+        """
+        all_steps = []
+        for env_wrapper in self.env_list:
+            env = env_wrapper.env
+            if hasattr(env, "get_episode_final_steps"):
+                steps = env.get_episode_final_steps()
+                if steps is not None:
+                    all_steps.append(steps)
+
+        if len(all_steps) == 0:
+            return None
+
+        # Each has shape (envs_per_stage,)
+        # Concatenate to get (total_envs,)
+        return torch.cat(all_steps, dim=0)
+
     def clear_rollout_images(self):
         """Clear collected images in all environment wrappers."""
         for env_wrapper in self.env_list:

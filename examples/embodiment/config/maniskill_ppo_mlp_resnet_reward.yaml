@@ -40,7 +40,7 @@ runner:
   val_check_interval: 50
   save_interval: 100
 
-  resume_dir: null
+  resume_dir: null  # Set to checkpoint path to resume training
 
 algorithm:
   update_epoch: 8
@@ -66,7 +66,7 @@ algorithm:
   value_clip: 1.0
   huber_delta: 10.0
 
-  gamma: 0.8   # Discount factor, MUST be in [0, 1]. 0.8 = short-term, 0.99 = long-term
+  gamma: 0.8
   gae_lambda: 0.9
 
   sampling_params:
@@ -181,7 +181,7 @@ reward:
   # Asymmetric reward: success gets big reward, fail gets small/no penalty
   # This prevents policy collapse when most episodes fail
   success_reward: 1.0   # Reward for success (prob > threshold)
-  fail_reward: -0.1      # Reward for fail (prob < threshold), use 0 or small negative
+  fail_reward: 0      # Reward for fail (prob < threshold), use 0 or small negative
   reward_threshold: 0.5 # Probability threshold for success/fail classification
   
   # How to combine learned rewards with environment rewards:
@@ -189,8 +189,8 @@ reward:
   # - "add": Add learned rewards to env rewards (reward = env + weight * learned)
   # - "weighted": Weighted sum (reward = env_weight * env + weight * learned)
   combine_mode: "replace"
-  reward_weight: 10.0  # Weight for learned rewards (higher for sparse terminal reward)
-  env_reward_weight: 0.0  # Not used in replace mode
+  reward_weight: 10.0  # Bonus reward for terminal success
+  env_reward_weight: 0.0  # Keep env dense reward for learning basic skills
   
   model:
     model_type: "resnet_reward"
@@ -198,14 +198,15 @@ reward:
     hidden_dim: 256
     dropout: 0.1
     image_size: [3, 128, 128]
-    normalize: false
+    normalize: true 
     precision: "bf16"
     
     # Path to trained reward model checkpoint
-    checkpoint_path: null
+    checkpoint_path: "logs/reward_model/checkpoints/best_model"
     
     # Debug image save directory (for visualizing ResNet classification results)
     # Set to a path to enable debug image saving, leave empty to disable
+    # debug_save_dir: "${runner.logger.log_path}/training_data_debug"
     debug_save_dir: null
 
 critic:

@@ -36,6 +36,15 @@ class ManiskillFullStateWrapper(gym.Wrapper):
         # Store main_images for reward model during rollout
         self.rollout_images = []
 
+        # Store episode-ending images for terminal reward mode
+        # This tracks the ACTUAL final observation for each env when episode ends
+        self.episode_final_images = (
+            None  # Shape: (num_envs, H, W, C) - latest final image per env
+        )
+        self.episode_final_step = (
+            None  # Shape: (num_envs,) - which step each env's episode ended
+        )
+
         # Show goal site visualization (green dot)
         self._show_goal_site_visual()
 
@@ -115,6 +124,8 @@ class ManiskillFullStateWrapper(gym.Wrapper):
         return obs, reward, terminated, truncated, info
 
     def chunk_step(self, chunk_actions):
+        import torch
+
         obs, rewards, terminations, truncations, infos = self.env.chunk_step(
             chunk_actions
         )
@@ -125,8 +136,49 @@ class ManiskillFullStateWrapper(gym.Wrapper):
                 infos["final_observation"]
             )
 
-        # Collect main_images for reward model
+        # Collect images for reward model
+        # We need to handle two scenarios:
+        # 1. Per-step mode: collect every frame
+        # 2. Terminal mode: collect the ACTUAL episode-ending frame for each env
+
         if isinstance(obs, dict) and "main_images" in obs:
+            current_step = len(self.rollout_images)
+
+            # Track episode-final images when episodes end (auto_reset)
+            if (
+                isinstance(infos, dict)
+                and "final_observation" in infos
+                and isinstance(infos["final_observation"], dict)
+                and "main_images" in infos["final_observation"]
+            ):
+                reset_mask = infos.get("_final_observation", None)
+                if reset_mask is not None and reset_mask.any():
+                    final_images = infos["final_observation"]["main_images"]
+
+                    # Initialize episode_final_images on first use
+                    if self.episode_final_images is None:
+                        self.episode_final_images = final_images.clone().cpu()
+                        # Use -1 to indicate "not set yet" (0 could be a valid step)
+                        self.episode_final_step = torch.full(
+                            (self.num_envs,), -1, dtype=torch.long
+                        )
+
+                    # Update episode_final_images for envs that just finished
+                    # reset_mask shape: (n_envs,) or (n_envs, chunk_size)
+                    if reset_mask.dim() > 1:
+                        # chunk_step returns dones with shape (n_envs, chunk_size)
+                        done_mask = reset_mask.any(dim=-1)  # Any done in chunk
+                    else:
+                        done_mask = reset_mask
+
+                    for env_idx in range(self.num_envs):
+                        if done_mask[env_idx]:
+                            self.episode_final_images[env_idx] = final_images[
+                                env_idx
+                            ].cpu()
+                            self.episode_final_step[env_idx] = current_step
+
+            # Always collect current obs for per-step mode
             self.rollout_images.append(obs["main_images"].cpu())
 
         return obs, rewards, terminations, truncations, infos
@@ -145,6 +197,55 @@ class ManiskillFullStateWrapper(gym.Wrapper):
         # Stack to (n_steps, n_envs, H, W, C)
         return torch.stack(self.rollout_images, dim=0)
 
+    def get_episode_final_images(self):
+        """Get the actual episode-ending images for terminal reward mode.
+
+        For each env, returns the image from when its episode actually ended,
+        NOT the last collected image (which might be from a new episode after reset).
+
+        Returns:
+            torch.Tensor: Images with shape (n_envs, H, W, C) or None if no episodes ended.
+        """
+        if self.episode_final_images is None:
+            # No episodes ended during this rollout, use last collected images
+            if len(self.rollout_images) == 0:
+                return None
+            return self.rollout_images[-1]
+
+        # For envs that had episodes end, use their final images
+        # For envs that never ended (ran full rollout), use the last collected image
+        if len(self.rollout_images) == 0:
+            return self.episode_final_images
+
+        result = self.rollout_images[-1].clone()
+
+        # episode_final_step tracks which step each env's episode ended
+        # If an env's episode ended (step >= 0 means it was set, -1 means not set), use episode_final_images
+        for env_idx in range(self.num_envs):
+            if (
+                self.episode_final_step is not None
+                and self.episode_final_step[env_idx] >= 0
+            ):
+                result[env_idx] = self.episode_final_images[env_idx]
+
+        return result
+
+    def get_episode_final_steps(self):
+        """Get the step at which each env's episode ended.
+
+        Returns:
+            torch.Tensor: Step indices with shape (n_envs,), -1 means no episode ended.
+        """
+        import torch
+
+        if self.episode_final_step is None:
+            # No episodes ended, return all -1 (will use last step)
+            return torch.full((self.num_envs,), -1, dtype=torch.long)
+
+        return self.episode_final_step.clone()
+
     def clear_rollout_images(self):
         """Clear collected images (call at start of each rollout)."""
         self.rollout_images = []
+        self.episode_final_images = None
+        self.episode_final_step = None

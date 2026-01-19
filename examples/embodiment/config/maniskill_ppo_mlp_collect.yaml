@@ -32,10 +32,10 @@ runner:
 
   only_eval: False
   eval_policy_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
-  val_check_interval: 25
-  save_interval: -1
+  val_check_interval: 10
+  save_interval: 10
 
-  resume_dir: null
+  resume_dir: null  # Set to checkpoint path to resume training, e.g. "logs/xxx/checkpoints/global_step_100"
 
 algorithm:
   update_epoch: 8
@@ -83,7 +83,7 @@ env:
   use_full_state: True 
 
   data_collection:
-    enabled: True
+    enabled: False
     save_dir: ${runner.logger.log_path}/collected_data
     mode: "eval" 
     sample_rate_success: 1.0

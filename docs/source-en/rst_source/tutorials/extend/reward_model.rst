@@ -101,7 +101,47 @@ Training a Reward Model
 
    .. code-block:: bash
 
-       bash examples/embodiment/run_embodiment.sh maniskill_ppo_rgb_reward
+       bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_resnet_reward
+
+Recommended Training Strategy
+-----------------------------
+
+For best results, we recommend a **two-stage training approach**:
+
+**Stage 1: Warmup with Environment Reward (100+ steps)**
+
+First, train the policy using the environment's native reward signal:
+
+.. code-block:: bash
+
+    bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_collect
+
+This creates a checkpoint with basic task understanding and collects episode data
+for training the reward model.
+
+**Stage 2: Continue with ResNet Reward**
+
+Resume training from the Stage 1 checkpoint, now using the ResNet reward model:
+
+.. code-block:: yaml
+
+    runner:
+      resume_dir: "logs/.../checkpoints/global_step_100"
+    
+    reward:
+      use_reward_model: True
+      model:
+        checkpoint_path: "path/to/trained_resnet.safetensors"
+
+.. code-block:: bash
+
+    bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_resnet_reward
+
+**Why Two Stages?**
+
+- Starting from scratch with learned reward often fails (cold start problem)
+- Stage 1 provides diverse data for training the reward model
+- Stage 1 checkpoint gives the policy basic competence before refinement
 
 Reward Modes
 ------------

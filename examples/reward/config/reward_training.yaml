@@ -31,7 +31,14 @@ runner:
   max_epochs: 800
   max_steps: -1
   val_check_interval: 50
-  save_interval: 50  # Save checkpoint every 50 epochs
+  save_interval: 50
+
+  # Early stopping
+  early_stop:
+    enabled: true
+    patience: 5           # Stop after N val checks without improvement
+    min_delta: 0.001      # Minimum improvement to count as progress
+    monitor: "val_loss"   # Metric to monitor
 
 # -----------------------------------------------------------------------------
 # Data Configuration
@@ -39,7 +46,7 @@ runner:
 data:
   # Path to collected data with .pkl files
   # Labels are determined per-frame using info['is_obj_placed']
-  data_path: ""
+  data_path: "logs/20260117-22:37:03-maniskill_ppo_mlp_collect/collected_data"
   val_split: 0.2  # 20% of EPISODES for validation (prevents data leakage)
   num_workers: 4
   # Number of frames to sample per episode (evenly spaced)

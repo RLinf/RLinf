@@ -101,7 +101,46 @@ RLinf 支持基于图像的奖励模型：
 
    .. code-block:: bash
 
-       bash examples/embodiment/run_embodiment.sh maniskill_ppo_rgb_reward
+       bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_resnet_reward
+
+推荐训练策略
+-----------------------------
+
+为获得最佳效果，我们推荐 **两阶段训练方法**：
+
+**阶段 1：使用环境奖励预热（100+ 步）**
+
+首先使用环境原生奖励信号训练策略：
+
+.. code-block:: bash
+
+    bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_collect
+
+这将创建一个具有基本任务理解的 checkpoint，并收集用于训练奖励模型的 episode 数据。
+
+**阶段 2：继续使用 ResNet 奖励**
+
+从阶段 1 的 checkpoint 恢复训练，使用 ResNet 奖励模型：
+
+.. code-block:: yaml
+
+    runner:
+      resume_dir: "logs/.../checkpoints/global_step_100"
+    
+    reward:
+      use_reward_model: True
+      model:
+        checkpoint_path: "path/to/trained_resnet.safetensors"
+
+.. code-block:: bash
+
+    bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_resnet_reward
+
+**为什么需要两阶段？**
+
+- 从头开始使用学习奖励往往会失败（冷启动问题）
+- 阶段 1 为训练奖励模型提供多样化数据
+- 阶段 1 的 checkpoint 让策略在精调前具备基本能力
 
 奖励模式
 ------------

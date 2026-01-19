@@ -450,68 +450,10 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
         self._val_interval = cfg.runner.get("val_check_interval", 50)
 
     def init_worker(self):
-        """Initialize model and optimizer using FSDP wrapping.
-
-        We manually wrap with FSDP since base class's wrap_model needs SupportedModel enum.
-        """
-        from torch.distributed.fsdp import (
-            FullyShardedDataParallel as FSDP,
-        )
-        from torch.distributed.fsdp import (
-            MixedPrecision,
-            ShardingStrategy,
-        )
-
-        from rlinf.config import torch_dtype_from_precision
-
-        # Create base model
-        module = self.model_provider_func()
-
-        # Log gradient checkpointing status
-        if self._cfg.fsdp_config.get("gradient_checkpointing", False):
-            logger.info("[FSDP] Gradient checkpointing enabled")
-        else:
-            logger.info("[FSDP] Gradient checkpointing is disabled")
-
-        # Setup mixed precision
-        mixed_precision_config = self._cfg.fsdp_config.mixed_precision
-        param_dtype = torch_dtype_from_precision(mixed_precision_config.param_dtype)
-        reduce_dtype = torch_dtype_from_precision(mixed_precision_config.reduce_dtype)
-        buffer_dtype = torch_dtype_from_precision(mixed_precision_config.buffer_dtype)
-        mixed_precision = MixedPrecision(
-            param_dtype=param_dtype,
-            reduce_dtype=reduce_dtype,
-            buffer_dtype=buffer_dtype,
-        )
-
-        # Get sharding strategy
-        sharding_strategy_name = self._cfg.fsdp_config.sharding_strategy.upper()
-        sharding_strategy = getattr(
-            ShardingStrategy, sharding_strategy_name, ShardingStrategy.NO_SHARD
-        )
-
-        # Wrap model with FSDP
-        self.model = FSDP(
-            module=module,
-            device_id=self.device,
-            sharding_strategy=sharding_strategy,
-            mixed_precision=mixed_precision,
-            sync_module_states=True,
-            device_mesh=self._device_mesh,
-            use_orig_params=self._cfg.fsdp_config.use_orig_params,
-        )
-
-        # Mark as not using LoRA
+        """Initialize model and optimizer using base class."""
+        self.tokenizer = None
         self.is_lora = False
-
-        # Use base class methods for optimizer and scheduler
-        self.optimizer = self.build_optimizer(
-            model=self.model, enable_critic_warmup=False
-        )
-        self.lr_scheduler = self.build_lr_scheduler(optimizer=self.optimizer)
-        self.grad_scaler = self.build_grad_scaler(
-            self._cfg.fsdp_config.amp.get("use_grad_scaler", False)
-        )
+        self.setup_model_and_optimizer()
 
         logger.info(
             f"Initialized FSDPRewardWorker with "
@@ -822,13 +764,9 @@ class ImageRewardWorker(Worker):
         # Model will be loaded in init_worker
         self.model = None
 
-        # Debug image saving (based on ResNet classification)
         self.debug_save_dir = os.environ.get("DEBUG_IMAGE_SAVE_DIR", None)
         self.debug_success_count = 0
         self.debug_fail_count = 0
-        # Use higher threshold to reduce false positives
-        # Model: success mean=0.61, fail mean=0.52 (too close!)
-        # Threshold 0.6 reduces FP rate significantly
         self.reward_threshold = 0.6
 
     def init_worker(self):
@@ -843,10 +781,8 @@ class ImageRewardWorker(Worker):
 
         # Setup debug image saving directories
         if self.debug_save_dir:
-            os.makedirs(
-                os.path.join(self.debug_save_dir, "resnet_success"), exist_ok=True
-            )
-            os.makedirs(os.path.join(self.debug_save_dir, "resnet_fail"), exist_ok=True)
+            os.makedirs(os.path.join(self.debug_save_dir, "success"), exist_ok=True)
+            os.makedirs(os.path.join(self.debug_save_dir, "fail"), exist_ok=True)
         checkpoint_path = model_cfg.get("checkpoint_path")
 
         if checkpoint_path is None:
@@ -894,35 +830,22 @@ class ImageRewardWorker(Worker):
                 output_channel.put({"rewards": None}, async_op=True)
                 return
 
-            # Convert to tensor if needed (don't normalize here, model will do it)
             if isinstance(images, np.ndarray):
                 images = torch.from_numpy(images)
 
             images = images.to(self.device)
-
-            # Ensure model is in eval mode (BatchNorm layers update running stats in train mode!)
             self.model.eval()
 
-            # Let model.preprocess_images() handle all preprocessing (permute, normalize, resize)
-            # This ensures consistency with training validation
             with torch.no_grad():
                 outputs = self.model(images)
                 probs = outputs["probabilities"]
-
-                # Apply threshold - use 0.5 for best accuracy (87% validated)
-                # probs > 0.5 means success, otherwise fail
                 rewards = torch.where(
                     probs > self.reward_threshold,
-                    probs,  # High confidence success: use probability as reward
-                    torch.zeros_like(probs),  # Below threshold: zero reward
+                    probs,
+                    torch.zeros_like(probs),
                 )
 
-            # Save debug images based on ResNet classification
-            # Note: images are already preprocessed by model.forward() -> preprocess_images()
-            # But we need to save the original images (before preprocessing) for visualization
             if self.debug_save_dir:
-                # Get original images before preprocessing (from channel data)
-                # Use explicit None check instead of 'or' (Tensor doesn't support bool conversion)
                 original_images = data.get("main_images")
                 if original_images is None:
                     original_images = data.get("images")
@@ -932,7 +855,6 @@ class ImageRewardWorker(Worker):
                     if isinstance(original_images, np.ndarray):
                         original_images = torch.from_numpy(original_images)
                     original_images = original_images.to(self.device)
-                    # Convert to CHW format if needed, and to [0, 1] float
                     if original_images.dim() == 4 and original_images.shape[-1] in [
                         1,
                         3,
@@ -943,12 +865,7 @@ class ImageRewardWorker(Worker):
                         original_images = original_images.float() / 255.0
                     self._save_debug_images(original_images, rewards, probs)
 
-            # Prepare output
-            output_data = {
-                "rewards": rewards.cpu(),
-            }
-
-            # Pass through episode_ids if provided
+            output_data = {"rewards": rewards.cpu()}
             if "episode_ids" in data:
                 output_data["episode_ids"] = data["episode_ids"]
 
@@ -965,26 +882,20 @@ class ImageRewardWorker(Worker):
         """
         images = self._preprocess_images(images)
         images = images.to(self.device)
-
-        # Ensure model is in eval mode
         self.model.eval()
 
         with torch.no_grad():
             rewards = self.model.compute_reward({"images": images})
-
         return rewards
 
     def _preprocess_images(self, images: torch.Tensor) -> torch.Tensor:
-        """Preprocess images to expected format (B, C, H, W) in [0, 1]."""
-        # Convert numpy to tensor if needed
+        """Preprocess images to (B, C, H, W) in [0, 1]."""
         if isinstance(images, np.ndarray):
             images = torch.from_numpy(images)
 
-        # Handle (B, H, W, C) -> (B, C, H, W)
         if images.dim() == 4 and images.shape[-1] in [1, 3, 4]:
             images = images.permute(0, 3, 1, 2)
 
-        # Ensure float in [0, 1]
         if images.dtype == torch.uint8:
             images = images.float() / 255.0
         elif images.dtype != torch.float32:
@@ -1004,7 +915,6 @@ class ImageRewardWorker(Worker):
         """
         from PIL import Image
 
-        # Convert to numpy for saving
         images_np = images.cpu().numpy()
         rewards_np = rewards.cpu().numpy()
         probs_np = probs.cpu().numpy() if probs is not None else rewards_np
@@ -1014,34 +924,23 @@ class ImageRewardWorker(Worker):
             prob = probs_np[idx]
             img = images_np[idx]
 
-            # Convert from (C, H, W) to (H, W, C)
             if img.shape[0] in [1, 3, 4]:
                 img = img.transpose(1, 2, 0)
-
-            # Convert from [0, 1] to [0, 255]
             img = (img * 255).clip(0, 255).astype(np.uint8)
-
-            # Handle grayscale
             if img.shape[-1] == 1:
                 img = img.squeeze(-1)
 
-            # Classify based on reward threshold
             is_success = reward > self.reward_threshold
-
-            # Save both success and fail images
-            # Filename format: {id}_{prob:.4f}.png for easy comparison
             if is_success:
                 self.debug_success_count += 1
-                save_dir = os.path.join(self.debug_save_dir, "resnet_success")
+                save_dir = os.path.join(self.debug_save_dir, "success")
                 filename = f"{self.debug_success_count:06d}_prob{prob:.4f}.png"
             else:
                 self.debug_fail_count += 1
-                save_dir = os.path.join(self.debug_save_dir, "resnet_fail")
+                save_dir = os.path.join(self.debug_save_dir, "fail")
                 filename = f"{self.debug_fail_count:06d}_prob{prob:.4f}.png"
 
             os.makedirs(save_dir, exist_ok=True)
-
-            # Save image
             try:
                 pil_img = Image.fromarray(img)
                 pil_img.save(os.path.join(save_dir, filename))
@@ -1072,8 +971,6 @@ class ImageRewardWorker(Worker):
 
                 images = self._preprocess_images(images)
                 images = images.to(self.device)
-
-                # Ensure model is in eval mode
                 self.model.eval()
 
                 with torch.no_grad():

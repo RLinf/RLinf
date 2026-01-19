@@ -147,19 +147,44 @@ class EmbodiedRunner:
         images_result = self.env.get_rollout_images().wait()
         images = images_result[0] if images_result else None
         if images is None:
+            logger.warning(
+                "compute_rewards_with_model: No images collected from env worker"
+            )
             return None
 
         # images shape: (n_steps, n_envs, H, W, C)
         n_steps, n_envs = images.shape[0], images.shape[1]
+        logger.debug(f"compute_rewards_with_model: images.shape={images.shape}")
 
         # Check reward mode
         reward_mode = self.cfg.reward.get("reward_mode", "per_step")
 
         if reward_mode == "terminal":
-            # Terminal mode: only use the last frame of each episode
-            last_frame_images = images[-1]  # Shape: (n_envs, H, W, C)
+            # Terminal mode: use the ACTUAL episode-ending frame for each env
+            # NOT images[-1] which might be from a new episode after auto_reset
+            episode_final_result = self.env.get_episode_final_images().wait()
+            episode_final_images = (
+                episode_final_result[0] if episode_final_result else None
+            )
 
-            # Send only last frame images to reward worker
+            # Get which step each env's episode ended
+            episode_final_steps_result = self.env.get_episode_final_steps().wait()
+            episode_final_steps = (
+                episode_final_steps_result[0] if episode_final_steps_result else None
+            )
+
+            if episode_final_images is not None:
+                last_frame_images = episode_final_images  # Shape: (n_envs, H, W, C)
+            else:
+                # Fallback to last collected image if no episode ended
+                last_frame_images = images[-1]
+
+            logger.debug(
+                f"compute_rewards_with_model [terminal]: using episode_final_images, "
+                f"shape={last_frame_images.shape}"
+            )
+
+            # Send episode-ending images to reward worker
             self.reward_input_channel.put(
                 {"main_images": last_frame_images}, async_op=False
             )
@@ -186,15 +211,42 @@ class EmbodiedRunner:
 
                 # Binary classification: prob > threshold = success, else fail
                 is_success = terminal_rewards > threshold
+                num_success = is_success.sum().item()
+                logger.debug(
+                    f"compute_rewards_with_model [terminal]: "
+                    f"terminal_rewards.shape={terminal_rewards.shape}, "
+                    f"probs range=[{terminal_rewards.min():.4f}, {terminal_rewards.max():.4f}], "
+                    f"success_count={num_success}/{n_envs}"
+                )
+
                 mapped_rewards = torch.where(
                     is_success,
                     torch.tensor(success_reward, device=terminal_rewards.device),
                     torch.tensor(fail_reward, device=terminal_rewards.device),
                 )
 
-                # Create full reward tensor: zeros except for the last step
+                # Create full reward tensor: zeros initially
                 rewards = torch.zeros(n_steps, n_envs, 1)
-                rewards[-1, :, 0] = mapped_rewards  # Only last step gets reward
+
+                # CRITICAL: Put reward at the step where each env's episode ACTUALLY ended
+                # NOT uniformly at the last step, which would give wrong credit assignment
+                if episode_final_steps is not None:
+                    for env_idx in range(n_envs):
+                        step = episode_final_steps[env_idx].item()
+                        if step >= 0 and step < n_steps:
+                            # Episode ended at this step, put reward here
+                            rewards[step, env_idx, 0] = mapped_rewards[env_idx]
+                        else:
+                            # Episode didn't end (ran full rollout), put reward at last step
+                            rewards[-1, env_idx, 0] = mapped_rewards[env_idx]
+                else:
+                    # Fallback: put all rewards at last step
+                    rewards[-1, :, 0] = mapped_rewards
+
+                logger.debug(
+                    f"compute_rewards_with_model: updating rewards with shape {rewards.shape}, "
+                    f"non_zero_steps={torch.nonzero(rewards).shape[0]}"
+                )
 
                 # Update actor's rollout_batch with computed rewards (remote call)
                 self.actor.update_rewards(rewards).wait()
@@ -326,19 +378,16 @@ class EmbodiedRunner:
                     self._save_checkpoint()
 
             time_metrics = self.timer.consume_durations()
-            time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
-
             env_results_list = [
                 results for results in env_handle.wait() if results is not None
             ]
             env_metrics = compute_evaluate_metrics(env_results_list)
-            env_metrics = {f"env/{k}": v for k, v in env_metrics.items()}
 
+            time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
             rollout_metrics = {
                 f"rollout/{k}": v for k, v in actor_rollout_metrics[0].items()
             }
             env_metrics = {f"env/{k}": v for k, v in env_metrics.items()}
-
             training_metrics = {
                 f"train/{k}": v for k, v in actor_training_metrics[0].items()
             }

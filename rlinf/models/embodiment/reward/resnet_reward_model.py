@@ -230,12 +230,36 @@ class ResNetRewardModel(BaseImageRewardModel):
         2. State dict with 'state_dict' or 'model_state_dict' key
         3. Backbone-only weights
         4. SafeTensors format (.safetensors)
+        5. Directory structure from FSDP training (actor/model_state_dict/full_weights.pt)
 
         Args:
-            checkpoint_path: Path to the checkpoint file.
+            checkpoint_path: Path to the checkpoint file or directory.
         """
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+        # Handle directory structure from FSDP training
+        if os.path.isdir(checkpoint_path):
+            # Try common paths in order
+            possible_paths = [
+                os.path.join(
+                    checkpoint_path, "actor", "model_state_dict", "full_weights.pt"
+                ),
+                os.path.join(checkpoint_path, "model_state_dict", "full_weights.pt"),
+                os.path.join(checkpoint_path, "full_weights.pt"),
+            ]
+            found_path = None
+            for p in possible_paths:
+                if os.path.exists(p):
+                    found_path = p
+                    break
+            if found_path is None:
+                raise FileNotFoundError(
+                    f"Checkpoint directory exists but no weights found. "
+                    f"Tried: {possible_paths}"
+                )
+            checkpoint_path = found_path
+            logger.info(f"Found weights at: {checkpoint_path}")
 
         # Load checkpoint based on format
         if checkpoint_path.endswith(".safetensors"):

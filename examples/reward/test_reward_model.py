@@ -40,8 +40,8 @@ from rlinf.models.embodiment.reward import ResNetRewardModel
 
 def load_debug_images(debug_dir: str, max_images: int = 50):
     """Load images from debug directories."""
-    success_dir = os.path.join(debug_dir, "resnet_success")
-    fail_dir = os.path.join(debug_dir, "resnet_fail")
+    success_dir = os.path.join(debug_dir, "success")
+    fail_dir = os.path.join(debug_dir, "fail")
 
     success_images = []
     fail_images = []
