@@ -264,15 +264,15 @@ b. 安装依赖
    # 下载模型（两种方式二选一）
    # 方式 1：使用 git clone
    git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Reset10-pretrained
-   git clone https://huggingface.co/RLinf/RLinf-Reset10-pretrained
+  git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+  git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
 
    # 方式 2：使用 huggingface-hub
    # 为了提高国内下载速度，可以添加以下环境变量：
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
-   hf download RLinf/RLinf-Reset10-pretrained --local-dir RLinf-Reset10-pretrained
-   hf download RLinf/RLinf-Reset10-pretrained --local-dir RLinf-Reset10-pretrained
+  hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
+  hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
 下载完成后，请在对应的配置 YAML 文件中正确填写模型路径。
 

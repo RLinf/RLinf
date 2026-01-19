@@ -263,15 +263,15 @@ Before starting training, you need to download the corresponding pretrained mode
    # Download the model (choose either method)
    # Method 1: Using git clone
    git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Reset10-pretrained
-   git clone https://huggingface.co/RLinf/RLinf-Reset10-pretrained
+  git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+  git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
 
    # Method 2: Using huggingface-hub
    # For mainland China users, you can use the following for better download speed:
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
-   hf download RLinf/RLinf-Reset10-pretrained --local-dir RLinf-Reset10-pretrained
-   hf download RLinf/RLinf-Reset10-pretrained --local-dir RLinf-Reset10-pretrained
+  hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
+  hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
 After downloading, make sure to correctly specify the model path in the configuration yaml file.
 
