@@ -252,6 +252,7 @@ class CalvinEnv(gym.Env):
         episode_info["return"] = self.returns.copy()
         episode_info["episode_len"] = self.elapsed_steps.copy()
         episode_info["reward"] = episode_info["return"] / episode_info["episode_len"]
+        episode_info["avg_len"] = self.current_task_idx.copy()
         infos["episode"] = to_tensor(episode_info)
         return infos
 

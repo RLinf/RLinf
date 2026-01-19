@@ -36,16 +36,16 @@ objects:
         led:
           link: led_link
           color: [0, 1, 0, 1] # green
-  movable_objects:
+  movable_objects:  # Done: switch the blue and pink
     block_red:
       file: blocks/block_red_middle.urdf
       initial_pos: any
       initial_orn: any
-    block_pink:
-      file: blocks/block_pink_small.urdf
-      initial_pos: any
-      initial_orn: any
     block_blue:
       file: blocks/block_blue_big.urdf
+      initial_pos: any
+      initial_orn: any
+    block_pink:
+      file: blocks/block_pink_small.urdf
       initial_pos: any
       initial_orn: any
