@@ -753,18 +753,11 @@ class MegatronActor(MegatronModelManager, Worker):
             train_metrics = self.run_forward_backward_iterator(batch)
         else:
             train_metrics = self.run_forward_backward(batch, forward_only=False)
-        if self.do_down_sampling:
-            increment = (
+        increment = (
             self.total_batch_size_per_dp
             * parallel_state.get_data_parallel_world_size()
             // self.cfg.algorithm.n_minibatches
         )
-        else:
-            increment = (
-                get_num_microbatches()
-                * self.cfg.actor.micro_batch_size
-                * parallel_state.get_data_parallel_world_size()
-            )
         success, grad_norm, num_zeros_in_grad, lr = self.optimizer_step(increment)
 
         # Training metrics
