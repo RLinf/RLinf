@@ -202,7 +202,7 @@ reward:
     precision: "bf16"
     
     # Path to trained reward model checkpoint
-    checkpoint_path: null
+    checkpoint_path: "/home/inin/RLinf/logs/reward_model/reward_training/checkpoints/global_step_600/actor/huggingface_model/model-00001-of-00001.safetensors"
     
     # Debug image save directory (for visualizing ResNet classification results)
     # Set to a path to enable debug image saving, leave empty to disable
