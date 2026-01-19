@@ -52,19 +52,19 @@ class MultiStepRolloutWorker(Worker):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
         with open_dict(rollout_model_config):
             rollout_model_config.precision = self.cfg.rollout.model.precision
-            rollout_model_config.path = self.cfg.rollout.model.model_path
+            rollout_model_config.model_path = self.cfg.rollout.model.model_path
 
         self.hf_model = get_model(rollout_model_config)
+
+        if self.cfg.runner.get("ckpt_path", None):
+            model_dict = torch.load(self.cfg.runner.ckpt_path)
+            self.hf_model.load_state_dict(model_dict)
 
         self.hf_model.eval()
 
         self.setup_sample_params()
         if self.enable_offload:
             self.offload_model()
-
-    def load_checkpoint(self, load_path):
-        model_dict = torch.load(load_path)
-        self.hf_model.load_state_dict(model_dict)
 
     def setup_sample_params(self):
         # length parameters for rollout
@@ -77,15 +77,18 @@ class MultiStepRolloutWorker(Worker):
         )
         self._train_sampling_params = {
             "do_sample": self._sampling_params["do_sample"],
-            "temperature": self._sampling_params["temperature_train"],
+            "temperature": self._sampling_params["temperature_train"]
+            if self._sampling_params["do_sample"]
+            else 1.0,
             "top_k": self._sampling_params["top_k"],
             "top_p": self._sampling_params["top_p"],
             "max_new_tokens": self._length_params["max_new_token"],
-            "use_cache": True,
         }
 
         self._eval_sampling_params = {
-            "do_sample": self._sampling_params["do_sample"],
+            "do_sample": True
+            if self._sampling_params.get("temperature_eval", -1) > 0
+            else False,
             "temperature": self._sampling_params["temperature_eval"],
             "top_k": self._sampling_params["top_k"],
             "top_p": self._sampling_params["top_p"],

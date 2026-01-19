@@ -26,6 +26,7 @@ import yaml
 from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
 
+from rlinf.envs import SupportedEnvType
 from rlinf.scheduler.cluster import Cluster
 from rlinf.utils.placement import (
     HybridComponentPlacement,
@@ -54,6 +55,7 @@ class SupportedModel(Enum):
     MLP_POLICY = ("mlp_policy", "embodied")
     GR00T = ("gr00t", "embodied")
     CNN_POLICY = ("cnn_policy", "embodied")
+    FLOW_POLICY = ("flow_policy", "embodied")
 
     def __new__(cls, value, category):
         obj = object.__new__(cls)
@@ -768,8 +770,8 @@ def validate_embodied_cfg(cfg):
 
     with open_dict(cfg):
         if (
-            cfg.env.train.env_type == "maniskill"
-            or cfg.env.eval.env_type == "maniskill"
+            SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.MANISKILL
+            or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.MANISKILL
         ):
 
             def get_robot_control_mode(robot: str):
@@ -791,7 +793,8 @@ def validate_embodied_cfg(cfg):
                 cfg.actor.model.policy_setup
             )
         elif (
-            cfg.env.train.env_type == "behavior" or cfg.env.eval.env_type == "behavior"
+            SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.BEHAVIOR
+            or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.BEHAVIOR
         ):
             import omnigibson as og
 
@@ -806,6 +809,8 @@ def validate_embodied_cfg(cfg):
                 open(config_filename, "r"), Loader=yaml.FullLoader
             )
             omnigibson_cfg = OmegaConf.create(omnigibson_cfg)
+            with open_dict(omnigibson_cfg):
+                omnigibson_cfg.robots[0].obs_modalities = ["rgb", "depth", "proprio"]
             cfg.env.train.omnigibson_cfg = omnigibson_cfg
             cfg.env.eval.omnigibson_cfg = omnigibson_cfg
 

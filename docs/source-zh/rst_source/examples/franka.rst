@@ -22,12 +22,14 @@ Franka真机强化学习
 **真实世界环境**
 
 - **Environment**: 真机设置
+
   - Franka Emika Panda 机械臂
   - Realsense 相机
   - 可能使用空间鼠标进行数据采集和人类干预
 - **Task**: 目前支持插块插入（Peg Insertion）和充电器插电（Charger）任务
 - **Observation**: 腕部或第三人称相机的 RGB 图像（128×128）
 - **Action Space**: 6 维或 7 维连续动作，取决于是否包含夹爪控制：
+
   - 三维位置控制（x, y, z）
   - 三维旋转控制（roll, pitch, yaw）
   - 夹爪控制（开/合）

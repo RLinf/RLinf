@@ -70,7 +70,6 @@ class FSDPModelManager:
             self.critic_warmup_steps = self._cfg.optim.critic_warmup_steps
         self.store_requires_grad_param_name = []
 
-        self.model_path = self._cfg.model.model_path
         if cfg.get("tokenizer", {}).get("tokenizer_model", None) is not None:
             self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
 
@@ -295,8 +294,14 @@ class FSDPModelManager:
         Args:
             save_path: the directory to save checkpoint.
         """
+        if self.is_weight_offloaded:
+            self.load_param_and_grad(self.device)
+            self.is_weight_offloaded = False
+        if self.is_optimizer_offloaded:
+            self.load_optimizer(self.device)
+            self.is_optimizer_offloaded = False
+
         self._strategy.save_checkpoint(
-            self.model_path,
             self.model,
             self.optimizer,
             self.lr_scheduler,
@@ -386,18 +391,22 @@ class FSDPModelManager:
         """
         total_steps = self._cfg.optim.get("total_training_steps", 0)
         num_warmup_steps = int(self._cfg.optim.get("lr_warmup_steps", -1))
-        warmup_style = self._cfg.optim.get("warmup_style", "constant")
+        lr_scheduler = self._cfg.optim.get("lr_scheduler", "constant")
         num_cycles = self._cfg.optim.get("num_cycles", 0.5)
+        min_lr = self._cfg.optim.get("min_lr", 0.0)
+        min_lr_rate = self._cfg.optim.get("min_lr_rate", None)
         if num_warmup_steps < 0:
             num_warmup_steps_ratio = self._cfg.optim.get("lr_warmup_steps_ratio", 0.0)
             num_warmup_steps = int(num_warmup_steps_ratio * total_steps)
 
         return get_lr_scheduler(
-            warmup_style=warmup_style,
+            lr_scheduler=lr_scheduler,
             optimizer=optimizer,
             num_warmup_steps=num_warmup_steps,
             num_training_steps=total_steps,
             num_cycles=num_cycles,
+            min_lr=min_lr,
+            min_lr_rate=min_lr_rate,
         )
 
     def build_optimizer(

@@ -30,7 +30,7 @@ from prismatic.vla.constants import (
 )
 from transformers.generation import TopKLogitsWarper
 
-from rlinf.models.embodiment.base_policy import BasePolicy
+from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.modules.value_head import ValueHead
 from rlinf.utils.utils import (
     compute_entropy_from_logits,
@@ -38,7 +38,7 @@ from rlinf.utils.utils import (
 )
 
 
-class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction):
+class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy):
     def __init__(
         self,
         config: OpenVLAOFTConfig,
@@ -47,7 +47,7 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
         add_value_head,
         max_prompt_length,
     ) -> None:
-        OpenVLAOFTForActionPrediction.__init__(self, config)
+        super().__init__(config)
 
         self.action_dim = action_dim
         self.num_action_chunks = num_action_chunks
@@ -209,8 +209,8 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
         attention_mask: torch.Tensor = None,
         pixel_values: torch.FloatTensor = None,
         env_obs=None,
-        calulate_logprobs=True,
-        calulate_values=True,
+        calculate_logprobs=True,
+        calculate_values=True,
         return_obs=True,
         **kwargs,
     ) -> tuple[np.ndarray, dict[str, Any]]:
@@ -410,7 +410,7 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
 
         chunk_logprobs = compute_logprobs_from_logits(logits=action_logits, target=idxs)
 
-        if hasattr(self, "value_head") and calulate_values:
+        if hasattr(self, "value_head") and calculate_values:
             hidden_features = last_hidden_states[
                 :, -self.action_dim * self.num_action_chunks
             ]  # [batch_size, hidden_dim]
@@ -455,6 +455,12 @@ class OpenVLAOFTForRLActionPrediction(BasePolicy, OpenVLAOFTForActionPrediction)
         self.action_scale = 1.0
 
         self.input_processor = input_processor
+
+    def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
+        if forward_type == ForwardType.DEFAULT:
+            return self.default_forward(**kwargs)
+        else:
+            raise NotImplementedError
 
     def default_forward(
         self,

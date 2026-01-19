@@ -17,13 +17,13 @@ import torch
 import torch.nn as nn
 from torch.distributions.normal import Normal
 
-from rlinf.models.embodiment.base_policy import BasePolicy
+from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.modules.q_head import MultiCrossQHead, MultiQHead
 from rlinf.models.embodiment.modules.utils import get_act_func, layer_init
 from rlinf.models.embodiment.modules.value_head import ValueHead
 
 
-class MLPPolicy(BasePolicy):
+class MLPPolicy(nn.Module, BasePolicy):
     def __init__(
         self,
         obs_dim,
@@ -103,16 +103,16 @@ class MLPPolicy(BasePolicy):
         device = next(self.parameters()).device
         return {"states": env_obs["states"].to(device)}
 
-    def forward(self, forward_type="default_forward", **kwargs):
-        if forward_type == "sac_forward":
+    def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
+        if forward_type == ForwardType.SAC:
             return self.sac_forward(**kwargs)
-        elif forward_type == "sac_q_forward":
+        elif forward_type == ForwardType.SAC_Q:
             return self.sac_q_forward(**kwargs)
-        elif forward_type == "crossq_forward":
+        elif forward_type == ForwardType.CROSSQ:
             return self.crossq_forward(**kwargs)
-        elif forward_type == "crossq_q_forward":
+        elif forward_type == ForwardType.CROSSQ_Q:
             return self.crossq_q_forward(**kwargs)
-        elif forward_type == "default_forward":
+        elif forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
         else:
             raise NotImplementedError
@@ -179,8 +179,8 @@ class MLPPolicy(BasePolicy):
     def predict_action_batch(
         self,
         env_obs,
-        calulate_logprobs=True,
-        calulate_values=True,
+        calculate_logprobs=True,
+        calculate_values=True,
         return_obs=True,
         mode="train",
         **kwargs,
@@ -224,7 +224,7 @@ class MLPPolicy(BasePolicy):
         chunk_actions = action.reshape(-1, self.num_action_chunks, self.action_dim)
         chunk_actions = chunk_actions.cpu().numpy()
 
-        if hasattr(self, "value_head") and calulate_values:
+        if hasattr(self, "value_head") and calculate_values:
             chunk_values = self.value_head(env_obs["states"])
         else:
             chunk_values = torch.zeros_like(chunk_logprobs[..., :1])

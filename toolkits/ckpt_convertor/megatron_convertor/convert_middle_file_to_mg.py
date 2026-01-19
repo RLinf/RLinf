@@ -25,7 +25,7 @@ from collections import OrderedDict
 
 import torch
 
-from toolkits.ckpt_convertor.config import ConvertorConfig
+from toolkits.ckpt_convertor.megatron_convertor.config import ConvertorConfig
 
 from .utils.fp8_utils import dict_push
 from .utils.mg_moe_groupgemm import moe_seq_to_group, moe_seq_to_te_group

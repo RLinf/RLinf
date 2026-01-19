@@ -26,7 +26,7 @@ from openpi.models import model as _model
 from openpi.models.pi0_config import Pi0Config
 from openpi.models_pytorch.pi0_pytorch import PI0Pytorch, make_att_2d_masks
 
-from rlinf.models.embodiment.base_policy import BasePolicy
+from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
 from rlinf.models.embodiment.modules.value_head import ValueHead
 
@@ -65,7 +65,7 @@ class OpenPi0Config(Pi0Config):
     value_vlm_mode: str = "mean_token"  # last_token, mean_token, first_token
 
 
-class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
+class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
     """
     Pi0 model for reinforcement learning action prediction.
     """
@@ -74,14 +74,37 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
 
     @property
     def _no_split_modules(self) -> list[str]:
-        # Currently, PaliGemmaForConditionalGeneration only support DDP, as many of it's modules are called without forward
+        if self.config.train_expert_only:
+            no_split_modules = [
+                "GemmaDecoderLayer",
+                "SiglipVisionEmbeddings",
+                "GemmaRMSNorm",
+                "GemmaRotaryEmbedding",
+            ]
+        else:
+            no_split_modules = [
+                "GemmaMLP",
+                "SiglipVisionEmbeddings",
+                "GemmaRMSNorm",
+                "GemmaRotaryEmbedding",
+            ]
+        if self.config.noise_method == "flow_noise":
+            no_split_modules.append("ExploreNoiseNet")
+        return no_split_modules
+
+    @property
+    def _no_split_names(self) -> list[str]:
         return [
-            "PaliGemmaForConditionalGeneration",
-            "GemmaDecoderLayer",
-            "SiglipVisionEmbeddings",
-            "GemmaRMSNorm",
-            "GemmaForCausalLM",
-            "GemmaRotaryEmbedding",
+            "action_in_proj",
+            "action_out_proj",
+            "lm_head",
+            # --pi0 only--
+            "state_proj",
+            "action_time_mlp_in",
+            "action_time_mlp_out",
+            # --pi05 only--
+            "time_mlp_in",
+            "time_mlp_out",
         ]
 
     def __init__(
@@ -90,7 +113,7 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
     ):
         # Override `sample_actions` to prevent parent class polymorphic call
         sample_actions_func = self.sample_actions
-        PI0Pytorch.__init__(self, config)
+        super().__init__(config)
         self.sample_actions = sample_actions_func
         self.global_step = 0
         # assert
@@ -136,6 +159,11 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
             self.noise_head = self.noise_head.to(
                 dtype=self.action_out_proj.weight.dtype
             )
+
+        for name, module in self.named_modules():
+            # Set _fsdp_wrap_name to the last part of the path (e.g., "model.action_in_proj" -> "action_in_proj")
+            path_parts = name.split(".")
+            setattr(module, "_fsdp_wrap_name", path_parts[-1] if path_parts else name)
 
     def set_global_step(self, global_step):
         self.global_step = global_step
@@ -227,10 +255,10 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
         outputs["actions"] = outputs["actions"][:, : self.config.action_chunk]
         return outputs
 
-    def forward(self, forward_type="default_forward", **kwargs):
-        if forward_type == "sft_forward":
+    def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
+        if forward_type == ForwardType.SFT:
             return self.sft_forward(**kwargs)
-        elif forward_type == "default_forward":
+        elif forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
         else:
             raise NotImplementedError
@@ -238,7 +266,7 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
     def sft_forward(self, data, **kwargs):
         observation = data["observation"]
         actions = data["actions"]
-        return PI0Pytorch.forward(self, observation, actions)
+        return super().forward(observation, actions)
 
     def default_forward(
         self,
@@ -357,11 +385,16 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
         forward_inputs = {
             "chains": outputs["chains"],
             "denoise_inds": outputs["denoise_inds"],
+            "observation/image": env_obs["main_images"],
+            "observation/state": env_obs["states"],
             "tokenized_prompt": processed_obs["tokenized_prompt"],
             "tokenized_prompt_mask": processed_obs["tokenized_prompt_mask"],
         }
+        if env_obs["wrist_images"] is not None:
+            forward_inputs["observation/wrist_image"] = env_obs["wrist_images"]
         forward_inputs.update(to_process_obs)
         forward_inputs.pop("prompt", None)
+
         result = {
             "prev_logprobs": outputs["prev_logprobs"],
             "prev_values": outputs["prev_values"],
@@ -733,10 +766,10 @@ class OpenPi0ForRLActionPrediction(BasePolicy, PI0Pytorch):
             entropy = self.gaussian_entropy(x_t_std)
             chains_log_probs.append(log_probs)
             chains_entropy.append(entropy)
-            if self.use_vlm_value:
-                chains_values.append(self.get_value_from_vlm(prefix_output))
-            else:
+            if not self.use_vlm_value:
                 chains_values.append(value_t)
+        if self.use_vlm_value:
+            chains_values.append(self.get_value_from_vlm(prefix_output))
         chains_log_probs = torch.stack(chains_log_probs, dim=1)
         chains_values = torch.stack(chains_values, dim=1)
 

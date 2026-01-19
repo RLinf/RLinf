@@ -49,44 +49,60 @@ cuda_dict = partial(apply_func_to_dict, partial(move_to_device_if_tensor, "cuda"
 cpu_dict = partial(apply_func_to_dict, partial(move_to_device_if_tensor, "cpu"))
 
 
-def retrieve_model_state_dict_in_cpu(model):
+def retrieve_model_state_dict_in_cpu(model, offloaded_buffer=None):
     """get a copy of the model states in CPU"""
-    cpu_dict = {}
+    if offloaded_buffer is None:
+        offloaded_buffer = {}
 
     for name, item in model.state_dict().items():
         if isinstance(item, torch.Tensor):
-            item = item.detach().to(device="cpu", non_blocking=True, copy=True)
-
-        cpu_dict[name] = item
+            if name in offloaded_buffer:
+                offloaded_buffer[name].copy_(item.detach(), non_blocking=True)
+            else:
+                item = (
+                    item.detach()
+                    .to(device="cpu", non_blocking=True, copy=True)
+                    .pin_memory()
+                )
+                offloaded_buffer[name] = item
+        else:
+            offloaded_buffer[name] = item
 
     torch.cuda.synchronize()
-    return cpu_dict
+    return offloaded_buffer
 
 
 @torch.no_grad()
-def swap_dict(resident_model, cpu_weights, offload_onto_cpu=True):
+def swap_dict(
+    resident_model, cpu_weights, offload_onto_cpu=True, offloaded_buffer=None
+):
     """swap the state dict with a specified state dict, and offload the current state dict onto CPU
     if needed
     """
-    offloaded_weights = {}
+    if offloaded_buffer is None:
+        offloaded_buffer = {}
 
     if offload_onto_cpu:
-        offloaded_weights = retrieve_model_state_dict_in_cpu(resident_model)
+        offloaded_buffer = retrieve_model_state_dict_in_cpu(
+            resident_model, offloaded_buffer
+        )
 
     resident_model.load_state_dict(cpu_weights)
-    return offloaded_weights
+    return offloaded_buffer
 
 
 @contextmanager
-def cpu_weight_swap(resident_model, cpu_weights):
+def cpu_weight_swap(resident_model, cpu_weights, offloaded_buffer=None):
     """swap the weights into GPU, and then swap it out once return"""
-    cpu_dict = swap_dict(resident_model, cpu_weights)
+    offloaded_buffer = swap_dict(
+        resident_model, cpu_weights, offloaded_buffer=offloaded_buffer
+    )
 
     try:
         yield
 
     finally:
-        swap_dict(resident_model, cpu_dict, offload_onto_cpu=False)
+        swap_dict(resident_model, offloaded_buffer, offload_onto_cpu=False)
 
 
 def configure_batch_sizes(rank, mbs, gbs, dp=1):
