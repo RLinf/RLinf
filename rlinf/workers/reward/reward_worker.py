@@ -450,68 +450,22 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
         self._val_interval = cfg.runner.get("val_check_interval", 50)
 
     def init_worker(self):
-        """Initialize model and optimizer using FSDP wrapping.
+        """Initialize model and optimizer using base class FSDP setup.
 
-        We manually wrap with FSDP since base class's wrap_model needs SupportedModel enum.
+        Reuses FSDPModelManager.setup_model_and_optimizer() which handles:
+        - FSDP wrapping with proper mixed precision and sharding strategy
+        - Optimizer creation with learning rate scheduling
+        - Gradient scaler for AMP training
         """
-        from torch.distributed.fsdp import (
-            FullyShardedDataParallel as FSDP,
-        )
-        from torch.distributed.fsdp import (
-            MixedPrecision,
-            ShardingStrategy,
-        )
-
-        from rlinf.config import torch_dtype_from_precision
-
-        # Create base model
-        module = self.model_provider_func()
-
-        # Log gradient checkpointing status
-        if self._cfg.fsdp_config.get("gradient_checkpointing", False):
-            logger.info("[FSDP] Gradient checkpointing enabled")
-        else:
-            logger.info("[FSDP] Gradient checkpointing is disabled")
-
-        # Setup mixed precision
-        mixed_precision_config = self._cfg.fsdp_config.mixed_precision
-        param_dtype = torch_dtype_from_precision(mixed_precision_config.param_dtype)
-        reduce_dtype = torch_dtype_from_precision(mixed_precision_config.reduce_dtype)
-        buffer_dtype = torch_dtype_from_precision(mixed_precision_config.buffer_dtype)
-        mixed_precision = MixedPrecision(
-            param_dtype=param_dtype,
-            reduce_dtype=reduce_dtype,
-            buffer_dtype=buffer_dtype,
-        )
-
-        # Get sharding strategy
-        sharding_strategy_name = self._cfg.fsdp_config.sharding_strategy.upper()
-        sharding_strategy = getattr(
-            ShardingStrategy, sharding_strategy_name, ShardingStrategy.NO_SHARD
-        )
-
-        # Wrap model with FSDP
-        self.model = FSDP(
-            module=module,
-            device_id=self.device,
-            sharding_strategy=sharding_strategy,
-            mixed_precision=mixed_precision,
-            sync_module_states=True,
-            device_mesh=self._device_mesh,
-            use_orig_params=self._cfg.fsdp_config.use_orig_params,
-        )
+        # Explicitly set tokenizer to None (reward model doesn't need tokenizer)
+        self.tokenizer = None
 
         # Mark as not using LoRA
         self.is_lora = False
 
-        # Use base class methods for optimizer and scheduler
-        self.optimizer = self.build_optimizer(
-            model=self.model, enable_critic_warmup=False
-        )
-        self.lr_scheduler = self.build_lr_scheduler(optimizer=self.optimizer)
-        self.grad_scaler = self.build_grad_scaler(
-            self._cfg.fsdp_config.amp.get("use_grad_scaler", False)
-        )
+        # Use base class to setup model, optimizer, lr_scheduler, and grad_scaler
+        # This calls model_provider_func() internally and handles FSDP wrapping
+        self.setup_model_and_optimizer()
 
         logger.info(
             f"Initialized FSDPRewardWorker with "
