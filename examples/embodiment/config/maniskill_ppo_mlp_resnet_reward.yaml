@@ -196,7 +196,7 @@ reward:
     model_type: "resnet_reward"
     arch: "resnet18"
     hidden_dim: 256
-    dropout: 0.1
+    dropout: 0
     image_size: [3, 128, 128]
     normalize: true 
     precision: "bf16"

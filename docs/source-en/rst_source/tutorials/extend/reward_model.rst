@@ -76,24 +76,24 @@ Training a Reward Model
 
 1. **Collect Data**
 
-   Enable data collection in your config:
-
-   .. code-block:: yaml
-
-       env:
-         data_collection:
-           enabled: True
-           save_dir: "collected_data"
-           sample_rate_success: 1.0
-           sample_rate_fail: 0.1
-
-2. **Train the Model**
-
-   Use the reward training configuration:
+   You can directly use the ``maniskill_ppo_mlp_collect.yaml`` config, which has
+   data collection integrated (see :doc:`data_collection` for details):
 
    .. code-block:: bash
 
-       bash examples/reward/run_reward_training.sh
+       bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_collect
+
+   This config simultaneously performs policy warmup training and data collection.
+   Collected data is saved to the ``collected_data`` directory.
+
+2. **Train the Model**
+
+   Use the reward training configuration (remember to modify ``data.data_path`` to your actual data path):
+
+   .. code-block:: bash
+
+       # Specify data path
+       bash examples/reward/run_reward_training.sh --data /path/to/collected_data
 
 3. **Use in RL Training**
 

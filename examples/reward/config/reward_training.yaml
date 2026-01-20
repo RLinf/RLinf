@@ -46,6 +46,8 @@ runner:
 data:
   # Path to collected data with .pkl files
   # Labels are determined per-frame using info['is_obj_placed']
+  # NOTE: Default path contains date, please modify to your actual data directory:
+  #   bash run_reward_training.sh --data /path/to/your/collected_data
   data_path: "logs/20260117-22:37:03-maniskill_ppo_mlp_collect/collected_data"
   val_split: 0.2  # 20% of EPISODES for validation (prevents data leakage)
   num_workers: 4

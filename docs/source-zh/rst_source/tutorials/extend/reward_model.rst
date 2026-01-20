@@ -76,24 +76,23 @@ RLinf 支持基于图像的奖励模型：
 
 1. **采集数据**
 
-   在配置中启用数据采集：
-
-   .. code-block:: yaml
-
-       env:
-         data_collection:
-           enabled: True
-           save_dir: "collected_data"
-           sample_rate_success: 1.0
-           sample_rate_fail: 0.1
-
-2. **训练模型**
-
-   使用奖励训练配置：
+   可直接使用 ``maniskill_ppo_mlp_collect.yaml`` 配置，该配置已集成数据采集功能
+   （详见 :doc:`data_collection`）：
 
    .. code-block:: bash
 
-       bash examples/reward/run_reward_training.sh
+       bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_collect
+
+   此配置同时完成策略预热训练和数据采集，采集的数据保存在 ``collected_data`` 目录。
+
+2. **训练模型**
+
+   使用奖励训练配置（注意修改 ``data.data_path`` 为实际数据路径）：
+
+   .. code-block:: bash
+
+       # 指定数据路径
+       bash examples/reward/run_reward_training.sh --data /path/to/collected_data
 
 3. **在 RL 训练中使用**
 

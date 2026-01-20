@@ -83,7 +83,7 @@ env:
   use_full_state: True 
 
   data_collection:
-    enabled: False
+    enabled: True
     save_dir: ${runner.logger.log_path}/collected_data
     mode: "eval" 
     sample_rate_success: 1.0
@@ -112,7 +112,7 @@ env:
     init_params:
       obs_mode: "rgb"  
     video_cfg:
-      save_video: True
+      save_video: False
       video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
