@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import socket
 import uuid
 from typing import Any, Dict, List, Optional, cast
 
@@ -22,6 +23,13 @@ except ImportError as e:
 from rlinf.data.io_struct import RolloutResult
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.placement import ModelParallelComponentPlacement
+
+
+def _find_available_port() -> int:
+    """Find an available port by binding to port 0."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
 
 
 class AgentLightningRolloutWorker(Worker):
@@ -49,24 +57,27 @@ class AgentLightningRolloutWorker(Worker):
     def init_worker(
         self,
         store: LightningStore,
-        llm_proxy: LLMProxy,
+        llm_proxy: Optional[LLMProxy],
         adapter: TraceToTripletBase,
         server_addresses: Optional[List[str]] = None,
         group_size: int = 1,
         model: str = "default-model",
         reward_fillna_value: float = 0.0,
     ):
-        from rlinf.scheduler import WorkerGroupFuncResult as Handle
-        
         self.store = store
-        self.llm_proxy = llm_proxy
+        if llm_proxy is None:
+            self.llm_proxy = LLMProxy(
+                port=_find_available_port(),
+                model_list=[],
+                store=store,
+            )
+        else:
+            self.llm_proxy = llm_proxy
         self.adapter = adapter
         self.server_addresses = server_addresses or []
         self.group_size = group_size
         self.model = model
         self.reward_fillna_value = reward_fillna_value
-        
-        return Handle(self, lambda: None, [])
 
     async def _async_setup_data(
         self,
@@ -76,13 +87,22 @@ class AgentLightningRolloutWorker(Worker):
         server_addresses_changed = False
         if server_addresses is not None and server_addresses != self.server_addresses:
             self.server_addresses = server_addresses
-            await self._update_proxy_server()
+            if self.llm_proxy is not None:
+                await self._update_proxy_server()
             server_addresses_changed = True
 
         if self._resources_id is None and self.server_addresses and len(self.server_addresses) > 0:
-            await self._update_proxy_server()
+            if self.llm_proxy is not None:
+                await self._update_proxy_server()
 
         if server_addresses_changed or self._resources_id is None:
+            if self.llm_proxy is None:
+                raise ValueError(
+                    "llm_proxy is None but resources need to be created. "
+                    "Please ensure llm_proxy is properly initialized via init_worker() "
+                    "or enable llm_proxy in the configuration."
+                )
+            
             llm_resource = self.llm_proxy.as_resource(
                 sampling_parameters={
                     "temperature": 0.7
@@ -133,6 +153,13 @@ class AgentLightningRolloutWorker(Worker):
         self._total_tasks_queued += len(rollouts)
 
     async def _update_proxy_server(self):
+        if self.llm_proxy is None:
+            logging.warning(
+                "llm_proxy is None, skipping proxy server update. "
+                "This may happen when llm_proxy is disabled in the configuration."
+            )
+            return
+        
         from agentlightning.llm_proxy import ModelConfig
         
         model_name = os.path.basename(str(self.model)) if os.path.sep in str(self.model) else str(self.model)
