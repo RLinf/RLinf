@@ -26,7 +26,6 @@ def compute_score(model_output: str, ground_truth: str) -> float:
         pass
 
     try:
-        # print(f"math_verify_compute_score: {model_output}, {ground_truth}")
         if math_verify_compute_score(model_output, ground_truth):
             return 1.0
     except Exception:
