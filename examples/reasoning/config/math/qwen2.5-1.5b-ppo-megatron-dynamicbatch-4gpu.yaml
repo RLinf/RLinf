@@ -51,7 +51,7 @@ algorithm:
   shuffle_rollout: False
 
   # clip range for value in critic model
-  value_cliprange: 0.5
+  value_clip: 0.5
 
   # warmup steps for value head
   critic_warmup_steps: 0
@@ -88,7 +88,7 @@ algorithm:
 rollout:
   group_name: "RolloutGroup"
 
-  gpu_memory_utilization: 0.3
+  gpu_memory_utilization: 0.5
 
   model:
     model_path: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B/
