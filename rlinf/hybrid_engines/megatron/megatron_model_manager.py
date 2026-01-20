@@ -14,11 +14,12 @@
 
 import gc
 import itertools
+from functools import partial
 from typing import TYPE_CHECKING, Iterator, Optional
 
 import torch
 from omegaconf import DictConfig
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 from megatron.core import tensor_parallel
 
@@ -37,6 +38,7 @@ from .utils import (
     remove_left_padding,
 )
 
+import megatron
 try:
     from megatron.core import parallel_state
     from megatron.core.distributed import DistributedDataParallel as DDP
@@ -135,6 +137,19 @@ class LinearForLastLayer(torch.nn.Linear):
             logits = tensor_parallel.gather_from_sequence_parallel_region(logits, tensor_parallel_output_grad=False)
         return logits, None
 
+def patch_load_checkpoint_to_be_non_strict(enable: bool):
+    @contextmanager
+    def context():
+        load_checkpoint_orig = megatron.training.training.load_checkpoint
+        load_checkpoint_patched = partial(load_checkpoint_orig, strict=False)
+        megatron.training.training.load_checkpoint = load_checkpoint_patched
+        yield
+        megatron.training.training.load_checkpoint = load_checkpoint_orig
+    if enable:
+        return context()
+    else:
+        return nullcontext()
+
 class MegatronModelManager:
     """
     Megatron Model Manager for RL training
@@ -181,11 +196,16 @@ class MegatronModelManager:
         """Setup model and optimizer."""
         set_megatron_args(self._cfg)
 
-        self.model, self.optimizer, self.lr_scheduler = setup_model_and_optimizer(
-            model_provider_func=self.model_provider_func,
-            model_type=model_type,
-            checkpointing_context=self.checkpoint_context,
-        )
+        # if it is the critic model, then we must set the strict parameter
+        # of load_checkpoint to false, because we replaced
+        # the output layer of the critic model to value head,
+        # resulting in a mismatch with the checkpoint.
+        with patch_load_checkpoint_to_be_non_strict(enable=self.is_dedicated_critic_model):
+            self.model, self.optimizer, self.lr_scheduler = setup_model_and_optimizer(
+                model_provider_func=self.model_provider_func,
+                model_type=model_type,
+                checkpointing_context=self.checkpoint_context,
+            )
 
     def model_provider_func(self, pre_process, post_process):
         """Model depends on pipeline paralellism."""
@@ -375,7 +395,6 @@ class MegatronModelManager:
                 self.optimizer,
                 self.lr_scheduler,
                 checkpointing_context=self.checkpoint_context,
-                strict=not self.is_dedicated_critic_model,
             )
 
     def load_state_dict(self, state_dict, strict=True):

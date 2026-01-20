@@ -164,7 +164,7 @@ actor:
 
   model:
     megatron_checkpoint: /workspace/dataset/DeepSeek-R1-Distill-Qwen-1.5B-tp2-pp1
-    precision: fp16
+    precision: bf16
     add_bias_linear: False
 
     tensor_model_parallel_size: 1
@@ -199,8 +199,8 @@ actor:
 
   optim:
     optimizer: adam
-    bf16: False
-    fp16: True
+    bf16: True
+    fp16: False
     lr: 1e-6
     adam_beta1: 0.9
     adam_beta2: 0.999
@@ -297,7 +297,7 @@ critic:
 
   model:
     megatron_checkpoint: /workspace/dataset/DeepSeek-R1-Distill-Qwen-1.5B-tp2-pp1
-    precision: fp16
+    precision: bf16
     add_bias_linear: False
 
     tensor_model_parallel_size: ${actor.model.tensor_model_parallel_size}
@@ -332,8 +332,8 @@ critic:
 
   optim:
     optimizer: adam
-    bf16: False
-    fp16: True
+    bf16: True
+    fp16: False
     lr: 1e-05
     adam_beta1: 0.9
     adam_beta2: 0.999
