@@ -542,7 +542,14 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                         await self._async_process_dataloader_channel(expected_chunks)
                         await self._async_collect_rollout_results(self.rollout_channel)
                     
-                    asyncio.run(process_batch())
+                    try:
+                        loop = asyncio.get_running_loop()
+                        future = asyncio.run_coroutine_threadsafe(process_batch(), loop)
+                        future.result()
+                    except RuntimeError:
+                        print("have no loop")
+                        asyncio.run(process_batch())
+
                     
                     if self.reward is not None:
                         reward_handle: Handle = self.reward.compute_rewards(
