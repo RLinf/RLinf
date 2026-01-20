@@ -140,7 +140,47 @@ interface is chosen).
 How to Debug RLinf
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**Description:** This section helps users debug RLinf during usage.
+**Description:** This section helps users debug RLinf during usage, using `ppo_openpi_pi05` as an example.
+
+**Method 1: Using Ray Distributed Debugger (Recommended)**
+
+If you can install Ray Distributed Debugger, this method is recommended.
+
+1. Set up the environment:
+
+.. code-block:: bash
+
+   conda create -n myenv python=3.10
+   conda activate myenv
+   pip install "ray[default]" debugpy
+
+2. Install the Ray Distributed Debugger extension in VS Code (if not already installed).
+
+3. Start a Ray cluster:
+
+.. code-block:: bash
+
+   ray start --head
+
+4. Register the Ray cluster (the head node's ip:port is usually 127.0.0.1:8265):
+
+Find and click the Ray extension icon in the VS Code left side nav. Add the Ray cluster IP:PORT to the cluster list. The default IP:PORT is 127.0.0.1:8265. You can change it when you start the cluster. Make sure your current machine can access the IP and port.
+
+5. Set breakpoints in your code (add `breakpoint()` at the location where you want to debug).
+
+6. Run your program:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
+
+7. Attach to the paused task:
+
+Once the process hits the first `breakpoint()`, click the Ray Distributed Debugger icon in the VS Code sidebar to attach the debugger.
+
+**Method 2: Using pdb Terminal Debugger**
+
+If you cannot use Ray Distributed Debugger, you can use the pdb terminal debugging method:
 
 1. First, set a breakpoint at the location where you want to debug, as shown below:
 
@@ -169,4 +209,6 @@ How to Debug RLinf
    ray debug
 
 
-**Reference:** See Ray's official documentation at https://verl.readthedocs.io/en/latest/start/ray_debug_tutorial.html.
+**Reference:** 
+
+- See Ray's official documentation at https://docs.ray.io/en/latest/ray-observability/ray-distributed-debugger.html.
