@@ -69,8 +69,12 @@ PPO 的目标函数定义如下：
 3. 配置
 -----------------
 
-目前，在我们的框架中，PPO 仅支持具身任务。  
-算法配置如下所示：  
+我们的框架支持在 LLM 推理任务和具身任务中使用 PPO。
+
+3.1. 具身任务
+~~~~~~~~~~~~~~~~~
+
+下面首先给出一个具身任务的示例配置：
 
 .. code-block:: yaml
 
@@ -99,6 +103,57 @@ PPO 的目标函数定义如下：
 
       huber_delta: 10.0         # 价值训练中 Huber 损失的 Delta 参数
 
+3.2. LLM 推理任务
+~~~~~~~~~~~~~~~~~
+LLM 推理任务的配置与具身任务的配置有相似之处。
+
+.. code-block:: yaml
+
+    algorithm:
+       # 组数应为1
+       group_size: 1
+
+       # 优势函数
+       adv_type: gae
+       gamma: 1
+       gae_lambda: 1
+       normalize_advantages: True
+
+       # actor loss 的类型。此处与具身任务不同，
+       # 因为 actor 与 critic 不在同一个模型中，不能进行联合 backward
+       loss_type: actor
+       loss_agg_func: "token-mean"
+
+       # 用于actor loss
+       clip_ratio_c: 3.0
+       clip_ratio_low: 0.2
+       clip_ratio_high: 0.2
+
+       # 用于critic loss
+       value_clip: 0.2           # 稳定价值函数更新
+
+另外，在 LLM 推理任务中，我们使用独立的 critic 模型，而不是让 actor 模型和 critic 模型共享 backbone；这意味着配置中除了像 GRPO 一样有 actor 组件，还需要添加一个 critic 组件，并为其设置相应的 placement:
+
+.. code-block:: yaml
+
+    cluster:
+      num_nodes: 1
+      component_placement:
+        # 注意相比于 GRPO 新增了一个 critic 组件
+        actor,critic,rollout,reward: all
+                
+    actor:
+      group_name: "ActorGroup"
+      training_backend: megatron
+      ...
+    
+    critic:
+      use_critic_model: true # 该参数用于指出 critic 是一个完整的模型，而非只有一个 value head
+      group_name: "CriticGroup"
+      training_backend: megatron
+      # critic 的其余部分配置和 GRPO 配置中的 actor 配置非常类似
+      ...
+       
 
 4. 注意事项
 -----------
