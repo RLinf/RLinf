@@ -88,9 +88,14 @@ class SGLangHTTPServerWorker(Worker):
         app.add_api_route("/", self._handle_root, methods=["GET"])
 
         # Init the HTTP server
+        # Disable access log to reduce verbose output (access logs show request/response details)
         self._server = uvicorn.Server(
             uvicorn.Config(
-                app, host=self._server_host, port=self._server_port, log_level="info"
+                app, 
+                host=self._server_host, 
+                port=self._server_port, 
+                log_level="warning",  # Reduce log level from "info" to "warning" to suppress access logs
+                access_log=False  # Disable access log to prevent printing request/response details
             )
         )
 

@@ -180,7 +180,7 @@ class SGLangWorker(Worker):
             # sglang will print statistics every decode_log_interval decode steps.
             decode_log_interval=self._cfg_rollout.sglang.decode_log_interval,
             attention_backend=self._cfg_rollout.sglang.attention_backend,
-            log_level="info",
+            log_level="warning",
             max_running_requests=self._cfg_rollout.max_running_requests,
             dist_init_addr=f"127.0.0.1:{str(self.acquire_free_port())}",
         )
