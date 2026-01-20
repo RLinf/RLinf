@@ -36,7 +36,6 @@ class RewardWorker(Worker):
             * self.cfg.algorithm.get("group_size", 1)
             // self._world_size
         )
-        print(f"total_batch_size_per_dp: {self.total_batch_size_per_dp}")
         self.do_down_sampling = (
             hasattr(self.cfg.algorithm, "down_sampling")
             and getattr(self.cfg.algorithm.down_sampling, "do_down_sampling", False)

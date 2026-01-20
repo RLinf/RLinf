@@ -84,12 +84,12 @@ class Rstar2Reward:
                     elapsed = current_time - process_start_times[i]
                     
                     if elapsed > self.timeout:
-                        print(f"⏰ Process {i}: Timeout after {elapsed:.2f}s")
+                        print(f"Process {i}: Timeout after {elapsed:.2f}s")
                         results[i] = self.default_score
                         self._terminate_process(process, i)
                     
                     elif not process.is_alive():
-                        print(f"⚠️  Process {i}: Died without result")
+                        print(f"Process {i}: Died without result")
                         results[i] = self.default_score
                 
                 if len(results) < n:
@@ -140,7 +140,7 @@ class Rstar2Reward:
                 index, result = result_queue.get_nowait()
                 if index not in results:
                     if isinstance(result, Exception):
-                        print(f"⚠️  Process {index}: Exception - {result}")
+                        print(f"Process {index}: Exception - {result}")
                         results[index] = self.default_score
                     else:
                         elapsed = time.time() - process_start_times[index]
