@@ -99,7 +99,6 @@ class RLinfAgentModeDaemon:
         self.server_addresses = server_addresses or []
         self.llm_timeout_seconds = llm_timeout_seconds
         self.model = model
-        self.is_train = True
         self.group_size = group_size
         self.reward_fillna_value = reward_fillna_value
         self._resources_id: Optional[str] = None
@@ -109,13 +108,10 @@ class RLinfAgentModeDaemon:
         self._completed_rollout_ids: Dict[str, RolloutLegacy] = {}
         self._data_id_to_rollout_ids: Dict[str, List[str]] = {}
 
-
-
     async def async_setup_data(
         self,
         data: Dict[str, Any],
-        server_addresses: Optional[List[str]] = None,
-        is_train: Optional[bool] = None,
+        server_addresses: Optional[List[str]] = None
     ):
         server_addresses_changed = False
         if server_addresses is not None and server_addresses != self.server_addresses:
@@ -136,7 +132,7 @@ class RLinfAgentModeDaemon:
             resources: NamedResources = {"main_llm": llm_resource}
             resources_update = await self.store.add_resources(resources)
             self._resources_id = resources_update.resources_id
-            self._last_is_train = self.is_train
+
 
         resources_id = self._resources_id
 
@@ -444,8 +440,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                 break
             await self.daemon.async_setup_data(
                 data=chunk_data,
-                server_addresses=self.daemon.server_addresses,
-                is_train=True,
+                server_addresses=self.daemon.server_addresses
             )
             processed_chunks += 1
 
