@@ -196,12 +196,11 @@ class ReconfigureSubprocEnv(SubprocVectorEnv):
         id = self._wrap_id(id)
         if self.is_async:
             self._assert_id(id)
-
         # send(None) == reset() in worker
-        for i in id:
+        for ind, i in enumerate(id):
             if robot_obs is not None and scene_obs is not None:
                 self.workers[i].send(
-                    None, robot_obs=robot_obs[i], scene_obs=scene_obs[i]
+                    None, robot_obs=robot_obs[ind], scene_obs=scene_obs[ind]
                 )
             else:
                 self.workers[i].send(None)
@@ -246,11 +245,7 @@ class ReconfigureSubprocEnv(SubprocVectorEnv):
         # get_obs() already handles send and recv internally
         obs_list = [self.workers[i].get_obs() for i in id]
 
-        # If only one environment, return single observation
-        if len(obs_list) == 1:
-            return obs_list[0]
-        else:
-            return obs_list
+        return obs_list
 
     def get_info(
         self,
@@ -266,11 +261,7 @@ class ReconfigureSubprocEnv(SubprocVectorEnv):
         # get_info() already handles send and recv internally
         info_list = [self.workers[i].get_info() for i in id]
 
-        # If only one environment, return single info
-        if len(info_list) == 1:
-            return info_list[0]
-        else:
-            return info_list
+        return info_list
 
 
 if __name__ == "__main__":
