@@ -121,6 +121,20 @@ def compute_grpo_advantages(
     return advantages, None
 
 
+@register_advantage("grpo_dynamic")
+def compute_grpo_dynamic_advantages(
+    rewards: torch.Tensor,
+    loss_mask: torch.Tensor,
+    group_size: int,
+    idx_to_traj: list[int],
+    advantage_mode: str = "turn",  # "trajectory" or "turn"
+    **kwargs,
+):
+    """
+    Compute GRPO advantages for multi-turn multi-agent scenarios.
+    """
+    assert False, "not implemented"
+
 @register_advantage("reinpp")
 def compute_reinpp_advantages(
     rewards: torch.Tensor,
