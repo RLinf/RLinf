@@ -214,7 +214,7 @@ class ReasoningRunner:
                 and self.cfg.critic.training_backend == "megatron"
                 and self.cfg.critic.megatron.use_hf_ckpt
             ):
-                from toolkits.ckpt_convertor.convert_hf_to_mg import convert_hf_to_mg
+                from toolkits.ckpt_convertor.megatron_convertor.convert_hf_to_mg import convert_hf_to_mg
 
                 convert_hf_to_mg(
                     self.cfg.critic.megatron.ckpt_convertor.hf_model_path,
