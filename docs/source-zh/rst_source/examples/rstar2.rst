@@ -52,7 +52,7 @@ rStar2-Agent 使用 Code Judge 作为工具调用服务器来执行模型生成�
    # Replace $WORKSPACE and $MASTER_ADDR with your actual paths
 
    tmux new-session -d -s server \
-   'cd $WORKSPACE/code-judge && \
+   'cd $WORKSPACE/toolkits/rstar2/code-judge && \
       MAX_EXECUTION_TIME=4 \
       REDIS_URI="redis://$MASTER_ADDR:6379" \
       RUN_WORKERS=0 \
@@ -67,7 +67,7 @@ rStar2-Agent 使用 Code Judge 作为工具调用服务器来执行模型生成�
    # Adjust MAX_WORKERS based on your CPU count per node
 
    tmux new-session -d -s worker \
-   'cd $WORKSPACE/code-judge && \
+   'cd $WORKSPACE/toolkits/rstar2/code-judge && \
       MAX_EXECUTION_TIME=4 \
       REDIS_URI="redis://$MASTER_ADDR:6379" \
       MAX_WORKERS=64 \
