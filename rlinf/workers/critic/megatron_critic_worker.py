@@ -88,7 +88,7 @@ class MegatronCritic(MegatronWorker):
                 loss, metrics_data = compute_ppo_critic_loss(values=vpreds,
                                                              returns=returns,
                                                              prev_values=prev_values,
-                                                             value_clip=self.cfg.algorithm.value_cliprange,
+                                                             value_clip=self.cfg.algorithm.value_clip,
                                                              huber_delta=10000,
                                                              loss_agg_func=self.loss_agg_func,
                                                              loss_mask=mask)
