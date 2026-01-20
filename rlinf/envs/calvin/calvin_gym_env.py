@@ -207,7 +207,9 @@ class CalvinEnv(gym.Env):
         ]
         if len(env_idx) == self.num_envs:
             # update all envs when env_idx is all envs
-            self.current_task = [subtask_sequence[0] for subtask_sequence in self.task_sequence]
+            self.current_task = [
+                subtask_sequence[0] for subtask_sequence in self.task_sequence
+            ]
             self.current_task_idx = [0] * len(self.current_task)
             self.previous_info = self.env.get_info(id=env_idx)
         else:
@@ -217,8 +219,9 @@ class CalvinEnv(gym.Env):
                 self.current_task[idx] = self.task_sequence[idx][0]
                 self.current_task_idx[idx] = 0
                 self.previous_info[idx] = info_list[i]
-        self.task_descriptions = [self.task_suite.get_task_descriptions(task) for task in self.current_task]
-
+        self.task_descriptions = [
+            self.task_suite.get_task_descriptions(task) for task in self.current_task
+        ]
 
     @property
     def elapsed_steps(self):
@@ -323,10 +326,7 @@ class CalvinEnv(gym.Env):
             self.env.reconfigure_env_fns(env_fn_params, reconfig_env_idx)
         init_state = self._get_reset_states(env_idx=env_idx)
         robot_obs, scene_obs = self.task_suite.get_obs_for_initial_condition(init_state)
-        # if len(env_idx) != self.num_envs:
-        #     breakpoint()
         self.env.reset(id=env_idx, robot_obs=robot_obs, scene_obs=scene_obs)
-        # task
         self._get_task_info(env_idx)
 
     def reset(
@@ -427,14 +427,6 @@ class CalvinEnv(gym.Env):
         past_truncations = raw_chunk_truncations.any(dim=1)
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
-        # # Randomly set done=True for some environments for testing
-        # num_envs_to_reset = np.random.randint(1, self.num_envs + 1)  # 随机选择1到total_num_envs个环境
-        # env_indices = np.random.choice(self.num_envs, size=num_envs_to_reset, replace=False)
-        # env_indices = env_indices[:self.num_envs-1]  # 少一个，做partial reset
-        # for env_idx in env_indices:
-        #     past_dones[env_idx] = True  # 将选中的环境的所有chunks设置为done
-        #     print(f"Randomly set env {env_idx} done=True")
-        
         if past_dones.any() and self.auto_reset:
             extracted_obs, infos = self._handle_auto_reset(
                 past_dones.cpu().numpy(), extracted_obs, infos

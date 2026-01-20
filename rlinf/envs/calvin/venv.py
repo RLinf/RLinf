@@ -196,7 +196,7 @@ class ReconfigureSubprocEnv(SubprocVectorEnv):
         id = self._wrap_id(id)
         if self.is_async:
             self._assert_id(id)
-        # send(None) == reset() in worker
+
         for ind, i in enumerate(id):
             if robot_obs is not None and scene_obs is not None:
                 self.workers[i].send(
@@ -262,20 +262,3 @@ class ReconfigureSubprocEnv(SubprocVectorEnv):
         info_list = [self.workers[i].get_info() for i in id]
 
         return info_list
-
-
-if __name__ == "__main__":
-    from calvin_agent.evaluation.multistep_sequences import get_sequences
-    from calvin_agent.evaluation.utils import get_env_state_for_initial_condition
-
-    sequences = get_sequences(10)
-    seq = sequences[0]
-    robot_obs, scene_obs = get_env_state_for_initial_condition(seq[0])
-    robot_obs_list = [robot_obs] * 10
-    scene_obs_list = [scene_obs] * 10
-    env = ReconfigureSubprocEnv([make_env] * 10)
-    obs = env.reset(robot_obs=robot_obs_list, scene_obs=scene_obs_list)
-    print("reset over")
-    for _ in range(10):
-        env.step(np.zeros((10, 7)))
-    print("Done")
