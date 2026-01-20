@@ -117,9 +117,6 @@ class RLinfAgentModeDaemon:
         server_addresses: Optional[List[str]] = None,
         is_train: Optional[bool] = None,
     ):
-        if is_train is not None:
-            self.is_train = is_train
-
         server_addresses_changed = False
         if server_addresses is not None and server_addresses != self.server_addresses:
             self.server_addresses = server_addresses
@@ -129,11 +126,10 @@ class RLinfAgentModeDaemon:
         if self._resources_id is None and self.server_addresses and len(self.server_addresses) > 0:
             await self._update_proxy_server()
 
-        is_train_changed = self._last_is_train != self.is_train
-        if server_addresses_changed or is_train_changed or self._resources_id is None:
+        if server_addresses_changed or self._resources_id is None:
             llm_resource = self.llm_proxy.as_resource(
                 sampling_parameters={
-                    "temperature": 0.7 if self.is_train else 0.0
+                    "temperature": 0.7
                 },
             )
 
@@ -146,7 +142,7 @@ class RLinfAgentModeDaemon:
 
         keys = list(data.keys())
         num_samples = len(data[keys[0]])
-        group_size = self.group_size if is_train else 1
+        group_size = self.group_size
 
         enqueue_rollout_requests: List[EnqueueRolloutRequest] = []
         data_id_to_original_sample: Dict[str, Dict[str, Any]] = {}
@@ -158,11 +154,11 @@ class RLinfAgentModeDaemon:
             data_id_to_original_sample[data_id] = original_sample
 
             for rollout_idx in range(group_size):
-                task_metadata = {"data_id": data_id, "is_train": self.is_train}
+                task_metadata = {"data_id": data_id}
                 enqueue_rollout_requests.append(
                     EnqueueRolloutRequest(
                         input=original_sample,
-                        mode="train" if self.is_train else "val",
+                        mode="train",
                         resources_id=resources_id,
                         config=RolloutConfig(
                             unresponsive_seconds=self.llm_timeout_seconds,
@@ -185,10 +181,7 @@ class RLinfAgentModeDaemon:
         import os
         from agentlightning.llm_proxy import ModelConfig
         
-        if os.path.sep in str(self.model):
-            model_name = os.path.basename(str(self.model))
-        else:
-            model_name = str(self.model)
+        model_name = os.path.basename(str(self.model)) if os.path.sep in str(self.model) else str(self.model)
         
         self.llm_proxy.update_model_list(
             [
@@ -309,9 +302,7 @@ class RLinfAgentModeDaemon:
         actual_group_size = len(rollouts)
         num_sequences = len(prompt_ids_list)
         
-        rewards_tensor = None
-        if rewards_list:
-            rewards_tensor = torch.tensor(rewards_list, dtype=torch.float32)
+        rewards_tensor = torch.tensor(rewards_list, dtype=torch.float32)
         
         return RolloutResult(
             num_sequence=num_sequences,
@@ -376,11 +367,10 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         if collate_fn is None:
             def agl_collate_fn(data_list: list[dict]) -> dict[str, Any]:
                 batch = {}
-                if len(data_list) > 0:
-                    keys = list(data_list[0].keys())
-                    for key in keys:
-                        batch[key] = [item[key] for item in data_list]
-                    return batch
+                keys = list(data_list[0].keys())
+                for key in keys:
+                    batch[key] = [item[key] for item in data_list]
+                return batch
             collate_fn = agl_collate_fn
 
         if self.cfg.data.shuffle:
@@ -404,11 +394,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
             sampler=sampler,
         )
 
-        val_batch_size = (
-            self.cfg.data.val_rollout_batch_size
-        )
-        if val_batch_size is None:
-            val_batch_size = len(self.val_dataset)
+        val_batch_size = self.cfg.data.val_rollout_batch_size or len(self.val_dataset)
 
         self.val_dataloader = StatefulDataLoader(
             dataset=self.val_dataset,
@@ -418,9 +404,6 @@ class AgentLightningRLinfRunner(ReasoningRunner):
             drop_last=False,
             collate_fn=collate_fn,
         )
-
-        assert len(self.train_dataloader) >= 1, "Train dataloader is empty!"
-        assert len(self.val_dataloader) >= 1, "Validation dataloader is empty!"
 
         logging.info(
             f"[AgentLightningRLinfRunner] Size of train dataloader: {len(self.train_dataloader)}, Size of val dataloader: "
@@ -485,9 +468,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                     continue
                 if rollout.rollout_id not in self.daemon._rollout_id_to_original_sample:
                     continue
-                if isinstance(rollout, Rollout):
-                    rollout = await self.daemon._change_to_triplets(rollout)
-
+                rollout = await self.daemon._change_to_triplets(rollout) if isinstance(rollout, Rollout) else rollout
                 self.daemon._completed_rollout_ids[rollout.rollout_id] = rollout
             
             completed_data_ids = await self.daemon._async_get_completed_data_ids()
@@ -540,19 +521,11 @@ class AgentLightningRLinfRunner(ReasoningRunner):
 
         self.sglang_http_server.server_start()
         
-        try:
-            if ray is not None:
-                node_ip = ray.util.get_node_ip_address()
-                server_port = self.cfg.server.sglang_http.get('port', 8020)
-                self.daemon.server_addresses = [f"{node_ip}:{server_port}"]
-                
-
-                logging.info(f"[AgentLightningRLinfRunner] Updated server addresses to {self.daemon.server_addresses} after server start")
-            else:
-                logging.warning("[AgentLightningRLinfRunner] Ray is not available, cannot get node IP")
-        except Exception as e:
-            logging.error(f"[AgentLightningRLinfRunner] Failed to update server addresses after server start: {e}")
-            raise
+        if ray is not None:
+            node_ip = ray.util.get_node_ip_address()
+            server_port = self.cfg.server.sglang_http.get('port', 8020)
+            self.daemon.server_addresses = [f"{node_ip}:{server_port}"]
+            logging.info(f"[AgentLightningRLinfRunner] Updated server addresses to {self.daemon.server_addresses} after server start")
         
         self.run_timer.start_time()
 
@@ -574,7 +547,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                         await self._async_process_dataloader_channel(expected_chunks)
                         await self._async_collect_rollout_results(self.rollout_channel)
                     
-                    process_future = asyncio.run_coroutine_threadsafe(process_batch(), loop)
+                    asyncio.run(process_batch())
                     
                     if self.reward is not None:
                         reward_handle: Handle = self.reward.compute_rewards(
