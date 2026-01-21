@@ -109,7 +109,9 @@ class EnvWorker(Worker):
         self.broadcast(True, list(range(self._world_size)))
 
         dc_cfg = getattr(self.cfg.env, "data_collection", None)
-        dc_enabled = dc_cfg and getattr(dc_cfg, "enabled", False) and not enable_offload
+        dc_enabled = (
+            dc_cfg and getattr(dc_cfg, "enabled", False) and not self.enable_offload
+        )
         use_full_state = getattr(self.cfg.env, "use_full_state", False)
 
         if not self.only_eval:

@@ -38,7 +38,6 @@ if TYPE_CHECKING:
     from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
     from rlinf.workers.env.async_env_worker import AsyncEnvWorker
     from rlinf.workers.env.env_worker import EnvWorker
-    from rlinf.workers.reward.reward_worker import RewardWorker
     from rlinf.workers.rollout.hf.async_huggingface_worker import (
         AsyncMultiStepRolloutWorker,
     )
@@ -46,8 +45,6 @@ if TYPE_CHECKING:
 
 
 class EmbodiedRunner:
-    """Runner for embodied RL training with optional reward model support."""
-
     def __init__(
         self,
         cfg: DictConfig,
@@ -58,7 +55,7 @@ class EmbodiedRunner:
         env: Union["EnvWorker", "AsyncEnvWorker"],
         demo_buffer: Optional[SACReplayBuffer] = None,
         critic=None,
-        reward: Optional["RewardWorker"] = None,
+        reward=None,
         run_timer=None,
     ):
         self.cfg = cfg
@@ -69,32 +66,32 @@ class EmbodiedRunner:
         self.critic = critic
         self.reward = reward
 
+        # Data channels
         self.env_channel = Channel.create("Env")
         self.rollout_channel = Channel.create("Rollout")
         self.actor_channel = Channel.create("Actor")
-
         if self.demo_buffer is not None:
             self.demo_data_channel = Channel.create("DemoBufferChannel")
 
-        if self.reward is not None:
-            self.reward_input_channel = Channel.create("RewardInput")
-            self.reward_output_channel = Channel.create("RewardOutput")
-
+        # this timer checks if we should stop training
         self.run_timer = run_timer
+
         self.consumed_samples = 0
+        # the step here is GRPO step
         self.global_step = 0
 
+        # compute `max_steps`
         self.set_max_steps()
+
         self.timer = ScopedTimer(reduction="max", sync_cuda=False)
+
         self.metric_logger = MetricLogger(cfg)
 
     def init_workers(self):
+        # create worker in order to decrease the maximum memory usage
         self.actor.init_worker().wait()
         self.rollout.init_worker().wait()
         self.env.init_worker().wait()
-
-        if self.reward is not None:
-            self.reward.init_worker().wait()
 
         resume_dir = self.cfg.runner.get("resume_dir", None)
         if resume_dir is None:
@@ -105,17 +102,12 @@ class EmbodiedRunner:
             f"resume_dir {actor_checkpoint_path} does not exist."
         )
         self.actor.load_checkpoint(actor_checkpoint_path).wait()
-
-        if self.reward is not None:
-            reward_checkpoint_path = os.path.join(resume_dir, "reward")
-            if os.path.exists(reward_checkpoint_path):
-                self.reward.load_checkpoint(reward_checkpoint_path).wait()
-
         self.global_step = int(resume_dir.split("global_step_")[-1])
 
     def send_demo_buffer(self):
         if self.demo_buffer is not None:
             sub_demo_buffer_ls = self.demo_buffer.split_to_dict(self.actor._world_size)
+
             for sub_demo_buffer in sub_demo_buffer_ls:
                 self.demo_data_channel.put(sub_demo_buffer, async_op=True)
             self.actor.recv_demo_data(self.demo_data_channel).wait()
@@ -302,17 +294,14 @@ class EmbodiedRunner:
             ncols=800,
         )
         self.send_demo_buffer()
-
         for _step in range(start_step, self.max_steps):
+            # set global step
             self.actor.set_global_step(self.global_step)
             self.rollout.set_global_step(self.global_step)
-            if self.reward is not None:
-                self.reward.set_global_step(self.global_step)
 
             with self.timer("step"):
                 with self.timer("sync_weights"):
                     self.update_rollout_weights()
-
                 with self.timer("generate_rollouts"):
                     env_handle: Handle = self.env.interact(
                         input_channel=self.rollout_channel,
@@ -328,32 +317,15 @@ class EmbodiedRunner:
                     ).wait()
                     rollout_handle.wait()
 
-                reward_metrics = {}
-                if self.reward is not None and self.cfg.reward.get(
-                    "use_reward_model", False
-                ):
-                    with self.timer("compute_rewards"):
-                        reward_handle = self.compute_rewards_with_model()
-                        if reward_handle is not None:
-                            reward_handle.wait()
-
+                # compute advantages and returns.
                 with self.timer("cal_adv_and_returns"):
                     actor_rollout_metrics = (
                         self.actor.compute_advantages_and_returns().wait()
                     )
 
+                # actor training.
                 with self.timer("actor_training"):
                     actor_training_metrics = self.actor.run_training().wait()
-
-                if (
-                    self.reward is not None
-                    and self.cfg.reward.get("train_reward_model", False)
-                    and self.cfg.reward.get("use_reward_model", False)
-                ):
-                    with self.timer("reward_training"):
-                        reward_training_metrics = self._train_reward_model()
-                        if reward_training_metrics:
-                            reward_metrics.update(reward_training_metrics)
 
                 self.global_step += 1
 
@@ -406,18 +378,11 @@ class EmbodiedRunner:
             logging_metrics.update(env_metrics)
             logging_metrics.update(rollout_metrics)
             logging_metrics.update(training_metrics)
-            if reward_metrics:
-                logging_metrics.update(reward_metrics)
 
             global_pbar.set_postfix(logging_metrics, refresh=False)
             global_pbar.update(1)
 
         self.metric_logger.finish()
-
-    def _train_reward_model(self) -> Optional[dict]:
-        if self.reward is None:
-            return None
-        return None
 
     def _save_checkpoint(self):
         base_output_dir = os.path.join(
@@ -425,15 +390,9 @@ class EmbodiedRunner:
             self.cfg.runner.logger.experiment_name,
             f"checkpoints/global_step_{self.global_step}",
         )
-
         actor_save_path = os.path.join(base_output_dir, "actor")
         os.makedirs(actor_save_path, exist_ok=True)
         self.actor.save_checkpoint(actor_save_path, self.global_step).wait()
-
-        if self.reward is not None and self.cfg.reward.get("use_reward_model", False):
-            reward_save_path = os.path.join(base_output_dir, "reward")
-            os.makedirs(reward_save_path, exist_ok=True)
-            self.reward.save_checkpoint(reward_save_path, self.global_step).wait()
 
     def set_max_steps(self):
         self.num_steps_per_epoch = 1
