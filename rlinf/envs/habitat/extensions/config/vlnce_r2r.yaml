@@ -56,11 +56,13 @@ habitat:
         success_distance: 3.0
       spl:
         type: SPL
-      # oracle_success:
-      #   type: OracleSuccess
-      #   # success_distance: 3.0
-      # oracle_navigation_error:
-      #   type: OracleNavigationError
+      trajectory_Length:
+        type: TrajectoryLength
+      oracle_success:
+        type: OracleSuccess
+      oracle_navigation_error:
+        type: OracleNavigationError
+
   dataset:
     type: R2RVLN-v1
     split: val_seen

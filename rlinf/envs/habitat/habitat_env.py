@@ -25,6 +25,7 @@ from habitat.core.registry import registry
 from habitat_baselines.config.default import get_config
 from hydra.core.global_hydra import GlobalHydra
 
+from rlinf.envs.habitat.extensions import measures
 from rlinf.envs.habitat.extensions.utils import observations_to_image
 from rlinf.envs.habitat.venv import HabitatRLEnv, ReconfigureSubprocEnv
 from rlinf.envs.utils import (
@@ -32,6 +33,8 @@ from rlinf.envs.utils import (
     save_rollout_video,
     to_tensor,
 )
+
+measures.pass_format_check()
 
 
 @registry.register_task_action
@@ -166,6 +169,7 @@ class HabitatEnv(gym.Env):
 
         # TODO: what if termination means failure? (e.g. robot falling down)
         step_reward = self._calc_step_reward(terminations)
+        infos = self._record_metrics(infos)
 
         if self.video_cfg.save_video:
             episode_ids = self.env.get_current_episode_ids()
@@ -280,6 +284,19 @@ class HabitatEnv(gym.Env):
             return reward_diff
         else:
             return reward
+
+    def _record_metrics(self, infos):
+        episode_info = {}
+        episode_info["distance_to_goal"] = infos["distance_to_goal"].copy()
+        episode_info["success"] = infos["success"].copy()
+        episode_info["spl"] = infos["spl"].copy()
+        episode_info["trajectory_Length"] = infos["trajectory_Length"].copy()
+        episode_info["oracle_success"] = infos["oracle_success"].copy()
+        episode_info["oracle_navigation_error"] = infos[
+            "oracle_navigation_error"
+        ].copy()
+        infos["episode"] = to_tensor(episode_info)
+        return infos
 
     def _init_env(self):
         env_fns = self._get_env_fns()
