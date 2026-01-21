@@ -98,7 +98,7 @@ _CONFIGS = [
             repo_id="physical-intelligence/maniskill",
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base"),
-            extra_delta_transform=True,
+            extra_delta_transform=False,
         ),
         pytorch_weight_path="checkpoints/torch/pi0_base",
         seed=0,
