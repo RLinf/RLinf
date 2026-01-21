@@ -244,13 +244,15 @@ actor:
     adam_eps: 1.0e-08
     min_lr: 0.0
     weight_decay: 0.01
+    clip_grad: 1.0
+
+    # megatron config
     use_distributed_optimizer: True
     overlap_grad_reduce: False
     overlap_param_gather: False
     optimizer_enable_pin: False
     overlap_param_gather_with_optimizer_step: False
-    clip_grad: 1.0
-    loss_scale: 65536
+    initial_loss_scale: 65536
 
   lr_sched:
     lr_warmup_fraction: 0.1

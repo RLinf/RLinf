@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 from .math_verify import compute_score as math_verify_compute_score
 from .prime_math import compute_score as prime_compute_score
-import base64
+
 
 def compute_score(model_output: str, ground_truth: str) -> float:
     try:
