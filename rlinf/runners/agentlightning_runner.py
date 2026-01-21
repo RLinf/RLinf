@@ -5,10 +5,8 @@ from typing import Optional, Any
 import torch
 from omegaconf.dictconfig import DictConfig
 
-try:
-    import ray.util
-except ImportError:
-    ray = None
+import ray.util
+
 from torch.utils.data import Dataset, RandomSampler, SequentialSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 from tqdm import tqdm
@@ -20,15 +18,10 @@ from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.runner_utils import check_progress
 from rlinf.utils.timers import Timer
 
-try:
-    from agentlightning.adapter.triplet import TraceToTripletBase
-    from agentlightning.llm_proxy import LLMProxy
-    from agentlightning.store.base import LightningStore
-except ImportError as e:
-    raise ImportError(
-        "AgentLightning is required for AgentLightningRLinfRunner. "
-        "Please install agentlightning: pip install agentlightning"
-    ) from e
+
+from agentlightning.adapter.triplet import TraceToTripletBase
+from agentlightning.store.base import LightningStore
+
 
 from rlinf.workers.rollout.server.sglang_http_server_worker import SGLangHTTPServerWorker
 from rlinf.workers.agent.agentlightning_rollout_worker import AgentLightningRolloutWorker
@@ -57,7 +50,6 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         actor: "MegatronActor",
         reward: Optional["RewardWorker"],
         store: LightningStore,
-        llm_proxy: LLMProxy,
         adapter: TraceToTripletBase,
         sglang_http_server: SGLangHTTPServerWorker,
         agentlightning_rollout_worker: AgentLightningRolloutWorker,
@@ -75,7 +67,6 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         )
         
         self.store = store
-        self.llm_proxy = llm_proxy
         self.adapter = adapter
         self.sglang_http_server = sglang_http_server
         self.agentlightning_rollout_worker = agentlightning_rollout_worker
@@ -125,10 +116,6 @@ class AgentLightningRLinfRunner(ReasoningRunner):
             collate_fn=collate_fn,
         )
 
-        logging.info(
-            f"[AgentLightningRLinfRunner] Size of train dataloader: {len(self.train_dataloader)}, Size of val dataloader: "
-            f"{len(self.val_dataloader)}"
-        )
 
     def init_rollout_workers(self):
         rollout_handle = self.rollout.init_worker()
@@ -153,10 +140,9 @@ class AgentLightningRLinfRunner(ReasoningRunner):
             self.rollout.offload_engine().wait()
         
         self.sglang_http_server.init_worker(self.rollout).wait()
-        
+
         self.agentlightning_rollout_worker.init_worker(
             store=self.store,
-            llm_proxy=self.llm_proxy,
             adapter=self.adapter,
             server_addresses=[],
             group_size=self.cfg.algorithm.group_size,
@@ -248,50 +234,23 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                     )
 
                     if save_model:
-                        self._save_checkpoint()
+                            self._save_checkpoint()
 
-                time_metrics = self.timer.consume_durations()
-                time_metrics["training"] = actor_handle.consume_duration()
-                if reward_handle is not None:
-                    time_metrics["reward"] = reward_handle.consume_duration()
-                if infer_handle is not None:
-                    time_metrics["inference"] = infer_handle.consume_duration(reduction_type="min")
+                    if is_train_end:
+                        logging.info(
+                            f"Step limit given by max_steps={self.max_steps} reached. Stopping run"
+                        )
+                        return
 
-                logging_steps = self.global_steps
-                
-                log_time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
-                
-                rollout_metrics = {}
-                for k, v in actor_rollout_metrics.items():
-                    if k == "rewards":
-                        rollout_metrics["training/reward"] = v
-                        rollout_metrics["critic/rewards/mean"] = v
-                    elif k == "reward_scores":
-                        rollout_metrics["rollout/reward_scores"] = v
-                    elif k.startswith("advantages"):
-                        if k == "advantages_mean":
-                            rollout_metrics["critic/advantages/mean"] = v
-                        elif k == "advantages_max":
-                            rollout_metrics["critic/advantages/max"] = v
-                        elif k == "advantages_min":
-                            rollout_metrics["critic/advantages/min"] = v
-                    else:
-                        rollout_metrics[f"rollout/{k}"] = v
+                    if run_time_exceeded:
+                        logging.info(
+                            f"Time limit given by run_timer={self.run_timer} reached. Stopping run"
+                        )
+                        return
 
-                self.metric_logger.log(log_time_metrics, logging_steps)
-                self.metric_logger.log(rollout_metrics, logging_steps)
-                
-                training_metrics = {
-                    f"train/{k}": v for k, v in actor_training_metrics[-1].items()
-                }
-                self.metric_logger.log(training_metrics, logging_steps)
 
-                logging_metrics = time_metrics
-                logging_metrics.update(actor_rollout_metrics)
-                logging_metrics.update(actor_training_metrics[-1])
-
-                global_pbar.set_postfix(logging_metrics, refresh=False)
                 global_pbar.update(1)
+
 
         self.sglang_http_server.server_stop()
         self.metric_logger.finish()
