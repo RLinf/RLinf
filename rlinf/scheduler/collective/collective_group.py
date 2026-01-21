@@ -18,6 +18,7 @@ import logging
 import threading
 import time
 from contextlib import nullcontext
+from dataclasses import dataclass
 from pickle import Pickler, Unpickler
 from queue import Empty, Queue
 from typing import TYPE_CHECKING, Any, Optional
@@ -32,6 +33,34 @@ from .async_work import AsyncFuncWork, AsyncWork
 
 if TYPE_CHECKING:
     from .collective import Collective
+
+
+@dataclass
+class CollectiveGroupOptions:
+    """Options for the scheduler collective group.
+
+    For accelerator communication options, see ProcessGroupNCCL.Options.
+    """
+
+    accel_cluster_size: Optional[int] = None
+    """The cluster size for the accelerator communication."""
+
+    accel_max_ctas: Optional[int] = None
+    """The maximum number of collective threads to use for GPU communication via NCCL-like accelerator CCLs.
+    Higher value of this option means more GPU computation resource (e.g., SM) consumption but better communication efficiency.
+    Lower value of this option means less GPU computation resource (e.g., SM) consumption but worse communication efficiency."""
+
+    accel_min_ctas: Optional[int] = None
+    """The minimum number of collective threads to use for GPU communication via NCCL-like accelerator CCLs.
+    Similar to accel_max_ctas, but with lower value means less GPU computation resource (e.g., SM) consumption but worse communication efficiency."""
+
+    is_high_priority_stream: bool = False
+    """Whether to use a high priority stream for GPU communication via NCCL-like accelerator CCLs."""
+
+    def is_empty_options(self) -> bool:
+        """Check if the options are empty."""
+        empty_options = CollectiveGroupOptions()
+        return self == empty_options
 
 
 class CollectiveWorkQueue:
@@ -176,6 +205,7 @@ class CollectiveGroup:
         self,
         object: torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any,
         async_op: bool = False,
+        options: Optional[CollectiveGroupOptions] = None,
     ) -> Optional[AsyncWork]:
         """Implement the Worker's send method.
 
@@ -196,6 +226,7 @@ class CollectiveGroup:
             comm_id=send_comm_id,
             device_type=device_type,
             object_type=object_type,
+            options=options,
         )
 
         # Capture CUDA event of the main stream if the device type is CUDA
@@ -224,12 +255,13 @@ class CollectiveGroup:
         comm_id: int,
         device_type: str,
         object_type: str,
+        options: Optional[CollectiveGroupOptions] = None,
     ) -> Optional[AsyncWork]:
         """Send an object to a specific address in the collective group in an out-of-place manner.
 
         It runs in an atomic way, i.e., communications of two calls of _atomic_send are guaranteed to be in the same ordered as the send API is called.
         """
-        self._init_p2p_process_group()
+        self._init_process_group(options=options)
         # First send object type to the destination worker
         object_type_tensor = torch.tensor(object_type, dtype=torch.int, device="cpu")
         self._send(object_type_tensor, CollectiveGroup.CPU, comm_id)
@@ -250,7 +282,9 @@ class CollectiveGroup:
             raise ValueError(f"Unsupported object type: {object_type}")
 
     def recv(
-        self, async_op: bool = False
+        self,
+        async_op: bool = False,
+        options: Optional[CollectiveGroupOptions] = None,
     ) -> AsyncWork | torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any:
         """Implement Worker's recv method.
 
@@ -264,7 +298,10 @@ class CollectiveGroup:
             current_device = None
 
         recv_work = AsyncFuncWork(
-            self._atomic_recv, comm_id=recv_comm_id, current_device=current_device
+            self._atomic_recv,
+            comm_id=recv_comm_id,
+            current_device=current_device,
+            options=options,
         )
 
         if self._worker.has_accelerator and Worker.torch_platform.is_initialized():
@@ -285,13 +322,16 @@ class CollectiveGroup:
             return recv_work.wait()
 
     def _atomic_recv(
-        self, comm_id: int, current_device: Optional[int]
+        self,
+        comm_id: int,
+        current_device: Optional[int],
+        options: Optional[CollectiveGroupOptions] = None,
     ) -> AsyncWork | torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any:
         """Atomic recv implementation."""
         if current_device is not None:
             Worker.torch_platform.set_device(current_device)
 
-        self._init_p2p_process_group()
+        self._init_process_group(options=options)
 
         # First recv object type
         object_type_tensor = torch.empty(1, dtype=torch.int, device="cpu")
@@ -315,7 +355,10 @@ class CollectiveGroup:
             return self._recv_object(comm_id)
 
     def send_tensor(
-        self, tensor: torch.Tensor, async_op: bool = False
+        self,
+        tensor: torch.Tensor,
+        async_op: bool = False,
+        options: Optional[CollectiveGroupOptions] = None,
     ) -> Optional[AsyncWork]:
         """Implement the Worker's send_tensor method.
 
@@ -330,6 +373,7 @@ class CollectiveGroup:
             comm_id=send_comm_id,
             device_type=device_type,
             object_type=object_type,
+            options=options,
         )
 
         if device_type == CollectiveGroup.ACCEL:
@@ -350,7 +394,12 @@ class CollectiveGroup:
             return send_work.wait()
 
     def _atomic_send_tensor(
-        self, tensor: torch.Tensor, comm_id: int, device_type: str, object_type: str
+        self,
+        tensor: torch.Tensor,
+        comm_id: int,
+        device_type: str,
+        object_type: str,
+        options: Optional[CollectiveGroupOptions] = None,
     ) -> None:
         """Atomic send_tensor implementation."""
         assert object_type == CollectiveGroup.TENSOR, (
@@ -361,7 +410,7 @@ class CollectiveGroup:
                 "All CUDA tensors must be contiguous when using P2P communication. Otherwise the recv side might recv wrong tensor data. Consider using .contiguous() to make the tensors contiguous."
             )
 
-        self._init_p2p_process_group()
+        self._init_process_group(options=options)
         self._logger.debug(
             f"Sending tensor to Rank {self._peer_rank} in group {self._group_info.group_name}"
         )
@@ -377,7 +426,10 @@ class CollectiveGroup:
         return self._send(tensor, device=device_type, comm_id=comm_id)
 
     def recv_tensor(
-        self, tensor: torch.Tensor, async_op: bool = False
+        self,
+        tensor: torch.Tensor,
+        async_op: bool = False,
+        options: Optional[CollectiveGroupOptions] = None,
     ) -> Optional[AsyncWork]:
         """Implement Worker's recv_tensor method.
 
@@ -386,7 +438,10 @@ class CollectiveGroup:
         recv_comm_id = next(self._recv_comm_id_iter)
 
         recv_work = AsyncFuncWork(
-            self._atomic_recv_tensor, tensor=tensor, comm_id=recv_comm_id
+            self._atomic_recv_tensor,
+            tensor=tensor,
+            comm_id=recv_comm_id,
+            options=options,
         )
 
         if self._worker.has_accelerator and Worker.torch_platform.is_initialized():
@@ -406,14 +461,19 @@ class CollectiveGroup:
             self._logger.debug(f"Sync recv_tensor ID {recv_comm_id} done")
             return recv_work.wait()
 
-    def _atomic_recv_tensor(self, tensor: torch.Tensor, comm_id: int) -> None:
+    def _atomic_recv_tensor(
+        self,
+        tensor: torch.Tensor,
+        comm_id: int,
+        options: Optional[CollectiveGroupOptions] = None,
+    ) -> None:
         """Atomic recv_tensor implementation."""
         device_type, object_type = self._get_object_device_type(tensor)
         assert object_type == CollectiveGroup.TENSOR, (
             "The object must be a torch.Tensor"
         )
 
-        self._init_p2p_process_group()
+        self._init_process_group(options=options)
         self._logger.debug(
             f"Receiving tensor from Rank {self._peer_rank} in group {self._group_info.group_name}"
         )
@@ -492,7 +552,9 @@ class CollectiveGroup:
                 logger=self._logger,
             )
 
-    def _init_p2p_process_group(self) -> dist.ProcessGroup:
+    def _init_process_group(
+        self, options: Optional[CollectiveGroupOptions] = None
+    ) -> dist.ProcessGroup:
         """Initialize the process group for collective operations."""
         with self._lock:
             self._init_group()
@@ -529,6 +591,7 @@ class CollectiveGroup:
                 world_size=self._group_info.world_size,
                 rank=self._rank,
                 group_name=self._group_info.group_name,
+                options=options,
             )
 
             self._logger.debug(

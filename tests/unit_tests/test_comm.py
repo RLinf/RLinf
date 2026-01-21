@@ -19,7 +19,12 @@ import os
 import pytest
 import torch
 
-from rlinf.scheduler import Cluster, NodePlacementStrategy, Worker
+from rlinf.scheduler import (
+    Cluster,
+    CollectiveGroupOptions,
+    NodePlacementStrategy,
+    Worker,
+)
 
 SENDER_GROUP_NAME = "sender_worker_group"
 RECEIVER_GROUP_NAME = "receiver_worker_group"
@@ -63,7 +68,13 @@ class SenderWorker(Worker):
                 data, RECEIVER_GROUP_NAME, peer_rank, async_op=async_op
             )
         else:
-            work = self.send(data, RECEIVER_GROUP_NAME, peer_rank, async_op=async_op)
+            work = self.send(
+                data,
+                RECEIVER_GROUP_NAME,
+                peer_rank,
+                async_op=async_op,
+                options=CollectiveGroupOptions(accel_max_ctas=1),
+            )
 
         if async_op:
             work.wait()
@@ -219,7 +230,12 @@ class ReceiverWorker(Worker):
                 work.wait()
             return tensor
         else:
-            work = self.recv(SENDER_GROUP_NAME, peer_rank, async_op=async_op)
+            work = self.recv(
+                SENDER_GROUP_NAME,
+                peer_rank,
+                async_op=async_op,
+                options=CollectiveGroupOptions(accel_max_ctas=1),
+            )
             if async_op:
                 return work.wait()
             return work
