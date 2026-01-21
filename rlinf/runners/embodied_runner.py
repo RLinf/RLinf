@@ -72,6 +72,9 @@ class EmbodiedRunner:
         self.actor_channel = Channel.create("Actor")
         if self.demo_buffer is not None:
             self.demo_data_channel = Channel.create("DemoBufferChannel")
+        if self.reward is not None:
+            self.reward_input_channel = Channel.create("RewardInput")
+            self.reward_output_channel = Channel.create("RewardOutput")
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -92,6 +95,8 @@ class EmbodiedRunner:
         self.actor.init_worker().wait()
         self.rollout.init_worker().wait()
         self.env.init_worker().wait()
+        if self.reward is not None:
+            self.reward.init_worker().wait()
 
         resume_dir = self.cfg.runner.get("resume_dir", None)
         if resume_dir is None:
@@ -316,6 +321,12 @@ class EmbodiedRunner:
                         input_channel=self.actor_channel
                     ).wait()
                     rollout_handle.wait()
+
+                # compute rewards with reward model if available
+                reward_metrics = None
+                if self.reward is not None:
+                    with self.timer("compute_rewards"):
+                        self.compute_rewards_with_model()
 
                 # compute advantages and returns.
                 with self.timer("cal_adv_and_returns"):
