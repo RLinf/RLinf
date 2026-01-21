@@ -9,8 +9,6 @@ You will learn how to:
 - Integrate a :doc:`new environment <new_env>` into RLinf’s task system  
 - Add a :doc:`new model <new_model_fsdp>` using the FSDP + HuggingFace backend  
 - Add a :doc:`new model <new_model_megatron>` using the Megatron + SGLang backend  
-- Set up :doc:`data collection <data_collection>` for offline learning and reward model training  
-- Integrate a :doc:`reward model <reward_model>` for image-based reward learning  
 
 RLinf supports multiple backends for model training, each with its own initialization logic and execution flow.  
 This guide provides step-by-step instructions on how to:
