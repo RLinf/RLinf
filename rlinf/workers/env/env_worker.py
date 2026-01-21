@@ -99,7 +99,7 @@ class EnvWorker(Worker):
             )
 
     def init_worker(self):
-        enable_offload = self.cfg.env.enable_offload
+        self.enable_offload = self.cfg.env.enable_offload
 
         train_env_cls = get_env_cls(self.cfg.env.train.env_type, self.cfg.env.train)
         eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
