@@ -65,14 +65,13 @@ class AgentLightningRolloutWorker(Worker):
         reward_fillna_value: float = 0.0,
     ):
         self.store = store
-        if llm_proxy is None:
-            self.llm_proxy = LLMProxy(
-                port=_find_available_port(),
-                model_list=[],
-                store=store,
-            )
-        else:
-            self.llm_proxy = llm_proxy
+        
+        self.llm_proxy = LLMProxy(
+            port=_find_available_port(),
+            model_list=[],
+            store=store,
+        )
+        self.llm_proxy.start()
         self.adapter = adapter
         self.server_addresses = server_addresses or []
         self.group_size = group_size
@@ -296,14 +295,9 @@ class AgentLightningRolloutWorker(Worker):
     async def process_rollout_batch(
         self, input_channel: Channel, output_channel: Channel
     ):
-        """
-        Process a single batch from the dataloader channel.
-        Similar to run_agentloop_rollout, only gets one batch.
-        """
+
         with self.worker_timer():
             batch_data = input_channel.get()
-            if batch_data is None:
-                return
             
             await self._async_setup_data(
                 data=batch_data,
