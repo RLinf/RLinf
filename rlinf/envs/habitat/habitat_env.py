@@ -46,7 +46,9 @@ class NoOpAction(SimulatorTaskAction):
 
 
 class HabitatEnv(gym.Env):
-    def __init__(self, cfg, num_envs, seed_offset, total_num_processes):
+    def __init__(
+        self, cfg, num_envs, seed_offset, total_num_processes, worker_info=None
+    ):
         self.cfg = cfg
         self.seed_offset = seed_offset
         self.total_num_processes = total_num_processes
@@ -243,8 +245,19 @@ class HabitatEnv(gym.Env):
 
     def _wrap_obs(self, obs_list):
         image_list = []
+        task_descs = []
         for obs in obs_list:
             image_list.append(observations_to_image(obs))
+            # VLN-CE observations usually carry instruction in one of these fields.
+            inst = ""
+            if isinstance(obs, dict):
+                if "instruction" in obs and isinstance(obs["instruction"], dict):
+                    inst = str(obs["instruction"].get("text", ""))
+                elif "instruction_text" in obs:
+                    inst = str(obs["instruction_text"])
+                elif "text" in obs:
+                    inst = str(obs["text"])
+            task_descs.append(inst)
 
         image_tensor = to_tensor(list_of_dict_to_dict_of_list(image_list))
 
@@ -252,7 +265,8 @@ class HabitatEnv(gym.Env):
         rgb_image_tensor = torch.stack(
             [value.clone().permute(2, 0, 1) for value in image_tensor["rgb"]]
         )
-        obs["rgb"] = rgb_image_tensor
+        obs["main_images"] = rgb_image_tensor
+        obs["task_descriptions"] = task_descs
 
         if "depth" in image_tensor:
             depth_image_tensor = torch.stack(

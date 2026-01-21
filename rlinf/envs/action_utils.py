@@ -202,6 +202,13 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.HABITAT:
+        chunk_actions = raw_chunk_actions
+        if isinstance(chunk_actions, np.ndarray):
+            if chunk_actions.ndim == 3 and chunk_actions.shape[-1] == 1:
+                chunk_actions = chunk_actions[..., 0]
+        else:
+            chunk_actions = np.asarray(chunk_actions)
     else:
         raise NotImplementedError
 

@@ -28,6 +28,9 @@ from PIL import Image
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 
 _FLOAT_RE = re.compile(r"[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?")
+_VLN_ACTION_RE = re.compile(
+    r"\b(move_forward|turn_left|turn_right|stop|no_op)\b", flags=re.IGNORECASE
+)
 
 
 def _to_pil_rgb(img: torch.Tensor) -> Image.Image:
@@ -88,6 +91,30 @@ def _parse_actions_from_text(
         return np.full((total_dim,), fallback, dtype=np.float32)
     vals = (vals + [fallback] * total_dim)[:total_dim]
     return np.asarray(vals, dtype=np.float32)
+
+
+def _parse_vln_actions_from_text(
+    text: str, *, chunk_len: int, fallback: str = "no_op"
+) -> np.ndarray:
+    """
+    Parse discrete VLN actions from model-generated text.
+
+    We accept any occurrences of:
+      - move_forward / turn_left / turn_right / stop / no_op
+    and build a fixed-length action chunk. If "stop" occurs, we pad the rest with "no_op".
+    """
+    text = (text or "").strip().lower()
+    acts = _VLN_ACTION_RE.findall(text)
+    if not acts:
+        acts = [fallback] * chunk_len
+    else:
+        acts = [a.lower() for a in acts][:chunk_len]
+        if "stop" in acts:
+            stop_i = acts.index("stop")
+            acts = acts[: stop_i + 1]
+    if len(acts) < chunk_len:
+        acts = acts + [fallback] * (chunk_len - len(acts))
+    return np.asarray(acts, dtype=object)
 
 
 @dataclass(frozen=True)
@@ -175,6 +202,9 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
             else (self.model.device if hasattr(self.model, "device") else "cpu")
         )
         out = dict(env_obs)
+        # Habitat env may provide `rgb` instead of `main_images`. Mirror to keep downstream stable.
+        if "main_images" not in out and "rgb" in out:
+            out["main_images"] = out["rgb"]
         if "main_images" in out and torch.is_tensor(out["main_images"]):
             out["main_images"] = out["main_images"].to(
                 device="cpu"
@@ -211,8 +241,15 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
         do_sample = kwargs.get("do_sample", mode == "train")
         temperature = float(kwargs.get("temperature", 1.0))
         top_p = float(kwargs.get("top_p", 1.0))
-        top_k = int(kwargs.get("top_k", 0))
-        max_new_tokens = int(kwargs.get("max_new_tokens", self.gen_cfg.max_new_tokens))
+        top_k_raw = kwargs.get("top_k", 0)
+        top_k = int(top_k_raw) if top_k_raw is not None else 0
+        if top_k <= 0:
+            top_k = None
+        max_new_tokens_raw = kwargs.get("max_new_tokens", self.gen_cfg.max_new_tokens)
+        if max_new_tokens_raw is None:
+            # fall back to generation config or a sensible default
+            max_new_tokens_raw = self.gen_cfg.max_new_tokens or 32
+        max_new_tokens = int(max_new_tokens_raw)
 
         from rlinf.models.embodiment.navid.conversation import conv_templates
         from rlinf.models.embodiment.navid.mm_utils import (
@@ -242,7 +279,19 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
         for i in range(bsz):
             # Build a single-turn prompt with <image>.
             conv = conv_tmpl.copy()
-            user_msg = f"<image>\n{task_descs[i]}"
+            if int(self.action_dim) == 1:
+                # Explicitly instruct discrete VLN action format for Habitat.
+                user_msg = (
+                    "<image>\n"
+                    "You are an embodied navigation agent in Habitat (VLN-CE R2R). "
+                    "Given the instruction, output a sequence of actions, one per step, "
+                    f"for the next {self.num_action_chunks} steps. "
+                    "Use only these tokens: move_forward, turn_left, turn_right, stop, no_op. "
+                    "If you decide to stop, include stop and then no_op for the remaining steps.\n\n"
+                    f"Instruction: {task_descs[i]}"
+                )
+            else:
+                user_msg = f"<image>\n{task_descs[i]}"
             conv.append_message(conv.roles[0], user_msg)
             conv.append_message(conv.roles[1], None)
             prompt = conv.get_prompt()
@@ -315,18 +364,31 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
                 self.tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
             )
 
-        total_dim = self.action_dim * self.num_action_chunks
-        flat_actions = np.stack(
-            [
-                _parse_actions_from_text(t, total_dim=total_dim, fallback=0.0)
-                for t in gen_texts
-            ],
-            axis=0,
-        ).astype(np.float32)
-
-        chunk_actions = flat_actions.reshape(
-            bsz, self.num_action_chunks, self.action_dim
-        )
+        # Two modes:
+        #  - Continuous action parsing (default): action_dim * num_action_chunks floats
+        #  - VLN discrete action parsing (Habitat): action_dim==1 means an action token per step
+        if int(self.action_dim) == 1:
+            # shape: [B, num_action_chunks] of strings
+            chunk_actions = np.stack(
+                [
+                    _parse_vln_actions_from_text(t, chunk_len=self.num_action_chunks)
+                    for t in gen_texts
+                ],
+                axis=0,
+            )
+            flat_actions = None
+        else:
+            total_dim = self.action_dim * self.num_action_chunks
+            flat_actions = np.stack(
+                [
+                    _parse_actions_from_text(t, total_dim=total_dim, fallback=0.0)
+                    for t in gen_texts
+                ],
+                axis=0,
+            ).astype(np.float32)
+            chunk_actions = flat_actions.reshape(
+                bsz, self.num_action_chunks, self.action_dim
+            )
 
         # Build tensors for buffer. Shape contracts:
         # - prev_logprobs: [B, action_dim] (ChunkStepResult expects this)
@@ -336,8 +398,10 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
         )
         prev_values = torch.zeros((bsz, 1), device=device, dtype=torch.float32)
 
-        action_tensor = torch.from_numpy(flat_actions).to(device=device)
-        forward_inputs: dict[str, Any] = {"action": action_tensor}
+        forward_inputs: dict[str, Any] = {}
+        if flat_actions is not None:
+            action_tensor = torch.from_numpy(flat_actions).to(device=device)
+            forward_inputs["action"] = action_tensor
         if return_obs:
             forward_inputs["main_images"] = env_obs["main_images"]
             if env_obs.get("states", None) is not None:
