@@ -15,15 +15,11 @@
 import asyncio
 import copy
 import json
-import random
-import time
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
 import regex as re
-from pydantic import BaseModel
-
 from omegaconf import DictConfig
 
 from rlinf.data.tool_call.tool_io_struct import (
@@ -32,13 +28,14 @@ from rlinf.data.tool_call.tool_io_struct import (
     ToolRequest,
     ToolResponse,
 )
-from rlinf.scheduler import Channel
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.agent.agent_loop import AgentLoopOutput, AgentLoopWorker
+
 
 @dataclass
 class GenerateContext:
     tool_session_ids: dict[str, str] = field(default_factory=dict)
+
 
 class Rstar2AgentLoopWorker(AgentLoopWorker):
     """Simple tool agent loop that can interact with tools."""
@@ -51,7 +48,7 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
         super().__init__(cfg, placement)
         if self.cfg.rollout.get("custom_chat_template", None) is not None:
             self.tokenizer.chat_template = cfg.rollout.custom_chat_template
-        
+
         self.max_prompt_len = int(self.cfg.data.max_prompt_length)
         max_total_len = int(self.cfg.actor.model.encoder_seq_length)
         self.max_resp_len = max(1, max_total_len - self.max_prompt_len)
@@ -59,14 +56,20 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
         self.max_user_turns = cfg.agentloop.get("max_user_turns", 5)
         self.max_assistant_turns = cfg.agentloop.get("max_assistant_turns", 5)
         self.max_parallel_calls = cfg.agentloop.get("max_parallel_calls", 3)
-        self.max_tool_response_length = cfg.agentloop.get("max_tool_response_length", 500)
-        self.tool_response_truncate_side = cfg.agentloop.get("tool_response_truncate_side", "right")
+        self.max_tool_response_length = cfg.agentloop.get(
+            "max_tool_response_length", 500
+        )
+        self.tool_response_truncate_side = cfg.agentloop.get(
+            "tool_response_truncate_side", "right"
+        )
         self.apply_chat_template_kwargs = cfg.data.get("apply_chat_template_kwargs", {})
         self.system_prompt = self.tokenizer.apply_chat_template(
-            [{}], add_generation_prompt=False, tokenize=True, **self.apply_chat_template_kwargs
+            [{}],
+            add_generation_prompt=False,
+            tokenize=True,
+            **self.apply_chat_template_kwargs,
         )
-        
-        
+
     def generate_context_create(self) -> dict[str, Any]:
         return GenerateContext()
 
@@ -97,9 +100,10 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
             response: ToolChannelResponse = await self.tool_worker_output_channel.get(
                 session_id, async_op=True
             ).async_wait()
+            assert response.success
             self.log_debug("session_start get")
         return session_id
-    
+
     async def tool_session_release(self, tool_worker_name, session_id) -> str | dict:
         tool_channel_info = self.tool_channel_info_map[tool_worker_name]
         await tool_channel_info.input_channel.put(
@@ -110,18 +114,25 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
         response: ToolChannelResponse = await self.tool_worker_output_channel.get(
             session_id, async_op=True
         ).async_wait()
+        assert response.success
         self.log_debug("session_end get")
 
     async def tool_call(
-        self, generate_context: GenerateContext, tool_request: ToolRequest | ToolChannelResponse
+        self,
+        generate_context: GenerateContext,
+        tool_request: ToolRequest | ToolChannelResponse,
     ) -> ToolResponse:
         if isinstance(tool_request, ToolChannelResponse):
             return ToolResponse(text=tool_request.result)
         elif tool_request.name not in self.tool_name_map:
-            return ToolResponse(text=f"Error when executing tool: '{tool_request.name}'")
+            return ToolResponse(
+                text=f"Error when executing tool: '{tool_request.name}'"
+            )
         else:
             tool_name, tool_args = tool_request.name, tool_request.arguments
-            tool_channel_info = self.tool_channel_info_map[self.tool_name_map[tool_name]]
+            tool_channel_info = self.tool_channel_info_map[
+                self.tool_name_map[tool_name]
+            ]
             tool_input_channel = tool_channel_info.input_channel
             session_id = await self.tool_session_get(generate_context, tool_name)
             await tool_input_channel.put(
@@ -143,23 +154,36 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
                 result_text = json.dumps(response.result)
             else:
                 result_text = str(response.result)
-                
+
             if result_text and len(result_text) > self.max_tool_response_length:
                 if self.tool_response_truncate_side == "left":
-                    result_text = result_text[: self.max_tool_response_length] + "...(truncated)"
+                    result_text = (
+                        result_text[: self.max_tool_response_length] + "...(truncated)"
+                    )
                 elif self.tool_response_truncate_side == "right":
-                    result_text = "(truncated)..." + result_text[-self.max_tool_response_length :]
+                    result_text = (
+                        "(truncated)..." + result_text[-self.max_tool_response_length :]
+                    )
                 else:
                     length = self.max_tool_response_length // 2
-                    result_text = result_text[:length] + "...(truncated)..." + result_text[-length:]
+                    result_text = (
+                        result_text[:length]
+                        + "...(truncated)..."
+                        + result_text[-length:]
+                    )
             return ToolResponse(text=result_text)
 
-    async def extract_tool_calls(self, response_text) -> tuple[str, list[ToolRequest | ToolChannelResponse]]:
+    async def extract_tool_calls(
+        self, response_text
+    ) -> tuple[str, list[ToolRequest | ToolChannelResponse]]:
         tool_call_start_token: str = "<tool_call>"
         tool_call_end_token: str = "</tool_call>"
         tool_call_regex = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
-    
-        if tool_call_start_token not in response_text or tool_call_end_token not in response_text:
+
+        if (
+            tool_call_start_token not in response_text
+            or tool_call_end_token not in response_text
+        ):
             return response_text, []
 
         matches = tool_call_regex.findall(response_text)
@@ -168,10 +192,14 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
             try:
                 function_call = json.loads(match)
                 name, arguments = function_call["name"], function_call["arguments"]
-                return_function_calls.append(ToolRequest(name=name, arguments=arguments))
+                return_function_calls.append(
+                    ToolRequest(name=name, arguments=arguments)
+                )
             except Exception as e:
                 return_function_calls.append(
-                    ToolChannelResponse(success=False, result=f"Failed to decode tool call: {e}")
+                    ToolChannelResponse(
+                        success=False, result=f"Failed to decode tool call: {e}"
+                    )
                 )
 
         return response_text, return_function_calls
@@ -190,19 +218,21 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
                 pending_pos.append(i)
                 filtered_tool_requests.append(tool_request)
         tool_requests = filtered_tool_requests
-        
+
         tasks = []
         for tool_request in tool_requests[: self.max_parallel_calls]:
             tasks.append(self.tool_call(generate_context, tool_request))
         tool_responses: list[ToolResponse] = await asyncio.gather(*tasks)
-        for i, tool_response in zip(pending_pos[: self.max_parallel_calls], tool_responses, strict=False):
+        for i, tool_response in zip(
+            pending_pos[: self.max_parallel_calls], tool_responses, strict=False
+        ):
             total_tool_responses[i] = tool_response
         tool_responses = total_tool_responses
         return tool_responses[0]
 
     async def run_one_query(self, prompt_ids: list[int]) -> AgentLoopOutput:
         prompt_ids = copy.deepcopy(prompt_ids)
-        orig_prompt_ids = copy.deepcopy(prompt_ids) 
+        orig_prompt_ids = copy.deepcopy(prompt_ids)
         orig_prompt_text = self.tokenizer.decode(orig_prompt_ids)
         generate_context: GenerateContext = self.generate_context_create()
         trace_uuid = uuid4().hex
@@ -229,7 +259,7 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
                 response_ids = response_ids[:max_resp_len]
                 if self.return_logprobs:
                     generate_logprobs = generate_logprobs[:max_resp_len]
-            
+
             response_text = self.tokenizer.decode(response_ids)
 
             prompt_ids += response_ids
@@ -258,12 +288,14 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
                     pending_pos.append(i)
                     filtered_tool_requests.append(tool_request)
             tool_requests = filtered_tool_requests
-            
+
             tasks = []
             for tool_request in tool_requests[: self.max_parallel_calls]:
                 tasks.append(self.tool_call(generate_context, tool_request))
             tool_responses: list[ToolResponse] = await asyncio.gather(*tasks)
-            for i, tool_response in zip(pending_pos[: self.max_parallel_calls], tool_responses, strict=False):
+            for i, tool_response in zip(
+                pending_pos[: self.max_parallel_calls], tool_responses, strict=False
+            ):
                 total_tool_responses[i] = tool_response
             tool_responses = total_tool_responses
             if any(isinstance(item, Exception) for item in tool_responses):
@@ -281,7 +313,7 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
                 tokenize=True,
                 **self.apply_chat_template_kwargs,
             )
-            tool_response_ids = tool_response_ids[len(self.system_prompt):]
+            tool_response_ids = tool_response_ids[len(self.system_prompt) :]
             max_tool_resp_len = self.max_resp_len - (
                 len(prompt_ids) - len(orig_prompt_ids)
             )
@@ -293,16 +325,18 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
                 response_logprobs += [0.0] * len(tool_response_ids)
 
             user_turns += 1
-        data = {
-            'prompt_text': orig_prompt_text,
-            'prompt_ids': orig_prompt_ids,
-        }
-        
+
         # Separate prompt and response
-        response_ids = prompt_ids[len(orig_prompt_ids):]
+        response_ids = prompt_ids[len(orig_prompt_ids) :]
         extra_fields = {"num_turns": user_turns + assistant_turns + 1}
         if self.print_outputs:
-            trace_prints.append({"uuid": trace_uuid, "generate": self.tokenizer.decode(response_ids), "assistant_turns": user_turns + assistant_turns + 1})
+            trace_prints.append(
+                {
+                    "uuid": trace_uuid,
+                    "generate": self.tokenizer.decode(response_ids),
+                    "assistant_turns": user_turns + assistant_turns + 1,
+                }
+            )
         return AgentLoopOutput(
             prompt_ids=orig_prompt_ids,
             prompt_text=orig_prompt_text,

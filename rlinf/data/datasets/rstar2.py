@@ -15,52 +15,56 @@
 import json
 import logging
 import os
-from typing import Any, List, Tuple, Union, Dict
+from typing import Any, Union
 
 import torch
-from omegaconf import OmegaConf, DictConfig
+from omegaconf import DictConfig
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
 from rlinf.data.datasets.item import DatasetItem
 from rlinf.data.utils import batch_pad_to_fixed_len
 
+
 def get_tool_schemas():
     """
     Load tool schemas from a configuration file.
-    
+
     Args:
         tools_config_file: Path to the tools configuration file.
-        
+
     Returns:
         List[Dict[str, Any]]: List of tool schema dictionaries.
     """
-    return [{
-        "type": "function",
-        "function": {
-            "name": "python_code_with_standard_io", 
-            "description": "Execute Python code with standard input and capture standard output. This function takes a Python code string and an input string, provides the input string through standard input (stdin) to the code, and captures and returns any output produced through standard output (stdout). If the executed code raises an exception, the error message will be captured and returned instead.", 
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "code": {
-                        "type": "string", 
-                        "description": "A string containing Python code to be executed. The code can read from standard input using the input() function."
-                    }, 
-                    "input": {
-                        "type": "string", 
-                        "description": "A string that will be provided as standard input to the code when it calls input()."
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "python_code_with_standard_io",
+                "description": "Execute Python code with standard input and capture standard output. This function takes a Python code string and an input string, provides the input string through standard input (stdin) to the code, and captures and returns any output produced through standard output (stdout). If the executed code raises an exception, the error message will be captured and returned instead.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "code": {
+                            "type": "string",
+                            "description": "A string containing Python code to be executed. The code can read from standard input using the input() function.",
+                        },
+                        "input": {
+                            "type": "string",
+                            "description": "A string that will be provided as standard input to the code when it calls input().",
+                        },
                     },
-                }, 
-                "required": ["code", "input"],
-            }
-        },
-    }]
+                    "required": ["code", "input"],
+                },
+            },
+        }
+    ]
+
 
 class Rstar2Dataset(Dataset):
     def __init__(
         self,
-        data_paths: Union[str, List[str]],
+        data_paths: Union[str, list[str]],
         config: DictConfig,
         tokenizer: AutoTokenizer,
     ):
@@ -108,7 +112,9 @@ class Rstar2Dataset(Dataset):
         self.apply_chat_template = config.data.apply_chat_template
         if config.rollout.get("custom_chat_template", None) is not None:
             self.tokenizer.chat_template = config.rollout.custom_chat_template
-        self.apply_chat_template_kwargs = config.data.get("apply_chat_template_kwargs", {})
+        self.apply_chat_template_kwargs = config.data.get(
+            "apply_chat_template_kwargs", {}
+        )
         self.tool_schemas = get_tool_schemas()
 
         self.data = self._load_data()
@@ -149,7 +155,7 @@ class Rstar2Dataset(Dataset):
                     f"(kept {len(self.data)} / {total})."
                 )
 
-    def _load_data(self) -> List[Any]:
+    def _load_data(self) -> list[Any]:
         """
         Load and merge data from multiple files(json or jsonl).
         """
@@ -177,7 +183,7 @@ class Rstar2Dataset(Dataset):
     def __len__(self):
         return len(self.data)
 
-    def encode(self, text: str) -> Tuple[List[int], int]:
+    def encode(self, text: str) -> tuple[list[int], int]:
         """
         Use tokenizer to encode the text and return the token ids and length.
         """

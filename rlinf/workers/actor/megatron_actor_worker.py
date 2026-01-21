@@ -193,9 +193,14 @@ class MegatronActor(MegatronModelManager, Worker):
             * self.cfg.algorithm.group_size
             // parallel_state.get_data_parallel_world_size()
         )
-        self.do_down_sampling = self.cfg.algorithm.get("down_sampling", False) and self.cfg.algorithm.down_sampling.do_down_sampling
+        self.do_down_sampling = (
+            self.cfg.algorithm.get("down_sampling", False)
+            and self.cfg.algorithm.down_sampling.do_down_sampling
+        )
         if self.do_down_sampling:
-            self.down_sampling_config = self.cfg.algorithm.down_sampling.down_sampling_config
+            self.down_sampling_config = (
+                self.cfg.algorithm.down_sampling.down_sampling_config
+            )
 
         # Config validation
         if self.is_pipeline:
@@ -848,17 +853,17 @@ class MegatronActor(MegatronModelManager, Worker):
         # Otherwise, loading model might cause OOM
         self._load_weight_and_optimizer()
         self._training_setup()
-        
+
         # DP batch load balance
         if (
             self.cfg.actor.get("enable_dp_load_balance", False)
             and parallel_state.get_data_parallel_world_size() > 1
         ):
             batch = self._dp_load_balance(batch)
-            
+
         if batch is None:
             return None, None
-        
+
         # Advantage normalization
         if self.cfg.algorithm.normalize_advantages:
             mask = batch["response_mask"][:, -self.response_len :]
@@ -887,7 +892,7 @@ class MegatronActor(MegatronModelManager, Worker):
             training_metrics_list = []
             for global_batch in global_batches:
                 if self.do_down_sampling:
-                    global_batch_size_per_dp = global_batch['input_ids'].shape[0]
+                    global_batch_size_per_dp = global_batch["input_ids"].shape[0]
                     dp_size = parallel_state.get_data_parallel_world_size()
                     configure_batch_sizes(
                         rank=torch.distributed.get_rank(),
@@ -1371,7 +1376,9 @@ class MegatronActor(MegatronModelManager, Worker):
         """
         with self.worker_timer():
             if batch["rewards"].numel() == 0:
-                batch["advantages"] = torch.zeros(0, dtype=torch.float32, device=batch["rewards"].device)
+                batch["advantages"] = torch.zeros(
+                    0, dtype=torch.float32, device=batch["rewards"].device
+                )
             if batch.get("advantages", None) is None:
                 mask = batch["response_mask"][:, -self.response_len :]
                 advantages, _ = calculate_adv_and_returns(
@@ -1379,7 +1386,9 @@ class MegatronActor(MegatronModelManager, Worker):
                     adv_type=self.cfg.algorithm.adv_type,
                     rewards=batch["rewards"].cuda(),
                     loss_mask=mask.cuda(),
-                    group_size=self.down_sampling_config.down_sample_to_n if self.do_down_sampling else self.cfg.algorithm.group_size,
+                    group_size=self.down_sampling_config.down_sample_to_n
+                    if self.do_down_sampling
+                    else self.cfg.algorithm.group_size,
                     kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
                     kl_penalty_type=self.kl_penalty_type,
                     logprob=batch["prev_logprobs"].cuda()

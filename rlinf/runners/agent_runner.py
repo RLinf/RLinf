@@ -283,7 +283,7 @@ class AgentRunner(ReasoningRunner):
                     ) * self.cfg.algorithm.n_minibatches
                     # add prefix to the metrics
                     log_time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
-                    if actor_rollout_metrics != None:
+                    if actor_rollout_metrics is not None:
                         rollout_metrics = {
                             f"rollout/{k}": v for k, v in actor_rollout_metrics.items()
                         }
@@ -297,7 +297,9 @@ class AgentRunner(ReasoningRunner):
                             }
                             self.metric_logger.log(training_metrics, logging_steps + i)
 
-                        logging_metrics = {f"{k}_time": v for k, v in time_metrics.items()}
+                        logging_metrics = {
+                            f"{k}_time": v for k, v in time_metrics.items()
+                        }
 
                         if self.cfg.actor.get("calculate_flops", False):
                             flops_metrics = self._compute_flops_metrics(
