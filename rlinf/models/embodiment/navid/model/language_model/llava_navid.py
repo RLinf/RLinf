@@ -13,28 +13,36 @@
 #    limitations under the License.
 
 
-from typing import List, Optional, Tuple, Union
+from typing import Optional, Union
 
 import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
-
-from transformers import AutoConfig, AutoModelForCausalLM, \
-                         LlamaConfig, LlamaModel, LlamaForCausalLM
-
+from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    LlamaConfig,
+    LlamaForCausalLM,
+    LlamaModel,
+)
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
-from navid.model.navid_arch import NaVidMetaModel, NaVidMetaForCausalLM
-from navid.constants import NAVIGATION_IDENTIFIER
+from rlinf.models.embodiment.navid.model.navid_arch import (
+    NaVidMetaForCausalLM,
+    NaVidMetaModel,
+)
+
 
 class LlavaConfig(LlamaConfig):
     model_type = "llava"
+
 
 class LlavaAttLlamaModel(NaVidMetaModel, LlamaModel):
     config_class = LlavaConfig
 
     def __init__(self, config: LlamaConfig):
         super(LlavaAttLlamaModel, self).__init__(config)
+
 
 class LlavaLlamaAttForCausalLM(LlamaForCausalLM, NaVidMetaForCausalLM):
     config_class = LlavaConfig
@@ -48,8 +56,6 @@ class LlavaLlamaAttForCausalLM(LlamaForCausalLM, NaVidMetaForCausalLM):
         # Initialize weights and apply final processing
         self.post_init()
 
-
-
     def get_model(self):
         return self.model
 
@@ -57,21 +63,29 @@ class LlavaLlamaAttForCausalLM(LlamaForCausalLM, NaVidMetaForCausalLM):
         self,
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        past_key_values: Optional[list[torch.FloatTensor]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         images: Optional[torch.FloatTensor] = None,
-        prompts: Optional[List[str]] = None,
+        prompts: Optional[list[str]] = None,
         return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, CausalLMOutputWithPast]:
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+    ) -> Union[tuple, CausalLMOutputWithPast]:
+        output_attentions = (
+            output_attentions
+            if output_attentions is not None
+            else self.config.output_attentions
         )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        output_hidden_states = (
+            output_hidden_states
+            if output_hidden_states is not None
+            else self.config.output_hidden_states
+        )
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
 
         if not self.training:
             if images[0].device != self.device:
@@ -79,7 +93,16 @@ class LlavaLlamaAttForCausalLM(LlamaForCausalLM, NaVidMetaForCausalLM):
             if input_ids.device != self.device:
                 input_ids = input_ids.to(device=self.device)
 
-        input_ids, attention_mask, past_key_values, inputs_embeds, labels = self.prepare_inputs_labels_for_multimodal(input_ids, attention_mask, past_key_values, labels, images, prompts=prompts)
+        input_ids, attention_mask, past_key_values, inputs_embeds, labels = (
+            self.prepare_inputs_labels_for_multimodal(
+                input_ids,
+                attention_mask,
+                past_key_values,
+                labels,
+                images,
+                prompts=prompts,
+            )
+        )
 
         torch.cuda.empty_cache()
 
@@ -92,7 +115,7 @@ class LlavaLlamaAttForCausalLM(LlamaForCausalLM, NaVidMetaForCausalLM):
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
-            return_dict=return_dict
+            return_dict=return_dict,
         )
 
         hidden_states = outputs[0]
@@ -124,7 +147,12 @@ class LlavaLlamaAttForCausalLM(LlamaForCausalLM, NaVidMetaForCausalLM):
         )
 
     def prepare_inputs_for_generation(
-        self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None, **kwargs
+        self,
+        input_ids,
+        past_key_values=None,
+        attention_mask=None,
+        inputs_embeds=None,
+        **kwargs,
     ):
         if past_key_values:
             input_ids = input_ids[:, -1:]
@@ -141,9 +169,19 @@ class LlavaLlamaAttForCausalLM(LlamaForCausalLM, NaVidMetaForCausalLM):
                 "use_cache": kwargs.get("use_cache"),
                 "attention_mask": attention_mask,
                 "images": kwargs.get("images", None),
+                # Needed for NaVid video/navigation logic; keep prompts across generation steps.
+                "prompts": kwargs.get("prompts", None),
             }
         )
         return model_inputs
 
-AutoConfig.register("llava", LlavaConfig)
-AutoModelForCausalLM.register(LlavaConfig, LlavaLlamaAttForCausalLM)
+
+# Register config and model only if not already registered
+try:
+    AutoConfig.register("llava", LlavaConfig, exist_ok=True)
+except ValueError:
+    pass  # Already registered
+try:
+    AutoModelForCausalLM.register(LlavaConfig, LlavaLlamaAttForCausalLM, exist_ok=True)
+except ValueError:
+    pass  # Already registered

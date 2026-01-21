@@ -1,0 +1,29 @@
+model_type: "navid"
+implement_version: "rlinf"
+model_path: "/data/RLinf/VLN-CE/models/Navid_weight/navid-7b-full-224-video-fps-1-grid-2-r2r-rxr-training-split"  # NaVid model path
+
+precision: "bf16"
+
+value_type: action_level
+
+action_dim: 7
+num_action_chunks: 8
+use_proprio: False
+unnorm_key: libero_10_no_noops
+center_crop: True
+
+max_prompt_length: 50
+vocab_size: 32000
+hidden_size: 4096
+add_value_head: False
+image_size: [224, 224]
+is_lora: False
+lora_rank: 32
+lora_path: null
+num_images_in_input: 1
+attn_implementation: "flash_attention_2"
+low_cpu_mem_usage: True
+trust_remote_code: True
+
+# used for maniskill
+policy_setup: "widowx_bridge"
