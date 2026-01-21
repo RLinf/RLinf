@@ -18,8 +18,8 @@ import hydra
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
-from rlinf.agents.rstar2.rstar2_agent_loop import Rstar2AgentLoopWorker
 from rlinf.agents.rstar2.http_tool_worker import HttpToolWorker
+from rlinf.agents.rstar2.rstar2_agent_loop import Rstar2AgentLoopWorker
 from rlinf.config import validate_cfg
 from rlinf.data.datasets import create_rl_dataset
 from rlinf.data.tokenizers import hf_tokenizer
@@ -66,7 +66,9 @@ def main(cfg) -> None:
         len(agentloop_placement_strategy._node_ranks)
         == component_placement.rollout_dp_size
     ), "agentloop worker num now should be equal to rollout dp size"
-    agentloop_group = Rstar2AgentLoopWorker.create_group(cfg, component_placement).launch(
+    agentloop_group = Rstar2AgentLoopWorker.create_group(
+        cfg, component_placement
+    ).launch(
         cluster,
         name=cfg.agentloop.group_name,
         placement_strategy=agentloop_placement_strategy,
@@ -114,7 +116,8 @@ def main(cfg) -> None:
             name="HttpToolWorker",
             placement_strategy=singleton_tool_placement,
         ): ToolWorkerInfo(
-            tool_names=[tool_cls.name for tool_cls in HttpToolWorker.TOOL_SET_CLS], has_session=True
+            tool_names=[tool_cls.name for tool_cls in HttpToolWorker.TOOL_SET_CLS],
+            has_session=True,
         ),
     }
 

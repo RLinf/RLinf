@@ -128,7 +128,8 @@ def normalize(answer, pi) -> str:
 
     # checking if answer is <number>% or <number>\\% and removing %
     if isinstance(answer, str) and (
-        bool(re.match(r"^\d+(\.\d+)?%$", answer)) or bool(re.match(r"^\d+(\.\d+)?\\%$", answer))
+        bool(re.match(r"^\d+(\.\d+)?%$", answer))
+        or bool(re.match(r"^\d+(\.\d+)?\\%$", answer))
     ):
         return answer.replace("\\%", "").replace("%", "")
 
@@ -151,9 +152,9 @@ def handle_base(x) -> str:
 
 
 def handle_pi(string, pi):
-    if isinstance(string, str) and "\pi" in string:
+    if isinstance(string, str) and r"\pi" in string:
         # Find the first occurrence of "\pi"
-        idx = string.find("\pi")
+        idx = string.find(r"\pi")
 
         # Iterate over the string and find all occurrences of "\pi" with a valid previous character
         while idx != -1:
@@ -165,7 +166,7 @@ def handle_pi(string, pi):
                 string = string[:idx] + f"1*{pi}" + string[idx + 3 :]
 
             # Find the next occurrence of "\pi"
-            idx = string.find("\pi", idx + 1)
+            idx = string.find(r"\pi", idx + 1)
 
         # Evaluate the expression using eval() function
         with contextlib.suppress(Exception):
@@ -191,7 +192,9 @@ def math_equal(
     prediction = normalize(prediction, pi)
     reference = normalize(reference, pi)
 
-    if isinstance(prediction, str) and len(prediction) > 1000:  # handling weird corner-cases
+    if (
+        isinstance(prediction, str) and len(prediction) > 1000
+    ):  # handling weird corner-cases
         prediction = prediction[:1000]
 
     # 0. string comparison
@@ -206,7 +209,11 @@ def math_equal(
             prediction = is_digit(prediction)[1]
             reference = is_digit(reference)[1]
             # number questions
-            gt_result = [reference / 100, reference, reference * 100] if include_percentage else [reference]
+            gt_result = (
+                [reference / 100, reference, reference * 100]
+                if include_percentage
+                else [reference]
+            )
             for item in gt_result:
                 try:
                     if isclose(item, prediction, rel_tol=tolerance):
@@ -228,8 +235,14 @@ def math_equal(
     prediction = format_intervals(prediction)
 
     pred_str, ref_str = prediction, reference
-    if (prediction.startswith("[") and prediction.endswith("]") and not reference.startswith("(")) or (
-        prediction.startswith("(") and prediction.endswith(")") and not reference.startswith("[")
+    if (
+        prediction.startswith("[")
+        and prediction.endswith("]")
+        and not reference.startswith("(")
+    ) or (
+        prediction.startswith("(")
+        and prediction.endswith(")")
+        and not reference.startswith("[")
     ):
         pred_str = pred_str.strip("[]()")
         ref_str = ref_str.strip("[]()")
@@ -251,10 +264,8 @@ def math_equal(
         pred_parts = prediction[1:-1].split(",")
         ref_parts = reference[1:-1].split(",")
         if len(pred_parts) == len(ref_parts) and all(
-            [
-                math_equal(pred_pt, ref_pt, include_percentage, tolerance)
-                for pred_pt, ref_pt in zip(pred_parts, ref_parts, strict=True)
-            ]
+            math_equal(pred_pt, ref_pt, include_percentage, tolerance)
+            for pred_pt, ref_pt in zip(pred_parts, ref_parts, strict=True)
         ):
             return True
 
@@ -265,10 +276,10 @@ def math_equal(
         if len(pred_parts) == len(ref_parts):
             return bool(
                 all(
-                    [
-                        math_equal(pred_parts[i], ref_parts[i], include_percentage, tolerance)
-                        for i in range(len(pred_parts))
-                    ]
+                    math_equal(
+                        pred_parts[i], ref_parts[i], include_percentage, tolerance
+                    )
+                    for i in range(len(pred_parts))
                 )
             )
 
@@ -277,10 +288,8 @@ def math_equal(
         pred_parts = prediction[prediction.find("(") + 1 : -1].split(",")
         ref_parts = reference[1:-1].split(",")
         if len(pred_parts) == len(ref_parts) and all(
-            [
-                math_equal(pred_pt, ref_pt, include_percentage, tolerance)
-                for pred_pt, ref_pt in zip(pred_parts, ref_parts, strict=False)
-            ]
+            math_equal(pred_pt, ref_pt, include_percentage, tolerance)
+            for pred_pt, ref_pt in zip(pred_parts, ref_parts, strict=False)
         ):
             return True
 
@@ -290,15 +299,17 @@ def math_equal(
             pred_matrix = parse_expr(prediction)
             ref_matrix_items = reference.split()[1:-1:2]
             if len(pred_matrix) == len(ref_matrix_items) and all(
-                [
-                    math_equal(pred, ref, include_percentage, tolerance)
-                    for ref, pred in zip(ref_matrix_items, pred_matrix, strict=False)
-                ]
+                math_equal(pred, ref, include_percentage, tolerance)
+                for ref, pred in zip(ref_matrix_items, pred_matrix, strict=False)
             ):
                 return True
         except Exception:
             pass
-    elif "\begin{pmatrix}" in reference and prediction.startswith("[") and prediction.endswith("]"):
+    elif (
+        "\begin{pmatrix}" in reference
+        and prediction.startswith("[")
+        and prediction.endswith("]")
+    ):
         if isinstance(eval(prediction), list):
             try:
                 pred_matrix = eval(prediction)
@@ -307,15 +318,15 @@ def math_equal(
                     reference.lstrip("\\begin{pmatrix}")  # noqa: B005
                     .lstrip("\begin{pmatrix}")
                     .rstrip("\\end{pmatrix}")
-                    .rstrip("\end{pmatrix}")
+                    .rstrip(r"\end{pmatrix}")
                 )  # noqa: B005
                 ref_matrix_items = ref_matrix_items.split("\\")
-                ref_matrix_items = [row.split("&") if "&" in row else row for row in ref_matrix_items]
+                ref_matrix_items = [
+                    row.split("&") if "&" in row else row for row in ref_matrix_items
+                ]
                 if len(pred_matrix) == len(ref_matrix_items) and all(
-                    [
-                        math_equal(pred, ref, include_percentage, tolerance)
-                        for ref, pred in zip(ref_matrix_items, pred_matrix, strict=False)
-                    ]
+                    math_equal(pred, ref, include_percentage, tolerance)
+                    for ref, pred in zip(ref_matrix_items, pred_matrix, strict=False)
                 ):
                     return True
             except Exception:
@@ -387,7 +398,12 @@ def format_intervals(prediction):
     return prediction
 
 
-def _mp_target_wrapper(target_func: Callable, mp_queue: multiprocessing.Queue, args: tuple, kwargs: dict[str, Any]):
+def _mp_target_wrapper(
+    target_func: Callable,
+    mp_queue: multiprocessing.Queue,
+    args: tuple,
+    kwargs: dict[str, Any],
+):
     """
     Internal wrapper function executed in the child process.
     Calls the original target function and puts the result or exception into the queue.
@@ -404,7 +420,14 @@ def _mp_target_wrapper(target_func: Callable, mp_queue: multiprocessing.Queue, a
             mp_queue.put((False, e))  # Indicate failure and put exception
         except (pickle.PicklingError, TypeError):
             # Fallback if the original exception cannot be pickled
-            mp_queue.put((False, RuntimeError(f"Original exception type {type(e).__name__} not pickleable: {e}")))
+            mp_queue.put(
+                (
+                    False,
+                    RuntimeError(
+                        f"Original exception type {type(e).__name__} not pickleable: {e}"
+                    ),
+                )
+            )
 
 
 def timeout_limit(seconds: float, use_signals: bool = False):
@@ -441,7 +464,9 @@ def timeout_limit(seconds: float, use_signals: bool = False):
             def wrapper_signal(*args, **kwargs):
                 def handler(signum, frame):
                     # Update function name in error message if needed (optional but good practice)
-                    raise TimeoutError(f"Function {func.__name__} timed out after {seconds} seconds (signal)!")
+                    raise TimeoutError(
+                        f"Function {func.__name__} timed out after {seconds} seconds (signal)!"
+                    )
 
                 old_handler = signal.getsignal(signal.SIGALRM)
                 signal.signal(signal.SIGALRM, handler)
@@ -462,7 +487,9 @@ def timeout_limit(seconds: float, use_signals: bool = False):
             @wraps(func)
             def wrapper_mp(*args, **kwargs):
                 q = multiprocessing.Queue(maxsize=1)
-                process = multiprocessing.Process(target=_mp_target_wrapper, args=(func, q, args, kwargs))
+                process = multiprocessing.Process(
+                    target=_mp_target_wrapper, args=(func, q, args, kwargs)
+                )
                 process.start()
                 process.join(timeout=seconds)
 
@@ -470,12 +497,18 @@ def timeout_limit(seconds: float, use_signals: bool = False):
                     process.terminate()
                     process.join(timeout=0.5)  # Give it a moment to terminate
                     if process.is_alive():
-                        print(f"Warning: Process {process.pid} did not terminate gracefully after timeout.")
+                        print(
+                            f"Warning: Process {process.pid} did not terminate gracefully after timeout."
+                        )
                     # Update function name in error message if needed (optional but good practice)
-                    raise TimeoutError(f"Function {func.__name__} timed out after {seconds} seconds (multiprocessing)!")
+                    raise TimeoutError(
+                        f"Function {func.__name__} timed out after {seconds} seconds (multiprocessing)!"
+                    )
 
                 try:
-                    success, result_or_exc = q.get(timeout=0.1)  # Small timeout for queue read
+                    success, result_or_exc = q.get(
+                        timeout=0.1
+                    )  # Small timeout for queue read
                     if success:
                         return result_or_exc
                     else:

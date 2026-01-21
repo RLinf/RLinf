@@ -14,7 +14,7 @@
 
 import base64
 import time
-from typing import Any, Callable, Union, Optional, Dict
+from typing import Callable, Optional
 
 from rlinf.data.tool_call.tool_io_struct import ToolChannelRequest, ToolChannelResponse
 
@@ -25,11 +25,13 @@ class ToolBase:
     def __init__(self, cfg):
         self.cfg = cfg
 
-    async def execute(self, request: ToolChannelRequest, **kwargs) -> ToolChannelResponse:
+    async def execute(
+        self, request: ToolChannelRequest, **kwargs
+    ) -> ToolChannelResponse:
         """Execute the tool call."""
         raise NotImplementedError()
 
-    def tool_schema(self) -> Dict:
+    def tool_schema(self) -> dict:
         """
         A JSON Schema, giving the name, description and argument types for the tool.
         Ref: https://huggingface.co/docs/transformers/en/chat_extras#json-schemas
@@ -90,7 +92,7 @@ class CodeExecutionError(Exception):
         self.original_error = original_error
         self.code = code
         self.line_offset = line_offset
-        
+
         # Get error line number
         if hasattr(original_error, 'lineno'):
             self.lineno = original_error.lineno
@@ -102,15 +104,15 @@ class CodeExecutionError(Exception):
                 self.lineno = tb.tb_lineno
             else:
                 self.lineno = -1
-        
+
         # Adjust line number for code segment
         if self.lineno != -1:
             self.lineno += line_offset
-        
+
         # Format error message
         error_type = type(original_error).__name__
         error_msg = str(original_error)
-        
+
         if self.lineno != -1:
             # Get the problematic line
             lines = code.splitlines()
@@ -119,7 +121,7 @@ class CodeExecutionError(Exception):
                 # Create error message with line information
                 super().__init__(f"{error_type} at line {self.lineno}: {error_msg}\\n  {error_line}")
                 return
-        
+
         super().__init__(f"{error_type}: {error_msg}")
 
 class PersistentExecutor:
@@ -133,10 +135,10 @@ class PersistentExecutor:
     def split_code(self, code: str) -> tuple[str, Optional[str]]:
         """
         Intelligently split code into main body and last expression
-        
+
         Args:
             code: The source code string
-            
+
         Returns:
             tuple[str, Optional[str]]: (main code body, last expression if exists)
         """
@@ -145,14 +147,14 @@ class PersistentExecutor:
             tree = ast.parse(code)
             if not tree.body:
                 return code, None
-            
+
             # Check if the last node is a pure expression (not a call)
             last_node = tree.body[-1]
             if isinstance(last_node, ast.Expr):
                 # Get the line range of the last expression
                 last_expr_start = last_node.lineno
                 last_expr_end = last_node.end_lineno if hasattr(last_node, 'end_lineno') else last_node.lineno
-                
+
                 # Split the code
                 lines = code.splitlines()
                 main_code = '\\n'.join(lines[:last_expr_start-1])
@@ -166,7 +168,7 @@ class PersistentExecutor:
         """
         Execute code while maintaining persistent environment state.
         If the last line is an expression, its value will be printed to stdout.
-        
+
         Args:
             code: The source code string to execute
             replay_history_code: If True, suppress stdout and stderr output
@@ -174,7 +176,7 @@ class PersistentExecutor:
         try:
             # Split code intelligently
             main_code, last_expr = self.split_code(code)
-            
+
             # Set up output redirection if replay_history_code is True
             if replay_history_code:
                 stdout_capture = StringIO()
@@ -184,7 +186,7 @@ class PersistentExecutor:
             else:
                 stdout_context = redirect_stdout(sys.stdout)
                 stderr_context = redirect_stderr(sys.stderr)
-            
+
             # Execute main code body
             if main_code:
                 try:
@@ -194,7 +196,7 @@ class PersistentExecutor:
                         exec(compiled_code, self.exec_globals)
                 except Exception as e:
                     raise CodeExecutionError(e, main_code)
-            
+
             # If there's a last expression, try to evaluate and print it
             if last_expr:
                 try:
@@ -202,7 +204,7 @@ class PersistentExecutor:
                     compiled_expr = compile(last_expr, '<string>', 'eval')
                     with stdout_context, stderr_context:
                         last_value = eval(compiled_expr, self.exec_globals)
-                    
+
                     # Only print the result if not in replay mode
                     if last_value is not None and not replay_history_code:
                         print(repr(last_value), file=sys.stdout)
@@ -216,7 +218,7 @@ class PersistentExecutor:
                         # Calculate line offset for the last expression
                         line_offset = len(main_code.splitlines()) if main_code else 0
                         raise CodeExecutionError(e, last_expr, line_offset)
-                    
+
         except Exception as e:
             if replay_history_code:
                 return
@@ -236,19 +238,26 @@ code_to_execute = base64.b64decode("{}".encode()).decode()
 persistent_executor.execute_code(code_to_execute, replay_history_code={})
 """
 
+
 class PythonTool(CodeJudgeToolBase):
     name = "python_code_with_standard_io"
 
     def __init__(self, cfg):
         super().__init__(cfg=cfg)
 
-    async def execute(self, request: ToolChannelRequest, send_request_func: Callable[[str, Dict], ToolChannelResponse]):
+    async def execute(
+        self,
+        request: ToolChannelRequest,
+        send_request_func: Callable[[str, dict], ToolChannelResponse],
+    ):
         err_msg = self.validate(request)
         if err_msg:
             return err_msg
 
         # convert the code to the code exec on code-judge
-        code_to_execute = base64.b64encode(request.tool_args.get("code","").encode()).decode()
+        code_to_execute = base64.b64encode(
+            request.tool_args.get("code", "").encode()
+        ).decode()
         final_code = code_template_setup
         # TODO: add history code here
         final_code += code_template_exec.format(code_to_execute, "False")
@@ -256,13 +265,10 @@ class PythonTool(CodeJudgeToolBase):
         submission = {
             "type": "python",
             "solution": final_code,
-            "input": request.tool_args.get("input",""),
+            "input": request.tool_args.get("input", ""),
         }
 
-        data = {
-            "type": "batch",
-            "submissions": [submission]
-        }
+        data = {"type": "batch", "submissions": [submission]}
 
         # try:
         if True:
@@ -274,31 +280,31 @@ class PythonTool(CodeJudgeToolBase):
                     print(f"Tool retry time {retry_time}, exception: {e}")
                     time.sleep(1)
             else:
-                raise e
+                raise RuntimeError("Tool call failed after retries")
             assert len(results) == 1, f"{results}"
             return self._postprocess(results[0])
-        
-    def tool_schema(self) -> Dict:
+
+    def tool_schema(self) -> dict:
         return {
             "type": "function",
             "function": {
-                "name": "python_code_with_standard_io", 
-                "description": "Execute Python code with standard input and capture standard output. This function takes a Python code string and an input string, provides the input string through standard input (stdin) to the code, and captures and returns any output produced through standard output (stdout). If the executed code raises an exception, the error message will be captured and returned instead.", 
+                "name": "python_code_with_standard_io",
+                "description": "Execute Python code with standard input and capture standard output. This function takes a Python code string and an input string, provides the input string through standard input (stdin) to the code, and captures and returns any output produced through standard output (stdout). If the executed code raises an exception, the error message will be captured and returned instead.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "code": {
-                            "type": "string", 
-                            "description": "A string containing Python code to be executed. The code can read from standard input using the input() function."
-                        }, 
+                            "type": "string",
+                            "description": "A string containing Python code to be executed. The code can read from standard input using the input() function.",
+                        },
                         "input": {
-                            "type": "string", 
-                            "description": "A string that will be provided as standard input to the code when it calls input()."
-                        }
-                    }, 
+                            "type": "string",
+                            "description": "A string that will be provided as standard input to the code when it calls input().",
+                        },
+                    },
                     "required": ["code", "input"],
-                }
-            }
+                },
+            },
         }
 
     # def validate(self, request) -> Optional[ToolChannelResponse]:
@@ -311,7 +317,7 @@ class PythonTool(CodeJudgeToolBase):
     #             success=False,
     #             result=f"parameters format error, expect a json format, but get {type(tool_args)}\n"
     #         )
-    
+
     #     required_param_msg = ""
     #     for required_name in self.tool_schema()["function"]["parameters"]["required"]:
     #         if required_name not in tool_args:
@@ -327,7 +333,7 @@ class PythonTool(CodeJudgeToolBase):
     #             success=False,
     #             result=f"parameters format error, 'code' should be a string but get {type(tool_args['code'])}"
     #         )
-        
+
     #     if not isinstance(tool_args["input"], str):
     #         return ToolChannelResponse(
     #             success=False,
@@ -336,25 +342,28 @@ class PythonTool(CodeJudgeToolBase):
     def validate(self, request) -> Optional[ToolChannelResponse]:
         tool_args = request.tool_args
 
-        assert request.tool_name == self.name, f"Name mismatch, {self.name} != {request.tool_name}"
+        assert request.tool_name == self.name, (
+            f"Name mismatch, {self.name} != {request.tool_name}"
+        )
 
         if not isinstance(tool_args, dict):
             return ToolChannelResponse(
                 success=False,
-                result=f"Error when executing tool: run_tool_calls_on_server_async failed for1 tool calls after 4 attempts."
+                result="Error when executing tool: run_tool_calls_on_server_async failed for1 tool calls after 4 attempts.",
             )
 
         if "code" in tool_args and not isinstance(tool_args["code"], str):
             return ToolChannelResponse(
                 success=False,
-                result=f"Error when executing tool: run_tool_calls_on_server_async failed for1 tool calls after 4 attempts."
+                result="Error when executing tool: run_tool_calls_on_server_async failed for1 tool calls after 4 attempts.",
             )
-        
+
         if "input" in tool_args and not isinstance(tool_args["input"], str):
             return ToolChannelResponse(
                 success=False,
-                result=f"Error when executing tool: run_tool_calls_on_server_async failed for1 tool calls after 4 attempts."
+                result="Error when executing tool: run_tool_calls_on_server_async failed for1 tool calls after 4 attempts.",
             )
+
 
 class JupyterTool(CodeJudgeToolBase):
     name = "execute_jupyter_code"
@@ -362,7 +371,11 @@ class JupyterTool(CodeJudgeToolBase):
     def __init__(self, cfg):
         super().__init__(cfg=cfg)
 
-    async def execute(self, request: ToolChannelRequest, send_request_func: Callable[[str, Dict], ToolChannelResponse]):
+    async def execute(
+        self,
+        request: ToolChannelRequest,
+        send_request_func: Callable[[str, dict], ToolChannelResponse],
+    ):
         err_msg = self.validate(request)
         if err_msg:
             return err_msg
@@ -378,69 +391,71 @@ class JupyterTool(CodeJudgeToolBase):
             "solution": final_code,
         }
 
-        data = {
-            "type": "batch",
-            "submissions": [submission]
-        }
+        data = {"type": "batch", "submissions": [submission]}
 
         try:
             results = (await send_request_func(self.url, data))["results"]
             assert len(results) == 1, f"{results}"
             return self._postprocess(results[0])
         except Exception as e:
-            return ToolChannelResponse(success=False, result=f"Error: send request failed: {str(e)}")
+            return ToolChannelResponse(
+                success=False, result=f"Error: send request failed: {str(e)}"
+            )
 
-    def tool_schema(self) -> Dict:
+    def tool_schema(self) -> dict:
         return {
             "type": "function",
             "function": {
                 "name": self.name,
                 "description": "Execute python code in a Jupyter notebook cell and return result.",
-                "parameters":{
+                "parameters": {
                     "type": "object",
                     "properties": {
                         "code": {
                             "type": "string",
-                            "description":  "The python code to execute in a single cell."
+                            "description": "The python code to execute in a single cell.",
                         }
                     },
                     "required": ["code"],
-                }
-            }
+                },
+            },
         }
 
     def validate(self, request) -> Optional[ToolChannelResponse]:
         tool_args = request.tool_args
 
-        assert request.tool_name == self.name, f"Name mismatch, {self.name} != {request.tool_name}"
+        assert request.tool_name == self.name, (
+            f"Name mismatch, {self.name} != {request.tool_name}"
+        )
 
         if not isinstance(tool_args, dict):
             return ToolChannelResponse(
                 success=False,
-                result=f"parameters format error, expect a json format, but get {type(tool_args)}\n"
+                result=f"parameters format error, expect a json format, but get {type(tool_args)}\n",
             )
-    
+
         required_param_msg = ""
         for required_name in self.tool_schema()["function"]["parameters"]["required"]:
             if required_name not in tool_args:
                 required_param_msg += f"parameters format error, '{required_name}' is a required parameter but not found\n"
         if required_param_msg:
-            return ToolChannelResponse(
-                success=False,
-                result=required_param_msg
-            )
+            return ToolChannelResponse(success=False, result=required_param_msg)
 
         if not isinstance(tool_args["code"], str):
             return ToolChannelResponse(
                 success=False,
-                result=f"parameters format error, 'code' should be a string but get {type(tool_args['code'])}"
+                result=f"parameters format error, 'code' should be a string but get {type(tool_args['code'])}",
             )
 
 
 class LeanTool(CodeJudgeToolBase):
     name = "execute_lean_code"
 
-    async def execute(self, request: ToolChannelRequest, send_request_func: Callable[[str, Dict], ToolChannelResponse]):
+    async def execute(
+        self,
+        request: ToolChannelRequest,
+        send_request_func: Callable[[str, dict], ToolChannelResponse],
+    ):
         err_msg = self.validate(request)
         if err_msg:
             return err_msg
@@ -452,61 +467,58 @@ class LeanTool(CodeJudgeToolBase):
             "solution": code_to_execute,
         }
 
-        data = {
-            "type": "batch",
-            "submissions": [submission]
-        }
+        data = {"type": "batch", "submissions": [submission]}
 
         try:
             results = (await send_request_func(self.url, data))["results"]
             assert len(results) == 1, f"{results}"
             return self._postprocess(results[0])
         except Exception as e:
-            return ToolChannelResponse(success=False, result=f"Error: send request failed: {str(e)}")
+            return ToolChannelResponse(
+                success=False, result=f"Error: send request failed: {str(e)}"
+            )
 
-    def tool_schema(self) -> Dict:
+    def tool_schema(self) -> dict:
         return {
             "type": "function",
             "function": {
                 "name": self.name,
                 "description": "Executes a snippet of Lean code and returns the output or errors.",
-                "parameters":{
+                "parameters": {
                     "type": "object",
                     "properties": {
                         "code": {
                             "type": "string",
-                            "description":  "The Lean code snippet to be executed."
+                            "description": "The Lean code snippet to be executed.",
                         }
                     },
                     "required": ["code"],
-                }
-            }
+                },
+            },
         }
-        
 
     def validate(self, request) -> Optional[ToolChannelResponse]:
         tool_args = request.tool_args
 
-        assert request.tool_name == self.name, f"Name mismatch, {self.name} != {request.tool_name}"
+        assert request.tool_name == self.name, (
+            f"Name mismatch, {self.name} != {request.tool_name}"
+        )
 
         if not isinstance(tool_args, dict):
             return ToolChannelResponse(
                 success=False,
-                result=f"parameters format error, expect a json format, but get {type(tool_args)}\n"
+                result=f"parameters format error, expect a json format, but get {type(tool_args)}\n",
             )
-    
+
         required_param_msg = ""
         for required_name in self.tool_schema()["function"]["parameters"]["required"]:
             if required_name not in tool_args:
                 required_param_msg += f"parameters format error, '{required_name}' is a required parameter but not found\n"
         if required_param_msg:
-            return ToolChannelResponse(
-                success=False,
-                result=required_param_msg
-            )
+            return ToolChannelResponse(success=False, result=required_param_msg)
 
         if not isinstance(tool_args["code"], str):
             return ToolChannelResponse(
                 success=False,
-                result=f"parameters format error, 'code' should be a string but get {type(tool_args['code'])}"
+                result=f"parameters format error, 'code' should be a string but get {type(tool_args['code'])}",
             )
