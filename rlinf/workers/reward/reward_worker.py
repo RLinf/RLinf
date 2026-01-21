@@ -13,6 +13,9 @@
 # limitations under the License.
 
 
+import re as _re
+
+import numpy as np
 import torch
 from omegaconf import DictConfig
 
@@ -21,8 +24,6 @@ from rlinf.data.io_struct import RolloutResult
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.placement import ModelParallelComponentPlacement
-import re as _re
-import numpy as np
 
 
 class RewardWorker(Worker):
@@ -36,12 +37,13 @@ class RewardWorker(Worker):
             * self.cfg.algorithm.get("group_size", 1)
             // self._world_size
         )
-        self.do_down_sampling = (
-            hasattr(self.cfg.algorithm, "down_sampling")
-            and getattr(self.cfg.algorithm.down_sampling, "do_down_sampling", False)
-        )
+        self.do_down_sampling = hasattr(
+            self.cfg.algorithm, "down_sampling"
+        ) and getattr(self.cfg.algorithm.down_sampling, "do_down_sampling", False)
         if self.do_down_sampling:
-            self.down_sampling_config = getattr(self.cfg.algorithm.down_sampling, "down_sampling_config", {})
+            self.down_sampling_config = getattr(
+                self.cfg.algorithm.down_sampling, "down_sampling_config", {}
+            )
         else:
             self.down_sampling_config = None
 
@@ -121,20 +123,21 @@ class RewardWorker(Worker):
 
     def compute_batch_rewards_with_model(self, batch: dict[str, torch.Tensor]):
         raise NotImplementedError("Reward model is not implemented yet.")
-    
+
     def down_sample_batch(self, rollout_result: RolloutResult):
         if not self.do_down_sampling:
             return rollout_result
-        
+
         down_sampling_config = self.down_sampling_config
-        
+
         def _build_group_uids_by_chunks(total_num: int, group_size: int):
             return [i // max(1, group_size) for i in range(total_num)]
 
         def _reject_equal_reward(uids, rewards):
-            
             rewards_t = (
-                rewards if isinstance(rewards, torch.Tensor) else torch.tensor(rewards, dtype=torch.float32)
+                rewards
+                if isinstance(rewards, torch.Tensor)
+                else torch.tensor(rewards, dtype=torch.float32)
             )
             uids_arr = np.array(uids)
             unique_uids = np.unique(uids_arr)
@@ -149,7 +152,6 @@ class RewardWorker(Worker):
             return valid_mask
 
         def _calc_penalty_weights(response_texts):
-
             def error_ratio(text, pattern=r"<tool_response>.*?</tool_response>"):
                 matches = _re.findall(pattern, text, _re.DOTALL)
                 error_count = len([m for m in matches if "error" in m.lower()])
@@ -178,11 +180,12 @@ class RewardWorker(Worker):
                 return min((closed_cnt - 1) / num_turns, 1.0)
 
             err_w = np.array([error_ratio(t) for t in response_texts], dtype=float)
-            fmt_w = np.array([answer_tag_penalty(t) for t in response_texts], dtype=float)
+            fmt_w = np.array(
+                [answer_tag_penalty(t) for t in response_texts], dtype=float
+            )
             return err_w, fmt_w
 
         def _weighted_group_choice(uids, rewards, response_texts):
-            
             cfg = down_sampling_config
             down_sample_to_n = int(cfg.get("down_sample_to_n", -1))
             if down_sample_to_n <= 0:
@@ -198,7 +201,9 @@ class RewardWorker(Worker):
             uids_arr = np.array(uids)
             unique_uids = np.unique(uids_arr)
             rewards_t = (
-                rewards if isinstance(rewards, torch.Tensor) else torch.tensor(rewards, dtype=torch.float32)
+                rewards
+                if isinstance(rewards, torch.Tensor)
+                else torch.tensor(rewards, dtype=torch.float32)
             )
 
             valid_mask = torch.zeros(len(uids), dtype=torch.bool)
@@ -212,13 +217,20 @@ class RewardWorker(Worker):
                 grp_rewards = rewards_t[idxs]
                 grp_err_w = err_w[idxs]
                 grp_fmt_w = fmt_w[idxs]
-                penalty = (
-                    (grp_err_w if roc_error_ratio else 0)
-                    + (grp_fmt_w if roc_answer_format else 0)
+                penalty = (grp_err_w if roc_error_ratio else 0) + (
+                    grp_fmt_w if roc_answer_format else 0
                 )
 
-                zero_pairs = [(i, p) for i, r, p in zip(idxs, grp_rewards, penalty, strict=False) if r <= 0]
-                non_zero_pairs = [(i, p) for i, r, p in zip(idxs, grp_rewards, penalty, strict=False) if r > 0]
+                zero_pairs = [
+                    (i, p)
+                    for i, r, p in zip(idxs, grp_rewards, penalty, strict=False)
+                    if r <= 0
+                ]
+                non_zero_pairs = [
+                    (i, p)
+                    for i, r, p in zip(idxs, grp_rewards, penalty, strict=False)
+                    if r > 0
+                ]
 
                 non_zero_pairs.sort(key=lambda x: x[1])
 
@@ -232,9 +244,16 @@ class RewardWorker(Worker):
                     nz_quota = min(min_non_zero, len(non_zero_pairs))
                     z_quota = down_sample_to_n - nz_quota
 
-                chosen = [i for i, _ in non_zero_pairs[:nz_quota]] + [i for i, _ in zero_pairs[:z_quota]]
+                chosen = [i for i, _ in non_zero_pairs[:nz_quota]] + [
+                    i for i, _ in zero_pairs[:z_quota]
+                ]
                 if len(chosen) != down_sample_to_n:
-                    all_sorted = [i for i, _ in sorted(non_zero_pairs + zero_pairs, key=lambda x: x[1])]
+                    all_sorted = [
+                        i
+                        for i, _ in sorted(
+                            non_zero_pairs + zero_pairs, key=lambda x: x[1]
+                        )
+                    ]
                     chosen = all_sorted[:down_sample_to_n]
                 valid_mask[torch.tensor(chosen, dtype=torch.long)] = True
 
@@ -243,9 +262,10 @@ class RewardWorker(Worker):
         reject_equal = bool(down_sampling_config.get("reject_equal_reward", False))
 
         original_group_size = int(self.cfg.algorithm.group_size)
-        uids = _build_group_uids_by_chunks(rollout_result.num_sequence, original_group_size)
+        uids = _build_group_uids_by_chunks(
+            rollout_result.num_sequence, original_group_size
+        )
 
-        
         if reject_equal and rollout_result.rewards is not None:
             mask1 = _reject_equal_reward(uids, rollout_result.rewards)
         else:
@@ -277,7 +297,11 @@ class RewardWorker(Worker):
         rr.response_ids = _apply_mask_to_list(rr.response_ids, idx_mask)
         rr.is_end = _apply_mask_to_list(rr.is_end, idx_mask)
         if rr.rewards is not None:
-            rr.rewards = rr.rewards if isinstance(rr.rewards, torch.Tensor) else torch.tensor(rr.rewards)
+            rr.rewards = (
+                rr.rewards
+                if isinstance(rr.rewards, torch.Tensor)
+                else torch.tensor(rr.rewards)
+            )
             rr.rewards = _apply_mask_to_tensor(rr.rewards, idx_mask)
         if rr.prompt_texts is not None:
             rr.prompt_texts = _apply_mask_to_list(rr.prompt_texts, idx_mask)
@@ -294,8 +318,10 @@ class RewardWorker(Worker):
         if rr.prev_logprobs is not None:
             rr.prev_logprobs = _apply_mask_to_tensor(rr.prev_logprobs, idx_mask)
         if rr.recompute_prev_logprobs is not None:
-            rr.recompute_prev_logprobs = _apply_mask_to_tensor(rr.recompute_prev_logprobs, idx_mask)
-        
+            rr.recompute_prev_logprobs = _apply_mask_to_tensor(
+                rr.recompute_prev_logprobs, idx_mask
+            )
+
         _dsn = int(down_sampling_config.get("down_sample_to_n", -1))
         if _dsn > 0:
             rr.group_size = _dsn
