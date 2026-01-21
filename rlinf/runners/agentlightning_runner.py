@@ -248,8 +248,21 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                         )
                         return
 
+                time_metrics = self.timer.consume_durations()
+                time_metrics["training"] = actor_handle.consume_duration()
+                time_metrics["rollout"] = rollout_handle.consume_duration()
+                if reward_handle is not None:
+                    time_metrics["reward"] = reward_handle.consume_duration()
+                if infer_handle is not None:
+                    time_metrics["inference"] = infer_handle.consume_duration()
 
+                logging_metrics = {f"{k}_time": v for k, v in time_metrics.items()}
+                logging_metrics.update(actor_rollout_metrics)
+                logging_metrics.update(actor_training_metrics[-1])
+
+                global_pbar.set_postfix(logging_metrics, refresh=False)
                 global_pbar.update(1)
+                return
 
 
         self.sglang_http_server.server_stop()
