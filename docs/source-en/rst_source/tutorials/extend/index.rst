@@ -29,5 +29,6 @@ this section gives you the tools to plug directly into RLinf’s modular design.
    new_model_fsdp
    new_model_megatron
    data_collection
+   data_collection_realworld
    reward_model
    reward_model_realworld

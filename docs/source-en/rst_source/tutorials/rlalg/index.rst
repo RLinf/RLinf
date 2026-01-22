@@ -5,7 +5,7 @@ In this section, we provide an overview of each algorithm, including their core 
 
 Each algorithm is implemented with flexibility in mind, allowing researchers and practitioners to apply them to a variety of reinforcement learning tasks. Whether you're exploring standard benchmarks or designing custom environments, RLinf offers streamlined interfaces for training and evaluation.
 
-As of now, RLinf supports four widely-used reinforcement learning algorithms:
+As of now, RLinf supports seven widely-used reinforcement learning algorithms:
 
 - :doc:`Proximal Policy Optimization (PPO) <ppo>`
 - :doc:`Group Relative Policy Optimization (GRPO) <grpo>`

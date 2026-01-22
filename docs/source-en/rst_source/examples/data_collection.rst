@@ -1,5 +1,5 @@
-Data Collection
-===============
+Data Collection (Sim)
+======================
 
 This document provides a guide to using the Data Collection feature in RLinf.
 The ``DataCollectorWrapper`` enables transparent collection of environment interaction data
