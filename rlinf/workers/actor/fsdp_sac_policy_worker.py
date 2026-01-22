@@ -607,7 +607,5 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
 
     def save_checkpoint(self, save_base_path, step):
         super().save_checkpoint(save_base_path, step)
-        buffer_path = os.path.join(
-            self.cfg.runner.logger.log_path, f"replay_buffer_{self._rank}.pkl"
-        )
+        buffer_path = os.path.join(save_base_path, f"replay_buffer_{self._rank}.pkl")
         self.replay_buffer.save(buffer_path)
