@@ -957,16 +957,42 @@ class ImageRewardWorker(Worker):
             output_channel: Channel to send computed rewards to
         """
         logger.info("Starting ImageRewardWorker inference loop")
+        target_key = "0_train"
 
         while True:
             try:
-                data = input_channel.get(timeout=1.0)
+                data = input_channel.get(key=target_key)
                 if data is None:
                     logger.info("Received stop signal, ending inference loop")
                     break
 
+                dones = data.get("dones")
+                final_obs = data.get("final_obs")
+
+                is_done_flag = False
+                if dones is not None:
+                    if isinstance(dones, torch.Tensor):
+                        is_done_flag = dones.any().item()
+                    else:
+                        is_done_flag = bool(dones)
+
+                # If Done=True is displayed but there's no final_obs, it means this is the starting frame after a Reset.
+                # In this case, Reward should not be calculated, as it would trigger an Invariant check in RolloutWorker.
+                if is_done_flag and final_obs is None:
+                    output_data = data.copy()  # copy.deepcopy(data)
+                    output_data["rewards"] = None
+                    output_channel.put(output_data, key=target_key, async_op=True)
+                    continue
+
                 images = data.get("images")
                 if images is None:
+                    images = data.get("main_images")
+                if images is None and "obs" in data and isinstance(data["obs"], dict):
+                    images = data["obs"].get("main_images")
+
+                if images is None:
+                    logger.warning("Received data but no images found")
+                    output_channel.put(data, key=target_key, async_op=True)
                     continue
 
                 images = self._preprocess_images(images)
@@ -976,11 +1002,17 @@ class ImageRewardWorker(Worker):
                 with torch.no_grad():
                     rewards = self.model.compute_reward({"images": images})
 
-                output_data = {"rewards": rewards.cpu()}
-                if "episode_ids" in data:
-                    output_data["episode_ids"] = data["episode_ids"]
+                # # print reward model output
+                # r_mean = rewards.mean().item()
+                # print(f"Model Inference | Reward Val: {r_mean:.4f}", flush=True)
 
-                output_channel.put(output_data, async_op=True)
+                output_data = data.copy()  # copy.deepcopy(data)
+                cpu_rewards = rewards.cpu()
+                if cpu_rewards.dim() == 1:
+                    cpu_rewards = cpu_rewards.unsqueeze(1)
+                output_data["rewards"] = cpu_rewards
+
+                output_channel.put(output_data, key=target_key, async_op=True)
 
             except Exception as e:
                 logger.warning(f"Error in inference loop: {e}")

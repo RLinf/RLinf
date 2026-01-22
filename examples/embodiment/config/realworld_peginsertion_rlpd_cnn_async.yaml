@@ -24,6 +24,9 @@ cluster:
     rollout:
       node_group: "4090"
       placement: 0 # Local GPU rank in the 4090 node group (n for the n+1 th GPU)
+    reward:
+      node_group: "4090"
+      placement: 0  # Local GPU rank in the 4090 node group (n for the n+1 th GPU)
   node_groups:
     - label: "4090" # GPU node group
       node_ranks: 0 # The ranks of the nodes to be included in this group， change this if your training node is not rank 0
@@ -160,6 +163,43 @@ actor:
 
 reward:
   use_reward_model: False
+  group_name: "RewardGroup"
+  
+  # Reward mode:
+  # - "per_step": Compute reward for every frame (default, prone to reward hacking)
+  # - "terminal": Only compute reward at episode end (last frame), prevents reward hacking
+  reward_mode: "per_step"
+  
+  # Asymmetric reward: success gets big reward, fail gets small/no penalty
+  # This prevents policy collapse when most episodes fail
+  success_reward: 1.0   # Reward for success (prob > threshold)
+  fail_reward: 0      # Reward for fail (prob < threshold), use 0 or small negative
+  reward_threshold: 0.5 # Probability threshold for success/fail classification
+  
+  # How to combine learned rewards with environment rewards:
+  # - "replace": Use only learned rewards (default)
+  # - "add": Add learned rewards to env rewards (reward = env + weight * learned)
+  # - "weighted": Weighted sum (reward = env_weight * env + weight * learned)
+  combine_mode: "replace"
+  reward_weight: 10.0  # Bonus reward for terminal success
+  env_reward_weight: 0.0  # Keep env dense reward for learning basic skills
+  
+  model:
+    model_type: "resnet_reward"
+    arch: "resnet18"
+    hidden_dim: 256
+    dropout: 0.0
+    image_size: [3, 128, 128]
+    normalize: true 
+    precision: "bf16"
+    
+    # Path to trained reward model checkpoint
+    checkpoint_path: "logs/reward_model_realworld/checkpoints/best_model"
+    
+    # Debug image save directory (for visualizing ResNet classification results)
+    # Set to a path to enable debug image saving, leave empty to disable
+    # debug_save_dir: "${runner.logger.log_path}/training_data_debug"
+    debug_save_dir: null
 
 critic:
   use_critic_model: False
