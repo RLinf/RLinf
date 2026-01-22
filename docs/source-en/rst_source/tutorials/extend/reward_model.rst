@@ -77,7 +77,7 @@ Training a Reward Model
 1. **Collect Data**
 
    You can directly use the ``maniskill_ppo_mlp_collect.yaml`` config, which has
-   data collection integrated (see :doc:`data_collection` for details):
+   data collection integrated:
 
    .. code-block:: bash
 

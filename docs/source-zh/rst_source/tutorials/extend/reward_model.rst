@@ -76,8 +76,7 @@ RLinf 支持基于图像的奖励模型：
 
 1. **采集数据**
 
-   可直接使用 ``maniskill_ppo_mlp_collect.yaml`` 配置，该配置已集成数据采集功能
-   （详见 :doc:`data_collection`）：
+   可直接使用 ``maniskill_ppo_mlp_collect.yaml`` 配置，该配置已集成数据采集功能：
 
    .. code-block:: bash
 
