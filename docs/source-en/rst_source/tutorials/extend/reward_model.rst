@@ -1,5 +1,5 @@
-Reward Model Integration
-========================
+Reward Model Integration (Sim)
+====================================
 
 This guide explains how to integrate a learned reward model into RLinf for embodied RL training.
 The reward model can replace or augment environment rewards, enabling learning from visual observations.

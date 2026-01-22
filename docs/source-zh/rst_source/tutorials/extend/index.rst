@@ -29,3 +29,4 @@ RLinf 支持多种模型训练后端，每种后端都有自己的初始化逻�
    new_model_megatron
    data_collection
    reward_model
+   reward_model_realworld
