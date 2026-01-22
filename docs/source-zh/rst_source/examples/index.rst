@@ -178,7 +178,7 @@
           <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/mlp.html" target="_blank" style="text-decoration: underline; color: blue;">
             <b>基于MLP的强化学习</b>
           </a><br>
-          支持多种环境下MLP模型的PPO/SAC/GRPO训练
+          使用 PPO/SAC/GRPO 训练 PPO 策略
         </p>
       </div>
     </div>
@@ -306,7 +306,7 @@ RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训
    :hidden:
    :maxdepth: 2
 
-      maniskill
+   maniskill
    libero
    behavior
    metaworld

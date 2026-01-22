@@ -178,9 +178,9 @@ as well as reinforcement learning training examples on real robots.
           data-target="animated-image.originalImage">
       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
         <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/mlp.html" target="_blank" style="text-decoration: underline; color: blue;">
-          <b>RL with MLP Policies</b>
+          <b>MLP Policy Training</b>
         </a><br>
-        Supports PPO / SAC / GRPO training with MLP policies across multiple environments
+        Train an MLP Policy with PPO/SAC/GRPO
       </p>
     </div>
   </div>
