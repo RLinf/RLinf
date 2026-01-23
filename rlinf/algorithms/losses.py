@@ -95,10 +95,10 @@ def compute_ppo_actor_loss(
     )  # default max_episode_steps is None
 
     clip_mask = policy_loss1.detach() < policy_loss2.detach()
-    dual_clip_mask.logical_and_(loss_mask)
+    dual_clip_mask = (dual_clip_mask * loss_mask).bool()
 
-    clip_fraction = clip_mask.logical_and_(loss_mask).count_nonzero() / loss_mask_count
-    approx_kl = -approx_kl.sum() / loss_mask_count
+    clip_fraction = (clip_mask * loss_mask).sum() / float(loss_mask_count)
+    approx_kl = -torch.sum(approx_kl) / float(loss_mask_count)
 
     dual_cliped_ratio = torch.where(dual_clip_mask, ratio, 0)
 
