@@ -191,15 +191,8 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                         output_channel=self.rollout_channel,
                     )
 
-                    if self.reward is not None:
-                        reward_handle: Handle = self.reward.compute_rewards(
-                            input_channel=self.rollout_channel,
-                            output_channel=self.reward_channel,
-                        )
-                        inference_input_channel = self.reward_channel
-                    else:
-                        reward_handle = None
-                        inference_input_channel = self.rollout_channel
+                    reward_handle = None
+                    inference_input_channel = self.rollout_channel
 
                     if self.recompute_logprobs:
                         infer_handle: Handle = self.inference.run_inference(
@@ -262,7 +255,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
 
                 global_pbar.set_postfix(logging_metrics, refresh=False)
                 global_pbar.update(1)
-                return
+            
 
 
         self.sglang_http_server.server_stop()
