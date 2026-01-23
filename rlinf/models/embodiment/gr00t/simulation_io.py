@@ -107,11 +107,12 @@ def convert_to_maniskill_action(
 
     return action_chunk["action.left_arm"][:, :chunk_size]
 
+
 def convert_to_isaaclab_stack_cube_action(
     action_chunk: dict[str, np.array], chunk_size: int = 1
 ) -> np.ndarray:
     """Convert GR00T action chunk to Isaaclab Stack Cube format.
-    The main difference of Libero and Isaaclab Stack Cube is gripper action in 
+    The main difference of Libero and Isaaclab Stack Cube is gripper action in
     Libero is 0 and 1, but in Isaaclab Stack Cube is -1 and +1.
 
     Args:
