@@ -147,18 +147,10 @@ class SGLangHTTPServerWorker(Worker):
                 + "\nassistant:"
             )
 
-            # 2. Tokenize prompt to get prompt_token_ids (for AgentLightning)
-            # Format: list of lists (batch format) - like _validate_weight_at_first
-            tokenizer_output = self._tokenizer([prompt_text])
-            prompt_token_ids = tokenizer_output.input_ids
-            # Ensure it's a list of lists (batch format)
+            # 2. Tokenize prompt for AgentLightning-compatible response
+            prompt_token_ids = self._tokenizer(prompt_text).input_ids
             if hasattr(prompt_token_ids, 'tolist'):
                 prompt_token_ids = prompt_token_ids.tolist()
-            elif isinstance(prompt_token_ids, list) and len(prompt_token_ids) > 0 and isinstance(prompt_token_ids[0], int):
-                # Single list, wrap it
-                prompt_token_ids = [prompt_token_ids]
-            # Extract single prompt_token_ids (we're processing one request)
-            prompt_token_ids_single = prompt_token_ids[0]
 
             # 3. Forward request to rollout worker
             sglang_instance_id = random.randint(0, self._rollout_instance_num - 1)
@@ -182,23 +174,37 @@ class SGLangHTTPServerWorker(Worker):
             # SGLang engine will tokenize on GPU, avoiding CPU tensor issues
             generate_result = (
                 await self.rollout_worker.execute_on(sglang_instance_id)
-                .async_generate(prompt=prompt_text, sampling_params=sampling_params)
+                .async_generate(prompt=prompt_text, sampling_params=sampling_params, return_logprob=True)
                 .async_wait()
             )
             generate_result = generate_result[0][0]
 
-            # 4. Extract result from SGLang
-            # SGLang returns: {"text": str, "output_ids": list[int], "meta_info": {...}}
             response_text = generate_result.get("text", "")
             response_ids = generate_result.get("output_ids", [])
             meta_info = generate_result.get("meta_info", {})
             finish_reason_info = meta_info.get("finish_reason", {})
             finish_reason = finish_reason_info.get("type", "stop")
+            
+            # Extract logprobs if available
+            logprobs = None
+            if "output_token_logprobs" in meta_info:
+                logprobs = [item[0] for item in meta_info["output_token_logprobs"]]
 
-            # 5. Build OpenAI-format response with AgentLightning-compatible fields
-            # AgentLightning expects:
-            # - prompt_token_ids: List[int] (single list)
-            # - response_token_ids: List[List[int]] (list of lists, will take [0])
+            # Build logprobs in standard OpenAI API JSON format
+            # OpenAI client SDK will automatically parse this into Pydantic objects
+            choice_logprobs = None
+            if logprobs is not None:
+                choice_logprobs = {
+                    "content": [
+                        {
+                            "token": "",
+                            "logprob": logprob_value,
+                            "top_logprobs": []
+                        }
+                        for logprob_value in logprobs
+                    ]
+                }
+
             response = {
                 "id": f"chatcmpl-{request_id}",
                 "object": "chat.completion",
@@ -209,35 +215,20 @@ class SGLangHTTPServerWorker(Worker):
                         "index": 0,
                         "message": {"role": "assistant", "content": response_text},
                         "finish_reason": finish_reason,
+                        "logprobs": choice_logprobs,
                     }
                 ],
                 "usage": {
-                    "prompt_tokens": len(prompt_token_ids_single),
+                    "prompt_tokens": len(prompt_token_ids),
                     "completion_tokens": len(response_ids),
-                    "total_tokens": len(prompt_token_ids_single) + len(response_ids),
+                    "total_tokens": len(prompt_token_ids) + len(response_ids),
                 },
                 # AgentLightning-compatible fields
-                "prompt_token_ids": prompt_token_ids_single,  # List[int]
+                "prompt_token_ids": prompt_token_ids,  # List[int]
                 "response_token_ids": [response_ids],  # List[List[int]], AgentLightning will take [0]
             }
 
             return response
-
-        except Exception as e:
-            import traceback
-            error_detail = traceback.format_exc()
-            # 添加详细的错误日志
-            self.log_error(f"Error in chat completion (request_id={request_id}): {error_detail}")
-            return JSONResponse(
-                status_code=500,
-                content={
-                    "error": {
-                        "message": f"Generation failed: {str(e)}",
-                        "type": type(e).__name__,
-                        "detail": error_detail  # 添加详细错误信息到响应中
-                    }
-                },
-            )
 
     async def _handle_health(self):
         """Health check endpoint."""
