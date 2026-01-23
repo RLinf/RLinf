@@ -73,7 +73,7 @@ class SGLangHTTPServerWorker(Worker):
         from transformers import AutoTokenizer
         model_path = self._cfg.rollout.model.model_path
         self._tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-
+        self._return_logprobs = self._cfg.rollout.return_logprobs
         # Setup FastAPI routes
         self._setup_routes()
         self._server_task = None
@@ -174,7 +174,7 @@ class SGLangHTTPServerWorker(Worker):
             # SGLang engine will tokenize on GPU, avoiding CPU tensor issues
             generate_result = (
                 await self.rollout_worker.execute_on(sglang_instance_id)
-                .async_generate(prompt=prompt_text, sampling_params=sampling_params, return_logprob=True)
+                .async_generate(prompt=prompt_text, sampling_params=sampling_params, return_logprob=self._return_logprobs)
                 .async_wait()
             )
             generate_result = generate_result[0][0]
@@ -187,7 +187,7 @@ class SGLangHTTPServerWorker(Worker):
             
             # Extract logprobs if available
             logprobs = None
-            if "output_token_logprobs" in meta_info:
+            if _return_logprobs:
                 logprobs = [item[0] for item in meta_info["output_token_logprobs"]]
 
             # Build logprobs in standard OpenAI API JSON format
