@@ -267,6 +267,7 @@ class HabitatEnv(gym.Env):
         )
         obs["main_images"] = rgb_image_tensor
         obs["task_descriptions"] = task_descs
+        obs["episode_ids"] = self.env.get_current_episode_ids()
 
         if "depth" in image_tensor:
             depth_image_tensor = torch.stack(

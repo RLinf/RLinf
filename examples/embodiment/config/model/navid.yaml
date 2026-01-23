@@ -7,7 +7,7 @@ precision: "bf16"
 value_type: action_level
 
 action_dim: 1
-num_action_chunks: 8
+num_action_chunks: 1
 use_proprio: False
 unnorm_key: libero_10_no_noops
 center_crop: True
