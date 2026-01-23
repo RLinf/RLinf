@@ -12,13 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Override of Ray's NPUAcceleratorManager
-# https://github.com/ray-project/ray/blob/161849364a784442cc659fb9780f1a6adee85fce/python/ray/_private/accelerators/npu.py
-
 import os
 from typing import TYPE_CHECKING, Optional
-
-from ray._private.accelerators.npu import NPUAcceleratorManager
 
 from .accelerator import AcceleratorManager, AcceleratorType
 
@@ -26,24 +21,62 @@ if TYPE_CHECKING:
     from ...collective import CollectiveGroupOptions
 
 
-@AcceleratorManager.register_manager(AcceleratorType.NPU)
-class AscendNPUManager(AcceleratorManager):
-    """Utility Class for Ascend NPU."""
+@AcceleratorManager.register_manager(AcceleratorType.MUSA_GPU)
+class MUSAGPUManager(AcceleratorManager):
+    """Utility Class for MUSA GPU."""
 
     @staticmethod
     def get_num_devices():
-        """Get the number of Ascend NPU devices on the node."""
-        return NPUAcceleratorManager.get_current_node_num_accelerators()
+        """Get the number of MUSA GPU devices on the node."""
+        initialized = False
+        try:
+            import pymtml
+
+            pymtml.mtmlLibraryInit()
+            initialized = True
+            device_count = pymtml.mtmlLibraryCountDevice()
+            pymtml.mtmlLibraryShutDown()
+            return device_count
+        except Exception:
+            return 0
+        finally:
+            if initialized:
+                try:
+                    pymtml.mtmlLibraryShutDown()
+                except Exception:
+                    # Ignore shutdown errors to avoid masking earlier exceptions.
+                    pass
 
     @staticmethod
     def get_accelerator_type():
         """Get the type of the accelerator."""
-        return AcceleratorType.NPU
+        return AcceleratorType.MUSA_GPU
 
     @staticmethod
     def get_accelerator_model():
-        """Get the model of the Ascend NPU."""
-        return NPUAcceleratorManager.get_current_node_accelerator_type()
+        """Get the model of the MUSA GPU."""
+        initialized = False
+        try:
+            import pymtml
+
+            pymtml.mtmlLibraryInit()
+            initialized = True
+            device_count = pymtml.mtmlLibraryCountDevice()
+            if device_count > 0:
+                device = pymtml.mtmlLibraryInitDeviceByIndex(0)
+                model = pymtml.mtmlDeviceGetName(device)
+                return model
+            else:
+                return "UNKNOWN"
+        except Exception:
+            return "UNKNOWN"
+        finally:
+            if initialized:
+                try:
+                    pymtml.mtmlLibraryShutDown()
+                except Exception:
+                    # Ignore shutdown errors to avoid masking earlier exceptions.
+                    pass
 
     @staticmethod
     def get_accelerator_env_var(visible_accelerators: list[str]) -> dict[str, str]:
@@ -58,16 +91,17 @@ class AscendNPUManager(AcceleratorManager):
         env_vars = {}
         visible_accelerators_str = ",".join(visible_accelerators)
 
-        env_vars["ASCEND_RT_VISIBLE_DEVICES"] = visible_accelerators_str
-        env_vars["RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES"] = "1"
-        # https://github.com/ray-project/ray/blob/161849364a784442cc659fb9780f1a6adee85fce/python/ray/_private/accelerators/npu.py#L91
-
+        # All the three types of GPU can be set together
+        env_vars["MUSA_VISIBLE_DEVICES"] = visible_accelerators_str
+        # Override Ray's control over GPU assignment
+        # Ray currently has no support for MUSA GPU, this is a precautionary measure.
+        env_vars["RAY_EXPERIMENTAL_NOSET_MUSA_VISIBLE_DEVICES"] = "1"
         return env_vars
 
     @staticmethod
     def get_visible_devices():
         """Get the visible device IDs."""
-        visible_devices = os.environ.get("ASCEND_RT_VISIBLE_DEVICES", None)
+        visible_devices = os.environ.get("MUSA_VISIBLE_DEVICES", None)
 
         if visible_devices is None or visible_devices == "":
             return []
@@ -84,7 +118,7 @@ class AscendNPUManager(AcceleratorManager):
     @staticmethod
     def get_ccl_backend():
         """Get the CCL backend."""
-        return "hccl"
+        return "mccl"
 
     @staticmethod
     def get_ccl_socket_ifname_env_var() -> str:
@@ -93,19 +127,19 @@ class AscendNPUManager(AcceleratorManager):
         Returns:
             str: The network socket interface name environment variable.
         """
-        return "HCCL_SOCKET_IFNAME"
+        return "MCCL_SOCKET_IFNAME"
 
     @staticmethod
     def get_torch_platform():
         """Get the PyTorch platform module."""
         import torch
 
-        return torch.npu
+        return torch.musa
 
     @staticmethod
     def get_device_type() -> str:
         """Get the device type."""
-        return "npu"
+        return "musa"
 
     @staticmethod
     def get_accel_pg_options(options: Optional["CollectiveGroupOptions"]):

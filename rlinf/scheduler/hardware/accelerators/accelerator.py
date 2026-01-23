@@ -13,9 +13,12 @@
 # limitations under the License.
 
 from enum import Enum
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from ..hardware import Hardware, HardwareConfig, HardwareInfo, HardwareResource
+
+if TYPE_CHECKING:
+    from ...collective import CollectiveGroupOptions
 
 
 class AcceleratorType(str, Enum):
@@ -26,6 +29,7 @@ class AcceleratorType(str, Enum):
     INTEL_GPU = "INTEL_GPU"
     NPU = "NPU"  # Huawei Ascend
     NO_ACCEL = "NO_ACCEL"
+    MUSA_GPU = "MUSA_GPU"
 
 
 class AcceleratorManager:
@@ -106,6 +110,18 @@ class AcceleratorManager:
     @staticmethod
     def get_device_type() -> str:
         """Get the device type."""
+        raise NotImplementedError
+
+    @staticmethod
+    def get_accel_pg_options(options: Optional["CollectiveGroupOptions"]):
+        """Get the accelerator CCL process group options.
+
+        Args:
+            options (Optional[CollectiveGroupOptions]): The options for the collective group.
+
+        Returns:
+            Optional[dist.ProcessGroup.Options]: The accelerator CCL process group options.
+        """
         raise NotImplementedError
 
 
@@ -253,4 +269,16 @@ class AcceleratorUtil:
         elif accelerator_type in AcceleratorManager.manager_register:
             manager = AcceleratorManager.manager_register[accelerator_type]
             return manager.get_device_type()
+        raise ValueError(f"Unsupported accelerator type: {accelerator_type}")
+
+    @staticmethod
+    def get_accel_pg_options(
+        accelerator_type: AcceleratorType, options: Optional["CollectiveGroupOptions"]
+    ):
+        """Get the accelerator CCL process group options based on the accelerator type."""
+        if accelerator_type == AcceleratorType.NO_ACCEL:
+            return None
+        elif accelerator_type in AcceleratorManager.manager_register:
+            manager = AcceleratorManager.manager_register[accelerator_type]
+            return manager.get_accel_pg_options(options=options)
         raise ValueError(f"Unsupported accelerator type: {accelerator_type}")

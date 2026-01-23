@@ -23,7 +23,7 @@ from tqdm import tqdm
 from rlinf.config import SupportedModel
 from rlinf.data.io_struct import ChunkStepResult, EmbodiedRolloutResult
 from rlinf.models import get_model
-from rlinf.scheduler import Channel, Cluster, Worker
+from rlinf.scheduler import Channel, Cluster, CollectiveGroupOptions, Worker
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.nested_dict_process import put_tensor_device
 from rlinf.utils.placement import HybridComponentPlacement
@@ -47,6 +47,13 @@ class MultiStepRolloutWorker(Worker):
 
         actor_world_size = self.placement.get_world_size("actor")
         self.actor_weight_src_rank = self._rank % actor_world_size
+
+        # Sync weight comm options
+        max_ctas = cfg.rollout.get("sync_weight_nccl_max_ctas", None)
+        min_ctas = cfg.rollout.get("sync_weight_nccl_min_ctas", None)
+        self._sync_weight_comm_options = CollectiveGroupOptions(
+            accel_max_ctas=max_ctas, accel_min_ctas=min_ctas
+        )
 
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
@@ -175,7 +182,10 @@ class MultiStepRolloutWorker(Worker):
     async def sync_model_from_actor(self):
         """Sync model parameters from the actor worker."""
         param_state_dict = await self.recv(
-            self.actor_group_name, src_rank=self.actor_weight_src_rank, async_op=True
+            self.actor_group_name,
+            src_rank=self.actor_weight_src_rank,
+            async_op=True,
+            options=self._sync_weight_comm_options,
         ).async_wait()
 
         self.hf_model.load_state_dict(param_state_dict)

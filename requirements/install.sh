@@ -472,7 +472,7 @@ install_calvin_env() {
     local calvin_dir
     calvin_dir=$(clone_or_reuse_repo CALVIN_PATH "$VENV_DIR/calvin" https://github.com/mees/calvin.git --recurse-submodules)
 
-    uv pip install wheel cmake==3.18.4 setuptools==57.5.0
+    uv pip install wheel cmake==3.18.4 setuptools==57.5.0 wheel==0.45.1
     # NOTE: Use a fork version of pyfasthash that fixes install on Python 3.11
     uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/pyfasthash.git --no-build-isolation
     uv pip install -e ${calvin_dir}/calvin_env/tacto
