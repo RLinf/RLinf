@@ -327,9 +327,30 @@ class RoboTwinEnv(gym.Env):
         num_envs = chunk_actions.shape[0]
         chunk_step = chunk_actions.shape[1]
 
-        raw_obs, step_reward, terminations, truncations, info_list = self.venv.step(
-            chunk_actions
-        )
+        raw_obs_list = []
+        step_rewards = []
+        terminations_list = []
+        truncations_list = []
+        info_lists = []
+
+        for i in range(chunk_step):
+            actions = chunk_actions[:, i : i + 1]  # [num_envs, 1, action_dim]
+            raw_obs, step_reward, terminations, truncations, info_list = self.venv.step(
+                actions
+            )
+
+            raw_obs_list.append(raw_obs)
+            step_rewards.append(step_reward)
+            terminations_list.append(terminations)
+            truncations_list.append(truncations)
+            info_lists.append(info_list)
+
+        raw_obs = raw_obs_list[-1]
+        step_reward = step_rewards[-1]
+        terminations = terminations_list[-1]
+        truncations = truncations_list[-1]
+        info_list = info_lists[-1]
+
         extracted_obs = self._extract_obs_image(raw_obs)
         infos = list_of_dict_to_dict_of_list(info_list)
         if isinstance(terminations, list):
@@ -359,12 +380,6 @@ class RoboTwinEnv(gym.Env):
         if truncated.any():
             truncations = torch.logical_or(truncated, truncations)
 
-        if self.video_cfg.save_video:
-            plot_infos = {
-                "terminations": terminations,
-                "task": self.cfg.task_config.task_name,
-            }
-            self.add_new_frames(raw_obs, plot_infos)
         infos = self._record_metrics(step_reward, infos)
 
         if self.ignore_terminations:
@@ -372,6 +387,26 @@ class RoboTwinEnv(gym.Env):
             if self.record_metrics:
                 if "success" in infos:
                     infos["episode"]["success_at_end"] = infos["success"].clone()
+
+        if self.video_cfg.save_video:
+            for i in range(chunk_step):
+                if i == chunk_step - 1:
+                    plot_terminations = terminations
+                else:
+                    plot_term = terminations_list[i]
+                    if isinstance(plot_term, list):
+                        plot_term = torch.as_tensor(
+                            np.array(plot_term).reshape(-1), device=self.device
+                        )
+                    elif not isinstance(plot_term, torch.Tensor):
+                        plot_term = torch.as_tensor(plot_term, device=self.device)
+                    plot_terminations = plot_term.clone()
+
+                plot_infos = {
+                    "terminations": plot_terminations,
+                    "task": self.cfg.task_config.task_name,
+                }
+                self.add_new_frames(raw_obs_list[i], plot_infos)
 
         past_dones = torch.logical_or(terminations, truncations)
         if past_dones.any() and self.auto_reset:
