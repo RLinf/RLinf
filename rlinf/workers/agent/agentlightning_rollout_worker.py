@@ -12,6 +12,7 @@ try:
     from agentlightning.adapter.triplet import TraceToTripletBase
     from agentlightning.llm_proxy import LLMProxy
     from agentlightning.store.base import LightningStore
+    
     from agentlightning.types.core import EnqueueRolloutRequest, Rollout, RolloutConfig, Task
 except ImportError as e:
     raise ImportError(
@@ -52,6 +53,8 @@ class AgentLightningRolloutWorker(Worker):
         self._total_tasks_queued = 0
         self._completed_rollout_ids: Dict[str, RolloutLegacy] = {}
         self._data_id_to_rollout_ids: Dict[str, List[str]] = {}
+        self.tokenizer = AutoTokenizer.from_pretrained(self.cfg.rollout.model.model_path)
+        
 
     def init_worker(
         self,
@@ -129,7 +132,6 @@ class AgentLightningRolloutWorker(Worker):
 
         rollouts = await self.store.enqueue_many_rollouts(enqueue_rollout_requests)
         for rollout in rollouts:
-            self.log_info(f"[Rollout] {rollout}")
             data_id = cast(Dict[str, Any], rollout.metadata)["data_id"]
             self._rollout_ids.add(rollout.rollout_id)
             self._data_id_to_rollout_ids[data_id].append(rollout.rollout_id)
@@ -170,7 +172,8 @@ class AgentLightningRolloutWorker(Worker):
             if triplet.reward is not None:
                 final_reward = triplet.reward
                 break
-
+        if final_reward is None:
+            final_reward = self.reward_fillna_value
         task = Task(
             rollout_id=rollout.rollout_id,
             input=rollout.input,
@@ -186,7 +189,6 @@ class AgentLightningRolloutWorker(Worker):
             triplets=triplets,
             metadata=rollout.metadata or {},
         )
-        self.log_info(f"[RolloutLegacy] {result_rollout}")
 
         return result_rollout
 
@@ -205,9 +207,7 @@ class AgentLightningRolloutWorker(Worker):
         return completed_data_ids
 
     async def _async_get_rollout_result_for_data_id(self, data_id: str) -> Optional[RolloutResult]:
-
         rollout_ids = self._data_id_to_rollout_ids[data_id]
-        
         rollouts = [self._completed_rollout_ids[rollout_id] for rollout_id in rollout_ids]
         
         prompt_ids_list: List[List[int]] = []
@@ -216,43 +216,69 @@ class AgentLightningRolloutWorker(Worker):
         response_lengths_list: List[int] = []
         is_end_list: List[bool] = []
         rewards_list: List[float] = []
-        
+        response_mask_list: List[List[int]] = []
+        prompt_texts_list: List[str] = []
+        response_texts_list: List[str] = []
+        rollout_logprobs_list: List[List[float]] = []
+
         for rollout_legacy in rollouts:
+
+            first_triplet = rollout_legacy.triplets[0]
+            orig_prompt_ids = first_triplet.prompt.get("token_ids", [])
+            accumulated_response_mask: List[int] = []
+            accumulated_full_sequence: List[int] = []
+            accumulated_logprobs: List[float] = []
             
             for triplet_idx, triplet in enumerate(rollout_legacy.triplets):
-            
                 prompt_token_ids = triplet.prompt.get("token_ids", [])
                 response_token_ids = triplet.response.get("token_ids", [])
+                logprobs = triplet.response.get("logprobs", [])
 
-                prompt_ids_list.append(prompt_token_ids)
-                response_ids_list.append(response_token_ids)
-                prompt_lengths_list.append(len(prompt_token_ids))
-                response_lengths_list.append(len(response_token_ids))
-                
-                is_end = (triplet_idx == len(rollout_legacy.triplets) - 1)
-                is_end_list.append(is_end)
-                
-                reward = rollout_legacy.final_reward
-                if reward is None:
-                    reward = self.reward_fillna_value
-                rewards_list.append(reward)
-        
-        if len(prompt_ids_list) == 0:
-            return None
-        
-        num_sequences = len(prompt_ids_list)
-        
+                if triplet_idx == 0:
+                    accumulated_full_sequence = prompt_token_ids + response_token_ids
+                    accumulated_response_mask += [1] * len(response_token_ids)
+                else:
+                    tool_response_ids = prompt_token_ids[len(accumulated_full_sequence):]
+                    accumulated_full_sequence.extend(tool_response_ids)
+                    accumulated_full_sequence.extend(response_token_ids)
+                    accumulated_response_mask += [0] * len(tool_response_ids)
+                    accumulated_response_mask += [1] * len(response_token_ids)
+
+                if logprobs:
+                    accumulated_logprobs += [lp.get("logprob", 0.0) for lp in logprobs]
+            
+            response_ids = accumulated_full_sequence[len(orig_prompt_ids):]
+
+            prompt_ids_list.append(orig_prompt_ids)
+            response_ids_list.append(response_ids)
+            prompt_lengths_list.append(len(orig_prompt_ids))
+            response_lengths_list.append(len(response_ids))
+            response_mask_list.append(accumulated_response_mask)
+            is_end_list.append(True)
+            
+            reward = rollout_legacy.final_reward
+            rewards_list.append(reward)
+            
+            if self.cfg.rollout.return_logprobs:
+                rollout_logprobs_list.append(accumulated_logprobs)
+
         rewards_tensor = torch.tensor(rewards_list, dtype=torch.float32)
         
+        prompt_texts_list = [self.tokenizer.decode(prompt_ids) for prompt_ids in prompt_ids_list]
+        response_texts_list = [self.tokenizer.decode(response_ids) for response_ids in response_ids_list]
         rollout_result = RolloutResult(
-            num_sequence=num_sequences,
-            group_size=len(rollouts),
+            num_sequence=len(prompt_ids_list),
+            group_size=len(prompt_ids_list),
             prompt_lengths=prompt_lengths_list,
             prompt_ids=prompt_ids_list,
             response_lengths=response_lengths_list,
             response_ids=response_ids_list,
             is_end=is_end_list,
             rewards=rewards_tensor,
+            response_mask=response_mask_list,
+            prompt_texts= prompt_texts_list,
+            response_texts= response_texts_list,
+            rollout_logprobs=rollout_logprobs_list if self.cfg.rollout.return_logprobs else None,
         )
         self.log_info(f"[RolloutResult] {rollout_result}")
         return rollout_result
