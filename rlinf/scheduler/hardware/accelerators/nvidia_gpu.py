@@ -69,8 +69,10 @@ class NvidiaGPUManager(AcceleratorManager):
         """Get the model of the NVIDIA GPU."""
         import ray._private.thirdparty.pynvml as pynvml
 
+        initialized = False
         try:
             pynvml.nvmlInit()
+            initialized = True
             handle = pynvml.nvmlDeviceGetHandleByIndex(0)
             model = pynvml.nvmlDeviceGetName(handle)
             if isinstance(model, bytes):
@@ -80,6 +82,13 @@ class NvidiaGPUManager(AcceleratorManager):
             return model
         except pynvml.NVMLError as _:
             return "UNKNOWN"
+        finally:
+            if initialized:
+                try:
+                    pynvml.nvmlShutdown()
+                except Exception:
+                    # Ignore shutdown errors to avoid masking earlier exceptions.
+                    pass
 
     @staticmethod
     def get_accelerator_env_var(visible_accelerators: list[str]) -> dict[str, str]:
