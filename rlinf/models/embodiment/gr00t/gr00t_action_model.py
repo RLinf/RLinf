@@ -606,7 +606,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
             value=0,
         )
 
-        normalized_action, result = self._get_rl_action(normalized_input)
+        normalized_action, result = self._get_rl_action(normalized_input, mode = mode)
         unnormalized_action = self._get_unnormalized_action(normalized_action)
 
         if not is_batch:
@@ -643,13 +643,15 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         """
         return self._modality_transform.unapply(action)
 
-    def _get_rl_action(self, normalized_input: dict[str, Any]) -> torch.Tensor:
+    def _get_rl_action(self, 
+                       normalized_input: dict[str, Any],
+                       mode: Literal["train", "eval"] = "train",) -> torch.Tensor:
         # We expand get_action() and replace action head inference with RL inference.
         backbone_inputs, action_inputs = self.prepare_input(normalized_input)
         # Because the behavior of backbones remains the same for training and inference, we can use `forward` for backbones.
         backbone_outputs = self.backbone(backbone_inputs)
         action_head_outputs, rlinf_outputs = self.action_head.get_rl_action(
-            backbone_outputs, action_inputs
+            backbone_outputs, action_inputs, mode=mode
         )
         actions = rlinf_outputs["actions"]
         self.validate_data(action_head_outputs, backbone_outputs, is_training=False)

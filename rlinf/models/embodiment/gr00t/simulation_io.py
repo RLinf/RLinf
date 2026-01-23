@@ -107,16 +107,48 @@ def convert_to_maniskill_action(
 
     return action_chunk["action.left_arm"][:, :chunk_size]
 
+def convert_to_isaaclab_stack_cube_action(
+    action_chunk: dict[str, np.array], chunk_size: int = 1
+) -> np.ndarray:
+    """Convert GR00T action chunk to Isaaclab Stack Cube format.
+    The main difference of Libero and Isaaclab Stack Cube is gripper action in 
+    Libero is 0 and 1, but in Isaaclab Stack Cube is -1 and +1.
+
+    Args:
+        action_chunk: Dictionary of action components from GR00T policy
+        chunk_size: Number of action steps to consider from the chunk
+
+    Returns:
+        7-dim numpy array: [dx, dy, dz, droll, dpitch, dyaw, gripper]
+    """
+    action_components = [
+        action_chunk["action.x"][:, :chunk_size],
+        action_chunk["action.y"][:, :chunk_size],
+        action_chunk["action.z"][:, :chunk_size],
+        action_chunk["action.roll"][:, :chunk_size],
+        action_chunk["action.pitch"][:, :chunk_size],
+        action_chunk["action.yaw"][:, :chunk_size],
+        action_chunk["action.gripper"][:, :chunk_size],
+    ]
+    action_array = np.concatenate(action_components, axis=-1)
+    action_array[..., -1] = np.sign(action_array[..., -1])
+    assert action_array.shape[-1] == 7, (
+        f"Expected 7-dim action, got {action_array.shape[-1]}"
+    )
+    return action_array
+
 
 # TODO: we need a unified embodiement data.
 OBS_CONVERSION = {
     "maniskill": convert_maniskill_obs_to_gr00t_format,
     "libero": convert_libero_obs_to_gr00t_format,
+    "isaaclab_stack_cube": convert_libero_obs_to_gr00t_format,
 }
 
 ACTION_CONVERSION = {
     "libero": convert_to_libero_action,
     "maniskill": convert_to_maniskill_action,
+    "isaaclab_stack_cube": convert_to_isaaclab_stack_cube_action,
 }
 
 
