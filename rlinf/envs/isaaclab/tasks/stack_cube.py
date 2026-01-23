@@ -70,7 +70,7 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
     def step(self, actions=None, auto_reset=True):
         obs, _, terminations, truncations, infos = self.env.step(actions)
 
-        step_reward = self.cfg.reward_coef * terminations # simple version of libero.
+        step_reward = self.cfg.reward_coef * terminations  # simple version of libero.
 
         if self.video_cfg.save_video:
             self.images.append(self.add_image(obs))
@@ -101,13 +101,14 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
             truncations,
             infos,
         )
-    
 
     def _wrap_obs(self, obs):
         instruction = [self.task_description] * self.num_envs
         wrist_image = obs["policy"]["wrist_cam"]
         table_image = obs["policy"]["table_cam"]
-        quat = obs["policy"]["eef_quat"][:, [1,2,3,0]] # In isaaclab, quat is wxyz not like libero
+        quat = obs["policy"]["eef_quat"][
+            :, [1, 2, 3, 0]
+        ]  # In isaaclab, quat is wxyz not like libero
         states = torch.concatenate(
             [
                 obs["policy"]["eef_pos"],
