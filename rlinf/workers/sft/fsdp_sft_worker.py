@@ -28,7 +28,6 @@ from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.utils.utils import clear_memory
 
 
 class FSDPSftWorker(FSDPModelManager, Worker):
@@ -158,7 +157,6 @@ class FSDPSftWorker(FSDPModelManager, Worker):
 
             self.lr_scheduler.step()
 
-            clear_memory()
             train_metrics = {key: np.mean(value) for key, value in metrics.items()}
             train_metrics = all_reduce_dict(
                 train_metrics, op=torch.distributed.ReduceOp.AVG
