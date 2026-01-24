@@ -260,20 +260,16 @@ class HabitatEnv(gym.Env):
             task_descs.append(inst)
 
         image_tensor = to_tensor(list_of_dict_to_dict_of_list(image_list))
+        episode_ids = self.env.get_current_episode_ids()
 
         obs = {}
-        rgb_image_tensor = torch.stack(
-            [value.clone().permute(2, 0, 1) for value in image_tensor["rgb"]]
-        )
-        obs["main_images"] = rgb_image_tensor
+        obs["main_images"] = image_tensor["rgb"].clone()  # [N_ENV, H, W, C]
         obs["task_descriptions"] = task_descs
-        obs["episode_ids"] = self.env.get_current_episode_ids()
+        obs["states"] = torch.tensor(episode_ids, dtype=torch.int64)
 
         if "depth" in image_tensor:
-            depth_image_tensor = torch.stack(
-                [value.clone().permute(2, 0, 1) for value in image_tensor["depth"]]
-            )
-            obs["depth"] = depth_image_tensor
+            depth_tensor = image_tensor["depth"].clone()
+            obs["extra_view_images"] = depth_tensor.unsqueeze(1)  # [N_ENV, 1, H, W, C]
 
         return obs
 

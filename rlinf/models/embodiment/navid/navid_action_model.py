@@ -113,11 +113,10 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
 
     def preprocess_env_obs(self, env_obs):
         out = dict(env_obs)
-        images_tensor = out["main_images"]  # [B, C, H, W]
-        batch_images_np = []
-        for i in range(images_tensor.shape[0]):
-            img_np = images_tensor[i].detach().cpu().numpy()
-            img_np = img_np.transpose(1, 2, 0)  # [C, H, W] -> [H, W, C]
+        images = out["main_images"]
+        batch_images_np: list[np.ndarray] = []
+        for i in range(int(images.shape[0])):
+            img_np = images[i].detach().cpu().numpy()
             if img_np.dtype != np.uint8:
                 img_np = np.clip(img_np, 0, 255).astype(np.uint8)
             batch_images_np.append(img_np)
@@ -137,9 +136,9 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
         device = self._get_device()
         gen_params = self._get_generation_params(**kwargs)
 
-        images = env_obs["main_images"]
-        task_descs = env_obs.get("task_descriptions", [""] * len(images))
-        episode_ids = env_obs.get("episode_ids", None)
+        task_descs = env_obs["task_descriptions"]  # [N_ENV]
+        episode_ids = env_obs["states"]  # [N_ENV]
+        images = env_obs["main_images"]  # [N_ENV, H, W, C]
         bsz = len(images)
 
         prompts, questions, convs = self._build_prompts_and_convs(
@@ -154,7 +153,9 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
 
         new_frames_tensor = self._preprocess_new_frames(images=images, device=device)
         images_for_model = self._accumulate_history_frames(
-            new_frames_tensor=new_frames_tensor, episode_ids=episode_ids, device=device
+            new_frames_tensor=new_frames_tensor,
+            episode_ids=episode_ids,
+            device=device,
         )
 
         special_tokens = self._build_special_token_tensors(
@@ -200,6 +201,10 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
         chunk_actions = self._pack_actions_to_chunks(
             batch_actions=batch_actions, bsz=bsz
         )
+        for gen_text in gen_texts:
+            print(f"gen_text: {gen_text}")
+        for batch_action in batch_actions:
+            print(f"batch_action: {batch_action}")
 
         prev_logprobs = torch.zeros(
             (bsz, self.action_dim), device=device, dtype=torch.float32
