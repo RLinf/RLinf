@@ -40,7 +40,6 @@ def load_pretrained_model(
     load_8bit=False,
     load_4bit=False,
     device_map="auto",
-    device="cuda",
 ):
     kwargs = {}
     # Let callers force single-device placement by passing device_map=None.
@@ -131,6 +130,7 @@ def load_pretrained_model(
         vision_tower = model.get_vision_tower()
         if not vision_tower.is_loaded:
             vision_tower.load_model()
+        device = next(model.parameters()).device
         vision_tower.to(device=device, dtype=torch.float16)
         image_processor = vision_tower.image_processor
         # initialize attention modules

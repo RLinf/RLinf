@@ -41,7 +41,5 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         torch_dtype=torch_dtype,
         action_dim=int(cfg.action_dim),
         num_action_chunks=int(cfg.num_action_chunks),
-        max_new_tokens=int(getattr(cfg, "max_new_tokens", 32)),
-        conversation_template=getattr(cfg, "conversation_template", "imgsp_v1"),
     )
     return model
