@@ -66,7 +66,7 @@ algorithm:
   sampling_params:
     do_sample: True
     temperature_train: 1.6
-    temperature_eval: 1.6
+    temperature_eval: 0.2
     top_k: -1
     top_p: 1.0
     repetition_penalty: 1.0
@@ -74,9 +74,7 @@ algorithm:
   # length argument for autoregressive sampling
   # max length means max amount of tokens to generate
   length_params:
-    max_new_token: null
-    max_length: 1024
-    min_length: 1
+    max_new_token: 1024
 
   filter_rewards: True
   rewards_lower_bound: 0.5
@@ -89,8 +87,8 @@ env:
   # Override the default values in env/habitat_r2r
   train:
     total_num_envs: 64  # Total number of parallel environments for training
-    max_steps_per_rollout_epoch: 512
-    max_episode_steps: 512 # max episode steps for truncation
+    max_steps_per_rollout_epoch: 128
+    max_episode_steps: 128 # max episode steps for truncation
     reset_gripper_open: False
   eval:
     total_num_envs: 3
@@ -99,10 +97,6 @@ env:
     max_episode_steps: 128
     max_steps_per_rollout_epoch: 128
     group_size: 1
-    use_fixed_reset_state_ids: True
-    use_ordered_reset_state_ids: True
-    reset_gripper_open: False
-    is_eval: True
     video_cfg:
       fps: 5
       save_video: True
@@ -129,8 +123,6 @@ actor:
   # Override the default values in model/navid
   model:
     model_path: "/data/RLinf/VLN-CE/models/Navid_weight/navid-7b-full-224-video-fps-1-grid-2-r2r-rxr-training-split"
-    model_type: "navid"
-    max_prompt_length: 128
 
   optim:
     lr: 2.0e-5
