@@ -569,7 +569,7 @@ class FrankaSimEnv(gym.Env):
         raw_reward = torch.tensor(rew_list, device=self.device, dtype=torch.float32)
         step_reward = self._calc_step_reward(raw_reward)
 
-        reward_scale = float(_cfg_get(self.cfg, "reward_scale", 1e5))
+        reward_scale = float(_cfg_get(self.cfg, "reward_scale", 1))
         step_reward = step_reward * reward_scale
 
         terminations = torch.tensor(term_list, device=self.device, dtype=torch.bool)

@@ -79,10 +79,13 @@ The core algorithm components include:
    - value function clipping;
    - entropy regularization.
 
-2. **GRPO (Group Relative Policy Optimization)**
+2. **SAC (Soft Actor-Critic)**
 
-   - for each state/prompt, the policy samples *G* independent actions;
-   - compute advantages by subtracting the group mean reward.
+   - Learning Q-values by Bellman backups and entropy regularization.
+
+   - Learning policy to maximize entropy-regularized Q.
+
+   - Learning temperature parameter for exploration-exploitation trade-off.
 
 Dependency Installation
 -------------------------
@@ -181,11 +184,12 @@ After selecting a configuration, start training in root directory:
 
    bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
 
-Currently, only PPO training with an MLP policy is supported in the Franka-Sim environment:
+Supports training an MLP policy using PPO or training a CNN policy using SAC in the Franka-Sim environment:
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
+   bash examples/embodiment/run_async.sh frankasim_sac_cnn
 
 Visualization and Results
 -------------------------
