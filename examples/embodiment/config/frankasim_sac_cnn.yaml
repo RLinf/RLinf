@@ -15,7 +15,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    env,actor,rollout: 0-0
+    env,actor,rollout: 2-2
 
 
 runner:
@@ -35,7 +35,7 @@ runner:
   rollout_sync_interval: 30
 
 algorithm:
-  update_epoch: 4 #可能没对齐
+  update_epoch: 4 
   group_size: 1
   agg_q: min # or mean
   actor_agg_q: mean

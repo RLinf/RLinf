@@ -160,7 +160,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         if self.cfg.algorithm.get("auto_entropy_tuning", False):
             target_entropy = self.cfg.algorithm.get(
                 "target_entropy",
-                -self.cfg.actor.model.action_dim / 2,  # Heuristic: -|A|
+                -self.cfg.actor.model.action_dim / 2,  # Heuristic: -|A|/2
             )
             self.target_entropy = target_entropy
 
@@ -226,7 +226,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
 
     @property
     def alpha(self):
-        return self.compute_alpha().item()
+        return self.compute_alpha()
 
     def setup_sac_components(self):
         """Initialize SAC-specific components"""

@@ -207,10 +207,7 @@ class FrankaSimEnv(gym.Env):
 
         self.task_prompt = str(_cfg_get(cfg, "task_prompt", "Pick up the cube."))
 
-        if torch.cuda.is_available():
-            self._device = torch.device("cuda")
-        else:
-            self._device = torch.device("cpu")
+        self._device = torch.device("cpu")
 
         self._configure_mujoco()
 

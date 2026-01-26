@@ -14,8 +14,8 @@ group_size: 1
 
 auto_reset: True
 ignore_terminations: False
-max_steps_per_rollout_epoch: 256
-max_episode_steps: 200
+max_steps_per_rollout_epoch: 100
+max_episode_steps: 100
 
 video_cfg:
   save_video: True
