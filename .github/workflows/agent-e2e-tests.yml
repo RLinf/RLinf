@@ -234,6 +234,58 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  rstar2-qwen-grpo-test:
+    runs-on: reason
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create reason environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
+          bash requirements/install.sh reason
+
+      - name: Install dependencies
+        run: |
+          source .venv/bin/activate
+          apt-get update -y && apt-get install redis -y
+          git clone git@github.com:0xWJ/code-judge.git code-judge
+          uv pip install -r code-judge/requirements.txt
+          uv pip install -e code-judge
+          uv pip install math_verify
+          redis-server --daemonize yes --protected-mode no --bind 0.0.0.0
+          tmux new-session -d -s server \
+          'cd code-judge && \
+              MAX_EXECUTION_TIME=4 \
+              REDIS_URI="redis://$MASTER_ADDR:6379" \
+              RUN_WORKERS=0 \
+              uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 16 \
+              2>&1 | tee server.log' 
+          tmux new-session -d -s worker \
+          'cd code-judge && \
+              MAX_EXECUTION_TIME=4 \
+              REDIS_URI="redis://$MASTER_ADDR:6379" \
+              MAX_WORKERS=64 \
+              python run_workers.py \
+              2>&1 | tee worker.log'
+
+      - name: SGLang Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/agent/run_tool.sh rstar2-qwen2.5-1.5b-megatron
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   qwen-vl-grpo-test:
     runs-on: reason
     steps:
