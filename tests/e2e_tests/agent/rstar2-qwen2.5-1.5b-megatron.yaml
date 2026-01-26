@@ -10,10 +10,6 @@ cluster:
   num_nodes: 1
   component_placement:
     actor,rollout,reward: all
-    # rollout: 0-3
-    # inference: 4-5
-    # actor: 6-7
-    # reward: 0-3
 
 runner:
   task_type: reasoning
@@ -23,19 +19,19 @@ runner:
     experiment_name: ${runner.experiment_name}
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 1000
-  max_steps: -1
+  max_epochs: 1
+  max_steps: 3
 
   val_check_interval: 1
-  save_interval: 10
+  save_interval: -1
 
   seq_length: 10240
 
   enable_dynamic_batch_size: True
-  max_tokens_per_mbs: 16384
+  max_tokens_per_mbs: 10240
 
-  resume_dir: auto
-  experiment_name: rstar2-1.5b
+  resume_dir: null
+  experiment_name: rstar2-grpo-1.5b
   output_dir: ../results
 
 algorithm:
@@ -82,9 +78,9 @@ algorithm:
     repetition_penalty: 1.0
     max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
     min_new_tokens: 1
-  
+
   down_sampling:
-    do_down_sampling: true
+    do_down_sampling: True
     down_sampling_config:
       reject_equal_reward: true
       roc_error_ratio: true
@@ -92,7 +88,7 @@ algorithm:
       min_zero_reward_trace_num: 2
       min_non_zero_reward_trace_num: 2
       down_sample_to_n: 16
-  
+
 inference:
   model_type: ${rollout.model.model_type}
   group_name: "InferenceGroup"
@@ -119,9 +115,9 @@ rollout:
   gpu_memory_utilization: 0.5
 
   model:
-    model_path: /path/to/model/Qwen2.5-1.5B-Instruct
+    model_path: /workspace/dataset/Qwen2.5-1.5B-Instruct
     model_type: qwen2.5
-    precision: ${actor.model.precision}              # precision for rollout model, support [fp16, bf16, fp32]
+    precision: ${actor.model.precision}   # precision for rollout model, support [fp16, bf16, fp32]
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
@@ -132,7 +128,7 @@ rollout:
   rollout_backend: sglang     # here choose which backend to rollout,support [sglang, vllm] 
 
   custom_chat_template: "\n{%- if tools %}\n    {{- '<|im_start|>system\\n' }}\n    {%- if messages[0]['role'] == 'system' %}\n        {{- messages[0]['content'] }}\n    {%- else %}\n        {{- 'A conversation between User and Assistant. The User asks a question, and the Assistant solves it. The Assistant first thinks about the reasoning process in the mind and then provides the User with the answer. The reasoning process is enclosed within <reason> </reason> and answer is enclosed within <answer> </answer> tags, respectively, i.e., <reason> reasoning process here </reason> <answer> answer here </answer>.' }}\n    {%- endif %}\n    {{- \"\\n\\n# Tools\\n\\nYou may call one or more functions to assist with the user query.\\n\\nYou are provided with function signatures within <tools></tools> XML tags:\\n<tools>\" }}\n    {%- for tool in tools %}\n        {{- \"\\n\" }}\n        {{- tool | tojson }}\n    {%- endfor %}\n    {{- \"\\n</tools>\\n\\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\\n<tool_call>\\n{\\\"name\\\": <function-name>, \\\"arguments\\\": <args-json-object>}\\n</tool_call><|im_end|>\\n\" }}\n{%- else %}\n    {%- if messages[0]['role'] == 'system' %}\n        {{- '<|im_start|>system\\n' + messages[0]['content'] + '<|im_end|>\\n' }}\n    {%- else %}\n        {{- '<|im_start|>system\\nA conversation between User and Assistant. The User asks a question, and the Assistant solves it. The Assistant first thinks about the reasoning process in the mind and then provides the User with the answer. The reasoning process is enclosed within <reason> </reason> and answer is enclosed within <answer> </answer> tags, respectively, i.e., <reason> reasoning process here </reason> <answer> answer here </answer>.<|im_end|>\\n' }}\n    {%- endif %}\n{%- endif %}\n{%- for message in messages %}\n    {%- if (message.role == \"user\") or (message.role == \"system\" and not loop.first) or (message.role == \"assistant\" and not message.tool_calls) %}\n        {{- '<|im_start|>' + message.role + '\\n' + 'You must put your answer inside <answer> </answer> tags, i.e., <answer> answer here </answer>. And your final answer will be extracted automatically by the \\\\boxed{} tag.\\nThis is the problem:\\n' + message.content + '<|im_end|>' + '\\n' }}\n    {%- elif message.role == \"assistant\" %}\n        {{- '<|im_start|>' + message.role }}\n        {%- if message.content %}\n            {{- '\\n' + message.content }}\n        {%- endif %}\n        {%- for tool_call in message.tool_calls %}\n            {%- if tool_call.function is defined %}\n                {%- set tool_call = tool_call.function %}\n            {%- endif %}\n            {{- '\\n<tool_call>\\n{\"name\": \"' }}\n            {{- tool_call.name }}\n            {{- '\", \"arguments\": ' }}\n            {{- tool_call.arguments | tojson }}\n            {{- '}\\n</tool_call>' }}\n        {%- endfor %}\n        {{- '<|im_end|>\\n' }}\n    {%- elif message.role == \"tool\" %}\n        {%- if (loop.index0 == 0) or (messages[loop.index0 - 1].role != \"tool\") %}\n            {{- '<|im_start|>user' }}\n        {%- endif %}\n        {{- '\\n<tool_response>\\n' }}\n        {{- message.content }}\n        {{- '\\n</tool_response>' }}\n        {%- if loop.last or (messages[loop.index0 + 1].role != \"tool\") %}\n            {{- '<|im_end|>\\n' }}\n        {%- endif %}\n    {%- endif %}\n{%- endfor %}\n{%- if add_generation_prompt %}\n    {{- '<|im_start|>assistant\\n<reason>' }}\n{%- endif %}\n"
-  
+
   sglang:
     attention_backend: triton # [flashinfer, triton] for more, see sglang's doc
     decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
@@ -153,6 +149,7 @@ rollout:
   pipeline_parallel_size: 1
   
   validate_weight: False # whether to send all weights at first for weight comparison.
+  validate_weight_first_sync: True # validate the weight norm between load model and first sync.
   validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
   print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
 
@@ -163,7 +160,7 @@ data:
   type: rstar2
   max_prompt_length: 2048
   filter_prompt_by_length: True
-  rollout_batch_size: 128
+  rollout_batch_size: 8
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: prompt
@@ -172,8 +169,8 @@ data:
   shuffle: True
   validation_shuffle: True
   seed: 1234
-  train_data_paths: ["/path/to/train.jsonl"]
-  val_data_paths: ["/path/to/train.jsonl"]
+  train_data_paths: ["/workspace/dataset/rstar2/dapo-17k.jsonl"]
+  val_data_paths: ["/workspace/dataset/rstar2/dapo-17k.jsonl"]
   apply_chat_template_kwargs: {}
 
 # Tools configuration for AgentLoop
@@ -244,7 +241,6 @@ actor:
     weight_decay: 0.01
     clip_grad: 1.0
 
-    # megatron config
     use_distributed_optimizer: True
     overlap_grad_reduce: False
     overlap_param_gather: False
