@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional
 
+import re
 import numpy as np
 import torch
 import torch.nn as nn
@@ -195,16 +196,12 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
             stop_str=stop_str,
         )
 
-        batch_actions = self._parse_actions_from_texts(
+        chunk_actions = self._parse_actions_from_texts(
             gen_texts=gen_texts, stop_str=stop_str
         )
-        chunk_actions = self._pack_actions_to_chunks(
-            batch_actions=batch_actions, bsz=bsz
-        )
+        print("=" * 60)
         for gen_text in gen_texts:
             print(f"gen_text: {gen_text}")
-        for batch_action in batch_actions:
-            print(f"batch_action: {batch_action}")
 
         prev_logprobs = torch.zeros(
             (bsz, self.action_dim), device=device, dtype=torch.float32
@@ -476,20 +473,30 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
 
     def _parse_actions_from_texts(
         self, *, gen_texts: list[str], stop_str: str
-    ) -> list[str]:
-        actions: list[str] = []
-        for gen_text in gen_texts:
+    ) -> np.ndarray:
+        chunk_actions = np.full(
+            (len(gen_texts), self.num_action_chunks, 1), "no_op", dtype="<U12"
+        )
+
+        for i, gen_text in enumerate(gen_texts):
             text = (
                 gen_text[: -len(stop_str)].strip()
                 if stop_str and gen_text.endswith(stop_str)
                 else gen_text.strip()
             )
+            match = re.search(r'-?\d+', text)
+            num = int(match.group(0))
+
+            actions: list[str] = []
             if "forward" in text:
-                actions.append("move_forward")
+                for _ in range(min(3, int(num/25))):
+                    actions.append("move_forward")
             elif "left" in text:
-                actions.append("turn_left")
+                for _ in range(min(3, int(num/30))):
+                    actions.append("turn_left")
             elif "right" in text:
-                actions.append("turn_right")
+                for _ in range(min(3, int(num/30))):
+                    actions.append("turn_right")
             elif "stop" in text:
                 actions.append("stop")
             else:
@@ -498,22 +505,9 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
                     stacklevel=2,
                 )
                 actions.append("no_op")
-        return actions
 
-    def _pack_actions_to_chunks(
-        self, *, batch_actions: list[str], bsz: int
-    ) -> np.ndarray:
-        if len(batch_actions) != bsz:
-            raise ValueError(
-                f"Generated actions length mismatch: {len(batch_actions)} vs {bsz=}"
-            )
-        if self.action_dim != 1:
-            raise ValueError(
-                f"NaVidForRLActionPrediction currently outputs discrete string actions; "
-                f"expected {self.action_dim=} to be 1."
-            )
+            num_actions = len(actions)
+            fill_len = min(num_actions, self.num_action_chunks)
+            chunk_actions[i, :fill_len, 0] = np.asarray(actions[:fill_len], dtype="<U12")
 
-        # NaVid emits one action per env step. If num_action_chunks>1, pad remaining steps with no_op.
-        chunk_actions = np.full((bsz, self.num_action_chunks, 1), "no_op", dtype="<U12")
-        chunk_actions[:, 0, 0] = np.asarray(batch_actions, dtype="<U12")
         return chunk_actions
