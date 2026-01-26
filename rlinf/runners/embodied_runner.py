@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 from typing import TYPE_CHECKING, Optional, Union
 
+import torch
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
@@ -25,6 +27,8 @@ from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.utils.runner_utils import check_progress
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from rlinf.workers.actor.async_fsdp_sac_policy_worker import (
@@ -68,6 +72,9 @@ class EmbodiedRunner:
         self.actor_channel = Channel.create("Actor")
         if self.demo_buffer is not None:
             self.demo_data_channel = Channel.create("DemoBufferChannel")
+        if self.reward is not None:
+            self.reward_input_channel = Channel.create("RewardInput")
+            self.reward_output_channel = Channel.create("RewardOutput")
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -88,6 +95,8 @@ class EmbodiedRunner:
         self.actor.init_worker().wait()
         self.rollout.init_worker().wait()
         self.env.init_worker().wait()
+        if self.reward is not None:
+            self.reward.init_worker().wait()
 
         resume_dir = self.cfg.runner.get("resume_dir", None)
         if resume_dir is None:
@@ -113,6 +122,158 @@ class EmbodiedRunner:
         actor_handle: Handle = self.actor.sync_model_to_rollout()
         actor_handle.wait()
         rollout_handle.wait()
+
+    def compute_rewards_with_model(self):
+        """Compute rewards using the reward model via channel communication.
+
+        Data flow:
+        1. Get main_images from env worker (collected during rollout)
+        2. Flatten and send to reward_input_channel
+        3. Reward worker computes rewards
+        4. Receive from reward_output_channel
+        5. Reshape and update actor's rollout_batch rewards
+
+        Supports two modes (configured via reward.reward_mode):
+        - "per_step": Compute reward for every frame (default)
+        - "terminal": Only compute reward at episode end (last frame)
+        """
+        if self.reward is None:
+            return None
+
+        # Get main_images from env worker (collected during rollout)
+        images_result = self.env.get_rollout_images().wait()
+        images = images_result[0] if images_result else None
+        if images is None:
+            logger.warning(
+                "compute_rewards_with_model: No images collected from env worker"
+            )
+            return None
+
+        # images shape: (n_steps, n_envs, H, W, C)
+        n_steps, n_envs = images.shape[0], images.shape[1]
+        logger.debug(f"compute_rewards_with_model: images.shape={images.shape}")
+
+        # Check reward mode
+        reward_mode = self.cfg.reward.get("reward_mode", "per_step")
+
+        if reward_mode == "terminal":
+            # Terminal mode: use the ACTUAL episode-ending frame for each env
+            # NOT images[-1] which might be from a new episode after auto_reset
+            episode_final_result = self.env.get_episode_final_images().wait()
+            episode_final_images = (
+                episode_final_result[0] if episode_final_result else None
+            )
+
+            # Get which step each env's episode ended
+            episode_final_steps_result = self.env.get_episode_final_steps().wait()
+            episode_final_steps = (
+                episode_final_steps_result[0] if episode_final_steps_result else None
+            )
+
+            if episode_final_images is not None:
+                last_frame_images = episode_final_images  # Shape: (n_envs, H, W, C)
+            else:
+                # Fallback to last collected image if no episode ended
+                last_frame_images = images[-1]
+
+            logger.debug(
+                f"compute_rewards_with_model [terminal]: using episode_final_images, "
+                f"shape={last_frame_images.shape}"
+            )
+
+            # Send episode-ending images to reward worker
+            self.reward_input_channel.put(
+                {"main_images": last_frame_images}, async_op=False
+            )
+
+            # Start reward computation
+            reward_handle: Handle = self.reward.compute_rewards(
+                input_channel=self.reward_input_channel,
+                output_channel=self.reward_output_channel,
+            )
+
+            # Wait for reward computation and get results
+            reward_handle.wait()
+            reward_data = self.reward_output_channel.get()
+
+            if reward_data is not None and "rewards" in reward_data:
+                terminal_rewards = reward_data[
+                    "rewards"
+                ]  # Shape: (n_envs,), prob in [0,1]
+
+                # Asymmetric reward mapping: success gets big reward, fail gets small penalty
+                success_reward = self.cfg.reward.get("success_reward", 1.0)
+                fail_reward = self.cfg.reward.get("fail_reward", 0.0)
+                threshold = self.cfg.reward.get("reward_threshold", 0.5)
+
+                # Binary classification: prob > threshold = success, else fail
+                is_success = terminal_rewards > threshold
+                num_success = is_success.sum().item()
+                logger.debug(
+                    f"compute_rewards_with_model [terminal]: "
+                    f"terminal_rewards.shape={terminal_rewards.shape}, "
+                    f"probs range=[{terminal_rewards.min():.4f}, {terminal_rewards.max():.4f}], "
+                    f"success_count={num_success}/{n_envs}"
+                )
+
+                mapped_rewards = torch.where(
+                    is_success,
+                    torch.tensor(success_reward, device=terminal_rewards.device),
+                    torch.tensor(fail_reward, device=terminal_rewards.device),
+                )
+
+                # Create full reward tensor: zeros initially
+                rewards = torch.zeros(n_steps, n_envs, 1)
+
+                # CRITICAL: Put reward at the step where each env's episode ACTUALLY ended
+                # NOT uniformly at the last step, which would give wrong credit assignment
+                if episode_final_steps is not None:
+                    for env_idx in range(n_envs):
+                        step = episode_final_steps[env_idx].item()
+                        if step >= 0 and step < n_steps:
+                            # Episode ended at this step, put reward here
+                            rewards[step, env_idx, 0] = mapped_rewards[env_idx]
+                        else:
+                            # Episode didn't end (ran full rollout), put reward at last step
+                            rewards[-1, env_idx, 0] = mapped_rewards[env_idx]
+                else:
+                    # Fallback: put all rewards at last step
+                    rewards[-1, :, 0] = mapped_rewards
+
+                logger.debug(
+                    f"compute_rewards_with_model: updating rewards with shape {rewards.shape}, "
+                    f"non_zero_steps={torch.nonzero(rewards).shape[0]}"
+                )
+
+                # Update actor's rollout_batch with computed rewards (remote call)
+                self.actor.update_rewards(rewards).wait()
+        else:
+            # Per-step mode: compute reward for every frame (original behavior)
+            flat_images = images.view(n_steps * n_envs, *images.shape[2:])
+
+            # Send images to reward worker via channel
+            self.reward_input_channel.put({"main_images": flat_images}, async_op=False)
+
+            # Start reward computation
+            reward_handle: Handle = self.reward.compute_rewards(
+                input_channel=self.reward_input_channel,
+                output_channel=self.reward_output_channel,
+            )
+
+            # Wait for reward computation and get results
+            reward_handle.wait()
+            reward_data = self.reward_output_channel.get()
+
+            if reward_data is not None and "rewards" in reward_data:
+                rewards = reward_data["rewards"]
+
+                # Reshape rewards to (n_steps, n_envs, 1) to match rollout_batch
+                rewards = rewards.view(n_steps, n_envs, 1)
+
+                # Update actor's rollout_batch with computed rewards (remote call)
+                self.actor.update_rewards(rewards).wait()
+
+        return None  # Already waited
 
     def evaluate(self):
         env_handle: Handle = self.env.evaluate(
@@ -161,6 +322,12 @@ class EmbodiedRunner:
                     ).wait()
                     rollout_handle.wait()
 
+                # compute rewards with reward model if available
+                reward_metrics = None
+                if self.reward is not None:
+                    with self.timer("compute_rewards"):
+                        self.compute_rewards_with_model()
+
                 # compute advantages and returns.
                 with self.timer("cal_adv_and_returns"):
                     actor_rollout_metrics = (
@@ -194,21 +361,23 @@ class EmbodiedRunner:
                     self._save_checkpoint()
 
             time_metrics = self.timer.consume_durations()
-            time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
-
             env_results_list = [
                 results for results in env_handle.wait() if results is not None
             ]
             env_metrics = compute_evaluate_metrics(env_results_list)
-            env_metrics = {f"env/{k}": v for k, v in env_metrics.items()}
 
+            time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
             rollout_metrics = {
                 f"rollout/{k}": v for k, v in actor_rollout_metrics[0].items()
             }
-
+            env_metrics = {f"env/{k}": v for k, v in env_metrics.items()}
             training_metrics = {
                 f"train/{k}": v for k, v in actor_training_metrics[0].items()
             }
+
+            if reward_metrics:
+                reward_metrics = {f"reward/{k}": v for k, v in reward_metrics.items()}
+                self.metric_logger.log(reward_metrics, _step)
 
             self.metric_logger.log(env_metrics, _step)
             self.metric_logger.log(rollout_metrics, _step)

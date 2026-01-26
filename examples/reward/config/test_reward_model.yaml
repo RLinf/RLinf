@@ -1,0 +1,14 @@
+# Test configuration for reward model evaluation
+
+checkpoint_path: null
+training_data_path: null
+model:
+  arch: "resnet18"
+  pretrained: true
+  hidden_dim: 256
+  dropout: 0.1
+  normalize: true
+
+test:
+  max_debug_images: 50
+  max_training_images: 50

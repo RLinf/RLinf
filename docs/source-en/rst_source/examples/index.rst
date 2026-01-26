@@ -154,8 +154,19 @@ as well as reinforcement learning training examples on real robots.
       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
         <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/robotwin.html" target="_blank" style="text-decoration: underline; color: blue;">
           <b>RL with RoboTwin Benchmark</b>
+         </a><br>
+         Support RoboTwin + OpenVLA-OFT/π₀/π₀.₅ + PPO/GRPO training
+        </p>
+    </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/data_collection.png"
+          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="https://rlinf.readthedocs.io/en/latest/rst_source/example/data_collection.html" target="_blank" style="text-decoration: underline; color: blue;">
+        <b>Data Collection</b>
         </a><br>
-        Supports RoboTwin + OpenVLA-OFT / π₀ / π₀.₅ + PPO / GRPO training
+        Automatically collect success/fail trajectory data during training
       </p>
     </div>
   </div>
@@ -183,7 +194,7 @@ as well as reinforcement learning training examples on real robots.
         Train an MLP Policy with PPO/SAC/GRPO
       </p>
     </div>
-  </div>
+   </div>
 
 
 
@@ -329,3 +340,5 @@ Thanks to this decoupled design, workers can be flexibly and dynamically schedul
    reasoning
    coding_online_rl
    searchr1
+   data_collection
+   data_collection_realworld

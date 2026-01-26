@@ -52,6 +52,7 @@ def main(cfg) -> None:
     actor_group = actor_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
     )
+
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
     rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
@@ -70,12 +71,25 @@ def main(cfg) -> None:
 
         demo_buffer, _ = create_rl_dataset(cfg, tokenizer=None)
 
+    # Create reward worker group if using reward model
+    reward_group = None
+    if cfg.get("reward", {}).get("use_reward_model", False):
+        from rlinf.workers.reward.reward_worker import ImageRewardWorker
+
+        reward_placement = component_placement.get_strategy("reward")
+        reward_group = ImageRewardWorker.create_group(cfg).launch(
+            cluster,
+            name=cfg.reward.get("group_name", "RewardGroup"),
+            placement_strategy=reward_placement,
+        )
+
     runner = EmbodiedRunner(
         cfg=cfg,
         actor=actor_group,
         rollout=rollout_group,
         env=env_group,
         demo_buffer=demo_buffer,
+        reward=reward_group,
     )
 
     runner.init_workers()

@@ -141,12 +141,20 @@
           </a><br>
           支持Franka-Sim+MLP+PPO训练
         </p>
+      <img src="https://github.com/RLinf/misc/raw/main/pic/sac-flow-overview.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+          <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/sac_flow.html" target="_blank" style="text-decoration: underline; color: blue;">
+            <b>SAC-Flow 策略训练</b>
+          </a><br>
+          使用 SAC 训练 Flow Matching 策略 (Sim & Real)
+        </p>
       </div>
 
       <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
         <img src="https://raw.githubusercontent.com/RoboTwin-Platform/RoboTwin/main/assets/files/50_tasks.gif"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
-            data-target="animated-image.originalImage">
+              style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
+              data-target="animated-image.originalImage">
         <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
           <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/robotwin.html" target="_blank" style="text-decoration: underline; color: blue;">
             <b>基于RoboTwin的强化学习</b>
@@ -154,8 +162,18 @@
           支持RoboTwin + OpenVLA-OFT/π₀/π₀.₅ + PPO/GRPO训练
         </p>
       </div>
-    </div>
 
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+        <img src="https://github.com/RLinf/misc/raw/main/pic/data_collection.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+          <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/tutorials/extend/data_collection.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>数据采集</b>
+          </a><br>
+          训练过程中自动采集成功/失败轨迹数据
+        </p>
+      </div>
+    </div>
     
     <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
       <div style="flex: 1 1 45%; max-width: 300px; text-align: center;">
@@ -324,3 +342,5 @@ RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训
    reasoning
    coding_online_rl
    searchr1
+   data_collection
+   data_collection_realworld
