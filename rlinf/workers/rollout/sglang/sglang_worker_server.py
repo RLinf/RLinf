@@ -1,6 +1,7 @@
 
 import asyncio
 import copy
+import dataclasses
 import time
 import uuid
 from typing import Any, List, Literal, Optional
@@ -10,8 +11,11 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from omegaconf import DictConfig
 from pydantic import BaseModel
+from sglang.srt.server_args import ServerArgs
 
+from rlinf.config import torch_dtype_from_precision
 from rlinf.utils.placement import ModelParallelComponentPlacement
+from rlinf.workers.rollout.sglang import Engine
 from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
 
 
@@ -44,13 +48,12 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
         http_server_host: str = "0.0.0.0",
         http_server_port: int = 8020,
     ):
-        # Call parent __init__ first
         super().__init__(config, placement, weight_reload, config_rollout)
 
-        # HTTP server configuration
         self._enable_http_server = enable_http_server
-        self._http_server_host = http_server_host
-        self._http_server_port = http_server_port
+        self._http_server_host = http_server_host or self._cfg.get("server", {}).get("sglang_http", {}).get("host", "0.0.0.0")
+        base_port = self._cfg.get("server", {}).get("sglang_http", {}).get("port", http_server_port)
+        self._http_server_port = base_port + self._rank
         self._http_server = None
         self._http_server_task = None
         self._http_app = None
@@ -105,8 +108,6 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
                 prompt_token_ids = prompt_token_ids.tolist() 
                 
             sampling_params = copy.deepcopy(self._sampling_params)
-            if request.stop is not None:
-                sampling_params["stop"] = request.stop
             if request.temperature is not None:
                 sampling_params["temperature"] = request.temperature
             if request.max_tokens is not None:
@@ -119,7 +120,7 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
             engine_results = await self._engine.async_generate(
                 prompt=prompt_text,
                 sampling_params=sampling_params,
-                return_logprob=False,
+                return_logprob=self._return_logprobs,
             )
             
             result = engine_results[0] if isinstance(engine_results, list) and len(engine_results) > 0 else engine_results
@@ -129,6 +130,23 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
             meta_info = result.get("meta_info", {})
             finish_reason_info = meta_info.get("finish_reason", {})
             finish_reason = finish_reason_info.get("type", "stop")
+
+            logprobs = None
+            if self._return_logprobs:
+                logprobs = [item[0] for item in meta_info["output_token_logprobs"]]
+
+            choice_logprobs = None
+            if logprobs is not None:
+                choice_logprobs = {
+                    "content": [
+                        {
+                            "token": "",
+                            "logprob": logprob_value,
+                            "top_logprobs": []
+                        }
+                        for logprob_value in logprobs
+                    ]
+                }
 
             response = {
                 "id": f"chatcmpl-{request_id}",
@@ -140,34 +158,65 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
                         "index": 0,
                         "message": {"role": "assistant", "content": response_text},
                         "finish_reason": finish_reason,
+                        "logprobs": choice_logprobs,
                     }
                 ],
                 "usage": {
-                    "prompt_tokens": len(prompt_token_ids_single),
+                    "prompt_tokens": len(prompt_token_ids),
                     "completion_tokens": len(response_ids),
-                    "total_tokens": len(prompt_token_ids_single) + len(response_ids),
+                    "total_tokens": len(prompt_token_ids) + len(response_ids),
                 },
-                "prompt_token_ids": prompt_token_ids_single,  # List[int]
-                "response_token_ids": [response_ids],  # List[List[int]], AgentLightning will take [0]
+                "prompt_token_ids": prompt_token_ids,  
+                "response_token_ids": [response_ids],  
             }
 
             return response
 
-        except Exception as e:
-            import traceback
+    def _init_engine(self):
+        """Override parent method to add tool_call_parser support."""
+        use_cudagraph = not self._cfg_rollout.enforce_eager
 
-            error_detail = traceback.format_exc()
-            self.log_error(f"Error in chat completion (request_id={request_id}): {error_detail}")
-            return JSONResponse(
-                status_code=500,
-                content={
-                    "error": {
-                        "message": f"Generation failed: {str(e)}",
-                        "type": type(e).__name__,
-                        "detail": error_detail,
-                    }
-                },
-            )
+        load_format = "dummy"
+        if self.weight_reload == "sync":
+            if self._cfg_rollout.validate_weight or getattr(
+                self._cfg_rollout, "validate_weight_first_sync", False
+            ):
+                load_format = "auto"
+        else:
+            load_format = "auto"
+
+            
+
+        server_args = ServerArgs(
+            model_path=self._cfg_rollout.model.model_path,
+            disable_cuda_graph=not use_cudagraph,
+            cuda_graph_max_bs=min(
+                self._cfg_rollout.cuda_graph_max_bs,
+                self._cfg_rollout.max_running_requests,
+            ),
+            tp_size=self._cfg_rollout.tensor_parallel_size,
+            mem_fraction_static=self._cfg_rollout.gpu_memory_utilization,
+            enable_memory_saver=use_cudagraph,
+            enable_torch_compile=self._cfg_rollout.sglang.use_torch_compile,
+            torch_compile_max_bs=min(
+                self._cfg_rollout.sglang.torch_compile_max_bs,
+                self._cfg_rollout.max_running_requests,
+            ),
+            load_format=load_format,
+            dtype=torch_dtype_from_precision(self._cfg_rollout.model.precision),
+            skip_tokenizer_init=not self._cfg_rollout.detokenize,
+            decode_log_interval=self._cfg_rollout.sglang.decode_log_interval,
+            attention_backend=self._cfg_rollout.sglang.attention_backend,
+            log_level="warning",
+            max_running_requests=self._cfg_rollout.max_running_requests,
+            dist_init_addr=f"127.0.0.1:{str(self.acquire_free_port())}",
+            tool_call_parser = self._cfg_rollout.sglang.get("tool_call_parser", None),
+        )
+
+        self.log_on_first_rank(f"{server_args=}")
+        self._engine = Engine(
+            **dataclasses.asdict(server_args),
+        )
 
     def http_server_start(self):
 
@@ -196,7 +245,7 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
 
         await super().init_worker()
 
-        if self._enable_http_server and start_http_server and self._rank == 0:
+        if self._enable_http_server and start_http_server:
             self.http_server_start()
 
     def shutdown(self):
@@ -208,4 +257,10 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
 
         # Call parent shutdown
         super().shutdown()
+
+    def get_server_address(self) -> str:
+        """Get the HTTP server address for this worker."""
+        if not self._enable_http_server:
+            return None
+        return f"{self._http_server_host}:{self._http_server_port}"
 
