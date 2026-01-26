@@ -8,8 +8,8 @@ group_size: 1
 
 reward_coef: 1.0
 use_fixed_reset_state_ids: False
-max_steps_per_rollout_epoch: 10
-max_episode_steps: 10 # max episode steps for truncation
+max_steps_per_rollout_epoch: 256
+max_episode_steps: 256 # max episode steps for truncation
 
 
 video_cfg:
@@ -17,10 +17,10 @@ video_cfg:
   video_base_dir: ${runner.logger.log_path}/video/train
 
 init_params:
-  id: "Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Cosmos-v0"
+  id: "Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-v0"
   num_envs: null
   max_episode_steps: ${env.train.max_episode_steps} # max episode steps for truncation
-  task_description: "Stack three cubes (bottom to top: blue, red, green) with the Franka robot."
+  task_description: "Pick up the red cube and place it on top of the blue cube, then pick up the green cube and place it on top of the red cube."
   table_cam:
     height: 256
     width: 256

@@ -242,6 +242,7 @@ class IsaaclabBaseEnv(gym.Env):
             video_writer.append_data(img)
         video_writer.close()
         self.video_cnt += 1
+        self.images = []
 
     def close(self):
         self.env.close()

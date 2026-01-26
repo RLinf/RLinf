@@ -39,7 +39,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     )
     from rlinf.models.embodiment.gr00t.utils import replace_dropout_with_identity
 
-    if cfg.embodiment_tag == "libero_franka":
+    if cfg.embodiment_tag == "libero_franka" or cfg.embodiment_tag == "isaaclab_franka":
         data_config = load_data_config(
             "rlinf.models.embodiment.gr00t.modality_config:LiberoFrankaDataConfig"
         )

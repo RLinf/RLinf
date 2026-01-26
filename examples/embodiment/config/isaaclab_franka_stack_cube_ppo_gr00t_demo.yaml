@@ -90,15 +90,15 @@ env:
 
   # Override the default values in env/isaaclab_stack_cube
   train:
-    total_num_envs: 4
-    max_episode_steps: 5
-    max_steps_per_rollout_epoch: 5
+    total_num_envs: 1
+    max_episode_steps: 288
+    max_steps_per_rollout_epoch: 288
     use_fixed_reset_state_ids: True
 
   eval:
     total_num_envs: 1
-    max_episode_steps: 5
-    max_steps_per_rollout_epoch: 5
+    max_episode_steps: 288
+    max_steps_per_rollout_epoch: 288
     auto_reset: True
     ignore_terminations: True
     use_fixed_reset_state_ids: True
@@ -114,7 +114,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/gr00t_libero_spatial_fewshot_sft"
+    model_path: "/path/to/isaaclab_stack_cube_gr00t_ckpt"
     precision: ${actor.model.precision}
 
 actor:
@@ -127,8 +127,11 @@ actor:
 
   # Override the default values in model/gr00t
   model:
-    model_path: "/path/to/gr00t_libero_spatial_fewshot_sft"
+    model_path: "/path/to/isaaclab_stack_cube_gr00t_ckpt"
     add_value_head: True
+    embodiment_tag: "isaaclab_franka"
+    obs_converter_type: "isaaclab_stack_cube"
+    num_action_chunks: 16
 
   optim:
     lr: 2.0e-5
