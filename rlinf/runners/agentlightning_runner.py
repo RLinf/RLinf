@@ -23,7 +23,6 @@ from agentlightning.adapter.triplet import TraceToTripletBase
 from agentlightning.store.base import LightningStore
 
 
-from rlinf.workers.rollout.server.sglang_http_server_worker import SGLangHTTPServerWorker
 from rlinf.workers.agent.agentlightning_rollout_worker import AgentLightningRolloutWorker
 
 import typing
@@ -34,7 +33,7 @@ if typing.TYPE_CHECKING:
     from rlinf.workers.actor.megatron_actor_worker import MegatronActor
     from rlinf.workers.inference.megatron_inference_worker import MegatronInference
     from rlinf.workers.reward.reward_worker import RewardWorker
-    from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
+    from rlinf.workers.rollout.sglang.sglang_worker_server import SGLangWorkerWithHTTPServer
 
 
 class AgentLightningRLinfRunner(ReasoningRunner):
@@ -45,13 +44,12 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         placement: ModelParallelComponentPlacement,
         train_dataset: Dataset,
         val_dataset: Dataset,
-        rollout: "SGLangWorker",
+        rollout: "SGLangWorkerWithHTTPServer",
         inference: Optional["MegatronInference"],
         actor: "MegatronActor",
         reward: Optional["RewardWorker"],
         store: LightningStore,
         adapter: TraceToTripletBase,
-        sglang_http_server: SGLangHTTPServerWorker,
         agentlightning_rollout_worker: AgentLightningRolloutWorker,
         scheduler: Optional["SchedulerWorker"] = None,
     ):
@@ -68,7 +66,6 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         
         self.store = store
         self.adapter = adapter
-        self.sglang_http_server = sglang_http_server
         self.agentlightning_rollout_worker = agentlightning_rollout_worker
 
     def _build_dataloader(self, train_dataset, val_dataset, collate_fn=None):
@@ -138,13 +135,33 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         rollout_handle.wait()
         if self.use_pre_process_policy:
             self.rollout.offload_engine().wait()
-        
-        self.sglang_http_server.init_worker(self.rollout).wait()
+
+        # Start HTTP servers on all rollout workers and collect addresses
+        server_addresses = []
+        if hasattr(self.rollout, 'http_server_start') and ray is not None:
+
+            configured_host = self.cfg.server.sglang_http.get('host', '0.0.0.0')
+            if configured_host == '0.0.0.0':
+                node_ip = ray.util.get_node_ip_address()
+            else:
+                node_ip = configured_host
+            
+            base_port = self.cfg.server.sglang_http.get('port', 8020)
+            num_workers = len(self.rollout.worker_info_list)
+            for rank in range(num_workers):
+                port = base_port + rank
+                server_addresses.append(f"{node_ip}:{port}")
+            
+            # Start servers on all workers
+            for rank in range(num_workers):
+                self.rollout.execute_on(rank).http_server_start().wait()
+            
+            logging.info(f"[AgentLightningRLinfRunner] Started HTTP servers on {num_workers} workers with addresses {server_addresses}")
 
         self.agentlightning_rollout_worker.init_worker(
             store=self.store,
             adapter=self.adapter,
-            server_addresses=[],
+            server_addresses=server_addresses,
             group_size=self.cfg.algorithm.group_size,
             model=self.cfg.rollout.model.model_path,
             reward_fillna_value=self.cfg.algorithm.get("reward_fillna_value", 0.0),
@@ -161,15 +178,6 @@ class AgentLightningRLinfRunner(ReasoningRunner):
             ncols=620,
         )
 
-        self.sglang_http_server.server_start()
-        
-        if ray is not None:
-            node_ip = ray.util.get_node_ip_address()
-            server_port = self.cfg.server.sglang_http.get('port', 8020)
-            server_addresses = [f"{node_ip}:{server_port}"]
-            self.agentlightning_rollout_worker.update_server_addresses(server_addresses)
-            logging.info(f"[AgentLightningRLinfRunner] Updated server addresses to {server_addresses} after server start")
-        
         self.run_timer.start_time()
 
         epoch_iter = range(self.epoch, self.cfg.runner.max_epochs)
@@ -258,5 +266,10 @@ class AgentLightningRLinfRunner(ReasoningRunner):
             
 
 
-        self.sglang_http_server.server_stop()
+        # Stop HTTP servers on all rollout workers
+        if hasattr(self.rollout, 'http_server_stop'):
+            num_workers = len(self.rollout.worker_info_list)
+            for rank in range(num_workers):
+                self.rollout.execute_on(rank).http_server_stop().wait()
+        
         self.metric_logger.finish()
