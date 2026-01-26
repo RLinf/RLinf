@@ -423,7 +423,7 @@ the LIBERO environment, run:
 
 ::
 
-   bash examples/embodiment/run_embodiment.sh libero_10_ppo_openpi
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi_quickstart
 
 --------------
 
