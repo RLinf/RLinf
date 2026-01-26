@@ -30,6 +30,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 
 ## What's NEW!
+- [2026/01] 🔥 RLinf supports reinforcement learning fine-tuning for [OpenSora World Model](https://github.com/hpcaitech/Open-Sora). Doc: [RL on OpenSora World Model](https://rlinf.readthedocs.io/en/latest/rst_source/examples/opensora.html).
 - [2026/01] 🔥 RLinf supports reinforcement learning fine-tuning for [RoboTwin](https://github.com/robotwin-Platform/RoboTwin). Doc: [RL on RoboTwin](https://rlinf.readthedocs.io/en/latest/rst_source/examples/robotwin.html).
 - [2026/01] 🔥 RLinf supports SAC training for flow matching policy. Doc: [SAC-Flow](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/sac_flow.html), paper: [SAC Flow: Sample-Efficient Reinforcement Learning of Flow-Based Policies via Velocity-Reparameterized Sequential Modeling](https://arxiv.org/abs/2509.25756).
 - [2025/12] 🔥 RLinf supports agentic reinforcement learning on [Search-R1](https://github.com/PeterGriffinJin/Search-R1). Doc: [Search-R1](https://rlinf.readthedocs.io/en/latest/rst_source/examples/searchr1.html).
@@ -100,6 +101,10 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
           <li><b>VLM</b></li>
           <ul>
             <li>Qwen2.5-VL</li>
+          </ul>
+          <li><b>World Model</b></li>
+          <ul>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/opensora.html">OpenSora</a> ✅</li>
           </ul>
           <li><b>Custom Models</b></li>
           <ul>
@@ -572,8 +577,8 @@ and exhibits greater stability.
 - [ ] Support for multi-agent training  
 - [ ] Support for integration with more embodied simulators (e.g., [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis))  
 - [ ] Support for more Vision Language Action models (VLAs) (e.g., [WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow))
-- [ ] Support for world model   
-- [x] Support for real-world RL
+- [X] Support for world model   
+- [X] Support for real-world RL
 
 # CI Test Status
 RLinf has comprehensive CI tests for both the core components (via unit tests) and end-to-end RL training workflows of embodied, agent, and reasoning scenarios.

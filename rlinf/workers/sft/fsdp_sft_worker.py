@@ -43,6 +43,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
         self.data_loader, self.data_config = self.build_dataloader()
         self.data_iter = iter(self.data_loader)
+        self.global_step = 0
 
     def init_worker(self):
         self.setup_model_and_optimizer()
@@ -158,7 +159,9 @@ class FSDPSftWorker(FSDPModelManager, Worker):
 
             self.lr_scheduler.step()
 
-            clear_memory()
+            if self.global_step > 0 and self.global_step % 1000 == 0:
+                clear_memory()
+
             train_metrics = {key: np.mean(value) for key, value in metrics.items()}
             train_metrics = all_reduce_dict(
                 train_metrics, op=torch.distributed.ReduceOp.AVG
@@ -167,5 +170,6 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             return train_metrics
 
     def set_global_step(self, global_step):
+        self.global_step = global_step
         if hasattr(self.model, "set_global_step"):
             self.model.set_global_step(global_step)

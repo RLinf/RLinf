@@ -149,7 +149,7 @@ actor:
     value_lr: 1.55e-4
     adam_beta1: 0.9
     adam_beta2: 0.95
-    adam_eps: 1.0e-05
+    adam_eps: 1.0e-08
     clip_grad: 1.0
     critic_warmup_steps: 0
 

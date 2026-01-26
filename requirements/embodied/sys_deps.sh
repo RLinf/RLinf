@@ -107,6 +107,7 @@ install_deps_apt() {
         libsm6 \
         libxext6 \
         libxrender-dev \
+        libaio-dev \
         libgomp1 || {
             ubuntu_ver=""
             if command -v lsb_release >/dev/null 2>&1; then
@@ -155,6 +156,7 @@ install_deps_dnf() {
         libSM \
         libXext \
         libXrender-devel \
+        libaio-devel \
         libgomp || {
             echo "dnf install failed. Please check your repositories or install dependencies manually." >&2
             exit 1
@@ -184,6 +186,7 @@ install_deps_yum() {
         libSM \
         libXext \
         libXrender-devel \
+        libaio-devel \
         libgomp || {
             echo "yum install failed. Please check your repositories or install dependencies manually." >&2
             exit 1
@@ -210,6 +213,7 @@ install_deps_pacman() {
         libsm \
         libxext \
         libxrender \
+        libaio \
         gcc || {
             echo "pacman install failed. Please check your repositories or install dependencies manually." >&2
             exit 1

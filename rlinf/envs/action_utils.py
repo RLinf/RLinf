@@ -159,6 +159,7 @@ def prepare_actions(
     action_dim,
     action_scale: float = 1.0,
     policy: str = "widowx_bridge",
+    wm_env_type=None,
 ) -> torch.Tensor | np.ndarray:
     env_type = SupportedEnvType(env_type)
     if env_type == SupportedEnvType.LIBERO:
@@ -166,6 +167,17 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.OPENSORAWM:
+        # TODO: Implement prepare_actions_for_opensora_wm
+        if wm_env_type == "libero":
+            chunk_actions = prepare_actions_for_libero(
+                raw_chunk_actions=raw_chunk_actions,
+                model_type=model_type,
+            )
+        else:
+            raise NotImplementedError(
+                f"Env type {wm_env_type} not implemented for OpenSoraWM"
+            )
     elif env_type == SupportedEnvType.MANISKILL:
         chunk_actions = prepare_actions_for_maniskill(
             raw_chunk_actions=raw_chunk_actions,
