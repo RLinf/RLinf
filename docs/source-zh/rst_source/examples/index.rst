@@ -158,7 +158,7 @@
 
     
     <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
-      <div style="flex: 1 1 45%; max-width: 300px; text-align: center;">
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
         <img src="https://github.com/RLinf/misc/raw/main/pic/sac-flow-overview.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
         <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -170,7 +170,7 @@
       </div>
 
      
-      <div style="flex: 1 1 45%; max-width: 300px; text-align: center;">
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
         <img src="https://github.com/RLinf/misc/raw/main/pic/3_layer_mlp.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
             data-target="animated-image.originalImage">
@@ -181,8 +181,19 @@
           使用 PPO/SAC/GRPO 训练 PPO 策略
         </p>
       </div>
-    </div>
 
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/hpcaitech/Open-Sora-Demo/raw/main/readme/icon.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
+            data-target="animated-image.originalImage">
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/opensora.rst" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>基于 OpenSora 世界模型的强化学习</b>
+         </a><br>
+         支持 OpenSora 世界模型 + OpenVLA-OFT + GRPO 训练
+       </p>
+      </div>
+    </div>
 
 
 推理场景
@@ -315,6 +326,7 @@ RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训
    robocasa
    robotwin
    frankasim
+   opensora
    pi0
    gr00t
    sac_flow
