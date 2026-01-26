@@ -83,8 +83,12 @@ class CNNPolicy(nn.Module, BasePolicy):
 
         self.cfg = cfg
         self.in_channels = self.cfg.image_size[0]
-        self.register_buffer("img_mean", torch.tensor([0.485, 0.456, 0.406]).view(1,1,1,3))
-        self.register_buffer("img_std",  torch.tensor([0.229, 0.224, 0.225]).view(1,1,1,3))
+        self.register_buffer(
+            "img_mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 1, 1, 3)
+        )
+        self.register_buffer(
+            "img_std", torch.tensor([0.229, 0.224, 0.225]).view(1, 1, 1, 3)
+        )
         self.encoders = nn.ModuleList()
         encoder_out_dim = 0
         if self.cfg.backbone == "resnet":
@@ -173,18 +177,18 @@ class CNNPolicy(nn.Module, BasePolicy):
     def preprocess_env_obs(self, env_obs):
         device = next(self.parameters()).device
         mean = self.img_mean.to(device)
-        std  = self.img_std.to(device)
+        std = self.img_std.to(device)
 
         processed_env_obs = {}
         processed_env_obs["states"] = env_obs["states"].clone().to(device)
-        x =  env_obs["main_images"].clone().to(device).float() / 255.0
+        x = env_obs["main_images"].clone().to(device).float() / 255.0
         processed_env_obs["main_images"] = (x - mean) / std
 
         if env_obs.get("extra_view_images", None) is not None:
             ex = env_obs["extra_view_images"].clone().to(device).float() / 255.0
-            ex = (ex - mean.unsqueeze(1)) / std.unsqueeze(1)  
-            processed_env_obs["extra_view_images"] = ex  
-            
+            ex = (ex - mean.unsqueeze(1)) / std.unsqueeze(1)
+            processed_env_obs["extra_view_images"] = ex
+
         return processed_env_obs
 
     def get_feature(self, obs, detach_encoder=False):

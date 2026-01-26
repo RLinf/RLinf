@@ -72,26 +72,26 @@ class QHead(nn.Module):
         self._init_weights(self.nonlinearity)
 
     def _init_weights(self, nonlinearity="relu"):
-    
         if nonlinearity == "tanh":
             gain = nn.init.calculate_gain("tanh")
         else:
-            gain = None  
+            gain = None
 
         for m in self.net:
             if isinstance(m, nn.Linear):
                 if m is self.net[-1]:
-                  
                     nn.init.normal_(m.weight, mean=0.0, std=0.02)
                     if m.bias is not None:
                         nn.init.zeros_(m.bias)
                 else:
                     if nonlinearity == "tanh":
-                        # tanh: Xavier 
+                        # tanh: Xavier
                         nn.init.xavier_uniform_(m.weight, gain=gain)
                     else:
-                        # relu: Kaiming 
-                        nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity=nonlinearity)
+                        # relu: Kaiming
+                        nn.init.kaiming_normal_(
+                            m.weight, mode="fan_out", nonlinearity=nonlinearity
+                        )
 
                     if m.bias is not None:
                         nn.init.zeros_(m.bias)

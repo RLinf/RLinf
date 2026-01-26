@@ -15,7 +15,7 @@
 
 import os
 from typing import Optional, Union
-from rlinf.utils import drq
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -30,6 +30,7 @@ from rlinf.hybrid_engines.fsdp import (
 )
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel
+from rlinf.utils import drq
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
     append_to_dict,
@@ -64,8 +65,10 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             self.offload_optimizer()
         self._setup_rollout_weight_dst_ranks()
         if self.cfg.actor.get("compile_model", False):
-           self.model = torch.compile(self.model, mode="default") # max-autotune-no-cudagraphs
-           self.target_model = torch.compile(self.target_model, mode="default")
+            self.model = torch.compile(
+                self.model, mode="default"
+            )  # max-autotune-no-cudagraphs
+            self.target_model = torch.compile(self.target_model, mode="default")
 
     def setup_model_and_optimizer(self, initialize_target=False) -> None:
         """Setup model, lr_scheduler, optimizer and grad_scaler."""
@@ -128,7 +131,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 if ("mix_proj" in name) or ("state_proj" in name):
                     params_critic.append(param)
                     continue
-        
+
                 if "q_head" in name:
                     params_critic.append(param)
                     continue
@@ -157,7 +160,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         if self.cfg.algorithm.get("auto_entropy_tuning", False):
             target_entropy = self.cfg.algorithm.get(
                 "target_entropy",
-                -self.cfg.actor.model.action_dim/2,  # Heuristic: -|A|
+                -self.cfg.actor.model.action_dim / 2,  # Heuristic: -|A|
             )
             self.target_entropy = target_entropy
 
@@ -391,7 +394,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         if "actor_agg_q" in self.cfg.algorithm:
             agg_q = self.cfg.algorithm["actor_agg_q"]
         else:
-            agg_q =  self.cfg.algorithm.get("agg_q", "min")
+            agg_q = self.cfg.algorithm.get("agg_q", "min")
 
         curr_obs = batch["transitions"]["obs"]
         kwargs = {}
@@ -472,8 +475,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 t = batch["transitions"]
                 drq.apply_drq(t["obs"], pad=4)
                 drq.apply_drq(t["next_obs"], pad=4)
-    
-                
+
             critic_loss = self.forward_critic(batch) / self.gradient_accumulation
             critic_loss.backward()
             gbs_critic_loss.append(critic_loss.item() * self.gradient_accumulation)
