@@ -17,7 +17,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 SUPPORTED_TARGETS=("embodied" "reason" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "opensora")
 
 # Ensure uv is installed
 if ! command -v uv &> /dev/null; then
@@ -146,7 +146,7 @@ create_and_sync_venv() {
     UV_TORCH_BACKEND=auto uv sync --active
 }
 
-install_prebuilt_flash_attn() {
+install_flash_attn() {
     # Base release info – adjust when bumping flash-attn
     local flash_ver="2.7.4.post1"
     local base_url="${GITHUB_PREFIX}https://github.com/Dao-AILab/flash-attention/releases/download/v${flash_ver}"
@@ -195,10 +195,10 @@ EOF
 
     local wheel_name="flash_attn-${flash_ver}+${cu_tag}${torch_tag}${cxx_abi}-${py_tag}-${abi_tag}-${platform_tag}.whl"
     uv pip uninstall flash-attn || true
-    uv pip install "${base_url}/${wheel_name}"
+    uv pip install "${base_url}/${wheel_name}" || (echo "Flash attn installation via wheel failed. Attempting to install from source..."; uv pip install flash-attn==${flash_ver} --no-build-isolation)
 }
 
-install_prebuilt_apex() {
+install_apex() {
     # Example URL: https://github.com/RLinf/apex/releases/download/25.09/apex-0.1-cp311-cp311-linux_x86_64.whl
     local base_url="${GITHUB_PREFIX}https://github.com/RLinf/apex/releases/download/25.09"
 
@@ -219,7 +219,10 @@ EOF
     local wheel_name="apex-0.1-${py_tag}-${abi_tag}-${platform_tag}.whl"
         
     uv pip uninstall apex || true
-    uv pip install "${base_url}/${wheel_name}" || (echo "Apex wheel is not available for Python ${py_major}.${py_minor}, please install apex manually. See https://github.com/NVIDIA/apex" >&2; exit 1)
+    export NUM_THREADS=$(nproc)
+    export NVCC_APPEND_FLAGS=${NVCC_APPEND_FLAGS:-"--threads ${NUM_THREADS}"}
+    export APEX_PARALLEL_BUILD=${APEX_PARALLEL_BUILD:-${NUM_THREADS}}
+    uv pip install "${base_url}/${wheel_name}" || (echo "Apex installation via wheel failed. Attempting to install from source..."; APEX_CPP_EXT=1 APEX_CUDA_EXT=1 uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/apex.git --no-build-isolation)
 }
 
 clone_or_reuse_repo() {
@@ -285,7 +288,7 @@ install_openvla_model() {
             ;;
     esac
     uv pip install git+${GITHUB_PREFIX}https://github.com/openvla/openvla.git --no-build-isolation
-    install_prebuilt_flash_attn
+    install_flash_attn
     uv pip uninstall pynvml || true
 }
 
@@ -302,15 +305,23 @@ install_openvla_oft_model() {
             create_and_sync_venv
             install_common_embodied_deps
             install_maniskill_libero_env
-            install_prebuilt_flash_attn
+            install_flash_attn
             uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git  --no-build-isolation
             ;;
         robotwin)
             create_and_sync_venv
             install_common_embodied_deps
-            install_prebuilt_flash_attn
+            install_flash_attn
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openvla-oft.git@RLinf/v0.1  --no-build-isolation
             install_robotwin_env
+            ;;
+        opensora)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_maniskill_libero_env
+            install_opensora_world_model
+            install_flash_attn
+            uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenVLA-OFT model." >&2
@@ -335,34 +346,34 @@ install_openpi_model() {
             install_common_embodied_deps
             install_maniskill_libero_env
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
-            install_prebuilt_flash_attn
+            install_flash_attn
             ;;
         metaworld)
             create_and_sync_venv
             install_common_embodied_deps
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
-            install_prebuilt_flash_attn
+            install_flash_attn
             install_metaworld_env
             ;;
         calvin)
             create_and_sync_venv
             install_common_embodied_deps
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
-            install_prebuilt_flash_attn
+            install_flash_attn
             install_calvin_env
             ;;
         robocasa)
             create_and_sync_venv
             install_common_embodied_deps
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
-            install_prebuilt_flash_attn
+            install_flash_attn
             install_robocasa_env
             ;;
         robotwin)
             create_and_sync_venv
             install_common_embodied_deps
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
-            install_prebuilt_flash_attn
+            install_flash_attn
             install_robotwin_env
             ;;
         *)
@@ -396,12 +407,12 @@ install_gr00t_model() {
     case "$ENV_NAME" in
         maniskill_libero)
             install_maniskill_libero_env
-            install_prebuilt_flash_attn
+            install_flash_attn
             ;;
         isaaclab)
             install_isaaclab_env
             # Torch is modified in Isaac Lab, install flash-attn afterwards
-            install_prebuilt_flash_attn
+            install_flash_attn
             uv pip install numpydantic==1.7.0 pydantic==2.11.7 numpy==1.26.0
             ;;
         *)
@@ -460,7 +471,7 @@ install_behavior_env() {
     uv pip install click==8.2.1
     pushd ~ >/dev/null
     uv pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
-    install_prebuilt_flash_attn
+    install_flash_attn
     popd >/dev/null
 }
 
@@ -621,6 +632,20 @@ install_frankasim_env() {
     uv pip install -r "$serldir/franka_sim/requirements.txt"
 }
 
+install_opensora_world_model() {
+    # Clone opensora repository
+    local opensora_dir
+    opensora_dir=$(clone_or_reuse_repo OPENSORA_PATH "$VENV_DIR/opensora" ${GITHUB_PREFIX}https://github.com/RLinf/opensora.git)
+    
+    uv pip install -e "$opensora_dir"
+    
+    # Install opensora dependencies
+    uv pip install -r $SCRIPT_DIR/embodied/models/opensora.txt
+    uv pip install git+${GITHUB_PREFIX}https://github.com/fangqi-Zhu/TensorNVMe.git --no-build-isolation
+    echo "export LD_LIBRARY_PATH=~/.tensornvme/lib:\$LD_LIBRARY_PATH" >> "$VENV_DIR/bin/activate"
+    install_apex
+}
+
 #=======================REASONING INSTALLER=======================
 
 install_reason() {
@@ -641,8 +666,8 @@ install_reason() {
         uv pip install -r $SCRIPT_DIR/reason/megatron.txt --no-build-isolation
     fi
 
-    install_prebuilt_apex
-    install_prebuilt_flash_attn
+    install_apex
+    install_flash_attn
     uv pip uninstall pynvml || true
 }
 

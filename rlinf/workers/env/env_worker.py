@@ -147,6 +147,7 @@ class EnvWorker(Worker):
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
             action_dim=self.cfg.actor.model.action_dim,
             policy=self.cfg.actor.model.get("policy_setup", None),
+            wm_env_type=self.cfg.env.train.get("wm_env_type", None),
         )
         env_info = {}
 
@@ -207,6 +208,7 @@ class EnvWorker(Worker):
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
             action_dim=self.cfg.actor.model.action_dim,
             policy=self.cfg.actor.model.get("policy_setup", None),
+            wm_env_type=self.cfg.env.eval.get("wm_env_type", None),
         )
         env_info = {}
 

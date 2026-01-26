@@ -100,6 +100,10 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
           <ul>
             <li>Qwen2.5-VL</li>
           </ul>
+          <li><b>世界模型</b></li>
+          <ul>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/opensora.html">OpenSora</a> ✅</li>
+          </ul>
           <li><b>自定义模型</b></li>
           <ul>
             <li>MLP-Policy ✅</li>
@@ -574,7 +578,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 - [ ] 支持多智能体训练
 - [ ] 支持更多具身模拟器的集成 (如 [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis))  
 - [ ] 支持更多VLA模型 (如[WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow))
-- [ ] 支持世界模型（World Model）
+- [X] 支持世界模型（World Model）
 
 - [x] 支持真实世界的具身智能强化学习
 

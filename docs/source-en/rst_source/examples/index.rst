@@ -161,7 +161,7 @@ as well as reinforcement learning training examples on real robots.
   </div>
 
   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
-    <div style="flex: 1 1 45%; max-width: 300px; text-align: center;">
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
       <img src="https://github.com/RLinf/misc/raw/main/pic/sac-flow-overview.png"
           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -172,7 +172,7 @@ as well as reinforcement learning training examples on real robots.
       </p>
     </div>
 
-    <div style="flex: 1 1 45%; max-width: 300px; text-align: center;">
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
       <img src="https://github.com/RLinf/misc/raw/main/pic/3_layer_mlp.jpg"
           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
           data-target="animated-image.originalImage">
@@ -183,8 +183,19 @@ as well as reinforcement learning training examples on real robots.
         Train an MLP Policy with PPO/SAC/GRPO
       </p>
     </div>
-  </div>
 
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/hpcaitech/Open-Sora-Demo/raw/main/readme/icon.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
+            data-target="animated-image.originalImage">
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/opensora.rst" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>RL with OpenSora World Model</b>
+         </a><br>
+         Support OpenSora World Model + OpenVLA-OFT + GRPO training
+       </p>
+     </div>
+  </div>
 
 
 Reasoning Scenarios
@@ -320,6 +331,7 @@ Thanks to this decoupled design, workers can be flexibly and dynamically schedul
    robocasa
    robotwin
    frankasim
+   opensora
    pi0
    gr00t
    sac_flow

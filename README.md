@@ -101,6 +101,10 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
           <ul>
             <li>Qwen2.5-VL</li>
           </ul>
+          <li><b>World Model</b></li>
+          <ul>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/opensora.html">OpenSora</a> ✅</li>
+          </ul>
           <li><b>Custom Models</b></li>
           <ul>
             <li>MLP-Policy ✅</li>
@@ -572,8 +576,8 @@ and exhibits greater stability.
 - [ ] Support for multi-agent training  
 - [ ] Support for integration with more embodied simulators (e.g., [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis))  
 - [ ] Support for more Vision Language Action models (VLAs) (e.g., [WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow))
-- [ ] Support for world model   
-- [x] Support for real-world RL
+- [X] Support for world model   
+- [X] Support for real-world RL
 
 # CI Test Status
 RLinf has comprehensive CI tests for both the core components (via unit tests) and end-to-end RL training workflows of embodied, agent, and reasoning scenarios.
