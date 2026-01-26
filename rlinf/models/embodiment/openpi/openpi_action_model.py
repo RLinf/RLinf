@@ -128,7 +128,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             proj_width = 1024
         # value head
         if self.config.add_value_head:
-            if self.config.config_name == "pi05_maniskill":
+            if self.config.config_name in ["pi05_maniskill", "pi05_libero"]:
                 value_head_hidden_sizes = (1024, 512, 256)
             else:
                 value_head_hidden_sizes = (512, 256, 128)
@@ -139,9 +139,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                 output_dim=1,
                 activation=value_head_activation,
                 bias_last=True,
-            )
-            self.value_head = self.value_head.to(
-                dtype=self.action_out_proj.weight.dtype
             )
         self.use_vlm_value = getattr(self.config, "value_after_vlm", False) and getattr(
             self.config, "add_value_head", False
@@ -156,9 +153,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                 noise_logvar_range=self.config.noise_logvar_range,
                 noise_scheduler_type="learn",
             )
-            self.noise_head = self.noise_head.to(
-                dtype=self.action_out_proj.weight.dtype
-            )
 
         for name, module in self.named_modules():
             # Set _fsdp_wrap_name to the last part of the path (e.g., "model.action_in_proj" -> "action_in_proj")
@@ -167,26 +161,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
 
     def set_global_step(self, global_step):
         self.global_step = global_step
-
-    def _tensor_to_numpy(self, x):
-        """Convert tensor to numpy, handling BFloat16/Float16 conversion."""
-        if torch.is_tensor(x):
-            x_cpu = x.detach().cpu()
-            # BFloat16 and Float16 are not supported by numpy, convert to float32
-            if x_cpu.dtype in (torch.bfloat16, torch.float16):
-                x_cpu = x_cpu.float()
-            return np.asarray(x_cpu)
-        return x
-
-    def _tensor_to_numpy_single(self, x, index):
-        """Convert single tensor element to numpy, handling BFloat16/Float16 conversion."""
-        if torch.is_tensor(x):
-            x_cpu = x[index].detach().cpu()
-            # BFloat16 and Float16 are not supported by numpy, convert to float32
-            if x_cpu.dtype in (torch.bfloat16, torch.float16):
-                x_cpu = x_cpu.float()
-            return np.asarray(x_cpu)
-        return x[index]
 
     def setup_wrappers(
         self,
@@ -205,8 +179,10 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         else:
             inputs = {key: inputs[key] for key in inputs.keys() if "/" in key}
 
-        # tensor -> numpy (Convert BFloat16/Float16 to float32 for numpy compatibility)
-        inputs = jax.tree.map(self._tensor_to_numpy, inputs)
+        # tensor -> numpy
+        inputs = jax.tree.map(
+            lambda x: np.asarray(x.detach().cpu()) if torch.is_tensor(x) else x, inputs
+        )
         batch_size = next(v.shape[0] for v in inputs.values() if hasattr(v, "shape"))
         # split & transform
         transformed_samples = []
@@ -244,7 +220,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         batch_size = outputs["actions"].shape[0]
         transformed_samples = []
         for i in range(batch_size):
-            sample = jax.tree.map(lambda x: self._tensor_to_numpy_single(x, i), outputs)
+            sample = jax.tree.map(lambda x: np.asarray(x[i].detach().cpu()), outputs)
             sample = self._output_transform(sample)
             transformed_samples.append(sample)
         # recombine
@@ -323,17 +299,14 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             "observation/image": env_obs["main_images"],
             "prompt": env_obs["task_descriptions"],
         }
-        # state observation - ensure float32 to prevent BFloat16 conversion issues
+        # state observation
         if "calvin" in self.config.config_name:
             state = env_obs["states"]
             processed_obs["observation/state_ee_pos"] = state[:, :3]
             processed_obs["observation/state_ee_rot"] = state[:, 3:6]
             processed_obs["observation/state_gripper"] = state[:, 6:7]
         else:
-            state = env_obs["states"]
-            if torch.is_tensor(state):
-                state = state.to(dtype=torch.float32)
-            processed_obs["observation/state"] = state
+            processed_obs["observation/state"] = env_obs["states"]
         # wrist image observation
         if env_obs["wrist_images"] is not None:
             processed_obs["observation/wrist_image"] = env_obs["wrist_images"]
@@ -354,10 +327,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                 processed_obs[key] = value.to(device=device).contiguous()
             elif isinstance(value, dict):
                 for sub_key, sub_value in value.items():
-                    if torch.is_tensor(sub_value):
-                        processed_obs[key][sub_key] = sub_value.to(
-                            device=device
-                        ).contiguous()
+                    processed_obs[key][sub_key] = sub_value.to(
+                        device=device
+                    ).contiguous()
         return processed_obs
 
     def predict_action_batch(
@@ -572,9 +544,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             x_t,
             t_input,
         )
-        v_t = self.action_out_proj(
-            suffix_out.to(dtype=self.action_out_proj.weight.dtype)
-        )  # [bs,n_action_steps,max_action_dim]
+        v_t = self.action_out_proj(suffix_out)  # [bs,n_action_steps,max_action_dim]
         # value prediction
         if (
             self.config.add_value_head
@@ -626,9 +596,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             elif self.config.noise_method == "flow_noise":
                 x0_weight = 1 - (t_input - delta)
                 x1_weight = t_input - delta
-                x_t_std = self.noise_head(
-                    suffix_out.to(dtype=self.action_out_proj.weight.dtype)
-                )
+                x_t_std = self.noise_head(suffix_out)
             else:
                 raise ValueError(f"Invalid noise method: {self.config.noise_method}")
         x_t_mean = x0_pred * x0_weight + x1_pred * x1_weight
