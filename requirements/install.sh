@@ -17,7 +17,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 SUPPORTED_TARGETS=("embodied" "reason" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "opensora")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora")
 
 # Ensure uv is installed
 if ! command -v uv &> /dev/null; then
@@ -436,6 +436,10 @@ install_env_only() {
                 install_franka_env
             fi
             ;;
+        habitat)
+            install_common_embodied_deps
+            install_habitat_env
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for env-only installation." >&2
             exit 1
@@ -630,6 +634,23 @@ install_frankasim_env() {
     serldir=$(clone_or_reuse_repo SERL_PATH "$VENV_DIR/serl" https://github.com/RLinf/serl.git -b RLinf/franka-sim)
     uv pip install -e "$serldir/franka_sim"
     uv pip install -r "$serldir/franka_sim/requirements.txt"
+}
+
+install_habitat_env() {
+    local habitat_sim_dir
+    habitat_sim_dir=$(clone_or_reuse_repo HABITAT_SIM_PATH "$VENV_DIR/habitat" https://github.com/facebookresearch/habitat-sim.git -b v0.3,3 --recurse-submodules)
+    if [ -d "$habitat_sim_dir/build" ]; then
+        rm -rf $habitat_sim_dir/build
+    fi
+    export CMAKE_POLICY_VERSION_MINIMUM=3.5
+    uv pip install "$habitat_sim_dir" --config-settings="--build-option=--headless" --config-settings="--build-option=--with-bullet"
+    uv pip install $habitat_sim_dir/build/deps/magnum-bindings/src/python/
+
+    local habitat_lab_dir
+    # Use a fork version of habitat-lab that fixes Python 3.11 compatibility issues
+    habitat_lab_dir=$(clone_or_reuse_repo HABITAT_LAB_PATH "$VENV_DIR/habitat-lab" https://github.com/RLinf/habitat-lab.git -b v0.3.3 --recurse-submodules)
+    uv pip install -e $habitat_lab_dir/habitat-lab
+    uv pip install -e $habitat_lab_dir/habitat-baselines
 }
 
 install_opensora_world_model() {
