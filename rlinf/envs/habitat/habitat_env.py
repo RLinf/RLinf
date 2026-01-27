@@ -26,7 +26,10 @@ from habitat_baselines.config.default import get_config
 from hydra.core.global_hydra import GlobalHydra
 
 from rlinf.envs.habitat.extensions import measures
-from rlinf.envs.habitat.extensions.utils import observations_to_image
+from rlinf.envs.habitat.extensions.utils import (
+    observations_to_image,
+    resize_observation_images,
+)
 from rlinf.envs.habitat.venv import HabitatRLEnv, ReconfigureSubprocEnv
 from rlinf.envs.utils import (
     list_of_dict_to_dict_of_list,
@@ -177,6 +180,7 @@ class HabitatEnv(gym.Env):
             episode_ids = self.env.get_current_episode_ids()
             for i in range(len(raw_obs)):
                 frame = observations_to_image(raw_obs[i], info_lists[i])
+                frame = resize_observation_images(frame, frame["rgb"].shape[0])
                 frame_concat = np.concatenate(
                     (frame["rgb"], frame["depth"], frame["top_down_map"]), axis=1
                 )
@@ -233,6 +237,7 @@ class HabitatEnv(gym.Env):
             dones_episode_ids = np.array(self.env.get_current_episode_ids())
         else:
             dones_episode_ids = np.array(self.env.get_current_episode_ids())[dones]
+
         for episode_ids in dones_episode_ids:
             video_name = f"episode_{episode_ids}"
             save_rollout_video(
