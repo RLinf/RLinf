@@ -40,7 +40,6 @@ class HttpToolWorker(ToolWorker):
         self.active_tasks = set()
         self.tools: dict[str, ToolBase] = {}
 
-        # TODO: make it as config
         self.concurrency_limit = self.cfg.tools.codejudge.concurrency_limit
         self.semaphore = asyncio.Semaphore(self.concurrency_limit)
 
