@@ -15,7 +15,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    env,actor,rollout: 2-2
+    env,actor,rollout: 5-5
 
 
 runner:
@@ -79,8 +79,6 @@ algorithm:
 env:
   group_name: "EnvGroup"
   enable_offload: False
-  max_steps_per_rollout_epoch: 100
-
   train:
     wrap_obs_mode: cnn
     obs_mode: rgb
@@ -113,7 +111,7 @@ rollout:
   pipeline_stage_num: 1
   compile_model: False
   model:
-    model_path: "/mnt/public/tenggongyue/new/RLinf/install_models/RLinf-Reset10-pretrained"
+    model_path: "/path/to/model"
     state_dim: 7
     action_dim: 4
     num_q_heads: 10
@@ -130,7 +128,7 @@ actor:
   enable_drq: True
   compile_model: True
   model:
-    model_path:  "/mnt/public/tenggongyue/new/RLinf/install_models/RLinf-Reset10-pretrained"
+    model_path:  "/path/to/model"
     state_dim: 7
     action_dim: 4
     num_q_heads: 10

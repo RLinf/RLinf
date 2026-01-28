@@ -117,29 +117,22 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         if enable_critic_warmup:
             raise NotImplementedError
         else:
-            params_actor = []
-            params_critic = []
-
             for name, param in self.model.named_parameters():
                 if not param.requires_grad:
                     continue
-
                 if ("encoders" in name) or ("encoder" in name):
                     params_critic.append(param)
                     continue
-
                 if ("mix_proj" in name) or ("state_proj" in name):
                     params_critic.append(param)
                     continue
-
                 if "q_head" in name:
                     params_critic.append(param)
                     continue
-
-                if ("actor_mean" in name) or ("actor_logstd" in name):
+                else:
                     params_actor.append(param)
                     continue
-
+   
         assert len(params_critic) > 0
         assert len(params_actor) > 0
         self.optimizer = torch.optim.Adam(
