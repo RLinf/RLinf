@@ -238,7 +238,6 @@ class HabitatEnv(gym.Env):
             dones_episode_ids = np.array(self.env.get_current_episode_ids())
         else:
             dones_episode_ids = np.array(self.env.get_current_episode_ids())[dones]
-
         for episode_ids in dones_episode_ids:
             video_name = f"episode_{episode_ids}"
             save_rollout_video(

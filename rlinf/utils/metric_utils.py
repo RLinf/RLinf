@@ -22,12 +22,52 @@ def compute_split_num(num, split_num):
     return math.lcm(num, split_num) // split_num
 
 
+def count_trajectories(metrics_dict):
+    """
+    Count the total number of trajectories from metrics dictionary.
+
+    Args:
+        metrics_dict: Dictionary of metrics where each value is a tensor after concatenation.
+                     Each tensor's first dimension represents the number of trajectories.
+
+    Returns:
+        int: Total number of trajectories. If metrics_dict is empty, returns 0.
+    """
+    if not metrics_dict:
+        return 0
+
+    # Use the first metric tensor to get the trajectory count
+    # All metrics should have the same first dimension (number of trajectories)
+    first_key = next(iter(metrics_dict.keys()))
+    first_tensor = metrics_dict[first_key]
+
+    if isinstance(first_tensor, torch.Tensor):
+        return first_tensor.shape[0]
+    elif isinstance(first_tensor, list):
+        # If it's a list of tensors, sum up all trajectory counts
+        return sum(
+            t.shape[0] if isinstance(t, torch.Tensor) else len(t) for t in first_tensor
+        )
+    else:
+        raise TypeError(f"Unsupported tensor type: {type(first_tensor)}")
+
+
 def compute_evaluate_metrics(eval_metrics_list):
     """
     List of evaluate metrics, list length stands for rollout process
+
+    Returns:
+        dict: Aggregated metrics with mean values and trajectory count
     """
     all_eval_metrics = {}
     env_info_keys = eval_metrics_list[0].keys()
+
+    # Count trajectories from each process
+    # If num_trajectories is already in the metrics, use it; otherwise count from tensor shape
+    trajectory_counts = []
+    for eval_metrics in eval_metrics_list:
+        count = count_trajectories(eval_metrics)
+        trajectory_counts.append(count)
 
     for env_info_key in env_info_keys:
         all_eval_metrics[env_info_key] = [
@@ -38,6 +78,9 @@ def compute_evaluate_metrics(eval_metrics_list):
         all_eval_metrics[key] = (
             torch.concat(all_eval_metrics[key]).float().mean().numpy()
         )
+
+    # Add total trajectory count to metrics
+    all_eval_metrics["num_trajectories"] = sum(trajectory_counts)
 
     return all_eval_metrics
 

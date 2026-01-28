@@ -1512,7 +1512,7 @@ class AsyncEmbodiedRolloutBuffer:
 
         # Organize data
         for i in range(split_num):
-            data_channel.put(splited_data[i])
+            data_channel.put(splited_data[i], async_op=True)
 
     async def run(self, data_channel, split_num):
         cnt = 0

@@ -16,6 +16,7 @@ import numpy as np
 import torch
 
 from rlinf.config import SupportedModel
+from rlinf.envs import SupportedEnvType
 
 
 def prepare_actions_for_maniskill(
@@ -157,19 +158,32 @@ def prepare_actions_for_habitat(raw_chunk_actions, model_type):
 
 def prepare_actions(
     raw_chunk_actions,
-    env_type,
-    model_type,
+    env_type: str,
+    model_type: str,
     num_action_chunks,
     action_dim,
     action_scale: float = 1.0,
     policy: str = "widowx_bridge",
+    wm_env_type=None,
 ) -> torch.Tensor | np.ndarray:
-    if env_type == "libero":
+    env_type = SupportedEnvType(env_type)
+    if env_type == SupportedEnvType.LIBERO:
         chunk_actions = prepare_actions_for_libero(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
-    elif env_type == "maniskill":
+    elif env_type == SupportedEnvType.OPENSORAWM:
+        # TODO: Implement prepare_actions_for_opensora_wm
+        if wm_env_type == "libero":
+            chunk_actions = prepare_actions_for_libero(
+                raw_chunk_actions=raw_chunk_actions,
+                model_type=model_type,
+            )
+        else:
+            raise NotImplementedError(
+                f"Env type {wm_env_type} not implemented for OpenSoraWM"
+            )
+    elif env_type == SupportedEnvType.MANISKILL:
         chunk_actions = prepare_actions_for_maniskill(
             raw_chunk_actions=raw_chunk_actions,
             num_action_chunks=num_action_chunks,
@@ -177,35 +191,35 @@ def prepare_actions(
             action_scale=action_scale,
             policy=policy,
         )
-    elif env_type == "robotwin":
+    elif env_type == SupportedEnvType.ROBOTWIN:
         chunk_actions = raw_chunk_actions
-    elif env_type == "metaworld":
+    elif env_type == SupportedEnvType.METAWORLD:
         chunk_actions = raw_chunk_actions
-    elif env_type == "calvin":
+    elif env_type == SupportedEnvType.CALVIN:
         chunk_actions = prepare_actions_for_calvin(
             raw_chunk_actions=raw_chunk_actions,
         )
-    elif env_type == "behavior":
+    elif env_type == SupportedEnvType.BEHAVIOR:
         chunk_actions = raw_chunk_actions
-    elif env_type == "isaaclab":
+    elif env_type == SupportedEnvType.ISAACLAB:
         chunk_actions = prepare_actions_for_isaaclab(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
-    elif env_type == "robocasa":
+    elif env_type == SupportedEnvType.ROBOCASA:
         chunk_actions = prepare_actions_for_robocasa(
             raw_chunk_actions=raw_chunk_actions,
             action_dim=action_dim,
             model_type=model_type,
         )
-    elif env_type == "realworld":
+    elif env_type == SupportedEnvType.REALWORLD:
         chunk_actions = raw_chunk_actions
-    elif env_type == "frankasim":
+    elif env_type == SupportedEnvType.FRANKASIM:
         chunk_actions = prepare_actions_for_mujoco(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
-    elif env_type == "habitat":
+    elif env_type == SupportedEnvType.HABITAT:
         chunk_actions = prepare_actions_for_habitat(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,

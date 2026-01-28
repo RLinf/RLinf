@@ -48,7 +48,7 @@ from transformers.tokenization_utils import (
 )
 from transformers.utils import TensorType
 
-from rlinf.models.embodiment.base_policy import BasePolicy
+from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.modules.value_head import ValueHead
 from rlinf.utils.utils import (
     compute_entropy_from_logits,
@@ -471,7 +471,7 @@ class VLALogitsProcessor(LogitsProcessor):
         return scores_processed
 
 
-class OpenVLAForRLActionPrediction(BasePolicy, OpenVLAForBatchActionPrediction):
+class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
     def __init__(
         self,
         config,
@@ -482,7 +482,7 @@ class OpenVLAForRLActionPrediction(BasePolicy, OpenVLAForBatchActionPrediction):
         add_value_head,
         max_prompt_length,
     ):
-        OpenVLAForBatchActionPrediction.__init__(self, config)
+        super().__init__(config)
         self._init_logits_processor()
 
         action_norm_stats = self.get_action_stats(unnorm_key)
@@ -507,6 +507,12 @@ class OpenVLAForRLActionPrediction(BasePolicy, OpenVLAForBatchActionPrediction):
     def _init_logits_processor(self):
         self.logits_processors = LogitsProcessorList()
         self.logits_processors.append(VLALogitsProcessor(self.config.n_action_bins))
+
+    def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
+        if forward_type == ForwardType.DEFAULT:
+            return self.default_forward(**kwargs)
+        else:
+            raise NotImplementedError
 
     def default_forward(
         self,
@@ -537,8 +543,7 @@ class OpenVLAForRLActionPrediction(BasePolicy, OpenVLAForBatchActionPrediction):
         if compute_values:
             output_hidden_states = True
 
-        outputs = OpenVLAForBatchActionPrediction.forward(
-            self=self,
+        outputs = super().forward(
             input_ids=input_ids,
             attention_mask=attention_mask,
             pixel_values=pixel_values,

@@ -16,10 +16,14 @@
 # https://github.com/ray-project/ray/blob/161849364a784442cc659fb9780f1a6adee85fce/python/ray/_private/accelerators/npu.py
 
 import os
+from typing import TYPE_CHECKING, Optional
 
 from ray._private.accelerators.npu import NPUAcceleratorManager
 
 from .accelerator import AcceleratorManager, AcceleratorType
+
+if TYPE_CHECKING:
+    from ...collective import CollectiveGroupOptions
 
 
 @AcceleratorManager.register_manager(AcceleratorType.NPU)
@@ -102,3 +106,8 @@ class AscendNPUManager(AcceleratorManager):
     def get_device_type() -> str:
         """Get the device type."""
         return "npu"
+
+    @staticmethod
+    def get_accel_pg_options(options: Optional["CollectiveGroupOptions"]):
+        """Get the accelerator CCL process group options."""
+        return None

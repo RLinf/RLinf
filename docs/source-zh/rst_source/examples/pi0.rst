@@ -387,7 +387,7 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
 
 ::
 
-   bash examples/embodiment/run_embodiment.sh libero_10_ppo_openpi
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi_quickstart
 
 可视化与结果
 ------------

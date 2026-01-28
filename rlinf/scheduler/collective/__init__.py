@@ -20,7 +20,7 @@ from .async_work import (
     AsyncWork,
 )
 from .collective import Collective
-from .collective_group import CollectiveGroup
+from .collective_group import CollectiveGroup, CollectiveGroupOptions
 
 __all__ = [
     "AsyncWork",
@@ -30,4 +30,5 @@ __all__ = [
     "AsyncFuncWork",
     "CollectiveGroup",
     "Collective",
+    "CollectiveGroupOptions",
 ]

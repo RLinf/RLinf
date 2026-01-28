@@ -48,7 +48,10 @@ class DataCollector(Worker):
             obs.pop("task_descriptions", None)
         ret_obs = {}
         for key in obs:
-            ret_obs[key] = obs[key][0]
+            if "images" in key:
+                ret_obs[key] = obs[key].clone()[0].float() / 255.0
+            else:
+                ret_obs[key] = obs[key][0]
         return ret_obs
 
     def run(self):

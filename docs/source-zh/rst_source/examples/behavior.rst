@@ -114,7 +114,12 @@
 
    # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
 
+   # 安装openvla-oft环境
    bash requirements/install.sh embodied --model openvla-oft --env behavior
+   source .venv/bin/activate
+
+   # 安装openpi环境
+   bash requirements/install.sh embodied --model openpi --env behavior
    source .venv/bin/activate
 
 资源下载
@@ -176,6 +181,22 @@ OpenVLA-OFT 提供了一个适用于 Behavior 环境中所有任务类型的统�
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir RLinf-OpenVLAOFT-Behavior
+
+**OpenPI 模型下载**
+
+.. code:: bash
+
+   # 下载模型（选择任一方法）
+   # 方法 1: 使用 git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-Behavior
+
+   # 方法 2: 使用 huggingface-hub
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+   hf download RLinf/RLinf-Pi0-Behavior --local-dir RLinf-Pi0-Behavior
+
 
 下载后，请确保在配置 yaml 文件中正确指定模型路径。
 

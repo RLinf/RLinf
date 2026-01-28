@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# This file contains code copied from the VLN-CE project: https://github.com/jacobkrantz/VLN-CE.
+# The original code is licensed under the MIT License.
+
 import textwrap
 from copy import deepcopy
 from typing import Any, Optional, Union
@@ -660,49 +663,6 @@ def navigator_video_frame(
     return np.concatenate((rgb, horizontal_white, map_and_inst), axis=0).astype(
         np.uint8
     )
-
-
-# def generate_video(
-#     video_option: List[str],
-#     video_dir: Optional[str],
-#     images: List[ndarray],
-#     episode_id: Union[str, int],
-#     checkpoint_idx: int,
-#     metrics: Dict[str, float],
-#     tb_writer: TensorboardWriter,
-#     fps: int = 10,
-# ) -> None:
-#     """Generate video according to specified information. Using a custom
-#     verion instead of Habitat's that passes FPS to video maker.
-
-#     Args:
-#         video_option: string list of "tensorboard" or "disk" or both.
-#         video_dir: path to target video directory.
-#         images: list of images to be converted to video.
-#         episode_id: episode id for video naming.
-#         checkpoint_idx: checkpoint index for video naming.
-#         metric_name: name of the performance metric, e.g. "spl".
-#         metric_value: value of metric.
-#         tb_writer: tensorboard writer object for uploading video.
-#         fps: fps for generated video.
-#     """
-#     if len(images) < 1:
-#         return
-
-#     metric_strs = []
-#     for k, v in metrics.items():
-#         metric_strs.append(f"{k}={v:.2f}")
-
-#     video_name = f"episode={episode_id}-ckpt={checkpoint_idx}-" + "-".join(
-#         metric_strs
-#     )
-#     if "disk" in video_option:
-#         assert video_dir is not None
-#         images_to_video(images, video_dir, video_name, fps=fps)
-#     if "tensorboard" in video_option:
-#         tb_writer.add_video_from_np_images(
-#             f"episode{episode_id}", checkpoint_idx, images, fps=fps
-#         )
 
 
 def compute_heading_to(

@@ -143,7 +143,6 @@ rollout:
 
   max_running_requests: 128 # the maximum number of running requests in the rollout engine.
   cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
-  is_eval: False
 
 data:
   type: math
@@ -185,26 +184,24 @@ actor:
   model:
     megatron_checkpoint: null
     precision: fp16
-    add_bias_linear: False
-
-    tensor_model_parallel_size: 1
-    pipeline_model_parallel_size: 1
-
-    activation: swiglu
-    sequence_parallel: False
-    # recompute_method: block
-    # recompute_granularity: selective
-
-    recompute_method: block
-    recompute_granularity: full
-    recompute_num_layers: 36
 
     seq_length: ${runner.seq_length}
     encoder_seq_length: ${runner.seq_length}
 
+    # megatron model config
+    activation: swiglu
     normalization: rmsnorm
-
+    add_bias_linear: False
     position_embedding_type: rope
+
+    # megatron performance config
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: False
+
+    recompute_method: block
+    recompute_granularity: full
+    recompute_num_layers: 36
 
     apply_rope_fusion: True
     bias_dropout_fusion: False
@@ -219,20 +216,22 @@ actor:
 
   optim:
     optimizer: adam
-    bf16: False
-    fp16: True
     lr: 1.0e-06
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-05
     min_lr: 0.0
     weight_decay: 0.01
+    clip_grad: 0.8
+
+    # megatron config
+    bf16: False
+    fp16: True
     use_distributed_optimizer: True
     overlap_grad_reduce: False
     overlap_param_gather: False
     optimizer_enable_pin: False
     overlap_param_gather_with_optimizer_step: False
-    clip_grad: 0.8
     loss_scale: 65536
 
   lr_sched:

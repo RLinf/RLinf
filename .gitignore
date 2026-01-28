@@ -18,5 +18,3 @@ outputs/*
 .docs-venv
 uv.lock
 rlinf/envs/maniskill/assets
-eval/
-VLN-CE

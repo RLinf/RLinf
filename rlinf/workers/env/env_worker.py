@@ -71,10 +71,14 @@ class EnvWorker(Worker):
             )
 
     def init_worker(self):
-        enable_offload = self.cfg.env.enable_offload
+        self.enable_offload = self.cfg.env.enable_offload
 
-        train_env_cls = get_env_cls(self.cfg.env.train.env_type, self.cfg.env.train)
-        eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
+        train_env_cls = get_env_cls(
+            self.cfg.env.train.env_type, self.cfg.env.train, self.enable_offload
+        )
+        eval_env_cls = get_env_cls(
+            self.cfg.env.eval.env_type, self.cfg.env.eval, self.enable_offload
+        )
 
         # This is a barrier to ensure all envs' initial setup upon import is done
         # Essential for RealWorld env to ensure initial ROS node setup is done
@@ -91,7 +95,6 @@ class EnvWorker(Worker):
                         total_num_processes=self._world_size * self.stage_num,
                         env_cls=train_env_cls,
                         worker_info=self.worker_info,
-                        enable_offload=enable_offload,
                     )
                 )
         if self.enable_eval:
@@ -105,7 +108,6 @@ class EnvWorker(Worker):
                         total_num_processes=self._world_size * self.stage_num,
                         env_cls=eval_env_cls,
                         worker_info=self.worker_info,
-                        enable_offload=enable_offload,
                     )
                 )
 
@@ -129,6 +131,9 @@ class EnvWorker(Worker):
                 self.last_intervened_info_list.append((None, None))
                 self.env_list[i].stop_env()
 
+                if self.enable_offload and hasattr(self.env_list[i], "close"):
+                    self.env_list[i].close()
+
     def env_interact_step(
         self, chunk_actions: torch.Tensor, stage_id: int
     ) -> tuple[EnvOutput, dict[str, Any]]:
@@ -142,6 +147,7 @@ class EnvWorker(Worker):
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
             action_dim=self.cfg.actor.model.action_dim,
             policy=self.cfg.actor.model.get("policy_setup", None),
+            wm_env_type=self.cfg.env.train.get("wm_env_type", None),
         )
         env_info = {}
 
@@ -202,6 +208,7 @@ class EnvWorker(Worker):
             num_action_chunks=self.cfg.actor.model.num_action_chunks,
             action_dim=self.cfg.actor.model.action_dim,
             policy=self.cfg.actor.model.get("policy_setup", None),
+            wm_env_type=self.cfg.env.eval.get("wm_env_type", None),
         )
         env_info = {}
 
@@ -242,17 +249,15 @@ class EnvWorker(Worker):
     def finish_rollout(self, mode="train"):
         # reset
         if mode == "train":
-            if self.cfg.env.train.video_cfg.save_video:
-                for i in range(self.stage_num):
-                    self.env_list[i].flush_video()
             for i in range(self.stage_num):
+                if self.cfg.env.train.video_cfg.save_video:
+                    self.env_list[i].flush_video()
                 self.env_list[i].update_reset_state_ids()
         elif mode == "eval":
-            if self.cfg.env.eval.video_cfg.save_video:
-                for i in range(self.stage_num):
+            for i in range(self.stage_num):
+                if self.cfg.env.eval.video_cfg.save_video:
                     self.eval_env_list[i].flush_video()
-            if not self.cfg.env.eval.auto_reset:
-                for i in range(self.stage_num):
+                if not self.cfg.env.eval.auto_reset:
                     self.eval_env_list[i].update_reset_state_ids()
 
     def split_env_batch(self, env_batch, gather_id, mode):
@@ -385,6 +390,8 @@ class EnvWorker(Worker):
             self.finish_rollout()
 
         for env in self.env_list:
+            if self.enable_offload and hasattr(env, "close"):
+                env.close()
             env.stop_env()
 
         for key, value in env_metrics.items():
@@ -433,6 +440,8 @@ class EnvWorker(Worker):
 
             self.finish_rollout(mode="eval")
         for stage_id in range(self.stage_num):
+            if self.enable_offload and hasattr(self.eval_env_list[stage_id], "close"):
+                self.eval_env_list[stage_id].close()
             self.eval_env_list[stage_id].stop_env()
 
         for key, value in eval_metrics.items():

@@ -17,6 +17,7 @@ from typing import Any, Optional, Union
 
 import imageio
 import numpy as np
+import tensorflow as tf
 import torch
 from PIL import Image, ImageDraw, ImageFont
 
@@ -47,8 +48,11 @@ def to_tensor(
         ret = torch.tensor(array).to(device)
     else:
         if isinstance(array, list) and isinstance(array[0], np.ndarray):
-            array = np.array(array)
-        ret = torch.tensor(array, device=device)
+            ret = torch.tensor(np.array(array), device=device)
+        elif isinstance(array, list) and isinstance(array[0], torch.Tensor):
+            ret = torch.stack(array).to(device)
+        else:
+            ret = torch.tensor(array, device=device)
     if ret.dtype == torch.float64:
         ret = ret.to(torch.float32)
     return ret
@@ -230,3 +234,61 @@ def put_info_on_image(
     if extras is not None:
         lines.extend(extras)
     return put_text_on_image(image, lines)
+
+
+def crop_and_resize(image, crop_scale, batch_size):
+    """
+    Center-crops an image to have area `crop_scale` * (original image area), and then resizes back
+    to original size. We use the same logic seen in the `dlimp` RLDS datasets wrapper to avoid
+    distribution shift at test time.
+    """
+    assert image.shape.ndims == 3 or image.shape.ndims == 4
+    expanded_dims = False
+    if image.shape.ndims == 3:
+        image = tf.expand_dims(image, axis=0)
+        expanded_dims = True
+
+    new_heights = tf.reshape(
+        tf.clip_by_value(tf.sqrt(crop_scale), 0, 1), shape=(batch_size,)
+    )
+    new_widths = tf.reshape(
+        tf.clip_by_value(tf.sqrt(crop_scale), 0, 1), shape=(batch_size,)
+    )
+
+    height_offsets = (1 - new_heights) / 2
+    width_offsets = (1 - new_widths) / 2
+    bounding_boxes = tf.stack(
+        [
+            height_offsets,
+            width_offsets,
+            height_offsets + new_heights,
+            width_offsets + new_widths,
+        ],
+        axis=1,
+    )
+
+    image = tf.image.crop_and_resize(
+        image, bounding_boxes, tf.range(batch_size), (224, 224)
+    )
+
+    if expanded_dims:
+        image = image[0]
+
+    return image
+
+
+def center_crop_image(image):
+    batch_size = 1
+    crop_scale = 0.9
+
+    image = tf.convert_to_tensor(np.array(image))
+    orig_dtype = image.dtype
+
+    image = tf.image.convert_image_dtype(image, tf.float32)
+    image = crop_and_resize(image, crop_scale, batch_size)
+    image = tf.clip_by_value(image, 0, 1)
+    image = tf.image.convert_image_dtype(image, orig_dtype, saturate=True)
+
+    image = Image.fromarray(image.numpy())
+    image = image.convert("RGB")
+    return image

@@ -416,7 +416,7 @@ class CMANet(nn.Module):
         return x, rnn_states_out
 
 
-class CMAPolicy(BasePolicy):
+class CMAPolicy(nn.Module, BasePolicy):
     """CMA Policy for embodied navigation."""
 
     def __init__(self, cfg: CMAConfig, observation_space: spaces.Space = None):

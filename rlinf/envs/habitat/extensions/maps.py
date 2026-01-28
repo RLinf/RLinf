@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# This file contains code copied from the VLN-CE project: https://github.com/jacobkrantz/VLN-CE.
+# The original code is licensed under the MIT License.
+
 from typing import Optional, Union
 
 import networkx as nx
