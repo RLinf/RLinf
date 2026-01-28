@@ -5,10 +5,6 @@ tabs 4
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export TOKENIZERS_PARALLELISM=false
 export RAY_DEDUP_LOGS=0
-# export RAY_DEBUG=1
-
-# ray stop
-# ray start --head
 
 CONFIG_PATH="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_PATH=$(dirname $(dirname "$CONFIG_PATH"))
