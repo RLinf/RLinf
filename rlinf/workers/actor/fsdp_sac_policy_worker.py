@@ -132,7 +132,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 else:
                     params_actor.append(param)
                     continue
-   
+
         assert len(params_critic) > 0
         assert len(params_actor) > 0
         self.optimizer = torch.optim.Adam(
