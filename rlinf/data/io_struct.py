@@ -746,6 +746,7 @@ class RolloutResult:
 
         max_response_len = training_seq_length - data_seq_length
 
+        # when do_down_sample is enabled, there might be no valid rewards
         if self.rewards is not None and self.rewards.numel() == 0:
             batch = {
                 "input_ids": torch.zeros(0, dtype=torch.long).cuda(),

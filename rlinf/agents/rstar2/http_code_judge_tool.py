@@ -270,19 +270,17 @@ class PythonTool(CodeJudgeToolBase):
 
         data = {"type": "batch", "submissions": [submission]}
 
-        # try:
-        if True:
-            for retry_time in range(4):
-                try:
-                    results = (await send_request_func(self.url, data))["results"]
-                    break
-                except Exception as e:
-                    print(f"Tool retry time {retry_time}, exception: {e}")
-                    time.sleep(1)
-            else:
-                raise RuntimeError("Tool call failed after retries")
-            assert len(results) == 1, f"{results}"
-            return self._postprocess(results[0])
+        for retry_time in range(4):
+            try:
+                results = (await send_request_func(self.url, data))["results"]
+                break
+            except Exception as e:
+                print(f"Tool retry time {retry_time}, exception: {e}")
+                time.sleep(1)
+        else:
+            raise RuntimeError("Tool call failed after retries")
+        assert len(results) == 1, f"{results}"
+        return self._postprocess(results[0])
 
     def tool_schema(self) -> dict:
         return {
@@ -307,38 +305,6 @@ class PythonTool(CodeJudgeToolBase):
             },
         }
 
-    # def validate(self, request) -> Optional[ToolChannelResponse]:
-    #     tool_args = request.tool_args
-
-    #     assert request.tool_name == self.name, f"Name mismatch, {self.name} != {request.tool_name}"
-
-    #     if not isinstance(tool_args, dict):
-    #         return ToolChannelResponse(
-    #             success=False,
-    #             result=f"parameters format error, expect a json format, but get {type(tool_args)}\n"
-    #         )
-
-    #     required_param_msg = ""
-    #     for required_name in self.tool_schema()["function"]["parameters"]["required"]:
-    #         if required_name not in tool_args:
-    #             required_param_msg += f"parameters format error, '{required_name}' is a required parameter but not found\n"
-    #     if required_param_msg:
-    #         return ToolChannelResponse(
-    #             success=False,
-    #             result=required_param_msg
-    #         )
-
-    #     if not isinstance(tool_args["code"], str):
-    #         return ToolChannelResponse(
-    #             success=False,
-    #             result=f"parameters format error, 'code' should be a string but get {type(tool_args['code'])}"
-    #         )
-
-    #     if not isinstance(tool_args["input"], str):
-    #         return ToolChannelResponse(
-    #             success=False,
-    #             result=f"parameters format error, 'input' should be a string but get {type(tool_args['input'])}"
-    #         )
     def validate(self, request) -> Optional[ToolChannelResponse]:
         tool_args = request.tool_args
 
@@ -362,163 +328,4 @@ class PythonTool(CodeJudgeToolBase):
             return ToolChannelResponse(
                 success=False,
                 result="Error when executing tool: run_tool_calls_on_server_async failed for1 tool calls after 4 attempts.",
-            )
-
-
-class JupyterTool(CodeJudgeToolBase):
-    name = "execute_jupyter_code"
-
-    def __init__(self, cfg):
-        super().__init__(cfg=cfg)
-
-    async def execute(
-        self,
-        request: ToolChannelRequest,
-        send_request_func: Callable[[str, dict], ToolChannelResponse],
-    ):
-        err_msg = self.validate(request)
-        if err_msg:
-            return err_msg
-
-        # convert the code to the code exec on code-judge
-        code_to_execute = base64.b64encode(request.tool_args["code"].encode()).decode()
-        final_code = code_template_setup
-        # TODO: add history code here
-        final_code += code_template_exec.format(code_to_execute, "False")
-
-        submission = {
-            "type": "python",
-            "solution": final_code,
-        }
-
-        data = {"type": "batch", "submissions": [submission]}
-
-        try:
-            results = (await send_request_func(self.url, data))["results"]
-            assert len(results) == 1, f"{results}"
-            return self._postprocess(results[0])
-        except Exception as e:
-            return ToolChannelResponse(
-                success=False, result=f"Error: send request failed: {str(e)}"
-            )
-
-    def tool_schema(self) -> dict:
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": "Execute python code in a Jupyter notebook cell and return result.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "code": {
-                            "type": "string",
-                            "description": "The python code to execute in a single cell.",
-                        }
-                    },
-                    "required": ["code"],
-                },
-            },
-        }
-
-    def validate(self, request) -> Optional[ToolChannelResponse]:
-        tool_args = request.tool_args
-
-        assert request.tool_name == self.name, (
-            f"Name mismatch, {self.name} != {request.tool_name}"
-        )
-
-        if not isinstance(tool_args, dict):
-            return ToolChannelResponse(
-                success=False,
-                result=f"parameters format error, expect a json format, but get {type(tool_args)}\n",
-            )
-
-        required_param_msg = ""
-        for required_name in self.tool_schema()["function"]["parameters"]["required"]:
-            if required_name not in tool_args:
-                required_param_msg += f"parameters format error, '{required_name}' is a required parameter but not found\n"
-        if required_param_msg:
-            return ToolChannelResponse(success=False, result=required_param_msg)
-
-        if not isinstance(tool_args["code"], str):
-            return ToolChannelResponse(
-                success=False,
-                result=f"parameters format error, 'code' should be a string but get {type(tool_args['code'])}",
-            )
-
-
-class LeanTool(CodeJudgeToolBase):
-    name = "execute_lean_code"
-
-    async def execute(
-        self,
-        request: ToolChannelRequest,
-        send_request_func: Callable[[str, dict], ToolChannelResponse],
-    ):
-        err_msg = self.validate(request)
-        if err_msg:
-            return err_msg
-
-        code_to_execute = request.tool_args["code"]
-
-        submission = {
-            "type": "lean",
-            "solution": code_to_execute,
-        }
-
-        data = {"type": "batch", "submissions": [submission]}
-
-        try:
-            results = (await send_request_func(self.url, data))["results"]
-            assert len(results) == 1, f"{results}"
-            return self._postprocess(results[0])
-        except Exception as e:
-            return ToolChannelResponse(
-                success=False, result=f"Error: send request failed: {str(e)}"
-            )
-
-    def tool_schema(self) -> dict:
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": "Executes a snippet of Lean code and returns the output or errors.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "code": {
-                            "type": "string",
-                            "description": "The Lean code snippet to be executed.",
-                        }
-                    },
-                    "required": ["code"],
-                },
-            },
-        }
-
-    def validate(self, request) -> Optional[ToolChannelResponse]:
-        tool_args = request.tool_args
-
-        assert request.tool_name == self.name, (
-            f"Name mismatch, {self.name} != {request.tool_name}"
-        )
-
-        if not isinstance(tool_args, dict):
-            return ToolChannelResponse(
-                success=False,
-                result=f"parameters format error, expect a json format, but get {type(tool_args)}\n",
-            )
-
-        required_param_msg = ""
-        for required_name in self.tool_schema()["function"]["parameters"]["required"]:
-            if required_name not in tool_args:
-                required_param_msg += f"parameters format error, '{required_name}' is a required parameter but not found\n"
-        if required_param_msg:
-            return ToolChannelResponse(success=False, result=required_param_msg)
-
-        if not isinstance(tool_args["code"], str):
-            return ToolChannelResponse(
-                success=False,
-                result=f"parameters format error, 'code' should be a string but get {type(tool_args['code'])}",
             )

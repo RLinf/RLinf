@@ -244,7 +244,6 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
         if self.return_logprobs:
             response_logprobs = []
         user_turns, assistant_turns = 0, 0
-        # 5 is a magic number in this demo.
         while True:
             # Generate response from LLM
             max_resp_len = self.max_resp_len - (len(prompt_ids) - len(orig_prompt_ids))
