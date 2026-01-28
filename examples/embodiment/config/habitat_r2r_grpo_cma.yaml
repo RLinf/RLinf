@@ -93,7 +93,7 @@ env:
     max_episode_steps: 512 # max episode steps for truncation
     reset_gripper_open: False
   eval:
-    total_num_envs: 64
+    total_num_envs: 4
     auto_reset: True
     ignore_terminations: False
     max_episode_steps: 128
@@ -115,7 +115,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/cma/"
+    model_path: "/data/qianyx/RLinf/eval/ckpt/best_ckpt_r2r.pth"
     precision: ${actor.model.precision}
 
 actor:
@@ -126,11 +126,10 @@ actor:
   seed: 1234
   enable_offload: True
 
-  # Override the default values in model/cma
+  # Override only the paths that need to be customized
+  # All other CMA configs are inherited from model/cma.yaml
   model:
-    model_path: "/path/to/model/cma/"
-    model_type: "cma"
-    max_prompt_length: 128
+    model_path: "/path/to/model/cma/"  # Path to CMA checkpoint directory
 
   optim:
     lr: 2.0e-5

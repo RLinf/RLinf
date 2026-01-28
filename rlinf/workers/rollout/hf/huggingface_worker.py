@@ -104,6 +104,7 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.MLP_POLICY,
             SupportedModel.GR00T,
             SupportedModel.CNN_POLICY,
+            SupportedModel.CMA_POLICY,
         ]:
             kwargs = {"mode": mode}
 
