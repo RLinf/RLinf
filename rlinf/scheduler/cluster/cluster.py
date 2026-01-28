@@ -59,6 +59,19 @@ class ClusterEnvVar(str, Enum):
     COMM_NET_DEVICES = "COMM_NET_DEVICES"
     """Network devices to use for inter-node communication."""
 
+    EXT_MODULE = "EXT_MODULE"
+    """Load extension modules specified via EXT_MODULE environment variable.
+
+    This allows users to register custom environments, models, or other extensions
+    without patching.
+    The extension module should have a `register()` function that performs the necessary registrations.
+
+    Example usage:
+        export RLINF_EXT_MODULE=rlinf_ext
+        # or with full path:
+        export RLINF_EXT_MODULE=workflows.scripts.rlinf_ext
+    """
+
 
 class Cluster:
     """A singleton class that manages the cluster resources for Ray workers."""
@@ -75,6 +88,7 @@ class Cluster:
         ClusterEnvVar.TIMEOUT: "180",
         ClusterEnvVar.NODE_RANK: None,
         ClusterEnvVar.COMM_NET_DEVICES: None,
+        ClusterEnvVar.EXT_MODULE: None,
     }
 
     class NamespaceConflictError(Exception):

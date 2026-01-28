@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import types
+from unittest import mock
+
 import pytest
 import torch
 
@@ -175,6 +179,35 @@ class TestWorkerGroup:
         results2 = group2.sum_with_rank(200).wait()
         assert len(results2) == num_workers
         assert sorted(results2) == [200 + i for i in range(num_workers)]
+
+
+class TestLoadUserExtensions:
+    """Tests for the Worker._load_user_extensions method."""
+
+    def _create_mock_worker(self):
+        """Create a minimal mock worker instance for testing _load_user_extensions."""
+        worker = object.__new__(Worker)
+        return worker
+
+    def test_no_action_when_env_var_not_set(self):
+        """Verify no action is taken when RLINF_EXT_MODULE is not set."""
+        worker = self._create_mock_worker()
+        os.environ.pop("RLINF_EXT_MODULE", None)
+
+        with mock.patch("importlib.import_module") as mock_import:
+            worker._load_user_extensions()
+            mock_import.assert_not_called()
+
+    def test_extension_module_loaded_and_register_called(self):
+        """Verify extension module is loaded and register() is called."""
+        worker = self._create_mock_worker()
+        mock_module = types.ModuleType("mock_ext_module")
+        mock_module.register = mock.Mock()
+
+        with mock.patch.dict(os.environ, {"RLINF_EXT_MODULE": "mock_ext_module"}):
+            with mock.patch("importlib.import_module", return_value=mock_module):
+                worker._load_user_extensions()
+                mock_module.register.assert_called_once()
 
 
 if __name__ == "__main__":
