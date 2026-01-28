@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+import json
 import os
 from typing import Optional, Union
 
@@ -57,7 +58,6 @@ class HabitatEnv(gym.Env):
         self.total_num_processes = total_num_processes
         self.seed = self.cfg.seed + seed_offset
         self._is_start = True
-        self.start_idx = 0
         self.num_envs = num_envs
         self.group_size = self.cfg.group_size
         self.num_group = self.num_envs // self.group_size
@@ -66,14 +66,17 @@ class HabitatEnv(gym.Env):
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
         self.auto_reset = cfg.auto_reset
         self.max_episode_steps = cfg.max_steps_per_rollout_epoch
+        self.ignore_terminations = cfg.ignore_terminations
+        self.dones_once = np.zeros(self.num_envs, dtype=bool)
+        self.record_first_done_infos = None
 
         self._generator = np.random.default_rng(seed=self.seed)
         self._generator_ordered = np.random.default_rng(seed=0)
 
         self._init_env()
 
+        self.metrics_cfg = cfg.metrics_cfg
         self.video_cfg = cfg.video_cfg
-        self.video_cnt = 0
         self.render_images = {}
         self.current_raw_obs = None
 
@@ -96,8 +99,6 @@ class HabitatEnv(gym.Env):
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
-
-        chunk_rewards = []
 
         # Truncate chunk if it contains "stop" and pad with "no_op"
         for env_idx, chunk_action in enumerate(chunk_actions):
@@ -122,8 +123,9 @@ class HabitatEnv(gym.Env):
                     ]
                 )
 
-        chunk_terminations = []
-        chunk_truncations = []
+        chunk_rewards = []
+        raw_chunk_terminations = []
+        raw_chunk_truncations = []
         for i in range(chunk_size):
             actions = chunk_actions[:, i]
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
@@ -131,16 +133,22 @@ class HabitatEnv(gym.Env):
             )
 
             chunk_rewards.append(step_reward)
-            chunk_terminations.append(terminations)
-            chunk_truncations.append(truncations)
+            raw_chunk_terminations.append(terminations)
+            raw_chunk_truncations.append(truncations)
 
-        chunk_rewards = torch.stack(chunk_rewards, dim=1)  # [num_envs, chunk_steps]
-        chunk_terminations = torch.stack(
-            chunk_terminations, dim=1
-        )  # [num_envs, chunk_steps]
-        chunk_truncations = torch.stack(
-            chunk_truncations, dim=1
-        )  # [num_envs, chunk_steps]
+        # [num_envs, chunk_steps]
+        chunk_rewards = torch.stack(chunk_rewards, dim=1)
+        raw_chunk_terminations = torch.stack(raw_chunk_terminations, dim=1)
+        raw_chunk_truncations = torch.stack(raw_chunk_truncations, dim=1)
+        if self.auto_reset or self.ignore_terminations:
+            chunk_terminations = torch.zeros_like(raw_chunk_terminations)
+            chunk_terminations[:, -1] = raw_chunk_terminations.any(dim=1)
+
+            chunk_truncations = torch.zeros_like(raw_chunk_truncations)
+            chunk_truncations[:, -1] = raw_chunk_truncations.any(dim=1)
+        else:
+            chunk_terminations = raw_chunk_terminations.clone()
+            chunk_truncations = raw_chunk_truncations.clone()
 
         return (
             extracted_obs,
@@ -154,10 +162,7 @@ class HabitatEnv(gym.Env):
         """Step the environment with the given actions."""
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
-
-        for i, action in enumerate(actions):
-            if action != "no_op":
-                self._elapsed_steps[i] += 1
+        self._elapsed_steps += 1
 
         # After excuting "stop" action, habitat env needs reset to process the next action
         # Replace "stop" with "no_op" before stepping the underlying env
@@ -167,14 +172,20 @@ class HabitatEnv(gym.Env):
 
         raw_obs, _reward, terminations, info_lists = self.env.step(actions)
         terminations[is_stop] = True
-        self.current_raw_obs = raw_obs
-        obs = self._wrap_obs(raw_obs)
-        infos = list_of_dict_to_dict_of_list(info_lists)
-        truncations = self.elapsed_steps >= self.max_episode_steps
-
         # TODO: what if termination means failure? (e.g. robot falling down)
         step_reward = self._calc_step_reward(terminations)
+        infos = list_of_dict_to_dict_of_list(info_lists)
         infos = self._record_metrics(infos)
+
+        truncations = self.elapsed_steps >= self.max_episode_steps
+        dones_for_metric_save = terminations | truncations
+        # Only save episode metrics once: at the first time an env becomes done.
+        metric_save_masks = dones_for_metric_save & (~self.dones_once)
+        if metric_save_masks.any():
+            self._save_metrics(infos, metric_save_masks)
+
+        self.current_raw_obs = raw_obs
+        obs = self._wrap_obs(raw_obs)
 
         if self.video_cfg.save_video:
             episode_ids = self.env.get_current_episode_ids()
@@ -189,11 +200,20 @@ class HabitatEnv(gym.Env):
                     self.render_images[key] = []
                 self.render_images[key].append(frame_concat)
 
+        if self.ignore_terminations:
+            terminations[:] = False
         dones = terminations | truncations
+
         if dones.any() and self.auto_reset:
             if self.video_cfg.save_video:
                 self.flush_video(dones=dones)
-            obs, infos = self._handle_auto_reset(dones, obs, infos)
+
+            final_infos = (
+                self.record_first_done_infos
+                if self.record_first_done_infos is not None
+                else infos
+            )
+            obs, infos = self._handle_auto_reset(dones, obs, final_infos)
 
         return (
             obs,
@@ -212,6 +232,19 @@ class HabitatEnv(gym.Env):
 
         raw_obs = self.env.reset(env_idx)
         self._elapsed_steps[env_idx] = 0
+        self.dones_once[env_idx] = False
+        # If there is record_first_done_infos, clear the first-done info of the envs in this reset.
+        if (
+            self.record_first_done_infos is not None
+            and "episode" in self.record_first_done_infos
+        ):
+            episode = self.record_first_done_infos["episode"]
+            # Construct a mask to mark the envs in this reset.
+            device = next(iter(episode.values())).device
+            mask = torch.zeros(self.num_envs, dtype=torch.bool, device=device)
+            mask[env_idx] = True
+            for k, v in episode.items():
+                v[mask] = torch.zeros_like(v)
         infos = {}
 
         if self.current_raw_obs is None:
@@ -222,9 +255,6 @@ class HabitatEnv(gym.Env):
         obs = self._wrap_obs(self.current_raw_obs)
 
         return obs, infos
-
-    def update_reset_state_ids(self):
-        self.reset()
 
     def flush_video(
         self, video_sub_dir: Optional[str] = None, dones: Optional[np.ndarray] = None
@@ -240,13 +270,17 @@ class HabitatEnv(gym.Env):
 
         for episode_ids in dones_episode_ids:
             video_name = f"episode_{episode_ids}"
-            save_rollout_video(
-                self.render_images[video_name],
-                output_dir=output_dir,
-                video_name=video_name,
-                fps=self.video_cfg.fps,
-            )
-            self.render_images[video_name] = []
+            if video_name in self.render_images:
+                save_rollout_video(
+                    self.render_images[video_name],
+                    output_dir=output_dir,
+                    video_name=video_name,
+                    fps=self.video_cfg.fps,
+                )
+                self.render_images[video_name] = []
+
+    def update_reset_state_ids(self):
+        pass
 
     def _wrap_obs(self, obs_list):
         image_list = []
@@ -313,6 +347,46 @@ class HabitatEnv(gym.Env):
         ].copy()
         infos["episode"] = to_tensor(episode_info)
         return infos
+
+    def _save_metrics(self, infos, metric_save_masks):
+        """Save metrics by episode_id when env first done."""
+        mask = torch.from_numpy(metric_save_masks)  # [num_envs]
+        self.dones_once[metric_save_masks] = True
+        episode = infos["episode"]
+
+        if self.record_first_done_infos is None:
+            self.record_first_done_infos = {
+                "episode": {k: torch.zeros_like(v) for k, v in episode.items()}
+            }
+
+        # Update the envs that become done in this step
+        for k, v in episode.items():
+            cached_v = self.record_first_done_infos["episode"][k]
+            m = mask.to(v.device)
+            cached_v[m] = v[m]
+
+        # Save metrics by episode_id when env first done
+        episode_ids = self.env.get_current_episode_ids()
+        for i in range(len(metric_save_masks)):
+            if metric_save_masks[i]:
+                episode_id = episode_ids[i]
+                metrics_dict = {}
+                for k, v in episode.items():
+                    if torch.is_tensor(v):
+                        if v.dim() == 1:
+                            metrics_dict[k] = v[i].item()
+                        else:
+                            metrics_dict[k] = v[i].cpu().numpy().tolist()
+                    elif isinstance(v, (list, np.ndarray)):
+                        metrics_dict[k] = v[i]
+                    else:
+                        metrics_dict[k] = v
+                metrics_file = os.path.join(
+                    self.metrics_cfg.metrics_base_dir, f"episode_{episode_id}.json"
+                )
+                os.makedirs(self.metrics_cfg.metrics_base_dir, exist_ok=True)
+                with open(metrics_file, "w") as f:
+                    json.dump(metrics_dict, f, indent=2, ensure_ascii=False)
 
     def _init_env(self):
         env_fns = self._get_env_fns()
