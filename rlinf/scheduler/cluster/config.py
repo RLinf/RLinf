@@ -252,6 +252,17 @@ class ClusterConfig:
 
         When using `node_group` in the component_placement, the specified hardware ranks are thus (1) `hardware.type` hardware if it is specified in the node group; (2) automatically detected accelerator hardware if it exists; (3) node itself as hardware resource if no accelerator hardware is found.
         When using the reserved `node` node_group in the component_placement, it is a group with all nodes but no hardware. And so it can be used to perform hardware-agnostic placement of processes on specific nodes.
+
+        **Multi-node-group placement**: A worker group can be placed across multiple node groups with heterogeneous hardware types by specifying multiple node group labels. For example:
+
+        .. code-block:: yaml
+
+            component_placement:
+                actor:
+                    node_group: "a800,4090"  # or node_group: [a800, 4090]
+                    placement: 0-15  # Hardware ranks span across both groups
+
+        When multiple node groups are specified, hardware ranks are numbered sequentially across all groups in order, starting from 0. Each hardware rank maintains its original hardware type from its source node group. Note that hardware ranks in a single process must all be of the same hardware type and on the same node.
     """
 
     num_nodes: int
