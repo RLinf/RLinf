@@ -88,6 +88,7 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         while train_step < self.max_steps:
             if (
                 self.cfg.runner.val_check_interval > 0
+                and train_step > 0
                 and train_step % self.cfg.runner.val_check_interval == 0
             ):
                 self.update_rollout_weights()
@@ -100,7 +101,8 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
                 time.sleep(1.0)
                 continue
             train_step += 1
-            self.update_rollout_weights()
+            if train_step % self.rollout_sync_interval == 0:
+                self.update_rollout_weights()
 
             training_metrics = {f"train/{k}": v for k, v in actor_result[0].items()}
             self.metric_logger.log(training_metrics, train_step)
