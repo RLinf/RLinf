@@ -835,6 +835,12 @@ class Worker(metaclass=WorkerMeta):
             raise ValueError(f"Timer '{tag}' has not been recorded.")
         return self._timer_metrics.pop(tag)
 
+    def pop_execution_times(self) -> dict[str, float]:
+        """Retrieve and clear all execution times."""
+        metrics = dict(self._timer_metrics)
+        self._timer_metrics.clear()
+        return metrics
+
     @contextmanager
     def worker_timer(self, tag: Optional[str] = None):
         """Context manager to time the execution of a worker function.
@@ -853,6 +859,29 @@ class Worker(metaclass=WorkerMeta):
         finally:
             duration = time.perf_counter() - start_time
             self._timer_metrics[tag] = self._timer_metrics.get(tag, 0.0) + duration
+
+    @staticmethod
+    def timer(tag: Optional[str] = None):
+        """Decorator to time a worker function."""
+
+        def decorator(func):
+            if inspect.iscoroutinefunction(func):
+
+                @functools.wraps(func)
+                async def wrapper(self, *args, **kwargs):
+                    with self.worker_timer(tag or func.__name__):
+                        return await func(self, *args, **kwargs)
+
+                return wrapper
+
+            @functools.wraps(func)
+            def wrapper(self, *args, **kwargs):
+                with self.worker_timer(tag or func.__name__):
+                    return func(self, *args, **kwargs)
+
+            return wrapper
+
+        return decorator
 
     @staticmethod
     def check_worker_alive(worker_name: str) -> bool:

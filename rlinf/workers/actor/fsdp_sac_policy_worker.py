@@ -23,17 +23,18 @@ import torch.nn.functional as F
 from omegaconf import DictConfig
 
 from rlinf.config import SupportedModel
-from rlinf.data.replay_buffer import SACReplayBuffer
+from rlinf.data.embodied_io_struct import Trajectory
+from rlinf.data.replay_buffer import TrajectoryReplayBuffer
 from rlinf.hybrid_engines.fsdp import (
     FSDP,
     FSDPModule,
 )
 from rlinf.models.embodiment.base_policy import ForwardType
-from rlinf.scheduler import Channel
+from rlinf.scheduler import Channel, Worker
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
     append_to_dict,
-    compute_rollout_metrics,
+    compute_split_num,
 )
 from rlinf.utils.nested_dict_process import (
     concat_batch,
@@ -208,11 +209,50 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         """Initialize SAC-specific components"""
         # Initialize replay buffer
         seed = self.cfg.actor.get("seed", 1234)
-        self.replay_buffer = SACReplayBuffer(
-            capacity=self.cfg.algorithm.replay_buffer_capacity,
-            device=self.device,
+        storage_dir = self.cfg.algorithm.replay_buffer.get("storage_dir", None)
+        if storage_dir is None:
+            storage_dir = os.path.join(
+                self.cfg.runner.logger.log_path, f"replay_buffer/rank_{self._rank}"
+            )
+        else:
+            storage_dir = os.path.join(storage_dir, f"rank_{self._rank}")
+        self.replay_buffer = TrajectoryReplayBuffer(
             seed=seed,
+            storage_dir=storage_dir,
+            storage_format="pt",
+            enable_cache=self.cfg.algorithm.replay_buffer.enable_cache,
+            cache_size=self.cfg.algorithm.replay_buffer.cache_size,
+            sample_window_size=self.cfg.algorithm.replay_buffer.sample_window_size,
+            save_trajectories=self.cfg.algorithm.replay_buffer.get(
+                "save_trajectories", True
+            ),
         )
+
+        if self.cfg.algorithm.get("demo_buffer", {}).get("load_path", None) is not None:
+            storage_dir = self.cfg.algorithm.demo_buffer.get("storage_dir", None)
+            if storage_dir is None:
+                storage_dir = os.path.join(
+                    self.cfg.runner.logger.log_path, f"demo_buffer/rank_{self._rank}"
+                )
+            else:
+                storage_dir = os.path.join(storage_dir, f"rank_{self._rank}")
+            self.demo_buffer = TrajectoryReplayBuffer(
+                seed=seed,
+                storage_dir=storage_dir,
+                storage_format="pt",
+                enable_cache=self.cfg.algorithm.demo_buffer.enable_cache,
+                cache_size=self.cfg.algorithm.demo_buffer.cache_size,
+                sample_window_size=self.cfg.algorithm.demo_buffer.sample_window_size,
+                save_trajectories=self.cfg.algorithm.demo_buffer.get(
+                    "save_trajectories", True
+                ),
+            )
+            self.demo_buffer.load_checkpoint(
+                self.cfg.algorithm.demo_buffer.load_path,
+                is_distributed=True,
+                local_rank=self._rank,
+                world_size=self._world_size,
+            )
 
         self.critic_actor_ratio = self.cfg.algorithm.get("critic_actor_ratio", 1)
         self.critic_subsample_size = self.cfg.algorithm.get("critic_subsample_size", -1)
@@ -241,16 +281,26 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                     target_param.data.mul_(1.0 - tau)
                     target_param.data.add_(online_param.data * tau)
 
-    def recv_rollout_batch(self, input_channel: Channel):
-        super().recv_rollout_batch(input_channel)
-        self.replay_buffer.add_rollout_batch(self.rollout_batch)
+    async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
+        """
+        Receive rollout trajectories from rollout workers.
 
-    async def recv_demo_data(self, input_channel: Channel):
-        demo_data = await input_channel.get(async_op=True).async_wait()
-        self.demo_buffer = SACReplayBuffer.create_from_buffer(
-            demo_data, seed=self.cfg.actor.seed
-        )
+        Args:
+            input_channel: The input channel to read from.
+        """
+        send_num = self._component_placement.get_world_size("rollout") * self.stage_num
+        recv_num = self._component_placement.get_world_size("actor")
+        split_num = compute_split_num(send_num, recv_num)
 
+        recv_list = []
+
+        for _ in range(split_num):
+            trajectory: Trajectory = await input_channel.get(async_op=True).async_wait()
+            recv_list.append(trajectory)
+
+        self.replay_buffer.add_trajectories(recv_list)
+
+    @Worker.timer("forward_critic")
     def forward_critic(self, batch):
         use_crossq = self.cfg.algorithm.get("q_head_type", "default") == "crossq"
         bootstrap_type = self.cfg.algorithm.get("bootstrap_type", "standard")
@@ -258,8 +308,8 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         rewards = batch["rewards"].to(self.torch_dtype)
         terminations = batch["terminations"].to(self.torch_dtype)
 
-        curr_obs = batch["transitions"]["obs"]
-        next_obs = batch["transitions"]["next_obs"]
+        curr_obs = batch["curr_obs"]
+        next_obs = batch["next_obs"]
         with torch.no_grad():
             kwargs = {}
             if SupportedModel(self.cfg.actor.model.model_type) in [
@@ -321,16 +371,16 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             all_data_q_values = self.model(
                 forward_type=ForwardType.SAC_Q,
                 obs=curr_obs,
-                actions=batch["action"]
-                if "action" in batch
+                actions=batch["forward_inputs"]["action"]
+                if "action" in batch["forward_inputs"]
                 else batch["action_tokens"],
             )
         else:
             all_data_q_values, all_qf_next = self.model(
                 forward_type=ForwardType.CROSSQ_Q,
                 obs=curr_obs,
-                actions=batch["action"]
-                if "action" in batch
+                actions=batch["forward_inputs"]["action"]
+                if "action" in batch["forward_inputs"]
                 else batch["action_tokens"],
                 next_obs=next_obs,
                 next_actions=next_state_actions,
@@ -365,10 +415,11 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         )
         return critic_loss
 
+    @Worker.timer("forward_actor")
     def forward_actor(self, batch):
         use_crossq = self.cfg.algorithm.get("q_head_type", "default") == "crossq"
         agg_q = self.cfg.algorithm.get("agg_q", "min")
-        curr_obs = batch["transitions"]["obs"]
+        curr_obs = batch["curr_obs"]
         kwargs = {}
         if self.cfg.actor.model.model_type in ["openvla", "openvla_oft"]:
             kwargs["temperature"] = self.cfg.algorithm.sampling_params.temperature_train
@@ -404,8 +455,9 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         entropy = -log_pi.mean()
         return actor_loss, entropy
 
+    @Worker.timer("forward_alpha")
     def forward_alpha(self, batch):
-        curr_obs = batch["transitions"]["obs"]
+        curr_obs = batch["curr_obs"]
         with torch.no_grad():
             kwargs = {}
             if self.cfg.actor.model.model_type in ["openvla", "openvla_oft"]:
@@ -421,18 +473,26 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         alpha_loss = -alpha * (log_pi.mean() + self.target_entropy)
         return alpha_loss
 
-    def update_one_epoch(self, train_actor):
+    @Worker.timer("update_one_epoch")
+    def update_one_epoch(self):
         global_batch_size_per_rank = (
             self.cfg.actor.global_batch_size // self._world_size
         )
 
-        if self.demo_buffer is not None:
-            replay_batch = self.replay_buffer.sample(global_batch_size_per_rank // 2)
-            demo_batch = self.demo_buffer.sample(global_batch_size_per_rank // 2)
-            global_batch = concat_batch(replay_batch, demo_batch)
-        else:
-            # Sample batch from replay buffer
-            global_batch = self.replay_buffer.sample(global_batch_size_per_rank)
+        with self.worker_timer("sample"):
+            if self.demo_buffer is not None:
+                replay_batch = self.replay_buffer.sample(
+                    num_chunks=global_batch_size_per_rank // 2
+                )
+                demo_batch = self.demo_buffer.sample(
+                    num_chunks=global_batch_size_per_rank // 2
+                )
+                global_batch = concat_batch(replay_batch, demo_batch)
+            else:
+                # Sample batch from replay buffer
+                global_batch = self.replay_buffer.sample(
+                    num_chunks=global_batch_size_per_rank
+                )
 
         train_micro_batch_list = split_dict_to_chunk(
             global_batch,
@@ -459,7 +519,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             "critic/grad_norm": qf_grad_norm,
         }
 
-        if self.update_step % self.critic_actor_ratio == 0 and train_actor:
+        if self.update_step % self.critic_actor_ratio == 0:
             self.optimizer.zero_grad()
             gbs_actor_loss = []
             gbs_entropy = []
@@ -547,6 +607,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         )
         return mean_metric_dict
 
+    @Worker.timer("run_training")
     def run_training(self):
         """SAC training using replay buffer"""
         if self.cfg.actor.get("enable_offload", False):
@@ -554,20 +615,12 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             self.load_optimizer(self.device)
 
         # Check if replay buffer has enough samples
-        min_buffer_size = (
-            self.cfg.algorithm.get("min_buffer_size", 100) // self._world_size
-        )
-        train_actor_steps = (
-            self.cfg.algorithm.get("train_actor_steps", 0) // self._world_size
-        )
-        train_actor_steps = max(min_buffer_size, train_actor_steps)
-
+        min_buffer_size = self.cfg.algorithm.replay_buffer.get("min_buffer_size", 100)
         if not self.replay_buffer.is_ready(min_buffer_size):
             self.log_on_first_rank(
                 f"Replay buffer size {len(self.replay_buffer)} < {min_buffer_size}, skipping training"
             )
             return {}
-        train_actor = self.replay_buffer.is_ready(train_actor_steps)
 
         assert (
             self.cfg.actor.global_batch_size
@@ -585,7 +638,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
 
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
         for _ in range(update_epoch):
-            metrics_data = self.update_one_epoch(train_actor)
+            metrics_data = self.update_one_epoch()
             append_to_dict(metrics, metrics_data)
             self.update_step += 1
 
@@ -601,13 +654,28 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         SAC doesn't compute advantages/returns like PPO.
         This method is kept for compatibility but returns empty metrics.
         """
-        # Just compute basic rollout metrics without advantages/returns
-        rollout_metrics = compute_rollout_metrics(self.rollout_batch)
-        return rollout_metrics
+        return {}
 
     def save_checkpoint(self, save_base_path, step):
         super().save_checkpoint(save_base_path, step)
-        buffer_path = os.path.join(
-            self.cfg.runner.logger.log_path, f"replay_buffer_{self._rank}.pkl"
+        buffer_save_path = os.path.join(
+            save_base_path, f"replay_buffer/rank_{self._rank}"
         )
-        self.replay_buffer.save(buffer_path)
+        self.replay_buffer.save_checkpoint(buffer_save_path)
+        if self.demo_buffer is not None:
+            demo_save_path = os.path.join(
+                save_base_path, f"demo_buffer/rank_{self._rank}"
+            )
+            self.demo_buffer.save_checkpoint(demo_save_path)
+
+    def load_checkpoint(self, load_base_path):
+        super().load_checkpoint(load_base_path)
+        buffer_load_path = os.path.join(
+            load_base_path, f"replay_buffer/rank_{self._rank}"
+        )
+        self.replay_buffer.load_checkpoint(buffer_load_path)
+        if self.demo_buffer is not None:
+            demo_load_path = os.path.join(
+                load_base_path, f"demo_buffer/rank_{self._rank}"
+            )
+            self.demo_buffer.load_checkpoint(demo_load_path)

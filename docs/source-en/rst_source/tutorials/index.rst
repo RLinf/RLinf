@@ -33,6 +33,7 @@ This design enables users to build large-scale RL training pipelines with minima
    mode/index
    scheduler/index
    communication/index
+   components/index
    advance/index
    rlalg/index
    extend/index

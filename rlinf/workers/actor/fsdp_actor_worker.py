@@ -28,6 +28,7 @@ from rlinf.algorithms.utils import (
     kl_penalty,
 )
 from rlinf.config import SupportedModel
+from rlinf.data.embodied_io_struct import Trajectory, convert_trajectories_to_batch
 from rlinf.data.io_struct import BatchResizingIterator, RolloutResult
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
@@ -46,7 +47,6 @@ from rlinf.utils.metric_utils import (
     compute_split_num,
 )
 from rlinf.utils.nested_dict_process import (
-    cat_list_of_dict_tensor,
     put_tensor_device,
     split_dict_to_chunk,
 )
@@ -102,30 +102,6 @@ def process_nested_dict_for_train(nested_dict, shuffle_id):
         elif isinstance(value, dict):
             ret_dict[key] = process_nested_dict_for_train(value, shuffle_id)
     return ret_dict
-
-
-def get_nested_k_split_for_specific_keys(nested_dict, num_splits, key_list):
-    """
-    Get k-split iterator for some keys in nested_dict.
-    """
-    extra_dict = {}
-    for key in key_list:
-        if key not in nested_dict.keys():
-            continue
-        value = nested_dict[key]
-        if isinstance(value, dict):
-            extra_dict[key] = split_dict_to_chunk(value, num_splits)
-        elif isinstance(value, torch.Tensor):
-            continue
-        else:
-            raise NotImplementedError(
-                f"Only support dict and tensor type, but got {type(value)}"
-            )
-    # {key1: [d1, d2, ...], key2: [d1, d2, ...]} -> [{key1: d1, key2: d1}, {key1: d2, key2: d2}, ...]
-    extra_list = [
-        {k: extra_dict[k][i] for k in extra_dict.keys()} for i in range(num_splits)
-    ]
-    return extra_list
 
 
 class FSDPActor(FSDPModelManager, Worker):
@@ -809,9 +785,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.enable_offload and not self.is_weight_offloaded:
             self.offload_param_and_grad()
 
-    def recv_rollout_batch(self, input_channel: Channel) -> None:
+    async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
         """
-        Receive rollout batch from rollout workers.
+        Receive rollout trajectories from rollout workers.
 
         Args:
             input_channel: The input channel to read from.
@@ -820,13 +796,12 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(send_num, recv_num)
 
-        self.rollout_batch = {}
         recv_list = []
         for _ in range(split_num):
-            recv_list.append(input_channel.get())
+            trajectory: Trajectory = await input_channel.get(async_op=True).async_wait()
+            recv_list.append(trajectory)
 
-        # shape [num_chunk, bsz, chunk_size], cat dim 1
-        self.rollout_batch = cat_list_of_dict_tensor(recv_list, dim=1)
+        self.rollout_batch = convert_trajectories_to_batch(recv_list)
 
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
 
@@ -981,7 +956,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         metrics = {}
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
         for _ in range(update_epoch):
-            rollout_dataloader_iter = get_iterator_k_split(
+            rollout_dataloader_iter = split_dict_to_chunk(
                 self.rollout_batch,
                 rollout_size // batch_size_per_rank,
             )
@@ -997,35 +972,43 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size}"
                 )
 
-                train_micro_batch = get_iterator_k_split(
+                train_micro_batch = split_dict_to_chunk(
                     train_global_batch,
                     train_global_batch_size // self.cfg.actor.micro_batch_size,
                 )
 
                 self.optimizer.zero_grad()
-                for idx, data in enumerate(train_micro_batch):
-                    data = put_tensor_device(
-                        data, f"cuda:{int(os.environ['LOCAL_RANK'])}"
+                for idx, batch in enumerate(train_micro_batch):
+                    batch = put_tensor_device(
+                        batch, f"cuda:{int(os.environ['LOCAL_RANK'])}"
                     )
                     backward_ctx = self.before_micro_batch(
                         self.model,
                         is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
                     )
-                    advantages = data["advantages"]
-                    prev_logprobs = data["prev_logprobs"]
-                    returns = data.get("returns", None)
-                    prev_values = data.get("prev_values", None)
-                    loss_mask = data.get("loss_mask", None)
-                    loss_mask_sum = data.get("loss_mask_sum", None)
+                    advantages = batch["advantages"]
+                    prev_logprobs = batch["prev_logprobs"]
+                    returns = batch.get("returns", None)
+                    prev_values = batch.get("prev_values", None)
+                    loss_mask = batch.get("loss_mask", None)
+                    loss_mask_sum = batch.get("loss_mask_sum", None)
 
+                    forward_inputs = batch.get("forward_inputs", None)
+
+                    kwargs = {}
                     if SupportedModel(self.cfg.actor.model.model_type) in [
                         SupportedModel.OPENVLA,
                         SupportedModel.OPENVLA_OFT,
                     ]:
-                        data["temperature"] = (
+                        kwargs["temperature"] = (
                             self.cfg.algorithm.sampling_params.temperature_train
                         )
-                        data["top_k"] = self.cfg.algorithm.sampling_params.top_k
+                        kwargs["top_k"] = self.cfg.algorithm.sampling_params.top_k
+                    elif (
+                        SupportedModel(self.cfg.actor.model.model_type)
+                        == SupportedModel.GR00T
+                    ):
+                        kwargs["prev_logprobs"] = prev_logprobs
 
                     compute_values = (
                         True if self.cfg.algorithm.adv_type == "gae" else False
@@ -1033,16 +1016,18 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
                     with self.amp_context:
                         output_dict = self.model(
-                            data=data,
+                            forward_inputs=forward_inputs,
                             compute_logprobs=True,
                             compute_entropy=self.cfg.algorithm.entropy_bonus > 0,
                             compute_values=compute_values,
                             use_cache=False,
+                            **kwargs,
                         )
 
-                    if SupportedModel(self.cfg.actor.model.model_type) in [
-                        SupportedModel.GR00T
-                    ]:
+                    if (
+                        SupportedModel(self.cfg.actor.model.model_type)
+                        == SupportedModel.GR00T
+                    ):
                         prev_logprobs = output_dict["prev_logprobs"]
 
                     kwargs = {
@@ -1083,13 +1068,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         )
                         entropy_loss = masked_mean(entropy, mask=loss_mask)
                         loss -= self.cfg.algorithm.entropy_bonus * entropy_loss
-                    metrics_data["entropy_loss"] = entropy_loss.detach().item()
+                    metrics_data["actor/entropy_loss"] = entropy_loss.detach().item()
 
                     loss /= self.gradient_accumulation
                     with backward_ctx:
                         self.grad_scaler.scale(loss).backward()
 
-                    metrics_data["loss"] = loss.detach().item()
+                    metrics_data["actor/total_loss"] = loss.detach().item()
                     append_to_dict(metrics, metrics_data)
 
                 torch.cuda.empty_cache()

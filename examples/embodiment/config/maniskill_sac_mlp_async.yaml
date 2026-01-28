@@ -59,8 +59,12 @@ algorithm:
   alpha_lr: 3.0e-4  # Learning rate for temperature parameter
   
   # Replay buffer settings
-  replay_buffer_capacity: 500000
-  min_buffer_size: 1  # Minimum buffer size before training starts
+  replay_buffer:
+    enable_cache: True
+    cache_size: 5000 # number of trajectories cached in memory
+    sample_window_size: 10000 # number of latest trajectories to sample from for replay buffer
+    min_buffer_size: 1  # Minimum buffer size before training starts
+
   target_update_freq: 1  # Frequency of target network updates
 
   # params for rollout
@@ -107,6 +111,9 @@ rollout:
   backend: "huggingface"
   enable_offload: False
   pipeline_stage_num: 1
+
+  collect_transitions: True
+  collect_prev_infos: False
 
   model:
     model_path: ""

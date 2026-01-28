@@ -16,6 +16,47 @@ Worker
 这些功能使得进程组的创建变得简单，并简化了分布式训练的设置流程。  
 一个 Worker 封装了单个执行单元的逻辑，使得在多个 GPU 和节点间扩展任务变得容易。
 
+WorkerTimer
+~~~~~~~~~~~~~
+
+RLinf 提供轻量级计时工具，用于统计 Worker 函数的耗时。
+
+**上下文管理器用法**：
+
+.. code-block:: python
+
+   class MyWorker(Worker):
+       def run_training(self, batch):
+           with self.worker_timer("run_training"):
+               return self.train_step(batch)
+
+       def train_step(self, batch): ...
+
+**装饰器用法**：
+
+.. code-block:: python
+
+   class MyWorker(Worker):
+       @Worker.timer("run_training")
+       def run_training(self, batch):
+           return self.train_step(batch)
+
+       @Worker.timer("train_step")
+       def train_step(self, batch): ...
+
+**获取耗时指标**：
+
+.. code-block:: python
+
+   handle = worker_group.run_training(...)
+   result = handle.wait()
+   timing = handle.consume_durations()  # dict: tag -> duration
+
+计时 tag 会在 worker group 内进行聚合，默认使用 ``max`` 进行归约。
+
+返回的 timing 会同时包含 ``run_training`` 和 ``train_step``，
+便于统计子函数耗时。
+
 WorkerInfo 
 ~~~~~~~~~~~
 

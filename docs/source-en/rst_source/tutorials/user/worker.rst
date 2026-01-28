@@ -25,6 +25,48 @@ By inheriting from :class:`Worker`, a worker or processor class gains the abilit
 These features enable the seamless creation of process groups and simplify distributed training setup.  
 A Worker encapsulates the logic for an individual execution unit, making it easy to scale tasks across multiple GPUs and nodes.
 
+WorkerTimer
+~~~~~~~~~~~~~
+
+RLinf provides a lightweight timer utility to profile worker functions.
+
+**Context manager usage**:
+
+.. code-block:: python
+
+   class MyWorker(Worker):
+       def run_training(self, batch):
+           with self.worker_timer("run_training"):
+               return self.train_step(batch)
+
+       def train_step(self, batch): ...
+
+**Decorator usage**:
+
+.. code-block:: python
+
+   class MyWorker(Worker):
+       @Worker.timer("run_training")
+       def run_training(self, batch):
+           return self.train_step(batch)
+
+       @Worker.timer("train_step")
+       def train_step(self, batch): ...
+
+**Retrieving timing metrics**:
+
+.. code-block:: python
+
+   handle = worker_group.run_training(...)
+   result = handle.wait()
+   timing = handle.consume_durations()  # dict of tag -> duration
+
+The timer tags are aggregated across ranks in the worker group. By default,
+``consume_durations()`` reduces with ``max``.
+
+The returned timing map contains both ``run_training`` and ``train_step`` so you
+can profile nested/child functions explicitly.
+
 
 .. The `Worker` class encapsulates a remote or local unit of computation. In a Ray-based setup, each `Worker` typically runs as a Ray actor on a specific node and GPU. 
 

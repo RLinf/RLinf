@@ -201,6 +201,15 @@ class CNNPolicy(nn.Module, BasePolicy):
         return x, visual_feature
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
+        obs = kwargs.get("obs", None)
+        if obs is not None:
+            obs = self.preprocess_env_obs(obs)
+            kwargs.update({"obs": obs})
+        next_obs = kwargs.get("next_obs", None)
+        if next_obs is not None:
+            next_obs = self.preprocess_env_obs(next_obs)
+            kwargs.update({"next_obs": next_obs})
+
         if forward_type == ForwardType.SAC:
             return self.sac_forward(**kwargs)
         elif forward_type == ForwardType.SAC_Q:
@@ -216,7 +225,7 @@ class CNNPolicy(nn.Module, BasePolicy):
 
     def default_forward(
         self,
-        data,
+        forward_inputs,
         compute_logprobs=True,
         compute_entropy=True,
         compute_values=True,
@@ -224,13 +233,13 @@ class CNNPolicy(nn.Module, BasePolicy):
         **kwargs,
     ):
         obs = {
-            "main_images": data["main_images"],
-            "states": data["states"],
+            "main_images": forward_inputs["main_images"],
+            "states": forward_inputs["states"],
         }
-        if "extra_view_images" in data:
-            obs["extra_view_images"] = data["extra_view_images"]
-
-        action = data["action"]
+        if "extra_view_images" in forward_inputs:
+            obs["extra_view_images"] = forward_inputs["extra_view_images"]
+        obs = self.preprocess_env_obs(obs)
+        action = forward_inputs["action"]
 
         full_feature, visual_feature = self.get_feature(obs)
         mix_feature = self.mix_proj(full_feature)
@@ -294,7 +303,8 @@ class CNNPolicy(nn.Module, BasePolicy):
         mode="train",
         **kwargs,
     ):
-        full_feature, visual_feature = self.get_feature(env_obs)
+        obs = self.preprocess_env_obs(env_obs)
+        full_feature, visual_feature = self.get_feature(obs)
         mix_feature = self.mix_proj(full_feature)
         action_mean = self.actor_mean(mix_feature)
         if self.cfg.independent_std:

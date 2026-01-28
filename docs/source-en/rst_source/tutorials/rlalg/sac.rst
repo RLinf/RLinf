@@ -96,5 +96,8 @@ The algorithm configuration is defined as follows:
       alpha_lr: 3.0e-4  # Learning rate for temperature parameter
       
       # Replay buffer settings
-      replay_buffer_capacity: 50000
-      min_buffer_size: 200  # Minimum buffer size before training starts
+      replay_buffer:
+         enable_cache: True # Enable memory cache to reduce I/O overhead
+         cache_size: 6000  # number of trajectories cached in memory
+         sample_window_size: 6000  # number of latest trajectories to sample from for replay buffer
+         min_buffer_size: 200  # Minimum buffer size before training starts

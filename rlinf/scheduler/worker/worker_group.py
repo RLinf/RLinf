@@ -501,6 +501,19 @@ class WorkerGroupFuncResult:
         reduction_func = getattr(np, reduction_type)
         return reduction_func(execution_times)
 
+    def consume_durations(self, reduction_type: str = "max") -> dict[str, float]:
+        """Get execution time map across ranks, reduced by reduction_type."""
+        self.wait()
+        metrics_list = self._worker_group.pop_execution_times().wait()
+        reduction_func = getattr(np, reduction_type)
+        merged: dict[str, list[float]] = {}
+        for metrics in metrics_list:
+            if not metrics:
+                continue
+            for key, value in metrics.items():
+                merged.setdefault(key, []).append(value)
+        return {key: float(reduction_func(values)) for key, values in merged.items()}
+
     def wait(self):
         """Wait for all remote results to complete and return the results."""
         if not self._wait_done:

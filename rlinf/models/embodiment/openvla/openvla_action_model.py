@@ -527,18 +527,19 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         output_hidden_states: Optional[bool] = None,
         output_projector_features: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-        data: Optional[dict[str, torch.Tensor]] = None,
+        forward_inputs: Optional[dict[str, torch.Tensor]] = None,
         compute_logprobs: bool = False,
         compute_entropy: bool = False,
         compute_values: bool = False,
+        **kwargs,
     ):
-        if data is not None:
-            data = self.preprocess_for_train(data)
-            input_ids = data["input_ids"]
-            attention_mask = data["attention_mask"]
-            pixel_values = data["pixel_values"]
+        if forward_inputs is not None:
+            forward_inputs = self.preprocess_for_train(forward_inputs)
+            input_ids = forward_inputs["input_ids"]
+            attention_mask = forward_inputs["attention_mask"]
+            pixel_values = forward_inputs["pixel_values"]
 
-            action_tokens = data["action_tokens"]
+            action_tokens = forward_inputs["action_tokens"]
 
         if compute_values:
             output_hidden_states = True
@@ -565,8 +566,10 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
                 :, -self.action_dim * self.num_action_chunks - 1 : -1
             ]  # [B, action-dim, vocab-size]
 
-            processed_logits_tensor = logits / data["temperature"]
-            top_k = min(data["top_k"], processed_logits_tensor.size(-1))  # Safety check
+            processed_logits_tensor = logits / kwargs["temperature"]
+            top_k = min(
+                kwargs["top_k"], processed_logits_tensor.size(-1)
+            )  # Safety check
             if top_k > 0:
                 logits_warper = TopKLogitsWarper(
                     top_k
@@ -613,7 +616,6 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         env_obs=None,
         calculate_logprobs=True,
         calculate_values=True,
-        return_obs=True,
         **kwargs,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         do_sample = kwargs.pop("do_sample")

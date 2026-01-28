@@ -16,23 +16,30 @@ import asyncio
 
 import torch
 
-from rlinf.scheduler import Channel
-from rlinf.utils.metric_utils import append_to_dict, compute_split_num
+from rlinf.scheduler import Worker
+from rlinf.utils.metric_utils import append_to_dict
 from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
 
 
 class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
-    async def start_replay_buffer(self, replay_channel: Channel):
-        send_num = self._component_placement.get_world_size("rollout") * self.stage_num
-        recv_num = self._component_placement.get_world_size("actor")
-        split_num = compute_split_num(send_num, recv_num)
-        replay_buffer_task = asyncio.create_task(
-            self.replay_buffer.run(
-                self.cfg, data_channel=replay_channel, split_num=split_num
-            )
-        )
-        await replay_buffer_task
+    should_stop = False
 
+    async def recv_rollout_trajectories(self, input_channel):
+        while not self.should_stop:
+            await super().recv_rollout_trajectories(input_channel)
+
+    async def _is_replay_buffer_ready_all_ranks(self, min_buffer_size: int) -> bool:
+        local_ready = await self.replay_buffer.is_ready_async(min_buffer_size)
+        if not torch.distributed.is_initialized():
+            return local_ready
+        ready_tensor = torch.tensor(
+            1 if local_ready else 0, device=self.device, dtype=torch.int32
+        )
+        torch.distributed.all_reduce(ready_tensor, op=torch.distributed.ReduceOp.SUM)
+        dist_ready = ready_tensor.item() == torch.distributed.get_world_size()
+        return dist_ready
+
+    @Worker.timer("run_training")
     async def run_training(self):
         """SAC training using replay buffer"""
         if self.cfg.actor.get("enable_offload", False):
@@ -40,21 +47,12 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
             self.load_optimizer(self.device)
 
         # Check if replay buffer has enough samples
-        min_buffer_size = (
-            self.cfg.algorithm.get("min_buffer_size", 100) // self._world_size
-        )
-        train_actor_steps = (
-            self.cfg.algorithm.get("train_actor_steps", 0) // self._world_size
-        )
-        train_actor_steps = max(min_buffer_size, train_actor_steps)
-
-        if not (await self.replay_buffer.is_ready_async(min_buffer_size)):
+        min_buffer_size = self.cfg.algorithm.replay_buffer.get("min_buffer_size", 100)
+        if not (await self._is_replay_buffer_ready_all_ranks(min_buffer_size)):
             self.log_on_first_rank(
                 f"Replay buffer size {len(self.replay_buffer)} < {min_buffer_size}, skipping training"
             )
-            return False
-
-        train_actor = await self.replay_buffer.is_ready_async(train_actor_steps)
+            return {}
 
         assert (
             self.cfg.actor.global_batch_size
@@ -73,7 +71,7 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
         for _ in range(update_epoch):
             await asyncio.sleep(0)
-            metrics_data = self.update_one_epoch(train_actor)
+            metrics_data = self.update_one_epoch()
             append_to_dict(metrics, metrics_data)
             self.update_step += 1
 
@@ -83,3 +81,6 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
         torch.distributed.barrier()
         torch.cuda.empty_cache()
         return mean_metric_dict
+
+    async def stop(self):
+        self.should_stop = True
