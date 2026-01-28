@@ -10,6 +10,7 @@ cluster:
   num_nodes: 1
   component_placement:
     actor,rollout,reward: all
+    # rStar2 only support collective placement now. Therefore these settings are ignored.
     # rollout: 0-3
     # inference: 4-5
     # actor: 6-7
