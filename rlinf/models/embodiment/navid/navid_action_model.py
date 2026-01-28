@@ -313,25 +313,34 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
         bsz = int(new_frames_tensor.shape[0])
         images_for_model: list[torch.Tensor] = []
 
+        if not self._history_rgb_tensor:
+            self._history_episode_ids = episode_ids
+
         for i in range(bsz):
-            ep_key = str(episode_ids[i])
-            if ep_key not in self._history_rgb_tensor:
-                self._history_rgb_tensor[ep_key] = None
+            ep_id = episode_ids[i]
+            hist_ep_id = self._history_episode_ids[i]
+
+            if ep_id != hist_ep_id:
+                self._history_rgb_tensor.pop(hist_ep_id, None)
+                self._history_episode_ids[i] = ep_id
+
+            if ep_id not in self._history_rgb_tensor:
+                self._history_rgb_tensor[ep_id] = None
 
             new_frame = new_frames_tensor[i : i + 1]  # [1, C, H, W]
-            if self._history_rgb_tensor[ep_key] is None:
-                self._history_rgb_tensor[ep_key] = new_frame
+            if self._history_rgb_tensor[ep_id] is None:
+                self._history_rgb_tensor[ep_id] = new_frame
             else:
-                self._history_rgb_tensor[ep_key] = torch.cat(
-                    (self._history_rgb_tensor[ep_key], new_frame), dim=0
+                self._history_rgb_tensor[ep_id] = torch.cat(
+                    (self._history_rgb_tensor[ep_id], new_frame), dim=0
                 )
 
             if self._max_history_len is not None:
-                hist = self._history_rgb_tensor[ep_key]
+                hist = self._history_rgb_tensor[ep_id]
                 if hist is not None and hist.shape[0] > self._max_history_len:
-                    self._history_rgb_tensor[ep_key] = hist[-self._max_history_len :]
+                    self._history_rgb_tensor[ep_id] = hist[-self._max_history_len :]
 
-            images_for_model.append(self._history_rgb_tensor[ep_key].to(device=device))
+            images_for_model.append(self._history_rgb_tensor[ep_id].to(device=device))
 
         return images_for_model
 
