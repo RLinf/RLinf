@@ -21,8 +21,8 @@ from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
 from rlinf.data.datasets.item import DatasetItem
-from rlinf.data.datasets.math import MathDataset
 from rlinf.data.datasets.mas import MASDataset
+from rlinf.data.datasets.math import MathDataset
 from rlinf.data.datasets.vlm import VLMDatasetRegistry
 
 
@@ -100,7 +100,7 @@ def create_rl_dataset(
             config=config,
             tokenizer=tokenizer,
         )
-    
+
     val_dataset = dataset_cls(
         data_paths=config.data.val_data_paths,
         config=config,

@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Dict
-
-from omegaconf import DictConfig
-
 import random
 import re
 import string
+from typing import Dict, List
+
+from omegaconf import DictConfig
 
 
 def normalize_answer(s):
@@ -37,6 +36,7 @@ def normalize_answer(s):
 
     return white_space_fix(remove_articles(remove_punc(lower(s))))
 
+
 def normalize_text(text: str) -> str:
     """Preprocess text for NQ dataset scoring.
 
@@ -47,14 +47,15 @@ def normalize_text(text: str) -> str:
     """
     # Replace punctuation with spaces
     for punct in string.punctuation:
-        text = text.replace(punct, ' ')
+        text = text.replace(punct, " ")
 
     # Replace multiple spaces with single space
-    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r"\s+", " ", text)
 
     # Remove leading/trailing spaces
     text = text.strip().lower()
     return text
+
 
 def bool_mapping(s):
     """Map boolean string values to yes/no."""
@@ -70,13 +71,13 @@ def contains_chinese(text):
     """Check if the given text contains Chinese characters."""
     for char in text:
         # Check for common Chinese characters (CJK Unified Ideographs)
-        if '\u4e00' <= char <= '\u9fff':
+        if "\u4e00" <= char <= "\u9fff":
             return True
         # Check for rare characters (CJK Unified Ideographs Extension A)
-        if '\u3400' <= char <= '\u4dbf':
+        if "\u3400" <= char <= "\u4dbf":
             return True
         # Check for compatibility characters
-        if '\uf900' <= char <= '\ufaff':
+        if "\uf900" <= char <= "\ufaff":
             return True
     return False
 
@@ -99,12 +100,13 @@ def f1_score(answer_content, gt):
 
     # Tokenize answer and reference answer
     if contains_chinese(gt):
+
         def parse_chinese_str(s):
             # parse consecutive numbers
             numbers = []
             for i, c in enumerate(s):
                 if c.isdigit():
-                    if i > 0 and s[i-1].isdigit():
+                    if i > 0 and s[i - 1].isdigit():
                         numbers[-1] = numbers[-1] + c
                     else:
                         numbers.append(c)
@@ -112,6 +114,7 @@ def f1_score(answer_content, gt):
                 s = s.replace(c, "")
             s = set(list(s) + numbers)
             return s
+
         pred_tokens = parse_chinese_str(answer_content)
         gt_tokens = parse_chinese_str(gt)
     else:
@@ -151,10 +154,7 @@ def f1_score(answer_content, gt):
 #     return score
 
 
-def extract_solution(
-    text: str,
-    is_boxed = 0
-) -> tuple[list[int], str]:
+def extract_solution(text: str, is_boxed=0) -> tuple[list[int], str]:
     if not is_boxed:
         answer_pattern = r"<answer>(.*?)</answer>"
         match = re.finditer(answer_pattern, text, re.DOTALL)
@@ -165,7 +165,7 @@ def extract_solution(
             return None
 
         # If there are 2 or more matches, return the last one
-        return matches[-1].group(1).strip()            
+        return matches[-1].group(1).strip()
     else:
         if not text:
             return ""
@@ -211,7 +211,6 @@ def extract_solution(
         return matches[-1] if matches else ""
 
 
-
 # def count_answer_tags(text):
 #     opening_tags = text.count("<answer>")
 #     closing_tags = text.count("</answer>")
@@ -219,7 +218,9 @@ def extract_solution(
 #     return opening_tags, closing_tags
 
 
-def compute_score_em(solution_str, ground_truth, method="strict", format_score=0.0, score=1.0):
+def compute_score_em(
+    solution_str, ground_truth, method="strict", format_score=0.0, score=1.0
+):
     """The scoring function for exact match (EM).
 
     Args:
@@ -247,7 +248,9 @@ def compute_score_em(solution_str, ground_truth, method="strict", format_score=0
             return answer, format_score
 
 
-def compute_score_f1(solution_str, ground_truth, method="strict", format_score=0.0, score=1.0):
+def compute_score_f1(
+    solution_str, ground_truth, method="strict", format_score=0.0, score=1.0
+):
     """The scoring function for F1 score.
 
     Args:
@@ -280,20 +283,24 @@ class MASReward:
         self.reward_type = config.get("reward", "EM").upper()  # Default to EM
 
         if self.reward_type not in ["EM", "F1"]:
-            raise ValueError(f"Invalid reward type: {self.reward_type}. Must be 'EM' or 'F1'")
+            raise ValueError(
+                f"Invalid reward type: {self.reward_type}. Must be 'EM' or 'F1'"
+            )
 
         print(f"[INFO] MASReward: Using {self.reward_type} reward metric")
 
     def get_reward(
-        self,
-        response: List[str],
-        reference: List[List[str]]
-    ) -> List[float]:
+        self, response: list[str], reference: list[list[str]]
+    ) -> list[float]:
         if self.reward_type == "F1":
             # Use F1 score - returns (answer, score) tuple, we only need the score
-            rewards = [compute_score_f1(sol, gt)[1] for sol, gt in zip(response, reference)]
+            rewards = [
+                compute_score_f1(sol, gt)[1] for sol, gt in zip(response, reference)
+            ]
         else:
             # Use EM score - returns (answer, score) tuple, we only need the score
-            rewards = [compute_score_em(sol, gt)[1] for sol, gt in zip(response, reference)]
+            rewards = [
+                compute_score_em(sol, gt)[1] for sol, gt in zip(response, reference)
+            ]
 
         return rewards

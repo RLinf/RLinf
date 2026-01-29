@@ -103,16 +103,22 @@ def metrics_process_microbatch(processor_map, metrics, rank=None):
         value = metrics[key]
         metrics_processor = processor_map.get(key, "batch:mean")
         if metrics_processor == "token:sum":
-            torch.distributed.all_reduce(value, group=parallel_state.get_data_parallel_group())
+            torch.distributed.all_reduce(
+                value, group=parallel_state.get_data_parallel_group()
+            )
             result_metrics[key] = value
         elif metrics_processor == "token:mean":
-            torch.distributed.all_reduce(value, group=parallel_state.get_data_parallel_group())
-            num_dp = result_metrics["actor/token_num"].item()
+            torch.distributed.all_reduce(
+                value, group=parallel_state.get_data_parallel_group()
+            )
+            # num_dp = result_metrics["actor/token_num"].item()
             result_metrics[key] = value
         elif metrics_processor == "batch:mean":
             result_metrics[key] = average_losses_across_data_parallel_group([value])
         else:
-            assert False, f"Unsupported metrics processor: {metrics_processor}, key is {key}"
+            assert False, (
+                f"Unsupported metrics processor: {metrics_processor}, key is {key}"
+            )
     return result_metrics
 
 
@@ -134,9 +140,12 @@ def metrics_process_globalbatch(process_map, metrics_list, rank=None):
             value = torch.stack([i[key] for i in metrics_list]).sum()
             result_metrics[key] = value.item()
         else:
-            assert False, f"Unsupported metrics processor: {metrics_processor}, key is {key}"
+            assert False, (
+                f"Unsupported metrics processor: {metrics_processor}, key is {key}"
+            )
     return result_metrics
-    
+
+
 class MegatronActor(MegatronModelManager, Worker):
     """The class for running the actor training using Megatron."""
 
@@ -771,7 +780,9 @@ class MegatronActor(MegatronModelManager, Worker):
         else:
             outputs = {}
             if forward_outputs:
-                outputs = metrics_process_globalbatch(self.metrics_processors, forward_outputs, rank=self._rank)
+                outputs = metrics_process_globalbatch(
+                    self.metrics_processors, forward_outputs, rank=self._rank
+                )
             output_list = [outputs]
             torch.distributed.broadcast_object_list(output_list, get_last_rank())
             outputs = output_list[0]

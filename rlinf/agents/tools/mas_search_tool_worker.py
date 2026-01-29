@@ -15,22 +15,19 @@
 
 import asyncio
 import atexit
-from collections import OrderedDict
 import hashlib
-import threading
+import json
 import logging
+import os
+import random
+import threading
+import time
+from collections import OrderedDict
+from typing import Any, Optional
 
+import aiohttp
 from omegaconf import DictConfig
 
-import requests
-import random
-import time
-import json
-import html
-import os
-import aiohttp
-
-from typing import Dict, List, Any, Optional
 from rlinf.data.tool_call.tool_io_struct import ToolChannelRequest, ToolChannelResponse
 from rlinf.scheduler import Channel
 from rlinf.workers.agent.tool_worker import ToolWorker
@@ -39,7 +36,12 @@ from rlinf.workers.agent.tool_worker import ToolWorker
 class WebPageCache:
     """Web page cache for storing accessed web pages."""
 
-    def __init__(self, max_size: int = 100000, cache_file: str = "./webpage_cache.json", save_interval: int = 10):
+    def __init__(
+        self,
+        max_size: int = 100000,
+        cache_file: str = "./webpage_cache.json",
+        save_interval: int = 10,
+    ):
         self.max_size = max_size
         self.cache_file = cache_file
         self.cache = OrderedDict()
@@ -72,7 +74,7 @@ class WebPageCache:
             self.cache[cache_key] = {
                 "url": url,
                 "content": content,
-                "timestamp": time.time()
+                "timestamp": time.time(),
             }
 
             self.operations_since_save += 1
@@ -108,7 +110,7 @@ class WebPageCache:
         self.save_to_file()
         self.operations_since_save = 0
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         with self.lock:
             total_requests = self.stats["hits"] + self.stats["misses"]
             hit_rate = self.stats["hits"] / total_requests if total_requests > 0 else 0
@@ -120,7 +122,7 @@ class WebPageCache:
                 "misses": self.stats["misses"],
                 "evictions": self.stats["evictions"],
                 "hit_rate": hit_rate,
-                "total_requests": total_requests
+                "total_requests": total_requests,
             }
 
     def _background_save(self):
@@ -140,38 +142,48 @@ class WebPageCache:
                     "cache_ordered": ordered_cache,
                     "stats": self.stats,
                     "max_size": self.max_size,
-                    "saved_at": time.time()
+                    "saved_at": time.time(),
                 }
 
-            with open(self.cache_file, 'w', encoding='utf-8') as f:
+            with open(self.cache_file, "w", encoding="utf-8") as f:
                 json.dump(cache_data, f, indent=2, ensure_ascii=False)
 
-            print(f"[DEBUG] WebPageCache: Saved {len(self.cache)} entries to {self.cache_file}")
+            print(
+                f"[DEBUG] WebPageCache: Saved {len(self.cache)} entries to {self.cache_file}"
+            )
 
         except Exception as e:
-            print(f"[ERROR] WebPageCache: Failed to save cache to {self.cache_file}: {e}")
+            print(
+                f"[ERROR] WebPageCache: Failed to save cache to {self.cache_file}: {e}"
+            )
 
     def load_from_file(self):
         """Load cache from JSON file."""
         if not os.path.exists(self.cache_file):
-            print(f"[DEBUG] WebPageCache: No existing cache file {self.cache_file}, starting fresh")
+            print(
+                f"[DEBUG] WebPageCache: No existing cache file {self.cache_file}, starting fresh"
+            )
             return
 
         try:
-            with open(self.cache_file, 'r', encoding='utf-8') as f:
+            with open(self.cache_file, "r", encoding="utf-8") as f:
                 cache_data = json.load(f)
 
             with self.lock:
                 if "cache_ordered" in cache_data:
                     ordered_cache = cache_data["cache_ordered"]
                     self.cache = OrderedDict(ordered_cache)
-                    print(f"[DEBUG] WebPageCache: Loaded ordered cache format")
+                    print("[DEBUG] WebPageCache: Loaded ordered cache format")
                 else:
                     loaded_cache = cache_data.get("cache", {})
                     self.cache = OrderedDict(loaded_cache)
-                    print(f"[DEBUG] WebPageCache: Loaded legacy cache format (LRU order may be lost)")
+                    print(
+                        "[DEBUG] WebPageCache: Loaded legacy cache format (LRU order may be lost)"
+                    )
 
-                self.stats = cache_data.get("stats", {"hits": 0, "misses": 0, "evictions": 0})
+                self.stats = cache_data.get(
+                    "stats", {"hits": 0, "misses": 0, "evictions": 0}
+                )
 
                 while len(self.cache) > self.max_size:
                     self.cache.popitem(last=False)
@@ -180,10 +192,14 @@ class WebPageCache:
             saved_at = cache_data.get("saved_at", 0)
             saved_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(saved_at))
 
-            print(f"[DEBUG] WebPageCache: Loaded {len(self.cache)} entries from {self.cache_file} (saved at {saved_time})")
+            print(
+                f"[DEBUG] WebPageCache: Loaded {len(self.cache)} entries from {self.cache_file} (saved at {saved_time})"
+            )
 
         except Exception as e:
-            print(f"[ERROR] WebPageCache: Failed to load cache from {self.cache_file}: {e}")
+            print(
+                f"[ERROR] WebPageCache: Failed to load cache from {self.cache_file}: {e}"
+            )
             with self.lock:
                 self.cache = OrderedDict()
                 self.stats = {"hits": 0, "misses": 0, "evictions": 0}
@@ -216,7 +232,7 @@ class AsyncOnlineSearchClient:
                     cls._shared_session = aiohttp.ClientSession(
                         connector=connector,
                         timeout=aiohttp.ClientTimeout(total=120, sock_connect=30),
-                        trust_env=True
+                        trust_env=True,
                     )
         return cls._shared_session
 
@@ -237,36 +253,46 @@ class AsyncOnlineSearchClient:
         self.logger = logging.getLogger(self.__class__.__name__)
 
         # Retry configuration
-        self.max_retries = self.cfg.tools.get('max_retries', 15)
-        self.retry_delay_base = self.cfg.tools.get('retry_delay_base', 5)
+        self.max_retries = self.cfg.tools.get("max_retries", 15)
+        self.retry_delay_base = self.cfg.tools.get("retry_delay_base", 5)
 
         # Serper API
         self.serper_server_addr = "https://google.serper.dev"
-        self.serper_api_key = os.environ.get('SERPER_API_KEY', '')
+        self.serper_api_key = os.environ.get("SERPER_API_KEY", "")
         if not self.serper_api_key:
-            raise RuntimeError("Serper API key is not set. Please set the SERPER_API_KEY environment variable.")
+            raise RuntimeError(
+                "Serper API key is not set. Please set the SERPER_API_KEY environment variable."
+            )
         self.serper_headers = {
-            'X-API-KEY': self.serper_api_key,
-            'Content-Type': 'application/json'
+            "X-API-KEY": self.serper_api_key,
+            "Content-Type": "application/json",
         }
-        self.logger.info(f"Initialized Serper API client with key: {self.serper_api_key[:8]}...")
+        self.logger.info(
+            f"Initialized Serper API client with key: {self.serper_api_key[:8]}..."
+        )
 
         # Jina API
-        self.use_jina = self.cfg.tools.get('use_jina', False)
-        self.jina_api_key = os.environ.get('JINA_API_KEY', '')
+        self.use_jina = self.cfg.tools.get("use_jina", False)
+        self.jina_api_key = os.environ.get("JINA_API_KEY", "")
         if self.use_jina and not self.jina_api_key:
-            raise RuntimeError("Jina is enabled but the API key is not set. Please set the JINA_API_KEY environment variable.")
+            raise RuntimeError(
+                "Jina is enabled but the API key is not set. Please set the JINA_API_KEY environment variable."
+            )
         if self.use_jina:
-            self.logger.info(f"Initialized Jina API client with key: {self.jina_api_key[:8]}...")
+            self.logger.info(
+                f"Initialized Jina API client with key: {self.jina_api_key[:8]}..."
+            )
 
         # Web page cache
-        cache_enabled = self.cfg.tools.get('enable_cache', True)
-        cache_size = self.cfg.tools.get('cache_size', 10000)
-        cache_file = self.cfg.tools.get('cache_file', './webpage_cache.json')
+        cache_enabled = self.cfg.tools.get("enable_cache", True)
+        cache_size = self.cfg.tools.get("cache_size", 10000)
+        cache_file = self.cfg.tools.get("cache_file", "./webpage_cache.json")
 
         if cache_enabled:
             self.webpage_cache = WebPageCache(cache_size, cache_file, save_interval=5)
-            self.logger.info(f"Web page cache enabled: size={cache_size}, file={cache_file}")
+            self.logger.info(
+                f"Web page cache enabled: size={cache_size}, file={cache_file}"
+            )
         else:
             self.webpage_cache = None
             self.logger.info("Web page cache disabled")
@@ -295,7 +321,7 @@ class AsyncOnlineSearchClient:
                 f"{self.serper_server_addr}/search",
                 headers=self.serper_headers,
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=120)
+                timeout=aiohttp.ClientTimeout(total=120),
             ) as response:
                 if response.status == 200:
                     data = await response.json()
@@ -323,8 +349,10 @@ class AsyncOnlineSearchClient:
         for attempt in range(self.max_retries):
             try:
                 if attempt > 0:
-                    delay = self.retry_delay_base * (2 ** (attempt - 1)) + random.uniform(0, 20)
-                    delay = min(delay, 300) + random.uniform(0, 20)  
+                    delay = self.retry_delay_base * (
+                        2 ** (attempt - 1)
+                    ) + random.uniform(0, 20)
+                    delay = min(delay, 300) + random.uniform(0, 20)
                     error_type = type(last_error).__name__ if last_error else "Unknown"
                     error_msg = str(last_error)[:100] if last_error else ""
                     if attempt > 5:
@@ -345,7 +373,7 @@ class AsyncOnlineSearchClient:
 
         return {"success": False, "error": "Unknown error after all retries"}
 
-    async def query_async(self, req_meta: Dict[str, Any]) -> List[Dict]:
+    async def query_async(self, req_meta: dict[str, Any]) -> list[dict]:
         """
         Query using Serper API with retry logic.
 
@@ -372,24 +400,27 @@ class AsyncOnlineSearchClient:
                 data = serper_result.get("data", {})
                 organic_results = data.get("organic", [])[:topk]
 
-                documents = [result.get("title", "") + " " + result.get("snippet", "") for result in organic_results]
+                documents = [
+                    result.get("title", "") + " " + result.get("snippet", "")
+                    for result in organic_results
+                ]
                 urls = [result.get("link", "") for result in organic_results]
 
-                formatted_results.append({
-                    "documents": documents,
-                    "urls": urls,
-                    "server_type": "async-online-search"
-                })
+                formatted_results.append(
+                    {
+                        "documents": documents,
+                        "urls": urls,
+                        "server_type": "async-online-search",
+                    }
+                )
             else:
-                formatted_results.append({
-                    "documents": [],
-                    "urls": [],
-                    "server_type": "async-online-search"
-                })
+                formatted_results.append(
+                    {"documents": [], "urls": [], "server_type": "async-online-search"}
+                )
 
         return formatted_results
 
-    async def _do_jina_access(self, session, url: str) -> Dict:
+    async def _do_jina_access(self, session, url: str) -> dict:
         """
         Execute a single Jina API access request (low-level network call).
 
@@ -404,23 +435,30 @@ class AsyncOnlineSearchClient:
             Exception: If the request fails (to trigger retry)
         """
         headers = {
-            'Authorization': f'Bearer {self.jina_api_key}',
-            'Content-Type': 'application/json',
+            "Authorization": f"Bearer {self.jina_api_key}",
+            "Content-Type": "application/json",
         }
 
-        async with session.get(f'https://r.jina.ai/{url}', headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as response:
+        async with session.get(
+            f"https://r.jina.ai/{url}",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as response:
             if response.status == 200:
                 content = await response.text()
                 return dict(page=content, type="jina")
             elif response.status != 429:
-                return dict(page="The current URL cannot be searched. Please switch to a different URL and try again.", type="jina")    
+                return dict(
+                    page="The current URL cannot be searched. Please switch to a different URL and try again.",
+                    type="jina",
+                )
             # elif response.status == 422:
             #     content = await response.text()
-            #     return dict(page=content, type="jina")                           
+            #     return dict(page=content, type="jina")
             else:
                 raise Exception(f"HTTP {response.status}")
 
-    async def _single_jina_access(self, session, url: str) -> Dict:
+    async def _single_jina_access(self, session, url: str) -> dict:
         """
         Access a single URL via Jina API with retry logic.
 
@@ -436,8 +474,10 @@ class AsyncOnlineSearchClient:
         for attempt in range(self.max_retries):
             try:
                 if attempt > 0:
-                    delay = self.retry_delay_base * (2 ** (attempt - 1)) + random.uniform(0, 20)
-                    delay = min(delay, 300) + random.uniform(0, 20)  
+                    delay = self.retry_delay_base * (
+                        2 ** (attempt - 1)
+                    ) + random.uniform(0, 20)
+                    delay = min(delay, 300) + random.uniform(0, 20)
                     error_type = type(last_error).__name__ if last_error else "Unknown"
                     error_msg = str(last_error)[:100] if last_error else ""
                     if attempt > 5:
@@ -453,11 +493,17 @@ class AsyncOnlineSearchClient:
             except Exception as e:
                 last_error = e
                 if attempt == self.max_retries - 1:
-                    return dict(page="The current URL cannot be searched. Please switch to a different URL and try again.", type="access")
+                    return dict(
+                        page="The current URL cannot be searched. Please switch to a different URL and try again.",
+                        type="access",
+                    )
 
-        return dict(page="The current URL cannot be searched. Please switch to a different URL and try again.", type="access")
+        return dict(
+            page="The current URL cannot be searched. Please switch to a different URL and try again.",
+            type="access",
+        )
 
-    async def access_async(self, urls: List[str]) -> List[Dict]:
+    async def access_async(self, urls: list[str]) -> list[dict]:
         """
         Access URLs using Jina API with caching and retry logic.
 
@@ -490,18 +536,30 @@ class AsyncOnlineSearchClient:
         if urls_to_fetch and self.use_jina and self.jina_api_key:
             session = await self.get_session()
             async with self._get_access_semaphore():
-                tasks = [self._single_jina_access(session, url) for url in urls_to_fetch]
+                tasks = [
+                    self._single_jina_access(session, url) for url in urls_to_fetch
+                ]
                 fetched_results = await asyncio.gather(*tasks, return_exceptions=True)
 
             # Merge fetched results back
             fetch_index = 0
             for i, result in enumerate(results):
                 if result is None:
-                    fetched_result = fetched_results[fetch_index] if fetch_index < len(fetched_results) else dict(page="The current URL cannot be searched. Please switch to a different URL and try again.", type="access")
+                    fetched_result = (
+                        fetched_results[fetch_index]
+                        if fetch_index < len(fetched_results)
+                        else dict(
+                            page="The current URL cannot be searched. Please switch to a different URL and try again.",
+                            type="access",
+                        )
+                    )
 
                     # Handle exceptions
                     if isinstance(fetched_result, Exception):
-                        fetched_result = dict(page="The current URL cannot be searched. Please switch to a different URL and try again.", type="access")
+                        fetched_result = dict(
+                            page="The current URL cannot be searched. Please switch to a different URL and try again.",
+                            type="access",
+                        )
 
                     results[i] = fetched_result
 
@@ -514,7 +572,10 @@ class AsyncOnlineSearchClient:
         # Fill in any remaining None values
         for i, result in enumerate(results):
             if result is None:
-                results[i] = dict(page="The current URL cannot be searched. Please switch to a different URL and try again.", type="access")
+                results[i] = dict(
+                    page="The current URL cannot be searched. Please switch to a different URL and try again.",
+                    type="access",
+                )
 
         # Add server_type to all results
         for result in results:
@@ -522,7 +583,7 @@ class AsyncOnlineSearchClient:
 
         return results
 
-    def get_cache_stats(self) -> Dict[str, Any]:
+    def get_cache_stats(self) -> dict[str, Any]:
         if self.webpage_cache:
             return self.webpage_cache.get_stats()
         else:
@@ -560,16 +621,16 @@ class AsyncSearchClient:
                     cls._shared_session = aiohttp.ClientSession(
                         connector=connector,
                         timeout=aiohttp.ClientTimeout(total=120, sock_connect=30),
-                        trust_env=False
+                        trust_env=False,
                     )
         return cls._shared_session
 
-    def __init__(self, cfg:DictConfig):
+    def __init__(self, cfg: DictConfig):
         self.cfg = cfg
         self.server_addr = self.cfg.tools.search.server_addr
         print(f"[INFO] AsyncSearchClient: Using local server at {self.server_addr}")
 
-    async def query_async(self, req_meta: Dict[str, Any]) -> List[Dict]:
+    async def query_async(self, req_meta: dict[str, Any]) -> list[dict]:
         """Query local search server."""
         cnt = 0
         last_exception = None
@@ -588,17 +649,22 @@ class AsyncSearchClient:
                             documents=[r["contents"] for r in result],
                             urls=[r["url"] for r in result],
                             server_type="async-search-browser",
-                        ) for result in res["result"]
+                        )
+                        for result in res["result"]
                     ]
             except Exception as e:
                 last_exception = e
-                print(f"[WARNING] AsyncSearchClient: Search query error {e}. Retry {cnt} times.")
+                print(
+                    f"[WARNING] AsyncSearchClient: Search query error {e}. Retry {cnt} times."
+                )
                 cnt += 1
                 await asyncio.sleep(10)
 
-        raise RuntimeError("Fail to post search query to RAG server") from last_exception
+        raise RuntimeError(
+            "Fail to post search query to RAG server"
+        ) from last_exception
 
-    async def access_async(self, urls: List[str]) -> List[Dict]:
+    async def access_async(self, urls: list[str]) -> list[dict]:
         """Access URLs via local server following ASearcher's AsyncSearchBrowserClient logic."""
         cnt = 0
         last_exception = None
@@ -617,15 +683,20 @@ class AsyncSearchClient:
                             page=result["contents"] if result is not None else "",
                             type="access",
                             server_type="async-search-browser",
-                        ) for result in res["result"]
+                        )
+                        for result in res["result"]
                     ]
             except Exception as e:
                 last_exception = e
-                print(f"[WARNING] AsyncSearchClient: Access request error {e}. Retry {cnt} times.")
+                print(
+                    f"[WARNING] AsyncSearchClient: Access request error {e}. Retry {cnt} times."
+                )
                 cnt += 1
                 await asyncio.sleep(10)
 
-        raise RuntimeError("Fail to post access request to RAG server") from last_exception
+        raise RuntimeError(
+            "Fail to post access request to RAG server"
+        ) from last_exception
 
 
 class MASToolWorker(ToolWorker):
@@ -636,7 +707,7 @@ class MASToolWorker(ToolWorker):
         self.request_processor_task = None
 
         # Determine whether to use online or local search
-        self.use_online_search = self.cfg.tools.get('online', False)
+        self.use_online_search = self.cfg.tools.get("online", False)
 
         if self.use_online_search:
             self.log_info("[INFO] MASToolWorker: Using online search (Serper API)")
@@ -676,10 +747,13 @@ class MASToolWorker(ToolWorker):
 
                 if len(documents) > 0:
                     doc_id_template = "[Doc {doc_id}]({url}):\n"
-                    text = "\n\n".join([
-                        doc_id_template.format(doc_id=str(k+1), url=url) + doc[:5000]
-                        for k, (doc, url) in enumerate(zip(documents, urls))
-                    ])
+                    text = "\n\n".join(
+                        [
+                            doc_id_template.format(doc_id=str(k + 1), url=url)
+                            + doc[:5000]
+                            for k, (doc, url) in enumerate(zip(documents, urls))
+                        ]
+                    )
                 else:
                     text = "No search results are found."
 
@@ -713,25 +787,24 @@ class MASToolWorker(ToolWorker):
             else:
                 raise ValueError(f"Unknown tool type: {tool_type}")
 
-
         async def generate_and_send(channel_key: str, tool_name: str, tool_args: dict):
             """Handle both search and access tool requests."""
             try:
                 if tool_name == "search":
                     # Handle search query
-                    query = tool_args.get('query', '')
-                    topk = tool_args.get('topk', self.topk)
+                    query = tool_args.get("query", "")
+                    topk = tool_args.get("topk", self.topk)
                     req_meta = {
                         "queries": [query],
                         "topk": topk,
-                        "return_scores": False
+                        "return_scores": False,
                     }
                     response = await self.search_client.query_async(req_meta)
                     full_text = process_tool_result(response, "search")
 
                 elif tool_name == "access":
                     # Handle webpage access
-                    url = tool_args.get('url', '')
+                    url = tool_args.get("url", "")
                     response = await self.search_client.access_async([url])
                     full_text = process_tool_result(response, "access")
 
@@ -747,7 +820,9 @@ class MASToolWorker(ToolWorker):
                 ).async_wait()
 
             except Exception as e:
-                self.log_error(f"[ERROR] MASToolWorker: Tool execution failed for {tool_name}: {e}, tool name is {tool_name}, tool args is {tool_args}")
+                self.log_error(
+                    f"[ERROR] MASToolWorker: Tool execution failed for {tool_name}: {e}, tool name is {tool_name}, tool args is {tool_args}"
+                )
                 result = ToolChannelResponse(
                     success=False,
                     result=f"Tool execution failed: {str(e)}",
@@ -761,9 +836,13 @@ class MASToolWorker(ToolWorker):
                 async_op=True
             ).async_wait()
             assert request.request_type == "execute"
-            assert request.tool_name in ["search", "access"], f"Unknown tool: {request.tool_name}"
+            assert request.tool_name in ["search", "access"], (
+                f"Unknown tool: {request.tool_name}"
+            )
             asyncio.create_task(
-                generate_and_send(request.session_id, request.tool_name, request.tool_args)
+                generate_and_send(
+                    request.session_id, request.tool_name, request.tool_args
+                )
             )
 
 
@@ -774,7 +853,7 @@ if __name__ == "__main__":
     # Setup logging
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
     # Create test configuration
@@ -802,24 +881,21 @@ if __name__ == "__main__":
 
         # Test 1: Search query
         print("\n[TEST 1] Testing search query...")
-        req_meta = {
-            "queries": ["苹果是什么"],
-            "topk": 3,
-            "return_scores": False
-        }
+        req_meta = {"queries": ["苹果是什么"], "topk": 3, "return_scores": False}
 
         try:
             results = await client.query_async(req_meta)
             print(f"[SUCCESS] Search returned {len(results)} results")
             for i, result in enumerate(results):
-                print(f"  Query {i+1}:")
+                print(f"  Query {i + 1}:")
                 print(f"    Documents: {len(result.get('documents', []))}")
                 print(f"    URLs: {len(result.get('urls', []))}")
-                if result.get('documents'):
+                if result.get("documents"):
                     print(f"    First document preview: {result['documents']}...")
         except Exception as e:
             print(f"[ERROR] Search test failed: {e}")
             import traceback
+
             traceback.print_exc()
 
         # Test 2: Access URL (if Jina is enabled)
@@ -831,8 +907,8 @@ if __name__ == "__main__":
                 access_results = await client.access_async(test_urls)
                 print(f"[SUCCESS] Access returned {len(access_results)} results")
                 for i, result in enumerate(access_results):
-                    page_content = result.get('page', '')
-                    print(f"  URL {i+1}:")
+                    page_content = result.get("page", "")
+                    print(f"  URL {i + 1}:")
                     print(f"    Page length: {len(page_content)} chars")
                     print(f"    Type: {result.get('type', 'unknown')}")
                     if page_content:
@@ -840,6 +916,7 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"[ERROR] Access test failed: {e}")
                 import traceback
+
                 traceback.print_exc()
 
         # Test 3: Cache statistics

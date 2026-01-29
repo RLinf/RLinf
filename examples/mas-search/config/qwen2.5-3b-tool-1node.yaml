@@ -11,6 +11,7 @@ cluster:
   component_placement:
     actor,rollout,reward: all
 
+
 runner:
   task_type: reasoning
   logger:
@@ -20,36 +21,35 @@ runner:
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1
-  max_steps: -1
+  max_steps: 200
 
-  val_check_interval: 30
-  save_interval: 30
+  val_check_interval: 25
+  save_interval: 25
 
   seq_length: 7096
 
-  enable_dynamic_batch_size: False
-  max_tokens_per_mbs: 7096
+  enable_dynamic_batch_size: True
+  max_tokens_per_mbs: 11008
 
   resume_dir: null
-  experiment_name: null
-  output_dir: /mnt/public/xzxuan/Multi-Agent/RLinf/eval
+  experiment_name: mas-search-qwen2.5-3b-tool-1node
+  output_dir: ../results
 
 algorithm:
-  group_size: 1
-
-  n_minibatches: 4
+  group_size: 4
+  n_minibatches: 2
   training_batch_size_per_gpu: 1 # micro batch size
   rollout_batch_size_per_gpu: null # If set to null, rollout_batch_size will be evenly divided across all inference instances. You can reduce this parameter if inference consumes too much GPU memory.
 
   # mbs to do log prob inference, can be set to
   # lower than rollout_batch_size_per_gpu to reduce
   # memory usage
-  logprob_forward_micro_batch_size: 1 # ${.rollout_batch_size_per_gpu}
+  logprob_forward_micro_batch_size: 16 # ${.rollout_batch_size_per_gpu}
 
   # val rollout mbs
-  val_rollout_batch_size_per_gpu: 4 # ${.rollout_batch_size_per_gpu}
+  val_rollout_batch_size_per_gpu: 1 # ${.rollout_batch_size_per_gpu}
 
-  recompute_logprobs: False
+  recompute_logprobs: True # True for inference, False for training
   shuffle_rollout: False
 
   # GRPO loss params
@@ -65,7 +65,7 @@ algorithm:
   clip_ratio_high: null # if null or not set, will use ratio_clip_eps
 
   adv_type: grpo_dynamic
-  advantage_mode: turn  # "trajectory" for trajectory-level GRPO, "turn" for turn-level GRPO
+  advantage_mode: turn # "trajectory" for trajectory-level GRPO, "turn" for turn-level GRPO
   normalize_advantages: False
   early_stop_imp_ratio: 5.0
   use_valid_token_scale: False
@@ -79,68 +79,33 @@ algorithm:
     repetition_penalty: 1.0
     max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
     min_new_tokens: 1
-    stop_token_ids: [151666, 151643, 151645] # TODO: check
+    
 
-# inference:
-#   model_type: ${rollout.model.model_type}
-#   group_name: "InferenceGroup"
-#   load_from_actor: True
-#   model:
-#     tensor_model_parallel_size: 1
-#     pipeline_model_parallel_size: 1
-#     sequence_parallel: False
+
+inference:
+  model_type: ${rollout.model.model_type}
+  group_name: "InferenceGroup"
+  load_from_actor: True
+  model:
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: False
 
 agentloop:
   group_name: "AgentLoopGroup"
-  use_tool: True
-  max_planner_turns: 20
-  max_worker_turns: 10
-  print_outputs: False # whether to print the outputs (token ids, texts, tool calls, etc.) of agent loop worker.
-  max_workers_per_planner: 10  
-  max_toolcall_per_worker: 5  
+  max_turns: 2  # Use max_turns instead of maxturn for consistency with multiturn_demo
+  max_tool_response_length: 500
+  tool_response_truncate_side: "right"
+  print_outputs: False
   is_dynamic_rollout_batch: True
-
-  hint_generation: false 
-  final_answer_extraction: false 
-  train_roles: null  
-  main_summary: False
-
-  format_reward: 0.1
-  call_search_reward: 0.05
-  length_limit: 5000
-  max_length_limit: 7000
-  length_penalty: 0.1
-  max_length_penalty: 0.2
-
-  use_llm_judge_api: True
-  llm_ip: 172.27.155.18
-  llm_port: 30000
-  llm_type: Qwen3-30b-a3b
-
-# Tools configuration for AgentLoop
-tools:
-  mcp_file_system: null
-  online: False  # Set to True to use online search (Serper API), False for local search
-  search:
-    server_addr: "127.0.0.1:8000"  # Used only for local search
-    topk: 3
-    stop_token: "</search>"
-
-  # Online search cache settings (only used when online: True)
-  enable_cache: False # may have some bugs?
-  cache_size: 10000
-  cache_file: './webpage_cache.json'
-  use_jina: True  # Set to True to enable Jina API for webpage access
-
 rollout:
   group_name: "RolloutGroup"
 
-  gpu_memory_utilization: 0.6
-  use_sub_worker: False 
+  gpu_memory_utilization: 0.75
   model:
-    model_path: null #TODO:
-    model_type: null #TODO:
-    precision: ${actor.model.precision}             # precision for rollout model, support [fp16, bf16, fp32]
+    model_path: /path/to/model/Qwen2.5-3B-Instruct-search
+    model_type: qwen2.5
+    precision: ${actor.model.precision}
   enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
@@ -169,80 +134,42 @@ rollout:
   tensor_parallel_size: 1
   pipeline_parallel_size: 1
   
-  validate_weight: True # whether to send all weights at first for weight comparison.
-  validate_weight_first_sync: False
-  validate_save_dir: /mnt/public/xzxuan/Multi-Agent/RLinf # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
-  print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
-
-  max_running_requests: 64 # the maximum number of running requests in the rollout engine.
-  cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
-
-  is_eval: 1 # sglang offload TODO:
-  
-rollout_sub_worker:
-  group_name: "SubWorkerRolloutGroup"
-
-  gpu_memory_utilization: 0.6
-
-  model:
-    model_path: null #TODO:
-    model_type: null #TODO:
-    precision: ${actor.model.precision}   
-  precision: ${actor.model.precision}              # precision for rollout model, support [fp16, bf16, fp32]
-  enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
-  distributed_executor_backend: mp   # ray or mp
-  disable_log_stats: False
-  detokenize: True            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
-  padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
-  eos: null                   # will be tokenizer.eos_token_id if null.
-
-  rollout_backend: sglang     # here choose which backend to rollout,support [sglang, vllm] 
-
-  sglang:
-    attention_backend: triton # [flashinfer, triton] for more, see sglang's doc
-    decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
-    use_torch_compile: False # enable torch_compile in SGLang for rollout.
-    torch_compile_max_bs: 128 # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.
-
-  return_logprobs: False
-
-  tensor_parallel_size: 1
-  pipeline_parallel_size: 1
-  
-  validate_weight: True # TODO: here is imp
-  validate_weight_first_sync: False # validate the weight norm between load model and first sync.
+  validate_weight: False # whether to send all weights at first for weight comparison.
+  validate_weight_first_sync: True # validate the weight norm between load model and first sync.
   validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
   print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
 
-  max_running_requests: 64 # the maximum number of running requests in the rollout engine.
+  max_running_requests: 128 # the maximum number of running requests in the rollout engine.
   cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
-
-  is_eval: 1 # sglang offload TODO:
 
 data:
   type: mas
   max_prompt_length: 4096
   filter_prompt_by_length: True
-  rollout_batch_size: 512 
-  val_rollout_batch_size: 1000
+  rollout_batch_size: 256
+  val_rollout_batch_size: null
   num_workers: 2
-  prompt_key: question
-  answer_key: golden_answers
+  prompt_key: prompt
+  answer_key: solutions
   apply_chat_template: False
   shuffle: True
-  validation_shuffle: False
+  validation_shuffle: True
   seed: 1234
-  train_data_paths: ["/mnt/public/xzxuan/data/nq_hotpotqa_train/train_RLinf.jsonl"]
-  val_data_paths: ["/mnt/public/xzxuan/data/nq_hotpotqa_train/validation_RLinf.jsonl"]
+  train_data_paths: ["/path/to/data/train.jsonl"]
+  val_data_paths: ["/path/to/data/val.jsonl"]
   data_size: -1
 
+# Tools configuration for AgentLoop
+tools:
+  search:
+    server_addr: 0.0.0.0:8000
+    topk: 3
 
 actor:
   group_name: "ActorGroup"
   training_backend: megatron
   mcore_gpt: True
   spec_name: decoder_gpt
-
 
   offload_optimizer: True
   offload_weight: True
@@ -254,7 +181,8 @@ actor:
   seed: 1234
 
   model:
-    megatron_checkpoint: null
+    # megatron_checkpoint: /mnt/project_rlinf/liyanghao/mas-search/results/01-16-mas-search-inference/converted_ckpts/actor
+    megatron_checkpoint: /path/to/actor/checkpoint
     precision: fp16
     add_bias_linear: False
 
@@ -262,13 +190,13 @@ actor:
     pipeline_model_parallel_size: 1
 
     activation: swiglu
-    sequence_parallel: ${gt:${actor.model.tensor_model_parallel_size}, 1} # enable sq if tp > 1
+    sequence_parallel: False
     # recompute_method: block
     # recompute_granularity: selective
 
     recompute_method: block
     recompute_granularity: full
-    recompute_num_layers: 20 # TODO:开到跟model layer一致
+    recompute_num_layers: 36
 
     seq_length: ${runner.seq_length}
     encoder_seq_length: ${runner.seq_length}
@@ -329,11 +257,12 @@ actor:
     use_dist_ckpt: False
     tp_comm_bootstrap_backend: nccl
     tp_comm_overlap_cfg: null # tp_comm_overlap_cfg.yaml
-    use_hf_ckpt: True # if true, will transfer hf model to generate megatron checkpoint and use it for training.
+    # use_hf_ckpt: False # if true, will transfer hf model to generate megatron checkpoint and use it for training.
+    use_hf_ckpt: False
     use_profiler: False # if true, will enable torch profiler when training, pay attention it has influence on performance
 
     ckpt_convertor: # config for ckpt convertor
-      model: null # TODO:
+      model: Qwen2.5-3B
       model_type: null # will be set by hf model's config if null
       hf_model_path: ${rollout.model.model_path} # path to the hf model
       save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
@@ -360,8 +289,16 @@ actor:
       # schedule_wait: it will be set at runtime
 
 reward:
-  reward_type: 'em' # or em
-  eval_metric: ['em', 'f1', 'llm']
+  group_name: "RewardGroup"
+  use_reward_model: False
+  reward_type: 'searchr1'
+  reward_scale: 1.0
+
+  tokenizer:
+    tokenizer_model: ${actor.tokenizer.tokenizer_model}
+    use_fast: ${actor.tokenizer.use_fast}
+    trust_remote_code: ${actor.tokenizer.trust_remote_code}
+    padding_side: ${actor.tokenizer.padding_side}
 
 critic:
   use_critic_model: False
