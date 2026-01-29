@@ -6,8 +6,8 @@
 # - Faster than single-threaded evaluation
 # - Follows RLinf's standard evaluation pattern
 #
-# For detailed per-instance metrics with single-threaded evaluation, use:
-#   toolkits/eval_scripts_openpi/behavior_eval.py
+# For complete documentation, see:
+#   examples/embodiment/BEHAVIOR_EVALUATION.md
 
 set -e
 
@@ -19,7 +19,7 @@ EVAL_CONFIG="behavior_openvlaoft_eval"  # Evaluation config file
 LOG_PATH="./logs/behavior_eval"  # Output directory
 
 # ============================================================================
-# Method 1: Parallel Evaluation with RLinf Workers (Recommended)
+# Parallel Evaluation with RLinf Workers
 # ============================================================================
 # This method uses RLinf's distributed worker architecture with:
 # - Environment workers: Run OmniGibson BEHAVIOR environments
@@ -30,8 +30,7 @@ LOG_PATH="./logs/behavior_eval"  # Output directory
 # - Much faster (parallel execution)
 # - Scales to multiple GPUs/nodes
 # - Follows RLinf's standard architecture
-echo "========================================" echo "Method 1: RLinf Parallel Evaluation"
-echo "========================================"
+echo "RLinf Parallel Evaluation Starting..."
 
 # Set environment variables
 export EMBODIED_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,55 +47,6 @@ python ${EMBODIED_PATH}/eval_embodied_agent.py \
 
 echo ""
 echo "Evaluation completed! Results saved to: ${LOG_PATH}"
-echo ""
-
-# ============================================================================
-# Method 2: Single-threaded Evaluation with Detailed Metrics (Optional)
-# ============================================================================
-# This method provides more granular metrics but is slower.
-# Use this if you need:
-# - Detailed per-instance statistics
-# - Step-by-step debugging
-# - Custom evaluation logic
-echo "========================================"
-echo "Method 2: Single-threaded Evaluation"
-echo "========================================"
-echo "(Commented out by default - uncomment to use)"
-echo ""
-
-# Uncomment to run single-threaded evaluation:
-# bash ${REPO_PATH}/toolkits/eval_scripts_openpi/eval_behavior.sh \
-#     --task_name ${TASK_NAME} \
-#     --model_path ${MODEL_PATH} \
-#     --policy_type rlinf \
-#     --action_chunk 32 \
-#     --max_steps 2000 \
-#     --num_episodes 1 \
-#     --log_path ${LOG_PATH}/single_threaded \
-#     --num_save_videos 10
-
-# ============================================================================
-# Evaluation Configuration Options
-# ============================================================================
-# Key parameters you can adjust:
-#
-# Task Configuration:
-#   env.eval.task_idx: Task index (0-49 for BEHAVIOR-1K tasks)
-#   env.eval.total_num_envs: Number of parallel environments
-#
-# Episode Configuration:
-#   env.eval.max_steps_per_rollout_epoch: Max steps per episode
-#   algorithm.eval_rollout_epoch: Number of evaluation epochs
-#
-# Model Configuration:
-#   actor.model.num_action_chunks: Action chunk size (must match training)
-#   runner.eval_policy_path: Path to model checkpoint
-#
-# Video Configuration:
-#   env.eval.video_cfg.save_video: Whether to save videos
-#   env.eval.video_cfg.video_base_dir: Video output directory
-#
-# For more options, see: examples/embodiment/config/behavior_openvlaoft_eval.yaml
 
 # ============================================================================
 # BEHAVIOR Task List
@@ -116,22 +66,8 @@ echo ""
 #   rlinf/envs/behavior/behavior_task.jsonl
 #   or OmniGibson's TASK_INDICES_TO_NAMES
 
-# ============================================================================
-# Multi-Task Evaluation Example
-# ============================================================================
-# To evaluate on multiple tasks, run the script multiple times with different
-# task indices:
-
-# for task_idx in 0 1 2 3 4; do
-#     echo "Evaluating task index: ${task_idx}"
-#     python ${EMBODIED_PATH}/eval_embodied_agent.py \
-#         --config-name ${EVAL_CONFIG} \
-#         runner.logger.log_path=${LOG_PATH}/task_${task_idx} \
-#         runner.eval_policy_path=${MODEL_PATH}/model.pt \
-#         env.eval.task_idx=${task_idx} \
-#         algorithm.eval_rollout_epoch=10
-# done
-
-echo "========================================" echo "All evaluations complete!"
-echo "========================================"
+echo "=========================================="
+echo "For more information and troubleshooting:"
+echo "  examples/embodiment/BEHAVIOR_EVALUATION.md"
+echo "=========================================="
 
