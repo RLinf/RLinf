@@ -436,17 +436,25 @@ def timeout_limit(seconds: float, use_signals: bool = False):
 
     Args:
         seconds: The timeout duration in seconds.
-        use_signals: (Deprecated)  This is deprecated because signals only work reliably in the main thread
+        use_signals: (Deprecated) This is deprecated because signals only work reliably in the main thread
                      and can cause issues in multiprocessing or multithreading contexts.
                      Defaults to False, which uses the more robust multiprocessing approach.
 
     Returns:
         A decorated function with timeout.
 
-    Raises:
-        TimeoutError: If the function execution exceeds the specified time.
-        RuntimeError: If the child process exits with an error (multiprocessing mode).
-        NotImplementedError: If the OS is not POSIX (signals are only supported on POSIX).
+    Note:
+        The decorated function may raise the following exceptions:
+        
+        - TimeoutError: If the function execution exceeds the specified time.
+        - RuntimeError: If the child process exits with an error (multiprocessing mode).
+        - NotImplementedError: If the OS is not POSIX (signals are only supported on POSIX).
+
+    Example:
+        >>> @timeout_limit(5.0)
+        ... def slow_function():
+        ...     time.sleep(10)
+        >>> slow_function()  # Raises TimeoutError after 5 seconds
     """
 
     def decorator(func):
