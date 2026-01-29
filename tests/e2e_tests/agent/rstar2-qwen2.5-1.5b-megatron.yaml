@@ -63,6 +63,8 @@ algorithm:
   clip_ratio_c: 3.0 # 3.0
   clip_ratio_low: 0.2 # if null or not set, will use ratio_clip_eps
   clip_ratio_high: 0.28 # if null or not set, will use ratio_clip_eps
+  clip_log_ratio_min: -20 # if null or not set, will not clip
+  clip_log_ratio_max: 20 # if null or not set, will not clip
 
   adv_type: grpo
   normalize_advantages: False
@@ -80,7 +82,7 @@ algorithm:
     min_new_tokens: 1
 
   down_sampling:
-    do_down_sampling: True
+    do_down_sampling: true
     down_sampling_config:
       reject_equal_reward: true
       roc_error_ratio: true

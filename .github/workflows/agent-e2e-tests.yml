@@ -284,7 +284,7 @@ jobs:
         run: |
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/agent/run_tool.sh rstar2-qwen2.5-1.5b-megatron
+          bash tests/e2e_tests/agent/run_rstar2.sh
 
       - name: Clean up
         run: |
