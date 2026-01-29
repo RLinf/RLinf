@@ -130,23 +130,6 @@ class MasSearchAgentLoopWorker(MultiTurnAgentLoopWorker):
 
         return content, function_calls
 
-    async def _get_reward_searchr1(
-        self, origin_question: str, extract_answer: str, label_answer: list
-    ) -> tuple[float, dict, bool]:
-        """Search-R1 的奖励计算（使用 EM）"""
-
-        from rlinf.agents.utils.reward import compute_score_em
-
-        if label_answer is not None and extract_answer is not None:
-            em_score = compute_score_em(extract_answer, label_answer)
-            format = True
-        else:
-            em_score = 0.0
-            format = False
-
-        eval_metric = {"EM": em_score, "F1": None, "LLM": None}
-
-        return em_score, eval_metric, format
 
     async def run_one_query(self, prompt_ids: list[int], *, answer) -> AgentLoopOutput:
         # origin_question = self.tokenizer.decode(prompt_ids)
@@ -189,14 +172,12 @@ class MasSearchAgentLoopWorker(MultiTurnAgentLoopWorker):
             response_mask += [1] * len(response_ids)
 
             if len(response_ids) == max_resp_len:
-                task_failed = True
                 break
 
             # Extract tool calls from response text
             content, function_calls = await self.extract_tool_calls(response_text)
 
             if function_calls == []:
-                task_failed = True
                 break
 
             # Execute tools in parallel with history propagation

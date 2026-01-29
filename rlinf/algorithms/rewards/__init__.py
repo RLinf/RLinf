@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from rlinf.algorithms.rewards.code import CodeRewardOffline
-from rlinf.algorithms.rewards.mas import MASReward
 from rlinf.algorithms.rewards.math import MathReward
 from rlinf.algorithms.rewards.searchr1 import SearchR1Reward
 from rlinf.algorithms.rewards.vqa import VQAReward
@@ -35,4 +34,3 @@ register_reward("math", MathReward)
 register_reward("vqa", VQAReward)
 register_reward("code_offline", CodeRewardOffline)
 register_reward("searchr1", SearchR1Reward)
-register_reward("mas", MASReward)
