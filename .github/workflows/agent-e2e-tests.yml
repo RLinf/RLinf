@@ -263,33 +263,42 @@ jobs:
           uv pip install -r code-judge/requirements.txt
           uv pip install -e code-judge
           uv pip install math_verify
-          redis-server --daemonize yes --protected-mode no --bind 0.0.0.0
-          tmux new-session -d -s server \
-          'cd code-judge && \
-              MAX_EXECUTION_TIME=4 \
-              REDIS_URI="redis://$MASTER_ADDR:6379" \
-              RUN_WORKERS=0 \
-              uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 16 \
-              2>&1 | tee server.log' 
-          tmux new-session -d -s worker \
-          'cd code-judge && \
-              MAX_EXECUTION_TIME=4 \
-              REDIS_URI="redis://$MASTER_ADDR:6379" \
-              MAX_WORKERS=64 \
-              python run_workers.py \
-              2>&1 | tee worker.log'
+          tmux kill-session -t server 2>/dev/null || true
+          tmux kill-session -t worker 2>/dev/null || true
+          pkill redis-server 2>/dev/null || true
 
       - name: SGLang Collocated mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
+          redis-server --daemonize yes --protected-mode no --bind 0.0.0.0
+          tmux new-session -d -s server \
+          'source $VENV_PATH/bin/activate && \
+            cd code-judge && \
+            MAX_EXECUTION_TIME=4 \
+            REDIS_URI="redis://$MASTER_ADDR:6379" \
+            RUN_WORKERS=0 \
+            uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 16 \
+            2>&1 | tee server.log' 
+            tmux new-session -d -s worker \
+          'source $VENV_PATH/bin/activate && \
+            cd code-judge && \
+            MAX_EXECUTION_TIME=4 \
+            REDIS_URI="redis://$MASTER_ADDR:6379" \
+            MAX_WORKERS=64 \
+            python run_workers.py \
+            2>&1 | tee worker.log'
           bash tests/e2e_tests/agent/run_rstar2.sh
 
       - name: Clean up
         run: |
           rm -rf .venv
           uv cache prune
+          tmux kill-session -t server
+          tmux kill-session -t worker
+          pkill redis-server
+          rm -rf code-judge/
 
   qwen-vl-grpo-test:
     runs-on: reason
