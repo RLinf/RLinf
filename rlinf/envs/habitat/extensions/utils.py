@@ -112,16 +112,16 @@ def resize_observation_images(
     observation_size: int,
 ) -> dict[str, Any]:
     """Resize images in egocentric_view to target observation_size.
-    
+
     Args:
         egocentric_view: Dictionary containing images (rgb, depth, top_down_map).
         observation_size: Target size for resizing (assumes square images).
-    
+
     Returns:
         Dictionary with resized images.
     """
     resized_view = {}
-    
+
     if "rgb" in egocentric_view:
         rgb = egocentric_view["rgb"]
         if rgb.shape[0] != observation_size or rgb.shape[1] != observation_size:
@@ -131,17 +131,20 @@ def resize_observation_images(
                 interpolation=cv2.INTER_CUBIC,
             )
         resized_view["rgb"] = rgb
-    
+
     if "depth" in egocentric_view:
         depth_map = egocentric_view["depth"]
-        if depth_map.shape[0] != observation_size or depth_map.shape[1] != observation_size:
+        if (
+            depth_map.shape[0] != observation_size
+            or depth_map.shape[1] != observation_size
+        ):
             depth_map = cv2.resize(
                 depth_map,
                 dsize=(observation_size, observation_size),
                 interpolation=cv2.INTER_CUBIC,
             )
         resized_view["depth"] = depth_map
-    
+
     if "top_down_map" in egocentric_view:
         td_map = egocentric_view["top_down_map"]
         old_h, old_w, _ = td_map.shape
@@ -154,7 +157,7 @@ def resize_observation_images(
             interpolation=cv2.INTER_CUBIC,
         )
         resized_view["top_down_map"] = td_map
-    
+
     return resized_view
 
 
@@ -657,49 +660,6 @@ def navigator_video_frame(
     return np.concatenate((rgb, horizontal_white, map_and_inst), axis=0).astype(
         np.uint8
     )
-
-
-# def generate_video(
-#     video_option: List[str],
-#     video_dir: Optional[str],
-#     images: List[ndarray],
-#     episode_id: Union[str, int],
-#     checkpoint_idx: int,
-#     metrics: Dict[str, float],
-#     tb_writer: TensorboardWriter,
-#     fps: int = 10,
-# ) -> None:
-#     """Generate video according to specified information. Using a custom
-#     verion instead of Habitat's that passes FPS to video maker.
-
-#     Args:
-#         video_option: string list of "tensorboard" or "disk" or both.
-#         video_dir: path to target video directory.
-#         images: list of images to be converted to video.
-#         episode_id: episode id for video naming.
-#         checkpoint_idx: checkpoint index for video naming.
-#         metric_name: name of the performance metric, e.g. "spl".
-#         metric_value: value of metric.
-#         tb_writer: tensorboard writer object for uploading video.
-#         fps: fps for generated video.
-#     """
-#     if len(images) < 1:
-#         return
-
-#     metric_strs = []
-#     for k, v in metrics.items():
-#         metric_strs.append(f"{k}={v:.2f}")
-
-#     video_name = f"episode={episode_id}-ckpt={checkpoint_idx}-" + "-".join(
-#         metric_strs
-#     )
-#     if "disk" in video_option:
-#         assert video_dir is not None
-#         images_to_video(images, video_dir, video_name, fps=fps)
-#     if "tensorboard" in video_option:
-#         tb_writer.add_video_from_np_images(
-#             f"episode{episode_id}", checkpoint_idx, images, fps=fps
-#         )
 
 
 def compute_heading_to(

@@ -87,8 +87,8 @@ env:
   # Override the default values in env/habitat_r2r
   train:
     total_num_envs: 64  # Total number of parallel environments for training
-    max_steps_per_rollout_epoch: 128
-    max_episode_steps: 128 # max episode steps for truncation
+    max_steps_per_rollout_epoch: 120
+    max_episode_steps: 120 # max episode steps for truncation
     reset_gripper_open: False
   eval:
     total_num_envs: 3
@@ -101,6 +101,9 @@ env:
       fps: 5
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
+    metrics_cfg:
+      save_metrics: True
+      metrics_base_dir: ${runner.logger.log_path}/metrics/eval
 
 rollout:
   group_name: "RolloutGroup"

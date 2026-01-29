@@ -171,6 +171,11 @@ class HabitatEnv(gym.Env):
         actions[is_stop] = "no_op"
 
         raw_obs, _reward, terminations, info_lists = self.env.step(actions)
+
+        # If some envs execute "no_op", manually normalize depth observations
+        # according to Habitat's depth sensor config.
+        self._normalize_depth(actions, raw_obs)
+
         terminations[is_stop] = True
         # TODO: what if termination means failure? (e.g. robot falling down)
         step_reward = self._calc_step_reward(terminations)
@@ -233,7 +238,6 @@ class HabitatEnv(gym.Env):
         raw_obs = self.env.reset(env_idx)
         self._elapsed_steps[env_idx] = 0
         self.dones_once[env_idx] = False
-        # If there is record_first_done_infos, clear the first-done info of the envs in this reset.
         if (
             self.record_first_done_infos is not None
             and "episode" in self.record_first_done_infos
@@ -243,7 +247,7 @@ class HabitatEnv(gym.Env):
             device = next(iter(episode.values())).device
             mask = torch.zeros(self.num_envs, dtype=torch.bool, device=device)
             mask[env_idx] = True
-            for k, v in episode.items():
+            for k, v in episode.values():
                 v[mask] = torch.zeros_like(v)
         infos = {}
 
@@ -281,6 +285,34 @@ class HabitatEnv(gym.Env):
 
     def update_reset_state_ids(self):
         pass
+
+    def _normalize_depth(self, actions, raw_obs):
+        """Normalize depth for envs whose action is 'no_op', following
+        Habitat's depth sensor configuration.
+        """
+        is_no_op = actions == "no_op"
+        if not np.any(is_no_op):
+            return
+
+        env_config = self.env.get_env_attr("config")[0]
+        depth_cfg = env_config.simulator.agents.main_agent.sim_sensors.depth_sensor
+        if not getattr(depth_cfg, "normalize_depth", False):
+            return
+
+        min_depth = float(depth_cfg.min_depth)
+        max_depth = float(depth_cfg.max_depth)
+
+        for env_idx, flag_no_op in enumerate(is_no_op):
+            if not flag_no_op:
+                continue
+            obs = raw_obs[env_idx]
+            if "depth" not in obs:
+                continue
+            depth = obs["depth"]
+            depth = np.clip(depth, min_depth, max_depth)
+            depth = (depth - min_depth) / (max_depth - min_depth)
+            obs["depth"] = depth
+            raw_obs[env_idx] = obs
 
     def _wrap_obs(self, obs_list):
         image_list = []
