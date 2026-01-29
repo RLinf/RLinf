@@ -14,6 +14,7 @@
 
 import asyncio
 import copy
+import json
 from dataclasses import dataclass, field
 from typing import Any, Optional
 from uuid import uuid4
@@ -22,23 +23,20 @@ from omegaconf import DictConfig
 from transformers import AutoTokenizer
 
 from rlinf.data.io_struct import (
+    DynamicRolloutResult,
     RolloutRequest,
     RolloutResult,
-    DynamicRolloutResult,
 )
-from rlinf.scheduler import Channel, Worker
-from rlinf.utils.placement import ModelParallelComponentPlacement
-from rlinf.workers.agent.tool_worker import ToolChannelInfo
-from rlinf.workers.rollout.utils import green
-
-
 from rlinf.data.tool_call.tool_io_struct import (
     ToolChannelRequest,
     ToolChannelResponse,
     ToolRequest,
     ToolResponse,
 )
-import json
+from rlinf.scheduler import Channel, Worker
+from rlinf.utils.placement import ModelParallelComponentPlacement
+from rlinf.workers.agent.tool_worker import ToolChannelInfo
+from rlinf.workers.rollout.utils import green
 
 
 @dataclass
@@ -70,6 +68,7 @@ class AgentLoopOutput:
     """Tool call information for this turn."""
     tool_call_info: Optional[dict[str, int]] = None
 
+
 @dataclass
 class MultiTurnAgentLoopOutput:
     """Multi agent loop output."""
@@ -80,6 +79,7 @@ class MultiTurnAgentLoopOutput:
     trace_prints: list[Any] = field(default_factory=list)
     """Extra fields for dynamic addition."""
     extra_fields: dict[str, Any] = field(default_factory=dict)
+
 
 class AgentLoopWorker(Worker):
     """
@@ -100,10 +100,14 @@ class AgentLoopWorker(Worker):
             self.return_logprobs = False
         else:
             self.return_logprobs = not cfg.algorithm.recompute_logprobs
-        self.is_dynamic_rollout_batch = cfg.agentloop.get("is_dynamic_rollout_batch", False)
+        self.is_dynamic_rollout_batch = cfg.agentloop.get(
+            "is_dynamic_rollout_batch", False
+        )
         if self.is_dynamic_rollout_batch:
-            assert isinstance(self, MultiTurnAgentLoopWorker), "agent loop worker must be MultiTurnAgentLoopWorker if is_dynamic_rollout_batch is True"
-            assert self.return_logprobs, "recompute_logprobs must be False if is_dynamic_rollout_batch is True"
+            assert isinstance(self, MultiTurnAgentLoopWorker), (
+                "agent loop worker must be MultiTurnAgentLoopWorker if is_dynamic_rollout_batch is True"
+            )
+            # assert self.return_logprobs, "recompute_logprobs must be False if is_dynamic_rollout_batch is True"
 
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.rollout.model.model_path)
 
@@ -313,11 +317,15 @@ class AgentLoopWorker(Worker):
     async def run_one_query(self, prompt_ids: list[int], **kwargs) -> AgentLoopOutput:
         raise NotImplementedError("Subclasses must implement this method")
 
+
 class MultiTurnAgentLoopWorker(AgentLoopWorker):
     """Multi-turn agent loop worker."""
 
     async def generate(
-        self, prompt_ids: list[int], sampling_params: Optional[dict] = None, rollout_name: str = None
+        self,
+        prompt_ids: list[int],
+        sampling_params: Optional[dict] = None,
+        rollout_name: Optional[str] = None,
     ):
         channel_key = uuid4().hex
         if rollout_name is None:
@@ -336,7 +344,7 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
             channel_key, async_op=True
         ).async_wait()
         return result
-    
+
     async def run_agentloop_rollout_group(
         self,
         input_dict: dict,
@@ -358,7 +366,9 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         rollout_tasks = []
         # grpo group_size
         for _ in range(group_size):
-            task = asyncio.create_task(self.run_one_query(copy.deepcopy(input_dict), answer=answer))
+            task = asyncio.create_task(
+                self.run_one_query(copy.deepcopy(input_dict), answer=answer)
+            )
             rollout_tasks.append(task)
 
         task_results = await asyncio.gather(*rollout_tasks)
@@ -392,7 +402,11 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
                 send_output_tasks.append(
                     asyncio.create_task(
                         self.run_agentloop_rollout_group(
-                            input_ids, answer, rollout_request.n, output_channel, is_eval=is_eval
+                            input_ids,
+                            answer,
+                            rollout_request.n,
+                            output_channel,
+                            is_eval=is_eval,
                         ),
                     )
                 )
@@ -438,7 +452,9 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
                 idx_to_traj.append(idx)
                 prompt_lengths.append(len(single_turn_output.prompt_ids))
                 response_lengths.append(len(single_turn_output.response_ids))
-                input_ids.append(single_turn_output.prompt_ids + single_turn_output.response_ids)
+                input_ids.append(
+                    single_turn_output.prompt_ids + single_turn_output.response_ids
+                )
                 rollout_logprobs.append(single_turn_output.response_logprobs)
                 is_end.append(single_turn_output.is_end)
                 rewards.append(single_turn_output.reward_score)
@@ -459,7 +475,7 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
                         assert subtask_count > 0
                         num_valid_planner_turns += 1
                     elif role == "worker" or role == "single":
-                        assert (search_count > 0 or access_count > 0)
+                        assert search_count > 0 or access_count > 0
                         num_valid_worker_turns += 1
                 else:
                     # Invalid turn - pad with zeros
@@ -534,10 +550,16 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
                 "sample_idx": idx,
                 "num_turns": len(turns),
                 "turns": turns,
-                "origin_question": task_result.extra_fields.get("origin_question", None),
+                "origin_question": task_result.extra_fields.get(
+                    "origin_question", None
+                ),
                 "final_answer": final_answer,
-                "final_answer_text": task_result.extra_fields.get("final_answer_text", None),
-                "planner_summary": task_result.extra_fields.get("planner_summary", None),
+                "final_answer_text": task_result.extra_fields.get(
+                    "final_answer_text", None
+                ),
+                "planner_summary": task_result.extra_fields.get(
+                    "planner_summary", None
+                ),
                 # Evaluation metrics for this sample
                 "eval_metric": eval_metric,
             }

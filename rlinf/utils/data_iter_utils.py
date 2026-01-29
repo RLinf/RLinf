@@ -61,7 +61,9 @@ def concat_dict_list(list_of_dicts: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def split_list(
-    inputs: list, num_chunks: Union[int, list[int]], enforce_divisible_batch: Optional[bool] = True
+    inputs: list,
+    num_chunks: Union[int, list[int]],
+    enforce_divisible_batch: Optional[bool] = True,
 ):
     """
     Split a list into equal sized chunks
@@ -82,7 +84,9 @@ def split_list(
             assert len(inputs) % chunk_size == 0, (
                 f"Issue with batch size configuration! inputs len:{len(inputs)} num_chunks:{num_chunks}"
             )
-            return [inputs[i : i + chunk_size] for i in range(0, len(inputs), chunk_size)]
+            return [
+                inputs[i : i + chunk_size] for i in range(0, len(inputs), chunk_size)
+            ]
         else:
             k, m = divmod(len(inputs), num_chunks)
             return [
@@ -206,20 +210,26 @@ def get_iterator_k_split(
                 f"Issue with batch size configuration! batch_size = {batch_size}, num_splits = {num_splits}"
             )
             # split_batch = [torch.split(item[1], num_splits, dim=0) for item in items]
-            tensor_items = {k: torch.split(v, num_splits) for k, v in tensor_items.items()}
+            tensor_items = {
+                k: torch.split(v, num_splits) for k, v in tensor_items.items()
+            }
         else:
             if enforce_divisible_batch:
                 assert batch_size % num_splits == 0, (
                     "Issue with batch size configuration!"
                 )
             # split_batch = [torch.tensor_split(item[1], num_splits, dim=0) for item in items]
-            tensor_items = {k: torch.tensor_split(v, num_splits) for k, v in tensor_items.items()}
+            tensor_items = {
+                k: torch.tensor_split(v, num_splits) for k, v in tensor_items.items()
+            }
             # handle the case where the batch size from dynamic bucketting is not divisible
             if batch_size % num_splits != 0:
                 # chunk_size = split_batch[0][-1].shape[0]
                 # split_batch = [[j[:chunk_size] for j in i] for i in split_batch]
                 chunk_size = batch_size // num_splits
-                tensor_items = {k: v[:chunk_size] for i, (k, v) in enumerate(tensor_items.items())}
+                tensor_items = {
+                    k: v[:chunk_size] for i, (k, v) in enumerate(tensor_items.items())
+                }
 
         list_items = {
             k: split_list(
@@ -239,8 +249,7 @@ def get_iterator_k_split(
         else:
             len_num_splits = num_splits
         microbatches = [
-            {k: v[i] for k, v in all_items.items()}
-            for i in range(len_num_splits)
+            {k: v[i] for k, v in all_items.items()} for i in range(len_num_splits)
         ]
     else:
         # Split a list of torch tensors
@@ -515,6 +524,32 @@ def get_iterator_dynamic(
     """
     assert dist.is_initialized()
     if isinstance(batch, (dict, UserDict)):
+        batch_size = batch["attention_mask"].shape[0]
+        problematic_fields = []
+
+        for key, value in batch.items():
+            if isinstance(value, list):
+                actual_size = len(value)
+                if actual_size != batch_size:
+                    problematic_fields.append((key, actual_size, batch_size))
+                    print(
+                        f"⚠️  WARNING: Field '{key}' has length {actual_size}, but attention_mask batch size is {batch_size}"
+                    )
+            elif isinstance(value, torch.Tensor) and len(value.shape) > 0:
+                actual_size = value.shape[0]
+                if actual_size != batch_size:
+                    problematic_fields.append((key, actual_size, batch_size))
+                    print(
+                        f"⚠️  WARNING: Field '{key}' has shape {value.shape}, but attention_mask batch size is {batch_size}"
+                    )
+
+        if problematic_fields:
+            print(f"❌ Found {len(problematic_fields)} fields with size mismatch:")
+            for key, actual, expected in problematic_fields:
+                print(f"   - {key}: actual={actual}, expected={expected}")
+            raise ValueError(
+                f"Batch size mismatch detected. Fields: {[f[0] for f in problematic_fields]}"
+            )
         # Get effective sequence length of each sample
         seq_len_effective = batch["attention_mask"].sum(dim=1)
         max_seq_len = batch["attention_mask"].shape[-1]

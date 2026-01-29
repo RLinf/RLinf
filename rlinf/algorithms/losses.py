@@ -55,7 +55,9 @@ def compute_ppo_actor_loss(
     # TODO：如果lossmask全0，为pad turn，直接特殊处理返回0.0
     if loss_mask is not None and loss_mask[0].sum() == 0.0:
         return torch.tensor(0.0, device=logprobs.device), {
-            "actor/token_num": torch.tensor(0, dtype=torch.long, device=logprobs.device),
+            "actor/token_num": torch.tensor(
+                0, dtype=torch.long, device=logprobs.device
+            ),
             "actor/policy_loss": torch.tensor(0.0, device=logprobs.device),
             "actor/policy_loss_mbs_mean": torch.tensor(0.0, device=logprobs.device),
             "actor/policy_loss_abs": torch.tensor(0.0, device=logprobs.device),
@@ -157,7 +159,9 @@ def compute_ppo_actor_loss(
         "actor/token_num": loss_mask.count_nonzero(),
         "actor/policy_loss": masked_sum(policy_loss_metrics, loss_mask_for_metrics),
         "actor/policy_loss_mbs_mean": policy_loss.detach(),
-        "actor/policy_loss_abs": masked_sum(policy_loss_metrics.abs(), loss_mask_for_metrics),
+        "actor/policy_loss_abs": masked_sum(
+            policy_loss_metrics.abs(), loss_mask_for_metrics
+        ),
         "actor/ratio": masked_sum(ratio_for_metrics, loss_mask_for_metrics),
         "actor/clipped_ratio": masked_sum(
             clipped_ratio_for_metrics, loss_mask_for_metrics
@@ -165,9 +169,7 @@ def compute_ppo_actor_loss(
         "actor/dual_cliped_ratio": masked_sum(
             dual_cliped_ratio_for_metrics, loss_mask_for_metrics
         ),
-        "actor/approx_kl": -masked_sum(
-            approx_kl, loss_mask_for_metrics
-        ),
+        "actor/approx_kl": -masked_sum(approx_kl, loss_mask_for_metrics),
         "actor/clip_fraction": masked_sum(
             clip_mask.logical_and_(loss_mask) != 0, loss_mask_for_metrics
         ),

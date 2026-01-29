@@ -181,7 +181,9 @@ def compute_grpo_dynamic_advantages(
     )
 
     # Initialize advantage tensor
-    turn_advantages = torch.zeros(num_sequence, dtype=rewards.dtype, device=rewards.device)
+    turn_advantages = torch.zeros(
+        num_sequence, dtype=rewards.dtype, device=rewards.device
+    )
 
     if advantage_mode == "trajectory":
         # ========================================
@@ -190,8 +192,12 @@ def compute_grpo_dynamic_advantages(
         # For each question, compute GRPO over its group_size trajectories
 
         # Step 1: Aggregate turn rewards to trajectory level
-        trajectory_rewards = torch.zeros(num_trajectories, dtype=rewards.dtype, device=rewards.device)
-        trajectory_counts = torch.zeros(num_trajectories, dtype=torch.long, device=rewards.device)
+        trajectory_rewards = torch.zeros(
+            num_trajectories, dtype=rewards.dtype, device=rewards.device
+        )
+        trajectory_counts = torch.zeros(
+            num_trajectories, dtype=torch.long, device=rewards.device
+        )
 
         for turn_idx, traj_idx in enumerate(idx_to_traj):
             trajectory_rewards[traj_idx] += rewards_flat[turn_idx]
@@ -204,13 +210,17 @@ def compute_grpo_dynamic_advantages(
         trajectory_rewards_grouped = trajectory_rewards.view(num_questions, group_size)
 
         # Step 3: Compute per-question mean and std
-        per_question_mean = trajectory_rewards_grouped.mean(dim=-1, keepdim=True)  # [num_questions, 1]
-        per_question_std = trajectory_rewards_grouped.std(dim=-1, keepdim=True)    # [num_questions, 1]
+        per_question_mean = trajectory_rewards_grouped.mean(
+            dim=-1, keepdim=True
+        )  # [num_questions, 1]
+        per_question_std = trajectory_rewards_grouped.std(
+            dim=-1, keepdim=True
+        )  # [num_questions, 1]
 
         # Step 4: Normalize per question
         normalized_trajectory_rewards = (
-            (trajectory_rewards_grouped - per_question_mean) / (per_question_std + 1e-6)
-        )  # [num_questions, group_size]
+            trajectory_rewards_grouped - per_question_mean
+        ) / (per_question_std + 1e-6)  # [num_questions, group_size]
 
         # Step 5: Flatten back to [num_trajectories]
         normalized_trajectory_rewards = normalized_trajectory_rewards.view(-1)
@@ -229,13 +239,13 @@ def compute_grpo_dynamic_advantages(
         turn_to_question = torch.tensor(
             [idx_to_traj[i] // group_size for i in range(num_sequence)],
             dtype=torch.long,
-            device=rewards.device
+            device=rewards.device,
         )
 
         # Step 2: Compute per-question statistics over all turns
         for question_idx in range(num_questions):
             # Get all turns belonging to this question
-            question_mask = (turn_to_question == question_idx)
+            question_mask = turn_to_question == question_idx
             question_turn_rewards = rewards_flat[question_mask]
 
             # Compute statistics for this question's turns
@@ -243,22 +253,29 @@ def compute_grpo_dynamic_advantages(
             question_std = question_turn_rewards.std()
 
             # Normalize turns in this question
-            normalized_question_rewards = (question_turn_rewards - question_mean) / (question_std + 1e-6)
+            normalized_question_rewards = (question_turn_rewards - question_mean) / (
+                question_std + 1e-6
+            )
 
             # Assign back to turn_advantages
             turn_advantages[question_mask] = normalized_question_rewards
 
     else:
-        raise ValueError(f"Invalid advantage_mode: {advantage_mode}. Must be 'trajectory' or 'turn'")
+        raise ValueError(
+            f"Invalid advantage_mode: {advantage_mode}. Must be 'trajectory' or 'turn'"
+        )
 
     # Broadcast advantages to match loss_mask shape [seq_len, num_sequence]
     # turn_advantages is [num_sequence], we broadcast to [seq_len, num_sequence]
-    advantages = torch.zeros_like(loss_mask, dtype=rewards.dtype) + turn_advantages.view(1, -1)
+    advantages = torch.zeros_like(
+        loss_mask, dtype=rewards.dtype
+    ) + turn_advantages.view(1, -1)
     advantages = advantages * loss_mask
     # advantages.view(1, -1) = [1, bsz]
     # lossmask, advantage = [seq_len, bsz]
 
     return advantages, None
+
 
 @register_advantage("reinpp")
 def compute_reinpp_advantages(

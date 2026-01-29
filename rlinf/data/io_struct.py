@@ -989,7 +989,9 @@ class DynamicRolloutResult:
     # size of belows are num_sequence
     input_ids: list[list[int]]
     rollout_logprobs: list[list[float]]
+    prev_logprobs: Optional[torch.Tensor] = None
     ref_logprobs: Optional[torch.Tensor] = None
+    recompute_prev_logprobs: Optional[torch.Tensor] = None
     prompt_lengths: list[int]
     response_lengths: list[int]
     is_end: list[bool]
@@ -1043,7 +1045,7 @@ class DynamicRolloutResult:
         # Broadcast [B, total_len]
         prompt_end = prompt_end.unsqueeze(1)
         response_end = response_end.unsqueeze(1)
-        attention_mask = (arange_ids < response_end)
+        attention_mask = arange_ids < response_end
         response_mask = (arange_ids >= prompt_end) & (arange_ids < response_end)
 
         # =========================
@@ -1110,15 +1112,16 @@ class DynamicRolloutResult:
         #           |<----- true response length ----->|<--- padding --->|
         #           |<------------------ cfg.runner.seq_length --------->|
 
-
         prompt_lengths = torch.tensor(self.prompt_lengths, dtype=torch.int32)
         response_lengths = torch.tensor(self.response_lengths, dtype=torch.int32)
         is_end = torch.tensor(self.is_end, dtype=torch.bool)
 
-        attention_mask, response_mask, position_ids = self._get_attention_masks_and_position_ids(
-            prompt_lengths=prompt_lengths,
-            response_lengths=response_lengths,
-            total_len=seq_length,
+        attention_mask, response_mask, position_ids = (
+            self._get_attention_masks_and_position_ids(
+                prompt_lengths=prompt_lengths,
+                response_lengths=response_lengths,
+                total_len=seq_length,
+            )
         )
 
         input_ids = batch_pad_to_fixed_len(
@@ -1130,7 +1133,9 @@ class DynamicRolloutResult:
         prev_logprobs = batch_pad_to_fixed_len(
             [
                 torch.as_tensor([0] * prompt_length + logprobs, dtype=torch.float)
-                for prompt_length, logprobs in zip(self.prompt_lengths, self.rollout_logprobs)
+                for prompt_length, logprobs in zip(
+                    self.prompt_lengths, self.rollout_logprobs
+                )
             ],
             max_batch_len=seq_length,
             pad_token=0,
@@ -1145,7 +1150,7 @@ class DynamicRolloutResult:
             "is_end": is_end.cuda(),
             "prompt_lengths": prompt_lengths.cuda(),
             "response_lengths": response_lengths.cuda(),
-            "prev_logprobs": prev_logprobs.cuda()
+            "prev_logprobs": prev_logprobs.cuda(),
         }
 
         if self.advantages is not None:
@@ -1158,7 +1163,9 @@ class DynamicRolloutResult:
             if isinstance(self.rewards, torch.Tensor):
                 batch["rewards"] = self.rewards.cuda()
             else:
-                batch["rewards"] = torch.as_tensor(self.rewards, dtype=torch.float).cuda().flatten()
+                batch["rewards"] = (
+                    torch.as_tensor(self.rewards, dtype=torch.float).cuda().flatten()
+                )
 
         # Add tool call metrics fields if available
         if self.turn_subtask_counts is not None:
@@ -1171,28 +1178,77 @@ class DynamicRolloutResult:
             batch["num_valid_planner_turns"] = self.num_valid_planner_turns
         if self.num_valid_worker_turns is not None:
             batch["num_valid_worker_turns"] = self.num_valid_worker_turns
-        if self.eval_metrics is not None:
-            batch["eval_metrics"] = self.eval_metrics
 
         return batch
 
     def get_batch_pad(seq_length: int) -> dict[str, torch.Tensor]:
         """Get the batch pad for the dynamic rollout result."""
         pad_seq_shape = (1, seq_length)
-        attention_mask = torch.zeros(*pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device())
-        attention_mask[:,:1] = True
+        attention_mask = torch.zeros(
+            *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
+        )
+        attention_mask[:, :1] = True
         return {
-            "input_ids": torch.zeros(*pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()),
+            "input_ids": torch.zeros(
+                *pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()
+            ),
             "attention_mask": attention_mask,
-            "response_mask": torch.zeros(*pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()),
-            "position_ids": torch.zeros(*pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()),
-            "is_end": torch.zeros(1, dtype=torch.bool, device=torch.cuda.current_device()),
-            "prompt_lengths": torch.zeros(1, dtype=torch.int32, device=torch.cuda.current_device()),
-            "response_lengths": torch.zeros(1, dtype=torch.int32, device=torch.cuda.current_device()),
-            "prev_logprobs": torch.zeros(*pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()),
-            "rewards": torch.zeros(1, dtype=torch.float32, device=torch.cuda.current_device()),
-            "advantages": torch.zeros(*pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()),
+            "response_mask": torch.zeros(
+                *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
+            ),
+            "position_ids": torch.zeros(
+                *pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()
+            ),
+            "is_end": torch.zeros(
+                1, dtype=torch.bool, device=torch.cuda.current_device()
+            ),
+            "prompt_lengths": torch.zeros(
+                1, dtype=torch.int32, device=torch.cuda.current_device()
+            ),
+            "response_lengths": torch.zeros(
+                1, dtype=torch.int32, device=torch.cuda.current_device()
+            ),
+            "ref_logprobs": torch.zeros(
+                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+            ),
+            "prev_logprobs": torch.zeros(
+                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+            ),
+            "rewards": torch.zeros(
+                1, dtype=torch.float32, device=torch.cuda.current_device()
+            ),
+            "advantages": torch.zeros(
+                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+            ),
         }
+
+    @staticmethod
+    def merge_batches_to_inference(
+        batches: list[dict[str, torch.Tensor]],
+    ) -> dict[str, torch.Tensor]:
+        """Merge two batches into one."""
+        merged_batch = {}
+        if len(batches) == 0:
+            return merged_batch, []
+        if len(batches) == 1:
+            return batches[0], [batches[0]["response_lengths"].shape[0]]
+        num_sequence_per_group = [
+            batch["response_lengths"].shape[0] for batch in batches
+        ]
+        # num_sequence_per_group = []
+        for key in batches[0].keys():
+            if torch.is_tensor(batches[0][key]):
+                merged_batch[key] = torch.cat([batch[key] for batch in batches], dim=0)
+            elif isinstance(batches[0][key], list):
+                merged_batch[key] = []
+                for batch in batches:
+                    merged_batch[key].extend(batch[key])
+            elif isinstance(batches[0][key], (int, float)):
+                # Sum scalar values (e.g., num_valid_planner_turns, num_valid_worker_turns)
+                merged_batch[key] = sum(batch[key] for batch in batches)
+            else:
+                raise ValueError(f"Unsupported batch key type: {type(batches[0][key])}")
+        return merged_batch, num_sequence_per_group
 
     @staticmethod
     def merge_batches(
@@ -1225,134 +1281,333 @@ class DynamicRolloutResult:
         return merged_batch
 
     @staticmethod
-    def pack_traj_batch(
-        batch: dict[str, torch.Tensor],
-        adv_turn_level_scale=False,
-    ) -> tuple["DynamicRolloutResult", dict]:
-        """Merge two batches into one."""
+    def merge_result_list(
+        rollout_results: list["DynamicRolloutResult"],
+        group_size: int,
+    ) -> "DynamicRolloutResult":
+        """
+        Merge a list of DynamicRolloutResult objects into a single DynamicRolloutResult.
 
-        # breakpoint()
-        traj_to_idx = {}
-        for idx, traj in enumerate(batch["idx_to_traj"]):
-            if traj not in traj_to_idx:
-                traj_to_idx[traj] = []
-            traj_to_idx[traj].append(idx)
+        Args:
+            rollout_results: List of DynamicRolloutResult objects to merge
+            group_size: The group_size for the merged result
 
-        prompt_lengths = batch["prompt_lengths"].tolist()
-        response_lengths = batch["response_lengths"].tolist()
-        pack_map = {}
-        passed_as_suffix = []
-        for traj, idxes in traj_to_idx.items():
-            idxes = sorted(idxes, key=lambda x: prompt_lengths[x])
-            for i in range(len(idxes)):
-                left = idxes[i]
-                for j in range(i + 1, len(idxes)):
-                    right = idxes[j]
-                    if right in passed_as_suffix:
-                        continue
-                    if prompt_lengths[left] + response_lengths[left] > prompt_lengths[right]:
-                        continue
-                    left_prompt_ids = batch["input_ids"][left][:prompt_lengths[left] + response_lengths[left]]
-                    right_total_ids = batch["input_ids"][right][:prompt_lengths[left] + response_lengths[left]]
-                    if torch.equal(left_prompt_ids, right_total_ids):
-                        pack_map[left] = right
-                        passed_as_suffix.append(right)
-                        break
+        Returns:
+            A single merged DynamicRolloutResult
+        """
+        assert len(rollout_results) > 0, "No rollout results to merge."
+        if len(rollout_results) == 1:
+            return rollout_results[0]
 
-        num_sequence = len(batch["idx_to_traj"])
-        new_idx_to_traj = []
-        split_params: dict[str, Union[torch.Tensor, list]] = {}
-        tensor_keys = [
-            'input_ids',
-            'attention_mask',
-            'response_mask',
-            'position_ids',
-            'is_end',
-            'prompt_lengths',
-            'response_lengths',
-            'prev_logprobs',
-            'rewards',
-            'advantages',
-        ]
-        list_keys = [
-            # 'turn_subtask_counts',
-            # 'turn_search_counts',
-            # 'turn_access_counts',
-        ]
-        solid_keys = [
-            'idx_to_traj',
-            # 'num_valid_planner_turns',
-            # 'num_valid_worker_turns',
-        ]
-        for k, v in batch.items():
-            if k in list_keys:
-                assert len(v) == num_sequence
-                split_params[k] = v
-                # split_params[k] = split_list(v, num_sequence)
-            elif k in tensor_keys:
-                split_params[k] = list(torch.chunk(
-                    v.clone(), num_sequence, dim=0
-                ))
-            else:
-                assert k in solid_keys, f"bad key {k}"
+        merged_result = DynamicRolloutResult(
+            num_sequence=sum(res.num_sequence for res in rollout_results),
+            group_size=group_size,
+            idx_to_traj=[],
+            input_ids=[],
+            rollout_logprobs=[],
+            prompt_lengths=[],
+            response_lengths=[],
+            is_end=[],
+        )
 
-        pack_params = {
-            k: [] for k in batch.keys() if k in tensor_keys or k in list_keys
-        }
-        for i in range(num_sequence):
-            if i in pack_map:
-                prefix = i
-                suffix = pack_map[i]
-                assert split_params["rewards"][prefix] == split_params["rewards"][suffix]
+        # Track trajectory offset for idx_to_traj adjustment
+        traj_offset = 0
 
-                # logprobs, advantages, response_mask
-                prev_logprobs_prefix = split_params["prev_logprobs"][prefix].masked_fill(~split_params["response_mask"][prefix], 0)
-                prev_logprobs_suffix = split_params["prev_logprobs"][suffix].masked_fill(~split_params["response_mask"][suffix], 0)
-                split_params["prev_logprobs"][suffix] = prev_logprobs_prefix + prev_logprobs_suffix
+        for res in rollout_results:
+            # Merge required list fields (size: num_sequence)
+            # Adjust idx_to_traj with trajectory offset
+            merged_result.idx_to_traj.extend(
+                [idx + traj_offset for idx in res.idx_to_traj]
+            )
+            merged_result.input_ids.extend(res.input_ids)
+            merged_result.rollout_logprobs.extend(res.rollout_logprobs)
+            merged_result.prompt_lengths.extend(res.prompt_lengths)
+            merged_result.response_lengths.extend(res.response_lengths)
+            merged_result.is_end.extend(res.is_end)
 
-                advantages_prefix = split_params["advantages"][prefix].masked_fill(~split_params["response_mask"][prefix], 0)
-                advantages_suffix = split_params["advantages"][suffix].masked_fill(~split_params["response_mask"][suffix], 0)
-                if adv_turn_level_scale:
-                    masked_count_prefix = split_params["response_mask"][prefix].sum().item()
-                    split_params["advantages"][suffix] = advantages_prefix / masked_count_prefix + advantages_suffix
+            # Merge optional list fields (size: num_sequence)
+            if res.turn_subtask_counts is not None:
+                merged_result.turn_subtask_counts = merge_list(
+                    merged_result.turn_subtask_counts, res.turn_subtask_counts
+                )
+
+            if res.turn_search_counts is not None:
+                merged_result.turn_search_counts = merge_list(
+                    merged_result.turn_search_counts, res.turn_search_counts
+                )
+
+            if res.turn_access_counts is not None:
+                merged_result.turn_access_counts = merge_list(
+                    merged_result.turn_access_counts, res.turn_access_counts
+                )
+
+            # Merge tensor fields (size: num_sequence)
+            if res.prev_logprobs is not None:
+                merged_result.prev_logprobs = merge_tensor(
+                    merged_result.prev_logprobs, res.prev_logprobs
+                )
+
+            if res.ref_logprobs is not None:
+                merged_result.ref_logprobs = merge_tensor(
+                    merged_result.ref_logprobs, res.ref_logprobs
+                )
+
+            if res.recompute_prev_logprobs is not None:
+                merged_result.recompute_prev_logprobs = merge_tensor(
+                    merged_result.recompute_prev_logprobs, res.recompute_prev_logprobs
+                )
+
+            # Merge tensor/list fields (size: group_size)
+            # Note: rewards and advantages are per trajectory (group_size), not per sequence
+            if res.rewards is not None:
+                if isinstance(res.rewards, list):
+                    merged_result.rewards = merge_list(
+                        merged_result.rewards, res.rewards
+                    )
+                elif isinstance(res.rewards, torch.Tensor):
+                    merged_result.rewards = merge_tensor(
+                        merged_result.rewards, res.rewards
+                    )
                 else:
-                    split_params["advantages"][suffix] = advantages_prefix + advantages_suffix
+                    raise ValueError(f"Wrong type of rewards {type(res.rewards)}")
 
-                split_params["response_mask"][suffix] += split_params["response_mask"][prefix]
-
-                # prompt_lengths, response_lengths
-                split_params["response_lengths"][suffix] += split_params["prompt_lengths"][suffix] - split_params["prompt_lengths"][prefix]
-                split_params["prompt_lengths"][suffix] = split_params["prompt_lengths"][prefix]
-
-                for k in list_keys:
-                    split_params[k][suffix] += split_params[k][prefix]
-            else:
-                if adv_turn_level_scale:
-                    old_masked = batch["response_mask"][i]
-                    advantages_prefix = split_params["advantages"][i].masked_fill(old_masked, 0)
-                    advantages_suffix = split_params["advantages"][i].masked_fill(~old_masked, 0)
-                    old_masked_count = old_masked.sum().item()
-                    new_masked_count = split_params["response_mask"][i].sum().item()
-                    split_params["advantages"][i] = advantages_prefix * new_masked_count + advantages_suffix / old_masked_count * new_masked_count
-                for k in (*tensor_keys, *list_keys):
-                    pack_params[k].append(split_params[k][i])
-                new_idx_to_traj.append(batch["idx_to_traj"][i])
-        packed_batch = {}
-        for k, v in pack_params.items():
-            try:
-                if k in tensor_keys:
-                    packed_batch[k] = torch.cat(v, dim=0)
-                elif k in list_keys:
-                    packed_batch[k] = v
+            if res.advantages is not None:
+                if isinstance(res.advantages, torch.Tensor):
+                    merged_result.advantages = merge_tensor(
+                        merged_result.advantages, res.advantages
+                    )
                 else:
-                    assert False, k
-            except:
-                assert False, k
-        # packed_batch["num_valid_planner_turns"] = batch["num_valid_planner_turns"]
-        # packed_batch["num_valid_worker_turns"] = batch["num_valid_worker_turns"]
-        packed_batch["idx_to_traj"] = new_idx_to_traj
-        print(f"length between pack_traj: {len(batch['idx_to_traj'])}->{len(new_idx_to_traj)}")
-        return packed_batch
+                    raise ValueError(f"Wrong type of advantages {type(res.advantages)}")
+
+            # Merge eval_metrics (size: group_size)
+            if res.eval_metrics is not None:
+                merged_result.eval_metrics = merge_list(
+                    merged_result.eval_metrics, res.eval_metrics
+                )
+
+            # Merge scalar fields (sum them)
+            if res.num_valid_planner_turns is not None:
+                if merged_result.num_valid_planner_turns is None:
+                    merged_result.num_valid_planner_turns = res.num_valid_planner_turns
+                else:
+                    merged_result.num_valid_planner_turns += res.num_valid_planner_turns
+
+            if res.num_valid_worker_turns is not None:
+                if merged_result.num_valid_worker_turns is None:
+                    merged_result.num_valid_worker_turns = res.num_valid_worker_turns
+                else:
+                    merged_result.num_valid_worker_turns += res.num_valid_worker_turns
+
+            # Update trajectory offset for next iteration
+            # Each result contributes its own group_size trajectories
+            traj_offset += res.group_size
+
+        return merged_result
+
+    @staticmethod
+    def merge_result_list_to_inference(
+        rollout_results: list["DynamicRolloutResult"],
+    ) -> "DynamicRolloutResult":
+        """
+        Merge a list of DynamicRolloutResult objects into a single DynamicRolloutResult.
+
+        Args:
+            rollout_results: List of DynamicRolloutResult objects to merge
+
+        Returns:
+            A single merged DynamicRolloutResult
+        """
+        assert len(rollout_results) > 0, "No rollout results to merge."
+        if len(rollout_results) == 1:
+            return rollout_results[0]
+
+        merged_result = DynamicRolloutResult(
+            num_sequence=sum(res.num_sequence for res in rollout_results),
+            group_size=rollout_results[0].group_size,
+            idx_to_traj=[],
+            input_ids=[],
+            rollout_logprobs=[],
+            prompt_lengths=[],
+            response_lengths=[],
+            is_end=[],
+        )
+
+        for res in rollout_results:
+            merged_result.idx_to_traj.extend(res.idx_to_traj)
+            merged_result.input_ids.extend(res.input_ids)
+            merged_result.rollout_logprobs.extend(res.rollout_logprobs)
+            merged_result.prompt_lengths.extend(res.prompt_lengths)
+            merged_result.response_lengths.extend(res.response_lengths)
+            merged_result.is_end.extend(res.is_end)
+            # merged_result.rewards.extend(res.rewards)
+
+            # Merge optional list fields (size: num_sequence)
+            if res.turn_subtask_counts is not None:
+                merged_result.turn_subtask_counts = merge_list(
+                    merged_result.turn_subtask_counts, res.turn_subtask_counts
+                )
+
+            if res.turn_search_counts is not None:
+                merged_result.turn_search_counts = merge_list(
+                    merged_result.turn_search_counts, res.turn_search_counts
+                )
+
+            if res.turn_access_counts is not None:
+                merged_result.turn_access_counts = merge_list(
+                    merged_result.turn_access_counts, res.turn_access_counts
+                )
+
+            # Merge tensor fields (size: num_sequence)
+            if res.prev_logprobs is not None:
+                merged_result.prev_logprobs = merge_tensor(
+                    merged_result.prev_logprobs, res.prev_logprobs
+                )
+
+            if res.ref_logprobs is not None:
+                merged_result.ref_logprobs = merge_tensor(
+                    merged_result.ref_logprobs, res.ref_logprobs
+                )
+
+            if res.recompute_prev_logprobs is not None:
+                merged_result.recompute_prev_logprobs = merge_tensor(
+                    merged_result.recompute_prev_logprobs, res.recompute_prev_logprobs
+                )
+
+            # Merge tensor/list fields (size: group_size)
+            # Note: rewards and advantages are per trajectory (group_size), not per sequence
+            if res.rewards is not None:
+                if isinstance(res.rewards, list):
+                    merged_result.rewards = merge_list(
+                        merged_result.rewards, res.rewards
+                    )
+                elif isinstance(res.rewards, torch.Tensor):
+                    merged_result.rewards = merge_tensor(
+                        merged_result.rewards, res.rewards
+                    )
+                else:
+                    raise ValueError(f"Wrong type of rewards {type(res.rewards)}")
+
+            if res.advantages is not None:
+                if isinstance(res.advantages, torch.Tensor):
+                    merged_result.advantages = merge_tensor(
+                        merged_result.advantages, res.advantages
+                    )
+                else:
+                    raise ValueError(f"Wrong type of advantages {type(res.advantages)}")
+
+            # Merge eval_metrics (size: group_size)
+            if res.eval_metrics is not None:
+                merged_result.eval_metrics = merge_list(
+                    merged_result.eval_metrics, res.eval_metrics
+                )
+
+            # Merge scalar fields (sum them)
+            if res.num_valid_planner_turns is not None:
+                if merged_result.num_valid_planner_turns is None:
+                    merged_result.num_valid_planner_turns = res.num_valid_planner_turns
+                else:
+                    merged_result.num_valid_planner_turns += res.num_valid_planner_turns
+
+            if res.num_valid_worker_turns is not None:
+                if merged_result.num_valid_worker_turns is None:
+                    merged_result.num_valid_worker_turns = res.num_valid_worker_turns
+                else:
+                    merged_result.num_valid_worker_turns += res.num_valid_worker_turns
+
+        return merged_result
+
+    @staticmethod
+    def split_results(
+        rollout_result: "DynamicRolloutResult",
+        num_sequence_per_group: list[int],
+    ) -> list["DynamicRolloutResult"]:
+        """
+        split the DynamicRolloutResult into multiple smaller DynamicRolloutResult objects.
+
+        Args:
+            rollout_result: The DynamicRolloutResult to split
+            num_sequence_per_group: The number of sequences in each group
+
+        Returns:
+            A list of split DynamicRolloutResult objects
+        """
+        num_sequence = rollout_result.num_sequence
+        if sum(num_sequence_per_group) != num_sequence:
+            raise ValueError("sum(num_sequence_per_group) != num_sequence")
+
+        split_results: list[DynamicRolloutResult] = []
+        start_idx = 0
+        # group_size = rollout_result.group_size
+
+        for split_size in num_sequence_per_group:
+            end_idx = start_idx + split_size
+
+            split_idx_to_traj = rollout_result.idx_to_traj[start_idx:end_idx]
+            split_input_ids = rollout_result.input_ids[start_idx:end_idx]
+            split_rollout_logprobs = rollout_result.rollout_logprobs[start_idx:end_idx]
+            split_prompt_lengths = rollout_result.prompt_lengths[start_idx:end_idx]
+            split_response_lengths = rollout_result.response_lengths[start_idx:end_idx]
+            split_is_end = rollout_result.is_end[start_idx:end_idx]
+            split_rewards = rollout_result.rewards[start_idx:end_idx]
+
+            split_turn_subtask_counts = None
+            if rollout_result.turn_subtask_counts is not None:
+                split_turn_subtask_counts = rollout_result.turn_subtask_counts[
+                    start_idx:end_idx
+                ]
+
+            split_turn_search_counts = None
+            if rollout_result.turn_search_counts is not None:
+                split_turn_search_counts = rollout_result.turn_search_counts[
+                    start_idx:end_idx
+                ]
+
+            split_turn_access_counts = None
+            if rollout_result.turn_access_counts is not None:
+                split_turn_access_counts = rollout_result.turn_access_counts[
+                    start_idx:end_idx
+                ]
+
+            split_prev_logprobs = None
+            if rollout_result.prev_logprobs is not None:
+                split_prev_logprobs = rollout_result.prev_logprobs[start_idx:end_idx]
+
+            split_ref_logprobs = None
+            if rollout_result.ref_logprobs is not None:
+                split_ref_logprobs = rollout_result.ref_logprobs[start_idx:end_idx]
+
+            split_recompute_prev_logprobs = None
+            if rollout_result.recompute_prev_logprobs is not None:
+                split_recompute_prev_logprobs = rollout_result.recompute_prev_logprobs[
+                    start_idx:end_idx
+                ]
+
+            # construct the split DynamicRolloutResult
+            split_result = DynamicRolloutResult(
+                num_sequence=split_size,
+                group_size=rollout_result.group_size,
+                idx_to_traj=split_idx_to_traj,
+                input_ids=split_input_ids,
+                rollout_logprobs=split_rollout_logprobs,
+                prev_logprobs=split_prev_logprobs,
+                ref_logprobs=split_ref_logprobs,
+                recompute_prev_logprobs=split_recompute_prev_logprobs,
+                prompt_lengths=split_prompt_lengths,
+                response_lengths=split_response_lengths,
+                is_end=split_is_end,
+                rewards=split_rewards,
+                turn_subtask_counts=split_turn_subtask_counts,
+                turn_search_counts=split_turn_search_counts,
+                turn_access_counts=split_turn_access_counts,
+                num_valid_planner_turns=rollout_result.num_valid_planner_turns,
+                num_valid_worker_turns=rollout_result.num_valid_worker_turns,
+            )
+
+            split_results.append(split_result)
+            start_idx = end_idx
+        return split_results
+
+
 class BatchResizingIterator:
     """The iterator for handling getting a batch and split it as a batch iterator with optional dynamic batch size."""
 
