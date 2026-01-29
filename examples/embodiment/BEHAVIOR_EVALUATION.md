@@ -11,8 +11,6 @@ Complete guide for evaluating BEHAVIOR models using RLinf's worker-based archite
 - [Video Recording](#video-recording)
 - [BEHAVIOR Tasks](#behavior-tasks)
 - [Metrics and Output](#metrics-and-output)
-- [Troubleshooting](#troubleshooting)
-- [Advanced Usage](#advanced-usage)
 
 ---
 
