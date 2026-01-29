@@ -247,7 +247,7 @@ class HabitatEnv(gym.Env):
             device = next(iter(episode.values())).device
             mask = torch.zeros(self.num_envs, dtype=torch.bool, device=device)
             mask[env_idx] = True
-            for k, v in episode.values():
+            for k, v in episode.items():
                 v[mask] = torch.zeros_like(v)
         infos = {}
 
