@@ -1,20 +1,16 @@
-#    Copyright 2023 Haotian Liu
+# Copyright 2025 The RLinf Authors.
 #
-#    Licensed under the Apache License, Version 2.0 (the "License");
-#    you may not use this file except in compliance with the License.
-#    You may obtain a copy of the License at
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-#        http://www.apache.org/licenses/LICENSE-2.0
+#     https://www.apache.org/licenses/LICENSE-2.0
 #
-#    Unless required by applicable law or agreed to in writing, software
-#    distributed under the License is distributed on an "AS IS" BASIS,
-#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#    See the License for the specific language governing permissions and
-#    limitations under the License.
-# ------------------------------------------------------------------------
-# Modified from LLaVA (https://github.com/haotian-liu/LLaVA)
-# Copyright 2023 Yanwei Li
-# ------------------------------------------------------------------------
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 from abc import ABC, abstractmethod
 
@@ -45,11 +41,6 @@ class NaVidMetaModel:
         super(NaVidMetaModel, self).__init__(config)
 
         if hasattr(config, "mm_vision_tower"):
-            # Store model_path in config for vision tower path resolution
-            if not hasattr(config, "_model_path_for_vision_tower"):
-                model_path = getattr(config, "model_path", None)
-                if model_path:
-                    setattr(config, "_model_path_for_vision_tower", model_path)
             self.vision_tower = build_vision_tower(config, delay_load=True)
             self.mm_projector = build_vision_projector(config)
 
@@ -256,19 +247,10 @@ class NaVidMetaForCausalLM(ABC):
         else:
             vis_embed = process_grid(vis_embed, grid_size)
 
-        # Ensure dtype matches projector weights (common when model weights are bf16)
-        proj_dtype = (
-            self.get_model().mm_projector[0].weight.dtype
-            if hasattr(self.get_model().mm_projector, "__getitem__")
-            else self.get_model().mm_projector.weight.dtype
-        )
-        vis_embed = vis_embed.to(dtype=proj_dtype)
         vis_embed = self.get_model().mm_projector(vis_embed)
-        if navigation:
-            vis_embed_nav = vis_embed_nav.to(dtype=proj_dtype)
-            vis_embed_nav = self.get_model().mm_projector(vis_embed_nav)
-        else:
-            vis_embed_nav = None
+        vis_embed_nav = (
+            self.get_model().mm_projector(vis_embed_nav) if navigation else None
+        )
 
         return vis_embed, vis_embed_nav
 

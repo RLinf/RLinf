@@ -1,17 +1,16 @@
-#    Copyright 2023 Haotian Liu
+# Copyright 2025 The RLinf Authors.
 #
-#    Licensed under the Apache License, Version 2.0 (the "License");
-#    you may not use this file except in compliance with the License.
-#    You may obtain a copy of the License at
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-#        http://www.apache.org/licenses/LICENSE-2.0
+#     https://www.apache.org/licenses/LICENSE-2.0
 #
-#    Unless required by applicable law or agreed to in writing, software
-#    distributed under the License is distributed on an "AS IS" BASIS,
-#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#    See the License for the specific language governing permissions and
-#    limitations under the License.
-
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import os
 
@@ -41,10 +40,7 @@ def load_pretrained_model(
     load_4bit=False,
     device_map="auto",
 ):
-    kwargs = {}
-    # Let callers force single-device placement by passing device_map=None.
-    if device_map is not None:
-        kwargs["device_map"] = device_map
+    kwargs = {"device_map": device_map}
 
     if load_8bit:
         kwargs["load_in_8bit"] = True
@@ -135,8 +131,6 @@ def load_pretrained_model(
         image_processor = vision_tower.image_processor
         # initialize attention modules
         model.config.model_path = model_path
-        # Set model_path in config so vision tower builder can resolve relative paths
-        setattr(model.config, "_model_path_for_vision_tower", model_path)
         model.get_model().initialize_attention_modules(model.config, for_eval=True)
 
     if hasattr(model.config, "max_sequence_length"):
