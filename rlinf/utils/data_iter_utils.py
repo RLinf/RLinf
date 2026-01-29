@@ -496,6 +496,33 @@ def get_iterator_dynamic(
         min_num_micro_batch: Minimum number of micro-batches to create
     """
     if isinstance(batch, (dict, UserDict)):
+        # diagnose: check the consistency of the lengths of all fields
+        batch_size = batch["attention_mask"].shape[0]
+        problematic_fields = []
+
+        for key, value in batch.items():
+            if isinstance(value, list):
+                actual_size = len(value)
+                if actual_size != batch_size:
+                    problematic_fields.append((key, actual_size, batch_size))
+                    print(
+                        f"⚠️  WARNING: Field '{key}' has length {actual_size}, but attention_mask batch size is {batch_size}"
+                    )
+            elif isinstance(value, torch.Tensor) and len(value.shape) > 0:
+                actual_size = value.shape[0]
+                if actual_size != batch_size:
+                    problematic_fields.append((key, actual_size, batch_size))
+                    print(
+                        f"⚠️  WARNING: Field '{key}' has shape {value.shape}, but attention_mask batch size is {batch_size}"
+                    )
+
+        if problematic_fields:
+            print(f"❌ Found {len(problematic_fields)} fields with size mismatch:")
+            for key, actual, expected in problematic_fields:
+                print(f"   - {key}: actual={actual}, expected={expected}")
+            raise ValueError(
+                f"Batch size mismatch detected. Fields: {[f[0] for f in problematic_fields]}"
+            )
         # Get effective sequence length of each sample
         seq_len_effective = batch["attention_mask"].sum(dim=1)
         max_seq_len = batch["attention_mask"].shape[-1]

@@ -7,7 +7,7 @@
 #     https://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
+# distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
@@ -18,8 +18,8 @@ import hydra
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
-from rlinf.agents.multiturn_demo.fake_tool_worker import FakeToolWorker
-from rlinf.agents.multiturn_demo.tool_agent_loop import ToolAgentLoopWorker
+from rlinf.agents.mas_search.mas_search_agent_loop import MasSearchAgentLoopWorker
+from rlinf.agents.searchr1.search_tool_worker import SearchToolWorker
 from rlinf.config import validate_cfg
 from rlinf.data.datasets import create_rl_dataset
 from rlinf.data.tokenizers import hf_tokenizer
@@ -27,13 +27,12 @@ from rlinf.runners.agent_runner import AgentRunner
 from rlinf.scheduler import Cluster, NodePlacementStrategy
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.utils import output_redirector
-from rlinf.workers.actor import get_actor_worker
+from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
 from rlinf.workers.agent.tool_worker import ToolWorkerInfo
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
-from rlinf.workers.reward.reward_worker import RewardWorker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
 
-"""Script to start GRPO training"""
+"""Script to start mas-search training"""
 mp.set_start_method("spawn", force=True)
 
 
@@ -66,7 +65,9 @@ def main(cfg) -> None:
         len(agentloop_placement_strategy._node_ranks)
         == component_placement.rollout_dp_size
     ), "agentloop worker num now should be equal to rollout dp size"
-    agentloop_group = ToolAgentLoopWorker.create_group(cfg, component_placement).launch(
+    agentloop_group = MasSearchAgentLoopWorker.create_group(
+        cfg, component_placement
+    ).launch(
         cluster,
         name=cfg.agentloop.group_name,
         placement_strategy=agentloop_placement_strategy,
@@ -87,18 +88,9 @@ def main(cfg) -> None:
             placement_strategy=inference_placement_strategy,
         )
 
-    # Reward group
-    reward_placement_strategy = component_placement.get_strategy("reward")
-    reward_group = RewardWorker.create_group(cfg, component_placement).launch(
-        cluster,
-        name=cfg.reward.group_name,
-        placement_strategy=reward_placement_strategy,
-    )
-
     # GRPO Actor group
-    actor_worker_cls = get_actor_worker(cfg)
     actor_placement_strategy = component_placement.get_strategy("actor")
-    actor_group = actor_worker_cls.create_group(cfg, component_placement).launch(
+    actor_group = MAMegatronActor.create_group(cfg, component_placement).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement_strategy
     )
 
@@ -109,9 +101,9 @@ def main(cfg) -> None:
     # Tool workers group
     singleton_tool_placement = NodePlacementStrategy([0])
     tool_workers = {
-        FakeToolWorker.create_group(cfg).launch(
-            cluster, name="FakeTool", placement_strategy=singleton_tool_placement
-        ): ToolWorkerInfo(tool_names=["fake_tool"], has_session=False),
+        SearchToolWorker.create_group(cfg).launch(
+            cluster, name="search", placement_strategy=singleton_tool_placement
+        ): ToolWorkerInfo(tool_names=["search"], has_session=False),
     }
 
     runner = AgentRunner(
@@ -122,7 +114,7 @@ def main(cfg) -> None:
         rollout=rollout_group,
         inference=inference_group,
         actor=actor_group,
-        reward=reward_group,
+        reward=None,
         agent_loop=agentloop_group,
         tool_workers=tool_workers,
     )
