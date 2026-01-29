@@ -250,11 +250,16 @@ jobs:
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
           bash requirements/install.sh reason
 
+      - name: Clone code-judge
+        uses: actions/checkout@v5
+        with:
+          repository: 0xWJ/code-judge.git
+          path: code-judge
+
       - name: Install dependencies
         run: |
           source .venv/bin/activate
           apt-get update -y && apt-get install redis -y
-          git clone git@github.com:0xWJ/code-judge.git code-judge
           uv pip install -r code-judge/requirements.txt
           uv pip install -e code-judge
           uv pip install math_verify
