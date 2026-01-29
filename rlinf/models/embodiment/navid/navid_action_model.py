@@ -14,14 +14,14 @@
 
 from __future__ import annotations
 
+import re
+import warnings
 from dataclasses import dataclass
 from typing import Any, Optional
 
-import re
 import numpy as np
 import torch
 import torch.nn as nn
-import warnings
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.navid.constants import (
@@ -297,10 +297,12 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
             batch_image, return_tensors="pt"
         )["pixel_values"]  # [B, C, H, W]
 
-        if getattr(self.model, "dtype", None) == torch.float16:
-            new_frames_tensor = new_frames_tensor.half()
+        model_dtype = getattr(self.model, "dtype", None)
+        if model_dtype in (torch.float16, torch.bfloat16):
+            new_frames_tensor = new_frames_tensor.to(dtype=model_dtype)
         else:
             new_frames_tensor = new_frames_tensor.float()
+
         return new_frames_tensor.to(device=device)
 
     def _accumulate_history_frames(
@@ -493,18 +495,18 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
                 if stop_str and gen_text.endswith(stop_str)
                 else gen_text.strip()
             )
-            match = re.search(r'-?\d+', text)
+            match = re.search(r"-?\d+", text)
             num = int(match.group(0))
 
             actions: list[str] = []
             if "forward" in text:
-                for _ in range(min(3, int(num/25))):
+                for _ in range(min(3, int(num / 25))):
                     actions.append("move_forward")
             elif "left" in text:
-                for _ in range(min(3, int(num/30))):
+                for _ in range(min(3, int(num / 30))):
                     actions.append("turn_left")
             elif "right" in text:
-                for _ in range(min(3, int(num/30))):
+                for _ in range(min(3, int(num / 30))):
                     actions.append("turn_right")
             elif "stop" in text:
                 actions.append("stop")
@@ -517,6 +519,8 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
 
             num_actions = len(actions)
             fill_len = min(num_actions, self.num_action_chunks)
-            chunk_actions[i, :fill_len, 0] = np.asarray(actions[:fill_len], dtype="<U12")
+            chunk_actions[i, :fill_len, 0] = np.asarray(
+                actions[:fill_len], dtype="<U12"
+            )
 
         return chunk_actions
