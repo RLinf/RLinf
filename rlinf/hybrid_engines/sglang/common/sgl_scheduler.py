@@ -111,9 +111,8 @@ class Scheduler(_Scheduler):
             "only sglang with 'sync' can run 'batch_load_hf_weight'"
         )
         model = self.tp_worker.worker.model_runner.model
-        colocate = (
-            self.placement_mode == PlacementMode.COLLOCATED
-        )
+        colocate = self.placement_mode == PlacementMode.COLLOCATED
+
         batch_weight = []
         if colocate:
             for name, handle in state_dict.items():

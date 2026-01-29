@@ -15,7 +15,7 @@
 import json
 import logging
 import os
-from typing import Any, List, Tuple, Union
+from typing import Any, Union
 
 import torch
 from omegaconf import DictConfig
@@ -25,10 +25,11 @@ from transformers import AutoTokenizer
 from rlinf.data.datasets.item import DatasetItem
 from rlinf.data.utils import batch_pad_to_fixed_len
 
+
 class MASDataset(Dataset):
     def __init__(
         self,
-        data_paths: Union[str, List[str]],
+        data_paths: Union[str, list[str]],
         config: DictConfig,
         tokenizer: AutoTokenizer,
     ):
@@ -48,18 +49,18 @@ class MASDataset(Dataset):
 
         self.data = self._load_data()
         if self.data_size is None or self.data_size < 0:
-            self.data_size = len(self.data)        
+            self.data_size = len(self.data)
         if config.data.get("filter_prompt_by_length", False):
             total = len(self.data)
             filtered = []
             failed = 0
-            for item in self.data[:self.data_size]:
+            for item in self.data[: self.data_size]:
                 try:
                     prompt = item[self.prompt_key]
                     _, L = self.encode(prompt)
                     if L <= self.max_prompt_length:
                         filtered.append(item)
-                    # breakpoint()    
+                    # breakpoint()
                 except Exception:
                     failed += 1
 
@@ -75,7 +76,7 @@ class MASDataset(Dataset):
                     f"(kept {len(self.data)} / {total})."
                 )
 
-    def _load_data(self) -> List[Any]:
+    def _load_data(self) -> list[Any]:
         """
         Load and merge data from multiple files(json or jsonl).
         """
@@ -103,7 +104,7 @@ class MASDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
-    def encode(self, text: str) -> Tuple[List[int], int]:
+    def encode(self, text: str) -> tuple[list[int], int]:
         """
         Use tokenizer to encode the text and return the token ids and length.
         """
@@ -123,7 +124,7 @@ class MASDataset(Dataset):
                 # Build answer dict from data
                 answer_dict = {
                     "answer": answer,
-                    "unique_columns": self.data[idx].get(self.unique_columns_key, [])
+                    "unique_columns": self.data[idx].get(self.unique_columns_key, []),
                 }
                 # Try to get evaluation info if available
                 evaluation = self.data[idx].get("evaluation", None)
@@ -131,7 +132,7 @@ class MASDataset(Dataset):
                     if isinstance(evaluation, str):
                         try:
                             evaluation = json.loads(evaluation)
-                        except:
+                        except Exception:
                             pass
                     if isinstance(evaluation, dict):
                         answer_dict["required"] = evaluation.get("required", [])
