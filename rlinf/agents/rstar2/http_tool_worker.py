@@ -19,8 +19,6 @@ import aiohttp
 from omegaconf import DictConfig
 
 from rlinf.agents.rstar2.http_code_judge_tool import (
-    JupyterTool,
-    LeanTool,
     PythonTool,
     ToolBase,
 )
@@ -30,7 +28,7 @@ from rlinf.workers.agent.tool_worker import ToolWorker
 
 
 class HttpToolWorker(ToolWorker):
-    TOOL_SET_CLS = [JupyterTool, LeanTool, PythonTool]
+    TOOL_SET_CLS = [PythonTool]
 
     def __init__(self, cfg: DictConfig):
         super().__init__()
