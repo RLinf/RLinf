@@ -137,11 +137,11 @@ class CalvinEnv(gym.Env):
         self.task_ids, self.trial_ids = (
             self._get_task_and_trial_ids_from_reset_state_ids(self.reset_state_ids)
         )
-    
+
     def _init_task_info(self):
         self.task_sequence = [None] * self.num_envs
         self.current_task = [None] * self.num_envs
-        self.current_task_idx = [0] * self.num_envs 
+        self.current_task_idx = [0] * self.num_envs
         self.previous_info = [None] * self.num_envs
         self.task_descriptions = [None] * self.num_envs
 
