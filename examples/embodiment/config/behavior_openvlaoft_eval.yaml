@@ -1,7 +1,7 @@
 defaults:
   - env/behavior_r1pro@env.train
   - env/behavior_r1pro@env.eval
-  - model/pi0@actor.model
+  - model/openvla_oft@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
@@ -15,35 +15,35 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor: 0-0
-    env,rollout: 1-1
+    actor: 0-0    # Not used in eval-only mode, but required by validator
+    env: 0-1      # Environment workers on GPU 0 and GPU 1 (1 env per GPU)
+    rollout: 2-3  # Rollout workers on GPU 2 and GPU 3
 
 runner:
   task_type: embodied
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "behavior_ppo_openpi"
+    experiment_name: "behavior_openvlaoft_eval"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
   max_steps: -1
 
-  only_eval: False
+  only_eval: True
+  eval_policy_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
+
   val_check_interval: -1
   save_interval: 40
-  seq_length: 4096
-  max_prompt_length: 50
 
-  resume_dir: null # Optional: path to a saved checkpoint directory, such as 'checkpoints/global_step_10'. If not None, it will be used to resume training.
-  ckpt_path: null  # Optional: path to a .pt checkpoint. If not None, it will be loaded after the model is instantiated (for evaluation).
+  resume_dir: null
 
 algorithm:
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
   rollout_epoch: 8
-  eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
+  eval_rollout_epoch: 2 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
 
   reward_type: chunk_level
   logprob_type: token_level
@@ -83,19 +83,17 @@ algorithm:
 env:
   group_name: "EnvGroup"
   enable_offload: False
-
+  
   # Override the default values in env/behavior_r1pro
-  train:
-    total_num_envs: 1
-    max_episode_steps: 20 # max episode steps for truncation
-    max_steps_per_rollout_epoch: 20
   eval:
-    total_num_envs: 1
-    max_episode_steps: 20 # max episode steps for truncation
-    max_steps_per_rollout_epoch: 20
+    total_num_envs: 2  # 2 envs total: 1 on GPU 0, 1 on GPU 1
+    max_episode_steps: 2000 # max episode steps for truncation
+    max_steps_per_rollout_epoch: 1024  # Must be divisible by num_action_chunks (32)
     video_cfg:
-      save_video: True
+      save_video: True  # Set to False to disable video recording
       video_base_dir: ${runner.logger.log_path}/video/eval
+      # Use high-res cameras (like OpenPI-Comet's RGBWrapper)
+      use_high_res_cameras: True  # True: native 720x720(head)/480x480(wrist), False: native 128x128
 
 rollout:
   group_name: "RolloutGroup"
@@ -104,49 +102,36 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-Pi0-SFT"
+    model_path: "/mnt/public/quanlu/RLinf-OpenVLAOFT-Behavior/"
     precision: ${actor.model.precision}
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 2
-  global_batch_size: 16
+  global_batch_size: 160
   seed: 1234
   enable_offload: True
 
-  # Override the default values in model/openpi
+  # Override the default values in model/openvla_oft
   model:
-    model_path: "/path/to/model/RLinf-Pi0-SFT"
-    add_value_head: True
+    model_path: "/mnt/public/quanlu/RLinf-OpenVLAOFT-Behavior/"
+    model_type: "openvla_oft"
+    value_type: ${algorithm.reward_type}
+    action_dim: 23
+    unnorm_key: behavior_turn_on_radio
     num_images_in_input: 3
-    proprio_dim: 32
-    openpi:
-      config_name: "pi0_behavior"
-      detach_critic_input: True
-      joint_logprob: False
-      noise_level: 0.5
-      action_env_dim: ${actor.model.action_dim}
-      noise_method: "flow_sde"
-
+    num_action_chunks: 32  # Action chunk size (must match training config)
+    add_value_head: True
+  
   optim:
     lr: 1.0e-4
     value_lr: 3.0e-3
     adam_beta1: 0.9
     adam_beta2: 0.999
-    adam_eps: 1.0e-08
-    clip_grad: 10.0
+    adam_eps: 1.0e-05
     weight_decay: 0.01
-    critic_warmup_steps: 0
-
-  # Override the default values in training_backend/fsdp
-  fsdp_config:
-    strategy: "fsdp"
-    gradient_checkpointing: True
-    mixed_precision:
-      param_dtype: ${actor.model.precision}
-      reduce_dtype: ${actor.model.precision}
-      buffer_dtype: ${actor.model.precision}
+    clip_grad: 10.0
 
 reward:
   use_reward_model: False
