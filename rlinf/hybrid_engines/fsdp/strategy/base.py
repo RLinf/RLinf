@@ -12,10 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
+import glob
 import os
 from abc import ABC, abstractmethod
-from dataclasses import asdict
 from logging import Logger
 from typing import TYPE_CHECKING, ContextManager, Optional, Union
 
@@ -23,7 +22,6 @@ import torch
 import torch.distributed.checkpoint as dcp
 import torch.nn as nn
 from omegaconf import DictConfig
-from safetensors.torch import save_file
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
@@ -37,9 +35,6 @@ from rlinf.hybrid_engines.fsdp import FSDP, FSDPModule
 from rlinf.hybrid_engines.fsdp.strategy.checkpoint import Checkpoint
 from rlinf.hybrid_engines.fsdp.utils import (
     FSDPVersion,
-    copy_model_config_and_code,
-    layered_summon_lora_params,
-    save_state_dict_sharded_safetensors,
 )
 from rlinf.utils.utils import clear_memory
 
@@ -163,11 +158,9 @@ class FSDPStrategyBase(ABC):
     @classmethod
     def save_checkpoint(
         cls,
-        model_path: str,
         model: Union[FSDP, FSDPModule],
         optimizer: Optimizer,
         lr_scheduler: LRScheduler,
-        is_lora: bool,
         save_path: str,
     ) -> None:
         """
@@ -180,16 +173,14 @@ class FSDPStrategyBase(ABC):
         this is done in `init_worker`.
 
         Args:
-            model_path (str): The original path to load model config and code, we
-                use it to copy model config and code to safetensors' save_path.
             model (Union[FSDP, FSDPModule]): The model to be saved.
             optimizer (Optimizer): The optimizer to be saved.
             lr_scheduler (LRScheduler): The learning rate scheduler to be saved.
-            is_lora (bool): Whether the model is trained with PEFT.
             save_path (str): The path to save the checkpoint.
         """
         clear_memory()
         torch.distributed.barrier()
+        dcp_save_path = os.path.join(save_path, "dcp_checkpoint")
         opts = StateDictOptions(full_state_dict=False, cpu_offload=True)
         try:
             training_state = Checkpoint(
@@ -199,7 +190,7 @@ class FSDPStrategyBase(ABC):
                 opts,
                 fsdp_version=cls.get_fsdp_version(),
             )
-            dcp.save({"fsdp_checkpoint": training_state}, checkpoint_id=save_path)
+            dcp.save({"fsdp_checkpoint": training_state}, checkpoint_id=dcp_save_path)
 
         except BaseException as e:
             import traceback
@@ -211,45 +202,13 @@ class FSDPStrategyBase(ABC):
         torch.distributed.barrier()
 
         opts = StateDictOptions(full_state_dict=True, cpu_offload=True)
-        sd_save_path = os.path.join(save_path, "huggingface_model")
+        sd_save_path = os.path.join(save_path, "model_state_dict")
         model_state_dict = get_model_state_dict(model=model, options=opts)
         if torch.distributed.get_rank() == 0:
-            copy_model_config_and_code(model_path=model_path, save_path=sd_save_path)
-            save_state_dict_sharded_safetensors(
-                state_dict=model_state_dict, out_dir=sd_save_path
-            )
+            os.makedirs(sd_save_path, exist_ok=True)
+            torch.save(model_state_dict, os.path.join(sd_save_path, "full_weights.pt"))
+
         torch.distributed.barrier()
-
-        if is_lora:
-            lora_save_path = os.path.join(sd_save_path, "lora_adapter")
-            peft_model = model.module if isinstance(model, FSDP) else model
-            peft_config = {}
-
-            lora_sd = layered_summon_lora_params(model)
-            if torch.distributed.get_rank() == 0:
-                os.makedirs(lora_save_path, exist_ok=True)
-                peft_config = asdict(peft_model.peft_config.get("default", {}))
-                peft_config["task_type"] = (
-                    peft_config["task_type"].value
-                    if peft_config["task_type"] is not None
-                    else None
-                )
-                peft_config["peft_type"] = (
-                    peft_config["peft_type"].value
-                    if peft_config["peft_type"] is not None
-                    else None
-                )
-                peft_config["target_modules"] = list(peft_config["target_modules"])
-                save_file(
-                    lora_sd, os.path.join(lora_save_path, "adapter_model.safetensors")
-                )
-                with open(
-                    os.path.join(lora_save_path, "adapter_config.json"),
-                    "w",
-                    encoding="utf-8",
-                ) as f:
-                    json.dump(peft_config, f, ensure_ascii=False, indent=2)
-            torch.distributed.barrier()
 
     @classmethod
     def load_checkpoint(
@@ -274,6 +233,17 @@ class FSDPStrategyBase(ABC):
             lr_scheduler (LRScheduler): The learning rate scheduler to load the checkpoint into.
             load_path (str): The path to load the checkpoint from.
         """
+        dcp_dir = os.path.join(load_path, "dcp_checkpoint")
+        if os.path.isdir(dcp_dir):
+            dcp_load_path = dcp_dir
+        else:
+            dcp_load_path = load_path
+        distcp_files = glob.glob(os.path.join(dcp_load_path, "*.distcp"))
+        if len(distcp_files) == 0:
+            raise FileNotFoundError(
+                f"Could not find a valid DCP checkpoint under '{dcp_load_path}'. "
+            )
+
         torch.distributed.barrier()
         opts = StateDictOptions(full_state_dict=False, cpu_offload=True)
         try:
@@ -284,12 +254,12 @@ class FSDPStrategyBase(ABC):
                 opts=opts,
                 fsdp_version=cls.get_fsdp_version(),
             )
-            dcp.load({"fsdp_checkpoint": training_state}, checkpoint_id=load_path)
+            dcp.load({"fsdp_checkpoint": training_state}, checkpoint_id=dcp_load_path)
         except BaseException as e:
             import traceback
 
             if hasattr(cls, "logger") and cls.logger is not None:
-                cls.logger.error(f"Failed to load checkpoint from {load_path}: {e}")
+                cls.logger.error(f"Failed to load checkpoint from {dcp_load_path}: {e}")
             traceback.print_exc()
             raise e
         torch.distributed.barrier()

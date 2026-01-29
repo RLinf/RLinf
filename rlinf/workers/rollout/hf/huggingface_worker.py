@@ -23,7 +23,7 @@ from tqdm import tqdm
 from rlinf.config import SupportedModel
 from rlinf.data.io_struct import ChunkStepResult, EmbodiedRolloutResult
 from rlinf.models import get_model
-from rlinf.scheduler import Channel, Cluster, Worker
+from rlinf.scheduler import Channel, Cluster, CollectiveGroupOptions, Worker
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.nested_dict_process import put_tensor_device
 from rlinf.utils.placement import HybridComponentPlacement
@@ -48,23 +48,30 @@ class MultiStepRolloutWorker(Worker):
         actor_world_size = self.placement.get_world_size("actor")
         self.actor_weight_src_rank = self._rank % actor_world_size
 
+        # Sync weight comm options
+        max_ctas = cfg.rollout.get("sync_weight_nccl_max_ctas", None)
+        min_ctas = cfg.rollout.get("sync_weight_nccl_min_ctas", None)
+        self._sync_weight_comm_options = CollectiveGroupOptions(
+            accel_max_ctas=max_ctas, accel_min_ctas=min_ctas
+        )
+
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
         with open_dict(rollout_model_config):
             rollout_model_config.precision = self.cfg.rollout.model.precision
-            rollout_model_config.path = self.cfg.rollout.model.model_path
+            rollout_model_config.model_path = self.cfg.rollout.model.model_path
 
         self.hf_model = get_model(rollout_model_config)
+
+        if self.cfg.runner.get("ckpt_path", None):
+            model_dict = torch.load(self.cfg.runner.ckpt_path)
+            self.hf_model.load_state_dict(model_dict)
 
         self.hf_model.eval()
 
         self.setup_sample_params()
         if self.enable_offload:
             self.offload_model()
-
-    def load_checkpoint(self, load_path):
-        model_dict = torch.load(load_path)
-        self.hf_model.load_state_dict(model_dict)
 
     def setup_sample_params(self):
         # length parameters for rollout
@@ -77,15 +84,18 @@ class MultiStepRolloutWorker(Worker):
         )
         self._train_sampling_params = {
             "do_sample": self._sampling_params["do_sample"],
-            "temperature": self._sampling_params["temperature_train"],
+            "temperature": self._sampling_params["temperature_train"]
+            if self._sampling_params["do_sample"]
+            else 1.0,
             "top_k": self._sampling_params["top_k"],
             "top_p": self._sampling_params["top_p"],
             "max_new_tokens": self._length_params["max_new_token"],
-            "use_cache": True,
         }
 
         self._eval_sampling_params = {
-            "do_sample": self._sampling_params["do_sample"],
+            "do_sample": True
+            if self._sampling_params.get("temperature_eval", -1) > 0
+            else False,
             "temperature": self._sampling_params["temperature_eval"],
             "top_k": self._sampling_params["top_k"],
             "top_p": self._sampling_params["top_p"],
@@ -172,7 +182,10 @@ class MultiStepRolloutWorker(Worker):
     async def sync_model_from_actor(self):
         """Sync model parameters from the actor worker."""
         param_state_dict = await self.recv(
-            self.actor_group_name, src_rank=self.actor_weight_src_rank, async_op=True
+            self.actor_group_name,
+            src_rank=self.actor_weight_src_rank,
+            async_op=True,
+            options=self._sync_weight_comm_options,
         ).async_wait()
 
         self.hf_model.load_state_dict(param_state_dict)

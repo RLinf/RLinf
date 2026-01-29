@@ -56,7 +56,7 @@ actor:
     value_lr: 1.55e-4
     adam_beta1: 0.9
     adam_beta2: 0.95
-    adam_eps: 1.0e-05
+    adam_eps: 1.0e-08
     weight_decay: 0.01
     clip_grad: 1.0
 
@@ -64,7 +64,7 @@ actor:
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
-    use_orig_params: True
+    use_orig_params: False
     gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
     mixed_precision:
       param_dtype: ${actor.model.precision}

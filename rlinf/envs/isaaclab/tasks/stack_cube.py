@@ -55,10 +55,10 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
                 self.cfg.init_params.num_envs
             )  # default 4096 ant_env_spaces.pkl
 
-            isaac_env_cfg.scene.wrist_cam.height = 256
-            isaac_env_cfg.scene.wrist_cam.width = 256
-            isaac_env_cfg.scene.table_cam.height = 256
-            isaac_env_cfg.scene.table_cam.width = 256
+            isaac_env_cfg.scene.wrist_cam.height = self.cfg.init_params.wrist_cam.height
+            isaac_env_cfg.scene.wrist_cam.width = self.cfg.init_params.wrist_cam.width
+            isaac_env_cfg.scene.table_cam.height = self.cfg.init_params.table_cam.height
+            isaac_env_cfg.scene.table_cam.width = self.cfg.init_params.table_cam.width
 
             env = gym.make(
                 self.isaaclab_env_id, cfg=isaac_env_cfg, render_mode="rgb_array"
@@ -67,14 +67,52 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
 
         return make_env_isaaclab
 
+    def step(self, actions=None, auto_reset=True):
+        obs, _, terminations, truncations, infos = self.env.step(actions)
+
+        step_reward = self.cfg.reward_coef * terminations  # simple version of libero.
+
+        if self.video_cfg.save_video:
+            self.images.append(self.add_image(obs))
+
+        obs = self._wrap_obs(obs)
+
+        self._elapsed_steps += 1
+
+        truncations = (self.elapsed_steps >= self.cfg.max_episode_steps) | truncations
+
+        dones = terminations | truncations
+
+        infos = self._record_metrics(
+            step_reward, terminations, {}
+        )  # return infos is useless
+        if self.ignore_terminations:
+            infos["episode"]["success_at_end"] = terminations
+            terminations[:] = False
+
+        _auto_reset = auto_reset and self.auto_reset  # always False
+        if dones.any() and _auto_reset:
+            obs, infos = self._handle_auto_reset(dones, obs, infos)
+
+        return (
+            obs,
+            step_reward,
+            terminations,
+            truncations,
+            infos,
+        )
+
     def _wrap_obs(self, obs):
         instruction = [self.task_description] * self.num_envs
         wrist_image = obs["policy"]["wrist_cam"]
         table_image = obs["policy"]["table_cam"]
+        quat = obs["policy"]["eef_quat"][
+            :, [1, 2, 3, 0]
+        ]  # In isaaclab, quat is wxyz not like libero
         states = torch.concatenate(
             [
                 obs["policy"]["eef_pos"],
-                quat2axisangle_torch(obs["policy"]["eef_quat"]),
+                quat2axisangle_torch(quat),
                 obs["policy"]["gripper_pos"],
             ],
             dim=1,

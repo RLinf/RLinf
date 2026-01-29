@@ -194,20 +194,22 @@ class EmbodiedRunner:
                     self._save_checkpoint()
 
             time_metrics = self.timer.consume_durations()
+            time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
+
             env_results_list = [
                 results for results in env_handle.wait() if results is not None
             ]
             env_metrics = compute_evaluate_metrics(env_results_list)
+            env_metrics = {f"env/{k}": v for k, v in env_metrics.items()}
 
-            time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
             rollout_metrics = {
                 f"rollout/{k}": v for k, v in actor_rollout_metrics[0].items()
             }
-            env_metrics = {f"env/{k}": v for k, v in env_metrics.items()}
-            time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
+
             training_metrics = {
                 f"train/{k}": v for k, v in actor_training_metrics[0].items()
             }
+
             self.metric_logger.log(env_metrics, _step)
             self.metric_logger.log(rollout_metrics, _step)
             self.metric_logger.log(time_metrics, _step)

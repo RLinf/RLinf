@@ -88,7 +88,7 @@ Dependency Installation
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-1. Install Dependencies
+2. Install Dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Option 1: Docker Image**
@@ -114,7 +114,12 @@ Install dependencies directly in your environment by running the following comma
 
    # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
 
+   # Install openvla-oft environment
    bash requirements/install.sh embodied --model openvla-oft --env behavior
+   source .venv/bin/activate
+
+   # Install openpi environment
+   bash requirements/install.sh embodied --model openpi --env behavior
    source .venv/bin/activate
 
 Assets Download
@@ -148,6 +153,8 @@ Assets Download
 
    # Make sure you are inside the correct Python virtual environment (venv) before running below commands
    # For our Docker image, you need to switch to the `openvla-oft` venv via `source switch_env openvla-oft`
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
    python -c "from omnigibson.utils.asset_utils import download_omnigibson_robot_assets; download_omnigibson_robot_assets()"
    python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets(accept_license=True)" 
    python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
@@ -174,6 +181,22 @@ OpenVLA-OFT provides a unified model that is suitable for all task types in the 
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir RLinf-OpenVLAOFT-Behavior
+
+**OpenPI Model Download**
+
+.. code:: bash
+
+   # Download the model (choose either method)
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-Behavior
+
+   # Method 2: Using huggingface-hub
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+   hf download RLinf/RLinf-Pi0-Behavior --local-dir RLinf-Pi0-Behavior
+
 
 After downloading, please make sure to specify the model path correctly in your configuration yaml file.
 

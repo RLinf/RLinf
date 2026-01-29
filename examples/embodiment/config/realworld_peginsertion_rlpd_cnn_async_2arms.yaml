@@ -52,6 +52,9 @@ runner:
   val_check_interval: -1
   save_interval: -1
 
+  resume_dir: null # Optional: path to a saved checkpoint directory, such as 'checkpoints/global_step_10'. If not None, it will be used to resume training.
+  ckpt_path: null  # Optional: path to a .pt checkpoint. If not None, it will be loaded after the model is instantiated (for evaluation).
+
 algorithm:
   update_epoch: 32
   group_size: 1
@@ -115,9 +118,9 @@ env:
 rollout:
   group_name: "RolloutGroup"
   backend: "huggingface"
-  model_dir: ""
   enable_offload: False
   pipeline_stage_num: 1
+  sync_weight_nccl_max_ctas: 32 # Max CTAs (Compute Thread Array, the compute resource of GPUs) for sync weight communication. Higher values consume more GPU resources, and thus sync weight is faster but could affect rollout speed in async mode. Positive integer 1 to 32. Default 32.
 
   model:
     model_path: "/path/to/model"
@@ -127,8 +130,8 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
 
-  micro_batch_size: 1024
-  global_batch_size: 1024
+  micro_batch_size: 256  # Smaller batch_size to accelerate training in real world
+  global_batch_size: 256  # Smaller batch_size to accelerate training in real world
   seed: 1234
   enable_offload: False
 
@@ -136,6 +139,7 @@ actor:
     model_path: "/path/to/model"
     state_dim: 19
     action_dim: 6
+    num_q_heads: 10 # number of Q heads for critic, passed to policy module
 
   optim:
     lr: 3.0e-4  # Lower learning rate for SAC

@@ -67,7 +67,7 @@ Algorithm
    - Compute the advantage of each action by subtracting the group's mean reward
 
 
-Dependencies Installation
+Dependency Installation
 -------------------------
 
 1. Clone RLinf Repository

@@ -95,10 +95,10 @@ def compute_ppo_actor_loss(
     )  # default max_episode_steps is None
 
     clip_mask = policy_loss1.detach() < policy_loss2.detach()
-    dual_clip_mask.logical_and_(loss_mask)
+    dual_clip_mask = (dual_clip_mask * loss_mask).bool()
 
-    clip_fraction = clip_mask.logical_and_(loss_mask).count_nonzero() / loss_mask_count
-    approx_kl = -approx_kl.sum() / loss_mask_count
+    clip_fraction = (clip_mask * loss_mask).sum() / float(loss_mask_count)
+    approx_kl = -torch.sum(approx_kl) / float(loss_mask_count)
 
     dual_cliped_ratio = torch.where(dual_clip_mask, ratio, 0)
 
@@ -113,12 +113,7 @@ def compute_ppo_actor_loss(
 
     # Only broadcast when ratio has action_dim dimension and loss_mask's last dim is 1
     # This handles token_level mode: ratio [bsz, num_chunks, action_dim], loss_mask [bsz, num_chunks, 1]
-    if (
-        len(ratio.shape) > 2
-        and ratio.shape[:-1] == loss_mask.shape[:-1]
-        and loss_mask.shape[-1] == 1
-        and ratio.shape[-1] > 1
-    ):
+    if len(ratio.shape) > 2 and loss_mask.shape[-1] == 1 and ratio.shape[-1] > 1:
         # Broadcast loss_mask to match ratio's shape for metrics computation
         loss_mask_for_metrics = loss_mask.expand_as(ratio)
 

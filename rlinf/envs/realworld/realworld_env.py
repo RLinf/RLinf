@@ -64,6 +64,7 @@ class RealWorldEnv(gym.Env):
         self.ignore_terminations = cfg.ignore_terminations
         self.num_group = num_envs // cfg.group_size
         self.group_size = cfg.group_size
+        self.main_image_key = cfg.main_image_key
 
         self._init_env()
 
@@ -217,9 +218,16 @@ class RealWorldEnv(gym.Env):
         obs["states"] = full_states
 
         # Process images
-        obs["main_images"] = raw_obs["frames"]["wrist_1"]
+        if self.main_image_key not in raw_obs["frames"]:
+            available_keys = list(raw_obs["frames"].keys())
+            raise KeyError(
+                f"main_image_key '{self.main_image_key}' not found in raw_obs['frames']. "
+                f"Available keys: {available_keys}. "
+                f"Please set 'main_image_key' in your env config to one of the available keys."
+            )
+        obs["main_images"] = raw_obs["frames"][self.main_image_key]
         raw_images = OrderedDict(sorted(raw_obs["frames"].items()))
-        raw_images.pop("wrist_1")
+        raw_images.pop(self.main_image_key)
 
         if raw_images:
             obs["extra_view_images"] = np.stack(list(raw_images.values()), axis=1)

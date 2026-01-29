@@ -28,12 +28,11 @@ runner:
   max_epochs: 1
   max_steps: -1
   only_eval: True
-  eval_policy_path: null  # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
-
   val_check_interval: -1
   save_interval: 50
 
-  resume_dir: null
+  resume_dir: null # Optional: path to a saved checkpoint directory, such as 'checkpoints/global_step_10'. If not None, it will be used to resume training.
+  ckpt_path: null  # Optional: path to a .pt checkpoint. If not None, it will be loaded after the model is instantiated (for evaluation).
 
 algorithm:
   normalize_advantages: True
@@ -145,7 +144,7 @@ actor:
     value_lr: 1.0e-4
     adam_beta1: 0.9
     adam_beta2: 0.95
-    adam_eps: 1.0e-05
+    adam_eps: 1.0e-08
     weight_decay: 0.01
     clip_grad: 1.0
     critic_warmup_steps: 0

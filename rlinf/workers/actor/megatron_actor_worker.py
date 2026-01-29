@@ -251,14 +251,13 @@ class MegatronActor(MegatronModelManager, Worker):
             if not self.is_running:
                 return
 
-        ref_policy_state_dict = None
         # only need this if we are running with inital kl penalty & full-parameter tuning
         if (
             self.cfg.algorithm.kl_beta > 0
             or self.cfg.algorithm.get("reinpp_kl_beta", 0) > 0
         ) and self.cfg.actor.get("combine_reference_model", True):
-            ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model[0])
-        self.ref_policy_state_dict = ref_policy_state_dict
+            self.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model[0])
+            self.offload_model_buffer = {}
 
         rollout_reshard_config = ReshardConfig(
             model_type=self.cfg.rollout.model.model_type,
@@ -437,14 +436,13 @@ class MegatronActor(MegatronModelManager, Worker):
 
             input_ids = batch["input_ids"]
             attention_mask = batch["attention_mask"]
-            response_mask = batch["response_mask"]
             position_ids = batch["position_ids"]
 
             response_len = self.response_len
             responses = input_ids[:, -response_len:]
             label = copy.deepcopy(position_ids)
             label[:, -response_len - 1 : -1] = responses
-            label_mask = copy.deepcopy(response_mask)
+            label_mask = copy.deepcopy(attention_mask)
             label_mask[:, : -response_len - 1] = False
             label_mask[:, -1] = False
 
@@ -572,9 +570,9 @@ class MegatronActor(MegatronModelManager, Worker):
                 # add to log
                 metrics_data.update(
                     {
-                        "final_loss": loss.detach(),
-                        "entropy_loss": entropy_loss.detach(),
-                        "kl_loss": kl_loss.detach(),
+                        "actor/final_loss": loss.detach(),
+                        "actor/entropy_loss": entropy_loss.detach(),
+                        "actor/kl_loss": kl_loss.detach(),
                     }
                 )
 
@@ -589,18 +587,11 @@ class MegatronActor(MegatronModelManager, Worker):
         return forward_output_and_loss_func
 
     def _get_num_microbatches(self, batch: dict[str, torch.Tensor], forward_only: bool):
-        batch_size = get_batch_size(batch)
-        forward_micro_batch_size = (
-            self.logprob_forward_micro_batch_size
-            if forward_only
-            else self.cfg.actor.micro_batch_size
-        )
-        num_microbatches = (
-            max(1, batch_size // forward_micro_batch_size)
-            if forward_only
-            else get_num_microbatches()
-        )
-        return num_microbatches
+        if forward_only:
+            batch_size = get_batch_size(batch)
+            return max(1, batch_size // self.logprob_forward_micro_batch_size)
+        else:
+            return get_num_microbatches()
 
     def run_forward_backward(self, batch: dict[str, torch.Tensor], forward_only=True):
         """Run the forward and backward pass on the model.
@@ -763,14 +754,14 @@ class MegatronActor(MegatronModelManager, Worker):
         success, grad_norm, num_zeros_in_grad, lr = self.optimizer_step(increment)
 
         # Training metrics
-        train_metrics["grad_norm"] = (
+        train_metrics["actor/grad_norm"] = (
             grad_norm if grad_norm is not None else float("nan")
         )
-        train_metrics["num_zeros_in_grad"] = (
+        train_metrics["actor/num_zeros_in_grad"] = (
             num_zeros_in_grad if num_zeros_in_grad is not None else float("nan")
         )
-        train_metrics["lr"] = lr if lr is not None else float("nan")
-        train_metrics["update_success"] = int(success)
+        train_metrics["actor/lr"] = lr if lr is not None else float("nan")
+        train_metrics["actor/update_success"] = int(success)
 
         return train_metrics
 
@@ -1308,20 +1299,24 @@ class MegatronActor(MegatronModelManager, Worker):
 
             with self.worker_timer():
                 # Prev logprobs
-                prev_logprobs = self.inference_step(batch)
+                prev_logprobs = self.inference_step(batch).cpu()
                 if rollout_result.rollout_logprobs is not None:
                     # Rollout has returned logprobs, store the recomputed logprobs in recompute_prev_logprobs
-                    rollout_result.recompute_prev_logprobs = prev_logprobs.cpu()
+                    rollout_result.recompute_prev_logprobs = prev_logprobs
                 else:
                     # Otherwise, store the logprobs in prev_logprobs (the final logprobs used for training)
-                    rollout_result.prev_logprobs = prev_logprobs.cpu()
+                    rollout_result.prev_logprobs = prev_logprobs
 
                 # Ref logprobs
                 if compute_ref_logprobs:
                     assert self.ref_policy_state_dict is not None
-                    with cpu_weight_swap(self.model[0], self.ref_policy_state_dict):
-                        ref_logprobs = self.inference_step(batch)
-                        rollout_result.ref_logprobs = ref_logprobs.cpu()
+                    with cpu_weight_swap(
+                        self.model[0],
+                        self.ref_policy_state_dict,
+                        self.offload_model_buffer,
+                    ):
+                        ref_logprobs = self.inference_step(batch).cpu()
+                        rollout_result.ref_logprobs = ref_logprobs
             if self.is_pipeline:
                 # for pipeline mode, send after inference to reduce latency.
                 # should do split to ensure actor won't get too much batches.

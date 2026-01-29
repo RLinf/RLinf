@@ -21,7 +21,11 @@ import torch.distributed as dist
 
 from ..hardware import AcceleratorType, AcceleratorUtil
 from .async_work import AsyncCollWork, AsyncWork
-from .collective_group import CollectiveGroup, CollectiveGroupInfo
+from .collective_group import (
+    CollectiveGroup,
+    CollectiveGroupInfo,
+    CollectiveGroupOptions,
+)
 
 
 class MultiChannelProcessGroup:
@@ -76,6 +80,7 @@ class MultiChannelProcessGroup:
             if not self._no_accel_ccl
             else None
         )
+        self._accel_type = accel_type
 
         self._send_accel_ccl_process_groups: list[dist.ProcessGroup] = [
             None for _ in range(num_channels)
@@ -101,6 +106,7 @@ class MultiChannelProcessGroup:
         world_size: int,
         rank: int,
         group_name: str,
+        options: Optional[CollectiveGroupOptions] = None,
     ):
         """Initialize a MultiChannelProcessGroup. The parameters are of the same meaning as the torch.distributed.init_process_group function.
 
@@ -109,6 +115,7 @@ class MultiChannelProcessGroup:
             world_size (int): The total number of processes in the group.
             rank (int): The rank of the current process in the group.
             group_name (str): The name of the group.
+            options (Optional[CollectiveGroupOptions]): The options for the collective group.
 
         """
         from ..cluster import Cluster, ClusterEnvVar
@@ -127,6 +134,7 @@ class MultiChannelProcessGroup:
             )
 
         if not self._no_accel_ccl:
+            pg_options = AcceleratorUtil.get_accel_pg_options(self._accel_type, options)
             # Create accelerator CCL groups and split GLOO groups from them
             base_group = MultiChannelProcessGroup._create_process_group(
                 backend=self._accel_ccl_backend,  # Only NCCL group supports splitting
@@ -135,6 +143,7 @@ class MultiChannelProcessGroup:
                 rank=rank,
                 group_name=group_name + f"{self._accel_ccl_backend}_send_0",
                 timeout=timeout,
+                pg_options=pg_options,
                 # device_id=torch.device(f"cuda:{torch.cuda.current_device()}"),
                 # Setting device_id is crucial triggers eager creation of NCCL communicators
                 # https://docs.pytorch.org/docs/stable/distributed.html#torch.distributed.init_process_group
@@ -150,6 +159,7 @@ class MultiChannelProcessGroup:
                         backend=self._accel_ccl_backend,
                         group_name=group_name + f"{self._accel_ccl_backend}_send_{i}",
                         timeout=timeout,
+                        pg_options=pg_options,
                     )
                     if i > 0
                     else base_group
@@ -161,6 +171,7 @@ class MultiChannelProcessGroup:
                         backend=self._accel_ccl_backend,
                         group_name=group_name + f"{self._accel_ccl_backend}_recv_{i}",
                         timeout=timeout,
+                        pg_options=pg_options,
                     )
                 )
 

@@ -14,10 +14,10 @@ SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 USE_MIRRORS=0
 GITHUB_PREFIX=""
-
+NO_ROOT=0
 SUPPORTED_TARGETS=("embodied" "reason" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora")
 
 # Ensure uv is installed
 if ! command -v uv &> /dev/null; then
@@ -49,6 +49,7 @@ Common options:
     -h, --help             Show this help message and exit.
     --venv <dir>           Virtual environment directory name (default: .venv).
     --use-mirror           Use mirrors for faster downloads.
+    --no-root              Avoid system dependency installation for non-root users. Only use this if you are certain system dependencies are already installed.
 EOF
 }
 
@@ -92,6 +93,10 @@ parse_args() {
                 USE_MIRRORS=1
                 shift
                 ;;
+            --no-root)
+                NO_ROOT=1
+                shift
+                ;;
             --*)
                 echo "Unknown option: $1" >&2
                 echo "Use --help to see available options." >&2
@@ -118,7 +123,7 @@ parse_args() {
 setup_mirror() {
     if [ "$USE_MIRRORS" -eq 1 ]; then
         export UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download
-        export UV_DEFAULT_INDEX=https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+        export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
         export HF_ENDPOINT=https://hf-mirror.com
         export GITHUB_PREFIX="https://ghfast.top/"
         git config --global url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/"
@@ -141,7 +146,7 @@ create_and_sync_venv() {
     UV_TORCH_BACKEND=auto uv sync --active
 }
 
-install_prebuilt_flash_attn() {
+install_flash_attn() {
     # Base release info – adjust when bumping flash-attn
     local flash_ver="2.7.4.post1"
     local base_url="${GITHUB_PREFIX}https://github.com/Dao-AILab/flash-attention/releases/download/v${flash_ver}"
@@ -190,10 +195,10 @@ EOF
 
     local wheel_name="flash_attn-${flash_ver}+${cu_tag}${torch_tag}${cxx_abi}-${py_tag}-${abi_tag}-${platform_tag}.whl"
     uv pip uninstall flash-attn || true
-    uv pip install "${base_url}/${wheel_name}"
+    uv pip install "${base_url}/${wheel_name}" || (echo "Flash attn installation via wheel failed. Attempting to install from source..."; uv pip install flash-attn==${flash_ver} --no-build-isolation)
 }
 
-install_prebuilt_apex() {
+install_apex() {
     # Example URL: https://github.com/RLinf/apex/releases/download/25.09/apex-0.1-cp311-cp311-linux_x86_64.whl
     local base_url="${GITHUB_PREFIX}https://github.com/RLinf/apex/releases/download/25.09"
 
@@ -214,7 +219,10 @@ EOF
     local wheel_name="apex-0.1-${py_tag}-${abi_tag}-${platform_tag}.whl"
         
     uv pip uninstall apex || true
-    uv pip install "${base_url}/${wheel_name}" || (echo "Apex wheel is not available for Python ${py_major}.${py_minor}, please install apex manually. See https://github.com/NVIDIA/apex" >&2; exit 1)
+    export NUM_THREADS=$(nproc)
+    export NVCC_APPEND_FLAGS=${NVCC_APPEND_FLAGS:-"--threads ${NUM_THREADS}"}
+    export APEX_PARALLEL_BUILD=${APEX_PARALLEL_BUILD:-${NUM_THREADS}}
+    uv pip install "${base_url}/${wheel_name}" || (echo "Apex installation via wheel failed. Attempting to install from source..."; APEX_CPP_EXT=1 APEX_CUDA_EXT=1 uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/apex.git --no-build-isolation)
 }
 
 clone_or_reuse_repo() {
@@ -252,7 +260,9 @@ clone_or_reuse_repo() {
 
 install_common_embodied_deps() {
     uv sync --extra embodied --active
-    bash $SCRIPT_DIR/embodied/sys_deps.sh
+    if [ "$NO_ROOT" -eq 0 ]; then
+        bash $SCRIPT_DIR/embodied/sys_deps.sh
+    fi
     {
         echo "export NVIDIA_DRIVER_CAPABILITIES=all"
         echo "export VK_DRIVER_FILES=/etc/vulkan/icd.d/nvidia_icd.json"
@@ -267,13 +277,18 @@ install_openvla_model() {
             install_common_embodied_deps
             install_maniskill_libero_env
             ;;
+        frankasim)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_frankasim_env
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenVLA model." >&2
             exit 1
             ;;
     esac
     uv pip install git+${GITHUB_PREFIX}https://github.com/openvla/openvla.git --no-build-isolation
-    install_prebuilt_flash_attn
+    install_flash_attn
     uv pip uninstall pynvml || true
 }
 
@@ -290,8 +305,23 @@ install_openvla_oft_model() {
             create_and_sync_venv
             install_common_embodied_deps
             install_maniskill_libero_env
-            install_prebuilt_flash_attn
+            install_flash_attn
             uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git  --no-build-isolation
+            ;;
+        robotwin)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_flash_attn
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openvla-oft.git@RLinf/v0.1  --no-build-isolation
+            install_robotwin_env
+            ;;
+        opensora)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_maniskill_libero_env
+            install_opensora_world_model
+            install_flash_attn
+            uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenVLA-OFT model." >&2
@@ -303,33 +333,48 @@ install_openvla_oft_model() {
 
 install_openpi_model() {
     case "$ENV_NAME" in
+        behavior)
+            PYTHON_VERSION="3.10"
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_behavior_env
+            uv pip install protobuf==6.33.0
+            ;;
         maniskill_libero)
             create_and_sync_venv
             install_common_embodied_deps
             install_maniskill_libero_env
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
-            install_prebuilt_flash_attn
+            install_flash_attn
             ;;
         metaworld)
             create_and_sync_venv
             install_common_embodied_deps
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
-            install_prebuilt_flash_attn
+            install_flash_attn
             install_metaworld_env
             ;;
         calvin)
             create_and_sync_venv
             install_common_embodied_deps
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
-            install_prebuilt_flash_attn
+            install_flash_attn
             install_calvin_env
             ;;
         robocasa)
             create_and_sync_venv
             install_common_embodied_deps
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
-            install_prebuilt_flash_attn
+            install_flash_attn
             install_robocasa_env
+            ;;
+        robotwin)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_flash_attn
+            install_robotwin_env
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
@@ -362,12 +407,12 @@ install_gr00t_model() {
     case "$ENV_NAME" in
         maniskill_libero)
             install_maniskill_libero_env
-            install_prebuilt_flash_attn
+            install_flash_attn
             ;;
         isaaclab)
             install_isaaclab_env
             # Torch is modified in Isaac Lab, install flash-attn afterwards
-            install_prebuilt_flash_attn
+            install_flash_attn
             uv pip install numpydantic==1.7.0 pydantic==2.11.7 numpy==1.26.0
             ;;
         *)
@@ -385,9 +430,15 @@ install_env_only() {
         franka)
             uv sync --extra franka --active
             if [ "$SKIP_ROS" -ne 1 ]; then
-                bash $SCRIPT_DIR/embodied/ros_install.sh
+                if [ "$NO_ROOT" -eq 0 ]; then
+                    bash $SCRIPT_DIR/embodied/ros_install.sh
+                fi
                 install_franka_env
             fi
+            ;;
+        habitat)
+            install_common_embodied_deps
+            install_habitat_env
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for env-only installation." >&2
@@ -424,7 +475,7 @@ install_behavior_env() {
     uv pip install click==8.2.1
     pushd ~ >/dev/null
     uv pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
-    install_prebuilt_flash_attn
+    install_flash_attn
     popd >/dev/null
 }
 
@@ -436,7 +487,7 @@ install_calvin_env() {
     local calvin_dir
     calvin_dir=$(clone_or_reuse_repo CALVIN_PATH "$VENV_DIR/calvin" https://github.com/mees/calvin.git --recurse-submodules)
 
-    uv pip install wheel cmake==3.18.4 setuptools==57.5.0
+    uv pip install wheel cmake==3.18.4 setuptools==57.5.0 wheel==0.45.1
     # NOTE: Use a fork version of pyfasthash that fixes install on Python 3.11
     uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/pyfasthash.git --no-build-isolation
     uv pip install -e ${calvin_dir}/calvin_env/tacto
@@ -515,6 +566,107 @@ install_franka_env() {
     echo "source $ROS_CATKIN_PATH/devel/setup.bash" >> "$VENV_DIR/bin/activate"
 }
 
+install_robotwin_env() {
+    # Set TORCH_CUDA_ARCH_LIST based on the CUDA version
+    local nvcc_exe
+    if [ -x "$(command -v nvcc)" ]; then
+        nvcc_exe=$(which nvcc)
+    elif [ -x /usr/local/cuda/bin/nvcc ]; then
+        nvcc_exe="/usr/local/cuda/bin/nvcc"
+    else
+        echo "nvcc not found. Cannot build robotwin environment."
+        exit 1
+    fi
+    local cuda_major=$("$nvcc_exe" --version | grep 'Cuda compilation tools' | awk '{print $5}' | tr -d ',' | awk -F '.' '{print $1}')
+    local cuda_minor=$("$nvcc_exe" --version | grep 'Cuda compilation tools' | awk '{print $5}' | tr -d ',' | awk -F '.' '{print $2}')
+    if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; }; then
+        # Include Blackwell support for CUDA 12.8+
+        export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0;10.0"
+    else
+        export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0"
+    fi
+
+    uv pip install mplib==0.2.1
+    uv pip install gymnasium==0.29.1
+
+    uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git  --no-build-isolation
+    uv pip install warp-lang
+    uv pip install git+${GITHUB_PREFIX}https://github.com/NVlabs/curobo.git  --no-build-isolation
+
+    # patch sapien and mplib for robotwin
+    SAPIEN_LOCATION=$(uv pip show sapien | grep 'Location' | awk '{print $2}')/sapien
+    # Adjust some code in wrapper/urdf_loader.py
+    URDF_LOADER=$SAPIEN_LOCATION/wrapper/urdf_loader.py
+    # ----------- before -----------
+    # 667         with open(urdf_file, "r") as f:
+    # 668             urdf_string = f.read()
+    # 669 
+    # 670         if srdf_file is None:
+    # 671             srdf_file = urdf_file[:-4] + "srdf"
+    # 672         if os.path.isfile(srdf_file):
+    # 673             with open(srdf_file, "r") as f:
+    # 674                 self.ignore_pairs = self.parse_srdf(f.read())
+    # ----------- after  -----------
+    # 667         with open(urdf_file, "r", encoding="utf-8") as f:
+    # 668             urdf_string = f.read()
+    # 669 
+    # 670         if srdf_file is None:
+    # 671             srdf_file = urdf_file[:-4] + ".srdf"
+    # 672         if os.path.isfile(srdf_file):
+    # 673             with open(srdf_file, "r", encoding="utf-8") as f:
+    # 674                 self.ignore_pairs = self.parse_srdf(f.read())
+    sed -i -E 's/("r")(\))( as)/\1, encoding="utf-8") as/g' $URDF_LOADER
+
+    MPLIB_LOCATION=$(uv pip show mplib | grep 'Location' | awk '{print $2}')/mplib
+    # Adjust some code in planner.py
+    # ----------- before -----------
+    # 807             if np.linalg.norm(delta_twist) < 1e-4 or collide or not within_joint_limit:
+    # 808                 return {"status": "screw plan failed"}
+    # ----------- after  ----------- 
+    # 807             if np.linalg.norm(delta_twist) < 1e-4 or not within_joint_limit:
+    # 808                 return {"status": "screw plan failed"}
+    PLANNER=$MPLIB_LOCATION/planner.py
+    sed -i -E 's/(if np.linalg.norm\(delta_twist\) < 1e-4 )(or collide )(or not within_joint_limit:)/\1\3/g' $PLANNER
+}
+
+install_frankasim_env() {
+    local serldir
+    serldir=$(clone_or_reuse_repo SERL_PATH "$VENV_DIR/serl" https://github.com/RLinf/serl.git -b RLinf/franka-sim)
+    uv pip install -e "$serldir/franka_sim"
+    uv pip install -r "$serldir/franka_sim/requirements.txt"
+}
+
+install_habitat_env() {
+    local habitat_sim_dir
+    habitat_sim_dir=$(clone_or_reuse_repo HABITAT_SIM_PATH "$VENV_DIR/habitat" https://github.com/facebookresearch/habitat-sim.git -b v0.3,3 --recurse-submodules)
+    if [ -d "$habitat_sim_dir/build" ]; then
+        rm -rf $habitat_sim_dir/build
+    fi
+    export CMAKE_POLICY_VERSION_MINIMUM=3.5
+    uv pip install "$habitat_sim_dir" --config-settings="--build-option=--headless" --config-settings="--build-option=--with-bullet"
+    uv pip install $habitat_sim_dir/build/deps/magnum-bindings/src/python/
+
+    local habitat_lab_dir
+    # Use a fork version of habitat-lab that fixes Python 3.11 compatibility issues
+    habitat_lab_dir=$(clone_or_reuse_repo HABITAT_LAB_PATH "$VENV_DIR/habitat-lab" https://github.com/RLinf/habitat-lab.git -b v0.3.3 --recurse-submodules)
+    uv pip install -e $habitat_lab_dir/habitat-lab
+    uv pip install -e $habitat_lab_dir/habitat-baselines
+}
+
+install_opensora_world_model() {
+    # Clone opensora repository
+    local opensora_dir
+    opensora_dir=$(clone_or_reuse_repo OPENSORA_PATH "$VENV_DIR/opensora" ${GITHUB_PREFIX}https://github.com/RLinf/opensora.git)
+    
+    uv pip install -e "$opensora_dir"
+    
+    # Install opensora dependencies
+    uv pip install -r $SCRIPT_DIR/embodied/models/opensora.txt
+    uv pip install git+${GITHUB_PREFIX}https://github.com/fangqi-Zhu/TensorNVMe.git --no-build-isolation
+    echo "export LD_LIBRARY_PATH=~/.tensornvme/lib:\$LD_LIBRARY_PATH" >> "$VENV_DIR/bin/activate"
+    install_apex
+}
+
 #=======================REASONING INSTALLER=======================
 
 install_reason() {
@@ -535,8 +687,8 @@ install_reason() {
         uv pip install -r $SCRIPT_DIR/reason/megatron.txt --no-build-isolation
     fi
 
-    install_prebuilt_apex
-    install_prebuilt_flash_attn
+    install_apex
+    install_flash_attn
     uv pip uninstall pynvml || true
 }
 

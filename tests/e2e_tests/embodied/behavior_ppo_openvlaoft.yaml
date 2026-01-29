@@ -15,7 +15,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor: 0-3
+    actor: 0-1
     env: 0-1
     rollout: 2-3
 
@@ -83,11 +83,13 @@ env:
   
   # Override the default values in env/behavior_r1pro
   train:
-    total_num_envs: 4
-    max_episode_steps: 8
+    total_num_envs: 2
+    max_episode_steps: 1
+    max_steps_per_rollout_epoch: 1
   eval:
     total_num_envs: 1
-    max_episode_steps: 8
+    max_episode_steps: 1
+    max_steps_per_rollout_epoch: 1
 
 rollout:
   group_name: "RolloutGroup"
@@ -105,7 +107,7 @@ actor:
   training_backend: "fsdp"
 
   micro_batch_size: 1
-  global_batch_size: 4
+  global_batch_size: 2
   seed: 1234
   enable_offload: True
 
@@ -115,6 +117,7 @@ actor:
     model_type: "openvla_oft"
     value_type: ${algorithm.reward_type}  # 'action' or 'token'
     action_dim: 23
+    num_action_chunks: 1
     unnorm_key: behavior_turn_on_radio
     add_value_head: True
     num_images_in_input: 3

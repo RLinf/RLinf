@@ -1,0 +1,27 @@
+defaults:
+  - model/openvla_oft@model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+convertor:
+  save_path: /path/to/save
+  merge_lora_weighs: True
+
+  ckpt_path: /path/to/full_weights.pt
+
+# Override the default values in model/openvla_oft
+model:
+  model_type: "openvla_oft"
+  model_path: "/path/to/Openvla-oft-SFT-libero-goal-traj1/"
+
+  unnorm_key: bridge_orig
+  is_lora: True
+  lora_rank: 32
+  lora_path: /path/to/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora/lora_adapter
+  max_prompt_length: 30

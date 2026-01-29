@@ -140,6 +140,9 @@ class WorkerInfo:
     rank: int
     """Rank of the worker in the group."""
 
+    group_world_size: int
+    """World size of the worker group."""
+
     cluster_node_rank: int
     """Node ID where the worker is placed."""
 

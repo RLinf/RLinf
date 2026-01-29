@@ -123,28 +123,79 @@ as well as reinforcement learning training examples on real robots.
    </div>
 
     
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+  <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
+          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
         <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/franka.html" target="_blank" style="text-decoration: underline; color: blue;">
-         <b>Real-World RL with Franka</b>
-         </a><br>
-         RLinf worker seamlessly integrates with the Franka robotic arm
-       </p>
-     </div>
+          <b>Real-World RL with Franka</b>
+        </a><br>
+        RLinf worker seamlessly integrates with the Franka robotic arm
+      </p>
+    </div>
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RoboTwin-Platform/RoboTwin/main/assets/files/50_tasks.gif"
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://raw.githubusercontent.com/RLinf/serl/refs/heads/RLinf/franka-sim/franka_sim/franka_sim/envs/xmls/robotiq_2f85/2f85.png"
+          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
+          data-target="animated-image.originalImage">
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/frankasim.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>RL with Franka-Sim Benchmark</b>
+        </a><br>
+        Supports Franka-Sim + MLP + PPO training
+      </p>
+    </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://raw.githubusercontent.com/RoboTwin-Platform/RoboTwin/main/assets/files/50_tasks.gif"
+          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
+          data-target="animated-image.originalImage">
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/robotwin.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>RL with RoboTwin Benchmark</b>
+        </a><br>
+        Supports RoboTwin + OpenVLA-OFT / π₀ / π₀.₅ + PPO / GRPO training
+      </p>
+    </div>
+  </div>
+
+  <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/sac-flow-overview.png"
+          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/sac_flow.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>SAC-Flow Policy Training</b>
+        </a><br>
+        Train a Flow Matching policy with SAC (Sim & Real)
+      </p>
+    </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/3_layer_mlp.jpg"
+          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
+          data-target="animated-image.originalImage">
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/mlp.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>MLP Policy Training</b>
+        </a><br>
+        Train an MLP Policy with PPO/SAC/GRPO
+      </p>
+    </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/hpcaitech/Open-Sora-Demo/raw/main/readme/icon.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
             data-target="animated-image.originalImage">
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[Ongoing]RL with RoboTwin Benchmark</b><br>
-         RoboTwin + OpenVLA-OFT + PPO achieves SOTA performance
+         <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/opensora.rst" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>RL with OpenSora World Model</b>
+         </a><br>
+         Support OpenSora World Model + OpenVLA-OFT + GRPO training
        </p>
-     </div>     
-   </div>
+     </div>
+  </div>
 
 
 Reasoning Scenarios
@@ -278,10 +329,15 @@ Thanks to this decoupled design, workers can be flexibly and dynamically schedul
    isaaclab
    calvin
    robocasa
+   robotwin
+   frankasim
+   opensora
    pi0
    gr00t
+   sac_flow
+   mlp
+   franka
+   sft
    reasoning
    coding_online_rl
-   sft
    searchr1
-   franka
