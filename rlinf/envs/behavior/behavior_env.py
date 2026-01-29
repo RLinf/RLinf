@@ -82,7 +82,13 @@ class BehaviorEnv(gym.Env):
         self._video_writer = None
         if self.cfg.video_cfg.save_video:
             os.makedirs(str(self.cfg.video_cfg.video_base_dir), exist_ok=True)
-            video_name = str(self.cfg.video_cfg.video_base_dir) + "/behavior_video.mp4"
+            # Include worker info to avoid overwrites when multiple env workers exist
+            if worker_info:
+                # Use rank and GPU ID for unique identification
+                worker_id = f"rank{worker_info.rank}_gpu{worker_info.accelerator_rank}"
+            else:
+                worker_id = "rank0_gpu0"
+            video_name = str(self.cfg.video_cfg.video_base_dir) + f"/behavior_video_{worker_id}.mp4"
             
             # Determine video resolution based on camera settings
             use_high_res = getattr(self.cfg.video_cfg, "use_high_res_cameras", False)
