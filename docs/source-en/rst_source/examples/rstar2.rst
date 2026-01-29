@@ -143,6 +143,18 @@ Below shows the comparison of reward curves and response length curves between R
 
    Qwen2.5-7B-Instruct in Verl
 
+We also evlaluated the trained models on the validation set, and the results are as follows:
+
+.. table:: Validation Results
+
+   +--------+----------+----------+---------+
+   |        | aime2024 | aime2025 | math500 |
+   +========+==========+==========+=========+
+   | Rlinf  | 33.65    | 24.11    | 79.60   |
+   +--------+----------+----------+---------+
+   | Verl   | 31.77    | 25.94    | 76.20   |
+   +--------+----------+----------+---------+
+
 
 References
 ----------
