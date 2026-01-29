@@ -251,7 +251,7 @@ class ReconfigureSubprocEnv(SubprocVectorEnv):
         self,
         id: Optional[Union[int, list[int], np.ndarray]] = None,
     ) -> Union[dict, list[dict]]:
-        """Get info from the environment(s)."""
+        """Get info from the environment(s). Return as list of dict, each dict has key: 'robot_info' and 'scene_info'."""
         self._assert_is_not_closed()
         id = self._wrap_id(id)
         if self.is_async:

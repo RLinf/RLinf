@@ -62,6 +62,7 @@ class CalvinEnv(gym.Env):
         self.reset_state_ids_all = self.get_reset_state_ids_all()
         self.update_reset_state_ids()
         self._init_task_and_trial_ids()
+        self._init_task_info()
         self._init_env()
 
         self.prev_step_reward = np.zeros(self.num_envs)
@@ -136,6 +137,13 @@ class CalvinEnv(gym.Env):
         self.task_ids, self.trial_ids = (
             self._get_task_and_trial_ids_from_reset_state_ids(self.reset_state_ids)
         )
+    
+    def _init_task_info(self):
+        self.task_sequence = [None] * self.num_envs
+        self.current_task = [None] * self.num_envs
+        self.current_task_idx = [0] * self.num_envs 
+        self.previous_info = [None] * self.num_envs
+        self.task_descriptions = [None] * self.num_envs
 
     def _get_random_reset_state_ids(self, num_reset_states):
         reset_state_ids = self._generator.integers(
@@ -201,27 +209,13 @@ class CalvinEnv(gym.Env):
         return init_state
 
     def _get_task_info(self, env_idx):
-        self.task_sequence = [
-            self.task_suite.get_task_sequence(self.trial_ids[env_id])
-            for env_id in range(self.num_envs)
-        ]
-        if len(env_idx) == self.num_envs:
-            # update all envs when env_idx is all envs
-            self.current_task = [
-                subtask_sequence[0] for subtask_sequence in self.task_sequence
-            ]
-            self.current_task_idx = [0] * len(self.current_task)
-            self.previous_info = self.env.get_info(id=env_idx)
-        else:
-            # only partially upate the current task and task index
-            info_list = self.env.get_info(id=env_idx)
-            for i, idx in enumerate(env_idx):
-                self.current_task[idx] = self.task_sequence[idx][0]
-                self.current_task_idx[idx] = 0
-                self.previous_info[idx] = info_list[i]
-        self.task_descriptions = [
-            self.task_suite.get_task_descriptions(task) for task in self.current_task
-        ]
+        for i in env_idx:
+            self.task_sequence[i] = self.task_suite.get_task_sequence(self.trial_ids[i])
+            task = self.task_sequence[i][0]
+            self.current_task[i] = task
+            self.current_task_idx[i] = 0
+            self.previous_info[i] = self.env.get_info(id=i)[0]
+            self.task_descriptions[i] = self.task_suite.get_task_descriptions(task)
 
     @property
     def elapsed_steps(self):
