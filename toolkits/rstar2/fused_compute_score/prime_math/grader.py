@@ -231,7 +231,7 @@ def math_equal(
     reference = str(reference).strip()
     prediction = str(prediction).strip()
 
-    ## deal with [], (), {}
+    # deal with [], (), {}
     prediction = format_intervals(prediction)
 
     pred_str, ref_str = prediction, reference
@@ -252,7 +252,7 @@ def math_equal(
     if pred_str == ref_str:
         return True
 
-    ## [a, b] vs. [c, d], return a==c and b==d
+    # [a, b] vs. [c, d], return a==c and b==d
     if (
         prediction
         and reference
