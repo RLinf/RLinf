@@ -86,14 +86,14 @@ env:
   
   # Override the default values in env/behavior_r1pro
   eval:
-    total_num_envs: 2  # 2 envs total: 1 on GPU 0, 1 on GPU 1
+    total_num_envs: 4  # 2 envs total: 1 on GPU 0, 1 on GPU 1
     max_episode_steps: 2000 # max episode steps for truncation
     max_steps_per_rollout_epoch: 1024  # Must be divisible by num_action_chunks (32)
     video_cfg:
       save_video: True  # Set to False to disable video recording
       video_base_dir: ${runner.logger.log_path}/video/eval
       # Use high-res cameras (like OpenPI-Comet's RGBWrapper)
-      use_high_res_cameras: True  # True: native 720x720(head)/480x480(wrist), False: native 128x128
+      use_high_res_cameras: False  # True: native 720x720(head)/480x480(wrist), False: native 128x128
 
 rollout:
   group_name: "RolloutGroup"

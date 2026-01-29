@@ -55,6 +55,12 @@ class BehaviorEnv(gym.Env):
         worker_info,
         record_metrics=True,
     ):
+        # Ensure worker_info is provided in Ray distributed mode
+        assert worker_info is not None, (
+            "worker_info must be provided when using BehaviorEnv in Ray distributed mode. "
+            "This should never be None in production usage."
+        )
+        
         self.cfg = cfg
 
         self.num_envs = num_envs
@@ -79,16 +85,10 @@ class BehaviorEnv(gym.Env):
         self._init_env()
 
         # manually reset environment episode number
-        self._video_writer = None
+        # Create separate video writers for each environment
+        self._video_writers = []
         if self.cfg.video_cfg.save_video:
             os.makedirs(str(self.cfg.video_cfg.video_base_dir), exist_ok=True)
-            # Include worker info to avoid overwrites when multiple env workers exist
-            if worker_info:
-                # Use rank and GPU ID for unique identification
-                worker_id = f"rank{worker_info.rank}_gpu{worker_info.accelerator_rank}"
-            else:
-                worker_id = "rank0_gpu0"
-            video_name = str(self.cfg.video_cfg.video_base_dir) + f"/behavior_video_{worker_id}.mp4"
             
             # Determine video resolution based on camera settings
             use_high_res = getattr(self.cfg.video_cfg, "use_high_res_cameras", False)
@@ -103,10 +103,18 @@ class BehaviorEnv(gym.Env):
             
             video_height = wrist_size * 2  # Two wrist cameras stacked vertically
             video_width = wrist_size + head_width  # Wrist + head horizontally
-            self.video_writer = create_video_writer(
-                fpath=video_name,
-                resolution=(video_height, video_width),  # (height, width)
-            )
+            
+            # Create one video writer per environment
+            for env_idx in range(self.cfg.total_num_envs):
+                # Use rank, GPU ID, and env index for unique identification
+                video_id = f"rank{worker_info.rank}_gpu{worker_info.accelerator_rank}_env{env_idx}"
+                video_name = str(self.cfg.video_cfg.video_base_dir) + f"/behavior_video_{video_id}.mp4"
+                
+                video_writer = create_video_writer(
+                    fpath=video_name,
+                    resolution=(video_height, video_width),  # (height, width)
+                )
+                self._video_writers.append(video_writer)
 
     def _load_tasks_cfg(self):
         with open_dict(self.cfg):
@@ -275,73 +283,99 @@ class BehaviorEnv(gym.Env):
         self._is_start = value
 
     @property
-    def video_writer(self) -> tuple[Container, Stream]:
+    def video_writers(self) -> list[tuple[Container, Stream]]:
         """
-        Returns the video writer for the current evaluation step.
+        Returns the list of video writers (one per environment).
         """
-        return self._video_writer
+        return self._video_writers
 
-    @video_writer.setter
-    def video_writer(self, video_writer: tuple[Container, Stream]) -> None:
-        if self._video_writer is not None:
-            (container, stream) = self._video_writer
-            # Flush any remaining packets
-            for packet in stream.encode():
-                container.mux(packet)
-            # Close the container
-            container.close()
-        self._video_writer = video_writer
+    @video_writers.setter
+    def video_writers(self, video_writers: list[tuple[Container, Stream]]) -> None:
+        # Close all existing video writers
+        if self._video_writers is not None:
+            for video_writer in self._video_writers:
+                if video_writer is not None:
+                    (container, stream) = video_writer
+                    # Flush any remaining packets
+                    for packet in stream.encode():
+                        container.mux(packet)
+                    # Close the container
+                    container.close()
+        self._video_writers = video_writers
 
     def flush_video(self) -> None:
         """
-        Flush the video writer.
+        Flush all video writers.
         """
         if self.cfg.video_cfg.save_video:
-            self.video_writer = None
+            self.video_writers = []
 
     def _write_video(self, raw_obs) -> None:
         """
-        Write observations to video at native resolution.
+        Write observations to video at native resolution for each environment.
         - With RGBWrapper (use_high_res_cameras=True): 720x720/480x480 - TRUE high quality
         - Without RGBWrapper: 128x128 - native low-res (no artificial upscaling)
         """
-        # Skip if video writer is not initialized
-        if self.video_writer is None:
+        # Skip if video writers are not initialized
+        if not self.video_writers:
             return
         
         use_high_res = getattr(self.cfg.video_cfg, "use_high_res_cameras", False)
         
-        # Extract observations from the first environment (raw_obs is a list)
-        for sensor_data in raw_obs[0].values():
-            for k, v in sensor_data.items():
-                # Skip non-camera observations (like low_dim)
-                if not isinstance(v, dict) or "rgb" not in v:
-                    continue
-                
-                # v["rgb"] is a torch tensor with shape [H, W, 4]
-                rgb = v["rgb"].cpu().numpy()[..., :3]  # Take only RGB channels, drop alpha
-                
-                if "left_realsense_link:Camera:0" in k:
-                    left_wrist_rgb = rgb  # Native resolution (480x480 or 128x128)
-                        
-                elif "right_realsense_link:Camera:0" in k:
-                    right_wrist_rgb = rgb  # Native resolution (480x480 or 128x128)
-                        
-                elif "zed_link:Camera:0" in k:
-                    # Resize head to match stacked wrist height for video layout
-                    if use_high_res:
-                        head_rgb = cv2.resize(rgb, (960, 960))  # 720→960 (match 480*2)
-                    else:
-                        head_rgb = cv2.resize(rgb, (256, 256))  # 128→256 (match 128*2)
-
-        write_video(
-            np.expand_dims(
-                np.hstack([np.vstack([left_wrist_rgb, right_wrist_rgb]), head_rgb]), 0
-            ),
-            video_writer=self.video_writer,
-            batch_size=1,
-            mode="rgb",
-        )
+        # raw_obs is a list of observations, one per environment
+        # Write each environment's observations to its own video
+        for env_idx, env_obs in enumerate(raw_obs):
+            if env_idx >= len(self.video_writers):
+                self.logger.warning(
+                    f"env_idx ({env_idx}) >= len(video_writers) ({len(self.video_writers)}). "
+                    f"This indicates a mismatch between the number of environments and video writers. "
+                    f"Skipping video recording for remaining environments."
+                )
+                break  # Safety check
+            
+            video_writer = self.video_writers[env_idx]
+            assert video_writer is not None, (
+                f"Video writer for environment {env_idx} is None. This should never happen. "
+                f"Video writers should be initialized during __init__ or the list should be empty."
+            )
+            
+            left_wrist_rgb = None
+            right_wrist_rgb = None
+            head_rgb = None
+            
+            # Extract observations from this environment
+            for sensor_data in env_obs.values():
+                for k, v in sensor_data.items():
+                    # Skip non-camera observations (like low_dim)
+                    if not isinstance(v, dict) or "rgb" not in v:
+                        continue
+                    
+                    # v["rgb"] is a torch tensor with shape [H, W, 4]
+                    rgb = v["rgb"].cpu().numpy()[..., :3]  # Take only RGB channels, drop alpha
+                    
+                    if "left_realsense_link:Camera:0" in k:
+                        left_wrist_rgb = rgb  # Native resolution (480x480 or 128x128)
+                            
+                    elif "right_realsense_link:Camera:0" in k:
+                        right_wrist_rgb = rgb  # Native resolution (480x480 or 128x128)
+                            
+                    elif "zed_link:Camera:0" in k:
+                        # Resize head to match stacked wrist height for video layout
+                        if use_high_res:
+                            head_rgb = cv2.resize(rgb, (960, 960))  # 720→960 (match 480*2)
+                        else:
+                            head_rgb = cv2.resize(rgb, (256, 256))  # 128→256 (match 128*2)
+            
+            # Write this environment's frame to its video
+            if left_wrist_rgb is not None and right_wrist_rgb is not None and head_rgb is not None:
+                write_video(
+                    np.expand_dims(
+                        np.hstack([np.vstack([left_wrist_rgb, right_wrist_rgb]), head_rgb]), 0
+                    ),
+                    video_writer=video_writer,
+                    batch_size=1,
+                    mode="rgb",
+                )
 
     def _init_metrics(self):
         self.success_once = torch.zeros(
