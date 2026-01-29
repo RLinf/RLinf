@@ -445,7 +445,6 @@ def timeout_limit(seconds: float, use_signals: bool = False):
 
     Note:
         The decorated function may raise the following exceptions:
-        
         - TimeoutError: If the function execution exceeds the specified time.
         - RuntimeError: If the child process exits with an error (multiprocessing mode).
         - NotImplementedError: If the OS is not POSIX (signals are only supported on POSIX).
