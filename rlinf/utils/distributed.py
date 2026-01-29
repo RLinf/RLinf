@@ -51,7 +51,6 @@ def compute_rollout_metrics_dynamic(
         response_len: Response length
         data_parallel_group: Data parallel group for distributed training
         use_critic: Whether using critic (unused)
-        group_size: Number of trajectories per question
     """
     device = torch.device(f"cuda:{torch.cuda.current_device()}")
     advantages = rollout_batch["advantages"].to(device=device)
@@ -778,11 +777,7 @@ class RolloutDataBalance(UserDict):
         rollout_batch_pad = {k: v.cpu() for k, v in rollout_batch_pad.items()}
 
         # 1. Allgather data
-        # gathered_rollout_batches = [None for _ in range(dp_world_size)]
-        # torch.distributed.all_gather_object(
-        #     gathered_rollout_batches, rollout_batches, group=dp_group
-        # )
-        gathered_rollout_batches = [dict() for _ in range(dp_world_size)]
+        gathered_rollout_batches = [{} for _ in range(dp_world_size)]
         for k in sorted(rollout_batches.keys()):
             rollout_batch_values = [None for _ in range(dp_world_size)]
             torch.distributed.all_gather_object(

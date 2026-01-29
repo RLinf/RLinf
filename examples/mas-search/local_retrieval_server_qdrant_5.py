@@ -1,3 +1,16 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import argparse
 import asyncio
 import json
@@ -19,11 +32,10 @@ from qdrant_client.models import (
     SearchParams,
 )
 from tqdm import tqdm
-from transformers import AutoConfig, AutoModel, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer
 
 
 def load_model(model_path: str, use_fp16: bool = False, device=torch.device("cuda")):
-    model_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
     model.eval()
     model = model.to(device=device)
@@ -128,7 +140,6 @@ class AsyncEncoderPool:
     @staticmethod
     def set_global_encoder(init_queue: Queue):
         args = init_queue.get()
-        device = args[-1]
         assert "global_encoder" not in globals()
         globals()["global_encoder"] = Encoder(*args)
 
@@ -171,11 +182,16 @@ class AsyncBaseRetriever:
     async def _abatch_search(self, query_list: list[str], num: int, return_score: bool):
         raise NotImplementedError
 
-    async def asearch(self, query: str, num: int = None, return_score: bool = False):
+    async def asearch(
+        self, query: str, num: Optional[int] = None, return_score: bool = False
+    ):
         return await self._asearch(query, num, return_score)
 
     async def abatch_search(
-        self, query_list: list[str], num: int = None, return_score: bool = False
+        self,
+        query_list: list[str],
+        num: Optional[int] = None,
+        return_score: bool = False,
     ):
         return await self._abatch_search(query_list, num, return_score)
 
@@ -239,7 +255,9 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
             )
         print(f"qdrant search_params: {self.search_params}")
 
-    async def _asearch(self, query: str, num: int = None, return_score: bool = False):
+    async def _asearch(
+        self, query: str, num: Optional[int] = None, return_score: bool = False
+    ):
         time_start = time.time()
         if num is None:
             num = self.topk
@@ -276,7 +294,10 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
             return payloads
 
     async def _abatch_search(
-        self, query_list: list[str], num: int = None, return_score: bool = False
+        self,
+        query_list: list[str],
+        num: Optional[int] = None,
+        return_score: bool = False,
     ):
         if return_score:
             all_payloads, all_scores = [], []

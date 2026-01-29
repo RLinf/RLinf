@@ -253,7 +253,6 @@ class RolloutResult:
     # Reference logprobs for comparison
     ref_logprobs: Optional[torch.Tensor] = None
 
-
     @property
     def batch_size(self):
         return self.num_sequence // self.group_size

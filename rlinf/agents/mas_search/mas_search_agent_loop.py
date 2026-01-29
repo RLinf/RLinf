@@ -130,7 +130,6 @@ class MasSearchAgentLoopWorker(MultiTurnAgentLoopWorker):
 
         return content, function_calls
 
-
     async def run_one_query(self, prompt_ids: list[int], *, answer) -> AgentLoopOutput:
         # origin_question = self.tokenizer.decode(prompt_ids)
         output_buffer = []
@@ -198,7 +197,7 @@ class MasSearchAgentLoopWorker(MultiTurnAgentLoopWorker):
                 len(prompt_ids) - len(orig_prompt_ids)
             )
             if len(tool_response_ids) > max_tool_resp_len:
-                task_failed = True
+                # task_failed = True
                 break
             prompt_ids += tool_response_ids
             all_response_ids.extend(tool_response_ids)
