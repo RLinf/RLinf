@@ -30,9 +30,6 @@ def get_tool_schemas():
     """
     Load tool schemas from a configuration file.
 
-    Args:
-        tools_config_file: Path to the tools configuration file.
-
     Returns:
         List[Dict[str, Any]]: List of tool schema dictionaries.
     """
