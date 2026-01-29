@@ -244,6 +244,17 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
 
    <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/rstar2-RLinf-7b.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/rstar2.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>rStar2强化学习</b>
+         </a><br>
+         训练LLM调用代码执行工具回答问题
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/coding_online_rl_offline_numbers.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -262,15 +273,6 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
           <b>Search-R1强化学习</b>
          </a><br>
          训练LLM调用搜索工具回答问题，RLinf加速训练过程55%
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/waiting_icon.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[适配中]rStar2-agent强化学习</b><br>
-         支持各组件所用资源量的灵活配置与调度
        </p>
      </div>
 
@@ -336,3 +338,4 @@ RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训
    reasoning
    coding_online_rl
    searchr1
+   rstar2

@@ -22,6 +22,7 @@ from transformers import AutoTokenizer
 
 from rlinf.data.datasets.item import DatasetItem
 from rlinf.data.datasets.math import MathDataset
+from rlinf.data.datasets.rstar2 import Rstar2Dataset
 from rlinf.data.datasets.vlm import VLMDatasetRegistry
 
 
@@ -50,6 +51,22 @@ def create_rl_dataset(
         )
 
         val_dataset = MathDataset(
+            data_paths=config.data.val_data_paths,
+            config=config,
+            tokenizer=tokenizer,
+        )
+
+        return train_dataset, val_dataset
+    if config.data.type == "rstar2":
+        logging.info(f"Using dataset class: {Rstar2Dataset.__name__}")
+
+        train_dataset = Rstar2Dataset(
+            data_paths=config.data.train_data_paths,
+            config=config,
+            tokenizer=tokenizer,
+        )
+
+        val_dataset = Rstar2Dataset(
             data_paths=config.data.val_data_paths,
             config=config,
             tokenizer=tokenizer,
