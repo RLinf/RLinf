@@ -245,9 +245,6 @@ class RolloutResult:
     # Reference logprobs for comparison
     ref_logprobs: Optional[torch.Tensor] = None
 
-    # evaluation
-    trace_info: Optional[Any] = None
-    origin_question: Optional[str] = None
 
     @property
     def batch_size(self):
@@ -1537,7 +1534,6 @@ class DynamicRolloutResult:
 
         split_results: list[DynamicRolloutResult] = []
         start_idx = 0
-        # group_size = rollout_result.group_size
 
         for split_size in num_sequence_per_group:
             end_idx = start_idx + split_size
