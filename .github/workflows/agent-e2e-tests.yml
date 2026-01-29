@@ -274,7 +274,7 @@ jobs:
           source .venv/bin/activate
           redis-server --daemonize yes --protected-mode no --bind 0.0.0.0
           tmux new-session -d -s server \
-          'source $VENV_PATH/bin/activate && \
+          'source .venv/bin/activate && \
             cd code-judge && \
             MAX_EXECUTION_TIME=4 \
             REDIS_URI="redis://$MASTER_ADDR:6379" \
@@ -282,7 +282,7 @@ jobs:
             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 16 \
             2>&1 | tee server.log' 
             tmux new-session -d -s worker \
-          'source $VENV_PATH/bin/activate && \
+          'source .venv/bin/activate && \
             cd code-judge && \
             MAX_EXECUTION_TIME=4 \
             REDIS_URI="redis://$MASTER_ADDR:6379" \
