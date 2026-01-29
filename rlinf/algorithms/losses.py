@@ -90,6 +90,9 @@ def compute_ppo_actor_loss(
     else:
         dual_clip_mask = torch.zeros_like(clip_mask)
 
+    metric_policy_loss_abs = loss_agg_func(
+        policy_loss.abs(), loss_mask, loss_mask_ratio
+    )
     policy_loss = loss_agg_func(
         policy_loss, loss_mask, loss_mask_ratio
     )  # default max_episode_steps is None
@@ -106,10 +109,11 @@ def compute_ppo_actor_loss(
         policy_loss = torch.tensor(0.0, device=policy_loss.device)
 
     # Compile metrics for logging
+    loss_mask_for_metrics = loss_mask
     ratio_for_metrics = ratio.detach()
+    ratio_abs_for_metrics = (ratio - 1).abs().detach()
     clipped_ratio_for_metrics = clipped_ratio.detach()
     dual_cliped_ratio_for_metrics = dual_cliped_ratio.detach()
-    loss_mask_for_metrics = loss_mask
 
     # Only broadcast when ratio has action_dim dimension and loss_mask's last dim is 1
     # This handles token_level mode: ratio [bsz, num_chunks, action_dim], loss_mask [bsz, num_chunks, 1]
@@ -119,7 +123,9 @@ def compute_ppo_actor_loss(
 
     metrics_data = {
         "actor/policy_loss": policy_loss.detach(),
+        "actor/policy_loss_abs": metric_policy_loss_abs.detach(),
         "actor/ratio": masked_mean(ratio_for_metrics, loss_mask_for_metrics),
+        "actor/ratio_abs": masked_mean(ratio_abs_for_metrics, loss_mask_for_metrics),
         "actor/clipped_ratio": masked_mean(
             clipped_ratio_for_metrics, loss_mask_for_metrics
         ),

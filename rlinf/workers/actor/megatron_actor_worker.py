@@ -537,15 +537,12 @@ class MegatronActor(MegatronModelManager, Worker):
                     loss = loss + kl_loss * self.kl_beta
 
                 # Logging and early stopping according to KL (logp vs ref) or importance ratio (new logp vs old logp).
-                _imp = metrics_data["actor/ratio"]
+                _imp: torch.Tensor = metrics_data["actor/ratio"].clone()
                 torch.distributed.all_reduce(
-                    _imp, group=parallel_state.get_data_parallel_group()
+                    _imp,
+                    torch.distributed.ReduceOp.AVG,
+                    group=parallel_state.get_data_parallel_group(),
                 )
-                _n_valid_tokens = mask.count_nonzero().clone()
-                torch.distributed.all_reduce(
-                    _n_valid_tokens, group=parallel_state.get_data_parallel_group()
-                )
-                _imp /= _n_valid_tokens
 
                 # Early stopping.
                 if (
