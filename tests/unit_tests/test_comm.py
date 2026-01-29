@@ -23,7 +23,9 @@ from rlinf.scheduler import (
     Cluster,
     CollectiveGroupOptions,
     NodePlacementStrategy,
+    PackedPlacementStrategy,
     Worker,
+    WorkerAddress,
 )
 
 SENDER_GROUP_NAME = "sender_worker_group"
@@ -355,6 +357,104 @@ class ReceiverWorker(Worker):
         assert torch.cuda.memory_allocated() == 0
 
 
+class CommCollectiveWorker(Worker):
+    """Worker for collective communication tests."""
+
+    def __init__(self):
+        super().__init__()
+        if torch.cuda.is_available():
+            torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+
+    def _broadcast_data(self, data, async_op):
+        if torch.cuda.is_available():
+            torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+        groups = [(self._group_name, list(range(self._world_size)))]
+        payload = data if self._rank == 0 else None
+        result = self.broadcast(payload, groups=groups, async_op=async_op)
+        if async_op:
+            return result.wait()
+        return result
+
+    def test_broadcast_object(self, async_op=False):
+        payload = {"message": "Hello from rank 0", "rank": 0}
+        return self._broadcast_data(payload, async_op)
+
+    def test_broadcast_tensor(self, on_cpu, async_op=False):
+        device = "cpu" if on_cpu else get_device()
+        payload = torch.ones(2, 2, device=device) * 7
+        return self._broadcast_data(payload, async_op)
+
+    def test_broadcast_tensor_list(self, on_cpu, async_op=False):
+        device = "cpu" if on_cpu else get_device()
+        payload = [torch.ones(2, 2, device=device) * i for i in range(4)]
+        return self._broadcast_data(payload, async_op)
+
+    def test_broadcast_tensor_dict(self, on_cpu, async_op=False):
+        device = "cpu" if on_cpu else get_device()
+        payload = {f"t{i}": torch.ones(2, 2, device=device) * i for i in range(4)}
+        return self._broadcast_data(payload, async_op)
+
+    def test_broadcast_tensor_asyncio(self, on_cpu):
+        async def _broadcast():
+            if torch.cuda.is_available():
+                torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+            device = "cpu" if on_cpu else get_device()
+            groups = [(self._group_name, list(range(self._world_size)))]
+            payload = torch.ones(3, 3, device=device) * 5
+            result = self.broadcast(
+                payload if self._rank == 0 else None, groups=groups, async_op=True
+            )
+            await result.async_wait()
+            return result.wait()
+
+        return asyncio.run(_broadcast())
+
+    def test_cross_group_broadcast_tensor_asyncio(self, groups, on_cpu):
+        async def _broadcast():
+            if torch.cuda.is_available():
+                torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+            device = "cpu" if on_cpu else get_device()
+            src_group_name, src_ranks = groups[0]
+            if isinstance(src_ranks, list):
+                src_rank = src_ranks[0]
+            else:
+                src_rank = src_ranks
+            is_src = self._worker_address == WorkerAddress(
+                src_group_name, ranks=src_rank
+            )
+            payload = torch.ones(3, 3, device=device) * 9
+            result = self.broadcast(
+                payload if is_src else None, groups=groups, async_op=True
+            )
+            await result.async_wait()
+            return result.wait()
+
+        return asyncio.run(_broadcast())
+
+    def _cross_group_broadcast(self, groups, payload, async_op):
+        src_group_name, src_ranks = groups[0]
+        if isinstance(src_ranks, list):
+            src_rank = src_ranks[0]
+        else:
+            src_rank = src_ranks
+        is_src = self._worker_address == WorkerAddress(src_group_name, ranks=src_rank)
+        result = self.broadcast(
+            payload if is_src else None, groups=groups, async_op=async_op
+        )
+        if async_op:
+            return result.wait()
+        return result
+
+    def test_cross_group_broadcast_object(self, groups, async_op=False):
+        payload = {"message": "Hello from cross-group src", "rank": 0}
+        return self._cross_group_broadcast(groups, payload, async_op)
+
+    def test_cross_group_broadcast_tensor(self, groups, on_cpu, async_op=False):
+        device = "cpu" if on_cpu else get_device()
+        payload = torch.ones(2, 2, device=device) * 11
+        return self._cross_group_broadcast(groups, payload, async_op)
+
+
 # --- Pytest Setup ---
 
 
@@ -384,6 +484,52 @@ def worker_groups(cluster: Cluster):
         )
     yield sender_group, receiver_group
     # No explicit cleanup needed, Ray handles actor termination on shutdown.
+
+
+@pytest.fixture(scope="class")
+def collective_group(cluster: Cluster):
+    """Creates and yields the collective worker group."""
+    if cluster.num_accelerators > 0:
+        group = CommCollectiveWorker.create_group().launch(
+            cluster=cluster, name="collective_group"
+        )
+    else:
+        placement = NodePlacementStrategy([0] * 8)
+        group = CommCollectiveWorker.create_group().launch(
+            cluster=cluster, placement_strategy=placement, name="collective_group"
+        )
+    yield group
+
+
+@pytest.fixture(scope="class")
+def cross_collective_groups(cluster: Cluster):
+    """Creates and yields two collective worker groups for cross-group tests."""
+    if torch.cuda.is_available():
+        if cluster.num_accelerators < 2:
+            pytest.skip("Skipping cross-group tests with insufficient accelerators.")
+        if cluster.num_accelerators >= 4:
+            group_a_size = 2
+            group_b_size = 2
+        else:
+            group_a_size = 1
+            group_b_size = 1
+        placement_a = PackedPlacementStrategy(0, group_a_size - 1)
+        placement_b = PackedPlacementStrategy(
+            group_a_size, group_a_size + group_b_size - 1
+        )
+    else:
+        group_a_size = 2
+        group_b_size = 2
+        placement_a = NodePlacementStrategy([0] * group_a_size)
+        placement_b = NodePlacementStrategy([0] * group_b_size)
+
+    group_a = CommCollectiveWorker.create_group().launch(
+        cluster=cluster, placement_strategy=placement_a, name="collective_group_a"
+    )
+    group_b = CommCollectiveWorker.create_group().launch(
+        cluster=cluster, placement_strategy=placement_b, name="collective_group_b"
+    )
+    yield group_a, group_b, group_a_size, group_b_size
 
 
 # --- Test Class ---
@@ -556,6 +702,125 @@ class TestCommunication:
             "test_memory_leak",
             "test_memory_leak",
         )
+
+
+@pytest.mark.usefixtures("collective_group")
+class TestCollective:
+    """A suite of tests for collective communication APIs."""
+
+    def _run_collective_test(self, collective_group, method, *args):
+        results = getattr(collective_group, method)(*args).wait()
+        return results
+
+    @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
+    def test_broadcast_object(self, collective_group, async_op):
+        results = self._run_collective_test(
+            collective_group, "test_broadcast_object", async_op
+        )
+        for res in results:
+            assert res == {"message": "Hello from rank 0", "rank": 0}
+
+    @pytest.mark.parametrize("on_cpu", [True, False], ids=["cpu", "cuda"])
+    @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
+    def test_broadcast_tensor(self, collective_group, on_cpu, async_op):
+        if not on_cpu and not torch.cuda.is_available():
+            pytest.skip("Skipping CUDA test on CPU-only environment.")
+        results = self._run_collective_test(
+            collective_group, "test_broadcast_tensor", on_cpu, async_op
+        )
+        expected = torch.ones(2, 2) * 7
+        for res in results:
+            assert torch.equal(res.cpu(), expected)
+
+    @pytest.mark.parametrize("on_cpu", [True, False], ids=["cpu", "cuda"])
+    @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
+    def test_broadcast_tensor_list(self, collective_group, on_cpu, async_op):
+        if not on_cpu and not torch.cuda.is_available():
+            pytest.skip("Skipping CUDA test on CPU-only environment.")
+        results = self._run_collective_test(
+            collective_group, "test_broadcast_tensor_list", on_cpu, async_op
+        )
+        for res_list in results:
+            assert isinstance(res_list, list)
+            for i, tensor in enumerate(res_list):
+                expected = torch.ones(2, 2) * i
+                assert torch.equal(tensor.cpu(), expected)
+
+    @pytest.mark.parametrize("on_cpu", [True, False], ids=["cpu", "cuda"])
+    @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
+    def test_broadcast_tensor_dict(self, collective_group, on_cpu, async_op):
+        if not on_cpu and not torch.cuda.is_available():
+            pytest.skip("Skipping CUDA test on CPU-only environment.")
+        results = self._run_collective_test(
+            collective_group, "test_broadcast_tensor_dict", on_cpu, async_op
+        )
+        for res_dict in results:
+            assert isinstance(res_dict, dict)
+            for i, key in enumerate(sorted(res_dict.keys())):
+                assert key == f"t{i}"
+                expected = torch.ones(2, 2) * i
+                assert torch.equal(res_dict[key].cpu(), expected)
+
+    @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
+    def test_cross_group_broadcast_object(self, cross_collective_groups, async_op):
+        group_a, group_b, group_a_size, group_b_size = cross_collective_groups
+        groups = [
+            ("collective_group_a", list(range(group_a_size))),
+            ("collective_group_b", list(range(group_b_size))),
+        ]
+        handle_a = group_a.test_cross_group_broadcast_object(groups, async_op)
+        handle_b = group_b.test_cross_group_broadcast_object(groups, async_op)
+        results = handle_a.wait() + handle_b.wait()
+        for res in results:
+            assert res == {"message": "Hello from cross-group src", "rank": 0}
+
+    @pytest.mark.parametrize("on_cpu", [True, False], ids=["cpu", "cuda"])
+    @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
+    def test_cross_group_broadcast_tensor(
+        self, cross_collective_groups, on_cpu, async_op
+    ):
+        if not on_cpu and not torch.cuda.is_available():
+            pytest.skip("Skipping CUDA test on CPU-only environment.")
+        group_a, group_b, group_a_size, group_b_size = cross_collective_groups
+        groups = [
+            ("collective_group_a", list(range(group_a_size))),
+            ("collective_group_b", list(range(group_b_size))),
+        ]
+        handle_a = group_a.test_cross_group_broadcast_tensor(groups, on_cpu, async_op)
+        handle_b = group_b.test_cross_group_broadcast_tensor(groups, on_cpu, async_op)
+        results = handle_a.wait() + handle_b.wait()
+        expected = torch.ones(2, 2) * 11
+        for res in results:
+            assert torch.equal(res.cpu(), expected)
+
+    @pytest.mark.parametrize("on_cpu", [True, False], ids=["cpu", "cuda"])
+    def test_collective_asyncio_broadcast(self, collective_group, on_cpu):
+        if not on_cpu and not torch.cuda.is_available():
+            pytest.skip("Skipping CUDA test on CPU-only environment.")
+        results = self._run_collective_test(
+            collective_group, "test_broadcast_tensor_asyncio", on_cpu
+        )
+        expected = torch.ones(3, 3) * 5
+        for res in results:
+            assert torch.equal(res.cpu(), expected)
+
+    @pytest.mark.parametrize("on_cpu", [True, False], ids=["cpu", "cuda"])
+    def test_collective_asyncio_cross_group_broadcast(
+        self, cross_collective_groups, on_cpu
+    ):
+        if not on_cpu and not torch.cuda.is_available():
+            pytest.skip("Skipping CUDA test on CPU-only environment.")
+        group_a, group_b, group_a_size, group_b_size = cross_collective_groups
+        groups = [
+            ("collective_group_a", list(range(group_a_size))),
+            ("collective_group_b", list(range(group_b_size))),
+        ]
+        handle_a = group_a.test_cross_group_broadcast_tensor_asyncio(groups, on_cpu)
+        handle_b = group_b.test_cross_group_broadcast_tensor_asyncio(groups, on_cpu)
+        results = handle_a.wait() + handle_b.wait()
+        expected = torch.ones(3, 3) * 9
+        for res in results:
+            assert torch.equal(res.cpu(), expected)
 
 
 if __name__ == "__main__":

@@ -305,10 +305,16 @@ class MegatronActor(MegatronModelManager, Worker):
             else:
                 result = None
             result = self.broadcast(
-                result, ranks=parallel_state._MODEL_PARALLEL_GLOBAL_RANKS
+                result,
+                groups=[
+                    (self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)
+                ],
             )
             result = self.broadcast(
-                result, ranks=parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS
+                result,
+                groups=[
+                    (self._group_name, parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS)
+                ],
             )
 
         batch = result.to_actor_batch(
@@ -384,10 +390,12 @@ class MegatronActor(MegatronModelManager, Worker):
         if not self.is_data_io_rank:
             result_len = None
         result_len = self.broadcast(
-            result_len, ranks=parallel_state._MODEL_PARALLEL_GLOBAL_RANKS
+            result_len,
+            groups=[(self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)],
         )
         result_len = self.broadcast(
-            result_len, ranks=parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS
+            result_len,
+            groups=[(self._group_name, parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS)],
         )
         if self.is_data_io_rank:
             cliped_results = list(rollout_results[result_len:])
@@ -397,10 +405,16 @@ class MegatronActor(MegatronModelManager, Worker):
         for i in range(result_len):
             rollout_result = rollout_results[i]
             rollout_result = self.broadcast(
-                rollout_result, ranks=parallel_state._MODEL_PARALLEL_GLOBAL_RANKS
+                rollout_result,
+                groups=[
+                    (self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)
+                ],
             )
             rollout_result = self.broadcast(
-                rollout_result, ranks=parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS
+                rollout_result,
+                groups=[
+                    (self._group_name, parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS)
+                ],
             )
             rollout_results[i] = rollout_result
 
@@ -988,7 +1002,10 @@ class MegatronActor(MegatronModelManager, Worker):
             return
         assert not self.is_weight_offloaded
         self.offload_model_weights_and_grad(offload_grad=True)
-        self.broadcast(None, ranks=list(range(inference_world_size)))
+        self.broadcast(
+            None,
+            groups=[(self._group_name, list(range(inference_world_size)))],
+        )
         self.is_weight_offloaded = True
         if self._rank == 0:
             self.schedule_channel.put(None, key=self.scheduler_response_queue)

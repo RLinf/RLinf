@@ -94,6 +94,12 @@ class MultiChannelProcessGroup:
         self._recv_gloo_process_groups: list[dist.ProcessGroup] = [
             None for _ in range(num_channels)
         ]
+        self._collective_accel_ccl_process_groups: list[dist.ProcessGroup] = [
+            None for _ in range(num_channels)
+        ]
+        self._collective_gloo_process_groups: list[dist.ProcessGroup] = [
+            None for _ in range(num_channels)
+        ]
 
     @property
     def is_initialized(self) -> bool:
@@ -192,6 +198,26 @@ class MultiChannelProcessGroup:
                         timeout=timeout,
                     )
                 )
+
+                self._collective_accel_ccl_process_groups[i] = (
+                    MultiChannelProcessGroup._split_process_group(
+                        base_group=base_group,
+                        backend=self._accel_ccl_backend,
+                        group_name=group_name
+                        + f"{self._accel_ccl_backend}_collective_{i}",
+                        timeout=timeout,
+                        pg_options=pg_options,
+                    )
+                )
+
+                self._collective_gloo_process_groups[i] = (
+                    MultiChannelProcessGroup._split_process_group(
+                        base_group=base_group,
+                        backend="gloo",
+                        group_name=group_name + f"gloo_collective_{i}",
+                        timeout=timeout,
+                    )
+                )
         else:
             # Create only GLOO groups when accelerator CCL is not available
             # GLOO does not support splitting, only reuse its store
@@ -228,6 +254,17 @@ class MultiChannelProcessGroup:
                         rank=rank,
                         store=base_store,
                         group_name=group_name + f"gloo_recv_{i}",
+                        timeout=timeout,
+                    )
+                )
+
+                self._collective_gloo_process_groups[i] = (
+                    MultiChannelProcessGroup._create_process_group(
+                        backend="gloo",
+                        world_size=world_size,
+                        rank=rank,
+                        store=base_store,
+                        group_name=group_name + f"gloo_collective_{i}",
                         timeout=timeout,
                     )
                 )
@@ -315,6 +352,35 @@ class MultiChannelProcessGroup:
             async_op=async_op,
         )
 
+        if async_op:
+            return AsyncCollWork(work)
+
+    def broadcast(
+        self,
+        tensor: torch.Tensor,
+        device: str,
+        channel_id: int,
+        src: int,
+        async_op: bool = False,
+    ) -> Optional[AsyncWork]:
+        """Broadcast a tensor to all ranks in the group."""
+        if not self._is_initialized:
+            raise RuntimeError("MultiChannelProcessGroup is not initialized")
+        if channel_id < 0 or channel_id >= self._num_channels:
+            raise ValueError(
+                f"Invalid channel_id: {channel_id}. Must be in range [0, {self._num_channels - 1}]"
+            )
+        if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
+            raise RuntimeError(
+                f"Collective group {self._group_name} does not support accelerator CCL backend, possibly because (1) the workers in the group have different accelerator types: {[worker.accelerator_type for worker in self._group_info.workers]}, (2) the workers are CPU-only, or (3) the accelerator CCL is not among the supported CCL: {AcceleratorUtil.CCL_SUPPORT_LIST}."
+            )
+
+        group = (
+            self._collective_accel_ccl_process_groups[channel_id]
+            if device == CollectiveGroup.ACCEL
+            else self._collective_gloo_process_groups[channel_id]
+        )
+        work = self._broadcast(tensor, src=src, group=group, async_op=async_op)
         if async_op:
             return AsyncCollWork(work)
 

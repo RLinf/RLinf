@@ -753,23 +753,76 @@ class Worker(metaclass=WorkerMeta):
 
         return Channel.connect(name=channel_name, current_worker=self)
 
-    def broadcast(self, object: Optional[Any], ranks: list[int]):
-        """Broadcast an object inside the current worker group.
+    def broadcast(
+        self,
+        object: Optional[Any] = None,
+        groups: Optional[list[tuple[str, list[int] | int]]] = None,
+        async_op: bool = False,
+        options: Optional["CollectiveGroupOptions"] = None,
+    ):
+        """Broadcast an object across workers in one or more groups.
+
+        The source is the first worker address in the expanded group list.
+        The index in the expanded list is the rank in the communication group.
+        All participating workers must call this method with identical arguments.
 
         Args:
-            object (Any): The object to broadcast. For non-src ranks, this is None.
-            ranks (List[int]): The ranks of the workers to broadcast the object to. The first in the list is the source.
+            object (Any): The object to broadcast on the source worker. For non-src
+                ranks, this is typically None.
+            groups: The participating groups with ranks. Each element must be a
+                (group_name, ranks) tuple where ranks is either a single int or a
+                list of ints.
+            async_op (bool): Whether to perform the operation asynchronously.
+            options (Optional[CollectiveGroupOptions]): The options for the collective group.
+
+        Returns:
+            AsyncWork | Any: An AsyncWork object if async_op is True, otherwise the
+            broadcast object.
         """
-        if not ranks:
+        if groups is None:
+            raise ValueError("groups must be provided with explicit ranks.")
+        if not isinstance(groups, list):
+            raise TypeError("groups must be a list of (group_name, rank) tuples.")
+        if len(groups) == 0:
+            raise ValueError("groups must contain at least one entry.")
+
+        worker_addresses: list[WorkerAddress] = []
+        for entry in groups:
+            if not isinstance(entry, tuple) or len(entry) != 2:
+                raise TypeError(
+                    "Each groups entry must be a (group_name, ranks) tuple."
+                )
+            group_name, ranks = entry
+            if not isinstance(group_name, str):
+                raise TypeError("group_name must be a string.")
+            if isinstance(ranks, list):
+                if len(ranks) == 0:
+                    raise ValueError("ranks list must not be empty.")
+                if not all(isinstance(rank, int) for rank in ranks):
+                    raise TypeError("All ranks must be integers.")
+                for rank in ranks:
+                    worker_addresses.append(WorkerAddress(group_name, ranks=rank))
+            elif isinstance(ranks, int):
+                worker_addresses.append(WorkerAddress(group_name, ranks=ranks))
+            else:
+                raise TypeError("ranks must be an int or list[int].")
+
+        if not worker_addresses:
             return object
 
-        src_rank = ranks[0]
-        if self._rank == src_rank:
-            for rank in ranks[1:]:
-                self.send(object, self._group_name, rank)
-        else:
-            object = self.recv(self._group_name, src_rank)
-        return object
+        if self._worker_address not in worker_addresses:
+            raise ValueError(
+                f"Worker {self._worker_address.get_name()} is not part of the broadcast group."
+            )
+
+        with self._lock:
+            group = self._collective.create_collective_group(worker_addresses)
+
+        return group.broadcast(
+            object=object,
+            async_op=async_op,
+            options=options,
+        )
 
     def get_name(self) -> str:
         """Convert the WorkerAddress to a string representation.
