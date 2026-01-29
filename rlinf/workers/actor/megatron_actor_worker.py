@@ -541,7 +541,7 @@ class MegatronActor(MegatronModelManager, Worker):
                     ),
                     clip_log_ratio_max=self.cfg.algorithm.get(
                         "clip_log_ratio_max", None
-                    )
+                    ),
                 )
 
                 entropy_loss = torch.zeros(1, device=loss.device)
