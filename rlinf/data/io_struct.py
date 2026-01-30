@@ -999,24 +999,6 @@ class DynamicRolloutResult:
     rewards: Optional[torch.Tensor | list[float]] = None
     advantages: Optional[torch.Tensor] = None
 
-    # Tool call counts per turn (size: num_sequence)
-    turn_subtask_counts: Optional[list[int]] = None
-    turn_search_counts: Optional[list[int]] = None
-    turn_access_counts: Optional[list[int]] = None
-
-    # Number of valid turns (turns with actual tool calls)
-    num_valid_planner_turns: Optional[int] = None
-    num_valid_worker_turns: Optional[int] = None
-
-    # Evaluation metrics per trajectory (size: group_size)
-    # Each item is a dict with metric_type -> metric_dict mapping
-    eval_metrics: Optional[list[dict[str, Any]]] = None
-
-    # for reject sampling
-    # size of belows are group_size
-    # prompt_texts: Optional[list[str]] = None
-    # response_texts: Optional[list[str]] = None
-    # answers: Optional[list[str | dict]] = None
 
     @staticmethod
     def _get_attention_masks_and_position_ids(
@@ -1163,18 +1145,6 @@ class DynamicRolloutResult:
                     torch.as_tensor(self.rewards, dtype=torch.float).cuda().flatten()
                 )
 
-        # Add tool call metrics fields if available
-        if self.turn_subtask_counts is not None:
-            batch["turn_subtask_counts"] = self.turn_subtask_counts
-        if self.turn_search_counts is not None:
-            batch["turn_search_counts"] = self.turn_search_counts
-        if self.turn_access_counts is not None:
-            batch["turn_access_counts"] = self.turn_access_counts
-        if self.num_valid_planner_turns is not None:
-            batch["num_valid_planner_turns"] = self.num_valid_planner_turns
-        if self.num_valid_worker_turns is not None:
-            batch["num_valid_worker_turns"] = self.num_valid_worker_turns
-
         return batch
 
     def get_batch_pad(seq_length: int) -> dict[str, torch.Tensor]:
@@ -1219,47 +1189,54 @@ class DynamicRolloutResult:
         }
 
     @staticmethod
-    def merge_batches_to_inference(
-        batches: list[dict[str, torch.Tensor]],
-    ) -> dict[str, torch.Tensor]:
-        """Merge two batches into one."""
-        merged_batch = {}
-        if len(batches) == 0:
-            return merged_batch, []
-        if len(batches) == 1:
-            return batches[0], [batches[0]["response_lengths"].shape[0]]
-        num_sequence_per_group = [
-            batch["response_lengths"].shape[0] for batch in batches
-        ]
-        # num_sequence_per_group = []
-        for key in batches[0].keys():
-            if torch.is_tensor(batches[0][key]):
-                merged_batch[key] = torch.cat([batch[key] for batch in batches], dim=0)
-            elif isinstance(batches[0][key], list):
-                merged_batch[key] = []
-                for batch in batches:
-                    merged_batch[key].extend(batch[key])
-            elif isinstance(batches[0][key], (int, float)):
-                # Sum scalar values (e.g., num_valid_planner_turns, num_valid_worker_turns)
-                merged_batch[key] = sum(batch[key] for batch in batches)
-            else:
-                raise ValueError(f"Unsupported batch key type: {type(batches[0][key])}")
-        return merged_batch, num_sequence_per_group
-
-    @staticmethod
     def merge_batches(
         batches: list[dict[str, torch.Tensor]],
-        group_size: int,
-    ) -> dict[str, torch.Tensor]:
-        """Merge two batches into one."""
+        group_size: int | None = None,
+        adjust_traj_indices: bool = True,
+        return_num_sequence_per_group: bool = False,
+    ) -> dict[str, torch.Tensor] | tuple[dict[str, torch.Tensor], list[int]]:
+        """
+        Merge multiple batches into one batch.
+
+        Args:
+            batches: List of batch dictionaries to merge
+            group_size: The group_size for adjusting trajectory indices. 
+                    Required if adjust_traj_indices is True.
+            adjust_traj_indices: If True, adjusts idx_to_traj with trajectory offset (for training).
+                            If False, keeps original indices (for inference).
+            return_num_sequence_per_group: If True, returns tuple (merged_batch, num_sequence_per_group).
+                                        If False, returns only merged_batch.
+
+        Returns:
+            If return_num_sequence_per_group is False: merged_batch
+            If return_num_sequence_per_group is True: (merged_batch, num_sequence_per_group)
+        """
         merged_batch = {}
         if len(batches) == 0:
+            if return_num_sequence_per_group:
+                return merged_batch, []
             return merged_batch
+        
         if len(batches) == 1:
+            if return_num_sequence_per_group:
+                num_sequence_per_group = [batches[0]["response_lengths"].shape[0]]
+                return batches[0], num_sequence_per_group
             return batches[0]
 
+        # Compute num_sequence_per_group if needed
+        num_sequence_per_group = None
+        if return_num_sequence_per_group:
+            num_sequence_per_group = [
+                batch["response_lengths"].shape[0] for batch in batches
+            ]
+
+        # Validate group_size if adjusting indices
+        if adjust_traj_indices and group_size is None:
+            raise ValueError("group_size must be provided when adjust_traj_indices is True")
+
         for key in batches[0].keys():
-            if key == "idx_to_traj":
+            if key == "idx_to_traj" and adjust_traj_indices:
+                # Special handling for idx_to_traj: adjust with trajectory offset
                 merged_batch[key] = []
                 for i, batch in enumerate(batches):
                     merged_batch[key].extend([j + i * group_size for j in batch[key]])
@@ -1274,135 +1251,15 @@ class DynamicRolloutResult:
                 merged_batch[key] = sum(batch[key] for batch in batches)
             else:
                 raise ValueError(f"Unsupported batch key type: {type(batches[0][key])}")
+
+        if return_num_sequence_per_group:
+            return merged_batch, num_sequence_per_group
         return merged_batch
+
 
     @staticmethod
     def merge_result_list(
         rollout_results: list["DynamicRolloutResult"],
-        group_size: int,
-    ) -> "DynamicRolloutResult":
-        """
-        Merge a list of DynamicRolloutResult objects into a single DynamicRolloutResult.
-
-        Args:
-            rollout_results: List of DynamicRolloutResult objects to merge
-            group_size: The group_size for the merged result
-
-        Returns:
-            A single merged DynamicRolloutResult
-        """
-        assert len(rollout_results) > 0, "No rollout results to merge."
-        if len(rollout_results) == 1:
-            return rollout_results[0]
-
-        merged_result = DynamicRolloutResult(
-            num_sequence=sum(res.num_sequence for res in rollout_results),
-            group_size=group_size,
-            idx_to_traj=[],
-            input_ids=[],
-            rollout_logprobs=[],
-            prompt_lengths=[],
-            response_lengths=[],
-            is_end=[],
-        )
-
-        # Track trajectory offset for idx_to_traj adjustment
-        traj_offset = 0
-
-        for res in rollout_results:
-            # Merge required list fields (size: num_sequence)
-            # Adjust idx_to_traj with trajectory offset
-            merged_result.idx_to_traj.extend(
-                [idx + traj_offset for idx in res.idx_to_traj]
-            )
-            merged_result.input_ids.extend(res.input_ids)
-            merged_result.rollout_logprobs.extend(res.rollout_logprobs)
-            merged_result.prompt_lengths.extend(res.prompt_lengths)
-            merged_result.response_lengths.extend(res.response_lengths)
-            merged_result.is_end.extend(res.is_end)
-
-            # Merge optional list fields (size: num_sequence)
-            if res.turn_subtask_counts is not None:
-                merged_result.turn_subtask_counts = merge_list(
-                    merged_result.turn_subtask_counts, res.turn_subtask_counts
-                )
-
-            if res.turn_search_counts is not None:
-                merged_result.turn_search_counts = merge_list(
-                    merged_result.turn_search_counts, res.turn_search_counts
-                )
-
-            if res.turn_access_counts is not None:
-                merged_result.turn_access_counts = merge_list(
-                    merged_result.turn_access_counts, res.turn_access_counts
-                )
-
-            # Merge tensor fields (size: num_sequence)
-            if res.prev_logprobs is not None:
-                merged_result.prev_logprobs = merge_tensor(
-                    merged_result.prev_logprobs, res.prev_logprobs
-                )
-
-            if res.ref_logprobs is not None:
-                merged_result.ref_logprobs = merge_tensor(
-                    merged_result.ref_logprobs, res.ref_logprobs
-                )
-
-            if res.recompute_prev_logprobs is not None:
-                merged_result.recompute_prev_logprobs = merge_tensor(
-                    merged_result.recompute_prev_logprobs, res.recompute_prev_logprobs
-                )
-
-            # Merge tensor/list fields (size: group_size)
-            # Note: rewards and advantages are per trajectory (group_size), not per sequence
-            if res.rewards is not None:
-                if isinstance(res.rewards, list):
-                    merged_result.rewards = merge_list(
-                        merged_result.rewards, res.rewards
-                    )
-                elif isinstance(res.rewards, torch.Tensor):
-                    merged_result.rewards = merge_tensor(
-                        merged_result.rewards, res.rewards
-                    )
-                else:
-                    raise ValueError(f"Wrong type of rewards {type(res.rewards)}")
-
-            if res.advantages is not None:
-                if isinstance(res.advantages, torch.Tensor):
-                    merged_result.advantages = merge_tensor(
-                        merged_result.advantages, res.advantages
-                    )
-                else:
-                    raise ValueError(f"Wrong type of advantages {type(res.advantages)}")
-
-            # Merge eval_metrics (size: group_size)
-            if res.eval_metrics is not None:
-                merged_result.eval_metrics = merge_list(
-                    merged_result.eval_metrics, res.eval_metrics
-                )
-
-            # Merge scalar fields (sum them)
-            if res.num_valid_planner_turns is not None:
-                if merged_result.num_valid_planner_turns is None:
-                    merged_result.num_valid_planner_turns = res.num_valid_planner_turns
-                else:
-                    merged_result.num_valid_planner_turns += res.num_valid_planner_turns
-
-            if res.num_valid_worker_turns is not None:
-                if merged_result.num_valid_worker_turns is None:
-                    merged_result.num_valid_worker_turns = res.num_valid_worker_turns
-                else:
-                    merged_result.num_valid_worker_turns += res.num_valid_worker_turns
-
-            # Update trajectory offset for next iteration
-            # Each result contributes its own group_size trajectories
-            traj_offset += res.group_size
-
-        return merged_result
-
-    @staticmethod
-    def merge_result_list_to_inference(
-        rollout_results: list["DynamicRolloutResult"],
     ) -> "DynamicRolloutResult":
         """
         Merge a list of DynamicRolloutResult objects into a single DynamicRolloutResult.
@@ -1416,6 +1273,7 @@ class DynamicRolloutResult:
         assert len(rollout_results) > 0, "No rollout results to merge."
         if len(rollout_results) == 1:
             return rollout_results[0]
+        
 
         merged_result = DynamicRolloutResult(
             num_sequence=sum(res.num_sequence for res in rollout_results),
@@ -1429,29 +1287,13 @@ class DynamicRolloutResult:
         )
 
         for res in rollout_results:
+            # Merge required list fields (size: num_sequence)
             merged_result.idx_to_traj.extend(res.idx_to_traj)
             merged_result.input_ids.extend(res.input_ids)
             merged_result.rollout_logprobs.extend(res.rollout_logprobs)
             merged_result.prompt_lengths.extend(res.prompt_lengths)
             merged_result.response_lengths.extend(res.response_lengths)
             merged_result.is_end.extend(res.is_end)
-            # merged_result.rewards.extend(res.rewards)
-
-            # Merge optional list fields (size: num_sequence)
-            if res.turn_subtask_counts is not None:
-                merged_result.turn_subtask_counts = merge_list(
-                    merged_result.turn_subtask_counts, res.turn_subtask_counts
-                )
-
-            if res.turn_search_counts is not None:
-                merged_result.turn_search_counts = merge_list(
-                    merged_result.turn_search_counts, res.turn_search_counts
-                )
-
-            if res.turn_access_counts is not None:
-                merged_result.turn_access_counts = merge_list(
-                    merged_result.turn_access_counts, res.turn_access_counts
-                )
 
             # Merge tensor fields (size: num_sequence)
             if res.prev_logprobs is not None:
@@ -1511,6 +1353,7 @@ class DynamicRolloutResult:
                     merged_result.num_valid_worker_turns += res.num_valid_worker_turns
 
         return merged_result
+
 
     @staticmethod
     def split_results(
@@ -1545,23 +1388,6 @@ class DynamicRolloutResult:
             split_is_end = rollout_result.is_end[start_idx:end_idx]
             split_rewards = rollout_result.rewards[start_idx:end_idx]
 
-            split_turn_subtask_counts = None
-            if rollout_result.turn_subtask_counts is not None:
-                split_turn_subtask_counts = rollout_result.turn_subtask_counts[
-                    start_idx:end_idx
-                ]
-
-            split_turn_search_counts = None
-            if rollout_result.turn_search_counts is not None:
-                split_turn_search_counts = rollout_result.turn_search_counts[
-                    start_idx:end_idx
-                ]
-
-            split_turn_access_counts = None
-            if rollout_result.turn_access_counts is not None:
-                split_turn_access_counts = rollout_result.turn_access_counts[
-                    start_idx:end_idx
-                ]
 
             split_prev_logprobs = None
             if rollout_result.prev_logprobs is not None:
@@ -1591,11 +1417,6 @@ class DynamicRolloutResult:
                 response_lengths=split_response_lengths,
                 is_end=split_is_end,
                 rewards=split_rewards,
-                turn_subtask_counts=split_turn_subtask_counts,
-                turn_search_counts=split_turn_search_counts,
-                turn_access_counts=split_turn_access_counts,
-                num_valid_planner_turns=rollout_result.num_valid_planner_turns,
-                num_valid_worker_turns=rollout_result.num_valid_worker_turns,
             )
 
             split_results.append(split_result)

@@ -56,7 +56,6 @@ from rlinf.utils.utils import (
 )
 from rlinf.workers.actor.megatron_actor_worker import (
     MegatronActor,
-    metrics_process_microbatch,
 )
 from rlinf.workers.rollout.utils import CollocateRankMapper, DisaggRankMapper
 
@@ -297,8 +296,12 @@ class MAMegatronActor(MegatronActor):
                 )
                 token_num_local = token_num_local.item()
                 token_num_global = token_num_global.item()
-                metrics_data = metrics_process_microbatch(
-                    self.metrics_processors, metrics_data, rank=self._rank
+                metrics_data.update(
+                    {
+                        "final_loss": loss.detach(),
+                        "entropy_loss": entropy_loss.detach(),
+                        "kl_loss": kl_loss.detach(),
+                    }
                 )
                 return loss, metrics_data
 
@@ -697,11 +700,12 @@ class MAMegatronActor(MegatronActor):
             batches.append(batch)
             rollout_results.append(rollout_result)
         merged_batch, num_sequence_per_group = (
-            DynamicRolloutResult.merge_batches_to_inference(batches)
+            DynamicRolloutResult.merge_batches(batches,adjust_traj_indices=False,return_num_sequence_per_group=True)
         )
 
-        rollout_result = DynamicRolloutResult.merge_result_list_to_inference(
-            rollout_results
+        rollout_result = DynamicRolloutResult.merge_result_list(
+            rollout_results,
+            group_size=self.cfg.algorithm.group_size,
         )
 
         self._load_weight_and_optimizer()
