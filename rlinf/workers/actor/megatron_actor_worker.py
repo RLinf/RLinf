@@ -258,6 +258,7 @@ class MegatronActor(MegatronModelManager, Worker):
         if self.use_profiler:
             self.init_profiler()
 
+        self._init_auto_scheduler(role)
         self.metrics_processors = {
             "actor/token_num": "token:sum",
             "actor/approx_kl": "token:mean",

@@ -181,8 +181,7 @@ actor:
   seed: 1234
 
   model:
-    # megatron_checkpoint: /mnt/project_rlinf/liyanghao/mas-search/results/01-16-mas-search-inference/converted_ckpts/actor
-    megatron_checkpoint: /path/to/actor/checkpoint
+    megatron_checkpoint: null
     precision: fp16
     add_bias_linear: False
 
@@ -257,8 +256,7 @@ actor:
     use_dist_ckpt: False
     tp_comm_bootstrap_backend: nccl
     tp_comm_overlap_cfg: null # tp_comm_overlap_cfg.yaml
-    # use_hf_ckpt: False # if true, will transfer hf model to generate megatron checkpoint and use it for training.
-    use_hf_ckpt: False
+    use_hf_ckpt: True # if true, will transfer hf model to generate megatron checkpoint and use it for training.
     use_profiler: False # if true, will enable torch profiler when training, pay attention it has influence on performance
 
     ckpt_convertor: # config for ckpt convertor

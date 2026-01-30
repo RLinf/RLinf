@@ -112,7 +112,6 @@ class Scheduler(_Scheduler):
         )
         model = self.tp_worker.worker.model_runner.model
         colocate = self.placement_mode == PlacementMode.COLLOCATED
-
         batch_weight = []
         if colocate:
             for name, handle in state_dict.items():
