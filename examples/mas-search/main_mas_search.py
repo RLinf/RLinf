@@ -88,14 +88,6 @@ def main(cfg) -> None:
             placement_strategy=inference_placement_strategy,
         )
 
-    # # Reward group
-    # reward_placement_strategy = component_placement.get_strategy("reward")
-    # reward_group = RewardWorker.create_group(cfg, component_placement).launch(
-    #     cluster,
-    #     name=cfg.reward.group_name,
-    #     placement_strategy=reward_placement_strategy,
-    # )
-
     # GRPO Actor group
     actor_placement_strategy = component_placement.get_strategy("actor")
     actor_group = MAMegatronActor.create_group(cfg, component_placement).launch(

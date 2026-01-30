@@ -58,15 +58,7 @@ class MasSearchAgentLoopWorker(MultiTurnAgentLoopWorker):
 
         # Max turns for multi-turn interaction
         self.max_turns = self.cfg.agentloop.get("max_turns", 5)
-
-        # self.return_logprobs = not cfg.algorithm.recompute_logprobs
-        self.return_logprobs = True
-
-        # Inserting tool info requires re-encode token_ids, so the recompute_logprobs must be true.
-        # if self.cfg.runner.task_type != "reasoning_eval":
-        #     assert self.cfg.algorithm.recompute_logprobs, (
-        #         "mas-search must use recompute_logprobs"
-        #     )
+        self.return_logprobs = not cfg.algorithm.recompute_logprobs
 
     async def state_less_tool_call_with_channel(
         self,
@@ -131,7 +123,6 @@ class MasSearchAgentLoopWorker(MultiTurnAgentLoopWorker):
         return content, function_calls
 
     async def run_one_query(self, prompt_ids: list[int], *, answer) -> AgentLoopOutput:
-        # origin_question = self.tokenizer.decode(prompt_ids)
         output_buffer = []
         orig_prompt_ids = copy.deepcopy(prompt_ids)
         trace_prints = []

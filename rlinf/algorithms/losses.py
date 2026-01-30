@@ -85,7 +85,7 @@ def compute_ppo_actor_loss(
     assert advantages.dtype == torch.float32
 
     loss_mask_count = loss_mask.count_nonzero() or 1
-
+    # For numerical stability.
     ratio = torch.where(loss_mask, torch.exp(logprobs - old_logprobs), 0)
     approx_kl = torch.where(loss_mask, (logprobs - old_logprobs).detach(), 0.0)
 
