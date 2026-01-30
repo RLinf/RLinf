@@ -143,17 +143,27 @@ Below shows the comparison of reward curves and response length curves between R
 
    Qwen2.5-7B-Instruct in Verl
 
-We also evlaluated the trained models on the validation set, and the results are as follows:
+\* We retrain the model using the default settings for steps.
 
-.. table:: Validation Results
+.. list-table:: **7 B model results**
+   :header-rows: 1
+   :widths: 35 15 15 15 20
 
-   +--------+----------+----------+---------+
-   |        | aime2024 | aime2025 | math500 |
-   +========+==========+==========+=========+
-   | Rlinf  | 33.65    | 24.11    | 79.60   |
-   +--------+----------+----------+---------+
-   | Verl   | 31.77    | 25.94    | 76.20   |
-   +--------+----------+----------+---------+
+   * - Engine
+     - AIME 24
+     - AIME 25
+     - Math 500
+     - Average
+   * - `RLinf <https://github.com/RLinf/RLinf>`_
+     - **33.65**
+     - 24.11
+     - **79.60**
+     - **45.79**
+   * - `Verl <https://github.com/volcengine/verl>`_
+     - 31.77
+     - **25.94**
+     - 76.20
+     - 44.64
 
 
 References

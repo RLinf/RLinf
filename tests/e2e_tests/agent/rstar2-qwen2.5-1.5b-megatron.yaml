@@ -20,22 +20,22 @@ runner:
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1
-  max_steps: 3
+  max_steps: 2
 
   val_check_interval: 1
   save_interval: -1
 
-  seq_length: 2048
+  seq_length: 10240
 
   enable_dynamic_batch_size: True
-  max_tokens_per_mbs: 2048
+  max_tokens_per_mbs: 10240
 
   resume_dir: null
   experiment_name: rstar2-grpo-1.5b
   output_dir: ../results
 
 algorithm:
-  group_size: 8
+  group_size: 32
 
   n_minibatches: 1
   training_batch_size_per_gpu: 1 # micro batch size
@@ -89,7 +89,7 @@ algorithm:
       roc_answer_format: true
       min_zero_reward_trace_num: 2
       min_non_zero_reward_trace_num: 2
-      down_sample_to_n: 4
+      down_sample_to_n: 16
 
 inference:
   model_type: ${rollout.model.model_type}
@@ -160,9 +160,9 @@ rollout:
 
 data:
   type: rstar2
-  max_prompt_length: 1024
+  max_prompt_length: 2048
   filter_prompt_by_length: True
-  rollout_batch_size: 8
+  rollout_batch_size: 32
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: prompt
