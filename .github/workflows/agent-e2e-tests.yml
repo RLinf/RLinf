@@ -254,6 +254,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: 0xWJ/code-judge
+          ref: fbc5293afa4fa0965418ed5b0d3979fe1d815a49
           path: code-judge
 
       - name: Install dependencies
