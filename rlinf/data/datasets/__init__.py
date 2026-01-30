@@ -21,6 +21,7 @@ from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
 from rlinf.data.datasets.item import DatasetItem
+from rlinf.data.datasets.mas import MASDataset
 from rlinf.data.datasets.math import MathDataset
 from rlinf.data.datasets.vlm import VLMDatasetRegistry
 
@@ -82,7 +83,6 @@ def create_rl_dataset(
         raise NotImplementedError(
             f"Unsupported dataset type {config.data.type}, only support ['math', 'vision_language', 'robot_demo']"
         )
-
 
 def collate_fn(data_list: list["DatasetItem"]) -> dict[str, Any]:
     """
