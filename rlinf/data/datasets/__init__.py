@@ -27,7 +27,7 @@ from rlinf.data.datasets.vlm import VLMDatasetRegistry
 
 
 def create_rl_dataset(
-    config: DictConfig, tokenizer: AutoTokenizer, is_eval: bool = False
+    config: DictConfig, tokenizer: AutoTokenizer
 ) -> tuple[Dataset, Dataset]:
     """Create rl datasets.
 
@@ -57,9 +57,6 @@ def create_rl_dataset(
         )
 
         return train_dataset, val_dataset
-        dataset_cls = MathDataset
-    elif config.data.type == "mas":
-        dataset_cls = MASDataset
     elif config.data.type == "vision_language":
         # Prefer new factory-based VLM datasets; fallback to legacy if requested
         dataset_name = getattr(config.data, "dataset_name", None)
@@ -83,27 +80,9 @@ def create_rl_dataset(
         )
         return train_dataset, val_dataset
     else:
-        return None, None
-
-    logging.info(f"Using dataset class: {dataset_cls.__name__}")
-
-    # Instantiate the dataset using the determined dataset class
-    train_dataset = None
-    if not is_eval:
-        train_dataset = dataset_cls(
-            data_paths=config.data.train_data_paths,
-            config=config,
-            tokenizer=tokenizer,
+        raise NotImplementedError(
+            f"Unsupported dataset type {config.data.type}, only support ['math', 'vision_language', 'robot_demo']"
         )
-
-    val_dataset = dataset_cls(
-        data_paths=config.data.val_data_paths,
-        config=config,
-        tokenizer=tokenizer,
-    )
-
-    return train_dataset, val_dataset
-
 
 def collate_fn(data_list: list["DatasetItem"]) -> dict[str, Any]:
     """

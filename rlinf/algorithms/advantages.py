@@ -127,7 +127,7 @@ def compute_grpo_dynamic_advantages(
     loss_mask: torch.Tensor,
     group_size: int,
     idx_to_traj: list[int],
-    advantage_mode: str = "turn",  # "trajectory" or "turn"
+    advantage_mode: str = "turn",
     **kwargs,
 ):
     """
@@ -139,13 +139,8 @@ def compute_grpo_dynamic_advantages(
     - We must compute GRPO separately for each question's group_size trajectories
 
     Two advantage computation modes:
-    1. "trajectory": Trajectory-level GRPO (Method 1)
-       - Compute mean/std over group_size trajectory rewards per question
-       - Broadcast same advantage to all turns in a trajectory
-       - Example: Q0 has 4 trajs with 1,2,3,4 turns. Compute GRPO over 4 traj rewards,
-                  then assign traj0_adv to its 1 turn, traj1_adv to its 2 turns, etc.
 
-    2. "turn": Turn-level GRPO (Method 2)
+    1. "turn": Turn-level GRPO
        - Compute mean/std over all turns within each question
        - Example: Q0 has 4 trajs with 1,2,3,4 turns = 10 turns total.
                   Compute GRPO over these 10 turn rewards (currently all same within traj).
@@ -156,7 +151,7 @@ def compute_grpo_dynamic_advantages(
         loss_mask: Shape [seq_len, num_sequence] after preprocessing
         group_size: Number of trajectories per question (e.g., 4)
         idx_to_traj: List mapping turn_idx -> global_traj_idx
-        advantage_mode: "trajectory" or "turn"
+        advantage_mode: "turn"
 
     Returns:
         advantages: Shape [seq_len, num_sequence]
@@ -184,55 +179,7 @@ def compute_grpo_dynamic_advantages(
     turn_advantages = torch.zeros(
         num_sequence, dtype=rewards.dtype, device=rewards.device
     )
-
-    if advantage_mode == "trajectory":
-        # ========================================
-        # Method 1: Trajectory-Level GRPO
-        # ========================================
-        # For each question, compute GRPO over its group_size trajectories
-
-        # Step 1: Aggregate turn rewards to trajectory level
-        trajectory_rewards = torch.zeros(
-            num_trajectories, dtype=rewards.dtype, device=rewards.device
-        )
-        trajectory_counts = torch.zeros(
-            num_trajectories, dtype=torch.long, device=rewards.device
-        )
-
-        for turn_idx, traj_idx in enumerate(idx_to_traj):
-            trajectory_rewards[traj_idx] += rewards_flat[turn_idx]
-            trajectory_counts[traj_idx] += 1
-
-        # Average rewards per trajectory
-        trajectory_rewards = trajectory_rewards / trajectory_counts.clamp(min=1).float()
-
-        # Step 2: Reshape to [num_questions, group_size] for per-question GRPO
-        trajectory_rewards_grouped = trajectory_rewards.view(num_questions, group_size)
-
-        # Step 3: Compute per-question mean and std
-        per_question_mean = trajectory_rewards_grouped.mean(
-            dim=-1, keepdim=True
-        )  # [num_questions, 1]
-        per_question_std = trajectory_rewards_grouped.std(
-            dim=-1, keepdim=True
-        )  # [num_questions, 1]
-
-        # Step 4: Normalize per question
-        normalized_trajectory_rewards = (
-            trajectory_rewards_grouped - per_question_mean
-        ) / (per_question_std + 1e-6)  # [num_questions, group_size]
-
-        # Step 5: Flatten back to [num_trajectories]
-        normalized_trajectory_rewards = normalized_trajectory_rewards.view(-1)
-
-        # Step 6: Broadcast trajectory advantages to all turns in each trajectory
-        for turn_idx, traj_idx in enumerate(idx_to_traj):
-            turn_advantages[turn_idx] = normalized_trajectory_rewards[traj_idx]
-
-    elif advantage_mode == "turn":
-        # ========================================
-        # Method 2: Turn-Level GRPO
-        # ========================================
+    if advantage_mode == "turn":
         # For each question, compute GRPO over all its turns
 
         # Step 1: Map each turn to its question
@@ -262,7 +209,7 @@ def compute_grpo_dynamic_advantages(
 
     else:
         raise ValueError(
-            f"Invalid advantage_mode: {advantage_mode}. Must be 'trajectory' or 'turn'"
+            f"Invalid advantage_mode: {advantage_mode}. Must be 'turn'"
         )
 
     # Broadcast advantages to match loss_mask shape [seq_len, num_sequence]

@@ -753,7 +753,6 @@ class RolloutDataBalance(UserDict):
         split_fix_chunk: int,
         partitioning_tool: Callable,
     ) -> Self:
-        # breakpoint()
         # 0. Check data
         assert rollout_batches.keys() == rollout_batch_pad.keys(), (
             f"rollout_batches and rollout_batch_pad must have the same keys, but these are [{sorted(rollout_batches.keys())}] and [{sorted(rollout_batch_pad.keys())}]"
@@ -799,7 +798,7 @@ class RolloutDataBalance(UserDict):
             pad_size = (dp_world_size * split_fix_chunk) - (
                 global_batch_size % (dp_world_size * split_fix_chunk)
             )
-        # make sure 总样本可以被dp_world_size * split_fix_chunk （dp size * self.num_train_steps * self.cfg.actor.micro_batch_size）整除
+        # make sure dp_world_size * split_fix_chunk (dp size * self.num_train_steps * self.cfg.actor.micro_batch_size) can be divided by global_batch_size
         merged_rollout_batches = {}
         for key in rollout_batches.keys():
             merged_rollout_batches[key] = torch.cat(
