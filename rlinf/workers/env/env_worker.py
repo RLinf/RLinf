@@ -79,7 +79,10 @@ class EnvWorker(Worker):
 
         # This is a barrier to ensure all envs' initial setup upon import is done
         # Essential for RealWorld env to ensure initial ROS node setup is done
-        self.broadcast(True, list(range(self._world_size)))
+        self.broadcast(
+            True,
+            groups=[(self._group_name, list(range(self._world_size)))],
+        )
 
         if not self.only_eval:
             for stage_id in range(self.stage_num):

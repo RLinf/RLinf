@@ -14,16 +14,149 @@
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, Optional, overload
 
 from omegaconf import DictConfig
 
-from ..cluster import Cluster, NodeGroupInfo, parse_rank_config
+from ..cluster import Cluster, NodeGroupInfo, NodeInfo, parse_rank_config
 from ..hardware import AcceleratorType
 
 if TYPE_CHECKING:
     from .flexible import FlexiblePlacementStrategy
     from .node import NodePlacementStrategy
+
+
+class MultiNodeGroupResolver:
+    """Helper class to resolve hardware ranks across multiple node groups without merging them.
+
+    When multiple node groups are specified, hardware ranks span across all groups
+    in order, starting from 0. This class helps map global hardware ranks to the
+    correct node group and local hardware rank within that group.
+    """
+
+    def __init__(self, node_groups: list[NodeGroupInfo]):
+        """Initialize the resolver with a list of node groups.
+
+        Args:
+            node_groups: List of node groups to span across, in order.
+        """
+        self._node_groups = node_groups
+        self._total_hardware_count = sum(
+            ng.hardware_resource_count for ng in node_groups
+        )
+
+        # Build mapping: global_hw_rank -> (node_group_index, local_hw_rank)
+        self._rank_to_group: dict[int, tuple[int, int]] = {}
+        global_hw_rank = 0
+        for group_idx, node_group in enumerate(node_groups):
+            group_hw_count = node_group.hardware_resource_count
+            for local_hw_rank in range(group_hw_count):
+                self._rank_to_group[global_hw_rank] = (group_idx, local_hw_rank)
+                global_hw_rank += 1
+
+    @property
+    def node_groups(self) -> list[NodeGroupInfo]:
+        """The resolved node groups in order."""
+        return self._node_groups
+
+    @property
+    def hardware_resource_count(self) -> int:
+        """Total hardware count across all node groups."""
+        return self._total_hardware_count
+
+    @property
+    def hardware_types(self) -> list[Optional[str]] | None:
+        """Get the list of hardware types for all node groups.
+
+        Returns:
+            List of hardware types (one per node group) if all groups have hardware.
+            Returns None if at least one group has no hardware (hardware_type is None).
+        """
+        all_hw_types = [ng.hardware_type for ng in self._node_groups]
+
+        # If any group has no hardware, return None
+        if None in all_hw_types:
+            return None
+
+        return all_hw_types
+
+    def get_node_by_hardware_rank(self, global_hw_rank: int) -> "NodeInfo":
+        """Get the node for a global hardware rank.
+
+        Args:
+            global_hw_rank: Global hardware rank across all the selected node groups.
+
+        Returns:
+            NodeInfo: The node containing this hardware rank.
+        """
+        if global_hw_rank not in self._rank_to_group:
+            raise ValueError(
+                f"Hardware rank {global_hw_rank} is out of range for node groups {[ng.label for ng in self._node_groups]}. Must be within (0-{self._total_hardware_count - 1})"
+            )
+        group_idx, local_hw_rank = self._rank_to_group[global_hw_rank]
+        node_group = self._node_groups[group_idx]
+        return node_group.get_node_by_hardware_rank(local_hw_rank)
+
+    def get_node_group(self, global_hw_rank: int) -> NodeGroupInfo:
+        """Get the node group for a global hardware rank, i.e., the rank in the selected node groups."""
+        if global_hw_rank not in self._rank_to_group:
+            raise ValueError(
+                f"Global hardware rank {global_hw_rank} is out of range for node groups {[ng.label for ng in self._node_groups]}. Must be within (0-{self._total_hardware_count - 1})"
+            )
+        group_idx, _ = self._rank_to_group[global_hw_rank]
+        return self._node_groups[group_idx]
+
+    def get_local_hardware_rank(self, global_hw_rank: int) -> int:
+        """Get the local hardware rank within the node for a global hardware rank.
+
+        Args:
+            global_hw_rank: Global hardware rank across all groups.
+
+        Returns:
+            int: Local hardware rank within the node.
+        """
+        if global_hw_rank not in self._rank_to_group:
+            raise ValueError(
+                f"Global hardware rank {global_hw_rank} is out of range "
+                f"(0-{self._total_hardware_count - 1})"
+            )
+        group_idx, local_hw_rank_in_group = self._rank_to_group[global_hw_rank]
+        node_group = self._node_groups[group_idx]
+        return node_group.get_local_hardware_rank(local_hw_rank_in_group)
+
+    def get_hardware_type_for_rank(self, global_hw_rank: int) -> Optional[str]:
+        """Get the hardware type for a specific global hardware rank.
+
+        Args:
+            global_hw_rank: Global hardware rank across all groups.
+
+        Returns:
+            Optional[str]: The hardware type for this rank.
+        """
+        if global_hw_rank not in self._rank_to_group:
+            raise ValueError(
+                f"Global hardware rank {global_hw_rank} is out of range "
+                f"(0-{self._total_hardware_count - 1})"
+            )
+        group_idx, _ = self._rank_to_group[global_hw_rank]
+        return self._node_groups[group_idx].hardware_type
+
+    def get_node_group_label(self, global_hw_rank: int) -> str:
+        """Get the node group label for a specific global hardware rank.
+
+        Args:
+            global_hw_rank: Global hardware rank across all groups.
+
+        Returns:
+            str: The label of the node group containing this rank.
+        """
+        if global_hw_rank not in self._rank_to_group:
+            raise ValueError(
+                f"Global hardware rank {global_hw_rank} is out of range "
+                f"(0-{self._total_hardware_count - 1})"
+            )
+        group_idx, _ = self._rank_to_group[global_hw_rank]
+        return self._node_groups[group_idx].label
 
 
 @dataclass
@@ -159,7 +292,9 @@ class ComponentPlacement:
 
       Fancier syntax mixing the two formats is also supported, e.g., 0-1:0-3,3-5,7-10:7-14, which means process 0-3 will be evenly assigned to resource ranks 0-1, process 4-6 will be assigned to resource ranks 3-5 (implicitly inferred by the scheduler) respectively, and process 7-14 will be evenly assigned to resource ranks 7-10. Note that even if the process ranks are not specified, they are assumed to be continuous from 0 to N-1, where N is the total number of processes. Failure to follow this rule will raise an assertion error.
 
-    - For the second format, the `node_group` label is the label defined in cluster.node_groups.label, which is optional. If not specified, all nodes in the cluster are used. A `node` label is reserved by the scheduler for allocating on node ranks only (no accelerators or other hardware).
+    - For the second format, the `node_group` label is the label defined in cluster.node_groups.label, which is optional. It can be either a single string (single node group) or a comma-separated string/list (multiple node groups, e.g., ``node_group: "a800,4090"``). If not specified, all nodes in the cluster are used. A `node` label is reserved by the scheduler for allocating on node ranks only (no accelerators or other hardware).
+
+      When multiple node groups are specified, hardware ranks span across all groups in order, starting from 0. For example, if group "a800" has 8 GPUs (ranks 0-7) and group "4090" has 8 GPUs (ranks 0-7 within that group), then in the composite placement, hardware ranks 0-7 belong to "a800" and ranks 8-15 belong to "4090". Note that hardware ranks within a single process must all be of the same hardware type and on the same node.
     """
 
     def __init__(self, config: DictConfig, cluster: Cluster):
@@ -218,35 +353,62 @@ class ComponentPlacement:
         assert isinstance(component_placement, (str, DictConfig)), (
             f"component_placement must be either a string or a DictConfig. But got: {type(component_placement)}: {component_placement}"
         )
+        node_group_labels = None
         # Format (1) group_name1,group_name2,...: resource_ranks:process_ranks
         if isinstance(component_placement, str):
-            node_group = cluster.get_node_group()
+            node_groups = [cluster.get_node_group()]
             rank_map_str = component_placement
         # Format (2) group_name1,group_name2,...:
-        #         node_group: <node_group_label>
+        #         node_group: <node_group_label> or <list_of_node_group_labels>
         #         placement: resource_ranks:process_ranks
         elif isinstance(component_placement, DictConfig):
             if hasattr(component_placement, "node_group"):
-                node_group_label = component_placement.node_group
-                node_group = cluster.get_node_group(node_group_label)
+                node_group_labels = component_placement.node_group
+                # Parse node_group - can be string, comma-separated string, or list
+                if isinstance(node_group_labels, str):
+                    # Check if it's comma-separated
+                    if "," in node_group_labels:
+                        node_group_labels = [
+                            label.strip() for label in node_group_labels.split(",")
+                        ]
+                    else:
+                        node_group_labels = [node_group_labels]
+                elif isinstance(node_group_labels, list):
+                    node_group_labels = [str(label) for label in node_group_labels]
+                else:
+                    node_group_labels = [str(node_group_labels)]
+
+                # Get all node groups
+                node_groups = []
+                for label in node_group_labels:
+                    ng = cluster.get_node_group(label)
+                    if ng is None:
+                        raise AssertionError(
+                            f'Node group not found for components {component_names} with label "{label}".'
+                        )
+                    node_groups.append(ng)
             else:
-                node_group = cluster.get_node_group()
+                node_groups = [cluster.get_node_group()]
             assert hasattr(component_placement, "placement"), (
                 f"placement must be specified in component_placement config: {component_placement}"
             )
             rank_map_str = component_placement.placement
+        else:
+            raise AssertionError(
+                f"Unexpected component_placement type: {type(component_placement)}"
+            )
 
-        assert node_group is not None, (
-            f'Node group not found for components {component_names} with label "{node_group_label}".'
-        )
-        rank_map = self._parse_rank_map(rank_map_str, node_group)
-        if node_group.hardware_type is None:
+        resolver = MultiNodeGroupResolver(node_groups)
+        rank_map = self._parse_rank_map(rank_map_str, resolver)
+        hardware_types = resolver.hardware_types
+
+        if hardware_types is None:
             placement_strategy = self._gen_node_placement(
-                rank_map, node_group, component_names
+                rank_map, node_groups, component_names
             )
         else:
             placement_strategy = self._gen_resource_placement(
-                rank_map, node_group, component_names
+                rank_map, node_groups, component_names
             )
 
         num_processes = sum(len(process_ranks) for process_ranks in rank_map.values())
@@ -259,16 +421,26 @@ class ComponentPlacement:
             self._component_rank_map[component_name] = rank_map
 
     def _parse_rank_map(
-        self, rank_map_str: str, node_group: NodeGroupInfo
+        self, rank_map_str: str, resolver: MultiNodeGroupResolver
     ) -> dict[list[int], list[int]]:
         """Parse the rank map string into a dictionary mapping resource ranks to process ranks.
 
         The string is a comma separated string, where each part is the format: resource_ranks:process_ranks. process_ranks is optional. If not specified, process_ranks will be counted from 0 to the number of resource_ranks - 1.
+
+        Args:
+            rank_map_str: The rank map string to parse.
+            resolver: MultiNodeGroupResolver that resolves the hardware ranks to node ranks.
         """
         rank_map_str = str(rank_map_str)
         rank_map: dict[tuple[int], list[int]] = {}
         parsed_resource_ranks: list[int] = []
         parsed_process_ranks: list[int] = []
+
+        total_hw_count = resolver.hardware_resource_count
+        hw_types = resolver.hardware_types
+        hw_type_str = "Node"
+        if hw_types is not None and isinstance(hw_types, list):
+            hw_type_str = ", ".join(hw_types)
 
         rank_map_parts = rank_map_str.strip().split(",")
         for rank_map_part in rank_map_parts:
@@ -285,8 +457,8 @@ class ComponentPlacement:
             try:
                 resource_ranks = parse_rank_config(
                     resource_ranks_str,
-                    list(range(node_group.hardware_resource_count)),
-                    node_group.hardware_type,
+                    list(range(total_hw_count)),
+                    hw_type_str,
                 )
             except AssertionError as e:
                 raise AssertionError(
@@ -391,7 +563,7 @@ class ComponentPlacement:
     def _gen_node_placement(
         self,
         rank_map: dict[tuple[int], list[int]],
-        node_group: NodeGroupInfo,
+        node_groups: list[NodeGroupInfo],
         component_names: list[str],
     ) -> "NodePlacementStrategy":
         from .node import NodePlacementStrategy
@@ -401,21 +573,22 @@ class ComponentPlacement:
         for process_rank in sorted(process_resources_map.keys()):
             node_ranks = process_resources_map[process_rank]
             assert len(node_ranks) == 1, (
-                f"Node placement is used for components {component_names} because there is no hardware in the selected nodes {node_group.nodes}. However, the number of processes {len(process_resources_map.keys())} of the components is smaller than the number of available nodes, which is impossible as one process cannot run across multiple nodes."
+                f"Process rank {process_rank} is allocated to node ranks {node_ranks}, which is impossible as one process cannot run across multiple nodes."
             )
             node_rank_list.append(node_ranks[0])
 
+        node_group_labels = [ng.label for ng in node_groups]
         try:
-            return NodePlacementStrategy(node_rank_list, node_group.label)
+            return NodePlacementStrategy(node_rank_list, node_group_labels)
         except AssertionError as e:
             raise AssertionError(
-                f"Error in component placement for components {component_names}. Allocated node ranks for each process: {process_resources_map}. {str(e)}"
+                f"Error in component placement for components {component_names}. Allocated node ranks for each process: {process_resources_map} across node groups {node_group_labels}. {str(e)}"
             )
 
     def _gen_resource_placement(
         self,
         rank_map: dict[tuple[int], list[int]],
-        node_group: NodeGroupInfo,
+        node_groups: list[NodeGroupInfo],
         component_names: list[str],
     ) -> "FlexiblePlacementStrategy":
         from .flexible import FlexiblePlacementStrategy
@@ -425,11 +598,15 @@ class ComponentPlacement:
         for process_rank in sorted(process_resources_map.keys()):
             resource_ranks = process_resources_map[process_rank]
             resource_ranks_list.append(resource_ranks)
+
+        node_group_labels = [ng.label for ng in node_groups]
         try:
-            return FlexiblePlacementStrategy(resource_ranks_list, node_group.label)
+            return FlexiblePlacementStrategy(
+                resource_ranks_list, node_group_label=node_group_labels
+            )
         except AssertionError as e:
             raise AssertionError(
-                f"Error in component placement for components {component_names}. Allocated hardware ranks for each process: {process_resources_map} for hardware type {node_group.hardware_type} and node group {node_group.label}. {str(e)}"
+                f"Error in component placement for components {component_names}. Allocated hardware ranks for each process: {process_resources_map} for hardware types across node groups {node_group_labels}. {str(e)}"
             )
 
     @property

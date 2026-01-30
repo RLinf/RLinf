@@ -13,13 +13,14 @@
 # limitations under the License.
 
 import pytest
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from rlinf.scheduler import (
     FlexiblePlacementStrategy,
     NodePlacementStrategy,
     PackedPlacementStrategy,
 )
+from rlinf.scheduler.cluster.config import NodeGroupEnvConfig
 from rlinf.scheduler.cluster.node import NodeGroupInfo, NodeInfo
 from rlinf.scheduler.hardware import Accelerator, HardwareInfo, HardwareResource
 from rlinf.utils.placement import (
@@ -748,6 +749,341 @@ class TestModelParallelComponentPlacement:
         assert all(
             p.local_world_size == placement.rollout_tp_size for p in rollout_placements
         )
+
+
+class TestHeteroMultiNodeGroupPlacement:
+    def test_flexible_placement_across_hetero_node_groups(self):
+        # Fake cluster with one node exposing both GPU and Franka hardware plus per-group env/interpreter.
+        nodes = [
+            NodeInfo(
+                node_labels=[],
+                node_rank=0,
+                ray_id="ray-node-0",
+                node_ip="10.0.0.1",
+                num_cpus=32,
+                python_interpreter_path="/usr/bin/python3",
+                default_env_vars={},
+                env_vars={},
+                hardware_resources=[
+                    HardwareResource(
+                        type=Accelerator.HW_TYPE,
+                        infos=[
+                            HardwareInfo(type=Accelerator.HW_TYPE, model="GPU:MockGPU")
+                        ],
+                    ),
+                    HardwareResource(
+                        type="Franka",
+                        infos=[HardwareInfo(type="Franka", model="Franka")],
+                    ),
+                ],
+            )
+        ]
+
+        gpu_group = NodeGroupInfo(
+            label="gpu",
+            nodes=nodes,
+            env_configs=[
+                NodeGroupEnvConfig(
+                    node_ranks=[0],
+                    env_vars=OmegaConf.create([{"GPU_ENV": "1"}]),
+                    python_interpreter_path="/opt/gpu/python",
+                )
+            ],
+        )
+        franka_group = NodeGroupInfo(
+            label="franka",
+            nodes=nodes,
+            hardware_type="Franka",
+            env_configs=[
+                NodeGroupEnvConfig(
+                    node_ranks=[0],
+                    env_vars=OmegaConf.create([{"FRANKA_ENV": "1"}]),
+                    python_interpreter_path="/opt/franka/python",
+                )
+            ],
+        )
+        node_groups = {
+            gpu_group.label: gpu_group,
+            franka_group.label: franka_group,
+            NodeGroupInfo.DEFAULT_GROUP_LABEL: NodeGroupInfo(
+                label=NodeGroupInfo.DEFAULT_GROUP_LABEL, nodes=nodes
+            ),
+        }
+        cluster = FakeCluster(nodes, node_groups)
+
+        strategy = FlexiblePlacementStrategy(
+            hardware_ranks_list=[[0], [1]],
+            node_group_label=["gpu", "franka"],
+        )
+        placements = strategy.get_placement(cluster, isolate_accelerator=True)
+
+        assert len(placements) == 2
+        gpu_placement, franka_placement = placements
+
+        assert gpu_placement.node_group_label == "gpu"
+        assert gpu_placement.local_hardware_ranks == [0]
+        assert gpu_placement.visible_accelerators == ["0"]
+
+        assert franka_placement.node_group_label == "franka"
+        assert franka_placement.local_hardware_ranks == [0]
+        assert franka_placement.visible_accelerators == ["0"]
+
+        assert gpu_group.get_node_env_vars(0) == {"GPU_ENV": "1"}
+        assert franka_group.get_node_env_vars(0) == {"FRANKA_ENV": "1"}
+        assert gpu_group.get_node_python_interpreter_path(0) == "/opt/gpu/python"
+        assert franka_group.get_node_python_interpreter_path(0) == "/opt/franka/python"
+
+    def test_packed_placement_across_hetero_node_groups(self):
+        nodes = [
+            NodeInfo(
+                node_labels=[],
+                node_rank=0,
+                ray_id="ray-node-0",
+                node_ip="10.0.0.1",
+                num_cpus=32,
+                python_interpreter_path="/usr/bin/python3",
+                default_env_vars={},
+                env_vars={},
+                hardware_resources=[
+                    HardwareResource(
+                        type=Accelerator.HW_TYPE,
+                        infos=[
+                            HardwareInfo(type=Accelerator.HW_TYPE, model="GPU:MockGPU")
+                        ],
+                    ),
+                    HardwareResource(
+                        type="Franka",
+                        infos=[HardwareInfo(type="Franka", model="Franka")],
+                    ),
+                ],
+            )
+        ]
+
+        gpu_group = NodeGroupInfo(
+            label="gpu",
+            nodes=nodes,
+            env_configs=[
+                NodeGroupEnvConfig(
+                    node_ranks=[0],
+                    env_vars=OmegaConf.create([{"GPU_ENV": "1"}]),
+                    python_interpreter_path="/opt/gpu/python",
+                )
+            ],
+        )
+        franka_group = NodeGroupInfo(
+            label="franka",
+            nodes=nodes,
+            hardware_type="Franka",
+            env_configs=[
+                NodeGroupEnvConfig(
+                    node_ranks=[0],
+                    env_vars=OmegaConf.create([{"FRANKA_ENV": "1"}]),
+                    python_interpreter_path="/opt/franka/python",
+                )
+            ],
+        )
+        node_groups = {
+            gpu_group.label: gpu_group,
+            franka_group.label: franka_group,
+            NodeGroupInfo.DEFAULT_GROUP_LABEL: NodeGroupInfo(
+                label=NodeGroupInfo.DEFAULT_GROUP_LABEL, nodes=nodes
+            ),
+        }
+        cluster = FakeCluster(nodes, node_groups)
+
+        strategy = PackedPlacementStrategy(
+            start_hardware_rank=0, end_hardware_rank=1, node_group=["gpu", "franka"]
+        )
+        placements = strategy.get_placement(cluster, isolate_accelerator=True)
+        assert len(placements) == 2
+        p0, p1 = placements
+
+        assert p0.node_group_label == "gpu"
+        assert p0.local_hardware_ranks == [0]
+        assert p0.visible_accelerators == ["0"]
+
+        assert p1.node_group_label == "franka"
+        assert p1.local_hardware_ranks == [0]
+        # Franka is non-accelerator; visible accelerators remain the node's GPUs
+        assert p1.visible_accelerators == ["0"]
+
+        assert gpu_group.get_node_env_vars(0) == {"GPU_ENV": "1"}
+        assert franka_group.get_node_env_vars(0) == {"FRANKA_ENV": "1"}
+        assert gpu_group.get_node_python_interpreter_path(0) == "/opt/gpu/python"
+        assert franka_group.get_node_python_interpreter_path(0) == "/opt/franka/python"
+
+    def test_node_placement_multi_node_groups(self):
+        nodes = [
+            _make_node_info(0, 1),
+            _make_node_info(1, 2),
+        ]
+        group_a = NodeGroupInfo(
+            label="a",
+            nodes=[nodes[0]],
+            env_configs=[
+                NodeGroupEnvConfig(
+                    node_ranks=[0],
+                    env_vars=OmegaConf.create([{"A_ENV": "1"}]),
+                    python_interpreter_path="/opt/a/python",
+                )
+            ],
+        )
+        group_b = NodeGroupInfo(
+            label="b",
+            nodes=[nodes[1]],
+            env_configs=[
+                NodeGroupEnvConfig(
+                    node_ranks=[1],
+                    env_vars=OmegaConf.create([{"B_ENV": "1"}]),
+                    python_interpreter_path="/opt/b/python",
+                )
+            ],
+        )
+        node_groups = {
+            group_a.label: group_a,
+            group_b.label: group_b,
+            NodeGroupInfo.DEFAULT_GROUP_LABEL: NodeGroupInfo(
+                label=NodeGroupInfo.DEFAULT_GROUP_LABEL, nodes=nodes
+            ),
+        }
+        cluster = FakeCluster(nodes, node_groups)
+
+        strategy = NodePlacementStrategy([0, 1], node_group_label=["a", "b"])
+        placements = strategy.get_placement(cluster, isolate_accelerator=False)
+        assert len(placements) == 2
+        p0, p1 = placements
+        assert p0.node_group_label == "a"
+        assert p0.cluster_node_rank == 0
+        assert p0.visible_accelerators == ["0"]
+
+        assert p1.node_group_label == "b"
+        assert p1.cluster_node_rank == 1
+        assert p1.visible_accelerators == ["0", "1"]
+
+        assert group_a.get_node_env_vars(0) == {"A_ENV": "1"}
+        assert group_b.get_node_env_vars(1) == {"B_ENV": "1"}
+        assert group_a.get_node_python_interpreter_path(0) == "/opt/a/python"
+        assert group_b.get_node_python_interpreter_path(1) == "/opt/b/python"
+
+    def test_same_node_different_node_groups_env_and_interpreter_isolated(self):
+        nodes = [
+            NodeInfo(
+                node_labels=[],
+                node_rank=0,
+                ray_id="ray-node-0",
+                node_ip="10.0.0.1",
+                num_cpus=32,
+                python_interpreter_path="/usr/bin/python3",
+                default_env_vars={},
+                env_vars={},
+                hardware_resources=[
+                    HardwareResource(
+                        type=Accelerator.HW_TYPE,
+                        infos=[
+                            HardwareInfo(
+                                type=Accelerator.HW_TYPE, model="NV_GPU:MockGPU"
+                            )
+                        ],
+                    ),
+                    HardwareResource(
+                        type="Franka",
+                        infos=[HardwareInfo(type="Franka", model="Franka")],
+                    ),
+                ],
+            )
+        ]
+
+        gpu_group = NodeGroupInfo(
+            label="gpu",
+            nodes=nodes,
+            env_configs=[
+                NodeGroupEnvConfig(
+                    node_ranks=[0],
+                    env_vars=OmegaConf.create([{"GPU_ENV": "1"}]),
+                    python_interpreter_path="/opt/gpu/python",
+                )
+            ],
+        )
+        franka_group = NodeGroupInfo(
+            label="franka",
+            nodes=nodes,
+            hardware_type="Franka",
+            env_configs=[
+                NodeGroupEnvConfig(
+                    node_ranks=[0],
+                    env_vars=OmegaConf.create([{"FRANKA_ENV": "1"}]),
+                    python_interpreter_path="/opt/franka/python",
+                )
+            ],
+        )
+        node_groups = {
+            gpu_group.label: gpu_group,
+            franka_group.label: franka_group,
+            NodeGroupInfo.DEFAULT_GROUP_LABEL: NodeGroupInfo(
+                label=NodeGroupInfo.DEFAULT_GROUP_LABEL, nodes=nodes
+            ),
+        }
+        cluster = FakeCluster(nodes, node_groups)
+
+        strategy = FlexiblePlacementStrategy(
+            hardware_ranks_list=[[0], [1]],
+            node_group_label=["gpu", "franka"],
+        )
+        placements = strategy.get_placement(cluster, isolate_accelerator=True)
+        assert len(placements) == 2
+        assert placements[0].node_group_label == "gpu"
+        assert placements[1].node_group_label == "franka"
+
+        assert gpu_group.get_node_env_vars(0) == {"GPU_ENV": "1"}
+        assert franka_group.get_node_env_vars(0) == {"FRANKA_ENV": "1"}
+        assert gpu_group.get_node_python_interpreter_path(0) == "/opt/gpu/python"
+        assert franka_group.get_node_python_interpreter_path(0) == "/opt/franka/python"
+
+    def test_single_process_mixed_node_groups_raises(self):
+        # One process cannot span different hardware/node groups
+        nodes = [
+            NodeInfo(
+                node_labels=[],
+                node_rank=0,
+                ray_id="ray-node-0",
+                node_ip="10.0.0.1",
+                num_cpus=32,
+                python_interpreter_path="/usr/bin/python3",
+                default_env_vars={},
+                env_vars={},
+                hardware_resources=[
+                    HardwareResource(
+                        type=Accelerator.HW_TYPE,
+                        infos=[
+                            HardwareInfo(
+                                type=Accelerator.HW_TYPE, model="NV_GPU:MockGPU"
+                            )
+                        ],
+                    ),
+                    HardwareResource(
+                        type="Franka",
+                        infos=[HardwareInfo(type="Franka", model="Franka")],
+                    ),
+                ],
+            )
+        ]
+        node_groups = {
+            "gpu": NodeGroupInfo(label="gpu", nodes=nodes),
+            "franka": NodeGroupInfo(
+                label="franka", nodes=nodes, hardware_type="Franka"
+            ),
+            NodeGroupInfo.DEFAULT_GROUP_LABEL: NodeGroupInfo(
+                label=NodeGroupInfo.DEFAULT_GROUP_LABEL, nodes=nodes
+            ),
+        }
+        cluster = FakeCluster(nodes, node_groups)
+
+        strategy = FlexiblePlacementStrategy(
+            hardware_ranks_list=[[0, 1]],
+            node_group_label=["gpu", "franka"],
+        )
+        with pytest.raises(AssertionError):
+            strategy.get_placement(cluster, isolate_accelerator=True)
 
 
 if __name__ == "__main__":

@@ -68,12 +68,13 @@ class CollectiveWorkQueue:
 
     SEND = 0
     RECV = 1
+    BROADCAST = 2
 
     def __init__(self, comm_type: int, logger: logging.Logger):
         """Initialize the CollectiveWorkQueue.
 
         Args:
-            comm_type (int): The type of the communication (SEND or RECV).
+            comm_type (int): The type of the communication (SEND or RECV or BROADCAST).
             logger (logging.Logger): The logger to use for logging messages.
 
         """
@@ -191,6 +192,7 @@ class CollectiveGroup:
 
         self._send_comm_id_iter = itertools.count()
         self._recv_comm_id_iter = itertools.count()
+        self._broadcast_comm_id_iter = itertools.count()
 
         self._send_work_queues = [
             CollectiveWorkQueue(CollectiveWorkQueue.SEND, self._logger)
@@ -198,6 +200,10 @@ class CollectiveGroup:
         ]
         self._recv_work_queues = [
             CollectiveWorkQueue(CollectiveWorkQueue.RECV, self._logger)
+            for _ in range(CollectiveGroup.POOL_SIZE)
+        ]
+        self.collective_work_queues = [
+            CollectiveWorkQueue(CollectiveWorkQueue.BROADCAST, self._logger)
             for _ in range(CollectiveGroup.POOL_SIZE)
         ]
 
@@ -461,6 +467,218 @@ class CollectiveGroup:
             self._logger.debug(f"Sync recv_tensor ID {recv_comm_id} done")
             return recv_work.wait()
 
+    def broadcast(
+        self,
+        object: torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any,
+        src_addr: WorkerAddress,
+        async_op: bool = False,
+        options: Optional[CollectiveGroupOptions] = None,
+    ) -> AsyncWork | torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any:
+        """Broadcast an object to all workers in the collective group.
+
+        The source rank is inferred as the first worker in the group. The source
+        rank should provide the object, and all other ranks should pass None.
+        """
+        broadcast_comm_id = next(self._broadcast_comm_id_iter)
+        if self._worker.has_accelerator and Worker.torch_platform.is_initialized():
+            current_device = Worker.torch_platform.current_device()
+        else:
+            current_device = None
+        broadcast_work = AsyncFuncWork(
+            self._atomic_broadcast,
+            object=object,
+            src_addr=src_addr,
+            comm_id=broadcast_comm_id,
+            current_device=current_device,
+            options=options,
+        )
+
+        if self._worker.has_accelerator and Worker.torch_platform.is_initialized():
+            broadcast_event = Worker.torch_platform.Event()
+            broadcast_event.record()
+        else:
+            broadcast_event = None
+
+        work_queue = self.collective_work_queues[
+            broadcast_comm_id % CollectiveGroup.POOL_SIZE
+        ]
+        if async_op:
+            work_queue.enqueue(broadcast_work, broadcast_comm_id, broadcast_event)
+            return broadcast_work
+        else:
+            while not work_queue.done:
+                continue
+            broadcast_work(None)
+            self._logger.debug(f"Sync broadcast ID {broadcast_comm_id} done")
+            return broadcast_work.wait()
+
+    def _atomic_broadcast(
+        self,
+        object: torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any,
+        src_addr: WorkerAddress,
+        comm_id: int,
+        current_device: Optional[int],
+        options: Optional[CollectiveGroupOptions] = None,
+    ) -> torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any:
+        if current_device is not None:
+            Worker.torch_platform.set_device(current_device)
+
+        self._init_process_group(options=options)
+        src_rank = self._worker_addresses.index(src_addr)
+
+        object_type_tensor = torch.empty(1, dtype=torch.int, device="cpu")
+        if self._rank == src_rank:
+            _, object_type = self._get_object_device_type(object)
+            object_type_tensor.fill_(object_type)
+
+        self._broadcast(
+            object_type_tensor,
+            device=CollectiveGroup.CPU,
+            comm_id=comm_id,
+            src_rank=src_rank,
+        )
+        object_type = object_type_tensor.item()
+
+        if object_type == CollectiveGroup.TENSOR:
+            tensor_list = [object] if self._rank == src_rank else None
+            return self._broadcast_tensor_list(
+                tensor_list, comm_id=comm_id, src_rank=src_rank
+            )[0]
+        elif object_type == CollectiveGroup.TENSOR_LIST:
+            tensor_list = object if self._rank == src_rank else None
+            return self._broadcast_tensor_list(
+                tensor_list, comm_id=comm_id, src_rank=src_rank
+            )
+        elif object_type == CollectiveGroup.TENSOR_DICT:
+            tensor_dict = object if self._rank == src_rank else None
+            return self._broadcast_tensor_dict(
+                tensor_dict, comm_id=comm_id, src_rank=src_rank
+            )
+        elif object_type == CollectiveGroup.OBJECT:
+            return self._broadcast_object(object, comm_id=comm_id, src_rank=src_rank)
+        else:
+            raise ValueError(f"Unsupported object type: {object_type}")
+
+    def _broadcast_tensor_list(
+        self,
+        tensors: Optional[list[torch.Tensor]],
+        comm_id: int,
+        src_rank: int,
+    ) -> list[torch.Tensor]:
+        """Broadcast a list of tensors from src_rank to all ranks."""
+        if self._rank == src_rank and tensors is None:
+            raise ValueError("Source rank must provide tensors for broadcast.")
+        metadata_size = torch.empty(1, dtype=torch.long, device="cpu")
+        if self._rank == src_rank:
+            device_type = (
+                CollectiveGroup.ACCEL
+                if all(
+                    tensor.device.type == Worker.torch_device_type for tensor in tensors
+                )
+                else CollectiveGroup.CPU
+            )
+            tensor_shape_dtype = [(tensor.shape, tensor.dtype) for tensor in tensors]
+            metadata = {"type": device_type, "meta": tensor_shape_dtype}
+            metadata_tensor, metadata_size = self._object_to_tensor(metadata, "cpu")
+        self._broadcast(
+            metadata_size,
+            device=CollectiveGroup.CPU,
+            comm_id=comm_id,
+            src_rank=src_rank,
+        )
+        metadata_tensor = (
+            metadata_tensor
+            if self._rank == src_rank
+            else torch.empty(metadata_size.item(), dtype=torch.uint8, device="cpu")
+        )
+        self._broadcast(
+            metadata_tensor,
+            device=CollectiveGroup.CPU,
+            comm_id=comm_id,
+            src_rank=src_rank,
+        )
+        metadata = self._tensor_to_object(metadata_tensor, metadata_size)
+
+        device_type = metadata["type"]
+        tensor_shapes = metadata["meta"]
+        if device_type == CollectiveGroup.ACCEL and not (
+            self._worker.has_accelerator and Worker.torch_platform.is_initialized()
+        ):
+            raise RuntimeError(
+                f"Broadcast expected accelerator tensors, but worker {self._cur_worker_address.get_name()} has no initialized accelerator."
+            )
+
+        broadcast_tensors = (
+            tensors
+            if self._rank == src_rank
+            else [
+                torch.empty(
+                    shape,
+                    dtype=dtype,
+                    device=Worker.torch_platform.current_device()
+                    if device_type == CollectiveGroup.ACCEL
+                    else "cpu",
+                )
+                for shape, dtype in tensor_shapes
+            ]
+        )
+        for tensor in broadcast_tensors:
+            self._broadcast(
+                tensor,
+                device=device_type,
+                comm_id=comm_id,
+                src_rank=src_rank,
+            )
+        return broadcast_tensors
+
+    def _broadcast_tensor_dict(
+        self,
+        tensor_dict: Optional[dict[str, torch.Tensor]],
+        comm_id: int,
+        src_rank: int,
+    ) -> dict[str, torch.Tensor]:
+        """Broadcast a dictionary of tensors from src_rank to all ranks."""
+        keys = list(tensor_dict.keys()) if self._rank == src_rank else None
+        keys = self._broadcast_object(keys, comm_id=comm_id, src_rank=src_rank)
+        values = list(tensor_dict.values()) if self._rank == src_rank else None
+        values = self._broadcast_tensor_list(values, comm_id=comm_id, src_rank=src_rank)
+        if len(keys) != len(values):
+            raise RuntimeError(
+                f"Broadcast received {len(values)} values but {len(keys)} keys from Rank {src_rank} in group {self._group_info.group_name}"
+            )
+        return dict(zip(keys, values))
+
+    def _broadcast_object(
+        self,
+        object: Any,
+        comm_id: int,
+        src_rank: int,
+    ) -> Any:
+        """Broadcast a Python object from src_rank to all ranks."""
+        object_size = torch.empty(1, dtype=torch.long, device="cpu")
+        if self._rank == src_rank:
+            object_tensor, object_size = self._object_to_tensor(object, "cpu")
+        self._broadcast(
+            object_size,
+            device=CollectiveGroup.CPU,
+            comm_id=comm_id,
+            src_rank=src_rank,
+        )
+        object_tensor = (
+            object_tensor
+            if self._rank == src_rank
+            else torch.empty(object_size.item(), dtype=torch.uint8, device="cpu")
+        )
+        self._broadcast(
+            object_tensor,
+            device=CollectiveGroup.CPU,
+            comm_id=comm_id,
+            src_rank=src_rank,
+        )
+        if self._rank == src_rank:
+            return object
+        return self._tensor_to_object(object_tensor, object_size)
+
     def _atomic_recv_tensor(
         self,
         tensor: torch.Tensor,
@@ -502,6 +720,24 @@ class CollectiveGroup:
         channel_id = comm_id % CollectiveGroup.POOL_SIZE
         return self._mc_group.recv(
             tensor=tensor, device=device, channel_id=channel_id, async_op=async_op
+        )
+
+    def _broadcast(
+        self,
+        tensor: torch.Tensor,
+        device: str,
+        comm_id: int,
+        src_rank: int,
+        async_op: bool = False,
+    ):
+        """Wrap the actual broadcast operation to hide internal API changes."""
+        channel_id = comm_id % CollectiveGroup.POOL_SIZE
+        return self._mc_group.broadcast(
+            tensor=tensor,
+            device=device,
+            channel_id=channel_id,
+            src=src_rank,
+            async_op=async_op,
         )
 
     def _init_group(self):

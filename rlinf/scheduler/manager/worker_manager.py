@@ -94,6 +94,13 @@ class WorkerAddress:
         """Check if two WorkerAddress instances are not equal."""
         return not self.__eq__(value)
 
+    def __lt__(self, other: "WorkerAddress"):
+        """Check if two WorkerAddress instances are less than."""
+        return (self.root_group_name, tuple(self.rank_path)) < (
+            other.root_group_name,
+            tuple(other.rank_path),
+        )
+
     def __hash__(self):
         """Hash function for WorkerAddress."""
         return hash((self.root_group_name, tuple(self.rank_path)))
