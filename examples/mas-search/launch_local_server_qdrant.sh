@@ -19,7 +19,7 @@ qdrant_url=http://localhost:6333
 
 qdrant_collection_name=wiki_collection
 
-python3  ./local_retrieval_server_qdrant_5.py \
+python3  ./local_retrieval_server_qdrant.py \
                                             --pages_path $pages_file \
                                             --topk 3 \
                                             --retriever_name $retriever_name \

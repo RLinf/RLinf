@@ -525,13 +525,13 @@ if __name__ == "__main__":
 
     # TODO: test:
     async def test():
-        query1 = "介绍一下红牛"
+        query1 = "introduce Red Bull"
         result1 = await retriever.asearch(query1, 1, return_score=False)
         print(f"test1: query: {query1}, result: {result1}")
-        query2 = "介绍一下卢布尔雅那"
+        query2 = "introduce Ljubljana"
         result2 = await retriever.asearch(query2, 2, return_score=True)
         print(f"test2: query: {query2}, result: {result2}")
-        query3 = ["介绍一下火星", "介绍一下水星"]
+        query3 = ["introduce Mars", "introduce Mercury"]
         result3 = await retriever.abatch_search(query3, 3, return_score=True)
         print(f"test3: query: {query3}, result: {result3}")
         print("Retriver is ready.")
