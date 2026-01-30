@@ -180,7 +180,7 @@ tools:
   mcp_file_system: null
   codejudge:
     host_addr: 127.0.0.1
-    host_port: 8000
+    host_port: 8088
     concurrency_limit: 128
 
 actor:
