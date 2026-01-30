@@ -272,12 +272,12 @@ jobs:
         run: |
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          redis-server --daemonize yes --protected-mode no --bind 0.0.0.0
+          redis-server --daemonize yes --protected-mode no --bind 0.0.0.0 --port 6380
           tmux new-session -d -s server \
           'source .venv/bin/activate && \
             cd code-judge && \
             MAX_EXECUTION_TIME=4 \
-            REDIS_URI="redis://$MASTER_ADDR:6379" \
+            REDIS_URI="redis://$MASTER_ADDR:6380" \
             RUN_WORKERS=0 \
             uvicorn app.main:app --host 0.0.0.0 --port 8088 --workers 16 \
             2>&1 | tee server.log' 
@@ -285,14 +285,14 @@ jobs:
           'source .venv/bin/activate && \
             cd code-judge && \
             MAX_EXECUTION_TIME=4 \
-            REDIS_URI="redis://$MASTER_ADDR:6379" \
+            REDIS_URI="redis://$MASTER_ADDR:6380" \
             MAX_WORKERS=64 \
             python run_workers.py \
             2>&1 | tee worker.log'
           for i in {1..6}; do
             echo "[$((i*10))s] Checking status..."
             
-            if curl -s http://127.0.0.1:8000/ >/dev/null 2>&1; then
+            if curl -s http://127.0.0.1:8088/ >/dev/null 2>&1; then
               echo "  ✓ Server is responding"
             else
               echo "  ⏳ Server not ready yet"
