@@ -281,7 +281,7 @@ jobs:
             RUN_WORKERS=0 \
             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 16 \
             2>&1 | tee server.log' 
-            tmux new-session -d -s worker \
+          tmux new-session -d -s worker \
           'source .venv/bin/activate && \
             cd code-judge && \
             MAX_EXECUTION_TIME=4 \
@@ -289,6 +289,40 @@ jobs:
             MAX_WORKERS=64 \
             python run_workers.py \
             2>&1 | tee worker.log'
+          for i in {1..6}; do
+            echo "[$((i*10))s] Checking status..."
+            
+            if curl -s http://127.0.0.1:8000/ >/dev/null 2>&1; then
+              echo "  ✓ Server is responding"
+            else
+              echo "  ⏳ Server not ready yet"
+            fi
+            
+            if ps aux | grep -v grep | grep "run_workers.py" >/dev/null; then
+              echo "  ✓ Worker is running"
+            else
+              echo "  ⏳ Worker not detected yet"
+            fi
+            
+            sleep 10
+          done
+          echo ""
+          echo "=== Server log (after 60s) ==="
+          if [ -f code-judge/server.log ]; then
+            cat code-judge/server.log
+          else
+            echo "⚠️  server.log not found"
+            tmux capture-pane -t server -p || echo "Could not capture server pane"
+          fi
+          echo ""
+          echo "=== Worker log (after 60s) ==="
+          if [ -f code-judge/worker.log ]; then
+            cat code-judge/worker.log
+          else
+            echo "⚠️  worker.log not found"
+            tmux capture-pane -t worker -p || echo "Could not capture worker pane"
+          fi
+          tmux ls
           bash tests/e2e_tests/agent/run_rstar2.sh
 
       - name: Clean up
