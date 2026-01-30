@@ -488,18 +488,32 @@ class WorkerGroupFuncResult:
             exit(-1)
         self._wait_done = True
 
-    def consume_duration(self, reduction_type: str = "max"):
-        """Get the max execution time of a function across different ranks of a group.
+    def consume_durations(self, reduction_type: Optional[str] = "max"):
+        """Get the execution times of a function across different ranks of a group.
 
         This implicitly waits for the function to finish.
 
         Args:
-            reduction_type (str): The type of reduction to apply. Can be "max", "min", or "mean".
+            reduction_type (Optional[str]): The type of reduction to apply. Can be any numpy reduction function,
+                such as "max", "min", "mean" or "sum". If None, the raw execution times are returned.
+
+        Returns:
+            dict[str, float | list[float]]: A dictionary of all recorded execution times for each key.
+            If reduction_type is not None, the dictionary is reduced to a single value for each key.
+            Otherwise, the list of execution times of all workers for each key is returned.
         """
         self.wait()
-        execution_times = self._worker_group.pop_execution_time(self._func_name).wait()
+        execution_times = self._worker_group.pop_execution_time().wait()
+        result = {}
+        for k in execution_times[0].keys():
+            result[k] = [execution_times[i][k] for i in range(len(execution_times))]
+        if reduction_type is None:
+            return result
         reduction_func = getattr(np, reduction_type)
-        return reduction_func(execution_times)
+        for k in result.keys():
+            result[k] = reduction_func(result[k]).item()
+
+        return result
 
     def wait(self):
         """Wait for all remote results to complete and return the results."""

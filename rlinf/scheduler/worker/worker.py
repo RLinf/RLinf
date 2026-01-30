@@ -28,7 +28,9 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
+    Concatenate,
     Optional,
+    ParamSpec,
     TypeVar,
 )
 
@@ -48,6 +50,8 @@ if TYPE_CHECKING:
     from .worker_group import WorkerGroup
 
 WorkerClsType = TypeVar("WorkerClsType")
+P = ParamSpec("P")
+R = TypeVar("R")
 
 
 class WorkerMeta(type):
@@ -794,15 +798,15 @@ class Worker(metaclass=WorkerMeta):
         """Log at the error level."""
         self._logger.error(msg, stacklevel=self._stacklevel)
 
-    def pop_execution_time(self, tag: str):
+    def pop_execution_time(self):
         """Retrieve the execution time of a function.
 
-        Args:
-            tag (str): The name of the timer to retrieve the execution time for.
+        Returns:
+            dict[str, float]: A dictionary of all recorded execution times.
         """
-        if tag not in self._timer_metrics:
-            raise ValueError(f"Timer '{tag}' has not been recorded.")
-        return self._timer_metrics.pop(tag)
+        metrics = self._timer_metrics
+        self._timer_metrics = {}
+        return metrics
 
     @contextmanager
     def worker_timer(self, tag: Optional[str] = None):
@@ -822,6 +826,52 @@ class Worker(metaclass=WorkerMeta):
         finally:
             duration = time.perf_counter() - start_time
             self._timer_metrics[tag] = self._timer_metrics.get(tag, 0.0) + duration
+
+    @classmethod
+    def timer(
+        cls, tag: Optional[str] = None
+    ) -> Callable[
+        [Callable[Concatenate["Worker", P], R]], Callable[Concatenate["Worker", P], R]
+    ]:
+        """Decorator to time a Worker instance method.
+
+        Usage:
+            - `@Worker.timer()` records the method execution time under the method name
+            - `@Worker.timer("my_tag")` records under a custom tag
+
+        This is equivalent to wrapping the method body with:
+            `with self.worker_timer("my_tag"): ...`
+        """
+
+        def decorator(
+            func: Callable[Concatenate["Worker", P], R],
+        ) -> Callable[Concatenate["Worker", P], R]:
+            if inspect.isasyncgenfunction(func):
+                raise NotImplementedError(
+                    f"Async generator function {func.__name__} is not supported by Worker.timer()."
+                )
+
+            timer_tag = func.__name__ if tag is None else tag
+
+            if inspect.iscoroutinefunction(func):
+
+                @functools.wraps(func)
+                async def async_wrapper(
+                    self: "Worker", *args: P.args, **kwargs: P.kwargs
+                ):
+                    with self.worker_timer(timer_tag):
+                        return await func(self, *args, **kwargs)
+
+                return async_wrapper  # type: ignore[return-value]
+
+            @functools.wraps(func)
+            def sync_wrapper(self: "Worker", *args: P.args, **kwargs: P.kwargs):
+                with self.worker_timer(timer_tag):
+                    return func(self, *args, **kwargs)
+
+            return sync_wrapper  # type: ignore[return-value]
+
+        return decorator
 
     @staticmethod
     def check_worker_alive(worker_name: str) -> bool:

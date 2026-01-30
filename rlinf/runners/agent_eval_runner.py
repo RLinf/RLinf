@@ -335,8 +335,12 @@ class AgentEvalRunner(ReasoningEvalRunner):
                     total_samples += batch_count
 
                 time_metrics = self.timer.consume_durations()
-                time_metrics["rollout"] = rollout_handle.consume_duration()
-                time_metrics["reward"] = reward_handle.consume_duration()
+                time_metrics["rollout"] = rollout_handle.consume_durations()[
+                    "run_agentloop_rollout"
+                ]
+                time_metrics["reward"] = reward_handle.consume_durations()[
+                    "compute_rewards"
+                ]
 
                 # Update progress bar with current metrics
                 current_accuracy = (

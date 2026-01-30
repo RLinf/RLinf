@@ -117,7 +117,7 @@ class SFTRunner:
                     self._save_checkpoint()
 
             time_metrics = self.timer.consume_durations()
-            time_metrics["training"] = actor_handle.consume_duration()
+            time_metrics["training"] = actor_handle.consume_durations()["run_training"]
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
             training_metrics = {f"train/{k}": v for k, v in actor_metrics[0].items()}
             self.metric_logger.log(time_metrics, _step)
