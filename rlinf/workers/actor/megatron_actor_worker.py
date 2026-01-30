@@ -94,58 +94,6 @@ except ImportError:
     HAVE_RESHARDING = False
 
 
-def metrics_process_microbatch(processor_map, metrics, rank=None):
-    result_metrics = {}
-    keys = set(metrics.keys())
-    priority_keys = ["actor/token_num"]
-    keys = [*priority_keys, *sorted(keys.difference(priority_keys))]
-    for key in keys:
-        value = metrics[key]
-        metrics_processor = processor_map.get(key, "batch:mean")
-        if metrics_processor == "token:sum":
-            torch.distributed.all_reduce(
-                value, group=parallel_state.get_data_parallel_group()
-            )
-            result_metrics[key] = value
-        elif metrics_processor == "token:mean":
-            torch.distributed.all_reduce(
-                value, group=parallel_state.get_data_parallel_group()
-            )
-            # num_dp = result_metrics["actor/token_num"].item()
-            result_metrics[key] = value
-        elif metrics_processor == "batch:mean":
-            result_metrics[key] = average_losses_across_data_parallel_group([value])
-        else:
-            assert False, (
-                f"Unsupported metrics processor: {metrics_processor}, key is {key}"
-            )
-    return result_metrics
-
-
-def metrics_process_globalbatch(process_map, metrics_list, rank=None):
-    result_metrics = {}
-    keys = set(metrics_list[0].keys())
-    priority_keys = ["actor/token_num"]
-    keys = [*priority_keys, *sorted(keys.difference(priority_keys))]
-    for key in keys:
-        metrics_processor = process_map.get(key, "batch:mean")
-        if metrics_processor == "token:sum":
-            value = torch.stack([i[key] for i in metrics_list]).sum()
-            result_metrics[key] = value.item()
-        elif metrics_processor == "token:mean":
-            value = torch.stack([i[key] for i in metrics_list]).sum()
-            token_num_global = result_metrics["actor/token_num"]
-            result_metrics[key] = value.item() / token_num_global
-        elif metrics_processor == "batch:mean":
-            value = torch.stack([i[key] for i in metrics_list]).sum()
-            result_metrics[key] = value.item()
-        else:
-            assert False, (
-                f"Unsupported metrics processor: {metrics_processor}, key is {key}"
-            )
-    return result_metrics
-
-
 class MegatronActor(MegatronModelManager, Worker):
     """The class for running the actor training using Megatron."""
 
@@ -259,16 +207,6 @@ class MegatronActor(MegatronModelManager, Worker):
             self.init_profiler()
 
         self._init_auto_scheduler(role)
-        self.metrics_processors = {
-            "actor/token_num": "token:sum",
-            "actor/approx_kl": "token:mean",
-            "actor/policy_loss": "token:mean",
-            "actor/policy_loss_abs": "token:mean",
-            "actor/ratio": "token:mean",
-            "actor/clipped_ratio": "token:mean",
-            "actor/dual_cliped_ratio": "token:mean",
-            "actor/clip_fraction": "token:mean",
-        }
 
     def _init_auto_scheduler(self, role: str):
         self.use_auto_scheduler = self.placement_mode == PlacementMode.AUTO
@@ -781,9 +719,12 @@ class MegatronActor(MegatronModelManager, Worker):
         else:
             outputs = {}
             if forward_outputs:
-                outputs = metrics_process_globalbatch(
-                    self.metrics_processors, forward_outputs, rank=self._rank
-                )
+                keys = forward_outputs[0].keys()
+                for key in keys:
+                    metric_mean = torch.stack(
+                        [loss_reduced[key] for loss_reduced in forward_outputs]
+                    ).mean()
+                    outputs[key] = metric_mean.cpu().item()
             output_list = [outputs]
             torch.distributed.broadcast_object_list(output_list, get_last_rank())
             outputs = output_list[0]
