@@ -67,6 +67,7 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
         self.action_dim = int(action_dim)
         self.num_action_chunks = int(num_action_chunks)
         self._history_rgb_tensor: dict[str, torch.Tensor | None] = {}
+        # TODO: initialize max history len from config
         self._max_history_len: int | None = None
 
     @classmethod
@@ -196,9 +197,7 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
             stop_str=stop_str,
         )
 
-        chunk_actions = self._parse_actions_from_texts(
-            gen_texts=gen_texts, stop_str=stop_str
-        )
+        chunk_actions = self._parse_actions_from_texts(gen_texts=gen_texts)
         print("=" * 60)
         for gen_text in gen_texts:
             print(f"gen_text: {gen_text}")
@@ -482,19 +481,13 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
             for text in gen_texts
         ]
 
-    def _parse_actions_from_texts(
-        self, *, gen_texts: list[str], stop_str: str
-    ) -> np.ndarray:
+    def _parse_actions_from_texts(self, *, gen_texts: list[str]) -> np.ndarray:
         chunk_actions = np.full(
             (len(gen_texts), self.num_action_chunks, 1), "no_op", dtype="<U12"
         )
 
         for i, gen_text in enumerate(gen_texts):
-            text = (
-                gen_text[: -len(stop_str)].strip()
-                if stop_str and gen_text.endswith(stop_str)
-                else gen_text.strip()
-            )
+            text = gen_text.strip()
             match = re.search(r"-?\d+", text)
             num = int(match.group(0))
 
