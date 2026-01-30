@@ -290,7 +290,6 @@ jobs:
             python run_workers.py \
             2>&1 | tee worker.log'
           sleep 10
-          done
           echo ""
           echo "=== Server log (after 10s) ==="
           if [ -f code-judge/server.log ]; then
