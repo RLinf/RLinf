@@ -139,10 +139,26 @@ unset_mirror() {
     fi
 }
 
+# create_and_sync_venv() {
+#     uv venv "$VENV_DIR" --python "$PYTHON_VERSION"
+#     # shellcheck disable=SC1090
+#     source "$VENV_DIR/bin/activate"
+#     UV_TORCH_BACKEND=auto uv sync --active
+# }
+
 create_and_sync_venv() {
-    uv venv "$VENV_DIR" --python "$PYTHON_VERSION"
+    # Reuse existing venv if present; otherwise create it.
+    if [ -f "$VENV_DIR/bin/activate" ]; then
+        echo "Reusing existing virtual environment at: $VENV_DIR"
+    else
+        echo "Creating virtual environment at: $VENV_DIR"
+        uv venv "$VENV_DIR" --python "$PYTHON_VERSION"
+    fi
+
     # shellcheck disable=SC1090
     source "$VENV_DIR/bin/activate"
+
+    # Sync deps into the active venv
     UV_TORCH_BACKEND=auto uv sync --active
 }
 
