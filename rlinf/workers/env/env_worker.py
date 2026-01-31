@@ -27,6 +27,34 @@ from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.placement import HybridComponentPlacement
 
 
+class SimpleEnvWrapper:
+    """Simple wrapper to replace EnvManager when not using multi-process"""
+
+    def __init__(self, env):
+        self.env = env
+        self.is_start = True
+
+    def start_env(self):
+        pass
+
+    def stop_env(self):
+        pass
+
+    def reset(self, **kwargs):
+        return self.env.reset(**kwargs)
+
+    def chunk_step(self, *args, **kwargs):
+        return self.env.chunk_step(*args, **kwargs)
+
+    def flush_video(self):
+        if hasattr(self.env, "flush_video"):
+            self.env.flush_video()
+
+    def update_reset_state_ids(self):
+        if hasattr(self.env, "update_reset_state_ids"):
+            self.env.update_reset_state_ids()
+
+
 class EnvWorker(Worker):
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
@@ -84,32 +112,78 @@ class EnvWorker(Worker):
             groups=[(self._group_name, list(range(self._world_size)))],
         )
 
+        dc_cfg = getattr(self.cfg.env, "data_collection", None)
+        dc_enabled = (
+            dc_cfg and getattr(dc_cfg, "enabled", False) and not self.enable_offload
+        )
+        use_full_state = getattr(self.cfg.env, "use_full_state", False)
+
         if not self.only_eval:
             for stage_id in range(self.stage_num):
-                self.env_list.append(
-                    EnvManager(
-                        self.cfg.env.train,
-                        rank=self._rank,
-                        num_envs=self.train_num_envs_per_stage,
-                        seed_offset=self._rank * self.stage_num + stage_id,
-                        total_num_processes=self._world_size * self.stage_num,
-                        env_cls=train_env_cls,
-                        worker_info=self.worker_info,
-                    )
+                # Create environment directly without EnvManager
+                env = train_env_cls(
+                    self.cfg.env.train,
+                    self.train_num_envs_per_stage,
+                    self._rank * self.stage_num + stage_id,
+                    self._world_size * self.stage_num,
+                    self.worker_info,
                 )
+
+                # Apply wrappers directly
+                if use_full_state and self.cfg.env.train.env_type == "maniskill":
+                    from rlinf.envs.maniskill import ManiskillFullStateWrapper
+
+                    env = ManiskillFullStateWrapper(
+                        env, num_envs=self.train_num_envs_per_stage
+                    )
+                if dc_enabled:
+                    from rlinf.envs.wrappers import DataCollectorWrapper
+
+                    env = DataCollectorWrapper(
+                        env,
+                        save_dir=dc_cfg.save_dir,
+                        rank=self._rank,
+                        mode=getattr(dc_cfg, "mode", "train"),
+                        num_envs=self.train_num_envs_per_stage,
+                        sample_rate_success=getattr(dc_cfg, "sample_rate_success", 1.0),
+                        sample_rate_fail=getattr(dc_cfg, "sample_rate_fail", 0.1),
+                    )
+
+                # Wrap in SimpleEnvWrapper for compatibility
+                self.env_list.append(SimpleEnvWrapper(env))
         if self.enable_eval:
             for stage_id in range(self.stage_num):
-                self.eval_env_list.append(
-                    EnvManager(
-                        self.cfg.env.eval,
-                        rank=self._rank,
-                        num_envs=self.eval_num_envs_per_stage,
-                        seed_offset=self._rank * self.stage_num + stage_id,
-                        total_num_processes=self._world_size * self.stage_num,
-                        env_cls=eval_env_cls,
-                        worker_info=self.worker_info,
-                    )
+                # Create environment directly without EnvManager
+                env = eval_env_cls(
+                    self.cfg.env.eval,
+                    self.eval_num_envs_per_stage,
+                    self._rank * self.stage_num + stage_id,
+                    self._world_size * self.stage_num,
+                    self.worker_info,
                 )
+
+                # Apply wrappers directly
+                if use_full_state and self.cfg.env.eval.env_type == "maniskill":
+                    from rlinf.envs.maniskill import ManiskillFullStateWrapper
+
+                    env = ManiskillFullStateWrapper(
+                        env, num_envs=self.eval_num_envs_per_stage
+                    )
+                if dc_enabled:
+                    from rlinf.envs.wrappers import DataCollectorWrapper
+
+                    env = DataCollectorWrapper(
+                        env,
+                        save_dir=dc_cfg.save_dir,
+                        rank=self._rank,
+                        mode=getattr(dc_cfg, "mode", "eval"),
+                        num_envs=self.eval_num_envs_per_stage,
+                        sample_rate_success=getattr(dc_cfg, "sample_rate_success", 1.0),
+                        sample_rate_fail=getattr(dc_cfg, "sample_rate_fail", 0.1),
+                    )
+
+                # Wrap in SimpleEnvWrapper for compatibility
+                self.eval_env_list.append(SimpleEnvWrapper(env))
 
         if not self.only_eval:
             self._init_env()
