@@ -65,7 +65,7 @@ class HabitatEnv(gym.Env):
         self.use_rel_reward = cfg.use_rel_reward
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
         self.auto_reset = cfg.auto_reset
-        self.max_episode_steps = cfg.max_steps_per_rollout_epoch
+        self.max_episode_steps = cfg.max_episode_steps
         self.ignore_terminations = cfg.ignore_terminations
         self.dones_once = np.zeros(self.num_envs, dtype=bool)
         self.record_first_done_infos = None
@@ -167,6 +167,7 @@ class HabitatEnv(gym.Env):
         # After excuting "stop" action, habitat env needs reset to process the next action
         # Replace "stop" with "no_op" before stepping the underlying env
         # to avoid unable to process the next action.
+        actions = actions.astype("U12")
         is_stop = actions == "stop"
         actions[is_stop] = "no_op"
 
@@ -247,7 +248,7 @@ class HabitatEnv(gym.Env):
             device = next(iter(episode.values())).device
             mask = torch.zeros(self.num_envs, dtype=torch.bool, device=device)
             mask[env_idx] = True
-            for k, v in episode.values():
+            for v in episode.values():
                 v[mask] = torch.zeros_like(v)
         infos = {}
 
@@ -317,24 +318,22 @@ class HabitatEnv(gym.Env):
     def _wrap_obs(self, obs_list):
         image_list = []
         task_descs = []
+        token_list = []
         for obs in obs_list:
             image_list.append(observations_to_image(obs))
-            # VLN-CE observations usually carry instruction in one of these fields.
-            inst = ""
-            if isinstance(obs, dict):
-                if "instruction" in obs and isinstance(obs["instruction"], dict):
-                    inst = str(obs["instruction"].get("text", ""))
-                elif "instruction_text" in obs:
-                    inst = str(obs["instruction_text"])
-                elif "text" in obs:
-                    inst = str(obs["text"])
+            inst = str(obs["instruction"].get("text", ""))
+            # token is used for CMA algorithm, please refer to
+            # https://github.com/jacobkrantz/VLN-CE for more details.
+            token = obs["instruction"].get("tokens", [])
             task_descs.append(inst)
+            token_list.append(token)
 
         image_tensor = to_tensor(list_of_dict_to_dict_of_list(image_list))
         episode_ids = self.env.get_current_episode_ids()
 
         obs = {}
         obs["main_images"] = image_tensor["rgb"].clone()  # [N_ENV, H, W, C]
+        obs["wrist_images"] = token_list  # Temporarily use wrist_images to store tokens
         obs["task_descriptions"] = task_descs
         obs["states"] = torch.tensor(episode_ids, dtype=torch.int64)
 
@@ -475,10 +474,10 @@ class HabitatEnv(gym.Env):
         episode_ids = self._build_ordered_episodes(habitat_dataset)
 
         num_episodes = len(episode_ids)
-        episodes_per_env = num_episodes // self.num_envs
+        episodes_per_env = num_episodes // self.num_envs // self.total_num_processes
 
         episode_ranges = []
-        start = 0
+        start = self.seed_offset * episodes_per_env * self.num_envs
         for i in range(self.num_envs - 1):
             episode_ranges.append((start, start + episodes_per_env))
             start += episodes_per_env
