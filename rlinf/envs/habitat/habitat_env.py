@@ -65,7 +65,7 @@ class HabitatEnv(gym.Env):
         self.use_rel_reward = cfg.use_rel_reward
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
         self.auto_reset = cfg.auto_reset
-        self.max_episode_steps = cfg.max_steps_per_rollout_epoch
+        self.max_episode_steps = cfg.max_episode_steps
         self.ignore_terminations = cfg.ignore_terminations
         self.dones_once = np.zeros(self.num_envs, dtype=bool)
         self.record_first_done_infos = None
@@ -79,6 +79,9 @@ class HabitatEnv(gym.Env):
         self.video_cfg = cfg.video_cfg
         self.render_images = {}
         self.current_raw_obs = None
+
+        self.env_config = self.env.get_env_attr("config")[0]
+        self.initial_distance_to_goal = np.zeros(self.num_envs)
 
     @property
     def elapsed_steps(self):
@@ -164,10 +167,10 @@ class HabitatEnv(gym.Env):
             actions = actions.detach().cpu().numpy()
         self._elapsed_steps += 1
 
-        # After excuting "stop" action, habitat env needs reset to process the next action
-        # Replace "stop" with "no_op" before stepping the underlying env
-        # to avoid unable to process the next action.
-        actions = actions.astype("U20")
+        # After excuting "stop" action, habitat env needs reset to process the next action.
+        # Replace "stop" with "no_op" before stepping the underlying env to avoid unable
+        # to process the next action.
+        actions = actions.astype("U12")
         is_stop = actions == "stop"
         actions[is_stop] = "no_op"
 
@@ -244,11 +247,10 @@ class HabitatEnv(gym.Env):
             and "episode" in self.record_first_done_infos
         ):
             episode = self.record_first_done_infos["episode"]
-            # Construct a mask to mark the envs in this reset.
             device = next(iter(episode.values())).device
             mask = torch.zeros(self.num_envs, dtype=torch.bool, device=device)
             mask[env_idx] = True
-            for k, v in episode.items():
+            for v in episode.values():
                 v[mask] = torch.zeros_like(v)
         infos = {}
 
@@ -295,8 +297,7 @@ class HabitatEnv(gym.Env):
         if not np.any(is_no_op):
             return
 
-        env_config = self.env.get_env_attr("config")[0]
-        depth_cfg = env_config.simulator.agents.main_agent.sim_sensors.depth_sensor
+        depth_cfg = self.env_config.simulator.agents.main_agent.sim_sensors.depth_sensor
         if not getattr(depth_cfg, "normalize_depth", False):
             return
 
@@ -319,20 +320,12 @@ class HabitatEnv(gym.Env):
         image_list = []
         task_descs = []
         token_list = []
-        task_descs = []
         for obs in obs_list:
             image_list.append(observations_to_image(obs))
-            # VLN-CE observations usually carry instruction in one of these fields.
-            inst = ""
-            token = []
-            if isinstance(obs, dict):
-                if "instruction" in obs and isinstance(obs["instruction"], dict):
-                    inst = str(obs["instruction"].get("text", ""))
-                elif "instruction_text" in obs:
-                    inst = str(obs["instruction_text"])
-                elif "text" in obs:
-                    inst = str(obs["text"])
-                token = obs["instruction"].get("tokens", [])
+            inst = str(obs["instruction"].get("text", ""))
+            # token is used for CMA algorithm, please refer to
+            # https://github.com/jacobkrantz/VLN-CE for more details.
+            token = obs["instruction"].get("tokens", [])
             task_descs.append(inst)
             token_list.append(token)
 
@@ -341,9 +334,9 @@ class HabitatEnv(gym.Env):
 
         obs = {}
         obs["main_images"] = image_tensor["rgb"].clone()  # [N_ENV, H, W, C]
+        obs["wrist_images"] = token_list  # Temporarily use wrist_images to store tokens
         obs["task_descriptions"] = task_descs
         obs["states"] = torch.tensor(episode_ids, dtype=torch.int64)
-        obs["wrist_images"] = token_list
 
         if "depth" in image_tensor:
             depth_tensor = image_tensor["depth"].clone()
@@ -376,15 +369,46 @@ class HabitatEnv(gym.Env):
 
     def _record_metrics(self, infos):
         episode_info = {}
-        episode_info["distance_to_goal"] = infos["distance_to_goal"].copy()
-        episode_info["success"] = infos["success"].copy()
-        episode_info["spl"] = infos["spl"].copy()
-        episode_info["trajectory_Length"] = infos["trajectory_Length"].copy()
-        episode_info["oracle_success"] = infos["oracle_success"].copy()
+        dist_threshold = self.env_config.task.measurements.success.success_distance
+
+        episode_info["distance_to_goal"] = np.array(
+            infos["distance_to_goal"], dtype=np.float32
+        ).copy()
+
+        # Record initial distance to goal at the first step of each episode
+        is_first_step = self._elapsed_steps == 1
+        if is_first_step.any():
+            self.initial_distance_to_goal[is_first_step] = episode_info[
+                "distance_to_goal"
+            ][is_first_step].copy()
+
+        episode_info["success"] = (
+            (np.array(infos["distance_to_goal"]) < dist_threshold).astype(float).copy()
+        )
+
+        episode_info["trajectory_Length"] = np.array(
+            infos["trajectory_Length"], dtype=np.float32
+        ).copy()
+
+        episode_info["spl"] = episode_info["success"] * (
+            self.initial_distance_to_goal
+            / np.maximum(
+                episode_info["trajectory_Length"], self.initial_distance_to_goal
+            )
+        )
+
+        episode_info["oracle_success"] = (
+            (np.array(infos["oracle_navigation_error"]) < dist_threshold)
+            .astype(float)
+            .copy()
+        )
+
         episode_info["oracle_navigation_error"] = infos[
             "oracle_navigation_error"
         ].copy()
+
         infos["episode"] = to_tensor(episode_info)
+
         return infos
 
     def _save_metrics(self, infos, metric_save_masks):
@@ -482,10 +506,10 @@ class HabitatEnv(gym.Env):
         episode_ids = self._build_ordered_episodes(habitat_dataset)
 
         num_episodes = len(episode_ids)
-        episodes_per_env = num_episodes // self.num_envs
+        episodes_per_env = num_episodes // self.num_envs // self.total_num_processes
 
         episode_ranges = []
-        start = 0
+        start = self.seed_offset * episodes_per_env * self.num_envs
         for i in range(self.num_envs - 1):
             episode_ranges.append((start, start + episodes_per_env))
             start += episodes_per_env
