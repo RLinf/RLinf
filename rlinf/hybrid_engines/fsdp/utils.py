@@ -48,6 +48,7 @@ from rlinf.hybrid_engines.fsdp import (
     ShardingStrategy,
     fully_shard,
 )
+from rlinf.scheduler import Worker
 
 
 class FSDPVersion(str, Enum):
@@ -58,11 +59,11 @@ class FSDPVersion(str, Enum):
 def create_device_mesh(world_size, fsdp_size):
     if fsdp_size < 0 or fsdp_size >= world_size:
         device_mesh = init_device_mesh(
-            "cuda", mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
+            Worker.torch_device_type, mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
         )
     else:
         device_mesh = init_device_mesh(
-            "cuda",
+            Worker.torch_device_type,
             mesh_shape=(world_size // fsdp_size, fsdp_size),
             mesh_dim_names=["ddp", "fsdp"],
         )
