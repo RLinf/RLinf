@@ -153,13 +153,6 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
             default_im_end_token=DEFAULT_IM_END_TOKEN,
         )
 
-        new_frames_tensor = self._preprocess_new_frames(images=images, device=device)
-        images_for_model = self._accumulate_history_frames(
-            new_frames_tensor=new_frames_tensor,
-            episode_ids=episode_ids,
-            device=device,
-        )
-
         special_tokens = self._build_special_token_tensors(
             image_start_token=IMAGE_START_TOKEN,
             image_end_token=IMAGE_END_TOKEN,
@@ -180,6 +173,13 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
 
         stop_str, stopping_criteria = self._build_stopping_criteria(
             convs=convs, SeparatorStyle=SeparatorStyle, input_ids=input_ids
+        )
+
+        new_frames_tensor = self._preprocess_new_frames(images=images, device=device)
+        images_for_model = self._accumulate_history_frames(
+            new_frames_tensor=new_frames_tensor,
+            episode_ids=episode_ids,
+            device=device,
         )
 
         outputs = self._generate(
@@ -288,63 +288,6 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
 
         return prompts, questions, convs
 
-    def _preprocess_new_frames(
-        self, *, images: list[np.ndarray], device: torch.device
-    ) -> torch.Tensor:
-        batch_image = np.asarray(images)
-        new_frames_tensor = self.image_processor.preprocess(
-            batch_image, return_tensors="pt"
-        )["pixel_values"]  # [B, C, H, W]
-
-        model_dtype = getattr(self.model, "dtype", None)
-        if model_dtype in (torch.float16, torch.bfloat16):
-            new_frames_tensor = new_frames_tensor.to(dtype=model_dtype)
-        else:
-            new_frames_tensor = new_frames_tensor.float()
-
-        return new_frames_tensor.to(device=device)
-
-    def _accumulate_history_frames(
-        self,
-        *,
-        new_frames_tensor: torch.Tensor,
-        episode_ids: list[Any],
-        device: torch.device,
-    ) -> list[torch.Tensor]:
-        bsz = int(new_frames_tensor.shape[0])
-        images_for_model: list[torch.Tensor] = []
-
-        if not self._history_rgb_tensor:
-            self._history_episode_ids = episode_ids
-
-        for i in range(bsz):
-            ep_id = episode_ids[i]
-            hist_ep_id = self._history_episode_ids[i]
-
-            if ep_id != hist_ep_id:
-                self._history_rgb_tensor.pop(hist_ep_id, None)
-                self._history_episode_ids[i] = ep_id
-
-            if ep_id not in self._history_rgb_tensor:
-                self._history_rgb_tensor[ep_id] = None
-
-            new_frame = new_frames_tensor[i : i + 1]  # [1, C, H, W]
-            if self._history_rgb_tensor[ep_id] is None:
-                self._history_rgb_tensor[ep_id] = new_frame
-            else:
-                self._history_rgb_tensor[ep_id] = torch.cat(
-                    (self._history_rgb_tensor[ep_id], new_frame), dim=0
-                )
-
-            if self._max_history_len is not None:
-                hist = self._history_rgb_tensor[ep_id]
-                if hist is not None and hist.shape[0] > self._max_history_len:
-                    self._history_rgb_tensor[ep_id] = hist[-self._max_history_len :]
-
-            images_for_model.append(self._history_rgb_tensor[ep_id].to(device=device))
-
-        return images_for_model
-
     @dataclass(frozen=True)
     class _SpecialTokens:
         image_start: torch.Tensor
@@ -441,6 +384,63 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
             [stop_str], self.tokenizer, input_ids
         )
         return stop_str, stopping_criteria
+
+    def _preprocess_new_frames(
+        self, *, images: list[np.ndarray], device: torch.device
+    ) -> torch.Tensor:
+        batch_image = np.asarray(images)
+        new_frames_tensor = self.image_processor.preprocess(
+            batch_image, return_tensors="pt"
+        )["pixel_values"]  # [B, C, H, W]
+
+        model_dtype = getattr(self.model, "dtype", None)
+        if model_dtype in (torch.float16, torch.bfloat16):
+            new_frames_tensor = new_frames_tensor.to(dtype=model_dtype)
+        else:
+            new_frames_tensor = new_frames_tensor.float()
+
+        return new_frames_tensor.to(device=device)
+
+    def _accumulate_history_frames(
+        self,
+        *,
+        new_frames_tensor: torch.Tensor,
+        episode_ids: list[Any],
+        device: torch.device,
+    ) -> list[torch.Tensor]:
+        bsz = int(new_frames_tensor.shape[0])
+        images_for_model: list[torch.Tensor] = []
+
+        if not self._history_rgb_tensor:
+            self._history_episode_ids = episode_ids
+
+        for i in range(bsz):
+            ep_id = episode_ids[i]
+            hist_ep_id = self._history_episode_ids[i]
+
+            if ep_id != hist_ep_id:
+                self._history_rgb_tensor.pop(hist_ep_id, None)
+                self._history_episode_ids[i] = ep_id
+
+            if ep_id not in self._history_rgb_tensor:
+                self._history_rgb_tensor[ep_id] = None
+
+            new_frame = new_frames_tensor[i : i + 1]  # [1, C, H, W]
+            if self._history_rgb_tensor[ep_id] is None:
+                self._history_rgb_tensor[ep_id] = new_frame
+            else:
+                self._history_rgb_tensor[ep_id] = torch.cat(
+                    (self._history_rgb_tensor[ep_id], new_frame), dim=0
+                )
+
+            if self._max_history_len is not None:
+                hist = self._history_rgb_tensor[ep_id]
+                if hist is not None and hist.shape[0] > self._max_history_len:
+                    self._history_rgb_tensor[ep_id] = hist[-self._max_history_len :]
+
+            images_for_model.append(self._history_rgb_tensor[ep_id].to(device=device))
+
+        return images_for_model
 
     def _generate(
         self,
