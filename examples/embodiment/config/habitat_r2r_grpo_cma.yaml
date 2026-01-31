@@ -15,7 +15,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 7
+    actor,env,rollout: 0-7
 
 runner:
   task_type: embodied
@@ -93,11 +93,11 @@ env:
     max_episode_steps: 512 # max episode steps for truncation
     reset_gripper_open: False
   eval:
-    total_num_envs: 4
+    total_num_envs: 384 # 608
     auto_reset: True
-    ignore_terminations: False
-    max_episode_steps: 128
-    max_steps_per_rollout_epoch: 64
+    ignore_terminations: True
+    max_episode_steps: 120
+    max_steps_per_rollout_epoch: 240
     group_size: 1
     use_fixed_reset_state_ids: True
     use_ordered_reset_state_ids: True
@@ -107,6 +107,8 @@ env:
       fps: 5
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
+    metrics_cfg:
+      metrics_base_dir: ${runner.logger.log_path}/metrics/eval
 
 rollout:
   group_name: "RolloutGroup"
