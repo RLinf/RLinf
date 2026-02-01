@@ -76,10 +76,13 @@ Franka-Sim 环境基于项目 `serl <https://rail-berkeley.github.io/serl/docs/s
    - 价值函数裁剪；
    - 熵正则化。
 
-2. **GRPO（组相对策略优化）**
+2. **SAC (Soft Actor-Critic)**
 
-   - 对于每个状态/提示，策略生成 *G* 个独立动作；
-   - 通过减去组平均奖励来计算每个动作的优势。
+   - 通过 Bellman 公式和熵正则化学习 Q 值。
+
+   - 学习策略网络以最大化熵正则化的 Q 值。
+
+   - 学习温度参数以平衡探索与利用。
 
 依赖安装
 --------
@@ -167,7 +170,7 @@ Franka-Sim 环境基于项目 `serl <https://rail-berkeley.github.io/serl/docs/s
        rollout: 4-7
        actor: 8-15
 
-该配置实现 env、rollout、actor 各自使用独立 GPU，互不干扰，因此通常不需要 offload 功能。
+该配置实现 env、rollout、actor 各自使用独立 GPU, 互不干扰, 因此通常不需要 offload 功能。
 
 2. 启动命令
 ~~~~~~~~~~~
@@ -178,11 +181,12 @@ Franka-Sim 环境基于项目 `serl <https://rail-berkeley.github.io/serl/docs/s
 
    bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
 
-暂时只支持在 Franka-Sim 环境中使用 PPO 训练 MLP Policy：
+支持在 Franka-Sim 环境中使用 PPO 训练 MLP Policy 或使用SAC 训练 CNN Policy :
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
+   bash examples/embodiment/run_async.sh frankasim_sac_cnn
 
 可视化与结果
 ------------

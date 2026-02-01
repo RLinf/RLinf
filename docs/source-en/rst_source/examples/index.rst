@@ -143,7 +143,7 @@ as well as reinforcement learning training examples on real robots.
         <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/frankasim.html" target="_blank" style="text-decoration: underline; color: blue;">
           <b>RL with Franka-Sim Benchmark</b>
         </a><br>
-        Supports Franka-Sim + MLP + PPO training
+        Supports Franka-Sim + MLP/CNN + PPO/SAC training
       </p>
     </div>
 
