@@ -107,7 +107,7 @@ rollout:
   backend: "huggingface"
   enable_offload: True
   pipeline_stage_num: 2
-
+  enable_torch_compile: True
   model:
     model_path: "/path/to/model/rl4vla/openvla-7b-rlvla-warmup/"
     precision: ${actor.model.precision}
