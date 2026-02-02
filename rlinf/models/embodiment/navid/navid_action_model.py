@@ -139,7 +139,7 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
         gen_params = self._get_generation_params(**kwargs)
 
         task_descs = env_obs["task_descriptions"]  # [N_ENV]
-        episode_ids = env_obs["states"]  # [N_ENV]
+        episode_ids = env_obs["states"].tolist()  # [N_ENV]
         images = env_obs["main_images"]  # [N_ENV, H, W, C]
         bsz = len(images)
 
@@ -198,9 +198,6 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
         )
 
         chunk_actions = self._parse_actions_from_texts(gen_texts=gen_texts)
-        print("=" * 60)
-        for gen_text in gen_texts:
-            print(f"gen_text: {gen_text}")
 
         prev_logprobs = torch.zeros(
             (bsz, self.action_dim), device=device, dtype=torch.float32
@@ -405,7 +402,7 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
         self,
         *,
         new_frames_tensor: torch.Tensor,
-        episode_ids: list[Any],
+        episode_ids: list[int],
         device: torch.device,
     ) -> list[torch.Tensor]:
         bsz = int(new_frames_tensor.shape[0])
@@ -422,7 +419,7 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
                 self._history_rgb_tensor.pop(hist_ep_id, None)
                 self._history_episode_ids[i] = ep_id
 
-            if ep_id not in self._history_rgb_tensor:
+            if ep_id not in self._history_rgb_tensor.keys():
                 self._history_rgb_tensor[ep_id] = None
 
             new_frame = new_frames_tensor[i : i + 1]  # [1, C, H, W]
@@ -489,7 +486,7 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
         for i, gen_text in enumerate(gen_texts):
             text = gen_text.strip()
             match = re.search(r"-?\d+", text)
-            num = int(match.group(0))
+            num = int(match.group(0)) if match else 0
 
             actions: list[str] = []
             if "forward" in text:
