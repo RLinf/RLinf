@@ -482,6 +482,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         max_prompt_length,
     ):
         super().__init__(config)
+        BasePolicy.__init__(self)
         self._init_logits_processor()
 
         action_norm_stats = self.get_action_stats(unnorm_key)
@@ -502,7 +503,6 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         self.num_action_chunks = num_action_chunks
         self.unnorm_key = unnorm_key
         self.max_prompt_length = max_prompt_length
-        self.torch_compile_enabled = False
 
     def _init_logits_processor(self):
         self.logits_processors = LogitsProcessorList()
@@ -998,6 +998,9 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         self.input_processor = input_processor
 
     def enable_torch_compile(self):
+        if self.torch_compile_enabled:
+            return
+
         def _prefill_fn(
             input_ids: torch.LongTensor,
             attention_mask: torch.Tensor,
@@ -1016,6 +1019,8 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         # self._prefill_fn_compiled = torch.compile(
         #     _prefill_fn, mode="max-autotune-no-cudagraphs"
         # )
+        # NOTE: it's sad that timm's vision encoder is not compatible with torch.compile yet
+        # It's ok to use monkey patch to fix it but we leave it for future work
         self._prefill_fn_compiled = _prefill_fn
 
         def _decode_step_fn(

@@ -16,6 +16,7 @@ import math
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any, Literal
 
 import jax
@@ -114,6 +115,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         # Override `sample_actions` to prevent parent class polymorphic call
         sample_actions_func = self.sample_actions
         super().__init__(config)
+        BasePolicy.__init__(self)
         self.sample_actions = sample_actions_func
         self.global_step = 0
         # assert
@@ -334,9 +336,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
 
     def predict_action_batch(
         self,
-        env_obs,
+        env_obs: dict[str, torch.Tensor],
         mode: Literal["train", "eval"] = "train",
-        compute_values=True,
+        compute_values: bool = True,
         **kwargs,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         to_process_obs = self.obs_processor(env_obs)  # env obs -> policy input obs
@@ -378,9 +380,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
     def sample_actions(
         self,
         observation: _model.Observation,
-        noise=None,
-        mode="train",
-        compute_values=True,
+        noise: torch.Tensor | None = None,
+        mode: Literal["train", "eval"] = "train",
+        compute_values: bool = True,
     ) -> torch.Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = observation.state.shape[0]
@@ -404,12 +406,22 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
         self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
 
-        (prefix_output, _), past_key_values = self.paligemma_with_expert.forward(
+        input_embeds = [prefix_embs, None]
+
+        paligemma_with_expert_forward = (
+            partial(
+                self.paligemma_with_expert.forward,
+                past_key_values=None,
+                use_cache=True,
+            )
+            if not self.torch_compile_enabled
+            else self.paligemma_with_expert_compiled
+        )
+
+        (prefix_output, _), past_key_values = paligemma_with_expert_forward(
             attention_mask=prefix_att_2d_masks_4d,
             position_ids=prefix_position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, None],
-            use_cache=True,
+            inputs_embeds=input_embeds,
         )
 
         x_t = noise
@@ -501,10 +513,10 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         self,
         x_t,
         idx,
-        state,
-        prefix_pad_masks,
-        past_key_values,
-        mode,
+        state: torch.Tensor,
+        prefix_pad_masks: torch.Tensor,
+        past_key_values: list[tuple[torch.Tensor, torch.Tensor]],
+        mode: Literal["train", "eval"],
         denoise_steps,
         compute_values=True,
     ):
@@ -537,7 +549,13 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         t_input = timesteps[idx]
         delta = timesteps[idx] - timesteps[idx + 1]
         # velocity prediction
-        suffix_out = self.get_suffix_out(
+        get_suffix_func = (
+            self.get_suffix_out
+            if not self.torch_compile_enabled
+            else self.get_suffix_out_compiled
+        )
+
+        suffix_out = get_suffix_func(
             state,
             prefix_pad_masks,
             past_key_values,
@@ -671,14 +689,14 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
 
     def get_log_prob_value(
         self,
-        images,
-        img_masks,
-        lang_tokens,
-        lang_masks,
-        state,
-        chains,
-        denoise_inds,
-        compute_values=False,
+        images: torch.Tensor,
+        img_masks: torch.Tensor,
+        lang_tokens: torch.Tensor,
+        lang_masks: torch.Tensor,
+        state: torch.Tensor,
+        chains: torch.Tensor,
+        denoise_inds: torch.Tensor,
+        compute_values: bool = False,
     ):
         bsize = state.shape[0]
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
@@ -787,3 +805,46 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             self.paligemma_with_expert.paligemma.eval()
             for params in self.paligemma_with_expert.paligemma.parameters():
                 params.requires_grad = False
+
+    def enable_torch_compile(self):
+        if self.torch_compile_enabled:
+            return
+
+        def paligemma_with_expert_forward(
+            attention_mask: torch.Tensor,
+            position_ids: torch.Tensor,
+            inputs_embeds: list[torch.Tensor | None],
+        ) -> tuple[dict, list[tuple[torch.Tensor, torch.Tensor]]]:
+            (prefix_output, _), past_key_values = self.paligemma_with_expert.forward(
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_values=None,
+                inputs_embeds=inputs_embeds,
+                use_cache=True,
+            )
+            return (prefix_output, _), past_key_values
+
+        self.paligemma_with_expert_compiled = torch.compile(
+            paligemma_with_expert_forward, mode="max-autotune-no-cudagraphs"
+        )
+
+        def get_suffix_out_fn(
+            state: torch.Tensor,
+            prefix_pad_masks: torch.Tensor,
+            past_key_values: list[tuple[torch.Tensor, torch.Tensor]],
+            x_t: torch.Tensor,
+            timestep: torch.Tensor,
+        ) -> torch.Tensor:
+            return self.get_suffix_out(
+                state,
+                prefix_pad_masks,
+                past_key_values,
+                x_t,
+                timestep,
+            )
+
+        self.get_suffix_out_compiled = torch.compile(
+            get_suffix_out_fn, mode="max-autotune-no-cudagraphs"
+        )
+
+        self.torch_compile_enabled = True
