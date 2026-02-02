@@ -1333,25 +1333,6 @@ class DynamicRolloutResult:
                 else:
                     raise ValueError(f"Wrong type of advantages {type(res.advantages)}")
 
-            # Merge eval_metrics (size: group_size)
-            if res.eval_metrics is not None:
-                merged_result.eval_metrics = merge_list(
-                    merged_result.eval_metrics, res.eval_metrics
-                )
-
-            # Merge scalar fields (sum them)
-            if res.num_valid_planner_turns is not None:
-                if merged_result.num_valid_planner_turns is None:
-                    merged_result.num_valid_planner_turns = res.num_valid_planner_turns
-                else:
-                    merged_result.num_valid_planner_turns += res.num_valid_planner_turns
-
-            if res.num_valid_worker_turns is not None:
-                if merged_result.num_valid_worker_turns is None:
-                    merged_result.num_valid_worker_turns = res.num_valid_worker_turns
-                else:
-                    merged_result.num_valid_worker_turns += res.num_valid_worker_turns
-
         return merged_result
 
 

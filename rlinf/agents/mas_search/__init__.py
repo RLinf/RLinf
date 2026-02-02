@@ -13,6 +13,6 @@
 # limitations under the License.
 
 from rlinf.agents.mas_search.mas_search_agent_loop import MasSearchAgentLoopWorker
-from rlinf.agents.searchr1 import SearchToolWorker
+from rlinf.agents.searchr1.search_tool_worker import SearchToolWorker
 
 __all__ = ["MasSearchAgentLoopWorker", "SearchToolWorker"]
