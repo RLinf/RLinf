@@ -45,7 +45,7 @@ algorithm:
 
   val_rollout_batch_size_per_gpu: 1
 
-  recompute_logprobs: False
+  recompute_logprobs: True
   shuffle_rollout: False
 
   loss_type: actor

@@ -90,6 +90,9 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
     async def _handle_chat_completion(self, request: ChatCompletionRequest):
         try:
 
+            if self._return_logprobs:
+                request.logprobs = True
+
             if request.temperature is None and "temperature" in self._sampling_params:
                 request.temperature = self._sampling_params["temperature"]
             if request.max_tokens is None and "max_new_tokens" in self._sampling_params:
