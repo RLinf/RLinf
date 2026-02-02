@@ -84,6 +84,8 @@ def stack_list_of_dict_tensor(list_of_dict: list, dim=0):
         elif isinstance(_v0, dict):
             v_list = [d[key] for d in list_of_dict]
             ret[key] = stack_list_of_dict_tensor(v_list)
+        elif _v0 is None:
+            pass
         else:
             raise ValueError(f"{key=}, {type(_v0)} is not supported!")
     return ret

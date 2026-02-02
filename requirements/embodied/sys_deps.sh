@@ -112,24 +112,8 @@ install_deps_apt() {
         libxcursor-dev \
         libxi-dev \
         libaio-dev \
-        libgomp1 || {
-            ubuntu_ver=""
-            if command -v lsb_release >/dev/null 2>&1; then
-                ubuntu_ver=$(lsb_release -rs || true)
-            elif [ -f /etc/os-release ]; then
-                ubuntu_ver=$(grep '^VERSION_ID=' /etc/os-release | cut -d= -f2 | tr -d '"')
-            fi
-
-            if [ -n "$ubuntu_ver" ]; then
-                # Check if version is higher than 22.04
-                if [ "$(printf '%s\n' "22.04" "$ubuntu_ver" | sort -V | head -n1)" = "22.04" ] && [ "$ubuntu_ver" != "22.04" ]; then
-                    echo "apt-get install failed and your Ubuntu version ($ubuntu_ver) is higher than 22.04. This script currently supports Ubuntu 22.04 or lower; please use 22.04/below or install dependencies manually." >&2
-                else
-                    echo "apt-get install failed on Ubuntu $ubuntu_ver. Please check your apt sources or install dependencies manually." >&2
-                fi
-            else
-                echo "apt-get install failed and the Ubuntu version could not be detected. Please ensure you are using Ubuntu version 22.04/below or install dependencies manually." >&2
-            fi
+        libgomp1 || sudo apt-get install -y --no-install-recommends libglx-mesa0 || {
+            echo "apt-get install failed. Please check your repositories or install dependencies manually." >&2
             exit 1
         }
 }

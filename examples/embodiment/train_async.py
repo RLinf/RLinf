@@ -66,18 +66,11 @@ def main(cfg) -> None:
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 
-    demo_buffer = None
-    if cfg.get("data", None):
-        from rlinf.data.datasets import create_rl_dataset
-
-        demo_buffer, _ = create_rl_dataset(cfg, tokenizer=None)
-
     runner = AsyncEmbodiedRunner(
         cfg=cfg,
         actor=actor_group,
         rollout=rollout_group,
         env=env_group,
-        demo_buffer=demo_buffer,
     )
 
     runner.init_workers()

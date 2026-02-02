@@ -35,12 +35,6 @@ cluster:
           - robot_ip: ROBOT_IP # Replace with your robot's IP address
             node_rank: 1
 
-data:
-  type: robot_demo
-  channel:
-    name: demo_data
-  path: "/path/to/demo_data"
-
 runner:
   task_type: embodied
   logger:
@@ -83,8 +77,18 @@ algorithm:
   
   critic_actor_ratio: 4
   # Replay buffer settings
-  replay_buffer_capacity: 20000
-  min_buffer_size: 200  # Minimum buffer size before training starts
+  replay_buffer:
+    enable_cache: True
+    cache_size: 100 # number of trajectories cached in memory
+    min_buffer_size: 200  # Minimum buffer size before training starts
+    sample_window_size: 200 # number of latest trajectories to sample from for replay buffer
+
+  demo_buffer:
+    enable_cache: True
+    cache_size: 100 # number of trajectories cached in memory
+    sample_window_size: 200 # number of latest trajectories to sample from for demo buffer
+    load_path: "/path/to/demo_data"
+
   target_update_freq: 1  # Frequency of target network updates
 
   # params for rollout
@@ -120,6 +124,9 @@ rollout:
   enable_offload: False
   pipeline_stage_num: 1
   sync_weight_nccl_max_ctas: 32 # Max CTAs (Compute Thread Array, the compute resource of GPUs) for sync weight communication. Higher values consume more GPU resources, and thus sync weight is faster but could affect rollout speed in async mode. Positive integer 1 to 32. Default 32.
+
+  collect_transitions: True
+  collect_prev_infos: False
 
   model:
     model_path: "/path/to/model"

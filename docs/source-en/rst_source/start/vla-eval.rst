@@ -94,7 +94,6 @@ Any YAML file can be used for evaluation with the ``eval_embodiment.sh`` script,
   export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
   export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 
-  export CUDA_LAUNCH_BLOCKING=1
   export HYDRA_FULL_ERROR=1
 
 
@@ -155,7 +154,6 @@ Then, execute the following command in the terminal to start the evaluation.
   export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
   export SRC_FILE="${EMBODIED_PATH}/eval_embodied_agent.py"
 
-  export CUDA_LAUNCH_BLOCKING=1
   export HYDRA_FULL_ERROR=1
 
   EVAL_NAME=YOUR_EVAL_NAME
