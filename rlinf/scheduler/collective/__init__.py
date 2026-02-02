@@ -17,6 +17,7 @@ from .async_work import (
     AsyncChannelWork,
     AsyncCollWork,
     AsyncFuncWork,
+    AsyncRayWork,
     AsyncWork,
 )
 from .collective import Collective
@@ -24,6 +25,7 @@ from .collective_group import CollectiveGroup, CollectiveGroupOptions
 
 __all__ = [
     "AsyncWork",
+    "AsyncRayWork",
     "AsyncChannelCommWork",
     "AsyncChannelWork",
     "AsyncCollWork",

@@ -18,9 +18,10 @@ from pathlib import Path
 
 import pytest
 import ray
+import torch
 from omegaconf import DictConfig, OmegaConf
 
-from rlinf.scheduler import Cluster, NodePlacementStrategy, Worker
+from rlinf.scheduler import Cluster, ComponentPlacement, NodePlacementStrategy, Worker
 from rlinf.scheduler.cluster.config import ClusterConfig
 from rlinf.scheduler.hardware.robots.franka import FrankaConfig
 
@@ -522,3 +523,78 @@ def test_cluster_env_configs_applied_in_worker_launch():
     assert env_values == [env_value]
     assert pythonpath_values[0] is not None
     assert pythonpath_values[0].split(os.pathsep)[0] == str(tests_root)
+
+
+def test_cluster_env_configs_multi_node_group_and_hetero_placement():
+    # Skip if num of GPUs is not 4
+    if torch.cuda.device_count() != 4:
+        pytest.skip("Skipping test because num of GPUs is not 4")
+    _reset_cluster_singleton()
+
+    config = OmegaConf.create(
+        {
+            "cluster": {
+                "num_nodes": 1,
+                "component_placement": {
+                    # gpu has 4 accelerators; franka adds one more hardware rank after them.
+                    # Use ranks 0 (gpu0) and 4 (franka0).
+                    "hetero": {"node_group": "gpu,franka", "placement": "0,4"}
+                },
+                "node_groups": [
+                    {
+                        "label": "gpu",
+                        "node_ranks": "0",
+                        "env_configs": [
+                            {
+                                "node_ranks": "0",
+                                "python_interpreter_path": sys.executable,
+                                "env_vars": [{"GPU_ENV": "1"}],
+                            }
+                        ],
+                    },
+                    {
+                        "label": "franka",
+                        "node_ranks": "0",
+                        "hardware": {
+                            "type": "Franka",
+                            "configs": [
+                                {
+                                    "node_rank": 0,
+                                    "robot_ip": "127.0.0.1",
+                                    "disable_validate": True,
+                                }
+                            ],
+                        },
+                        "env_configs": [
+                            {
+                                "node_ranks": "0",
+                                "python_interpreter_path": sys.executable,
+                                "env_vars": [{"FRANKA_ENV": "1"}],
+                            }
+                        ],
+                    },
+                ],
+            }
+        }
+    )
+
+    cluster = Cluster(cluster_cfg=config.cluster)
+    try:
+        placement = ComponentPlacement(config, cluster)
+        strategy = placement.get_strategy("hetero")
+        placements = strategy.get_placement(cluster)
+
+        assert len(placements) == 2
+        labels = [p.node_group_label for p in placements]
+        assert set(labels) == {"gpu", "franka"}
+
+        gpu_group = cluster.get_node_group("gpu")
+        franka_group = cluster.get_node_group("franka")
+        assert gpu_group.get_node_env_vars(0) == {"GPU_ENV": "1"}
+        assert franka_group.get_node_env_vars(0) == {"FRANKA_ENV": "1"}
+        assert gpu_group.get_node_python_interpreter_path(0) == sys.executable
+        assert franka_group.get_node_python_interpreter_path(0) == sys.executable
+    finally:
+        if ray.is_initialized():
+            ray.shutdown()
+        _reset_cluster_singleton()

@@ -365,7 +365,7 @@ class ChannelWorker(Worker):
             nowait (bool): If True, directly raise asyncio.QueueFull if the queue is full. Defaults to False.
 
         """
-        key, item, weight = self.recv(src_addr.root_group_name, src_addr.rank_path)
+        item, (key, weight) = self.recv(src_addr.root_group_name, src_addr.rank_path)
         self.create_queue(key, self.maxsize())
         item = WeightedItem(weight=weight, item=item)
         if nowait:
@@ -424,10 +424,11 @@ class ChannelWorker(Worker):
         else:
             weighted_item: WeightedItem = await self._queue_map[key].get()
         self.send(
-            (query_id, weighted_item.item),
+            weighted_item.item,
             dst_addr.root_group_name,
             dst_addr.rank_path,
             async_op=True,
+            piggyback_payload=query_id,
         )
 
     async def get_via_ray(self, key: Any = DEFAULT_KEY, nowait: bool = False) -> Any:
@@ -477,10 +478,11 @@ class ChannelWorker(Worker):
                 break
 
         self.send(
-            (query_id, batch),
+            batch,
             dst_addr.root_group_name,
             dst_addr.rank_path,
             async_op=True,
+            piggyback_payload=query_id,
         )
 
     async def get_batch_via_ray(
