@@ -4,21 +4,17 @@ import os
 import socket
 import uuid
 from typing import Any, Dict, List, Optional, Set, cast
-
+from transformers import AutoTokenizer
 import torch
 from omegaconf import DictConfig, OmegaConf
-try:
-    from agentlightning import NamedResources, RolloutLegacy
-    from agentlightning.adapter.triplet import TraceToTripletBase
-    from agentlightning.llm_proxy import LLMProxy
-    from agentlightning.store.base import LightningStore
-    
-    from agentlightning.types.core import EnqueueRolloutRequest, Rollout, RolloutConfig, Task
-except ImportError as e:
-    raise ImportError(
-        "AgentLightning is required for AgentLightningRolloutWorker. "
-        "Please install agentlightning: pip install agentlightning"
-    ) from e
+from transformers import AutoTokenizer
+
+from agentlightning import NamedResources, RolloutLegacy
+from agentlightning.adapter.triplet import TraceToTripletBase
+from agentlightning.llm_proxy import LLMProxy
+from agentlightning.store.base import LightningStore
+from agentlightning.types.core import EnqueueRolloutRequest, Rollout, RolloutConfig, Task
+
 
 from rlinf.data.io_struct import RolloutResult
 from rlinf.scheduler import Channel, Worker
@@ -54,7 +50,7 @@ class AgentLightningRolloutWorker(Worker):
         self._completed_rollout_ids: Dict[str, RolloutLegacy] = {}
         self._data_id_to_rollout_ids: Dict[str, List[str]] = {}
         self.tokenizer = AutoTokenizer.from_pretrained(self.cfg.rollout.model.model_path)
-        
+        self.is_eval_mode: bool = False
 
     def init_worker(
         self,
@@ -64,9 +60,9 @@ class AgentLightningRolloutWorker(Worker):
         group_size: int = 1,
         model: str = "default-model",
         reward_fillna_value: float = 0.0,
+        is_eval_mode: bool = False,
     ):
         self.store = store
-        
         self.llm_proxy = LLMProxy(
             port=_find_available_port(),
             model_list=[],
@@ -75,9 +71,10 @@ class AgentLightningRolloutWorker(Worker):
         self.llm_proxy.start()
         self.adapter = adapter
         self.server_addresses = server_addresses or []
-        self.group_size = group_size
+        self.group_size = 1 if is_eval_mode else group_size
         self.model = model
         self.reward_fillna_value = reward_fillna_value
+        self.is_eval_mode = is_eval_mode
 
     async def _async_setup_data(
         self,
@@ -86,10 +83,13 @@ class AgentLightningRolloutWorker(Worker):
         if self._resources_id is None and self.server_addresses and len(self.server_addresses) > 0:
             await self._update_proxy_server()
             sampling_params = self.cfg.algorithm.get("sampling_params", {})
-        
             if isinstance(sampling_params, DictConfig):
-                
                 sampling_params = OmegaConf.to_container(sampling_params, resolve=True)
+            if self.is_eval_mode:
+                # In eval mode, use the same sampling_params but set temperature to 0
+                sampling_params["temperature"] = 0.0
+                sampling_params["do_sample"] = False
+            
             llm_resource = self.llm_proxy.as_resource(
                 sampling_parameters=sampling_params
             )
@@ -117,10 +117,11 @@ class AgentLightningRolloutWorker(Worker):
 
             for rollout_idx in range(group_size):
                 task_metadata = {"data_id": data_id}
+                rollout_mode = "val" if self.is_eval_mode else "train"
                 enqueue_rollout_requests.append(
                     EnqueueRolloutRequest(
                         input=original_sample,
-                        mode="train",
+                        mode=rollout_mode,
                         resources_id=resources_id,
                         config=RolloutConfig(
                             unresponsive_seconds=self.llm_timeout_seconds,
@@ -160,12 +161,12 @@ class AgentLightningRolloutWorker(Worker):
 
     async def _change_to_triplets(self, rollout: Rollout) -> RolloutLegacy:
         spans = await self.store.query_spans(rollout.rollout_id, attempt_id="latest")
-        for span in spans:
-            self.log_info(f"[Span] {span}")
+        ##for span in spans:
+            ##self.log_info(f"[Span] {span}")
 
         triplets = self.adapter.adapt(spans)
-        for triplet in triplets:
-            self.log_info(f"[Triplet] {triplet}")
+        ##for triplet in triplets:
+            ##self.log_info(f"[Triplet] {triplet}")
 
         final_reward: Optional[float] = None
         for triplet in reversed(triplets):
@@ -210,6 +211,9 @@ class AgentLightningRolloutWorker(Worker):
         rollout_ids = self._data_id_to_rollout_ids[data_id]
         rollouts = [self._completed_rollout_ids[rollout_id] for rollout_id in rollout_ids]
         
+        max_prompt_len = int(self.cfg.data.get("max_prompt_length", 4096))
+        max_response_length = int(self.cfg.data.get("max_response_length", 2048))
+        
         prompt_ids_list: List[List[int]] = []
         response_ids_list: List[List[int]] = []
         prompt_lengths_list: List[int] = []
@@ -225,6 +229,10 @@ class AgentLightningRolloutWorker(Worker):
 
             first_triplet = rollout_legacy.triplets[0]
             orig_prompt_ids = first_triplet.prompt.get("token_ids", [])
+            
+            if len(orig_prompt_ids) > max_prompt_len:
+                orig_prompt_ids = orig_prompt_ids[:max_prompt_len]
+            
             accumulated_response_mask: List[int] = []
             accumulated_full_sequence: List[int] = []
             accumulated_logprobs: List[float] = []
@@ -235,19 +243,25 @@ class AgentLightningRolloutWorker(Worker):
                 logprobs = triplet.response.get("logprobs", [])
 
                 if triplet_idx == 0:
-                    accumulated_full_sequence = prompt_token_ids + response_token_ids
+                    accumulated_full_sequence = orig_prompt_ids + response_token_ids
                     accumulated_response_mask += [1] * len(response_token_ids)
+                    if logprobs:
+                        accumulated_logprobs += [lp.get("logprob", 0.0) for lp in logprobs]
                 else:
                     tool_response_ids = prompt_token_ids[len(accumulated_full_sequence):]
                     accumulated_full_sequence.extend(tool_response_ids)
                     accumulated_full_sequence.extend(response_token_ids)
                     accumulated_response_mask += [0] * len(tool_response_ids)
                     accumulated_response_mask += [1] * len(response_token_ids)
-
-                if logprobs:
-                    accumulated_logprobs += [lp.get("logprob", 0.0) for lp in logprobs]
+                    if logprobs:
+                        accumulated_logprobs += [lp.get("logprob", 0.0) for lp in logprobs]
             
             response_ids = accumulated_full_sequence[len(orig_prompt_ids):]
+            
+            if len(response_ids) > max_response_length:
+                response_ids = response_ids[:max_response_length]
+                accumulated_response_mask = accumulated_response_mask[:max_response_length]
+
 
             prompt_ids_list.append(orig_prompt_ids)
             response_ids_list.append(response_ids)
@@ -260,6 +274,8 @@ class AgentLightningRolloutWorker(Worker):
             rewards_list.append(reward)
             
             if self.cfg.rollout.return_logprobs:
+                if len(accumulated_logprobs) > max_response_length:
+                    accumulated_logprobs = accumulated_logprobs[:max_response_length]
                 rollout_logprobs_list.append(accumulated_logprobs)
 
         rewards_tensor = torch.tensor(rewards_list, dtype=torch.float32)
@@ -280,13 +296,13 @@ class AgentLightningRolloutWorker(Worker):
             response_texts= response_texts_list,
             rollout_logprobs=rollout_logprobs_list if self.cfg.rollout.return_logprobs else None,
         )
-        self.log_info(f"[RolloutResult] {rollout_result}")
+        ##self.log_info(f"[RolloutResult] {rollout_result}")
         return rollout_result
 
     async def process_rollout_batch(
         self, input_channel: Channel, output_channel: Channel
     ):
-
+        """训练模式：处理rollout batch，通过output_channel输出RolloutResult"""
         with self.worker_timer():
             batch_data = input_channel.get()
             
@@ -320,12 +336,70 @@ class AgentLightningRolloutWorker(Worker):
                     rollout_result = await self._async_get_rollout_result_for_data_id(data_id)
                     if rollout_result is not None:
                         output_channel.put(rollout_result, async_op=True)
-                        processed_data_ids.add(data_id)
+                    
+                    processed_data_ids.add(data_id)
                 
                 if len(processed_data_ids) < initial_data_ids_count:
                     await asyncio.sleep(0.1)
             
+            all_rewards: List[float] = []
+            for rollout_id, rollout_legacy in self._completed_rollout_ids.items():
+                all_rewards.append(rollout_legacy.final_reward)
+            
+            training_reward = sum(all_rewards) / len(all_rewards) if all_rewards else 0.0
+            
             self._clear_data()
+            return {"training/reward": training_reward}
+
+    async def process_eval_batch(
+        self, input_channel: Channel
+    ):
+        """Eval模式：处理eval batch，直接返回平均reward"""
+        with self.worker_timer():
+            batch_data = input_channel.get()
+            
+            await self._async_setup_data(
+                data=batch_data,
+            )
+            
+            initial_data_ids_count = len(self._data_id_to_rollout_ids)
+            processed_data_ids = set()
+            
+            while len(processed_data_ids) < initial_data_ids_count:
+                rollout_ids_to_query = [
+                    rid for rid in self._rollout_ids 
+                    if rid not in self._completed_rollout_ids
+                ]
+
+                completed_batch = await self.store.wait_for_rollouts(
+                    rollout_ids=rollout_ids_to_query,
+                    timeout=0.0
+                )
+                
+                for rollout in completed_batch:
+                    rollout = await self._change_to_triplets(rollout) if isinstance(rollout, Rollout) else rollout
+                    self._completed_rollout_ids[rollout.rollout_id] = rollout
+                
+                completed_data_ids = await self._async_get_completed_data_ids()
+                for data_id in completed_data_ids:
+                    if data_id in processed_data_ids:
+                        continue
+                    processed_data_ids.add(data_id)
+                
+                if len(processed_data_ids) < initial_data_ids_count:
+                    await asyncio.sleep(0.1)
+            
+            all_rewards: List[float] = []
+            for rollout_id, rollout_legacy in self._completed_rollout_ids.items():
+                all_rewards.append(rollout_legacy.final_reward)
+            
+            avg_reward = sum(all_rewards) / len(all_rewards) if all_rewards else 0.0
+            
+            # 输出调试信息
+            logging.info(f"Eval rewards: {all_rewards}, count: {len(all_rewards)}, avg: {avg_reward}")
+            
+            self._clear_data()
+            return avg_reward
 
     def update_server_addresses(self, server_addresses: List[str]):
         self.server_addresses = server_addresses
