@@ -240,27 +240,32 @@ class AgentLightningRolloutWorker(Worker):
             for triplet_idx, triplet in enumerate(rollout_legacy.triplets):
                 prompt_token_ids = triplet.prompt.get("token_ids", [])
                 response_token_ids = triplet.response.get("token_ids", [])
-                logprobs = triplet.response.get("logprobs", [])
 
                 if triplet_idx == 0:
                     accumulated_full_sequence = orig_prompt_ids + response_token_ids
                     accumulated_response_mask += [1] * len(response_token_ids)
-                    if logprobs:
-                        accumulated_logprobs += [lp.get("logprob", 0.0) for lp in logprobs]
+                    if self.cfg.rollout.return_logprobs:
+                        logprobs = triplet.response.get("logprobs", [])
+                        if logprobs:
+                            accumulated_logprobs += [lp.get("logprob", 0.0) for lp in logprobs]
                 else:
                     tool_response_ids = prompt_token_ids[len(accumulated_full_sequence):]
                     accumulated_full_sequence.extend(tool_response_ids)
                     accumulated_full_sequence.extend(response_token_ids)
                     accumulated_response_mask += [0] * len(tool_response_ids)
                     accumulated_response_mask += [1] * len(response_token_ids)
-                    if logprobs:
-                        accumulated_logprobs += [lp.get("logprob", 0.0) for lp in logprobs]
+                    if self.cfg.rollout.return_logprobs:
+                        logprobs = triplet.response.get("logprobs", [])
+                        if logprobs:
+                            accumulated_logprobs += [lp.get("logprob", 0.0) for lp in logprobs]
             
             response_ids = accumulated_full_sequence[len(orig_prompt_ids):]
             
             if len(response_ids) > max_response_length:
                 response_ids = response_ids[:max_response_length]
                 accumulated_response_mask = accumulated_response_mask[:max_response_length]
+                if self.cfg.rollout.return_logprobs:
+                    accumulated_logprobs = accumulated_logprobs[:max_response_length]
 
 
             prompt_ids_list.append(orig_prompt_ids)
