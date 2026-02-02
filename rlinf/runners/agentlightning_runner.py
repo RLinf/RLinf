@@ -102,17 +102,6 @@ class AgentLightningRLinfRunner(ReasoningRunner):
             sampler=sampler,
         )
 
-        val_batch_size = self.cfg.data.val_rollout_batch_size or len(self.val_dataset)
-
-        self.val_dataloader = StatefulDataLoader(
-            dataset=self.val_dataset,
-            batch_size=val_batch_size,
-            num_workers=num_workers,
-            shuffle=self.cfg.data.get("validation_shuffle", True),
-            drop_last=False,
-            collate_fn=collate_fn,
-        )
-
 
     def init_rollout_workers(self):
         rollout_handle = self.rollout.init_worker()
@@ -136,7 +125,6 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         if self.use_pre_process_policy:
             self.rollout.offload_engine().wait()
 
-        # Start HTTP servers on all rollout workers and collect addresses
         server_addresses = []
         if hasattr(self.rollout, 'http_server_start') and ray is not None:
 
@@ -152,7 +140,6 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                 port = base_port + rank
                 server_addresses.append(f"{node_ip}:{port}")
             
-            # Start servers on all workers
             for rank in range(num_workers):
                 self.rollout.execute_on(rank).http_server_start().wait()
             
