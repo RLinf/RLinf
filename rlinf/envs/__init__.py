@@ -14,10 +14,6 @@
 
 from enum import Enum
 
-from rlinf.envs.wrappers import RecordVideo
-
-__all__ = ["RecordVideo", "get_env_cls"]
-
 
 class SupportedEnvType(Enum):
     MANISKILL = "maniskill"

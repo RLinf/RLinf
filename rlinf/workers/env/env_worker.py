@@ -20,8 +20,9 @@ import torch
 from omegaconf import DictConfig
 
 from rlinf.data.embodied_io_struct import EnvOutput
-from rlinf.envs import RecordVideo, get_env_cls
+from rlinf.envs import get_env_cls
 from rlinf.envs.action_utils import prepare_actions
+from rlinf.envs.wrappers import RecordVideo
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.placement import HybridComponentPlacement
 

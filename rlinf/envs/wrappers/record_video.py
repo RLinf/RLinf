@@ -293,7 +293,33 @@ class RecordVideo(gym.Wrapper):
         result = self.env.chunk_step(*args, **kwargs)
         if isinstance(result, tuple) and len(result) >= 5:
             obs_list, rewards, terminations, _truncations, infos_list = result[:5]
-            self.add_new_frames(obs_list, infos_list, rewards, terminations)
+            final_obs = None
+            last_info = None
+            if isinstance(infos_list, (list, tuple)) and len(infos_list) > 0:
+                last_info = infos_list[-1]
+                if isinstance(last_info, dict):
+                    if last_info.get("final_obs") is not None:
+                        final_obs = last_info["final_obs"]
+                    elif last_info.get("final_observation") is not None:
+                        final_obs = last_info["final_observation"]
+
+            if (
+                final_obs is not None
+                and isinstance(obs_list, (list, tuple))
+                and len(obs_list) > 0
+            ):
+                reset_obs = obs_list[-1]
+                obs_main = list(obs_list)
+                obs_main[-1] = final_obs
+                infos_main = (
+                    list(infos_list)
+                    if isinstance(infos_list, (list, tuple))
+                    else infos_list
+                )
+                self.add_new_frames(obs_main, infos_main, rewards, terminations)
+                self.add_new_frames(reset_obs, None)
+            else:
+                self.add_new_frames(obs_list, infos_list, rewards, terminations)
         return result
 
     def flush_video(self, video_sub_dir: Optional[str] = None):
