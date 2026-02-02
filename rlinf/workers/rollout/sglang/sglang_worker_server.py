@@ -99,11 +99,6 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
             if request.top_k is None and "top_k" in self._sampling_params:
                 request.top_k = self._sampling_params["top_k"]
             
-            if self._return_logprobs:
-                request.logprobs = True
-                request.top_logprobs = 1
-            else:
-                request.logprobs = False
            
             adapted_request, _ = self._openai_serving_chat._convert_to_internal_request(
                 request
