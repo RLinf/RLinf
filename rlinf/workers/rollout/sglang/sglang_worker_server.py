@@ -1,39 +1,22 @@
 
 import asyncio
-import copy
 import dataclasses
 import time
-import uuid
-from typing import Any, List, Literal, Optional
+from typing import List, Literal, Optional
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from omegaconf import DictConfig
-from pydantic import BaseModel
 from sglang.srt.server_args import ServerArgs
+from sglang.srt.entrypoints.openai.protocol import ChatCompletionRequest
+from sglang.srt.entrypoints.openai.serving_chat import OpenAIServingChat
+from sglang.srt.managers.template_manager import TemplateManager
 
 from rlinf.config import torch_dtype_from_precision
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.sglang import Engine
 from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
-
-
-class ChatMessage(BaseModel):
-
-    role: str
-    content: str
-
-
-class ChatCompletionRequest(BaseModel):
-    model: str
-    messages: List[ChatMessage]
-    temperature: Optional[float] = None
-    max_tokens: Optional[int] = None
-    top_p: Optional[float] = None
-    top_k: Optional[int] = None
-    stop: Optional[List[str]] = None
-    stream: Optional[bool] = False
 
 
 class SGLangWorkerWithHTTPServer(SGLangWorker):
@@ -57,6 +40,7 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
         self._http_server = None
         self._http_server_task = None
         self._http_app = None
+        self._openai_serving_chat = None
 
         if self._enable_http_server:
             self._setup_http_routes()
@@ -91,89 +75,84 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
             )
         )
 
+    def _init_openai_serving(self):
+        tokenizer_manager = self._engine.tokenizer_manager
+        template_manager = TemplateManager()
+        template_manager.initialize_templates(
+            tokenizer_manager=tokenizer_manager,
+            model_path=self._cfg_rollout.model.model_path,
+        )
+        self._openai_serving_chat = OpenAIServingChat(
+            tokenizer_manager=tokenizer_manager,
+            template_manager=template_manager,
+        )
+
     async def _handle_chat_completion(self, request: ChatCompletionRequest):
-
-        request_id = str(uuid.uuid4())
-        start_time = time.time()
-
         try:
-            messages = [{"role": msg.role, "content": msg.content} for msg in request.messages]
-            prompt_text = (
-                "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages])
-                + "\nassistant:"
+
+            if request.temperature is None and "temperature" in self._sampling_params:
+                request.temperature = self._sampling_params["temperature"]
+            if request.max_tokens is None and "max_new_tokens" in self._sampling_params:
+                request.max_tokens = self._sampling_params["max_new_tokens"]
+            if request.top_p is None and "top_p" in self._sampling_params:
+                request.top_p = self._sampling_params["top_p"]
+            if request.top_k is None and "top_k" in self._sampling_params:
+                request.top_k = self._sampling_params["top_k"]
+            
+            if self._return_logprobs:
+                request.logprobs = True
+                request.top_logprobs = 1
+            else:
+                request.logprobs = False
+           
+            adapted_request, _ = self._openai_serving_chat._convert_to_internal_request(
+                request
             )
+            adapted_request.return_logprob = self._return_logprobs 
+            prompt_token_ids = None
+            if hasattr(adapted_request, "input_ids") and adapted_request.input_ids is not None:
+                prompt_token_ids = adapted_request.input_ids
+                if hasattr(prompt_token_ids, 'tolist'):
+                    prompt_token_ids = prompt_token_ids.tolist()
+            
+            generator = self._openai_serving_chat.tokenizer_manager.generate_request(
+                adapted_request
+            )
+            result = await generator.__anext__()
+            
+            if not isinstance(result, list):
+                result = [result]
 
-            prompt_token_ids = self._tokenizer(prompt_text).input_ids
-            if hasattr(prompt_token_ids, "tolist"):
-                prompt_token_ids = prompt_token_ids.tolist() 
-                
-            sampling_params = copy.deepcopy(self._sampling_params)
-            if request.temperature is not None:
-                sampling_params["temperature"] = request.temperature
-            if request.max_tokens is not None:
-                sampling_params["max_new_tokens"] = int(request.max_tokens)
-            if request.top_p is not None:
-                sampling_params["top_p"] = request.top_p
-            if request.top_k is not None:
-                sampling_params["top_k"] = request.top_k
 
-            engine_results = await self._engine.async_generate(
-                prompt=prompt_text,
-                sampling_params=sampling_params,
-                return_logprob=self._return_logprobs,
+            response = self._openai_serving_chat._build_chat_response(
+                request,
+                result,
+                int(time.time()),
             )
             
-            result = engine_results[0] if isinstance(engine_results, list) and len(engine_results) > 0 else engine_results
+            response_dict = response.model_dump(exclude_none=True)     
 
-            response_text = result.get("text", "")
-            response_ids = result.get("output_ids", [])
-            meta_info = result.get("meta_info", {})
-            finish_reason_info = meta_info.get("finish_reason", {})
-            finish_reason = finish_reason_info.get("type", "stop")
 
-            logprobs = None
-            if self._return_logprobs:
-                logprobs = [item[0] for item in meta_info["output_token_logprobs"]]
+            if result and len(result) > 0 and "output_ids" in result[0]:
+                response_dict["response_token_ids"] = [result[0]["output_ids"]]
 
-            choice_logprobs = None
-            if logprobs is not None:
-                choice_logprobs = {
-                    "content": [
-                        {
-                            "token": "",
-                            "logprob": logprob_value,
-                            "top_logprobs": []
-                        }
-                        for logprob_value in logprobs
-                    ]
-                }
+            if prompt_token_ids is not None:
+                response_dict["prompt_token_ids"] = prompt_token_ids
+            
+            return response_dict
 
-            response = {
-                "id": f"chatcmpl-{request_id}",
-                "object": "chat.completion",
-                "created": int(start_time),
-                "model": request.model,
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {"role": "assistant", "content": response_text},
-                        "finish_reason": finish_reason,
-                        "logprobs": choice_logprobs,
+        except Exception as e:
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": {
+                        "message": str(e),
+                        "type": type(e).__name__
                     }
-                ],
-                "usage": {
-                    "prompt_tokens": len(prompt_token_ids),
-                    "completion_tokens": len(response_ids),
-                    "total_tokens": len(prompt_token_ids) + len(response_ids),
-                },
-                "prompt_token_ids": prompt_token_ids,  
-                "response_token_ids": [response_ids],  
-            }
-
-            return response
+                }
+            )
 
     def _init_engine(self):
-        """Override parent method to add tool_call_parser support."""
         use_cudagraph = not self._cfg_rollout.enforce_eager
 
         load_format = "dummy"
@@ -184,8 +163,6 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
                 load_format = "auto"
         else:
             load_format = "auto"
-
-            
 
         server_args = ServerArgs(
             model_path=self._cfg_rollout.model.model_path,
@@ -219,7 +196,6 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
         )
 
     def http_server_start(self):
-
         if not self._enable_http_server:
             return
 
@@ -227,12 +203,10 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
             self.log_warning("HTTP server is already running")
             return
 
-        # Start server in background task
         self._http_server_task = asyncio.create_task(self._http_server.serve())
         self.log_info(f"HTTP server started on {self._http_server_host}:{self._http_server_port}")
 
     async def http_server_stop(self):
-"
         if not self._enable_http_server or self._http_server_task is None:
             return
 
@@ -242,25 +216,22 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
         self.log_info("HTTP server stopped")
 
     async def init_worker(self, start_http_server: bool = False):
-
         await super().init_worker()
-
-        if self._enable_http_server and start_http_server:
-            self.http_server_start()
+        
+        if self._enable_http_server:
+            self._init_openai_serving()
+            if start_http_server:
+                self.http_server_start()
 
     def shutdown(self):
-
         if self._enable_http_server and self._http_server_task is not None:
             self._http_server.should_exit = True
-            # Note: This is synchronous shutdown, async cleanup should be done elsewhere
-            # The task will be cleaned up when the event loop stops
 
-        # Call parent shutdown
         super().shutdown()
 
     def get_server_address(self) -> str:
-        """Get the HTTP server address for this worker."""
         if not self._enable_http_server:
             return None
         return f"{self._http_server_host}:{self._http_server_port}"
+
 
