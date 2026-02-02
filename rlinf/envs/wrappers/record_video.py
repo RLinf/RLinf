@@ -42,7 +42,10 @@ class RecordVideo(gym.Wrapper):
 
     def __init__(self, env: gym.Env, video_cfg, fps: Optional[int] = None):
         """Initialize the wrapper and set FPS/config."""
-        super().__init__(env)
+        if isinstance(env, gym.Env):
+            super().__init__(env)
+        else:
+            self.env = env
 
         if not hasattr(env, "seed"):
             raise AttributeError("Environment must have 'seed' attribute")
@@ -368,3 +371,7 @@ class RecordVideo(gym.Wrapper):
         self._executor.shutdown(wait=True)
         self._save_futures = []
         return super().close()
+
+    def update_reset_state_ids(self):
+        if hasattr(self.env, "update_reset_state_ids"):
+            self.env.update_reset_state_ids()

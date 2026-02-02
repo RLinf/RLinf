@@ -40,10 +40,16 @@ __all__ = ["OpenSoraEnv"]
 
 class OpenSoraEnv(BaseWorldEnv):
     def __init__(
-        self, cfg, num_envs, seed_offset, total_num_processes, record_metrics=True
+        self,
+        cfg,
+        num_envs,
+        seed_offset,
+        total_num_processes,
+        worker_info,
+        record_metrics=True,
     ):
         super().__init__(
-            cfg, num_envs, seed_offset, total_num_processes, record_metrics
+            cfg, num_envs, seed_offset, total_num_processes, worker_info, record_metrics
         )
         self.world_model_cfg = self.cfg.world_model_cfg
         self.inference_dtype = to_torch_dtype(self.world_model_cfg.get("dtype", "bf16"))
