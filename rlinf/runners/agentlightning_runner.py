@@ -158,6 +158,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
             
             logging.info(f"[AgentLightningRLinfRunner] Started HTTP servers on {num_workers} workers with addresses {server_addresses}")
 
+        is_eval_mode = False
         self.agentlightning_rollout_worker.init_worker(
             store=self.store,
             adapter=self.adapter,
@@ -165,6 +166,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
             group_size=self.cfg.algorithm.group_size,
             model=self.cfg.rollout.model.model_path,
             reward_fillna_value=self.cfg.algorithm.get("reward_fillna_value", 0.0),
+            is_eval_mode=is_eval_mode,
         ).wait()
 
     def _put_batch(self, batch: dict):
@@ -222,6 +224,16 @@ class AgentLightningRLinfRunner(ReasoningRunner):
 
                     actor_rollout_metrics = metrics[0][0]
                     actor_training_metrics = metrics[0][1]
+                    
+                    # Get rollout metrics from AgentLightningRolloutWorker
+                    # Handle case where wait() returns a list (multiple workers) or dict (single worker)
+                    rollout_metrics_result = rollout_handle.wait()
+                    if isinstance(rollout_metrics_result, list):
+                        # If list, take the first element (similar to how actor_handle.wait() is handled)
+                        rollout_metrics_dict = rollout_metrics_result[0] if rollout_metrics_result else {}
+                    else:
+                        rollout_metrics_dict = rollout_metrics_result if rollout_metrics_result else {}
+                    
                     self.global_steps += 1
 
                     run_time_exceeded = self.run_timer.is_finished()
@@ -257,7 +269,18 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                 if infer_handle is not None:
                     time_metrics["inference"] = infer_handle.consume_duration()
 
+                log_time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
+                rollout_metrics = rollout_metrics_dict if rollout_metrics_dict else {}
+                training_metrics = {
+                    f"train/{k}": v for k, v in actor_training_metrics[-1].items()
+                }
+                
+                self.metric_logger.log(log_time_metrics, self.global_steps)
+                self.metric_logger.log(rollout_metrics, self.global_steps)
+                self.metric_logger.log(training_metrics, self.global_steps)
+
                 logging_metrics = {f"{k}_time": v for k, v in time_metrics.items()}
+                logging_metrics.update(rollout_metrics)
                 logging_metrics.update(actor_rollout_metrics)
                 logging_metrics.update(actor_training_metrics[-1])
 
