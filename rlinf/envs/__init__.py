@@ -14,6 +14,10 @@
 
 from enum import Enum
 
+from rlinf.envs.wrappers import RecordVideo
+
+__all__ = ["RecordVideo", "get_env_cls"]
+
 
 class SupportedEnvType(Enum):
     MANISKILL = "maniskill"
@@ -30,7 +34,7 @@ class SupportedEnvType(Enum):
     OPENSORAWM = "opensora_wm"
 
 
-def get_env_cls(env_type: str, env_cfg=None, enable_offload=False):
+def get_env_cls(env_type: str, env_cfg=None):
     """
     Get environment class based on environment type.
 
@@ -45,12 +49,7 @@ def get_env_cls(env_type: str, env_cfg=None, enable_offload=False):
     env_type = SupportedEnvType(env_type)
 
     if env_type == SupportedEnvType.MANISKILL:
-        if not enable_offload:
-            from rlinf.envs.maniskill.maniskill_env import ManiskillEnv
-        else:
-            from rlinf.envs.maniskill.maniskill_offload_env import (
-                ManiskillOffloadEnv as ManiskillEnv,
-            )
+        from rlinf.envs.maniskill.maniskill_env import ManiskillEnv
 
         return ManiskillEnv
     elif env_type == SupportedEnvType.LIBERO:

@@ -53,8 +53,6 @@ class BaseWorldEnv(ABC):
         self.elapsed_steps = 0
 
         self.video_cfg = cfg.video_cfg
-        self.video_cnt = 0
-        self.render_images = []
 
         self.prev_step_reward = torch.zeros(
             self.num_envs, dtype=torch.float32, device=self.device
