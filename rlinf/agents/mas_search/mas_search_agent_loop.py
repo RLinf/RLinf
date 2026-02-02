@@ -153,7 +153,7 @@ class MasSearchAgentLoopWorker(MultiTurnAgentLoopWorker):
                     prompt_text=self.tokenizer.decode(prompt_ids),
                     response_text=response_text,
                     response_mask=response_mask,
-                    response_logprobs=generate_result["logprobs"],
+                    response_logprobs=generate_result["logprobs"] if self.return_logprobs else [],
                 )
             )
 

@@ -705,7 +705,6 @@ class MAMegatronActor(MegatronActor):
 
         rollout_result = DynamicRolloutResult.merge_result_list(
             rollout_results,
-            group_size=self.cfg.algorithm.group_size,
         )
 
         self._load_weight_and_optimizer()

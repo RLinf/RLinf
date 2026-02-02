@@ -21,7 +21,6 @@ from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
 from rlinf.data.datasets.item import DatasetItem
-from rlinf.data.datasets.mas import MASDataset
 from rlinf.data.datasets.math import MathDataset
 from rlinf.data.datasets.vlm import VLMDatasetRegistry
 

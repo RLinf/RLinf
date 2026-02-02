@@ -54,9 +54,7 @@ def compute_ppo_actor_loss(
     """
     if loss_mask is not None and loss_mask[0].sum() == 0.0:
         return torch.tensor(0.0, device=logprobs.device), {
-            "actor/token_num": torch.tensor(
-                0, dtype=torch.long, device=logprobs.device
-            ),
+            "actor/token_num": torch.tensor(0.0, device=logprobs.device),
             "actor/policy_loss": torch.tensor(0.0, device=logprobs.device),
             "actor/policy_loss_mbs_mean": torch.tensor(0.0, device=logprobs.device),
             "actor/policy_loss_abs": torch.tensor(0.0, device=logprobs.device),
@@ -112,7 +110,7 @@ def compute_ppo_actor_loss(
     clip_mask = policy_loss1.detach() < policy_loss2.detach()
     dual_clip_mask = (dual_clip_mask * loss_mask).bool()
 
-    # clip_fraction = (clip_mask * loss_mask).sum() / float(loss_mask_count)
+    #clip_fraction = (clip_mask * loss_mask).sum() / float(loss_mask_count)
     approx_kl = -torch.sum(approx_kl) / float(loss_mask_count)
 
     dual_cliped_ratio = torch.where(dual_clip_mask, ratio, 0)
@@ -135,7 +133,7 @@ def compute_ppo_actor_loss(
     approx_kl = -approx_kl.sum() / loss_mask_count
     # clip_fraction = clip_mask.logical_and_(loss_mask).count_nonzero() / loss_mask_count
     metrics_data = {
-        "actor/token_num": loss_mask.count_nonzero(),
+        "actor/token_num": loss_mask.count_nonzero().float(),
         "actor/policy_loss": masked_sum(policy_loss_metrics, loss_mask_for_metrics),
         "actor/policy_loss_mbs_mean": policy_loss.detach(),
         "actor/policy_loss_abs": masked_sum(
@@ -150,7 +148,7 @@ def compute_ppo_actor_loss(
         ),
         "actor/approx_kl": -masked_sum(approx_kl, loss_mask_for_metrics),
         "actor/clip_fraction": masked_sum(
-            clip_mask.logical_and_(loss_mask) != 0, loss_mask_for_metrics
+            (clip_mask.logical_and_(loss_mask) != 0).float(), loss_mask_for_metrics
         ),
     }
     return policy_loss, metrics_data
