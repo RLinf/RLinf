@@ -40,11 +40,7 @@ class BasePolicy(ABC):
         - sac_q_forward
         - crossq_forward
         - crossq_q_forward
-        - preprocess_env_obs
     """
-
-    def preprocess_env_obs(self, env_obs):
-        return env_obs
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.DEFAULT:

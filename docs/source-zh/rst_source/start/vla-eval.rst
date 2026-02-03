@@ -94,7 +94,6 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
   export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
   export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 
-  export CUDA_LAUNCH_BLOCKING=1
   export HYDRA_FULL_ERROR=1
 
 
@@ -154,7 +153,6 @@ RLinf 提供了 **即开即用的评估脚本**，用于在 *训练分布内* �
   export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
   export SRC_FILE="${EMBODIED_PATH}/eval_embodied_agent.py"
 
-  export CUDA_LAUNCH_BLOCKING=1
   export HYDRA_FULL_ERROR=1
 
   EVAL_NAME=YOUR_EVAL_NAME

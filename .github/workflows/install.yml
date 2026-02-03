@@ -166,3 +166,12 @@ jobs:
       - name: Install sys-deps
         run: |
           bash requirements/embodied/sys_deps.sh
+
+  sys-deps-ubuntu-latest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Install sys-deps
+        run: |
+          bash requirements/embodied/sys_deps.sh
