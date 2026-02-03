@@ -9,7 +9,7 @@ action_dim: 4  # Discrete actions: STOP, FORWARD, TURN_LEFT, TURN_RIGHT
 num_action_chunks: 1  # CMA predicts one action at a time
 
 # Model path for loading pretrained weights
-model_path: "/data/qianyx/RLinf/eval/ckpt/best_ckpt_r2r.pth"
+model_path: "/path/to/model"
 
 # Image configuration
 image_size: [256, 256, 3]  # [H, W, C]
@@ -32,7 +32,7 @@ instruction_encoder_config:
   sensor_uuid: "instruction"
   vocab_size: 2504
   use_pretrained_embeddings: True
-  embedding_file: "eval/instruction_encoder_embedding/embeddings.json.gz"
+  embedding_file: "/path/to/model"
   fine_tune_embeddings: False
   embedding_size: 50
   hidden_size: 128
@@ -45,7 +45,7 @@ depth_encoder_config:
   cnn_type: "VlnResnetDepthEncoder"
   output_size: 128
   backbone: "resnet50"
-  ddppo_checkpoint: "eval/ddppo-models/gibson-2plus-resnet50.pth"  # Path to DDPPO pretrained weights
+  ddppo_checkpoint: "/path/to/model"  # Path to DDPPO pretrained weights
   trainable: False
 
 # RGB encoder configuration

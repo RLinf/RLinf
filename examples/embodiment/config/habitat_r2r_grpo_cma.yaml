@@ -117,7 +117,11 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/data/qianyx/RLinf/eval/ckpt/best_ckpt_r2r.pth"
+    model_path: "/data/RLinf/VLN-CE/models/CMA_weight/ckpt/best_ckpt_r2r.pth"
+    instruction_encoder_config:
+      embedding_file: "/data/RLinf/VLN-CE/models/CMA_weight/instruction_encoder_embedding/embeddings.json.gz"
+    depth_encoder_config:
+      ddppo_checkpoint: "/data/RLinf/VLN-CE/models/CMA_weight/ddppo-models/gibson-2plus-resnet50.pth"
     precision: ${actor.model.precision}
 
 actor:
@@ -131,7 +135,11 @@ actor:
   # Override only the paths that need to be customized
   # All other CMA configs are inherited from model/cma.yaml
   model:
-    model_path: "/path/to/model/cma/"  # Path to CMA checkpoint directory
+    model_path: "/data/RLinf/VLN-CE/models/CMA_weight/ckpt/best_ckpt_r2r.pth"
+    instruction_encoder_config:
+      embedding_file: "/data/RLinf/VLN-CE/models/CMA_weight/instruction_encoder_embedding/embeddings.json.gz"
+    depth_encoder_config:
+      ddppo_checkpoint: "/data/RLinf/VLN-CE/models/CMA_weight/ddppo-models/gibson-2plus-resnet50.pth"
 
   optim:
     lr: 2.0e-5
