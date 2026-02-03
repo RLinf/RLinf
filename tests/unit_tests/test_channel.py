@@ -14,7 +14,10 @@
 
 # ruff: noqa: D103
 import asyncio
+import threading
+import time
 import uuid
+from dataclasses import dataclass, fields, is_dataclass
 from typing import Any, Optional
 
 import pytest
@@ -35,6 +38,15 @@ CONSUMER_GROUP_NAME = "consumer_group"
 TEST_CHANNEL_NAME = "my_test_channel"
 group_count = 0
 channel_count = 0
+
+
+@dataclass
+class TensorMessage:
+    """Simple dataclass with a tensor field for testing direct tensor send/recv/broadcast."""
+
+    id: int
+    payload: torch.Tensor
+    note: str
 
 
 def get_device():
@@ -187,6 +199,30 @@ class ConsumerWorker(Worker):
     def get_cluster_node_rank(self):
         """Get the cluster node rank of this worker."""
         return self._cluster_node_rank
+
+    async def test_async_wait_yields_control(
+        self, channel: Channel, key: str = "async_wait_yields_test"
+    ):
+        """Run get(async_op=True) and await async_wait() concurrently with another
+        asyncio task. Assert the other task ran while waiting, proving async_wait()
+        yields control to the event loop. Returns (yield_count, received_item)."""
+
+        async def get_task():
+            work = channel.get(async_op=True, key=key)
+            return await work.async_wait()
+
+        async def yield_check_task():
+            count = 0
+            for _ in range(30):
+                count += 1
+                await asyncio.sleep(0.01)
+            return count
+
+        async def main():
+            self.get_fut = asyncio.create_task(get_task())
+            return await yield_check_task()
+
+        return await main()
 
 
 # --- Pytest Fixtures ---
@@ -363,6 +399,14 @@ def get_test_data():
                 "b": torch.tensor([2], device=device),
             },
         ),
+        (
+            "dataclass_with_tensor",
+            TensorMessage(
+                id=42,
+                payload=torch.ones(2, 2, device=device) * 3,
+                note="channel test",
+            ),
+        ),
     ]
 
 
@@ -436,6 +480,31 @@ class TestChannel:
             (channel,),
         )
         self._assert_equal(received_item, item_to_send)
+
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    def test_async_wait_yields_control(self, worker_groups, channel, channel_type):
+        """Ensures channel get(async_op=True).async_wait() yields control so other
+        asyncio tasks can run while waiting."""
+        producer, consumer = worker_groups
+        key = "async_wait_yields_test"
+        recv_ref = consumer.test_async_wait_yields_control(channel, key)
+        producer_done = []
+
+        def delayed_put():
+            time.sleep(0.1)
+            producer.put_item(channel, "yield_test_item", 1, 0, False, key=key).wait()
+            producer_done.append(True)
+
+        t = threading.Thread(target=delayed_put)
+        try:
+            results = recv_ref.wait()
+            t.start()
+        finally:
+            t.join()
+        yield_count = results[0]
+        assert yield_count >= 1, (
+            f"async_wait() did not yield: yield_check task ran {yield_count} times"
+        )
 
     @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
     @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
@@ -595,6 +664,9 @@ class TestChannel:
             assert received.keys() == expected.keys()
             for key in expected:
                 self._assert_equal(received[key], expected[key])
+        elif is_dataclass(expected):
+            for f in fields(type(expected)):
+                self._assert_equal(getattr(received, f.name), getattr(expected, f.name))
         else:
             assert received == expected
 

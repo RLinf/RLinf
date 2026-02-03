@@ -14,7 +14,10 @@
 
 
 import dataclasses
-from typing import Callable, Optional, Protocol
+from dataclasses import fields, is_dataclass
+from typing import Any, Callable, Optional, Protocol
+
+import torch
 
 
 class DataclassProtocol(Protocol):
@@ -125,3 +128,15 @@ def dataclass_arg_check(
         )
 
     return missing_required_args, unknown_args, valid_args
+
+
+def extract_dataclass_tensor_fields(obj: Any) -> dict[str, torch.Tensor]:
+    """Extract fields of a dataclass that are torch.Tensor into a dict."""
+    if not is_dataclass(obj):
+        return {}
+    result = {}
+    for f in fields(obj):
+        val = getattr(obj, f.name)
+        if isinstance(val, torch.Tensor):
+            result[f.name] = val
+    return result

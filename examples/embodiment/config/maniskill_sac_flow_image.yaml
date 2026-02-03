@@ -65,8 +65,12 @@ algorithm:
   backup_entropy: True
   
   # Replay buffer settings
-  replay_buffer_capacity: 300000
-  min_buffer_size: 200  # Minimum buffer size before training starts
+  replay_buffer:
+    enable_cache: True
+    cache_size: 6000 # number of trajectories cached in memory
+    sample_window_size: 6000 # number of latest trajectories to sample from for replay buffer
+    min_buffer_size: 200  # Minimum buffer size before training starts
+
   num_updates_per_step: 64  # Number of gradient updates per training step
   target_update_freq: 1  # Frequency of target network updates
 
@@ -127,6 +131,9 @@ rollout:
   backend: "huggingface"
   enable_offload: False
   pipeline_stage_num: 1
+
+  collect_transitions: True
+  collect_prev_infos: False
 
   model:
     model_path: ""

@@ -421,7 +421,6 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         env_obs=None,
         calulate_logprobs=True,
         calulate_values=True,
-        return_obs=True,
         **kwargs,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         do_sample = kwargs.pop("do_sample")
@@ -584,18 +583,19 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         pixel_values: torch.FloatTensor = None,
         proprio: torch.FloatTensor = None,
         output_hidden_states: bool = False,
-        data: Optional[dict[str, torch.Tensor]] = None,
+        forward_inputs: Optional[dict[str, torch.Tensor]] = None,
         compute_logprobs: bool = False,
         compute_entropy: bool = False,
         compute_values: bool = False,
         use_cache: Optional[bool] = None,
+        **kwargs,
     ):
-        if data is not None:
-            input_ids = data["input_ids"]
-            attention_mask = data["attention_mask"]
-            pixel_values = data["pixel_values"]
-            proprio = data["proprio"]
-            action_tokens = data["action_tokens"]
+        if forward_inputs is not None:
+            input_ids = forward_inputs["input_ids"]
+            attention_mask = forward_inputs["attention_mask"]
+            pixel_values = forward_inputs["pixel_values"]
+            proprio = forward_inputs["proprio"]
+            action_tokens = forward_inputs["action_tokens"]
 
         # Create fake labels tensor (needed for action mask)
         labels = input_ids.clone()
@@ -672,8 +672,8 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
                 - self.config.pad_to_multiple_of : -self.config.pad_to_multiple_of,
             ]  # Shape: [batch_size, action_dim * num_action_chunks, 256]
 
-            action_logits = action_logits / data["temperature"]
-            top_k = min(data["top_k"], action_logits.size(-1))  # Safety check
+            action_logits = action_logits / kwargs["temperature"]
+            top_k = min(kwargs["top_k"], action_logits.size(-1))  # Safety check
             if top_k > 0:
                 logits_warper = TopKLogitsWarper(
                     top_k

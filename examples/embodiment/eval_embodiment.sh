@@ -23,7 +23,6 @@ export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 export ROBOTWIN_PATH="/path/to/RoboTwin"
 export PYTHONPATH=${REPO_PATH}:${ROBOTWIN_PATH}:$PYTHONPATH
 
-export CUDA_LAUNCH_BLOCKING=1
 export HYDRA_FULL_ERROR=1
 
 if [ -z "$1" ]; then
