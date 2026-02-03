@@ -540,6 +540,7 @@ class CMAPolicy(nn.Module, BasePolicy):
         **kwargs,
     ):
         """Predict actions for a batch of observations."""
+        env_obs = self.preprocess_env_obs(env_obs=env_obs)
         batch_size = env_obs["rgb"].shape[0]
         device = env_obs["rgb"].device
         current_episode_ids = env_obs["states"]
