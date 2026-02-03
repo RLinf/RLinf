@@ -17,6 +17,7 @@ import asyncio
 import threading
 import time
 import uuid
+from dataclasses import dataclass, fields, is_dataclass
 from typing import Any, Optional
 
 import pytest
@@ -37,6 +38,15 @@ CONSUMER_GROUP_NAME = "consumer_group"
 TEST_CHANNEL_NAME = "my_test_channel"
 group_count = 0
 channel_count = 0
+
+
+@dataclass
+class TensorMessage:
+    """Simple dataclass with a tensor field for testing direct tensor send/recv/broadcast."""
+
+    id: int
+    payload: torch.Tensor
+    note: str
 
 
 def get_device():
@@ -389,6 +399,14 @@ def get_test_data():
                 "b": torch.tensor([2], device=device),
             },
         ),
+        (
+            "dataclass_with_tensor",
+            TensorMessage(
+                id=42,
+                payload=torch.ones(2, 2, device=device) * 3,
+                note="channel test",
+            ),
+        ),
     ]
 
 
@@ -646,6 +664,9 @@ class TestChannel:
             assert received.keys() == expected.keys()
             for key in expected:
                 self._assert_equal(received[key], expected[key])
+        elif is_dataclass(expected):
+            for f in fields(type(expected)):
+                self._assert_equal(getattr(received, f.name), getattr(expected, f.name))
         else:
             assert received == expected
 
