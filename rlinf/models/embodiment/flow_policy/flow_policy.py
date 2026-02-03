@@ -347,6 +347,7 @@ class FlowPolicy(nn.Module, BasePolicy):
                 raise NotImplementedError
         return output_dict
 
+    @torch.inference_mode()
     def predict_action_batch(
         self,
         env_obs,
@@ -600,6 +601,7 @@ class FlowStatePolicy(nn.Module, BasePolicy):
             "Use FlowStatePolicy.forward with the appropriate forward_type instead."
         )
 
+    @torch.inference_mode()
     def predict_action_batch(
         self,
         env_obs,

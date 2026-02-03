@@ -334,6 +334,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                     ).contiguous()
         return processed_obs
 
+    @torch.inference_mode()
     def predict_action_batch(
         self,
         env_obs: dict[str, torch.Tensor],

@@ -303,6 +303,7 @@ class CNNPolicy(nn.Module, BasePolicy):
 
         return action, chunk_logprobs, full_feature
 
+    @torch.inference_mode()
     def predict_action_batch(
         self,
         env_obs,

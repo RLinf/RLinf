@@ -782,7 +782,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         last_hidden_states = torch.stack(h_steps, dim=1)  # [B,K,H]
         return action_tokens, token_scores, last_hidden_states
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def predict_action_batch(
         self,
         input_ids=None,

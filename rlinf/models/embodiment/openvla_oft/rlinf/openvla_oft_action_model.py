@@ -202,7 +202,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
 
         return actions
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def predict_action_batch(
         self,
         input_ids: torch.LongTensor = None,

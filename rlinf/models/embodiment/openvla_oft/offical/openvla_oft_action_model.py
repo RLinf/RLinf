@@ -418,7 +418,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
             last_hidden_states,
         )
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def predict_action_batch(
         self,
         input_ids: torch.LongTensor = None,

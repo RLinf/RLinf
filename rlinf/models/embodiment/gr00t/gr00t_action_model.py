@@ -439,7 +439,7 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
         values_vlm = self.value_head(value_embs)[:, 0]
         return values_vlm
 
-    def enable_torch_compiled(self):
+    def enable_torch_compile(self):
         self.process_backbone_output_compiled = torch.compile(
             self.process_backbone_output, mode="max-autotune-no-cudagraphs"
         )
@@ -797,5 +797,5 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
 
         self.backbone_compiled = torch.compile(backbone_fn)
 
-        self.action_head.enable_torch_compiled()
+        self.action_head.enable_torch_compile()
         self.torch_compile_enabled = True
