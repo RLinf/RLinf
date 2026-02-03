@@ -34,6 +34,7 @@ class MLPPolicy(nn.Module, BasePolicy):
         q_head_type="default",
     ):
         super().__init__()
+        BasePolicy.__init__(self)
         self.obs_dim = obs_dim
         self.action_dim = action_dim
         self.num_action_chunks = num_action_chunks
@@ -271,3 +272,9 @@ class MLPPolicy(nn.Module, BasePolicy):
 
     def crossq_forward(self, obs, **kwargs):
         return self.sac_forward(obs, **kwargs)
+
+    def enable_torch_compile(self):
+        if self.torch_compile_enabled:
+            return
+
+        self.torch_compile_enabled = True

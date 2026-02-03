@@ -75,7 +75,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         config: OpenVLAOFTRLConfig,
     ) -> None:
         super().__init__(config)
-
+        BasePolicy.__init__(self)
         self.action_dim = config.action_dim
         self.num_action_chunks = config.num_action_chunks
         self.use_proprio = config.use_proprio
@@ -326,18 +326,25 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         """Run discrete action tokens prediction."""
 
         # Forward pass through language model
-        language_model_output = self.language_model(
-            input_ids=None,
-            attention_mask=multimodal_attention_mask,
-            position_ids=multimodal_position_ids,
-            past_key_values=None,
-            inputs_embeds=multimodal_embeddings,
-            labels=None,
-            use_cache=None,
-            output_attentions=False,
-            output_hidden_states=True,
-            return_dict=True,
-        )
+        if not self.torch_compile_enabled:
+            language_model_output = self.language_model(
+                input_ids=None,
+                attention_mask=multimodal_attention_mask,
+                position_ids=multimodal_position_ids,
+                past_key_values=None,
+                inputs_embeds=multimodal_embeddings,
+                labels=None,
+                use_cache=None,
+                output_attentions=False,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+        else:
+            language_model_output = self.language_model_forward_compiled(
+                multimodal_embeddings,
+                multimodal_attention_mask,
+                multimodal_position_ids,
+            )
 
         # Extract hidden states for action tokens
         last_hidden_states = language_model_output.hidden_states[
@@ -701,3 +708,32 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         }
 
         return result
+
+    def enable_torch_compile(self):
+        if self.torch_compile_enabled:
+            return
+
+        def language_model_forward(
+            multimodal_embeddings: torch.Tensor,
+            multimodal_attention_mask: torch.Tensor,
+            multimodal_position_ids: torch.Tensor,
+        ):
+            language_model_output = self.language_model(
+                input_ids=None,
+                attention_mask=multimodal_attention_mask,
+                position_ids=multimodal_position_ids,
+                past_key_values=None,
+                inputs_embeds=multimodal_embeddings,
+                labels=None,
+                use_cache=None,
+                output_attentions=False,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+            return language_model_output
+
+        self.language_model_forward_compiled = torch.compile(
+            language_model_forward, mode="max-autotune-no-cudagraphs"
+        )
+
+        self.torch_compile_enabled = True

@@ -80,7 +80,7 @@ class CNNConfig:
 class CNNPolicy(nn.Module, BasePolicy):
     def __init__(self, cfg: CNNConfig):
         super().__init__()
-
+        BasePolicy.__init__(self)
         self.cfg = cfg
         self.in_channels = self.cfg.image_size[0]
         self.register_buffer(
@@ -405,3 +405,9 @@ class CNNPolicy(nn.Module, BasePolicy):
 
     def crossq_forward(self, obs, **kwargs):
         return self.sac_forward(obs, **kwargs)
+
+    def enable_torch_compile(self):
+        if self.torch_compile_enabled:
+            return
+
+        self.torch_compile_enabled = True
