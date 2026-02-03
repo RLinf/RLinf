@@ -140,7 +140,12 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
         timesteps_tensor = (
             (t_cont * self.num_timestep_buckets).to(torch.int64).to(device)
         )
-        action_features = self.action_encoder(x_t, timesteps_tensor, embodiment_id)
+        action_encoder_fn = (
+            self.action_encoder_compiled
+            if hasattr(self, "action_encoder_compiled")
+            else self.action_encoder
+        )
+        action_features = action_encoder_fn(x_t, timesteps_tensor, embodiment_id)
         # Maybe add position embedding.
         if self.config.add_pos_embed:
             pos_ids = torch.arange(
@@ -154,8 +159,12 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
             vl_embs.shape[0], -1, -1
         )
         sa_embs = torch.cat((state_features, future_tokens, action_features), dim=1)
-
-        model_output = self.model(
+        model_forward_fn = (
+            self.model_forward_compiled
+            if hasattr(self, "model_forward_compiled")
+            else self.model
+        )
+        model_output = model_forward_fn(
             hidden_states=sa_embs,
             encoder_hidden_states=vl_embs,
             timestep=timesteps_tensor,
@@ -163,7 +172,12 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
         model_output = model_output[:, -self.action_horizon :]
 
         # ode/sde sampling
-        v_t = self.action_decoder(model_output, embodiment_id)
+        action_decoder_fn = (
+            self.action_decoder_compiled
+            if hasattr(self, "action_decoder_compiled")
+            else self.action_decoder
+        )
+        v_t = action_decoder_fn(model_output, embodiment_id)
 
         timesteps = torch.linspace(
             0, 1, denoise_steps + 1, device=device, dtype=vl_embs.dtype
@@ -223,12 +237,23 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
         mode: Literal["train", "eval"] = "train",
         compute_values=True,
     ) -> BatchFeature:
-        backbone_output = self.process_backbone_output(backbone_output)
+        process_backbone_output_fn = (
+            self.process_backbone_output_compiled
+            if hasattr(self, "process_backbone_output_compiled")
+            else self.process_backbone_output
+        )
+        backbone_output = process_backbone_output_fn(backbone_output)
         # Get vision and language embeddings.
         vl_embs = backbone_output.backbone_features
         embodiment_id = action_input.embodiment_id
         # Embed state.
-        state_features = self.state_encoder(action_input.state, embodiment_id)
+        state_encoder_fn = (
+            self.state_encoder_compiled
+            if hasattr(self, "state_encoder_compiled")
+            else self.state_encoder
+        )
+
+        state_features = state_encoder_fn(action_input.state, embodiment_id)
         # Set initial actions as the sampled noise.
         batch_size = vl_embs.shape[0]
         device = vl_embs.device
@@ -414,6 +439,34 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
         values_vlm = self.value_head(value_embs)[:, 0]
         return values_vlm
 
+    def enable_torch_compiled(self):
+        self.process_backbone_output_compiled = torch.compile(
+            self.process_backbone_output, mode="max-autotune-no-cudagraphs"
+        )
+
+        self.state_encoder_compiled = torch.compile(
+            self.state_encoder, mode="max-autotune-no-cudagraphs"
+        )
+
+        self.action_encoder_compiled = torch.compile(
+            self.action_encoder, mode="max-autotune-no-cudagraphs"
+        )
+
+        self.action_decoder_compiled = torch.compile(
+            self.action_decoder, mode="max-autotune-no-cudagraphs"
+        )
+
+        def model_forward_fn(hidden_states, encoder_hidden_states, timestep):
+            return self.model(
+                hidden_states=hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+                timestep=timestep,
+            )
+
+        self.model_forward_compiled = torch.compile(
+            model_forward_fn, mode="max-autotune-no-cudagraphs"
+        )
+
 
 class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
     """
@@ -449,7 +502,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         output_action_chunks: int = 1,
     ):
         super().__init__(config, local_model_path)
-
+        BasePolicy.__init__(self)
         self.padding_value = rl_head_config.padding_value
         self._modality_config = modality_config  # ModalityConfig(delta_indices=[0], modality_keys=['video.ego_view'])
         self._modality_transform = modality_transform
@@ -560,7 +613,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
             "entropy": None,
         }
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def predict_action_batch(
         self,
         env_obs,
@@ -652,7 +705,11 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         # We expand get_action() and replace action head inference with RL inference.
         backbone_inputs, action_inputs = self.prepare_input(normalized_input)
         # Because the behavior of backbones remains the same for training and inference, we can use `forward` for backbones.
-        backbone_outputs = self.backbone(backbone_inputs)
+        backbone_fn = (
+            self.backbone_compiled if self.torch_compile_enabled else self.backbone
+        )
+        backbone_outputs = backbone_fn(backbone_inputs)
+
         action_head_outputs, rlinf_outputs = self.action_head.get_rl_action(
             backbone_outputs, action_inputs, mode=mode
         )
@@ -730,3 +787,15 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         self.valid_action_dim = valid_action_dim
 
         self.image_nums = len(metadata.modalities.video.keys())
+
+    def enable_torch_compile(self):
+        if self.torch_compile_enabled:
+            return
+
+        def backbone_fn(backbone_inputs):
+            return self.backbone(backbone_inputs)
+
+        self.backbone_compiled = torch.compile(backbone_fn)
+
+        self.action_head.enable_torch_compiled()
+        self.torch_compile_enabled = True
