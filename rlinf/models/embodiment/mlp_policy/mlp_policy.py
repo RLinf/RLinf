@@ -273,9 +273,3 @@ class MLPPolicy(nn.Module, BasePolicy):
 
     def crossq_forward(self, obs, **kwargs):
         return self.sac_forward(obs, **kwargs)
-
-    def enable_torch_compile(self):
-        if self.torch_compile_enabled:
-            return
-
-        self.torch_compile_enabled = True

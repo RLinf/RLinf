@@ -838,36 +838,6 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         assert torch.all(input_ids[:, -1] == 29871)
         assert torch.all(attention_mask[:, -1] == 1)
 
-        # generated_results: GenerateDecoderOnlyOutput = self.generate(
-        #     input_ids,
-        #     attention_mask=attention_mask,
-        #     pixel_values=pixel_values,
-        #     output_scores=True,
-        #     output_logits=True,
-        #     output_hidden_states=True,
-        #     return_dict_in_generate=True,
-        #     do_sample=do_sample,
-        #     logits_processor=self.logits_processors,
-        #     **kwargs,
-        # )
-        # action_tokens = generated_results.sequences
-        # action_tokens = action_tokens[:, -self.action_dim :]
-
-        # token_logits = (
-        #     generated_results.scores
-        # )  # ([B, vocab-size], ...), after logits processor and warper results
-        # token_logits_tensor = torch.stack(
-        #     token_logits, dim=1
-        # )  # [B, action-dim, vocab-size]
-
-        # last_hidden_states = torch.stack(
-        #     [
-        #         token_hidden_states[-1][:, -1]
-        #         for token_hidden_states in generated_results.hidden_states
-        #     ],
-        #     dim=1,
-        # )  # [B, hidden_states] -> [B, action-dim, hidden_states]
-
         generate_actions_fn = (
             self.generate_actions_compiled
             if self.torch_compile_enabled
@@ -1016,9 +986,6 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
             )
             return out.past_key_values, out.logits[:, -1, :]
 
-        # self._prefill_fn_compiled = torch.compile(
-        #     _prefill_fn, mode="max-autotune-no-cudagraphs"
-        # )
         # NOTE: it's sad that timm's vision encoder is not compatible with torch.compile yet
         # It's ok to use monkey patch to fix it but we leave it for future work
         self._prefill_fn_compiled = _prefill_fn

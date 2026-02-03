@@ -642,9 +642,3 @@ class FlowStatePolicy(nn.Module, BasePolicy):
             "forward_inputs": forward_inputs,
         }
         return chunk_actions, result
-
-    def enable_torch_compile(self):
-        if self.torch_compile_enabled:
-            return
-
-        self.torch_compile_enabled = True
