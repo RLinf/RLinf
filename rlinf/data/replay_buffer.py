@@ -18,7 +18,6 @@ import json
 import os
 import pickle as pkl
 import threading
-from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
@@ -32,24 +31,181 @@ class TrajectoryCache:
     """FIFO cache for storing flattened trajectories."""
 
     def __init__(self, max_size: int = 5):
-        self.cache: OrderedDict[str, dict] = OrderedDict()
+        self.cache: dict[int, int] = {}
         self.max_size = max_size
+        self._buffer: Optional[dict] = None
+        self._traj_num_samples: Optional[int] = None
+        self._traj_key_lengths: dict[int, dict] = {}
+        self._last_slot = 0
+        self._slot_to_id: dict[int, int] = {}
 
-    def get(self, trajectory_id: str) -> Optional[dict]:
-        return self.cache.get(trajectory_id)
+    def _get_key_lengths(self, trajectory: dict) -> dict:
+        lengths: dict = {}
+        has_tensor = False
+        for key, value in trajectory.items():
+            if isinstance(value, torch.Tensor):
+                lengths[key] = int(value.shape[0])
+                has_tensor = True
+            elif isinstance(value, dict):
+                nested = self._get_key_lengths(value)
+                if nested:
+                    lengths[key] = nested
+                    has_tensor = True
+        if not has_tensor:
+            raise ValueError("Trajectory contains no tensor fields.")
+        return lengths
 
-    def put(self, trajectory_id: str, trajectory: dict):
-        if trajectory_id not in self.cache:
-            self.cache[trajectory_id] = trajectory
-            # Evict oldest if cache is full
-            if len(self.cache) > self.max_size:
-                self.cache.popitem(last=False)
+    def _get_max_num_samples(self, lengths: dict) -> int:
+        max_len = 0
+        for value in lengths.values():
+            if isinstance(value, dict):
+                max_len = max(max_len, self._get_max_num_samples(value))
+            else:
+                max_len = max(max_len, int(value))
+        return max_len
+
+    def _alloc_buffer_like(self, trajectory: dict, total_samples: int) -> dict:
+        buffer: dict = {}
+        for key, value in trajectory.items():
+            if isinstance(value, torch.Tensor):
+                shape = (total_samples, *value.shape[1:])
+                buffer[key] = torch.empty(shape, dtype=value.dtype, device=value.device)
+            elif isinstance(value, dict):
+                buffer[key] = self._alloc_buffer_like(value, total_samples)
+            else:
+                buffer[key] = value
+        return buffer
+
+    def _insert_into_buffer(self, trajectory: dict, buffer: dict, start: int) -> None:
+        for key, value in trajectory.items():
+            if isinstance(value, torch.Tensor):
+                end = start + value.shape[0]
+                buffer[key][start:end] = value
+            elif isinstance(value, dict):
+                self._insert_into_buffer(value, buffer[key], start)
+            else:
+                buffer[key] = value
+
+    def _slice_from_buffer(self, buffer: dict, slc: slice) -> dict:
+        sliced: dict = {}
+        for key, value in buffer.items():
+            if isinstance(value, torch.Tensor):
+                sliced[key] = value[slc]
+            elif isinstance(value, dict):
+                sliced[key] = self._slice_from_buffer(value, slc)
+            else:
+                sliced[key] = value
+        return sliced
+
+    def _slice_from_buffer_with_lengths(
+        self, buffer: dict, start: int, lengths: Optional[dict]
+    ) -> dict:
+        sliced: dict = {}
+        for key, value in buffer.items():
+            if isinstance(value, torch.Tensor):
+                if lengths is None or key not in lengths:
+                    end = start + self._traj_num_samples
+                else:
+                    end = start + int(lengths[key])
+                sliced[key] = value[start:end]
+            elif isinstance(value, dict):
+                nested_lengths = None if lengths is None else lengths.get(key, None)
+                sliced[key] = self._slice_from_buffer_with_lengths(
+                    value, start, nested_lengths
+                )
+            else:
+                sliced[key] = value
+        return sliced
+
+    def _copy_buffer_slice(
+        self,
+        src_buffer: dict,
+        dst_buffer: dict,
+        src_slc: slice,
+        dst_slc: slice,
+    ) -> None:
+        for key, value in src_buffer.items():
+            if isinstance(value, torch.Tensor):
+                dst_buffer[key][dst_slc] = value[src_slc]
+            elif isinstance(value, dict):
+                self._copy_buffer_slice(value, dst_buffer[key], src_slc, dst_slc)
+            else:
+                dst_buffer[key] = value
+
+    def _ensure_capacity(self, max_num_samples: int, trajectory: dict) -> None:
+        if self._traj_num_samples is None:
+            self._traj_num_samples = max_num_samples
+            total_samples = self.max_size * self._traj_num_samples
+            self._buffer = self._alloc_buffer_like(trajectory, total_samples)
+            return
+        if max_num_samples <= self._traj_num_samples:
+            return
+
+        # Grow slot length only when needed.
+        old_slot_len = self._traj_num_samples
+        new_slot_len = max_num_samples
+        new_total_samples = self.max_size * new_slot_len
+        new_buffer = self._alloc_buffer_like(trajectory, new_total_samples)
+
+        if self._buffer is not None:
+            for slot in self.cache.values():
+                src_start = slot * old_slot_len
+                src_end = src_start + old_slot_len
+                dst_start = slot * new_slot_len
+                dst_end = dst_start + old_slot_len
+                self._copy_buffer_slice(
+                    self._buffer,
+                    new_buffer,
+                    slice(src_start, src_end),
+                    slice(dst_start, dst_end),
+                )
+
+        self._buffer = new_buffer
+        self._traj_num_samples = new_slot_len
+
+    def get(self, trajectory_id: int) -> Optional[dict]:
+        if trajectory_id not in self.cache or self._buffer is None:
+            return None
+        slot = self.cache[trajectory_id]
+        start = slot * self._traj_num_samples
+        lengths = self._traj_key_lengths.get(trajectory_id)
+        return self._slice_from_buffer_with_lengths(self._buffer, start, lengths)
+
+    def get_buffer(self) -> Optional[dict]:
+        return self._buffer
+
+    def get_slot_length(self) -> Optional[int]:
+        return self._traj_num_samples
+
+    def put(self, trajectory_id: int, trajectory: dict):
+        key_lengths = self._get_key_lengths(trajectory)
+        max_num_samples = self._get_max_num_samples(key_lengths)
+        self._ensure_capacity(max_num_samples, trajectory)
+
+        if trajectory_id in self.cache:
+            slot = self.cache[trajectory_id]
         else:
-            # Update existing without changing position
-            self.cache[trajectory_id] = trajectory
+            slot = self._last_slot
+            if slot in self._slot_to_id:
+                evict_id = self._slot_to_id[slot]
+                if evict_id in self.cache:
+                    self.cache.pop(evict_id, None)
+                self._traj_key_lengths.pop(evict_id, None)
+            self._slot_to_id[slot] = trajectory_id
+            self.cache[trajectory_id] = slot
+            self._last_slot = (self._last_slot + 1) % self.max_size
+
+        start = slot * self._traj_num_samples
+        self._insert_into_buffer(trajectory, self._buffer, start)
+        self._traj_key_lengths[trajectory_id] = key_lengths
 
     def clear(self):
         self.cache.clear()
+        self._buffer = None
+        self._traj_num_samples = None
+        self._traj_key_lengths.clear()
+        self._last_slot = 0
+        self._slot_to_id.clear()
 
 
 class TrajectoryReplayBuffer:
@@ -330,7 +486,8 @@ class TrajectoryReplayBuffer:
 
             if self._flat_trajectory_cache is not None:
                 self._flat_trajectory_cache.put(
-                    trajectory_id, self._flatten_trajectory(trajectory)
+                    trajectory_id,
+                    self._flatten_trajectory(trajectory),
                 )
 
         # Save metadata/index after all trajectory saves finish
@@ -459,38 +616,72 @@ class TrajectoryReplayBuffer:
                 (idx_in_batch, local_sample_idx)
             )
 
-        # Load each trajectory once and extract multiple chunks (batched indexing)
+        # Vectorized sampling: use cache buffer directly, load misses and gather once.
         batch = None
-        for trajectory_id, local_indices in grouped_indices.items():
-            flat_trajectory = None
-            if self._flat_trajectory_cache is not None:
-                flat_trajectory = self._flat_trajectory_cache.get(trajectory_id)
-            if flat_trajectory is None:
-                model_weights_id = self._trajectory_index[trajectory_id][
-                    "model_weights_id"
-                ]
-                trajectory = self._load_trajectory(trajectory_id, model_weights_id)
+        traj_ids_tensor = torch.as_tensor(
+            [window_ids[int(idx)] for idx in bucket_indices], dtype=torch.long
+        )
+        batch_indices_tensor = torch.arange(num_chunks, dtype=torch.long)
+
+        cached_mask = None
+        cache = self._flat_trajectory_cache
+        if cache is not None:
+            cached_ids = list(cache.cache.keys())
+            if cached_ids:
+                cached_ids_tensor = torch.as_tensor(cached_ids, dtype=torch.long)
+                cached_mask = torch.isin(traj_ids_tensor, cached_ids_tensor)
+            else:
+                cached_mask = torch.zeros_like(traj_ids_tensor, dtype=torch.bool)
+        else:
+            cached_mask = torch.zeros_like(traj_ids_tensor, dtype=torch.bool)
+
+        # 1) Cache hits: gather from cache buffer.
+        if torch.any(cached_mask):
+            cache_buffer = cache.get_buffer() if cache is not None else None
+            slot_len = cache.get_slot_length() if cache is not None else None
+            if cache_buffer is not None and slot_len is not None:
+                cached_traj_ids = traj_ids_tensor[cached_mask].tolist()
+                cached_slots = torch.as_tensor(
+                    [cache.cache[tid] for tid in cached_traj_ids], dtype=torch.long
+                )
+                cached_local = local_sample_indices[cached_mask]
+                buffer_indices = cached_slots * slot_len + cached_local
+                batch_indices = batch_indices_tensor[cached_mask]
+                if batch is None:
+                    batch = self._init_batch_from_buffer(cache_buffer, num_chunks)
+                self._fill_batch_from_buffer_indices(
+                    batch, cache_buffer, buffer_indices, batch_indices
+                )
+
+        # 2) Cache misses: load all, concat, then gather once.
+        miss_mask = ~cached_mask
+        if torch.any(miss_mask):
+            miss_traj_ids = torch.unique(traj_ids_tensor[miss_mask]).tolist()
+            miss_flats: list[dict] = []
+            traj_offsets: dict[int, int] = {}
+            cursor = 0
+            for tid in miss_traj_ids:
+                model_weights_id = self._trajectory_index[tid]["model_weights_id"]
+                trajectory = self._load_trajectory(tid, model_weights_id)
                 flat_trajectory = self._flatten_trajectory(trajectory)
+                miss_flats.append(flat_trajectory)
+                traj_offsets[tid] = cursor
+                cursor += self._trajectory_index[tid]["num_samples"]
 
+            concat_flat = self._concat_flat_trajectories(miss_flats)
             if batch is None:
-                batch = self._init_batch_from_flat(flat_trajectory, num_chunks)
+                batch = self._init_batch_from_flat(concat_flat, num_chunks)
 
-            batch_indices = torch.as_tensor(
-                [idx for idx, _ in local_indices], dtype=torch.long
+            miss_traj_ids_samples = traj_ids_tensor[miss_mask].tolist()
+            miss_offsets = torch.as_tensor(
+                [traj_offsets[tid] for tid in miss_traj_ids_samples], dtype=torch.long
             )
-            local_indices_tensor = torch.as_tensor(
-                [local_idx for _, local_idx in local_indices], dtype=torch.long
+            miss_local = local_sample_indices[miss_mask]
+            miss_buffer_indices = miss_offsets + miss_local
+            miss_batch_indices = batch_indices_tensor[miss_mask]
+            self._fill_batch_from_buffer_indices(
+                batch, concat_flat, miss_buffer_indices, miss_batch_indices
             )
-
-            for key, value in flat_trajectory.items():
-                if isinstance(value, torch.Tensor):
-                    batch[key][batch_indices] = value[local_indices_tensor]
-                elif isinstance(value, dict):
-                    for nested_key, nested_value in value.items():
-                        if isinstance(nested_value, torch.Tensor):
-                            batch[key][nested_key][batch_indices] = nested_value[
-                                local_indices_tensor
-                            ]
 
         return batch if batch is not None else {}
 
@@ -557,6 +748,54 @@ class TrajectoryReplayBuffer:
                 if nested_batch:
                     batch[key] = nested_batch
         return batch
+
+    def _init_batch_from_buffer(self, buffer: dict, batch_size: int) -> dict:
+        batch: dict[str, object] = {}
+        for key, value in buffer.items():
+            if isinstance(value, torch.Tensor):
+                shape = (batch_size, *value.shape[1:])
+                batch[key] = torch.empty(shape, dtype=value.dtype, device=value.device)
+            elif isinstance(value, dict):
+                nested_batch = {}
+                for nested_key, nested_value in value.items():
+                    if isinstance(nested_value, torch.Tensor):
+                        shape = (batch_size, *nested_value.shape[1:])
+                        nested_batch[nested_key] = torch.empty(
+                            shape,
+                            dtype=nested_value.dtype,
+                            device=nested_value.device,
+                        )
+                if nested_batch:
+                    batch[key] = nested_batch
+        return batch
+
+    def _fill_batch_from_buffer_indices(
+        self,
+        batch: dict,
+        buffer: dict,
+        buffer_indices: torch.Tensor,
+        batch_indices: torch.Tensor,
+    ) -> None:
+        for key, value in buffer.items():
+            if isinstance(value, torch.Tensor):
+                batch[key][batch_indices] = value.index_select(0, buffer_indices)
+            elif isinstance(value, dict):
+                self._fill_batch_from_buffer_indices(
+                    batch[key], value, buffer_indices, batch_indices
+                )
+
+    def _concat_flat_trajectories(self, flats: list[dict]) -> dict:
+        if not flats:
+            return {}
+        out: dict = {}
+        keys = flats[0].keys()
+        for key in keys:
+            if isinstance(flats[0][key], torch.Tensor):
+                out[key] = torch.cat([f[key] for f in flats], dim=0)
+            elif isinstance(flats[0][key], dict):
+                nested_list = [f[key] for f in flats]
+                out[key] = self._concat_flat_trajectories(nested_list)
+        return out
 
     def _merge_chunks_to_batch(self, chunks: list[dict]) -> dict[str, torch.Tensor]:
         """
@@ -775,7 +1014,10 @@ class TrajectoryReplayBuffer:
                     ]
                     trajectory = self._load_trajectory(trajectory_id, model_weights_id)
                     flat_trajectory = self._flatten_trajectory(trajectory)
-                    self._flat_trajectory_cache.put(trajectory_id, flat_trajectory)
+                    self._flat_trajectory_cache.put(
+                        trajectory_id,
+                        flat_trajectory,
+                    )
 
     def clear_cache(self):
         """Clear trajectory cache."""

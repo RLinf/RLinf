@@ -573,6 +573,7 @@ class Worker(metaclass=WorkerMeta):
         dst_rank: int | list[int],
         async_op: bool = False,
         options: Optional["CollectiveGroupOptions"] = None,
+        piggyback_payload: Optional[Any] = None,
     ):
         """Send an object to a specific worker address in the collective group.
 
@@ -599,6 +600,7 @@ class Worker(metaclass=WorkerMeta):
             dst_rank (int | List[int]): The rank or list of ranks in the destination worker group to send the object to. For SPMD-like workers, this should be a single rank. For SPSD-like workers forked by parent workers, this can be a list of ranks that forms a path from the root worker to the target worker.
             async_op (bool): Whether to perform the operation asynchronously.
             options (Optional[CollectiveGroupOptions]): The options for the collective group. The options will only take effect when two workers first communicate with each other, and will be ignored for subsequent communications. This option must match the options of the recv side.
+            piggyback_payload (Optional[Any]): The payload to piggyback on the send operation. This payload will be sent to the recv side and can be used to pass additional information to the recv side without disrupting the object's data structure, e.g., list/dict of tensors that are optimized for sending.
 
         Returns:
             Optional[AsyncWork]: An AsyncWork object if async_op is True, otherwise None.
@@ -606,7 +608,12 @@ class Worker(metaclass=WorkerMeta):
         """
         dst_addr = WorkerAddress(dst_group_name, ranks=dst_rank)
         group = self._get_collective_group(dst_addr)
-        return group.send(object=object, async_op=async_op, options=options)
+        return group.send(
+            object=object,
+            async_op=async_op,
+            options=options,
+            piggyback_payload=piggyback_payload,
+        )
 
     def recv(
         self,
@@ -633,8 +640,7 @@ class Worker(metaclass=WorkerMeta):
             options (Optional[CollectiveGroupOptions]): The options for the collective group. The options will only take effect when two workers first communicate with each other, and will be ignored for subsequent communications. This option must match the options of the send side.
 
         Returns:
-            AsyncWork | torch.Tensor | List[torch.Tensor] | Dict[str, torch.Tensor] | Any: An AsyncWork object if async_op is True, otherwise the received object.
-
+            AsyncWork | torch.Tensor | List[torch.Tensor] | Dict[str, torch.Tensor] | Any: An AsyncWork object if async_op is True, otherwise the received object. If the send side sends a piggyback payload, the received object will be a tuple of the received object and the piggyback payload.
         """
         src_addr = WorkerAddress(src_group_name, ranks=src_rank)
         group = self._get_collective_group(src_addr)

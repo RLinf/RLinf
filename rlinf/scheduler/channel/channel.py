@@ -395,7 +395,11 @@ class Channel:
                 **put_kwargs,
             )
             self._current_worker.send(
-                (key, item, weight), self._channel_name, target_rank, async_op=True
+                item,
+                self._channel_name,
+                target_rank,
+                async_op=True,
+                piggyback_payload=(key, weight),
             )
 
             if async_op:
@@ -447,7 +451,11 @@ class Channel:
                 **put_kwargs,
             )
             self._current_worker.send(
-                (key, item, weight), self._channel_name, target_rank, async_op=True
+                item,
+                self._channel_name,
+                target_rank,
+                async_op=True,
+                piggyback_payload=(key, weight),
             )
             try:
                 async_channel_work.wait()
@@ -499,7 +507,7 @@ class Channel:
                 )
             else:
                 # query_id, data
-                _, data = async_comm_work.wait()
+                data, _ = async_comm_work.wait()
                 return data
         else:
             # Outside a worker, use ray comm
@@ -541,7 +549,7 @@ class Channel:
                 "nowait": True,
             }
             target_actor.get.remote(**get_kwargs)
-            query_id, data = self._current_worker.recv(self._channel_name, target_rank)
+            data, query_id = self._current_worker.recv(self._channel_name, target_rank)
             if query_id == asyncio.QueueEmpty:
                 raise asyncio.QueueEmpty
             return data
@@ -596,7 +604,7 @@ class Channel:
                 )
             else:
                 # query_id, data
-                _, data = async_comm_work.wait()
+                data, _ = async_comm_work.wait()
                 return data
         else:
             get_kwargs = {"target_weight": target_weight, "key": key}

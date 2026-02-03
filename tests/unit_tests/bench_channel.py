@@ -12,36 +12,142 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
 import asyncio
 import random
+import re
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from queue import Empty as QueueEmpty
 from typing import Any
 
+import torch
+from ray.util.queue import Queue as RayQueue
+
 from rlinf.scheduler import Channel, Cluster, NodePlacementStrategy, Worker
 
-try:
-    from ray.util.queue import Queue as RayQueue
-except ImportError:
-    RayQueue = None  # type: ignore[misc, assignment]
+# Available test names for --tests selection.
+AVAILABLE_TESTS = frozenset(
+    {
+        "channel",  # Channel under pressure (sync + async)
+        "put_only",
+        "get_only",
+        "random_key",
+    }
+)
+
+# Payload types for --payload-type.
+PAYLOAD_TYPES = frozenset(
+    {"bytes", "cpu_tensor", "gpu_tensor", "tensor_list", "tensor_dict"}
+)
+
+# Size units (binary: 1024-based)
+_SIZE_UNITS = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3}
+
+
+def parse_size(s: str | int) -> int:
+    """Parse a size string with optional unit (B, KB, MB, GB) into bytes.
+
+    Examples: "1024", "1KB", "64KB", "1MB", "1GB"
+    """
+    if isinstance(s, int):
+        return s
+    s = str(s).strip().upper()
+    if not s:
+        raise ValueError("Empty size string")
+    m = re.match(r"^(\d+(?:\.\d+)?)\s*([KMG]?B?)$", s)
+    if not m:
+        raise ValueError(f"Invalid size format: {s!r}. Use e.g. 1024, 1KB, 1MB, 1GB")
+    num_str, unit = m.groups()
+    num = float(num_str)
+    unit = unit or "B"
+    if unit == "K":
+        unit = "KB"
+    elif unit == "M":
+        unit = "MB"
+    elif unit == "G":
+        unit = "GB"
+    if unit not in _SIZE_UNITS:
+        raise ValueError(f"Unknown unit: {unit}. Use B, KB, MB, GB")
+    return int(num * _SIZE_UNITS[unit])
 
 
 @dataclass
 class BenchmarkConfig:
     num_messages: int = 2000
     num_warmup_messages: int = 2
-    payload_size: int = 1024 * 1024  # bytes
+    payload_size: int = 1024 * 1024  # bytes (or approximate for tensors)
     channel_maxsize: int = 0
     enable_thread_interference: bool = False
     num_noise_threads: int = 2
+    payload_type: str = (
+        "bytes"  # "bytes" | "cpu_tensor" | "gpu_tensor" | "tensor_list" | "tensor_dict"
+    )
+    enabled_tests: frozenset[str] = field(default_factory=lambda: AVAILABLE_TESTS)
+    enable_ray_queue: bool = False  # Run ray.util.queue.Queue comparison for same tests
+
+
+def _create_tensor_payload(
+    payload_type: str, size_bytes: int
+) -> torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor]:
+    """Create a tensor payload of given type and approximate size in bytes."""
+    # float32: 4 bytes per element
+    num_elements = max(1, size_bytes // 4)
+    shape = (num_elements,)
+
+    if payload_type == "cpu_tensor":
+        return torch.ones(shape, dtype=torch.float32, device="cpu")
+
+    if payload_type == "gpu_tensor":
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "GPU tensor benchmark requested but CUDA is not available"
+            )
+        return torch.ones(
+            shape, dtype=torch.float32, device=torch.device("cuda")
+        ).contiguous()
+
+    if payload_type == "tensor_list":
+        # Split into 8 tensors
+        n = max(1, num_elements // 8)
+        if torch.cuda.is_available():
+            return [
+                torch.ones(
+                    (n,), dtype=torch.float32, device=torch.device("cuda")
+                ).contiguous()
+                for _ in range(8)
+            ]
+        return [torch.ones((n,), dtype=torch.float32, device="cpu") for _ in range(8)]
+
+    if payload_type == "tensor_dict":
+        # Split into 8 tensors in a dict
+        n = max(1, num_elements // 8)
+        if torch.cuda.is_available():
+            return {
+                f"t{i}": torch.ones(
+                    (n,), dtype=torch.float32, device=torch.device("cuda")
+                ).contiguous()
+                for i in range(8)
+            }
+        return {
+            f"t{i}": torch.ones((n,), dtype=torch.float32, device="cpu")
+            for i in range(8)
+        }
+
+    raise ValueError(f"Unknown payload_type: {payload_type}")
 
 
 class Producer(Worker):
     def __init__(self):
         super().__init__()
         self._noise_started = False
+
+    def _get_payload(self, cfg: BenchmarkConfig) -> Any:
+        """Create payload based on config payload_type."""
+        if cfg.payload_type == "bytes":
+            return b"x" * cfg.payload_size
+        return _create_tensor_payload(cfg.payload_type, cfg.payload_size)
 
     @staticmethod
     def _progress(i: int, total: int, prefix: str) -> None:
@@ -65,7 +171,7 @@ class Producer(Worker):
 
     def prefill(self, channel: Channel, cfg: BenchmarkConfig) -> int:
         """Fill the channel with `num_messages` synchronously (no timing)."""
-        payload = b"x" * cfg.payload_size
+        payload = self._get_payload(cfg)
         for _ in range(cfg.num_messages):
             channel.put(payload)
         return cfg.num_messages
@@ -88,7 +194,7 @@ class Producer(Worker):
 
     def warmup(self, channel: Channel, cfg: BenchmarkConfig, async_mode: bool) -> None:
         """Un-timed warmup for puts to build up channel state and JITs."""
-        payload = b"x" * cfg.payload_size
+        payload = 1
         if async_mode:
 
             async def _warmup() -> None:
@@ -103,7 +209,7 @@ class Producer(Worker):
 
     def run_sync(self, channel: Channel, cfg: BenchmarkConfig) -> float:
         """Synchronous put: each put blocks until finished."""
-        payload = b"x" * cfg.payload_size
+        payload = self._get_payload(cfg)
         with self.worker_timer("producer_sync"):
             for i in range(cfg.num_messages):
                 channel.put(payload)
@@ -112,9 +218,9 @@ class Producer(Worker):
 
     def run_async(self, channel: Channel, cfg: BenchmarkConfig) -> float:
         """Async put using asyncio: await put(..., async_op=True).async_wait()."""
+        payload = self._get_payload(cfg)
 
         async def _run() -> None:
-            payload = b"x" * cfg.payload_size
             for i in range(cfg.num_messages):
                 work = channel.put(payload, async_op=True)
                 await work.async_wait()
@@ -129,7 +235,7 @@ class Producer(Worker):
     ) -> float:
         """Synchronous put with per-message keys."""
         assert len(keys) == cfg.num_messages
-        payload = b"x" * cfg.payload_size
+        payload = self._get_payload(cfg)
         with self.worker_timer("producer_sync_keys"):
             for i, key in enumerate(keys):
                 channel.put(payload, key=key)
@@ -141,7 +247,7 @@ class Producer(Worker):
     ) -> float:
         """Async put with per-message keys using asyncio."""
         assert len(keys) == cfg.num_messages
-        payload = b"x" * cfg.payload_size
+        payload = self._get_payload(cfg)
 
         async def _run() -> None:
             for i, key in enumerate(keys):
@@ -157,7 +263,7 @@ class Producer(Worker):
         """Fill ray.util.queue.Queue with num_messages (no timing)."""
         if RayQueue is None:
             return 0
-        payload = b"x" * cfg.payload_size
+        payload = self._get_payload(cfg)
         for _ in range(cfg.num_messages):
             queue.put(payload)
         return cfg.num_messages
@@ -166,7 +272,7 @@ class Producer(Worker):
         """Synchronous put on ray.util.queue.Queue."""
         if RayQueue is None:
             return 0.0
-        payload = b"x" * cfg.payload_size
+        payload = self._get_payload(cfg)
         with self.worker_timer("producer_sync_ray_queue"):
             for i in range(cfg.num_messages):
                 queue.put(payload)
@@ -177,7 +283,7 @@ class Producer(Worker):
         """Async put on ray.util.queue.Queue (put_async returns coroutine)."""
         if RayQueue is None:
             return 0.0
-        payload = b"x" * cfg.payload_size
+        payload = self._get_payload(cfg)
 
         async def _run():
             for i in range(cfg.num_messages):
@@ -356,9 +462,14 @@ def run_benchmark(cfg: BenchmarkConfig) -> None:
                 break
 
     # Ray util queue for comparison (ray.util.queue.Queue).
-    ray_queue = None
-    if RayQueue is not None:
-        ray_queue = RayQueue(maxsize=cfg.channel_maxsize or 0)
+    ray_queue = RayQueue(
+        maxsize=cfg.channel_maxsize or 0,
+        actor_options={
+            "runtime_env": {
+                "env_vars": {"RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES": "1"}
+            }
+        },
+    )
 
     def reset_ray_queue() -> None:
         """Drain ray.util.queue.Queue."""
@@ -585,47 +696,70 @@ def run_benchmark(cfg: BenchmarkConfig) -> None:
             else float("inf"),
         }
 
-    print(f"Running channel pressure benchmark with config: {cfg}")
+    enabled = cfg.enabled_tests
 
-    print("\n[Start] Channel under pressure (sync)")
-    sync_stats = one_round(async_mode=False)
-    print("\n[Start] Channel under pressure (async)")
-    async_stats = one_round(async_mode=True)
+    # Results storage
+    sync_stats = async_stats = None
+    sync_put_stats = async_put_stats = None
+    sync_get_stats = async_get_stats = None
+    sync_randkey_stats = async_randkey_stats = None
+    sync_rayq_stats = async_rayq_stats = None
+    sync_rayq_put_stats = async_rayq_put_stats = None
+    sync_rayq_get_stats = async_rayq_get_stats = None
+
+    print(f"Running channel pressure benchmark with config: {cfg}")
+    print(
+        f"Enabled tests: {sorted(enabled)}, payload_type: {cfg.payload_type}"
+        + (
+            ", ray_queue comparison enabled"
+            if cfg.enable_ray_queue and ray_queue
+            else ""
+        )
+    )
+
+    # Ray util.queue.Queue comparison runs for same tests when enabled
+    run_ray_queue = cfg.enable_ray_queue and ray_queue is not None
+
+    # Channel under pressure
+    if "channel" in enabled:
+        print("\n[Start] Channel under pressure (sync)")
+        sync_stats = one_round(async_mode=False)
+        print("\n[Start] Channel under pressure (async)")
+        async_stats = one_round(async_mode=True)
 
     # Put-only benchmark (producer only).
-    print("\n[Start] Put-only benchmark (sync)")
-    sync_put_stats = put_only_round(async_mode=False)
-    print("\n[Start] Put-only benchmark (async)")
-    async_put_stats = put_only_round(async_mode=True)
+    if "put_only" in enabled:
+        print("\n[Start] Put-only benchmark (sync)")
+        sync_put_stats = put_only_round(async_mode=False)
+        print("\n[Start] Put-only benchmark (async)")
+        async_put_stats = put_only_round(async_mode=True)
 
     # Get-only benchmark (channel is already full before measurement).
-    print("\n[Start] Get-only benchmark (sync)")
-    sync_get_stats = get_only_round(async_mode=False)
-    print("\n[Start] Get-only benchmark (async)")
-    async_get_stats = get_only_round(async_mode=True)
+    if "get_only" in enabled:
+        print("\n[Start] Get-only benchmark (sync)")
+        sync_get_stats = get_only_round(async_mode=False)
+        print("\n[Start] Get-only benchmark (async)")
+        async_get_stats = get_only_round(async_mode=True)
 
     # Random-key benchmark (key-based routing stress).
-    print("\n[Start] Random-key benchmark (sync)")
-    sync_randkey_stats = random_key_round(async_mode=False)
-    print("\n[Start] Random-key benchmark (async)")
-    async_randkey_stats = random_key_round(async_mode=True)
+    if "random_key" in enabled:
+        print("\n[Start] Random-key benchmark (sync)")
+        sync_randkey_stats = random_key_round(async_mode=False)
+        print("\n[Start] Random-key benchmark (async)")
+        async_randkey_stats = random_key_round(async_mode=True)
 
-    # Ray util.queue.Queue comparison (same shared queue for all Ray rounds).
-    sync_rayq_stats = None
-    async_rayq_stats = None
-    sync_rayq_put_stats = None
-    async_rayq_put_stats = None
-    sync_rayq_get_stats = None
-    async_rayq_get_stats = None
-    if ray_queue is not None:
+    # Ray util.queue.Queue comparison for same tests when enabled.
+    if run_ray_queue and "channel" in enabled:
         print("\n[Start] Ray util.queue.Queue under pressure (sync)")
         sync_rayq_stats = ray_queue_round(async_mode=False)
         print("\n[Start] Ray util.queue.Queue under pressure (async)")
         async_rayq_stats = ray_queue_round(async_mode=True)
+    if run_ray_queue and "put_only" in enabled:
         print("\n[Start] Ray util.queue.Queue put-only (sync)")
         sync_rayq_put_stats = put_only_ray_queue_round(async_mode=False)
         print("\n[Start] Ray util.queue.Queue put-only (async)")
         async_rayq_put_stats = put_only_ray_queue_round(async_mode=True)
+    if run_ray_queue and "get_only" in enabled:
         print("\n[Start] Ray util.queue.Queue get-only (sync)")
         sync_rayq_get_stats = get_only_ray_queue_round(async_mode=False)
         print("\n[Start] Ray util.queue.Queue get-only (async)")
@@ -651,22 +785,30 @@ def run_benchmark(cfg: BenchmarkConfig) -> None:
             f"consumer_latency={s['consumer_latency_ms']:.3f} ms/msg"
         )
 
-    print("\n=== Channel under pressure (sync) ===")
-    print(fmt(sync_stats))
-    print("\n=== Channel under pressure (async) ===")
-    print(fmt(async_stats))
-    print("\n=== Put-only benchmark (sync) ===")
-    print(fmt(sync_put_stats))
-    print("\n=== Put-only benchmark (async) ===")
-    print(fmt(async_put_stats))
-    print("\n=== Get-only benchmark (sync) ===")
-    print(fmt_get(sync_get_stats))
-    print("\n=== Get-only benchmark (async) ===")
-    print(fmt_get(async_get_stats))
-    print("\n=== Random-key benchmark (sync) ===")
-    print(fmt(sync_randkey_stats))
-    print("\n=== Random-key benchmark (async) ===")
-    print(fmt(async_randkey_stats))
+    if sync_stats is not None:
+        print("\n=== Channel under pressure (sync) ===")
+        print(fmt(sync_stats))
+    if async_stats is not None:
+        print("\n=== Channel under pressure (async) ===")
+        print(fmt(async_stats))
+    if sync_put_stats is not None:
+        print("\n=== Put-only benchmark (sync) ===")
+        print(fmt(sync_put_stats))
+    if async_put_stats is not None:
+        print("\n=== Put-only benchmark (async) ===")
+        print(fmt(async_put_stats))
+    if sync_get_stats is not None:
+        print("\n=== Get-only benchmark (sync) ===")
+        print(fmt_get(sync_get_stats))
+    if async_get_stats is not None:
+        print("\n=== Get-only benchmark (async) ===")
+        print(fmt_get(async_get_stats))
+    if sync_randkey_stats is not None:
+        print("\n=== Random-key benchmark (sync) ===")
+        print(fmt(sync_randkey_stats))
+    if async_randkey_stats is not None:
+        print("\n=== Random-key benchmark (async) ===")
+        print(fmt(async_randkey_stats))
 
     # Ray util.queue.Queue comparison results.
     if sync_rayq_stats is not None:
@@ -689,5 +831,109 @@ def run_benchmark(cfg: BenchmarkConfig) -> None:
         print(fmt_get(async_rayq_get_stats))
 
 
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for benchmark configuration and test selection."""
+    parser = argparse.ArgumentParser(
+        description="Channel pressure benchmark: measure put/get throughput for bytes and tensors."
+    )
+    parser.add_argument(
+        "--tests",
+        "-t",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated list of tests to run. "
+            f"Available: {', '.join(sorted(AVAILABLE_TESTS))}. "
+            "Default: run all tests."
+        ),
+    )
+    parser.add_argument(
+        "--list-tests",
+        action="store_true",
+        help="Print available test names and exit.",
+    )
+    parser.add_argument(
+        "--num-messages",
+        type=int,
+        default=2000,
+        help="Number of messages (default: 2000).",
+    )
+    parser.add_argument(
+        "--payload-size",
+        type=parse_size,
+        default="1MB",
+        help="Payload size with optional unit: B, KB, MB, GB (default: 1MB).",
+    )
+    parser.add_argument(
+        "--payload-type",
+        type=str,
+        default="bytes",
+        choices=sorted(PAYLOAD_TYPES),
+        help=f"Payload type: {', '.join(sorted(PAYLOAD_TYPES))}.",
+    )
+    parser.add_argument(
+        "--channel-maxsize",
+        type=int,
+        default=0,
+        help="Channel max size, 0 = unbounded (default: 0).",
+    )
+    parser.add_argument(
+        "--enable-thread-interference",
+        action="store_true",
+        help="Enable background CPU-burning threads to stress test under interference.",
+    )
+    parser.add_argument(
+        "--num-noise-threads",
+        type=int,
+        default=2,
+        help="Number of noise threads per worker (default: 2).",
+    )
+    parser.add_argument(
+        "--ray-queue",
+        action="store_true",
+        help="Run ray.util.queue.Queue comparison for the same tests (channel, put_only, get_only).",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    """Entry point for the channel benchmark."""
+    args = parse_args()
+
+    if args.list_tests:
+        print("Available tests:")
+        for name in sorted(AVAILABLE_TESTS):
+            print(f"  {name}")
+        return
+
+    enabled_tests = AVAILABLE_TESTS
+    if args.tests is not None:
+        requested = {s.strip() for s in args.tests.split(",") if s.strip()}
+        invalid = requested - AVAILABLE_TESTS
+        if invalid:
+            raise SystemExit(
+                f"Unknown test(s): {invalid}. Available: {', '.join(sorted(AVAILABLE_TESTS))}"
+            )
+        enabled_tests = requested
+
+    if args.payload_type == "gpu_tensor" and not torch.cuda.is_available():
+        raise SystemExit("Payload type gpu_tensor requested but CUDA is not available.")
+
+    payload_size = parse_size(args.payload_size)
+
+    cfg = BenchmarkConfig(
+        num_messages=args.num_messages,
+        num_warmup_messages=2,
+        payload_size=payload_size,
+        channel_maxsize=args.channel_maxsize,
+        enable_thread_interference=args.enable_thread_interference,
+        num_noise_threads=args.num_noise_threads,
+        payload_type=args.payload_type,
+        enabled_tests=enabled_tests,
+        enable_ray_queue=args.ray_queue,
+    )
+    run_benchmark(cfg)
+
+
 if __name__ == "__main__":
-    run_benchmark(BenchmarkConfig())
+    main()
