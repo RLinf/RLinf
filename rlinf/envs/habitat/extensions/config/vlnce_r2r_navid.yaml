@@ -4,7 +4,6 @@ defaults:
   - /habitat: habitat_config_base
   - /habitat/task: vln_r2r
   - /habitat/simulator/agents@habitat.simulator.agents.main_agent: agent_base
-  # - /habitat/simulator/sensor_setups@habitat.simulator.agents.main_agent: rgbd_agent
   - /habitat/dataset/vln: mp3d_r2r
   - /habitat/task/lab_sensors:
     - gps_sensor
@@ -14,12 +13,11 @@ defaults:
   - _self_
 
 habitat:
-  seed: 12
   environment:
     max_episode_steps: 500
     iterator_options:
       max_scene_repeat_steps: 50000
-      shuffle: True
+      shuffle: False
   simulator:
     agents:
       main_agent:
@@ -28,19 +26,22 @@ habitat:
             type: HabitatSimRGBSensor
             width: 640
             height: 480
-            hfov: 79
+            hfov: 90
+            position: [0.0, 1.25, 0.0]
           depth_sensor:
             type: HabitatSimDepthSensor
             width: 640
             height: 480
-            hfov: 79
+            hfov: 90
             min_depth: 0.0
             max_depth: 10.0
             normalize_depth: True
+            position: [0.0, 1.25, 0.0]
     forward_step_size: 0.25
-    turn_angle: 15
+    turn_angle: 30
     habitat_sim_v0:
       gpu_device_id: 0
+      allow_sliding: True
   task:
     actions:
       no_op:

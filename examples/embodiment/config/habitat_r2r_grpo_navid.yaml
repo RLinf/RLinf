@@ -104,6 +104,8 @@ env:
     metrics_cfg:
       save_metrics: True
       metrics_base_dir: ${runner.logger.log_path}/metrics/eval
+    init_params:
+      config_path: "rlinf/envs/habitat/extensions/config/vlnce_r2r_navid.yaml"
 
 rollout:
   group_name: "RolloutGroup"
