@@ -24,7 +24,7 @@ from gym import spaces
 from torch import Tensor
 
 from rlinf.models.embodiment.base_policy import BasePolicy
-from rlinf.models.embodiment.cma_policy.modules import (
+from rlinf.models.embodiment.cma.modules import (
     CMABasePolicy,
     InstructionEncoder,
     TorchVisionResNet18,
@@ -96,20 +96,6 @@ class CMAConfig:
             )
 
     def build_observation_space(self) -> spaces.Space:
-        """Build observation_space with default values (matching VLN-CE default config).
-
-        Default values match VLN-CE's habitat config:
-        - depth_width: 256
-        - depth_height: 256
-        - min_depth: 0.0
-        - max_depth: 10.0
-
-        Returns:
-            gym.spaces.Dict with depth sensor space
-        """
-        import numpy as np
-        from gym import spaces
-
         # Default depth sensor config (matching VLN-CE/vlnce_r2r.yaml)
         depth_width = 256
         depth_height = 256
@@ -432,7 +418,7 @@ class CMAPolicy(nn.Module, BasePolicy):
         self.prev_episode_id = None
 
         self.action_map = {
-            0: "stop",
+            0: "no_op",
             1: "move_forward",
             2: "turn_left",
             3: "turn_right",
@@ -568,7 +554,11 @@ class CMAPolicy(nn.Module, BasePolicy):
                 self.prev_episode_id[reset_mask] = current_episode_ids[reset_mask]
 
         action, rnn_states = self.policy.act(
-            env_obs, self.rnn_states, self.prev_actions, self.not_done_masks
+            env_obs,
+            self.rnn_states,
+            self.prev_actions,
+            self.not_done_masks,
+            deterministic=True,
         )
         result = {
             "action": action,

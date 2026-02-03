@@ -24,7 +24,7 @@ from habitat_baselines.rl.ddppo.policy import resnet
 from habitat_baselines.rl.ddppo.policy.resnet_policy import ResNetEncoder
 from torch import Tensor
 
-from rlinf.models.embodiment.cma_policy.modules.utils import single_frame_box_shape
+from rlinf.models.embodiment.cma.modules.utils import single_frame_box_shape
 
 
 class VlnResnetDepthEncoder(nn.Module):

@@ -15,7 +15,7 @@
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from rlinf.models.embodiment.cma_policy.cma_policy import CMAConfig, CMAPolicy
+from rlinf.models.embodiment.cma.cma_action_model import CMAConfig, CMAPolicy
 
 
 def get_model(cfg: DictConfig, torch_dtype=torch.float32):

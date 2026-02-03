@@ -12,16 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from rlinf.models.embodiment.cma_policy.modules.instruction_encoder import (
+from rlinf.models.embodiment.cma.modules.instruction_encoder import (
     InstructionEncoder,
 )
-from rlinf.models.embodiment.cma_policy.modules.policy import CMABasePolicy
-from rlinf.models.embodiment.cma_policy.modules.resnet_encoders import (
+from rlinf.models.embodiment.cma.modules.policy import CMABasePolicy
+from rlinf.models.embodiment.cma.modules.resnet_encoders import (
     TorchVisionResNet18,
     TorchVisionResNet50,
     VlnResnetDepthEncoder,
 )
-from rlinf.models.embodiment.cma_policy.modules.rnn_state_encoder import (
+from rlinf.models.embodiment.cma.modules.rnn_state_encoder import (
     RNNStateEncoder,
     build_rnn_state_encoder,
 )

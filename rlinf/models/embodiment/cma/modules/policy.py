@@ -18,7 +18,7 @@ from typing import Any
 import torch.nn as nn
 from habitat_baselines.utils.common import CategoricalNet
 
-from rlinf.models.embodiment.cma_policy.modules.utils import CustomFixedCategorical
+from rlinf.models.embodiment.cma.modules.utils import CustomFixedCategorical
 
 
 class CMABasePolicy(nn.Module, metaclass=abc.ABCMeta):
