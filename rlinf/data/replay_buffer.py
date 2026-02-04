@@ -25,6 +25,7 @@ import numpy as np
 import torch
 
 from rlinf.data.embodied_io_struct import Trajectory
+from rlinf.utils.logging import get_logger
 
 
 class TrajectoryCache:
@@ -239,6 +240,7 @@ class TrajectoryReplayBuffer:
         self.enable_cache = enable_cache
         self.sample_window_size = sample_window_size
         self.save_trajectories = save_trajectories
+        self.logger = get_logger()
 
         if not self.save_trajectories and not self.enable_cache:
             raise ValueError("save_trajectories=False requires enable_cache=True")
@@ -250,6 +252,7 @@ class TrajectoryReplayBuffer:
 
         # Storage directory
         assert storage_dir != "", "storage_dir is required"
+        self.logger.info(f"Created replay buffer with storage directory: {storage_dir}")
         self.storage_dir = storage_dir
         if self.save_trajectories:
             os.makedirs(self.storage_dir, exist_ok=True)

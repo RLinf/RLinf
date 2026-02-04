@@ -102,13 +102,21 @@ jobs:
           export SERL_PATH=/workspace/dataset/serl
           bash requirements/install.sh embodied --model openvla --env frankasim
 
-      - name: ManiSkill SAC test
+      - name: MLP PPO test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh frankasim_ppo_mlp
+
+      - name: CNN SAC test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run_async.sh frankasim_sac_cnn
 
       - name: Clean up
         run: |

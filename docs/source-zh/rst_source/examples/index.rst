@@ -139,7 +139,7 @@
           <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/frankasim.html" target="_blank" style="text-decoration: underline; color: blue;">
             <b>基于Franka-Sim的强化学习</b>
           </a><br>
-          支持Franka-Sim+MLP+PPO训练
+          支持Franka-Sim+MLP/CNN+PPO/SAC训练
         </p>
       </div>
 

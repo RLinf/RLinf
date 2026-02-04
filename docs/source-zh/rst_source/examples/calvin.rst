@@ -37,7 +37,7 @@
 
 .. note::
 
-   注意，这里我们修改了其中的 scene A 和 scene C 的yaml文件，因为原本的Calvin仓库中对于这两个配置文件有一些错误的设置，我们在rlinf中已经修正，大家可放心使用。参见这个 `问题 <https://github.com/mees/calvin/issues/41>`_。
+   注意，这里我们修改了其中的 scene A, scene B 和 scene C 的yaml文件，因为原本的Calvin仓库中对于这两个配置文件有一些错误的设置，我们在rlinf中已经修正，大家可放心使用。参见这个 `问题 <https://github.com/mees/calvin/issues/41>`_。
 
 **数据结构**
 
