@@ -79,7 +79,7 @@ We provide Docker images for different experiments:
 
 - **Embodied:**
 
-  - ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` for the Libero or ManiSkill benchmarks. For other embodied experiments, please refer to the corresponding sections in :doc:`../examples/index`
+  - ``rlinf/rlinf:agentic-rlinf0.1-maniskill_libero`` for the Libero or ManiSkill benchmarks. For other embodied experiments, please refer to the corresponding sections in :doc:`../examples/index`
 
 - **Math reasoning:** 
 
