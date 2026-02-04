@@ -214,14 +214,14 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             else:
                 raise NotImplementedError
         else:
-            alpha = torch.Tensor(self.cfg.algorithm.initial_alpha).to(
+            alpha = torch.Tensor([self.cfg.algorithm.initial_alpha]).to(
                 dtype=self.torch_dtype, device=self.device
             )
         return alpha
 
     @property
     def alpha(self):
-        return self.compute_alpha()
+        return self.compute_alpha().item()
 
     def setup_sac_components(self):
         """Initialize SAC-specific components"""
@@ -575,6 +575,8 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             self.lr_scheduler.step()
 
             # Update temperature parameter if using automatic entropy tuning
+            gbs_alpha_loss = [0]
+            alpha_grad_norm = 0
             if hasattr(self, "base_alpha") and self.base_alpha is not None:
                 self.alpha_optimizer.zero_grad()
                 gbs_alpha_loss = []
