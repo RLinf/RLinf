@@ -38,7 +38,7 @@ habitat:
             normalize_depth: True
             position: [0.0, 1.25, 0.0]
     forward_step_size: 0.25
-    turn_angle: 30
+    turn_angle: 15
     habitat_sim_v0:
       gpu_device_id: 0
       allow_sliding: True
