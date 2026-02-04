@@ -117,27 +117,22 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         if self.use_pre_process_policy:
             self.rollout.offload_engine().wait()
 
-        server_addresses = []
-        if hasattr(self.rollout, 'http_server_start') and ray is not None:
+        # Start HTTP servers and collect addresses from rollout workers.
+        # This rollout-worker-specific init is kept behind `rollout.init_worker(start_http_server=True)`
+        # to keep the runner logic minimal.
+        server_addresses: list[str] = []
+        if hasattr(self.rollout, "init_worker") and hasattr(self.rollout, "get_server_address"):
+            # Parallelized across ranks by WorkerGroup.
+            self.rollout.init_worker(start_http_server=True).wait()
+            server_addresses_result = self.rollout.get_server_address().wait()
+            if isinstance(server_addresses_result, list):
+                server_addresses = [addr for addr in server_addresses_result if addr]
+            elif server_addresses_result:
+                server_addresses = [server_addresses_result]
+            logging.info(
+                f"[AgentLightningRLinfRunner] Rollout HTTP server addresses: {server_addresses}"
+            )
 
-            configured_host = self.cfg.server.sglang_http.get('host', '0.0.0.0')
-            if configured_host == '0.0.0.0':
-                node_ip = ray.util.get_node_ip_address()
-            else:
-                node_ip = configured_host
-            
-            base_port = self.cfg.server.sglang_http.get('port', 8020)
-            num_workers = len(self.rollout.worker_info_list)
-            for rank in range(num_workers):
-                port = base_port + rank
-                server_addresses.append(f"{node_ip}:{port}")
-            
-            for rank in range(num_workers):
-                self.rollout.execute_on(rank).http_server_start().wait()
-            
-            logging.info(f"[AgentLightningRLinfRunner] Started HTTP servers on {num_workers} workers with addresses {server_addresses}")
-
-        is_eval_mode = False
         self.agentlightning_rollout_worker.init_worker(
             store=self.store,
             adapter=self.adapter,
@@ -145,7 +140,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
             group_size=self.cfg.algorithm.group_size,
             model=self.cfg.rollout.model.model_path,
             reward_fillna_value=self.cfg.algorithm.get("reward_fillna_value", 0.0),
-            is_eval_mode=is_eval_mode,
+            is_eval_mode=False,
         ).wait()
 
     def _put_batch(self, batch: dict):
@@ -264,9 +259,8 @@ class AgentLightningRLinfRunner(ReasoningRunner):
 
 
         # Stop HTTP servers on all rollout workers
-        if hasattr(self.rollout, 'http_server_stop'):
-            num_workers = len(self.rollout.worker_info_list)
-            for rank in range(num_workers):
-                self.rollout.execute_on(rank).http_server_stop().wait()
+        if hasattr(self.rollout, "http_server_stop"):
+            # Parallelized across ranks by WorkerGroup.
+            self.rollout.http_server_stop().wait()
         
         self.metric_logger.finish()
