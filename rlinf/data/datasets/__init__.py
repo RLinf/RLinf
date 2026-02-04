@@ -83,7 +83,6 @@ def create_rl_dataset(
             f"Unsupported dataset type {config.data.type}, only support ['math', 'vision_language', 'robot_demo']"
         )
 
-
 def collate_fn(data_list: list["DatasetItem"]) -> dict[str, Any]:
     """
     Collate function for batching dataset items.
