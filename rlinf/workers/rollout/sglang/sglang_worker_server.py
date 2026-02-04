@@ -221,17 +221,9 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
             if start_http_server:
                 self.http_server_start()
 
-    def shutdown(self):
-        if self._enable_http_server and self._http_server_task is not None:
-            self._http_server.should_exit = True
-
-        super().shutdown()
-
     def get_server_address(self) -> str:
         if not self._enable_http_server:
             return None
-        # NOTE: "0.0.0.0" is a bind address and is not routable from clients.
-        # Return the node IP instead so the address can be used by other processes/workers.
         host = self._http_server_host
         if host == "0.0.0.0":
             import ray.util
