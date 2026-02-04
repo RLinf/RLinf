@@ -43,7 +43,7 @@ Environment
 
 .. note::
 
-   Please note that we have modified the YAML files for scene A and scene C here. The original repository calvin contained some incorrect settings for these two configuration files, which we have corrected in RLinf. You can use them with confidence. See this `issue <https://github.com/mees/calvin/issues/41>`_ for details.
+   Please note that we have modified the YAML files for scene A, scene B and scene C here. The original repository calvin contained some incorrect settings for these two configuration files, which we have corrected in RLinf. You can use them with confidence. See this `issue <https://github.com/mees/calvin/issues/41>`_ for details.
 
 Algorithm
 ---------

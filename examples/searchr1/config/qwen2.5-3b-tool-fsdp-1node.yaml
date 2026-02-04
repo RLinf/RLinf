@@ -34,7 +34,7 @@ runner:
   max_tokens_per_mbs: 11008
 
   resume_dir: null
-  experiment_name: searchr1-grpo-qwen2.5-3b-ins
+  experiment_name: searchr1-grpo-qwen2.5-3b-ins-fsdp
   output_dir: ../results
 
 
@@ -111,7 +111,7 @@ inference:
 
 rollout:
   group_name: "RolloutGroup"
-  gpu_memory_utilization: 0.75
+  gpu_memory_utilization: 0.5
   model:
     model_path: /path/to/model/Qwen2.5-3B-Instruct
     model_type: qwen2.5
@@ -168,53 +168,25 @@ data:
 
 actor:
   group_name: "ActorGroup"
-  training_backend: megatron
+  training_backend: fsdp
   enable_dp_load_balance: False
   calculate_flops: False
   seed: 1234
 
-  # megatron config
-  mcore_gpt: True
-  spec_name: decoder_gpt
-
-  offload_optimizer: True
-  offload_weight: True
-  offload_grad: True
+  # fsdp config
+  enable_offload: True
+  sync_precision: ${rollout.model.precision}
 
   model:
-    precision: fp16
+    precision: fp32
 
     seq_length: ${runner.seq_length}
     encoder_seq_length: ${runner.seq_length}
 
-    # megatron config
-    megatron_checkpoint: null
-
-    # megatron model config
-    activation: swiglu
-    normalization: rmsnorm
-    add_bias_linear: False
-    position_embedding_type: rope
-
-    # megatron performance config
-    tensor_model_parallel_size: 1
-    pipeline_model_parallel_size: 1
-    sequence_parallel: False
-
-    recompute_method: block
-    recompute_granularity: full
-    recompute_num_layers: 36
-
-    apply_rope_fusion: True
-    bias_dropout_fusion: False
-    persist_layer_norm: False
-    bias_activation_fusion: False
-    attention_softmax_in_fp32: True
-    batch_p2p_comm: False
-    variable_seq_lengths: True
-    gradient_accumulation_fusion: False
-    moe_token_dispatcher_type: alltoall
-    use_cpu_initialization: False
+    # fsdp config
+    model_type: ${rollout.model.model_type}
+    model_path: ${rollout.model.model_path}
+    is_lora: False
 
   optim:
     optimizer: adam
@@ -226,38 +198,9 @@ actor:
     weight_decay: 0.01
     clip_grad: 0.8
 
-    # megatron config
-    use_distributed_optimizer: True
-    overlap_grad_reduce: False
-    overlap_param_gather: False
-    optimizer_enable_pin: False
-    overlap_param_gather_with_optimizer_step: False
-
-    # megatron grad scale config
-    # 1. use loss_scale: constant grad scale
-    #    args of constant grad scale:
-    #        loss_scale: 2**32
-    # 2. no loss_scale, bf16 true, fp16 false: no grad scale
-    # 3. no loss_scale, bf16 false, fp16 true: dynamic grad scale
-    #    args of dynamic grad scale:
-    #        initial_loss_scale: 2**32
-    #        min_loss_scale:     1
-    #        loss_scale_window:  1000
-    #        hysteresis:         2
-
-    bf16: False
-    fp16: True
-    initial_loss_scale: 65536
-    loss_scale_window:  1000
-
-  lr_sched:
-    lr_warmup_fraction: 0.285
-    lr_warmup_init: 0.0
-    lr_warmup_iters: 0
-    max_lr: 1.0e-06
-    min_lr: 0.0
-    lr_decay_style: constant
-    lr_decay_iters: 662
+    # fsdp optim config
+    total_training_steps: 662
+    lr_warmup_steps_ratio: 0.285
 
   tokenizer:
     tokenizer_model: ${rollout.model.model_path}
@@ -265,43 +208,38 @@ actor:
     trust_remote_code: True
     padding_side: 'right'
 
-  megatron:
-    ddp_bucket_size: null
-    distributed_backend: nccl # Support 'nccl' and 'gloo'
-    distributed_timeout_minutes: 30
-    ckpt_format: torch
-    use_dist_ckpt: False
-    tp_comm_bootstrap_backend: nccl
-    tp_comm_overlap_cfg: null # tp_comm_overlap_cfg.yaml
-    use_hf_ckpt: True # if true, will transfer hf model to generate megatron checkpoint and use it for training.
-    use_profiler: False # if true, will enable torch profiler when training, pay attention it has influence on performance
+  fsdp_config:                  # below are fsdp configs, for more details, see https://pytorch.org/docs/stable/fsdp.html and https://huggingface.co/docs/accelerate/package_reference/fsdp
+    strategy: "fsdp"            # FSDP strategy: ["fsdp", "fsdp2"]
 
-    ckpt_convertor: # config for ckpt convertor
-      model: Qwen2.5-3B
-      model_type: null # will be set by hf model's config if null
-      hf_model_path: ${rollout.model.model_path} # path to the hf model
-      save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
-      use_gpu_num : 0
-      use_gpu_index: null
-      process_num: 16 # number of processes to use for checkpointing
-      tensor_model_parallel_size: ${actor.model.tensor_model_parallel_size}
-      pipeline_model_parallel_size: ${actor.model.pipeline_model_parallel_size}
+    # Sharding strategy: "full_shard" (shard parameters, gradients, optimizer states),
+    # "shard_grad_op" (shard gradients and optimizer states only), 
+    # "hybrid_shard" (combines data parallelism and model parallelism - sharding within FSDP groups, replicate across DDP groups),
+    # "no_shard" (no sharding)
+    sharding_strategy: "full_shard" 
 
-    profiler: # profile megatron when inference and traning
-      output_dir: ${runner.output_dir}/${runner.experiment_name}/profiler
-      activities: ["cpu", "cuda"]
-      record_shapes: False
-      profile_memory: False
-      with_stack: False
-      with_flops: False
-      with_modules: True
-      export_tensorboard: True
-      export_chrome_trace: False
-      chrome_filename_prefix: "chrome_trace"
-      schedule_warmup: 2
-      schedule_active: 1
-      schedule_repeat: 1 # inference and training will repeat such times
-      # schedule_wait: it will be set at runtime
+    gradient_checkpointing: True  # if True, gradient checkpointing will be used for FSDP/FSDP2 training, which will save memory but increase computation time.
+    cpu_offload: False            # whether to offload parameters and gradients to CPU when not in use，if True, actor's enable_offload should be True too.
+    offload_pin_memory: True      # whether FSDP2's CPU offload policy should pin memory when cpu_offload is True
+    reshard_after_forward: True   # if True, FSDP2 will reshard parameters after forward pass to save memory
+
+    enable_gradient_accumulation: True  # if True, gradient accumulation will be enabled for FSDP/FSDP2 training, which will enhance training performance but increase memory usage.
+    forward_prefetch: False             # if True, FSDP will explicitly prefetches the next upcoming all-gather while executing in the forward pass. only use with static graphs. Overlaps communication with computation to improve performance.
+    limit_all_gathers: False            # if True, FSDP will synchronizes CPU threads to limit the number of concurrent all-gathers. Only affects strategies that schedule all-gathers
+    backward_prefetch: null             # options are null, 'pre', 'post'. if 'pre', FSDP will prefetch the next upcoming all-gather while computing gradients. if 'post', FSDP will prefetch the next all-gather until current gradient is computed.
+    use_orig_params: False              # if True, FSDP will use module's original parameters, it means it will expose nn.Module.named_parameters rather than FlatParameter
+    use_liger_kernel: True              # if True, liger_kernel will be used for FSDP, note that currently supported models in RLinf are [qwen2.5, qwen2.5-vl], for more details, see liger_kernel's doc
+
+    fsdp_size: -1                       # Number of GPUs per FSDP group for hybrid sharding. -1 means use all available GPUs in a single FSDP group
+
+    mixed_precision:                    # mixed precision settings for fsdp/fsdp2
+      param_dtype: "fp16"
+      reduce_dtype: "fp32"
+      buffer_dtype: "fp32"
+
+    amp:
+      enabled: False                    # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
+      precision: "fp16"                 # precision for AMP, options are ["fp16" , "bf16"]
+      use_grad_scaler: True             # if True, GradScaler will be used for AMP training to prevent underflow.
 
 
 reward:
