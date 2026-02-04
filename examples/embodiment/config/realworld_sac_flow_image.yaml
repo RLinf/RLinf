@@ -121,7 +121,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   train:
     ignore_terminations: False

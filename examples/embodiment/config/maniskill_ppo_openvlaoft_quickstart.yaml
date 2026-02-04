@@ -80,7 +80,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
 
   # Override the default values in env/maniskill_put_on_plate_in_scene_25_main and env/maniskill_ood_template
   train:
