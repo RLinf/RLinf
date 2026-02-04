@@ -1,0 +1,73 @@
+# CMA Policy Configuration
+# Based on VLN-CE CMA implementation
+
+model_type: "cma"
+precision: "fp32"
+
+# Action configuration
+action_dim: 4  # Discrete actions: STOP, FORWARD, TURN_LEFT, TURN_RIGHT
+num_action_chunks: 1  # CMA predicts one action at a time
+
+# Model path for loading pretrained weights
+model_path: "/path/to/model"
+
+# Image configuration
+image_size: [256, 256, 3]  # [H, W, C]
+
+# RL head configuration
+add_value_head: False  # Set to True for PPO training
+add_q_head: False
+q_head_type: "default"  # "default" or "crossq"
+num_q_heads: 2
+
+# Action distribution configuration
+independent_std: True
+action_scale: null
+final_tanh: False
+std_range: null
+logstd_range: null
+
+# Instruction encoder configuration
+instruction_encoder_config:
+  sensor_uuid: "instruction"
+  vocab_size: 2504
+  use_pretrained_embeddings: True
+  embedding_file: "/path/to/model"
+  fine_tune_embeddings: False
+  embedding_size: 50
+  hidden_size: 128
+  rnn_type: "LSTM"
+  final_state_only: False  # CMA needs full sequence
+  bidirectional: True
+
+# Depth encoder configuration
+depth_encoder_config:
+  cnn_type: "VlnResnetDepthEncoder"
+  output_size: 128
+  backbone: "resnet50"
+  ddppo_checkpoint: "/path/to/model"  # Path to DDPPO pretrained weights
+  trainable: False
+
+# RGB encoder configuration
+rgb_encoder_config:
+  cnn_type: "TorchVisionResNet50"  # "TorchVisionResNet18" or "TorchVisionResNet50"
+  output_size: 256
+  trainable: False
+
+# State encoder configuration
+state_encoder_config:
+  hidden_size: 512
+  rnn_type: "GRU"  # "GRU" or "LSTM"
+
+# Model-level configuration
+hidden_size: 512
+normalize_rgb: False
+ablate_instruction: False
+ablate_depth: False
+ablate_rgb: False
+
+# Progress monitor (optional)
+use_progress_monitor: False
+progress_monitor_alpha: 1.0
+
+is_lora: False
