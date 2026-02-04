@@ -134,6 +134,8 @@ class NaVidForRLActionPrediction(nn.Module, BasePolicy):
         return_obs: bool = True,
         **kwargs,
     ):
+        env_obs = self.preprocess_env_obs(env_obs)
+
         assert mode in {"train", "eval"}, f"{mode=} is not supported"
         device = self._get_device()
         gen_params = self._get_generation_params(**kwargs)

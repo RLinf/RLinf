@@ -56,7 +56,6 @@ class SupportedModel(Enum):
     GR00T = ("gr00t", "embodied")
     CNN_POLICY = ("cnn_policy", "embodied")
     FLOW_POLICY = ("flow_policy", "embodied")
-    CMA_POLICY = ("cma", "embodied")
     NAVID = ("navid", "embodied")
 
     def __new__(cls, value, category):

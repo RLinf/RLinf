@@ -39,17 +39,6 @@ as well as reinforcement learning training examples on real robots.
        </p>
      </div>
 
-    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-      <img src="https://github.com/RLinf/misc/raw/main/pic/waiting_icon.jpg"
-           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/habitat.html" target="_blank" style="text-decoration: underline; color: blue;">
-         <b>RL with Habitat Benchmark</b>
-        </a><br>
-        Habitat (VLN) + RLinf training pipeline
-      </p>
-    </div>
-
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/pi0_icon.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -335,7 +324,6 @@ Thanks to this decoupled design, workers can be flexibly and dynamically schedul
 
    maniskill
    libero
-   habitat
    behavior
    metaworld
    isaaclab

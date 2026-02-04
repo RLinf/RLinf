@@ -12,25 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-NaVid embodied model integration.
-
-This module provides `get_model(cfg, torch_dtype)` so that NaVid can be constructed via
-`rlinf.models.get_model(...)` and used by `rlinf/workers/rollout/hf/huggingface_worker.py`.
-"""
-
 from __future__ import annotations
 
 from omegaconf import DictConfig
 
 
 def get_model(cfg: DictConfig, torch_dtype=None):
-    """
-    Build a NaVid model wrapper that exposes RLinf embodied policy interfaces:
-      - preprocess_env_obs(env_obs)
-      - predict_action_batch(env_obs=..., **kwargs) -> (chunk_actions, result_dict)
-    """
-
     from rlinf.models.embodiment.navid.navid_action_model import (
         NaVidForRLActionPrediction,
     )

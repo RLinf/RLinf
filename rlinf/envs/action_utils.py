@@ -151,6 +151,18 @@ def prepare_actions_for_mujoco(raw_chunk_actions, model_type):
     return chunk_actions
 
 
+def prepare_actions_for_habitat(
+    raw_chunk_actions,
+) -> torch.Tensor:
+    chunk_actions = raw_chunk_actions
+    if isinstance(chunk_actions, torch.Tensor):
+        chunk_actions = chunk_actions.detach().cpu().numpy()
+
+    if chunk_actions.ndim == 3 and chunk_actions.shape[-1] == 1:
+        chunk_actions = chunk_actions.squeeze(-1)
+    return chunk_actions
+
+
 def prepare_actions(
     raw_chunk_actions,
     env_type: str,
@@ -215,12 +227,9 @@ def prepare_actions(
             model_type=model_type,
         )
     elif env_type == SupportedEnvType.HABITAT:
-        chunk_actions = raw_chunk_actions
-        if isinstance(chunk_actions, np.ndarray):
-            if chunk_actions.ndim == 3 and chunk_actions.shape[-1] == 1:
-                chunk_actions = chunk_actions[..., 0]
-        else:
-            chunk_actions = np.asarray(chunk_actions)
+        chunk_actions = prepare_actions_for_habitat(
+            raw_chunk_actions=raw_chunk_actions,
+        )
     else:
         raise NotImplementedError
 
