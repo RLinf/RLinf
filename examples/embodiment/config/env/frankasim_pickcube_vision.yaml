@@ -2,7 +2,7 @@ env_type: frankasim
 gym_id: PandaPickCubeVision-v0
 
 # observation mode
-obs_mode: image
+obs_mode: rgb
 image_key: images
 camera: front     # front / wrist / both
 state_key: state
@@ -15,7 +15,7 @@ group_size: 1
 auto_reset: True
 ignore_terminations: False
 max_steps_per_rollout_epoch: 256
-max_episode_steps: 200
+max_episode_steps: 100
 
 video_cfg:
   save_video: True

@@ -39,7 +39,14 @@ AVAILABLE_TESTS = frozenset(
 
 # Payload types for --payload-type.
 PAYLOAD_TYPES = frozenset(
-    {"bytes", "cpu_tensor", "gpu_tensor", "tensor_list", "tensor_dict"}
+    {
+        "bytes",
+        "cpu_tensor",
+        "gpu_tensor",
+        "tensor_list",
+        "tensor_dict",
+        "tensor_dataclass",
+    }
 )
 
 # Size units (binary: 1024-based)
@@ -74,6 +81,15 @@ def parse_size(s: str | int) -> int:
 
 
 @dataclass
+class TensorPayload:
+    """Dataclass with a tensor field for benchmarking optimized dataclass put/get."""
+
+    id: int
+    payload: torch.Tensor
+    note: str
+
+
+@dataclass
 class BenchmarkConfig:
     num_messages: int = 2000
     num_warmup_messages: int = 2
@@ -81,17 +97,35 @@ class BenchmarkConfig:
     channel_maxsize: int = 0
     enable_thread_interference: bool = False
     num_noise_threads: int = 2
-    payload_type: str = (
-        "bytes"  # "bytes" | "cpu_tensor" | "gpu_tensor" | "tensor_list" | "tensor_dict"
-    )
+    payload_type: str = "bytes"  # "bytes" | "cpu_tensor" | "gpu_tensor" | "tensor_list" | "tensor_dict" | "tensor_dataclass"
+    payload_device: str = "auto"  # "auto" (cuda if available else cpu) | "cpu" | "cuda"
     enabled_tests: frozenset[str] = field(default_factory=lambda: AVAILABLE_TESTS)
     enable_ray_queue: bool = False  # Run ray.util.queue.Queue comparison for same tests
 
 
+def _resolve_device(device: str) -> str:
+    """Resolve device: 'auto' -> 'cuda' if available else 'cpu'; 'cpu'/'cuda' as-is."""
+    if device == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("Device cuda requested but CUDA is not available")
+    return device
+
+
 def _create_tensor_payload(
-    payload_type: str, size_bytes: int
-) -> torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor]:
-    """Create a tensor payload of given type and approximate size in bytes."""
+    payload_type: str,
+    size_bytes: int,
+    payload_device: str = "auto",
+) -> torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | TensorPayload:
+    """Create a tensor payload of given type and approximate size in bytes.
+
+    For tensor_list, tensor_dict, and tensor_dataclass, device controls where
+    tensors live: 'auto' (cuda if available else cpu), 'cpu', or 'cuda'.
+    cpu_tensor and gpu_tensor ignore device and always use cpu/cuda.
+    """
+    payload_device = _resolve_device(payload_device)
+    torch_device = torch.device(payload_device) if payload_device == "cuda" else "cpu"
+
     # float32: 4 bytes per element
     num_elements = max(1, size_bytes // 4)
     shape = (num_elements,)
@@ -109,31 +143,26 @@ def _create_tensor_payload(
         ).contiguous()
 
     if payload_type == "tensor_list":
-        # Split into 8 tensors
         n = max(1, num_elements // 8)
-        if torch.cuda.is_available():
-            return [
-                torch.ones(
-                    (n,), dtype=torch.float32, device=torch.device("cuda")
-                ).contiguous()
-                for _ in range(8)
-            ]
-        return [torch.ones((n,), dtype=torch.float32, device="cpu") for _ in range(8)]
+        return [
+            torch.ones((n,), dtype=torch.float32, device=torch_device).contiguous()
+            for _ in range(8)
+        ]
 
     if payload_type == "tensor_dict":
-        # Split into 8 tensors in a dict
         n = max(1, num_elements // 8)
-        if torch.cuda.is_available():
-            return {
-                f"t{i}": torch.ones(
-                    (n,), dtype=torch.float32, device=torch.device("cuda")
-                ).contiguous()
-                for i in range(8)
-            }
         return {
-            f"t{i}": torch.ones((n,), dtype=torch.float32, device="cpu")
+            f"t{i}": torch.ones(
+                (n,), dtype=torch.float32, device=torch_device
+            ).contiguous()
             for i in range(8)
         }
+
+    if payload_type == "tensor_dataclass":
+        tensor = torch.ones(
+            shape, dtype=torch.float32, device=torch_device
+        ).contiguous()
+        return TensorPayload(id=0, payload=tensor, note="bench")
 
     raise ValueError(f"Unknown payload_type: {payload_type}")
 
@@ -144,10 +173,12 @@ class Producer(Worker):
         self._noise_started = False
 
     def _get_payload(self, cfg: BenchmarkConfig) -> Any:
-        """Create payload based on config payload_type."""
+        """Create payload based on config payload_type and device."""
         if cfg.payload_type == "bytes":
             return b"x" * cfg.payload_size
-        return _create_tensor_payload(cfg.payload_type, cfg.payload_size)
+        return _create_tensor_payload(
+            cfg.payload_type, cfg.payload_size, cfg.payload_device
+        )
 
     @staticmethod
     def _progress(i: int, total: int, prefix: str) -> None:
@@ -708,8 +739,11 @@ def run_benchmark(cfg: BenchmarkConfig) -> None:
     sync_rayq_get_stats = async_rayq_get_stats = None
 
     print(f"Running channel pressure benchmark with config: {cfg}")
+    payload_info = f"payload_type: {cfg.payload_type}"
+    if cfg.payload_type in ("tensor_list", "tensor_dict", "tensor_dataclass"):
+        payload_info += f", device: {cfg.payload_device}"
     print(
-        f"Enabled tests: {sorted(enabled)}, payload_type: {cfg.payload_type}"
+        f"Enabled tests: {sorted(enabled)}, {payload_info}"
         + (
             ", ray_queue comparison enabled"
             if cfg.enable_ray_queue and ray_queue
@@ -872,6 +906,17 @@ def parse_args() -> argparse.Namespace:
         help=f"Payload type: {', '.join(sorted(PAYLOAD_TYPES))}.",
     )
     parser.add_argument(
+        "--payload-device",
+        type=str,
+        default="auto",
+        choices=("auto", "cpu", "cuda"),
+        help=(
+            "Device for tensor payloads (tensor_list, tensor_dict, tensor_dataclass): "
+            "auto (cuda if available else cpu), cpu, or cuda (default: auto). "
+            "cpu_tensor and gpu_tensor ignore this and always use cpu/cuda."
+        ),
+    )
+    parser.add_argument(
         "--channel-maxsize",
         type=int,
         default=0,
@@ -918,6 +963,8 @@ def main() -> None:
 
     if args.payload_type == "gpu_tensor" and not torch.cuda.is_available():
         raise SystemExit("Payload type gpu_tensor requested but CUDA is not available.")
+    if args.payload_device == "cuda" and not torch.cuda.is_available():
+        raise SystemExit("Device cuda requested but CUDA is not available.")
 
     payload_size = parse_size(args.payload_size)
 
@@ -929,6 +976,7 @@ def main() -> None:
         enable_thread_interference=args.enable_thread_interference,
         num_noise_threads=args.num_noise_threads,
         payload_type=args.payload_type,
+        payload_device=args.payload_device,
         enabled_tests=enabled_tests,
         enable_ray_queue=args.ray_queue,
     )
