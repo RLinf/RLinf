@@ -1,0 +1,144 @@
+explict_model:
+  'DeepSeek-V2-Lite':
+    first_dense: 1
+    model_type: deepseek
+    num_experts: 64
+    num_layers: 27
+    use_expert_bias: False
+    use_q_lora: False
+  'DeepSeek-V3':
+    first_dense: 3
+    model_type: deepseek
+    num_experts: 256
+    num_layers: 61
+    use_expert_bias: True
+    use_q_lora: True
+  'Qwen2.5-1.5B':
+    num_layers: 28
+    tie_word_embeddings: True
+    model_type: qwen_2
+    num_attention_heads: 12
+    num_query_groups: 2
+    head_dim: 128
+  'Qwen2.5-3B':
+    num_layers: 36
+    tie_word_embeddings: True
+    model_type: qwen_2
+    num_attention_heads: 16
+    num_query_groups: 2
+    head_dim: 128
+  'Qwen2.5-7B':
+    model_type: qwen_2
+    num_attention_heads: 28
+    num_query_groups: 4
+    head_dim: 128
+    num_layers: 28    
+  'Qwen2.5-32B':
+    model_type: qwen_2
+    num_attention_heads: 40
+    num_layers: 64
+    num_query_groups: 8
+  'Qwen2-57B-A14B':
+    model_type: qwen_2_moe
+    num_attention_heads: 28
+    num_experts: 64
+    num_layers: 28
+    num_query_groups: 4
+  'Qwen2.5-Coder-1.5B':
+    model_type: qwen_2
+    num_attention_heads: 12
+    num_query_groups: 2
+    head_dim: 128
+    num_layers: 28
+    tie_word_embeddings: True
+  'DeepSeek-R1-Distill-Qwen-1.5B':
+    model_type: qwen_2
+    num_attention_heads: 12
+    num_query_groups: 2
+    head_dim: 128
+    num_layers: 28
+  'DeepSeek-R1-Distill-Qwen-7B':
+    model_type: qwen_2
+    num_attention_heads: 28
+    num_query_groups: 4
+    head_dim: 128
+    num_layers: 28
+  'DeepSeek-R1-Distill-Qwen-32B':
+    model_type: qwen_2
+    num_attention_heads: 40
+    num_query_groups: 8
+    head_dim: 128
+    num_layers: 64
+  'Qwen3-30B-A3B':
+    model_type: qwen_3_moe
+    num_attention_heads: 32
+    num_query_groups: 4
+    head_dim: 128
+    num_layers: 48
+    num_experts: 128
+  'Qwen3-2.5B-A1B':
+    model_type: qwen_3_moe
+    num_attention_heads: 32
+    num_query_groups: 4
+    head_dim: 128
+    num_layers: 4
+    num_experts: 128
+  'Qwen3-0.6B':
+    model_type: qwen_3
+    num_attention_heads: 16
+    num_query_groups: 8
+    head_dim: 128
+    num_layers: 28
+    tie_word_embeddings: True
+  'Qwen3-4B':
+    model_type: qwen_3
+    num_attention_heads: 32
+    num_query_groups: 8
+    head_dim: 128
+    num_layers: 36
+    tie_word_embeddings: True
+  'Qwen3-8B':
+    model_type: qwen_3
+    num_attention_heads: 32
+    num_query_groups: 8
+    head_dim: 128
+    num_layers: 36
+    tie_word_embeddings: False
+  'Qwen3-14B':
+    model_type: qwen_3
+    num_attention_heads: 40
+    num_query_groups: 8
+    head_dim: 128
+    num_layers: 40
+    tie_word_embeddings: False
+
+model_type:
+  deepseek:
+    attn_type: mla
+    hf_shared_experts_prefix: mlp.shared_experts
+    mlp_type: moe
+    use_shared_experts: True
+  qwen_2:
+    attn_type: gqa
+    mlp_type: dense
+    use_qk_norm: False
+    use_qkv_bias: True
+  qwen_2_moe:
+    attn_type: gqa
+    hf_shared_experts_prefix: mlp.shared_expert
+    mlp_type: moe
+    use_qk_norm: False
+    use_qkv_bias: True
+    use_shared_experts: True
+    use_shared_experts_gate: True
+  qwen_3:
+    attn_type: gqa
+    mlp_type: dense
+    use_qk_norm: True
+    use_qkv_bias: False
+  qwen_3_moe:
+    attn_type: gqa
+    mlp_type: moe
+    use_qk_norm: True
+    use_qkv_bias: False
+    use_shared_experts: False

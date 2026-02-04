@@ -106,11 +106,11 @@ class VLLMWorker(Worker):
                 os.makedirs(self._cfg.rollout.vllm.torch_profiler_dir)
 
     def _load_tokenizer(self):
-        model_dir = self._cfg.rollout.model_dir
+        model_path = self._cfg.rollout.model.model_path
         trust_remote_code = self._cfg.actor.tokenizer.get("trust_remote_code", False)
         try:
             tokenizer = AutoTokenizer.from_pretrained(
-                model_dir,
+                model_path,
                 use_fast=True,
                 trust_remote_code=trust_remote_code,
             )
@@ -119,7 +119,7 @@ class VLLMWorker(Worker):
                 "Fast tokenizer unavailable; falling back to the slow tokenizer."
             )
             tokenizer = AutoTokenizer.from_pretrained(
-                model_dir,
+                model_path,
                 use_fast=False,
                 trust_remote_code=trust_remote_code,
             )
@@ -130,7 +130,7 @@ class VLLMWorker(Worker):
         Get sampling parameters built from the configuration.
         """
         cfg_sampling_params = self._cfg.algorithm.sampling_params
-        if cfg_sampling_params.use_greedy:
+        if not cfg_sampling_params.do_sample:
             sampling_params = SamplingParams(
                 temperature=0,
                 max_tokens=cfg_sampling_params.max_new_tokens,
@@ -333,9 +333,9 @@ class VLLMWorker(Worker):
         ready to use parameters sent from actor.
         """
         engine_args: EngineArgs = EngineArgs(
-            model=self._cfg.rollout.model_dir,
+            model=self._cfg.rollout.model.model_path,
             tensor_parallel_size=self._cfg.rollout.tensor_parallel_size,
-            dtype=torch_dtype_from_precision(self._cfg.rollout.precision),
+            dtype=torch_dtype_from_precision(self._cfg.rollout.model.precision),
             gpu_memory_utilization=self._cfg.rollout.gpu_memory_utilization,
             enforce_eager=self._cfg.rollout.enforce_eager,
             enable_chunked_prefill=self._cfg.rollout.vllm.enable_chunked_prefill,

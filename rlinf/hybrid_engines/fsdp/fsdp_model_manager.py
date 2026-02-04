@@ -13,17 +13,18 @@
 # limitations under the License.
 
 import os
+import warnings
 from typing import ContextManager, Union
 
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
-from torch.amp.grad_scaler import GradScaler
+from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForVision2Seq
 
-from rlinf.config import torch_dtype_from_precision
+from rlinf.config import SupportedModel, get_supported_model, torch_dtype_from_precision
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.hybrid_engines.fsdp import (
     FSDP,
@@ -37,6 +38,12 @@ from rlinf.hybrid_engines.fsdp.utils import (
 from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import warmup_optimizer_state
 
+warnings.filterwarnings(
+    "ignore",
+    message=".*NO_SHARD.*full_state_dict.*",
+    category=UserWarning,
+)
+
 
 class FSDPModelManager:
     """
@@ -47,11 +54,7 @@ class FSDPModelManager:
         """
         Initialize FSDP Model Manager.
 
-        Assumes:
-            - torch.distributed has been initialized outside before calling this constructor.
-            - all cfg parameters are validated in `valid_fsdp_config`.
-
-        Params:
+        Args:
             cfg: actor config in yaml file.
             world_size: total number of FSDP actor processes.
         """
@@ -61,9 +64,9 @@ class FSDPModelManager:
 
         self.optimizer_steps = 0
         self.critic_warmup_steps = 0
-        if self._cfg.optim.get("critic_warmup_steps", None) and self._cfg.model.get(
-            "add_value_head", False
-        ):
+        if self._cfg.get("optim", {}).get(
+            "critic_warmup_steps", None
+        ) and self._cfg.model.get("add_value_head", False):
             self.critic_warmup_steps = self._cfg.optim.critic_warmup_steps
         self.store_requires_grad_param_name = []
 
@@ -82,8 +85,13 @@ class FSDPModelManager:
         self._strategy = FSDPStrategyBase.create(
             self._cfg, world_size, self._dp_group, self._logger
         )
-
         self.amp_context = self._create_amp_context()
+
+        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+        self.device = torch.cuda.current_device()
+
+        self.is_weight_offloaded = False
+        self.is_optimizer_offloaded = False
 
     def _create_amp_context(self) -> ContextManager:
         """
@@ -168,7 +176,7 @@ class FSDPModelManager:
         """
         Replace model modules with liger-kernel optimized modules.
 
-        Params:
+        Args:
             model: the model to be optimized.
         """
         if self._cfg.model.get("gptq_model", False) or self._cfg.model.get(
@@ -184,8 +192,8 @@ class FSDPModelManager:
                 apply_liger_kernel_to_qwen2_5_vl,
             )
 
-            MODEL_ARCH_APPLY_FUNC = {
-                "qwen2.5": (
+            MODEL_LIGER_KERNEL_APPLY_FUNC = {
+                SupportedModel.QWEN2_5: (
                     apply_liger_kernel_to_qwen2,
                     {
                         "rope": True,
@@ -194,7 +202,7 @@ class FSDPModelManager:
                         "fused_linear_cross_entropy": True,
                     },
                 ),
-                "qwen2.5-vl": (
+                SupportedModel.QWEN2_5_VL: (
                     apply_liger_kernel_to_qwen2_5_vl,
                     {
                         "rope": True,
@@ -204,30 +212,34 @@ class FSDPModelManager:
                     },
                 ),
             }
-            model_arch = self._cfg.model.get("model_arch", "").lower()
-            if model_arch in MODEL_ARCH_APPLY_FUNC:
-                apply_func, apply_kwargs = MODEL_ARCH_APPLY_FUNC[model_arch]
+            model_type = get_supported_model(
+                self._cfg.model.get("model_type", "").lower()
+            )
+            if model_type in MODEL_LIGER_KERNEL_APPLY_FUNC:
+                apply_func, apply_kwargs = MODEL_LIGER_KERNEL_APPLY_FUNC[model_type]
                 apply_func(
                     model=model,
                     **apply_kwargs,
                 )
                 self._logger.info(
-                    f"[FSDP] Applied liger-kernel optimizations for model_arch: {model_arch}, used kwargs: {apply_kwargs}"
+                    f"[FSDP] Applied liger-kernel optimizations for model_type: {model_type.value}, used kwargs: {apply_kwargs}"
                 )
             else:
                 self._logger.info(
-                    f"[FSDP] No liger-kernel optimizations applied for model_arch: {model_arch}"
+                    f"[FSDP] No liger-kernel optimizations applied for model_type: {model_type.value}"
                 )
                 return
         except Exception as e:
             self._logger.warning(f"[FSDP] Liger kernels not applied: {e}")
 
     def setup_model_and_optimizer(self) -> None:
-        """Setup model, lr_scheduler, optimizer and grad_scaler."""
+        """
+        Setup model, lr_scheduler, optimizer and grad_scaler.
+        """
         module = self.model_provider_func()
 
         # Enable gradient checkpointing if configured
-        if self._cfg.model.get("gradient_checkpointing", False):
+        if self._cfg.fsdp_config.get("gradient_checkpointing", False):
             self._logger.info("[FSDP] Enabling gradient checkpointing")
             module.gradient_checkpointing_enable()
         else:
@@ -246,69 +258,93 @@ class FSDPModelManager:
             self._cfg.fsdp_config.amp.use_grad_scaler
         )
 
-    def get_model_state_dict(self) -> dict:
+    def get_model_state_dict(self, cpu_offload: bool, full_state_dict: bool) -> dict:
         """
-        Get full model state dict.
+        Get the model state dict according to the specified options.
+
+        Args:
+            - cpu_offload (bool): Whether returned state_dict's value will be offloaded to CPU
+                If true, will be copied to CPU memory, or just keep a reference to the original GPU tensor.
+            - full_state_dict (bool): Whether to get the full state dict.
+
+        Returns:
+            - dict: The state dict of the FSDP wrapped model according to the specified options
         """
-        state_dict = self._strategy.get_model_state_dict(self.model)
+        state_dict = self._strategy.get_model_state_dict(
+            self.model, cpu_offload, full_state_dict
+        )
         return state_dict
 
     def load_checkpoint(self, load_path: str) -> None:
         """
         Load checkpoint from local path.
 
-        Params:
+        Args:
             load_path: the directory to load checkpoint.
         """
         self._strategy.load_checkpoint(
             self.model, self.optimizer, self.lr_scheduler, load_path
         )
 
-    def save_checkpoint(self, save_path: str, global_steps: int) -> None:
+    def save_checkpoint(self, save_path: str, step: int = 0) -> None:
         """
         Save checkpoint to local path.
         Every rank will save its own model and optim shard.
 
-        Params:
+        Args:
             save_path: the directory to save checkpoint.
         """
+        if self.is_weight_offloaded:
+            self.load_param_and_grad(self.device)
+            self.is_weight_offloaded = False
+        if self.is_optimizer_offloaded:
+            self.load_optimizer(self.device)
+            self.is_optimizer_offloaded = False
+
         self._strategy.save_checkpoint(
-            self.model, self.optimizer, self.lr_scheduler, save_path
+            self.model,
+            self.optimizer,
+            self.lr_scheduler,
+            save_path,
         )
 
     def offload_param_and_grad(self, offload_grad: bool = False) -> None:
         """
         Offload FSDP parameters and gradients(options) to CPU.
 
-        Params:
+        Args:
             offload_grad: whether to offload gradients.
         """
         self._strategy.offload_param_and_grad(self.model, offload_grad)
+        self.is_weight_offloaded = True
 
     def load_param_and_grad(self, device_id: int, load_grad: bool = False) -> None:
         """
         Load FSDP parameters and gradients(options) to the specified device.
 
-        Params:
+        Args:
             device_id: the target device id to load parameters and gradients.
             load_grad: whether to load gradients.
         """
         self._strategy.onload_param_and_grad(self.model, device_id, load_grad)
+        self.is_weight_offloaded = False
 
     def offload_optimizer(self) -> None:
         """
         Offload optimizer states to CPU.
         """
         self._strategy.offload_optimizer(self.optimizer)
+        self.is_optimizer_offloaded = True
 
     def load_optimizer(self, device_id: int) -> None:
         """
         Load optimizer states to the specified device.
 
-        Params:
+        Args:
             device_id: the target device id to load optimizer states.
         """
         self._strategy.onload_optimizer(self.optimizer, device_id)
+        self.is_optimizer_offloaded = False
 
     def optimizer_step(self) -> tuple[float, list[float]]:
         """
@@ -318,7 +354,7 @@ class FSDPModelManager:
             A tuple of (grad_norm, lr_list), lr_list contains learning rates for all param groups.
         """
         self.optimizer_steps += 1
-        self.grad_scaler.unscale_(optimizer=self.optimizer)
+        self.grad_scaler.unscale_(self.optimizer)
         grad_norm = self._strategy.clip_grad_norm_(
             model=self.model,
         )
@@ -355,20 +391,22 @@ class FSDPModelManager:
         """
         total_steps = self._cfg.optim.get("total_training_steps", 0)
         num_warmup_steps = int(self._cfg.optim.get("lr_warmup_steps", -1))
-        warmup_style = self._cfg.optim.get("warmup_style", "constant")
-        min_lr_ratio = self._cfg.optim.get("min_lr_ratio", 0.0)
+        lr_scheduler = self._cfg.optim.get("lr_scheduler", "constant")
         num_cycles = self._cfg.optim.get("num_cycles", 0.5)
+        min_lr = self._cfg.optim.get("min_lr", 0.0)
+        min_lr_rate = self._cfg.optim.get("min_lr_rate", None)
         if num_warmup_steps < 0:
             num_warmup_steps_ratio = self._cfg.optim.get("lr_warmup_steps_ratio", 0.0)
             num_warmup_steps = int(num_warmup_steps_ratio * total_steps)
 
         return get_lr_scheduler(
-            warmup_style=warmup_style,
+            lr_scheduler=lr_scheduler,
             optimizer=optimizer,
             num_warmup_steps=num_warmup_steps,
             num_training_steps=total_steps,
-            min_lr_ratio=min_lr_ratio,
             num_cycles=num_cycles,
+            min_lr=min_lr,
+            min_lr_rate=min_lr_rate,
         )
 
     def build_optimizer(
@@ -387,6 +425,8 @@ class FSDPModelManager:
             Optimizer: The constructed optimizer.
         """
         betas = (self._cfg.optim.adam_beta1, self._cfg.optim.adam_beta2)
+        adam_eps = self._cfg.optim.get("adam_eps", 1e-8)
+        weight_decay = self._cfg.optim.get("weight_decay", 1e-2)
 
         params_actor = []
         params_critic = []
@@ -430,6 +470,8 @@ class FSDPModelManager:
             )
         optimizer = torch.optim.AdamW(
             param_groups,
+            eps=adam_eps,
+            weight_decay=weight_decay,
         )
 
         # run optimizer empty step to initialize optimizer.state
@@ -438,7 +480,7 @@ class FSDPModelManager:
         warmup_optimizer_state(optimizer)
         return optimizer
 
-    def build_grad_scaler(self, enabled: bool) -> GradScaler:
+    def build_grad_scaler(self, enabled: bool) -> ShardedGradScaler:
         """
         Build the gradient scaler based on the configuration.
 
@@ -446,9 +488,9 @@ class FSDPModelManager:
             enabled (bool): Whether to enable gradient scaling.
 
         Returns:
-            GradScaler: The gradient scaler.
+            ShardedGradScaler: The gradient scaler.
         """
-        return GradScaler(enabled=enabled)
+        return ShardedGradScaler(enabled=enabled)
 
     def before_micro_batch(
         self, model: Union[FSDP, FSDPModule], is_last_micro_batch: bool

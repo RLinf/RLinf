@@ -1,5 +1,5 @@
-基于Behavior模拟器的强化学习训练
-============================
+基于Behavior评测平台的强化学习训练
+====================================
 
 本示例提供了在 `Behavior <https://behavior.stanford.edu/index.html>`_ 环境中使用 **RLinf** 框架
 通过强化学习微调 Behavior 算法的完整指南。它涵盖了整个过程——从
@@ -32,8 +32,8 @@
 
 - **任务描述**: 从 `behavior-1k` 任务中选择
 - **图像**: 多相机 RGB 张量
-  - 头部图像: ``[batch_size, 3, 224, 224]``
-  - 手腕图像: ``[batch_size, 2, 3, 224, 224]`` (左右相机)
+  - 头部图像: ``[batch_size, 224, 224, 3]``
+  - 手腕图像: ``[batch_size, 2, 224, 224, 3]`` (左右相机)
 
 
 算法
@@ -65,11 +65,8 @@
 
    - 用于批评函数的价值头
 
-前置依赖（软件安装与数据集/资源下载）
---------------
-
 依赖安装
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+------------
 
 .. warning::
 
@@ -82,27 +79,51 @@
    尤其注意，如果你的GPU是Hopper及以上架构，请按照570及以上的NVIDIA驱动。
 
    另外，如果您的GPU没有Ray Tracing能力（例如A100、H100），BEHAVIOR的渲染质量会非常差，画面可能会出现严重的马赛克或模糊。
-   
-**选项 1：Docker 镜像**
 
-使用我们的新 Docker 镜像 `rlinf/rlinf:agentic-rlinf0.1-behavior` 来运行BEHAVIOR实验。
-
-**选项 2：自定义环境**
-
-.. warning::
-
-   **风险自负！**
-
-   我们强烈建议不要构建自定义环境，因为 BEHAVIOR 和 ISAAC-SIM 的依赖关系非常复杂，一旦出错，可能会导致难以调试的问题。
-   但我们仍然提供此选项，以防 Docker 在您的环境中不可用。
+1. 克隆 RLinf 仓库
+~~~~~~~~~~~~~~~~~~~~
 
 .. code:: bash
 
-   pip install uv
-   bash requirements/install.sh openvla-oft --enable-behavior
+   # 为提高国内下载速度，可以使用以下镜像地址：
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
 
-**资源文件和数据集**
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2. 安装依赖
+~~~~~~~~~~~~~~~~
+
+**选项 1：Docker 镜像**
+
+使用 Docker 镜像运行实验。
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.1-behavior
+      # 如果需要国内加速下载镜像，可以使用：
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-behavior
+
+**选项 2：自定义环境**
+
+.. code:: bash
+
+   # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
+
+   # 安装openvla-oft环境
+   bash requirements/install.sh embodied --model openvla-oft --env behavior
+   source .venv/bin/activate
+
+   # 安装openpi环境
+   bash requirements/install.sh embodied --model openpi --env behavior
+   source .venv/bin/activate
+
+资源下载
+---------------------
 
 * ISAAC-SIM 4.5下载
 
@@ -132,6 +153,8 @@
 
    # 请确保您在运行下面的命令前已激活正确的 Python 虚拟环境（venv）
    # 如果您在使用 Docker 镜像，您需要通过`source switch_env openvla-oft`命令切换到`openvla-oft`环境
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
    python -c "from omnigibson.utils.asset_utils import download_omnigibson_robot_assets; download_omnigibson_robot_assets()"
    python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets(accept_license=True)" 
    python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
@@ -154,10 +177,26 @@ OpenVLA-OFT 提供了一个适用于 Behavior 环境中所有任务类型的统�
    git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-Behavior
 
    # 方法 2: 使用 huggingface-hub
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
-   hf download RLinf/RLinf-OpenVLAOFT-Behavior
+   hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir RLinf-OpenVLAOFT-Behavior
 
-或者，您也可以使用 ModelScope 从 https://www.modelscope.cn/models/RLinf/RLinf-OpenVLAOFT-Behavior 下载模型。
+**OpenPI 模型下载**
+
+.. code:: bash
+
+   # 下载模型（选择任一方法）
+   # 方法 1: 使用 git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-Behavior
+
+   # 方法 2: 使用 huggingface-hub
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+   hf download RLinf/RLinf-Pi0-Behavior --local-dir RLinf-Pi0-Behavior
+
 
 下载后，请确保在配置 yaml 文件中正确指定模型路径。
 
@@ -183,10 +222,9 @@ OpenVLA-OFT 提供了一个适用于 Behavior 环境中所有任务类型的统�
    rollout:
       pipeline_stage_num: 2
 
-您可以灵活配置 env、rollout 和 actor 组件的 GPU 数量。使用上述配置，您可以实现
-env 和 rollout 之间的管道重叠，以及与 actor 的共享。
+您可以灵活配置 env、rollout 和 actor 组件的 GPU 数量。
 此外，通过在配置中设置 ``pipeline_stage_num = 2``，
-您可以实现 rollout 和 actor 之间的管道重叠，提高 rollout 效率。
+您可以实现 rollout 和 env 之间的管道重叠，提高 rollout 效率。
 
 .. code:: yaml
 
@@ -299,7 +337,7 @@ env 和 rollout 之间的管道重叠，以及与 actor 的共享。
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_behavior"
+       experiment_name: "behavior_ppo_openvlaoft"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 

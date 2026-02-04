@@ -15,10 +15,13 @@
 import asyncio
 import copy
 import dataclasses
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from omegaconf import DictConfig
-from sglang.srt.managers.io_struct import ReleaseMemoryOccupationReqInput
+from sglang.srt.managers.io_struct import (
+    ReleaseMemoryOccupationReqInput,
+    ResumeMemoryOccupationReqInput,
+)
 from sglang.srt.server_args import ServerArgs
 from transformers import AutoTokenizer
 
@@ -28,7 +31,7 @@ from rlinf.data.io_struct import (
     RolloutResult,
     SeqGroupInfo,
 )
-from rlinf.scheduler import Channel, Cluster, Worker
+from rlinf.scheduler import Channel, Worker
 from rlinf.scheduler.dynamic_scheduler.manager import RolloutScalingScheduler
 from rlinf.scheduler.dynamic_scheduler.utils import (
     get_scheduler_channel,
@@ -44,15 +47,37 @@ from rlinf.workers.rollout.utils import (
 
 
 class SGLangWorker(Worker):
-    def __init__(self, config: DictConfig, placement: ModelParallelComponentPlacement):
+    def __init__(
+        self,
+        config: DictConfig,
+        placement: ModelParallelComponentPlacement,
+        weight_reload: Literal["sync", "cpu", None] = "sync",
+        config_rollout: DictConfig = None,
+    ):
         Worker.__init__(self)
 
         self._cfg = config
+        # 'sync': sync weight from actor;
+        # 'cpu': save weight from cpu and reload weight from cpu
+        # None: no need to reload, only used in eval
+        self.weight_reload = weight_reload
+        if config_rollout is None:
+            config_rollout = self._cfg.rollout
+        self._cfg_rollout = config_rollout
         self._placement = placement
 
-        self._tokenizer = AutoTokenizer.from_pretrained(self._cfg.rollout.model_dir)
-        self._return_logprobs = self._cfg.rollout.return_logprobs
-        self._sampling_params = SGLangWorker.get_sampling_param_from_config(self._cfg)
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            self._cfg_rollout.model.model_path
+        )
+        self._return_logprobs = self._cfg_rollout.return_logprobs
+        sampling_params = None
+        if config_rollout is not None:
+            sampling_params = config_rollout.get("sampling_params", None)
+        if sampling_params is None:
+            sampling_params = self._cfg.algorithm.sampling_params
+        self._sampling_params = SGLangWorker.get_sampling_param_from_config(
+            sampling_params
+        )
 
         self._validate_sampling_params = {"temperature": 0, "max_new_tokens": 32}
         self._validate_prompts = [
@@ -66,7 +91,7 @@ class SGLangWorker(Worker):
 
         # Initialize meta_stats_collector for async operations
         self._collect_meta_stats = getattr(
-            self._cfg.rollout, "collect_meta_stats", False
+            self._cfg_rollout, "collect_meta_stats", False
         )
         self._use_auto_scheduler = self._placement.is_auto
 
@@ -86,7 +111,7 @@ class SGLangWorker(Worker):
 
     def _init_meta_stats_collector(self):
         async_stats_file = getattr(
-            self._cfg.rollout,
+            self._cfg_rollout,
             "async_meta_stats_file",
             f"sglang_meta_stats_async_rank_{self._rank}.jsonl",
         )
@@ -100,12 +125,11 @@ class SGLangWorker(Worker):
         self.async_batch_counter += 1
 
     @staticmethod
-    def get_sampling_param_from_config(cfg: DictConfig) -> dict:
+    def get_sampling_param_from_config(cfg_sampling_params: DictConfig) -> dict:
         """
         Get sampling parameters from the configuration.
         """
-        cfg_sampling_params = cfg.algorithm.sampling_params
-        if cfg_sampling_params.use_greedy:
+        if not cfg_sampling_params.do_sample:
             sampling_params = {
                 "temperature": 0,
                 "max_new_tokens": cfg_sampling_params.max_new_tokens,
@@ -121,35 +145,44 @@ class SGLangWorker(Worker):
         return sampling_params
 
     def _init_engine(self):
-        use_cudagraph = not self._cfg.rollout.enforce_eager
+        use_cudagraph = not self._cfg_rollout.enforce_eager
+
+        load_format = "dummy"  # dummy means randomize init weight
+        if self.weight_reload == "sync":
+            if self._cfg_rollout.validate_weight or getattr(
+                self._cfg_rollout, "validate_weight_first_sync", False
+            ):
+                load_format = "auto"
+        else:
+            load_format = "auto"
 
         server_args = ServerArgs(
-            model_path=self._cfg.rollout.model_dir,
+            model_path=self._cfg_rollout.model.model_path,
             disable_cuda_graph=not use_cudagraph,
             cuda_graph_max_bs=min(
-                self._cfg.rollout.cuda_graph_max_bs,
-                self._cfg.rollout.max_running_requests,
+                self._cfg_rollout.cuda_graph_max_bs,
+                self._cfg_rollout.max_running_requests,
             ),
-            tp_size=self._cfg.rollout.tensor_parallel_size,
-            mem_fraction_static=self._cfg.rollout.gpu_memory_utilization,
+            tp_size=self._cfg_rollout.tensor_parallel_size,
+            mem_fraction_static=self._cfg_rollout.gpu_memory_utilization,
             enable_memory_saver=use_cudagraph,
-            enable_torch_compile=self._cfg.rollout.sglang.use_torch_compile,
+            enable_torch_compile=self._cfg_rollout.sglang.use_torch_compile,
             torch_compile_max_bs=min(
-                self._cfg.rollout.sglang.torch_compile_max_bs,
-                self._cfg.rollout.max_running_requests,
+                self._cfg_rollout.sglang.torch_compile_max_bs,
+                self._cfg_rollout.max_running_requests,
             ),
-            load_format="dummy" if not self._cfg.rollout.validate_weight else "auto",
+            load_format=load_format,
             # disable_overlap_schedule=True,
-            dtype=torch_dtype_from_precision(self._cfg.rollout.precision),
+            dtype=torch_dtype_from_precision(self._cfg_rollout.model.precision),
             # sglang will only return text/output_ids when skip_tokenizer_init=False/True
             # text is not needed in RL training, so set to True can save time.
-            skip_tokenizer_init=not self._cfg.rollout.detokenize,
+            skip_tokenizer_init=not self._cfg_rollout.detokenize,
             # sglang will print statistics every decode_log_interval decode steps.
-            decode_log_interval=self._cfg.rollout.sglang.decode_log_interval,
-            attention_backend=self._cfg.rollout.sglang.attention_backend,
+            decode_log_interval=self._cfg_rollout.sglang.decode_log_interval,
+            attention_backend=self._cfg_rollout.sglang.attention_backend,
             log_level="info",
-            max_running_requests=self._cfg.rollout.max_running_requests,
-            dist_init_addr=f"127.0.0.1:{str(Cluster.find_free_port())}",
+            max_running_requests=self._cfg_rollout.max_running_requests,
+            dist_init_addr=f"127.0.0.1:{str(self.acquire_free_port())}",
         )
 
         self.log_on_first_rank(f"{server_args=}")
@@ -173,21 +206,14 @@ class SGLangWorker(Worker):
         """
         Run a test prompt batch and print its output.
         """
-        if self._cfg.rollout.detokenize:
-            self.log_warning(
-                "validate_weight with detokenize=True is not supported yet."
-            )
-        else:
-            input_ids = self._tokenizer(self._validate_prompts).input_ids
-            engine_results, _ = await self.async_generate(
-                input_ids=input_ids,
-                sampling_params=self._validate_sampling_params,
-                return_logprob=False,
-            )
-            print_sglang_outputs(
-                self._validate_prompts, engine_results, self._tokenizer
-            )
-            print("===============================", flush=True)
+        input_ids = self._tokenizer(self._validate_prompts).input_ids
+        engine_results, _ = await self.async_generate(
+            input_ids=input_ids,
+            sampling_params=self._validate_sampling_params,
+            return_logprob=False,
+        )
+        print_sglang_outputs(self._validate_prompts, engine_results, self._tokenizer)
+        print("===============================", flush=True)
 
     async def async_generate(
         self,
@@ -222,37 +248,68 @@ class SGLangWorker(Worker):
             prompt=prompt,
             sampling_params=sampling_params,
             input_ids=input_ids,
-            image_data=image_data if any(image_data) else None,
+            image_data=image_data
+            if image_data is not None and any(image_data)
+            else None,
             return_logprob=return_logprob,
         )
         return result, request_info
 
     async def init_worker(self):
         self._init_engine()
-        await self._engine.tokenizer_manager.run_task_method(
-            io_struct.TaskMethodInput(
-                method_name="init_rlinf_worker",
-                args=(
-                    self.worker_address,
-                    self._placement,
-                    self._cfg,
-                ),
+        if self.weight_reload == "sync":
+            await self._engine.tokenizer_manager.run_task_method(
+                io_struct.TaskMethodInput(
+                    method_name="init_rlinf_worker",
+                    args=(
+                        self.worker_address,
+                        self.weight_reload,
+                        self._placement,
+                        self._cfg,
+                    ),
+                )
             )
-        )
-        self.log_info(f"SGLang worker {self._rank} initialized.")
-        if self._cfg.rollout.validate_weight:
-            await self._validate_weight_at_first()
-        if self._placement.is_collocated:
-            await self.offload_engine()
-        if self._use_auto_scheduler:
-            asyncio.create_task(self._scheduler.main_loop())
+            self.log_info(f"SGLang worker {self._rank} initialized.")
+            if self._cfg_rollout.validate_weight:
+                await self._validate_weight_at_first()
+            if self._placement.is_collocated:
+                await self.offload_engine()
+            if self._use_auto_scheduler:
+                asyncio.create_task(self._scheduler.main_loop())
+        elif self.weight_reload == "cpu" or self.weight_reload is None:
+            await self._engine.tokenizer_manager.run_task_method(
+                io_struct.TaskMethodInput(
+                    method_name="init_rlinf_worker",
+                    args=(
+                        self.worker_address,
+                        self.weight_reload,
+                    ),
+                )
+            )
+            self.log_info(f"SGLang worker {self._rank} initialized.")
+            if self.weight_reload == "cpu" and self._placement.is_collocated:
+                await self.offload_engine()
+        else:
+            assert False, (
+                f"weight_reload should be in ['sync', 'cpu', None], but now it's {self.weight_reload}"
+            )
 
     async def offload_engine(self):
         """
-        Offload the model weights from the SGLang engine.
+        Release the model weights from the SGLang engine.
         """
+        assert self.weight_reload is not None
         await self._engine.tokenizer_manager.release_memory_occupation(
             obj=ReleaseMemoryOccupationReqInput()
+        )
+
+    async def onload_engine(self):
+        """
+        Onload the model weights from cpu to the SGLang engine.
+        """
+        assert self.weight_reload == "cpu"
+        await self._engine.tokenizer_manager.resume_memory_occupation(
+            obj=ResumeMemoryOccupationReqInput()
         )
 
     async def abort_generation(self):
@@ -397,7 +454,9 @@ class SGLangWorker(Worker):
             if self._collect_meta_stats:
                 self._collect_stats(all_rollout_results)
 
-            if self._placement.is_collocated or self._placement.is_auto:
+            if self.weight_reload is not None and (
+                self._placement.is_collocated or self._placement.is_auto
+            ):
                 await self.offload_engine()
                 if self._use_auto_scheduler:
                     await self._scheduler.report_offloaded()
@@ -420,6 +479,7 @@ class SGLangWorker(Worker):
             sampling_params=final_sampling_params,
             return_logprob=self._return_logprobs,
         )
+        # sglang will trim matched stop in result text, so we should only return output_ids
         result_dict = {
             "output_ids": result["output_ids"],
             "finish_reason": result["meta_info"]["finish_reason"]["type"],

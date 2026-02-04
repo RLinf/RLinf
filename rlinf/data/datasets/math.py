@@ -23,7 +23,7 @@ from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
 from rlinf.data.datasets.item import DatasetItem
-from rlinf.data.datasets.utils import batch_pad_to_fixed_len
+from rlinf.data.utils import batch_pad_to_fixed_len
 
 
 class MathDataset(Dataset):

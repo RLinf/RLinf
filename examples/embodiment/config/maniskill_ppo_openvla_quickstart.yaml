@@ -1,6 +1,8 @@
 defaults:
-  - env/train: PutCarrotOnPlateInScene
-  - env/eval: PutCarrotOnPlateInScene
+  - env/manikill_put_carrot_on_plate_in_scene@env.train
+  - env/manikill_put_carrot_on_plate_in_scene@env.eval
+  - model/openvla@actor.model
+  - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
 hydra:
@@ -20,7 +22,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "test_openvla"
+    experiment_name: "maniskill_ppo_openvla_quickstart"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -29,32 +31,20 @@ runner:
   only_eval: False
   val_check_interval: -1
   save_interval: 40
-  seq_length: 4096
-  max_prompt_length: 30
+
+  resume_dir: null # Optional: path to a saved checkpoint directory, such as 'checkpoints/global_step_10'. If not None, it will be used to resume training.
+  ckpt_path: null  # Optional: path to a .pt checkpoint. If not None, it will be loaded after the model is instantiated (for evaluation).
 
 algorithm:
-  auto_reset: True
-  ignore_terminations: True
-  use_fixed_reset_state_ids: False
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
-
-  n_chunk_steps: 80
-  n_eval_chunk_steps: 80
-  # training rollout mbs
-  rollout_micro_batch_size: 64
-  num_group_envs: 32
   rollout_epoch: 1
+  eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
 
   reward_type: action_level
   logprob_type: action_level
   entropy_type: action_level
-
-  # mbs to do log prob inference, can be set to
-  # lower than rollout_micro_batch_size to reduce
-  # memory usage
-  logprob_forward_micro_batch_size: 16 # ${.rollout_micro_batch_size}
 
   adv_type: gae
   loss_type: actor_critic
@@ -74,7 +64,7 @@ algorithm:
 
   # params for rollout
   sampling_params:
-    use_greedy: False
+    do_sample: True
     temperature_train: 1.0
     temperature_eval: 0.6
     top_k: 50
@@ -90,120 +80,74 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  channel:
-    name: "env_buffer_list"
-    queue_name: "obs_buffer"
-    queue_size: 0
   enable_offload: True
+
+  # Override the default values in env/manikill_put_carrot_on_plate_in_scene
+  train:
+    total_num_envs: 32
+    auto_reset: True
+    ignore_terminations: True
+    use_fixed_reset_state_ids: False
+    max_episode_steps: 80 # max episode steps for truncation
+    max_steps_per_rollout_epoch: 80
+  eval:
+    total_num_envs: 32
+    auto_reset: True
+    ignore_terminations: True
+    max_episode_steps: 80
+    max_steps_per_rollout_epoch: 80
+    use_fixed_reset_state_ids: True
+    group_size: 1
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
   group_name: "RolloutGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "action_buffer"
-    queue_size: 0
-  mode: "colocate"
   backend: "huggingface"
-  model_dir: "/path/to/model/openvla-7b-rlvla-warmup/"
-  precision: ${actor.model.precision}
   gpu_memory_utilization: 0.5
   enforce_eager: True
   enable_offload: True
   pipeline_stage_num: 2
 
+  model:
+    model_path: "/path/to/model/openvla-7b-rlvla-warmup/"
+    precision: ${actor.model.precision}
+
 actor:
   group_name: "ActorGroup"
-  channel:
-    name: ${env.channel.name}
-    queue_name: "replay_buffer"
-    queue_size: 0
   training_backend: "fsdp"
-
-  checkpoint_load_path: "/path/to/model/openvla-7b-rlvla-warmup/"
-  checkpoint_save_path: "../results"
 
   micro_batch_size: 20
   global_batch_size: 160
   seed: 1234
   enable_offload: True
 
-  tokenizer:
-    tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/openvla-7b-rlvla-warmup/"
-    extra_vocab_size: 421
-    use_fast: False
-    trust_remote_code: True
-    padding_side: "right"
-
+  # Override the default values in model/openvla
   model:
-    model_name: "openvla"
-    action_dim: 7
-    num_action_chunks: 1
-    use_proprio: False
-    unnorm_key: bridge_orig
-    micro_batch_size: 1
-    val_micro_batch_size: 8
-    center_crop: True
-    do_sample: False
-    
-    precision: "bf16"
-    add_bias_linear: False
-    add_qkv_bias: True
-    vocab_size: 32000
-    hidden_size: 4096
-    policy_setup: "widowx_bridge"
+    model_path: "/path/to/model/openvla-7b-rlvla-warmup/"
     add_value_head: True
-    image_size: [224, 224]
     is_lora: True
-    lora_rank: 32
-    ckpt_path: null
-    use_wrist_image: False
-    attn_implementation: "flash_attention_2"
-    low_cpu_mem_usage: True
-    trust_remote_code: True
-    gradient_checkpointing: False
+    max_prompt_length: 30
 
   optim:
     lr: 1.0e-4
     value_lr: 3.0e-3
     adam_beta1: 0.9
     adam_beta2: 0.95
-    adam_eps: 1.0e-05
+    adam_eps: 1.0e-08
+    weight_decay: 0.01
     clip_grad: 1.0
     critic_warmup_steps: 0
 
-  fsdp_config:                  # below are fsdp configs, for more details, see https://pytorch.org/docs/stable/fsdp.html and https://huggingface.co/docs/accelerate/package_reference/fsdp
-
-    strategy: "fsdp"            # FSDP strategy: ["fsdp", "fsdp2"]
-
-    # Sharding strategy: "full_shard" (shard parameters, gradients, optimizer states),
-    # "shard_grad_op" (shard gradients and optimizer states only), 
-    # "hybrid_shard" (combines data parallelism and model parallelism - sharding within FSDP groups, replicate across DDP groups),
-    # "no_shard" (no sharding)
-    sharding_strategy: "full_shard" 
-
-    cpu_offload: False           # whether to offload parameters and gradients to CPU when not in use，if True, actor's enable_offload should be True too.
-    offload_pin_memory: False    # whether FSDP2's CPU offload policy should pin memory when cpu_offload is True
-    reshard_after_forward: True  # if True, FSDP2 will reshard parameters after forward pass to save memory
-
-    enable_gradient_accumulation: True  # if True, gradient accumulation will be enabled for FSDP/FSDP2 training, which will enhance training performance but increase memory usage.
-    forward_prefetch: False             # if True, FSDP will explicitly prefetches the next upcoming all-gather while executing in the forward pass. only use with static graphs. Overlaps communication with computation to improve performance.
-    limit_all_gathers: False            # if True, FSDP will synchronizes CPU threads to limit the number of concurrent all-gathers. Only affects strategies that schedule all-gathers
-    backward_prefetch: null             # options are null, 'pre', 'post'. if 'pre', FSDP will prefetch the next upcoming all-gather while computing gradients. if 'post', FSDP will prefetch the next all-gather until current gradient is computed.
-    use_orig_params: False              # if True, FSDP will use module's original parameters, it means it will expose nn.Module.named_parameters rather than FlatParameter
-    use_liger_kernel: False             # if True, liger_kernel will be used for FSDP, note that currently supported models in RLinf are [qwen2.5, qwen2.5-vl], for more details, see liger_kernel's doc
-
-    fsdp_size: -1               # Number of GPUs per FSDP group for hybrid sharding. -1 means use all available GPUs in a single FSDP group
-
-    mixed_precision:            # mixed precision settings for fsdp/fsdp2
+  # Override the default values in training_backend/fsdp
+  fsdp_config:
+    strategy: "fsdp"
+    gradient_checkpointing: False
+    mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
-
-    amp:
-      enabled: False                 # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
-      precision: "bf16"              # precision for AMP, options are ["fp16" , "bf16"]
-      use_grad_scaler: False         # if True, GradScaler will be used for AMP training to prevent underflow.
 
 reward:
   use_reward_model: False

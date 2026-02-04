@@ -19,10 +19,10 @@
 </div>
 
 <h1 align="center">
-  <sub>RLinf: Reinforcement Learning Infrastructure for Post-training</sub>
+  <sub>RLinf: Reinforcement Learning Infrastructure for Embodied and Agentic AI</sub>
 </h1>
 
-RLinf is a flexible and scalable open-source infrastructure designed for post-training foundation models via reinforcement learning. The 'inf' in RLinf stands for `Infrastructure`, highlighting its role as a robust backbone for next-generation training. It also stands for `Infinite`, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
+RLinf is a flexible and scalable open-source RL infrastructure designed for Embodied and Agentic AI. The 'inf' in RLinf stands for `Infrastructure`, highlighting its role as a robust backbone for next-generation training. It also stands for `Infinite`, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
 
 <div align="center">
   <img src="docs/source-en/_static/svg/overview.svg" alt="RLinf-overview"/>
@@ -30,6 +30,15 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 
 
 ## What's NEW!
+- [2026/01] 🔥 RLinf supports reinforcement learning fine-tuning for [OpenSora World Model](https://github.com/hpcaitech/Open-Sora). Doc: [RL on OpenSora World Model](https://rlinf.readthedocs.io/en/latest/rst_source/examples/opensora.html).
+- [2026/01] 🔥 RLinf supports reinforcement learning fine-tuning for [RoboTwin](https://github.com/robotwin-Platform/RoboTwin). Doc: [RL on RoboTwin](https://rlinf.readthedocs.io/en/latest/rst_source/examples/robotwin.html).
+- [2026/01] 🔥 RLinf supports SAC training for flow matching policy. Doc: [SAC-Flow](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/sac_flow.html), paper: [SAC Flow: Sample-Efficient Reinforcement Learning of Flow-Based Policies via Velocity-Reparameterized Sequential Modeling](https://arxiv.org/abs/2509.25756).
+- [2025/12] 🔥 RLinf supports agentic reinforcement learning on [Search-R1](https://github.com/PeterGriffinJin/Search-R1). Doc: [Search-R1](https://rlinf.readthedocs.io/en/latest/rst_source/examples/searchr1.html).
+- [2025/12] 🔥 RLinf v0.2-pre is open-sourced. We support real-world RL with Franka. Doc: [RL on Franka in the RealWorld](https://rlinf.readthedocs.io/en/latest/rst_source/examples/franka.html).
+- [2025/12] 🔥 RLinf supports reinforcement learning fine-tuning for [RoboCasa](https://github.com/robocasa/robocasa). Doc: [RL on Robocasa](https://rlinf.readthedocs.io/en/latest/rst_source/examples/robocasa.html).
+- [2025/12] 🎉 RLinf official release of [v0.1](https://github.com/RLinf/RLinf/releases/tag/v0.1).
+- [2025/11] 🔥 RLinf supports reinforcement learning fine-tuning for [CALVIN](https://github.com/mees/calvin). Doc: [RL on CALVIN](https://rlinf.readthedocs.io/en/latest/rst_source/examples/calvin.html).
+- [2025/11] 🔥 RLinf supports reinforcement learning fine-tuning for [IsaacLab](https://github.com/isaac-sim/IsaacLab). Doc: [RL on IsaacLab](https://rlinf.readthedocs.io/en/latest/rst_source/examples/isaaclab.html). 
 - [2025/11] 🔥 RLinf supports reinforcement learning fine-tuning for [GR00T-N1.5](https://github.com/NVIDIA/Isaac-GR00T). Doc: [RL on GR00T-N1.5](https://rlinf.readthedocs.io/en/latest/rst_source/examples/gr00t.html).
 - [2025/11] 🔥 RLinf supports reinforcement learning fine-tuning for [Metaworld](https://github.com/Farama-Foundation/Metaworld). Doc: [RL on Metaworld](https://rlinf.readthedocs.io/en/latest/rst_source/examples/metaworld.html).
 - [2025/11] 🔥 RLinf supports reinforcement learning fine-tuning for [Behavior 1k](https://github.com/StanfordVL/BEHAVIOR-1K). Doc: [RL on Behavior 1k](https://rlinf.readthedocs.io/en/latest/rst_source/examples/behavior.html).
@@ -45,7 +54,7 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 ## Key Features
 
 
-### Embodied Intelligence
+### Embodied AI
 
 <table style="width: 100%; table-layout: auto; border-collapse: collapse;">
   <thead align="center" valign="bottom">
@@ -62,18 +71,20 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
         <ul style="margin-left: 0; padding-left: 16px;">
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/maniskill.html">ManiSkill</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/libero.html">LIBERO</a> ✅</li>
-          <li>RoboTwin</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/robotwin.html">RoboTwin</a> ✅</li>
           <li>RoboVerse</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/behavior.html">BEHAVIOR</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/metaworld.html">MetaWorld</a> ✅</li>
-          <li>IsaacLab</li>
-          <li>RoboCasa</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/isaaclab.html">IsaacLab</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/calvin.html">CALVIN</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/robocasa.html">RoboCasa</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/frankasim.html">Franka-Sim</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
       <td>
         <ul style="margin-left: 0; padding-left: 16px;">
-          <li>Franka Arm</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/franka.html">Franka Arm</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
@@ -91,9 +102,14 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
           <ul>
             <li>Qwen2.5-VL</li>
           </ul>
+          <li><b>World Model</b></li>
+          <ul>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/opensora.html">OpenSora</a> ✅</li>
+          </ul>
           <li><b>Custom Models</b></li>
           <ul>
             <li>MLP-Policy ✅</li>
+            <li>CNN-Policy ✅</li>
           </ul>
         </ul>
       </td>
@@ -105,30 +121,31 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/ppo.html">PPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/dapo.html">DAPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/reinforce.html">Reinforce++</a> ✅</li>
-            <li>SAC</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/sac.html">SAC</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/crossq.html">CrossQ</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/rlalg/rlpd.html">RLPD</a> ✅</li>
+            <li><a href="https://arxiv.org/abs/2509.25756">SAC-Flow</a> ✅</li>
           </ul>
           <li><b>SFT</b></li>
           <ul>
-            <li>Full-parameter SFT</li>
-            <li>LoRA SFT</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/sft.html">Full-parameter SFT</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/sft.html">LoRA SFT</a> ✅</li>
           </ul>
         </ul>
       </td>
     </tr>
   </tbody>
 </table>
-  
-RLinf supports mainstream VLA models, mainstream CPU & GPU-parallel simulators via standardized Worker interfaces, and enables the first RL fine-tuning of the $\pi_{0}$ and $\pi_{0.5}$ model family with a flow-matching action expert, as shown in the above table.
 
-### Agentic RL
+### Agentic AI
 
-Agentic RL includes both RL training for improving LLM reasoning ability, such as [Math Reasoning](https://rlinf.readthedocs.io/en/latest/rst_source/examples/reasoning.html), and RL training for Agents, for example, [RL training of coding agent](https://rlinf.readthedocs.io/en/latest/rst_source/examples/coding_online_rl.html). We believe embodied intelligence will also integrate the ability of agents in the future to complete complex tasks.
+We support RL training for improving reasoning ability, such as [Math Reasoning](https://rlinf.readthedocs.io/en/latest/rst_source/examples/reasoning.html), and RL training for improving coding ability, such as [Online Coder](https://rlinf.readthedocs.io/en/latest/rst_source/examples/coding_online_rl.html). We believe embodied AI will also integrate the ability of agents in the future to complete complex tasks.
 
 ### High flexibility, efficiency, and scalability
 
 Besides the rich functionalities introduced above, RLinf has high flexibility to support diverse RL training workflows (PPO, GRPO, SAC and so on), while hiding the complexity of distributed programming. Users can easily scale RL training to a large number of GPU nodes without modifying code, meeting the increasing demand of computation for RL training.
 
-The high flexibility allows RLinf to explore more efficient scheduling and execution. The hybrid execution mode for embodied RL achieves a **100%+** throughput improvement compared to baseline solutions.
+The high flexibility allows RLinf to explore more efficient scheduling and execution. The hybrid execution mode for embodied RL achieves up to **2.434×** throughput compared to existing frameworks.
 
 Multiple Backend Integrations
 
@@ -199,7 +216,7 @@ and exhibits greater stability.
     <td style="text-align:center;">39.10%</td>
   </tr>
   <tr>
-    <td style="text-align:center;"><a href="https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">RL4VLA (PPO)</a></td>
+    <td style="text-align:center;"><a href="https://huggingface.co/gen-robot/openvla-7b-rlvla-rl"><img src="docs/source-en/_static/svg/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">RL4VLA (PPO)</a></td>
     <td style="text-align:center;">93.75%</td>
     <td style="text-align:center;">80.47%</td>
     <td style="text-align:center;">75.00%</td>
@@ -553,16 +570,15 @@ and exhibits greater stability.
 - [X] Support for heterogeneous GPUs  
 - [ ] Support for asynchronous pipeline execution  
 - [X] Support for Mixture of Experts (MoE)  
-- [X] Support for vLLM inference backend
 
 ### 2. Application-Level Extensions
 - [X] Support for Vision-Language Models (VLMs) training  
 - [ ] Support for deep searcher agent training  
 - [ ] Support for multi-agent training  
-- [ ] Support for integration with more embodied simulators (e.g., [RoboCasa](https://github.com/robocasa/robocasa), [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis), [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin))  
-- [ ] Support for more Vision Language Action models (VLAs), such as [WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow)
-- [ ] Support for world model   
-- [ ] Support for real-world RL embodied intelligence
+- [ ] Support for integration with more embodied simulators (e.g., [GENESIS](https://github.com/Genesis-Embodied-AI/Genesis))  
+- [ ] Support for more Vision Language Action models (VLAs) (e.g., [WALL-OSS](https://huggingface.co/x-square-robot/wall-oss-flow))
+- [X] Support for world model   
+- [X] Support for real-world RL
 
 # CI Test Status
 RLinf has comprehensive CI tests for both the core components (via unit tests) and end-to-end RL training workflows of embodied, agent, and reasoning scenarios.

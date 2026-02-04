@@ -1,5 +1,5 @@
-基于MetaWorld模拟器的强化学习训练
-==============================
+基于MetaWorld评测平台的强化学习训练
+======================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -31,7 +31,7 @@
 
 **数据结构**
 
-- **Images**：RGB 张量 ``[batch_size, 3, 480, 480]``  
+- **Images**：RGB 张量 ``[batch_size, 480, 480, 3]``  
 - **Task Descriptions**：自然语言指令  
 - **Actions**：归一化的连续值
 - **Rewards**：基于任务完成的稀疏奖励
@@ -61,9 +61,42 @@
 依赖安装
 -----------
 
-如果您使用的是 Docker 镜像，请通过 `docker pull` 拉取最新镜像以获取所需的依赖项。
+1. 克隆 RLinf 仓库
+~~~~~~~~~~~~~~~~~~~~
 
-如果您已经手动安装了uv虚拟环境，请运行 `uv pip install metaworld` 来安装 MetaWorld 包及其依赖项。
+.. code:: bash
+
+   # 为提高国内下载速度，可以使用：
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+2. 安装依赖
+~~~~~~~~~~~~~~~~
+
+**选项 1：Docker 镜像**
+
+使用 Docker 镜像运行实验。
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.1-metaworld
+      # 如果需要国内加速下载镜像，可以使用：
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-metaworld
+
+**选项 2：自定义环境**
+
+.. code:: bash
+
+   # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
+
+   bash requirements/install.sh embodied --model openpi --env metaworld
+   source .venv/bin/activate
 
 
 模型下载
@@ -76,15 +109,15 @@
    # 下载模型（选择任一方法）
    # 方法 1: 使用 git clone
    git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT
+   git clone https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT
 
    # 方法 2: 使用 huggingface-hub
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-MetaWorld
-   hf download RLinf/RLinf-Pi05-MetaWorld
-
-或者，您也可以使用 ModelScope 从 https://www.modelscope.cn/models/RLinf/RLinf-Pi0-MetaWorld 下载模型。
+   hf download RLinf/RLinf-Pi0-MetaWorld-SFT --local-dir RLinf-Pi0-MetaWorld-SFT
+   hf download RLinf/RLinf-Pi05-MetaWorld-SFT --local-dir RLinf-Pi05-MetaWorld-SFT
 
 下载后，请确保在配置 yaml 文件中正确指定模型路径。
 
@@ -105,10 +138,9 @@
    rollout:
       pipeline_stage_num: 2
 
-您可以灵活配置 env、rollout 和 actor 组件的 GPU 数量。使用上述配置，您可以实现
-env 和 rollout 之间的管道重叠，以及与 actor 的共享。
+您可以灵活配置 env、rollout 和 actor 组件的 GPU 数量。
 此外，通过在配置中设置 ``pipeline_stage_num = 2``，
-您可以实现 rollout 和 actor 之间的管道重叠，提高 rollout 效率。
+您可以实现 rollout 和 env 之间的管道重叠，提高 rollout 效率。
 
 .. code:: yaml
 
@@ -213,7 +245,7 @@ MetaWorld ML45 联合训练配置文件 （在该任务设定下，训练在45�
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_metaworld"
+       experiment_name: "metaworld_50_ppo_openpi"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 

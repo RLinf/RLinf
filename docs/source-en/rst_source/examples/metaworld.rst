@@ -31,7 +31,7 @@ Environment
 
 **Data Structure**
 
-- **Images**: RGB tensors ``[batch_size, 3, 480, 480]``
+- **Images**: RGB tensors ``[batch_size, 480, 480, 3]``
 - **Task Descriptions**: Natural-language instructions
 - **Actions**: Normalized continuous values
 - **Rewards**: Sparse rewards based on task completion
@@ -57,14 +57,47 @@ Algorithm
 
    - Compute the advantage of each action by subtracting the group's mean reward
 
-
 Dependency Installation
 -----------------------
 
-If you are using the Docker image, please pull the latest image via `docker pull` to get the required dependencies.
+1. Clone RLinf Repository
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-If you have set up the environment manually, please run `uv pip install metaworld` to install the MetaWorld package along with its dependencies.
+.. code:: bash
 
+   # For mainland China users, you can use the following for better download speed:
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+2. Install Dependencies
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Option 1: Docker Image**
+
+Use Docker image for the experiment.
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.1-metaworld
+      # For mainland China users, you can use the following for better download speed:
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-metaworld
+
+**Option 2: Custom Environment**
+
+Install dependencies directly in your environment by running the following command:
+
+.. code:: bash
+
+   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
+
+   bash requirements/install.sh embodied --model openpi --env metaworld
+   source .venv/bin/activate
 
 Model Download
 --------------
@@ -76,13 +109,15 @@ Before starting training, you need to download the corresponding pretrained mode
    # Download the model (choose either method)
    # Method 1: Using git clone
    git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT
+   git clone https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT
 
    # Method 2: Using huggingface-hub
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
-   hf download RLinf/RLinf-Pi0-MetaWorld
-   hf download RLinf/RLinf-Pi05-MetaWorld
+   hf download RLinf/RLinf-Pi0-MetaWorld-SFT --local-dir RLinf-Pi0-MetaWorld-SFT
+   hf download RLinf/RLinf-Pi05-MetaWorld-SFT --local-dir RLinf-Pi05-MetaWorld-SFT
 
 Alternatively, you can also download the model from ModelScope at https://www.modelscope.cn/models/RLinf/RLinf-Pi0-MetaWorld.
 
@@ -105,10 +140,9 @@ Running the Script
    rollout:
       pipeline_stage_num: 2
 
-You can flexibly configure the GPU count for env, rollout, and actor components. Using the above configuration, you can achieve
-pipeline overlap between env and rollout, and sharing with actor.
+You can flexibly configure the GPU count for env, rollout, and actor components.
 Additionally, by setting ``pipeline_stage_num = 2`` in the configuration,
-you can achieve pipeline overlap between rollout and actor, improving rollout efficiency.
+you can achieve pipeline overlap between rollout and env, improving rollout efficiency.
 
 .. code:: yaml
 
@@ -218,13 +252,13 @@ Visualization and Results
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_metaworld"
+       experiment_name: "metaworld_50_ppo_openpi"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 
 MetaWorld Results
 -------------------------
-The results for Diffusion Policy, TinyVLA, and SmolVLA in the table below are referenced from the `SmolVLA paper <https://arxiv.org/abs/2403.04880>`_. The SFT results for π\ :sub:`0`\ and π\ :sub:`0.5`\ are obtained by retraining using the official `dataset <https://huggingface.co/datasets/lerobot/metaworld_mt50>`_ provided by LeRobot.
+The results for Diffusion Policy, TinyVLA, and SmolVLA in the table below are referenced from the `SmolVLA paper <https://arxiv.org/abs/2403.04880>`_. The SFT results for π\ :sub:`0`\  and π\ :sub:`0.5`\  are obtained by retraining using the official `dataset <https://huggingface.co/datasets/lerobot/metaworld_mt50>`_ provided by LeRobot.
 
 .. list-table:: **MetaWorld-MT50 Performance Comparison (Success Rate, %)**
    :widths: 15 10 10 10 10 10

@@ -1,5 +1,5 @@
 Math推理的强化学习训练
-===================
+=======================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -61,6 +61,7 @@ Math推理的强化学习训练
       apply_chat_template: true
 
   比如说，如果您的数据集使用如下所示的特定结构对话消息，则需启用该选项以正确格式化提示词信息：
+
   .. code-block:: json
 
       {
@@ -94,7 +95,7 @@ Math推理的强化学习训练
 在启动前，检查配置文件。主要字段包括：  
 
 - 集群设置：``cluster.num_nodes`` （节点数）。  
-- 路径：``runner.output_dir`` （保存训练日志与检查点的路径）、``rollout.model_dir`` （基础模型保存路径）、``data.train_data_paths`` （训练数据路径）等。  
+- 路径：``runner.output_dir`` （保存训练日志与检查点的路径）、``rollout.model.model_path`` （基础模型本地路径）、``data.train_data_paths`` （训练数据路径）等。  
 
 **2. 配置文件**
 

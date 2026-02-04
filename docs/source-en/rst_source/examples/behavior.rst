@@ -38,8 +38,8 @@ Environment
 
 - **Task_descriptions**: select from `behavoir-1k` tasks
 - **Images**: Multi-camera RGB tensors
-  - Head images: ``[batch_size, 3, 224, 224]``
-  - Wrist images: ``[batch_size, 2, 3, 224, 224]`` (left and right cameras)
+  - Head images: ``[batch_size, 224, 224, 3]``
+  - Wrist images: ``[batch_size, 2, 224, 224, 3]`` (left and right cameras)
 
 
 Algorithm
@@ -63,8 +63,8 @@ Algorithm
 
    - Compute the advantage of each action by subtracting the group’s mean reward.
 
-Prerequisites
---------------
+Dependency Installation
+------------------------
 
 .. warning::
 
@@ -78,29 +78,52 @@ Prerequisites
 
    Additionally, if your GPU lacks Ray Tracing capabilities (e.g., A100, H100), the rendering quality of BEHAVIOR will be very poor, and the visuals may suffer from severe artifacts or blurriness.
 
-Dependency Installation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**Option 1: Docker Image**
-
-Use our new Docker image `rlinf/rlinf:agentic-rlinf0.1-behavior` for running the behavior experiment.
-
-**Option 2: Custom Environment**
-
-.. warning::
-
-   **TRY AT YOUR OWN RISK!!!**
-
-   We strongly advise against building custom environments because dependencies of BEHAVIOR and ISAAC-SIM are extremely hard to get right.
-   But we still provide this option just in case Docker is not available to you.
+1. Clone RLinf Repository
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code:: bash
 
-   pip install uv
-   bash requirements/install.sh openvla-oft --enable-behavior
+   # For mainland China users, you can use the following for better download speed:
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
 
-Assets and Datasets
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2. Install Dependencies
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Option 1: Docker Image**
+
+Use Docker image for the experiment.
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.1-behavior
+      # For mainland China users, you can use the following for better download speed:
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-behavior
+
+**Option 2: Custom Environment**
+
+Install dependencies directly in your environment by running the following command:
+
+.. code:: bash
+
+   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
+
+   # Install openvla-oft environment
+   bash requirements/install.sh embodied --model openvla-oft --env behavior
+   source .venv/bin/activate
+
+   # Install openpi environment
+   bash requirements/install.sh embodied --model openpi --env behavior
+   source .venv/bin/activate
+
+Assets Download
+-----------------
 
 * ISAAC-SIM 4.5 Download
 
@@ -130,6 +153,8 @@ Assets and Datasets
 
    # Make sure you are inside the correct Python virtual environment (venv) before running below commands
    # For our Docker image, you need to switch to the `openvla-oft` venv via `source switch_env openvla-oft`
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
    python -c "from omnigibson.utils.asset_utils import download_omnigibson_robot_assets; download_omnigibson_robot_assets()"
    python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets(accept_license=True)" 
    python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
@@ -152,10 +177,26 @@ OpenVLA-OFT provides a unified model that is suitable for all task types in the 
    git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-Behavior
 
    # Method 2: Using huggingface-hub
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
-   hf download RLinf/RLinf-OpenVLAOFT-Behavior
+   hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir RLinf-OpenVLAOFT-Behavior
 
-Alternatively, you can also use ModelScope to download the model from https://www.modelscope.cn/models/RLinf/RLinf-OpenVLAOFT-Behavior.
+**OpenPI Model Download**
+
+.. code:: bash
+
+   # Download the model (choose either method)
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-Behavior
+
+   # Method 2: Using huggingface-hub
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+   hf download RLinf/RLinf-Pi0-Behavior --local-dir RLinf-Pi0-Behavior
+
 
 After downloading, please make sure to specify the model path correctly in your configuration yaml file.
 
@@ -182,11 +223,10 @@ Running Scripts
       pipeline_stage_num: 2
 
 Here you can flexibly configure the GPU count for env, rollout, and
-actor components. Using the above configuration, you can achieve
-pipeline overlap between env and rollout, and sharing with actor.
+actor components.
 Additionally, by setting ``pipeline_stage_num = 2`` in the
 configuration, you can achieve pipeline overlap between rollout and
-actor, improving rollout efficiency.
+env, improving rollout efficiency.
 
 .. code:: yaml
 
@@ -300,7 +340,7 @@ Visualization and Results
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_behavior"
+       experiment_name: "behavior_ppo_openvlaoft"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 

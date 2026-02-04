@@ -1,0 +1,259 @@
+defaults:
+  - override hydra/job_logging: stdout
+
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,rollout,reward: all
+
+
+runner:
+  task_type: reasoning
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: rlinf
+    experiment_name: ${runner.experiment_name}
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: 1
+  max_steps: -1
+
+  val_check_interval: 25
+  save_interval: 25
+
+  seq_length: 7096
+
+  enable_dynamic_batch_size: True
+  max_tokens_per_mbs: 11008
+
+  resume_dir: null
+  experiment_name: searchr1-grpo-qwen2.5-3b-ins-fsdp
+  output_dir: ../results
+
+
+algorithm:
+  group_size: 4
+  n_minibatches: 2
+  training_batch_size_per_gpu: 1 # micro batch size
+  rollout_batch_size_per_gpu: null # If set to null, rollout_batch_size will be evenly divided across all inference instances. You can reduce this parameter if inference consumes too much GPU memory.
+
+  # mbs to do log prob inference, can be set to
+  # lower than rollout_batch_size_per_gpu to reduce
+  # memory usage
+  logprob_forward_micro_batch_size: 16 # ${.rollout_batch_size_per_gpu}
+
+  # val rollout mbs
+  val_rollout_batch_size_per_gpu: 1 # ${.rollout_batch_size_per_gpu}
+
+  recompute_logprobs: True
+  shuffle_rollout: False
+
+  # GRPO loss params
+  loss_type: actor
+  loss_agg_func: "token-mean"
+  kl_beta: 0.001 # 0.001
+  kl_penalty_type: low_var_kl
+  ratio_clip_eps: 0.2
+  entropy_bonus: 0.0
+  calculate_entropy: False
+  clip_ratio_c: null # 3.0
+  clip_ratio_low: null # if null or not set, will use ratio_clip_eps
+  clip_ratio_high: null # if null or not set, will use ratio_clip_eps
+
+  adv_type: grpo
+  normalize_advantages: False
+  early_stop_imp_ratio: 5.0
+  use_valid_token_scale: False
+
+  # params for rollout
+  sampling_params:
+    do_sample: True
+    temperature: 1.0
+    top_k: 1000000
+    top_p: 1.0
+    repetition_penalty: 1.0
+    max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
+    min_new_tokens: 1
+    stop: ["</search>","?</search>","?</search>\n","?</search>\n\n","?</search><","?</search><\n","</search>\n","</search>\n\n","</search><","</search><\n","</search><think>","</search><|","</answer>","</answer><","</answer><think>","</answer>\n","</answer>\n\n","<|im_end|>"]
+
+
+agentloop:
+  group_name: "AgentLoopGroup"
+  maxturn: 2
+  max_tool_response_length: 500
+  tool_response_truncate_side: "right"
+  print_outputs: False
+
+
+# Tools configuration for AgentLoop
+tools:
+  search:
+    server_addr: 0.0.0.0:8000
+    topk: 3
+
+
+inference:
+  model_type: ${rollout.model.model_type}
+  group_name: "InferenceGroup"
+  load_from_actor: True
+  model:
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: False
+
+
+rollout:
+  group_name: "RolloutGroup"
+  gpu_memory_utilization: 0.5
+  model:
+    model_path: /path/to/model/Qwen2.5-3B-Instruct
+    model_type: qwen2.5
+    precision: fp16
+  enforce_eager: False        # if False, rollout engine will capture cuda graph, which will take more time to initialize.
+  distributed_executor_backend: mp   # ray or mp
+  disable_log_stats: False
+  detokenize: True            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
+  padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
+  eos: null                   # will be tokenizer.eos_token_id if null.
+  return_logprobs: ${not:${algorithm.recompute_logprobs}}
+
+  rollout_backend: sglang     # here choose which backend to rollout,support [sglang, vllm] 
+  sglang:
+    attention_backend: triton # [flashinfer, triton] for more, see sglang's doc
+    decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
+    use_torch_compile: False # enable torch_compile in SGLang for rollout.
+    torch_compile_max_bs: 128 # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.
+  vllm:
+    attention_backend: FLASH_ATTN #[FLASH_ATTN,XFORMERS] for more, see vllm's doc
+    enable_chunked_prefill: True  # enable vllm to use chunked_prefill.
+    enable_prefix_caching: True   # enable vllm to use prefix_caching.
+    enable_flash_infer_sampler: True # if True, vllm will use flashinfer to do sampling.
+    max_num_batched_tokens: null # the maximum number of tokens to be batched together in vllm. If set to null, vllm will use its default value.
+    torch_profiler_dir: null # if not null, vllm will enable torch profiler and save the result to the specified directory.
+
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  max_running_requests: 128 # the maximum number of running requests in the rollout engine.
+  cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
+
+  validate_weight: False # whether to send all weights at first for weight comparison.
+  validate_weight_first_sync: True # validate the weight norm between load model and first sync.
+  validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
+  print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
+
+
+data:
+  type: math
+  max_prompt_length: 4096
+  filter_prompt_by_length: True
+  rollout_batch_size: 512
+  val_rollout_batch_size: null
+  num_workers: 2
+  prompt_key: prompt
+  answer_key: solutions
+  apply_chat_template: False
+  shuffle: True
+  validation_shuffle: True
+  seed: 1234
+  train_data_paths: ["/path/to/data/searchr1_train.jsonl"]
+  val_data_paths: ["/path/to/data/searchr1_train.jsonl"]
+
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: fsdp
+  enable_dp_load_balance: False
+  calculate_flops: False
+  seed: 1234
+
+  # fsdp config
+  enable_offload: True
+  sync_precision: ${rollout.model.precision}
+
+  model:
+    precision: fp32
+
+    seq_length: ${runner.seq_length}
+    encoder_seq_length: ${runner.seq_length}
+
+    # fsdp config
+    model_type: ${rollout.model.model_type}
+    model_path: ${rollout.model.model_path}
+    is_lora: False
+
+  optim:
+    optimizer: adam
+    lr: 1.0e-06
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-05
+    min_lr: 0.0
+    weight_decay: 0.01
+    clip_grad: 0.8
+
+    # fsdp optim config
+    total_training_steps: 662
+    lr_warmup_steps_ratio: 0.285
+
+  tokenizer:
+    tokenizer_model: ${rollout.model.model_path}
+    use_fast: False
+    trust_remote_code: True
+    padding_side: 'right'
+
+  fsdp_config:                  # below are fsdp configs, for more details, see https://pytorch.org/docs/stable/fsdp.html and https://huggingface.co/docs/accelerate/package_reference/fsdp
+    strategy: "fsdp"            # FSDP strategy: ["fsdp", "fsdp2"]
+
+    # Sharding strategy: "full_shard" (shard parameters, gradients, optimizer states),
+    # "shard_grad_op" (shard gradients and optimizer states only), 
+    # "hybrid_shard" (combines data parallelism and model parallelism - sharding within FSDP groups, replicate across DDP groups),
+    # "no_shard" (no sharding)
+    sharding_strategy: "full_shard" 
+
+    gradient_checkpointing: True  # if True, gradient checkpointing will be used for FSDP/FSDP2 training, which will save memory but increase computation time.
+    cpu_offload: False            # whether to offload parameters and gradients to CPU when not in use，if True, actor's enable_offload should be True too.
+    offload_pin_memory: True      # whether FSDP2's CPU offload policy should pin memory when cpu_offload is True
+    reshard_after_forward: True   # if True, FSDP2 will reshard parameters after forward pass to save memory
+
+    enable_gradient_accumulation: True  # if True, gradient accumulation will be enabled for FSDP/FSDP2 training, which will enhance training performance but increase memory usage.
+    forward_prefetch: False             # if True, FSDP will explicitly prefetches the next upcoming all-gather while executing in the forward pass. only use with static graphs. Overlaps communication with computation to improve performance.
+    limit_all_gathers: False            # if True, FSDP will synchronizes CPU threads to limit the number of concurrent all-gathers. Only affects strategies that schedule all-gathers
+    backward_prefetch: null             # options are null, 'pre', 'post'. if 'pre', FSDP will prefetch the next upcoming all-gather while computing gradients. if 'post', FSDP will prefetch the next all-gather until current gradient is computed.
+    use_orig_params: False              # if True, FSDP will use module's original parameters, it means it will expose nn.Module.named_parameters rather than FlatParameter
+    use_liger_kernel: True              # if True, liger_kernel will be used for FSDP, note that currently supported models in RLinf are [qwen2.5, qwen2.5-vl], for more details, see liger_kernel's doc
+
+    fsdp_size: -1                       # Number of GPUs per FSDP group for hybrid sharding. -1 means use all available GPUs in a single FSDP group
+
+    mixed_precision:                    # mixed precision settings for fsdp/fsdp2
+      param_dtype: "fp16"
+      reduce_dtype: "fp32"
+      buffer_dtype: "fp32"
+
+    amp:
+      enabled: False                    # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
+      precision: "fp16"                 # precision for AMP, options are ["fp16" , "bf16"]
+      use_grad_scaler: True             # if True, GradScaler will be used for AMP training to prevent underflow.
+
+
+reward:
+  group_name: "RewardGroup"
+  use_reward_model: False
+  reward_type: 'searchr1'
+  reward_scale: 1.0
+
+  tokenizer:
+    tokenizer_model: ${actor.tokenizer.tokenizer_model}
+    use_fast: ${actor.tokenizer.use_fast}
+    trust_remote_code: ${actor.tokenizer.trust_remote_code}
+    padding_side: ${actor.tokenizer.padding_side}
+
+
+critic:
+  use_critic_model: False

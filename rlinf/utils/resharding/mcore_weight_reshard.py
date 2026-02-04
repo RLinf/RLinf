@@ -15,6 +15,7 @@
 
 import torch
 from megatron.core import parallel_state
+from megatron.training.training import unwrap_model
 
 from .reshard_config import ReshardConfig
 
@@ -22,6 +23,7 @@ from .reshard_config import ReshardConfig
 class MegatronCoreWeightReshard:
     def __init__(self, config: ReshardConfig):
         self.config = config
+        self.bucket_capacity = self.config.bucket_capacity
 
         assert (
             self.config.model_config.tensor_model_parallel_size
@@ -67,7 +69,48 @@ class MegatronCoreWeightReshard:
             f"Subgroup {key} does not exist! Please call _create_tp_subgroups() to create this subgroup first."
         )
 
-    def gather_and_reshard_model(self, model, dst_rank):
+    def divide_model_to_bucket(self, model):
+        bucket_capacity = self.bucket_capacity
+        model_bucket_list = []
+        model_bucket = {}
+
+        current_capacity = 0
+        model = unwrap_model(model)
+        vp_size = parallel_state.get_virtual_pipeline_model_parallel_world_size()
+
+        if vp_size is None:
+            for key, val in model[0].state_dict().items():
+                if "_extra_state" in key:
+                    continue
+                model_bucket[key] = val
+
+                if "decoder.layers" in key:
+                    current_capacity += val.numel() * val.element_size()
+
+                if current_capacity >= bucket_capacity:
+                    model_bucket_list.append(model_bucket)
+                    current_capacity = 0
+                    model_bucket = {}
+        else:
+            for idx, model_chunk in enumerate(model):
+                for key, val in model_chunk.state_dict().items():
+                    if "_extra_state" in key:
+                        continue
+                    model_bucket[key] = (val, idx)
+
+                    if "decoder.layers" in key:
+                        current_capacity += val.numel() * val.element_size()
+
+                    if current_capacity >= bucket_capacity:
+                        model_bucket_list.append(model_bucket)
+                        current_capacity = 0
+                        model_bucket = {}
+
+        if len(model_bucket) > 0:
+            model_bucket_list.append(model_bucket)
+        return model_bucket_list
+
+    def gather_and_reshard_model(self, bucket_weight, dst_tp_rank):
         """
         Accumulate all vp model chunks together, and reshard model (i.e) gather all pp ranks
         if required and return the final model state dict
@@ -134,39 +177,38 @@ class MegatronCoreWeightReshard:
             if pp_size > 1:
                 reshard_pp_model = True
 
-        if ep_size > 1 or tpe_size > 1:
+        if (
+            ep_size > 1 or tpe_size > 1
+        ) and self.config.model_config.num_moe_experts is not None:
             reshard_ep_model = True
-            if self.config.model_config.num_moe_experts is None:
-                raise ValueError(
-                    "the model is a moe model, but num_moe_experts is not set"
-                )
             experts_per_chunk = self.config.model_config.num_moe_experts // ep_size
 
         layers_per_pp = self.config.model_config.num_layers // pp_size
         layers_per_chunk = layers_per_pp // vp_size
 
+        model_state_dict = {}
+        model_level_params = {}
         tl_params = {}
         expert_params = {}
-        model_level_params = {}
+
         if vp_size > 1:  # consolidate params across model chunks
-            for idx, model_chunk in enumerate(model):
-                for key, val in model_chunk.state_dict().items():
-                    if "_extra_state" in key:
-                        continue
-                    if torch.is_tensor(val):
-                        if "layers" in key:
-                            key2 = rename_layer_num(
-                                key,
-                                get_layer_num(key) + idx * pp_size * layers_per_chunk,
-                            )
-                            if reshard_ep_model and "experts" in key:
-                                expert_params[key2] = val
-                            else:
-                                tl_params[key2] = val
+            for key, (val, idx) in bucket_weight.items():
+                if "_extra_state" in key:
+                    continue
+                if torch.is_tensor(val):
+                    if "layers" in key:
+                        key2 = rename_layer_num(
+                            key,
+                            get_layer_num(key) + idx * pp_size * layers_per_chunk,
+                        )
+                        if reshard_ep_model and "experts" in key:
+                            expert_params[key2] = val
                         else:
-                            model_level_params[key] = val
+                            tl_params[key2] = val
+                    else:
+                        model_level_params[key] = val
         else:
-            for key, val in model[0].state_dict().items():
+            for key, val in bucket_weight.items():
                 if "_extra_state" in key:
                     continue
                 if torch.is_tensor(val):
@@ -199,7 +241,7 @@ class MegatronCoreWeightReshard:
         if self.config.model_config.num_moe_experts is not None:
             # in MoE model, if use the te group gemm, we need to convert the weight type from te group to seq group
             if self.config.moe_grouped_gemm == "te":
-                from toolkits.ckpt_convertor.utils.mg_moe_groupgemm import (
+                from toolkits.ckpt_convertor.megatron_convertor.utils.mg_moe_groupgemm import (
                     moe_te_group_to_seq,
                 )
 
@@ -230,7 +272,7 @@ class MegatronCoreWeightReshard:
                     tpe_size,
                     tpe_group,
                     self.config.reshard_tp_size,
-                    dst_rank,
+                    dst_tp_rank,
                 )
 
                 # gather experts across pp ranks
@@ -259,10 +301,10 @@ class MegatronCoreWeightReshard:
                     tpe_size,
                     tpe_group,
                     self.config.reshard_tp_size,
-                    dst_rank,
+                    dst_tp_rank,
                 )
 
-        model_state_dict = model_level_params
+        model_state_dict.update(model_level_params)
         model_state_dict.update(tl_params)
         model_state_dict.update(expert_params)
 

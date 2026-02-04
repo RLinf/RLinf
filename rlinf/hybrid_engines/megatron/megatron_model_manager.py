@@ -14,8 +14,7 @@
 
 import gc
 import itertools
-import logging
-from typing import Iterator, Optional
+from typing import TYPE_CHECKING, Iterator, Optional
 
 import torch
 from omegaconf import DictConfig
@@ -24,6 +23,8 @@ from rlinf.config import build_config, build_transformer_config
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.utils.flops import FLOPSCalculator, ModelConfig
 from rlinf.utils.initialize import initialize_megatron, set_megatron_args
+from rlinf.utils.logging import get_logger
+from rlinf.utils.profiler import PyTorchProfiler, PyTorchProfilerFunc
 from rlinf.utils.utils import clear_memory
 
 from .utils import (
@@ -80,7 +81,8 @@ except ImportError:
 
 HAVE_TE = HAVE_TE and HAVE_TE_MODULE
 
-logging.getLogger().setLevel(logging.INFO)
+if TYPE_CHECKING:
+    pass
 
 
 def get_specs(spec_name, transformer_config=None, use_te=False):
@@ -123,9 +125,10 @@ class MegatronModelManager:
         self.mcore_gpt = cfg.mcore_gpt
         self.spec_name = cfg.spec_name
         self.distributed_adam_offload_manager = None
+        self._logger = get_logger()
 
         if torch.distributed.get_rank() == 0:
-            logging.info(f"{self.transformer_config}")
+            self._logger.info(f"{self.transformer_config}")
 
         self.checkpoint_context = self._get_checkpoint_context()
 
@@ -287,12 +290,15 @@ class MegatronModelManager:
         return checkpointing_context
 
     def save_checkpoint(
-        self, checkpoint_save_path, step, num_floating_point_operations_so_far=0
-    ):
+        self,
+        save_path: str,
+        step: int,
+        num_floating_point_operations_so_far: int = 0,
+    ) -> None:
         if not self.is_running:
             return
         args = get_args()
-        args.save = checkpoint_save_path
+        args.save = save_path
         save_checkpoint(
             iteration=step,
             model=self.model,
@@ -303,9 +309,9 @@ class MegatronModelManager:
             preprocess_common_state_dict_fn=preprocess_common_state_dict,
         )
 
-    def load_checkpoint(self, checkpoint_load_path):
+    def load_checkpoint(self, load_path):
         args = get_args()
-        args.load = checkpoint_load_path
+        args.load = load_path
         load_checkpoint(
             self.model,
             self.optimizer,
@@ -417,6 +423,39 @@ class MegatronModelManager:
             output = output[..., 0]
         return output
 
+    def _get_pinned_buffer(self, tensor: torch.Tensor) -> torch.Tensor:
+        """
+        Get or create a pinned CPU buffer for the given tensor.
+        Creates a pinned memory buffer on first call and caches it as `cpu_data` on `tensor`.
+        Subsequent calls return the cached buffer for efficient DMA transfers.
+        Args:
+            tensor: The GPU tensor to create a pinned buffer for.
+        Returns:
+            A pinned CPU tensor with the same size, dtype, and layout as the input.
+        """
+
+        needed_size = tensor.untyped_storage().size()
+
+        # check if there is a reusable buffer
+        if hasattr(tensor, "cpu_data"):
+            existing = getattr(tensor, "cpu_data")
+            if (
+                existing is not None
+                and existing.untyped_storage().size() >= needed_size
+            ):
+                return existing
+
+        # create new buffer (slightly larger to reuse)
+        new_buffer = torch.empty(
+            tensor.shape,
+            dtype=tensor.dtype,
+            pin_memory=True,
+            device="cpu",
+        )
+
+        setattr(tensor, "cpu_data", new_buffer)
+        return new_buffer
+
     def offload_model_weights_and_grad(self, offload_grad=True, offload_weight=True):
         for model_idx, model_chunk in enumerate(self.model):
             if isinstance(model_chunk, DDP):
@@ -427,16 +466,14 @@ class MegatronModelManager:
                     ):
                         param_size = buffer.param_data.untyped_storage().size()
 
-                        buffer.param_data.cpu_data = (
-                            buffer.param_data.data.cpu().pin_memory()
-                        )
+                        cpu_data = self._get_pinned_buffer(buffer.param_data)
+                        cpu_data.copy_(buffer.param_data, non_blocking=True)
                         buffer.param_data_size = param_size
 
                         buffer.param_data.untyped_storage().resize_(0)
 
                         assert (
-                            buffer.param_data_size
-                            == buffer.param_data.cpu_data.untyped_storage().size()
+                            buffer.param_data_size == cpu_data.untyped_storage().size()
                         )
 
                     if offload_grad and buffer.grad_data.untyped_storage().size() > 0:
@@ -447,12 +484,13 @@ class MegatronModelManager:
             else:
                 for param_name, param in model_chunk.named_parameters():
                     if offload_weight and param.data is not None:
-                        param.data = param.data.to("cpu", non_blocking=True)
+                        cpu_data = self._get_pinned_buffer(param.data)
+                        cpu_data.copy_(param.data, non_blocking=True)
 
                     if offload_grad and param.grad is not None:
-                        param.grad = param.grad.to("cpu", non_blocking=True)
-
-        # clear memory
+                        cpu_data = self._get_pinned_buffer(param.grad)
+                        cpu_data.copy_(param.grad, non_blocking=True)
+        # sync and clear memory
         clear_memory()
 
     def onload_model_weights_and_grad(self, load_grad=True):
@@ -572,13 +610,15 @@ class MegatronModelManager:
             self.offload_megatron_copy_params(_opt)
             for v in _opt.optimizer.state.values():
                 # Offloading through resetting the storage size can ensure that the tensor can be offloaded correctly even when it has tensor views.
-                if "exp_avg" in v:
+                if "exp_avg" in v and v["exp_avg"].is_cuda:
                     buffer = v["exp_avg"]
-                    buffer.cpu_data = buffer.data.cpu().pin_memory()
+                    cpu_data = self._get_pinned_buffer(buffer)
+                    cpu_data.copy_(buffer.data, non_blocking=True)
                     buffer.storage().resize_(0)
-                if "exp_avg_sq" in v:
+                if "exp_avg_sq" in v and v["exp_avg_sq"].is_cuda:
                     buffer = v["exp_avg_sq"]
-                    buffer.cpu_data = buffer.data.cpu().pin_memory()
+                    cpu_data = self._get_pinned_buffer(buffer)
+                    cpu_data.copy_(buffer.data, non_blocking=True)
                     buffer.storage().resize_(0)
         clear_memory()
 
@@ -591,12 +631,37 @@ class MegatronModelManager:
         for _opt in _iter_opts(self.optimizer):
             self.load_megatron_copy_params(_opt)
             for v in _opt.optimizer.state.values():
-                if "exp_avg" in v:
+                if "exp_avg" in v and v["exp_avg"].is_cuda:
                     v["exp_avg"].data = v["exp_avg"].cpu_data.to(
                         torch.cuda.current_device(), non_blocking=True
                     )
-                if "exp_avg_sq" in v:
+                if "exp_avg_sq" in v and v["exp_avg_sq"].is_cuda:
                     v["exp_avg_sq"].data = v["exp_avg_sq"].cpu_data.to(
                         torch.cuda.current_device(), non_blocking=True
                     )
         clear_memory()
+
+    def init_profiler(self):
+        # here we should validate profiler's schedule info
+        assert (
+            self._cfg.megatron.profiler.schedule_warmup is not None
+            and self._cfg.megatron.profiler.schedule_warmup >= 0
+        ), "<schedule_warmup> must be set and greater than 0 when using profiler."
+        assert (
+            self._cfg.megatron.profiler.schedule_active is not None
+            and self._cfg.megatron.profiler.schedule_active > 0
+        ), "<schedule_active> must be set and greater than 0 when using profiler."
+
+        self.profiler = PyTorchProfiler.from_config(self._cfg.megatron.profiler)
+
+        self.forward_only_record = PyTorchProfilerFunc("forward_only")
+        self.dynamic_batch_processing_record = PyTorchProfilerFunc(
+            "dynamic_batch_processing"
+        )
+        self.static_batch_processing_record = PyTorchProfilerFunc(
+            "static_batch_processing"
+        )
+        self.broadcast_outputs_record = PyTorchProfilerFunc("broadcast_outputs")
+        self.megatron_forward_backward_record = PyTorchProfilerFunc(
+            "megatron_forward_backward"
+        )

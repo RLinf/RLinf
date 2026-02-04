@@ -15,7 +15,7 @@
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Optional, Union
+from typing import TYPE_CHECKING, Callable, Optional, Union
 
 import torch
 from omegaconf import DictConfig
@@ -24,9 +24,11 @@ if TYPE_CHECKING:
     from vllm.outputs import CompletionOutput
     from vllm.outputs import RequestOutput as VllmRequestOutput
 
-from rlinf.data.datasets.utils import batch_pad_to_fixed_len
+from rlinf.data.utils import batch_pad_to_fixed_len
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
+    merge_list,
+    merge_tensor,
     split_list,
 )
 
@@ -251,7 +253,6 @@ class RolloutResult:
     def _get_attention_masks_and_position_ids(
         prompt_lengths: torch.Tensor,
         response_lengths: torch.Tensor,
-        response_mask: torch.Tensor | None,
         max_prompt_len: int,
         total_len: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -266,33 +267,15 @@ class RolloutResult:
 
         # Compute the start and end positions of the prompt and response tokens
         prompt_start = max_prompt_len - prompt_lengths  # [B]
+        prompt_end = torch.full_like(prompt_start, max_prompt_len)  # [B]
         response_end = max_prompt_len + response_lengths  # [B]
 
         # Broadcast [B, total_len]
         prompt_start = prompt_start.unsqueeze(1)
+        prompt_end = prompt_end.unsqueeze(1)
         response_end = response_end.unsqueeze(1)
-        if response_mask is not None:
-            max_response_len = total_len - max_prompt_len
-            response_mask = batch_pad_to_fixed_len(
-                [torch.as_tensor(ids, dtype=torch.long) for ids in response_mask],
-                max_batch_len=max_response_len,
-                pad_token=0,
-            )
-
-            attention_mask = torch.cat(
-                [
-                    (
-                        torch.arange(max_prompt_len)
-                        .unsqueeze(0)
-                        .expand(response_mask.size(0), -1)
-                        >= prompt_start
-                    ),
-                    response_mask,
-                ],
-                dim=1,
-            ).bool()
-        else:
-            attention_mask = (arange_ids >= prompt_start) & (arange_ids < response_end)
+        attention_mask = (arange_ids >= prompt_start) & (arange_ids < response_end)
+        response_mask = (arange_ids >= prompt_end) & (arange_ids < response_end)
 
         # =========================
         # Position IDs
@@ -303,7 +286,24 @@ class RolloutResult:
             ps = prompt_start[i].item()
             position_ids[i, ps:] = torch.arange(total_len - ps)
 
-        return attention_mask, position_ids
+        return attention_mask, response_mask, position_ids
+
+    @staticmethod
+    def _get_response_masks(
+        response_mask: list[list[int]],  # [[0 / 1] * response len] * group size
+        max_prompt_len: int,
+        total_len: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        response_mask = batch_pad_to_fixed_len(
+            [
+                torch.as_tensor([0] * max_prompt_len + ids, dtype=torch.long)
+                for ids in response_mask
+            ],
+            max_batch_len=total_len,
+            pad_token=0,
+        ).bool()
+
+        return response_mask
 
     @staticmethod
     def from_vllm_results(
@@ -463,35 +463,16 @@ class RolloutResult:
             is_end=[],
         )
 
-        def merge_tensor(dst_tensor: torch.Tensor, src_tensor: torch.Tensor):
-            assert dst_tensor is None or torch.is_tensor(dst_tensor), (
-                f"Expected tensor, got {type(dst_tensor)}"
-            )
-            assert torch.is_tensor(src_tensor), (
-                f"Expected tensor, got {type(src_tensor)}"
-            )
-            if dst_tensor is None:
-                return src_tensor
-            else:
-                return torch.cat([dst_tensor, src_tensor], dim=0)
-
-        def merge_list(dst_list: list, src_list: list):
-            assert dst_list is None or isinstance(dst_list, list), (
-                f"Expected list, got {type(dst_list)}"
-            )
-            assert isinstance(src_list, list), f"Expected list, got {type(src_list)}"
-            if dst_list is None:
-                return src_list
-            else:
-                dst_list.extend(src_list)
-                return dst_list
-
         for res in rollout_results:
             merged_result.prompt_lengths.extend(res.prompt_lengths)
             merged_result.prompt_ids.extend(res.prompt_ids)
             merged_result.response_lengths.extend(res.response_lengths)
             merged_result.response_ids.extend(res.response_ids)
             merged_result.is_end.extend(res.is_end)
+            if res.response_mask is not None:
+                merged_result.response_mask = merge_list(
+                    merged_result.response_mask, res.response_mask
+                )
             if res.answers is not None:
                 merged_result.answers = merge_list(merged_result.answers, res.answers)
             if res.advantages is not None:
@@ -716,7 +697,14 @@ class RolloutResult:
                 shape ``[batch_size, training_seq_length]``.
 
             attention_mask (torch.Tensor):
-                Attention mask for the input sequence,
+                Attention mask for the whole input sequence,
+                Value: True for or prompt_ids and response_ids, False for others
+                shape ``[batch_size, training_seq_length]``.
+
+            response_mask (torch.Tensor):
+                Mask participate in adv and loss calculation for the whole input sequence,
+                To filter ids not generated by llm,
+                Value: True for or response_ids generated by llm, False for others
                 shape ``[batch_size, training_seq_length]``.
 
             is_end (torch.Tensor):
@@ -740,11 +728,16 @@ class RolloutResult:
                 shape ``[batch_size, training_seq_length - data_seq_length]``.
         """
 
-        # len = training_seq_length: input_ids, attention_mask, position_ids
-        #           [prompt_padding, prompt_ids,    response_ids, ... ,response_padding]
+        # len = training_seq_length: input_ids, attention_mask, position_ids, response_mask
+        # each row: [prompt_padding, prompt_ids,    response_ids, ... ,response_padding]
         #           |<-- padding -->|<-- pmp len -->|<-- resp len --->|<-- padding --->|
         #           |<---- cfg.data.seq_length ---->|
         #           |<------------------ cfg.runner.seq_length --------------------->|
+        # each row: [response_mask]
+        #           |<------- padding ------->|<- llm resp ->|<- tool resp ->|<- llm resp ->|<- padding ->|
+        #           |<-------- False -------->|<--- True --->|<--- False --->|<--- True --->|<-- False -->|
+        #           |<- cfg.data.seq_length ->|<------ cfg.runner.seq_length - cfg.data.seq_length ------>|
+        #           |<------------------------------ cfg.runner.seq_length ------------------------------>|
 
         # len = training_seq_length - data_seq_length: advantage, prev_logprobs, ref_logprobs
         # each row: [response_ids, ...,                , response_padding]
@@ -757,13 +750,20 @@ class RolloutResult:
         response_lengths = torch.tensor(self.response_lengths)
         is_end = torch.tensor(self.is_end, dtype=torch.bool)
 
-        attention_mask, position_ids = self._get_attention_masks_and_position_ids(
-            prompt_lengths=prompt_lengths,
-            response_lengths=response_lengths,
-            response_mask=self.response_mask,
-            max_prompt_len=data_seq_length,
-            total_len=training_seq_length,
+        attention_mask, response_mask, position_ids = (
+            self._get_attention_masks_and_position_ids(
+                prompt_lengths=prompt_lengths,
+                response_lengths=response_lengths,
+                max_prompt_len=data_seq_length,
+                total_len=training_seq_length,
+            )
         )
+        if self.response_mask is not None:
+            response_mask = self._get_response_masks(
+                self.response_mask,
+                max_prompt_len=data_seq_length,
+                total_len=training_seq_length,
+            )
 
         prompt_ids = batch_pad_to_fixed_len(
             [torch.as_tensor(ids, dtype=torch.long) for ids in self.prompt_ids],
@@ -784,6 +784,7 @@ class RolloutResult:
         batch = {
             "input_ids": input_ids.cuda(),
             "attention_mask": attention_mask.cuda(),
+            "response_mask": response_mask.cuda(),
             "is_end": is_end.cuda(),
             "position_ids": position_ids.cuda(),
             "prompt_lengths": prompt_lengths.cuda(),
@@ -828,7 +829,7 @@ class RolloutResult:
                     for logprobs in self.rollout_logprobs
                 ],
                 max_batch_len=max_response_len,
-                pad_token=pad_token,
+                pad_token=0,
             )
             batch["prev_logprobs"] = logprobs.cuda()
 
@@ -856,6 +857,114 @@ class RolloutResult:
                 raise ValueError(f"Unsupported batch key type: {type(batches[0][key])}")
         return merged_batch
 
+    @staticmethod
+    def split_results(
+        rollout_result: "RolloutResult",
+        split_num: int,
+    ) -> list["RolloutResult"]:
+        """
+        Split a single RolloutResult into multiple RolloutResult objects by group_size.
+
+        Args:
+            rollout_result: The RolloutResult to be split
+
+        Returns:
+            list of split RolloutResult objects
+        """
+        group_size = rollout_result.group_size
+        num_sequence = rollout_result.num_sequence
+
+        assert num_sequence % (rollout_result.group_size * split_num) == 0, (
+            f"num_sequence ({num_sequence}) must be divisible by split_num ({split_num}) and group_size ({rollout_result.group_size})"
+        )
+
+        list_none = [None for _ in range(split_num)]
+        fields_split = {}
+        # Split list fields
+        list_fields = [
+            "prompt_lengths",
+            "prompt_ids",
+            "response_lengths",
+            "response_ids",
+            "is_end",
+        ]
+        for k in list_fields:
+            v = getattr(rollout_result, k)
+            fields_split[k] = split_list(v, split_num)
+
+        # Split optional list fields
+        list_fields = [
+            "answers",
+            "image_data",
+            "multi_modal_inputs",
+            "prompt_texts",
+            "response_texts",
+            "rollout_logprobs",
+            "recompute_prev_logprobs",
+            "response_mask",
+        ]
+        for k in list_fields:
+            v = getattr(rollout_result, k)
+            if v is not None:
+                fields_split[k] = split_list(v, split_num)
+            else:
+                fields_split[k] = list_none
+
+        # Split optional tensor or list fields
+        optional_tensor_fields = [
+            "prev_logprobs",
+            "ref_logprobs",
+        ]
+        for k in optional_tensor_fields:
+            v = getattr(rollout_result, k)
+            if v is not None:
+                fields_split[k] = torch.chunk(v, split_num, dim=0)
+            else:
+                fields_split[k] = list_none
+
+        # Split optional tensor or list fields
+        optional_tensor_list_fields = [
+            "rewards",
+            "advantages",
+        ]
+        for k in optional_tensor_list_fields:
+            v = getattr(rollout_result, k)
+            if v is not None:
+                if isinstance(v, torch.Tensor):
+                    fields_split[k] = torch.chunk(v, split_num, dim=0)
+                else:
+                    fields_split[k] = split_list(v, split_num)
+            else:
+                fields_split[k] = list_none
+
+        # Create split RolloutResult objects
+        split_results = []
+        for i in range(split_num):
+            split_result = RolloutResult(
+                num_sequence=num_sequence // split_num,
+                group_size=group_size,
+                prompt_lengths=fields_split["prompt_lengths"][i],
+                prompt_ids=fields_split["prompt_ids"][i],
+                response_lengths=fields_split["response_lengths"][i],
+                response_ids=fields_split["response_ids"][i],
+                is_end=fields_split["is_end"][i],
+                rewards=fields_split["rewards"][i],
+                advantages=fields_split["advantages"][i],
+                prompt_texts=fields_split["prompt_texts"][i],
+                response_texts=fields_split["response_texts"][i],
+                answers=fields_split["answers"][i],
+                image_data=fields_split["image_data"][i],
+                multi_modal_inputs=fields_split["multi_modal_inputs"][i],
+                response_mask=fields_split["response_mask"][i],
+                rollout_logprobs=fields_split["rollout_logprobs"][i],
+                recompute_prev_logprobs=fields_split["recompute_prev_logprobs"][i],
+                prev_logprobs=fields_split["prev_logprobs"][i],
+                ref_logprobs=fields_split["ref_logprobs"][i],
+            )
+            split_results.append(split_result)
+
+        return split_results
+
 
 class BatchResizingIterator:
     """The iterator for handling getting a batch and split it as a batch iterator with optional dynamic batch size."""
@@ -876,7 +985,9 @@ class BatchResizingIterator:
             cfg (DictConfig): The configuration object.
             get_batch_fn (Callable): The function to get the batch.
             micro_batch_size (int): The size of the micro batch.
-            global_batch_size_per_dp (int): The global batch size per data parallel. Here a global batch means the data required for running a single step of inference/training.
+            total_batch_size (int): The total batch size.
+            num_global_batches (int): The number of global batches.
+            forward_only (bool): Whether to run in forward-only mode.
             batch_tensor_key (str): The key for retrieving a sample batch tensor, which will be used to measure the batch size and sequence length. By default, this is "input_ids", which means the input_ids tensor's shape will be used to determine batch size and sequence length.
         """
         self.cfg = cfg
@@ -922,12 +1033,7 @@ class BatchResizingIterator:
         return batch
 
     def prefetch_one_batch(self):
-        """Get the total sequence length, number of microbatches, and indices based on the batch information and dynamic batch sizing.
-
-        Args:
-            forward_micro_batch_size: The size of the forward micro batch.
-            forward_only: Whether to only consider the forward pass.
-        """
+        """Get the total sequence length, number of microbatches, and indices based on the batch information and dynamic batch sizing."""
         if self.prefetch_micro_batch is None:
             self.prefetch_micro_batch = next(self)
 
@@ -1031,205 +1137,3 @@ class BatchResizingIterator:
             )
 
             return self._get_next_micro_batch()
-
-
-def put_tensor_cpu(data_dict):
-    if data_dict is None:
-        return None
-
-    for key, value in data_dict.items():
-        if isinstance(value, dict):
-            data_dict[key] = put_tensor_cpu(value)
-        if isinstance(value, torch.Tensor):
-            data_dict[key] = value.cpu().contiguous()
-    return data_dict
-
-
-@dataclass(kw_only=True)
-class EnvOutput:
-    simulator_type: str
-    obs: dict[str, Any]
-    final_obs: Optional[dict[str, Any]] = None
-    dones: Optional[torch.Tensor] = None  # [B]
-    rewards: Optional[torch.Tensor] = None  # [B]
-
-    def __post_init__(self):
-        self.obs = put_tensor_cpu(self.obs)
-        self.final_obs = (
-            put_tensor_cpu(self.final_obs) if self.final_obs is not None else None
-        )
-        self.dones = self.dones.cpu().contiguous() if self.dones is not None else None
-        self.rewards = (
-            self.rewards.cpu().contiguous() if self.rewards is not None else None
-        )
-
-    def prepare_observations(self, obs: dict[str, Any]) -> dict[str, Any]:
-        wrist_image_tensor = None
-        if self.simulator_type == "libero":
-            image_tensor = torch.stack(
-                [
-                    value.clone().permute(2, 0, 1)
-                    for value in obs["images_and_states"]["full_image"]
-                ]
-            )
-            if "wrist_image" in obs["images_and_states"]:
-                wrist_image_tensor = torch.stack(
-                    [
-                        value.clone().permute(2, 0, 1)
-                        for value in obs["images_and_states"]["wrist_image"]
-                    ]
-                )
-        elif self.simulator_type == "maniskill":
-            image_tensor = obs["images"]
-        elif self.simulator_type == "rlbench":
-            image_tensor = obs["images"]
-        elif self.simulator_type == "robotwin":
-            image_tensor = obs["images"]
-        elif self.simulator_type == "behavior":
-            image_tensor = obs["images"]
-            wrist_image_tensor = obs["wrist_images"]
-        elif self.simulator_type == "metaworld":
-            image_tensor = torch.stack(
-                [
-                    value.clone().permute(2, 0, 1)
-                    for value in obs["images_and_states"]["full_image"]
-                ]
-            )
-        else:
-            raise NotImplementedError
-
-        states = None
-        if "images_and_states" in obs and "state" in obs["images_and_states"]:
-            states = obs["images_and_states"]["state"]
-        if "state" in obs:
-            states = obs["state"]
-
-        task_descriptions = (
-            list(obs["task_descriptions"]) if "task_descriptions" in obs else None
-        )
-
-        return {
-            "images": image_tensor,
-            "wrist_images": wrist_image_tensor,
-            "states": states,
-            "task_descriptions": task_descriptions,
-        }
-
-    def to_dict(self):
-        env_output_dict = {}
-
-        env_output_dict["obs"] = self.prepare_observations(self.obs)
-        env_output_dict["final_obs"] = (
-            self.prepare_observations(self.final_obs)
-            if self.final_obs is not None
-            else None
-        )
-        env_output_dict["dones"] = self.dones
-        env_output_dict["rewards"] = self.rewards
-
-        return env_output_dict
-
-
-@dataclass(kw_only=True)
-class EmbodiedRolloutResult:
-    # required
-    prev_logprobs: list[torch.Tensor] = field(default_factory=list)
-    prev_values: list[torch.Tensor] = field(default_factory=list)
-    dones: list[torch.Tensor] = field(default_factory=list)
-    rewards: list[torch.Tensor] = field(default_factory=list)
-
-    forward_inputs: list[dict[str, Any]] = field(default_factory=list)
-
-    def __post_init__(self):
-        self.prev_logprobs = (
-            [prev_logprob.cpu().contiguous() for prev_logprob in self.prev_logprobs]
-            if self.prev_logprobs is not None
-            else []
-        )
-        self.prev_values = (
-            [prev_value.cpu().contiguous() for prev_value in self.prev_values]
-            if self.prev_values is not None
-            else []
-        )
-        self.dones = (
-            [done.cpu().contiguous() for done in self.dones]
-            if self.dones is not None
-            else []
-        )
-        self.rewards = (
-            [reward.cpu().contiguous() for reward in self.rewards]
-            if self.rewards is not None
-            else []
-        )
-
-        self.forward_inputs = [
-            put_tensor_cpu(forward_inputs) for forward_inputs in self.forward_inputs
-        ]
-
-    def append_result(self, result: dict[str, Any]):
-        self.prev_logprobs.append(
-            result["prev_logprobs"].cpu().contiguous()
-        ) if "prev_logprobs" in result else []
-        self.prev_values.append(
-            result["prev_values"].cpu().contiguous()
-        ) if "prev_values" in result else []
-        self.dones.append(
-            result["dones"].cpu().contiguous()
-        ) if "dones" in result else []
-        self.rewards.append(
-            result["rewards"].cpu().contiguous()
-        ) if "rewards" in result else []
-
-        self.forward_inputs.append(put_tensor_cpu(result["forward_inputs"]))
-
-    def to_dict(self):
-        rollout_result_dict = {}
-        rollout_result_dict["prev_logprobs"] = (
-            torch.stack(self.prev_logprobs, dim=0).cpu().contiguous()
-            if len(self.prev_logprobs) > 0
-            else None
-        )
-        rollout_result_dict["prev_values"] = (
-            torch.stack(self.prev_values, dim=0).cpu().contiguous()
-            if len(self.prev_values) > 0
-            else None
-        )
-        rollout_result_dict["dones"] = (
-            torch.stack(self.dones, dim=0).cpu().contiguous()
-            if len(self.dones) > 0
-            else None
-        )
-        rollout_result_dict["rewards"] = (
-            torch.stack(self.rewards, dim=0).cpu().contiguous()
-            if len(self.rewards) > 0
-            else None
-        )
-        merged_forward_inputs = {}
-        for data in self.forward_inputs:
-            for k, v in data.items():
-                if k in merged_forward_inputs:
-                    merged_forward_inputs[k].append(v)
-                else:
-                    merged_forward_inputs[k] = [v]
-        for k in merged_forward_inputs.keys():
-            assert k not in ["dones", "rewards", "prev_logprobs", "prev_values"]
-            rollout_result_dict[k] = (
-                torch.stack(merged_forward_inputs[k], dim=0).cpu().contiguous()
-            )
-
-        return rollout_result_dict
-
-    def to_splited_dict(self, split_size) -> list[dict[str, Any]]:
-        rollout_result_list = []
-        for i in range(split_size):
-            rollout_result_list.append(self.to_dict())
-
-            for key, value in rollout_result_list[i].items():
-                if isinstance(value, torch.Tensor):
-                    rollout_result_list[i][key] = torch.chunk(value, split_size, dim=1)[
-                        i
-                    ].contiguous()
-                else:
-                    raise ValueError(f"Unsupported type: {type(value)}")
-
-        return rollout_result_list

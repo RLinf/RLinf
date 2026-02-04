@@ -17,13 +17,14 @@ import gc
 import os
 import random
 import sys
+import uuid
 from contextlib import contextmanager
 from functools import partial, wraps
+from typing import Callable, Literal, Optional
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from omegaconf import DictConfig
 from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
@@ -49,44 +50,60 @@ cuda_dict = partial(apply_func_to_dict, partial(move_to_device_if_tensor, "cuda"
 cpu_dict = partial(apply_func_to_dict, partial(move_to_device_if_tensor, "cpu"))
 
 
-def retrieve_model_state_dict_in_cpu(model):
+def retrieve_model_state_dict_in_cpu(model, offloaded_buffer=None):
     """get a copy of the model states in CPU"""
-    cpu_dict = {}
+    if offloaded_buffer is None:
+        offloaded_buffer = {}
 
     for name, item in model.state_dict().items():
         if isinstance(item, torch.Tensor):
-            item = item.detach().to(device="cpu", non_blocking=True, copy=True)
-
-        cpu_dict[name] = item
+            if name in offloaded_buffer:
+                offloaded_buffer[name].copy_(item.detach(), non_blocking=True)
+            else:
+                item = (
+                    item.detach()
+                    .to(device="cpu", non_blocking=True, copy=True)
+                    .pin_memory()
+                )
+                offloaded_buffer[name] = item
+        else:
+            offloaded_buffer[name] = item
 
     torch.cuda.synchronize()
-    return cpu_dict
+    return offloaded_buffer
 
 
 @torch.no_grad()
-def swap_dict(resident_model, cpu_weights, offload_onto_cpu=True):
+def swap_dict(
+    resident_model, cpu_weights, offload_onto_cpu=True, offloaded_buffer=None
+):
     """swap the state dict with a specified state dict, and offload the current state dict onto CPU
     if needed
     """
-    offloaded_weights = {}
+    if offloaded_buffer is None:
+        offloaded_buffer = {}
 
     if offload_onto_cpu:
-        offloaded_weights = retrieve_model_state_dict_in_cpu(resident_model)
+        offloaded_buffer = retrieve_model_state_dict_in_cpu(
+            resident_model, offloaded_buffer
+        )
 
     resident_model.load_state_dict(cpu_weights)
-    return offloaded_weights
+    return offloaded_buffer
 
 
 @contextmanager
-def cpu_weight_swap(resident_model, cpu_weights):
+def cpu_weight_swap(resident_model, cpu_weights, offloaded_buffer=None):
     """swap the weights into GPU, and then swap it out once return"""
-    cpu_dict = swap_dict(resident_model, cpu_weights)
+    offloaded_buffer = swap_dict(
+        resident_model, cpu_weights, offloaded_buffer=offloaded_buffer
+    )
 
     try:
         yield
 
     finally:
-        swap_dict(resident_model, cpu_dict, offload_onto_cpu=False)
+        swap_dict(resident_model, offloaded_buffer, offload_onto_cpu=False)
 
 
 def configure_batch_sizes(rank, mbs, gbs, dp=1):
@@ -139,7 +156,50 @@ def masked_mean_ratio(
     return (values / loss_mask_ratio * mask).mean()
 
 
-def reshape_entropy(entropy, entropy_type, action_dim=7, batch_size=1):
+def get_loss_agg_func(
+    loss_agg: str,
+) -> Callable[[torch.Tensor, torch.Tensor, int], torch.Tensor]:
+    """
+    Get loss aggregation function based on the loss_agg string.
+
+    Args:
+        loss_agg (str): The loss aggregation method. Options are:
+            - "seq-mean-token-sum": Sequence mean of token sums.
+            - "seq-mean-token-mean": Sequence mean of token means.
+            - "token-mean": Mean over tokens.
+
+    Returns:
+        Callable[[torch.Tensor, torch.Tensor, int], torch.Tensor]: A function that takes values, mask, and dim as inputs and returns the aggregated
+    """
+    if loss_agg == "seq-mean-token-sum":
+        return seq_mean_token_sum
+    elif loss_agg == "seq-mean-token-mean":
+        return seq_mean_token_mean
+    elif loss_agg == "token-mean":
+        return masked_mean
+    else:
+        raise ValueError(f"Unsupported loss aggregation method: {loss_agg}")
+
+
+def reshape_entropy(
+    entropy: Optional[torch.Tensor],
+    entropy_type: str,
+    action_dim: int = 7,
+    batch_size: int = 1,
+) -> Optional[torch.Tensor]:
+    """
+    Reshape entropy based on the entropy type.If entropy is None, return None.
+    If entropy_type is "action_level", reshape entropy to [batch_size, seq_len] by summing over action_dim.
+    If entropy_type is "chunk_level", reshape entropy to [batch_size, seq_len]
+
+    Args:
+        entropy(Optional[torch.Tensor]): [B, seq_len * action_dim] or [B, seq_len] or None
+        entropy_type(str): "action_level" or "chunk_level"
+        action_dim(int): action dimension, default is 7
+
+    Returns:
+        entropy(Optional[torch.Tensor]): reshaped entropy or None
+    """
     if entropy is not None:
         if entropy_type == "action_level":
             entropy = entropy.reshape(batch_size, -1, action_dim).sum(dim=-1)
@@ -148,7 +208,20 @@ def reshape_entropy(entropy, entropy_type, action_dim=7, batch_size=1):
     return entropy
 
 
-def logprobs_from_logits_flash_attn(logits, labels, inplace_backward=True):
+def logprobs_from_logits_flash_attn(
+    logits: torch.Tensor, labels: torch.Tensor, inplace_backward: bool = True
+) -> torch.Tensor:
+    """
+    Compute logprobs by logits using flash-attn's cross_entropy_loss.
+
+    Args:
+        logits(torch.Tensor): [B*seq-len, vocab-size]
+        labels(torch.Tensor): [B*seq-len]
+        inplace_backward(bool): whether to use inplace backward to save memory
+
+    Returns:
+        logprobs(torch.Tensor): [B*seq-len]
+    """
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
 
     output = cross_entropy_loss(logits, labels, inplace_backward=inplace_backward)
@@ -158,45 +231,85 @@ def logprobs_from_logits_flash_attn(logits, labels, inplace_backward=True):
     return -output[0]
 
 
-def compute_logprobs_from_logits(logits, target, task_type="embodied"):
-    if task_type == "embodied":
-        logprobs = -F.cross_entropy(
-            logits, target=target, reduction="none"
-        )  # [B, action-dim]
-        return logprobs
+def logprobs_from_logits_liger_kernel(
+    logits: torch.Tensor, labels: torch.Tensor
+) -> torch.Tensor:
+    """
+    Compute logprobs by logits using liger-kernel's cross_entropy_loss.
+
+    Args:
+        logits(torch.Tensor): [B*seq-len, vocab-size]
+        labels(torch.Tensor): [B*seq-len]
+
+    Returns:
+        logprobs(torch.Tensor): [B*seq-len]
+    """
+    from liger_kernel.transformers.cross_entropy import LigerCrossEntropyLoss
+
+    loss_func = LigerCrossEntropyLoss(reduction="none")
+    logprobs = -loss_func(logits, labels)
+    return logprobs
+
+
+def compute_logprobs_from_logits(
+    logits: torch.Tensor,
+    target: torch.Tensor,
+    op_type: Literal["torch", "flash_attn", "liger_kernel"] = "torch",
+) -> torch.Tensor:
+    """
+    Compute logprobs by logits.
+
+    Args:
+        logits(torch.Tensor): [B, seq-len, vocab-size]
+        target(torch.Tensor): [B, seq-len]
+        op_type(str): the type of logprobs computation method, options are "torch", "flash_attn", "liger_kernel"
+            default is "torch".
+            flash_attn calc in fp32, torch and liger_kernel calc in logits.dtype.
+
+    Returns:
+        logprobs(torch.Tensor): [B, seq-len]
+    """
     batch_dim = logits.shape[:-1]
     last_dim = logits.shape[-1]
     logits = logits.reshape(-1, last_dim)
     labels = target.reshape(-1)
-    logprobs = logprobs_from_logits_flash_attn(
-        logits, labels=labels, inplace_backward=False
+
+    assert op_type in ["torch", "flash_attn", "liger_kernel"], (
+        f"Unsupported op_type: {op_type} for logprobs computation. Supported types are 'torch', 'flash_attn', 'liger_kernel'."
     )
-    logprobs = logprobs.view(*batch_dim)
+    if op_type == "liger_kernel":
+        # liger_kernel will use input dtype to compute logprobs.
+        logprobs = logprobs_from_logits_liger_kernel(logits, labels)
+    elif op_type == "flash_attn":
+        # flash_attn will use fp32 to compute logprobs.
+        logprobs = logprobs_from_logits_flash_attn(logits, labels)
+    elif op_type == "torch":
+        # torch will use input dtype to compute logprobs.
+        logprobs = -F.cross_entropy(logits, labels, reduction="none")
+
+    # reshape back to [B, seq-len]
+    logprobs = logprobs.view(*batch_dim).float()
     return logprobs
 
 
-def entropy_from_logits(logits: torch.Tensor):
-    """Calculate entropy from logits."""
-    pd = torch.nn.functional.softmax(logits, dim=-1)
-    entropy = torch.logsumexp(logits, dim=-1) - torch.sum(pd * logits, dim=-1)
-    return entropy
-
-
-def compute_entropy_from_logits(logits, epsilon=1e-10, task_type="embodied"):
+def compute_entropy_from_logits(logits: torch.Tensor, dim: int = -1) -> torch.Tensor:
     """
-    Compute entropy by logits.
+    Compute entropy by logits,formula: H(X) = - sum(p(x) * log(p(x)))
+    In case logits are too small to cause numerical instability(like downflow to zero after softmax),
+    we use log_softmax to compute(it will automatically stabilize the computation) logp.
 
     Args:
-        logits: [B, vocab-size, seq-len]
+        - logits(torch.Tensor): [B,seq-len,vocab-size]
+        - dim(int): the dimension to compute entropy
     Returns:
-        entropy: [B, seq-len]
+        - entropy(torch.Tensor): [B, seq-len]
     """
-    if task_type == "embodied":
-        all_probs = F.softmax(logits, dim=1)  # [B, vocab-size, seq-len]
-        all_log_probs = torch.log(all_probs + epsilon)
-        entropy = -torch.sum(all_probs * all_log_probs, dim=1)  # [B, seq-len]
-        return entropy
-    return entropy_from_logits(logits=logits)
+    logp = F.log_softmax(logits, dim=dim)
+    p = logp.exp()
+    # if some p are zero, p*logp will be nan, we set those terms to zero
+    entropy_term = torch.where(p > 0, p * logp, 0.0)
+    entropy = -entropy_term.sum(dim=dim)
+    return entropy
 
 
 class DualOutput:
@@ -276,13 +389,6 @@ def output_redirector(func):
             sys.stderr = old_stderr
 
     return wrapper
-
-
-def is_vla_model(cfg: DictConfig) -> bool:
-    """Check if the model is a VLA model based on the configuration."""
-    model_type = cfg.model.get("model_name", "").lower()
-    vla_model_types = {"openvla", "openvla_oft"}
-    return model_type in vla_model_types
 
 
 def warmup_optimizer_state(optimizer: Optimizer) -> None:
@@ -374,3 +480,28 @@ def set_rng_state(rng_state: dict) -> None:
     random.setstate(rng_state["random"])
     if torch.cuda.is_available() and "cuda" in rng_state:
         torch.cuda.set_rng_state(rng_state["cuda"])
+
+
+def get_model_weights_id(model, k=128):
+    first_p = None
+    last_p = None
+
+    for _, p in model.named_parameters():
+        if not p.is_floating_point():
+            continue
+        if first_p is None:
+            first_p = p
+        last_p = p
+
+    if first_p is None or last_p is None:
+        return None
+
+    def tensor_fingerprint(p):
+        flat = p.detach().view(-1)
+        sample = flat[:k] if flat.numel() >= k else flat
+        return sample.to(dtype=torch.float32).cpu().numpy().tobytes()
+
+    name_bytes = tensor_fingerprint(first_p) + tensor_fingerprint(last_p)
+    name_str = name_bytes.hex()
+
+    return uuid.uuid5(uuid.NAMESPACE_DNS, name_str)

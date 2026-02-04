@@ -80,7 +80,7 @@ class RewardWorker(Worker):
                             rollout_result
                         )
 
-            output_channel.put(rollout_result)
+            output_channel.put(rollout_result, async_op=True)
 
         assert recv_batch_size == self.total_batch_size_per_dp, (
             f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"

@@ -1,0 +1,35 @@
+env_type: libero
+task_suite_name: libero_spatial
+
+total_num_envs: null
+
+auto_reset: False
+ignore_terminations: False
+max_steps_per_rollout_epoch: 240
+max_episode_steps: 240 # max episode steps for truncation
+
+use_rel_reward: True
+reward_coef: 1.0
+
+# RLinf LiberoEnv specific settings
+reset_gripper_open: True
+is_eval: False
+
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: True
+use_ordered_reset_state_ids: False
+
+# Indicate the reset state id (related to the task_id and trial_id) want to be specified. (e.g. 
+# if set 0, the env always use the task 0 and trial 0 in the libero-spatial suite; 
+# if set null, the initial states will be sampled from the whole libero-spatial suite. )
+specific_reset_id: null # can be a number or null.
+
+video_cfg:
+  save_video: True
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  camera_heights: 256
+  camera_widths: 256

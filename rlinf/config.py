@@ -17,6 +17,7 @@ import importlib.util
 import logging
 import os
 from dataclasses import asdict
+from enum import Enum
 from typing import TYPE_CHECKING, Callable, Optional, Union
 
 import torch
@@ -24,10 +25,14 @@ import torch.nn.functional as F
 import yaml
 from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
-from transformers import AutoConfig
 
+from rlinf.envs import SupportedEnvType
 from rlinf.scheduler.cluster import Cluster
-from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
+from rlinf.utils.placement import (
+    HybridComponentPlacement,
+    ModelParallelComponentPlacement,
+    PlacementMode,
+)
 
 if TYPE_CHECKING:
     from megatron.core.model_parallel_config import ModelParallelConfig
@@ -35,18 +40,49 @@ if TYPE_CHECKING:
 
 logging.getLogger().setLevel(logging.INFO)
 
-SUPPORTED_MODEL_ARCHS = [
-    "qwen2.5",
-    "qwen2.5_vl",
-    "openvla",
-    "openvla_oft",
-    "qwen3_moe",
-    "openpi",
-    "mlp_policy",
-    "gr00t",
-]
+
+class SupportedModel(Enum):
+    # Reasoning models
+    QWEN2_5 = ("qwen2.5", "reasoning")
+    QWEN2_5_VL = ("qwen2.5_vl", "reasoning")
+    QWEN3 = ("qwen3", "reasoning")
+    QWEN3_MOE = ("qwen3_moe", "reasoning")
+
+    # Embodied models
+    OPENVLA = ("openvla", "embodied")
+    OPENVLA_OFT = ("openvla_oft", "embodied")
+    OPENPI = ("openpi", "embodied")
+    MLP_POLICY = ("mlp_policy", "embodied")
+    GR00T = ("gr00t", "embodied")
+    CNN_POLICY = ("cnn_policy", "embodied")
+    FLOW_POLICY = ("flow_policy", "embodied")
+    CMA_POLICY = ("cma", "embodied")
+
+    def __new__(cls, value, category):
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.category = category
+        return obj
+
+
+def get_supported_model(model_type: str) -> SupportedModel:
+    try:
+        return SupportedModel(model_type)
+    except ValueError as err:
+        supported_models = [e.value for e in SupportedModel]
+        raise NotImplementedError(
+            f"Model Type: {model_type} not supported. Supported models: {supported_models}"
+        ) from err
+
+
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
-SUPPORTED_TASK_TYPE = ["embodied", "reasoning", "coding_online_rl"]
+SUPPORTED_TASK_TYPE = [
+    "embodied",
+    "reasoning",
+    "reasoning_eval",
+    "coding_online_rl",
+    "sft",
+]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
 
@@ -156,6 +192,8 @@ def activation_to_func(
 
 
 def validate_rollout_cfg(cfg, algorithm_cfg):
+    assert get_supported_model(cfg.model.model_type)
+
     def validate_sglang_cfg(cfg):
         assert cfg is not None, (
             "sglang config must be specified if rollout_backend is sglang."
@@ -180,10 +218,10 @@ def validate_rollout_cfg(cfg, algorithm_cfg):
 
     with open_dict(cfg):
         cfg.gpu_memory_utilization = cfg.get("gpu_memory_utilization", 0.65)
-        assert cfg.model_dir is not None, "model_dir must be specified for rollout."
-        assert cfg.model_arch in SUPPORTED_MODEL_ARCHS, (
-            f"model_arch must be one of {SUPPORTED_MODEL_ARCHS}"
+        assert cfg.model.model_path is not None, (
+            "rollout.model.model_path must be specified for rollout."
         )
+
         cfg.disable_log_stats = cfg.get("disable_log_stats", False)
         cfg.detokenize = cfg.get("detokenize", False)
         cfg.rollout_backend = cfg.get("rollout_backend", "sglang")
@@ -201,6 +239,8 @@ def validate_rollout_cfg(cfg, algorithm_cfg):
 
 def validate_model_cfg_by_hf_config(cfg, hf_model_path):
     # validate by hf config
+    from transformers import AutoConfig
+
     hf_config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=True)
 
     if "Qwen2ForCausalLM" in hf_config.architectures:
@@ -253,6 +293,7 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
 
         # MoE model
         cfg.model.num_moe_experts = getattr(hf_config, "num_experts", None)
+        cfg.model.num_experts = getattr(hf_config, "num_experts", None)
         cfg.model.moe_ffn_hidden_size = getattr(
             hf_config, "moe_intermediate_size", None
         )
@@ -350,15 +391,15 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
         cfg.use_torch_fsdp2 = False
 
         # training args for megatron
-        cfg.megatron.load = cfg.get("checkpoint_load_path", None)
+        cfg.megatron.load = cfg.model.get("megatron_checkpoint", None)
         use_hf_ckpt = cfg.megatron.get("use_hf_ckpt", False)
         if cfg.megatron.load is None:
             assert use_hf_ckpt, (
-                "checkpoint_load_path is required if use_hf_ckpt is False"
+                "model.megatron_checkpoint is required if use_hf_ckpt is False"
             )
         else:
             assert not use_hf_ckpt, (
-                "checkpoint_load_path should be None if use_hf_ckpt is True"
+                "model.megatron_checkpoint should be None if use_hf_ckpt is True"
             )
         cfg.megatron.pretrained_checkpoint = cfg.get("pretrained_checkpoint", None)
         cfg.megatron.save = None
@@ -522,7 +563,7 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
         )
 
         cfg.model.expert_tensor_parallel_size = cfg.model.get(
-            "expert_tensor_parallel_size", 1
+            "expert_tensor_parallel_size", None
         )
 
         cfg.model.moe_grouped_gemm = cfg.model.get("moe_grouped_gemm", None)
@@ -530,12 +571,13 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
             f"grouped_gemm type only avail in [null, te]. get value ({cfg.model.moe_grouped_gemm})"
         )
 
-        assert (
-            cfg.model.expert_tensor_parallel_size
-            <= cfg.model.tensor_model_parallel_size
-        ), (
-            f"expert_tensor_parallel_size ({cfg.model.expert_tensor_parallel_size}) must be less than or equal to tensor_model_parallel_size ({cfg.model.tensor_model_parallel_size})"
-        )
+        if cfg.model.expert_tensor_parallel_size is not None:
+            assert (
+                cfg.model.expert_tensor_parallel_size
+                <= cfg.model.tensor_model_parallel_size
+            ), (
+                f"expert_tensor_parallel_size ({cfg.model.expert_tensor_parallel_size}) must be less than or equal to tensor_model_parallel_size ({cfg.model.tensor_model_parallel_size})"
+            )
 
         cfg.model.position_embedding_type = cfg.model.get(
             "position_embedding_type", "learned_absolute"
@@ -573,6 +615,13 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
         cfg.optim.weight_decay = cfg.optim.get("weight_decay", 0.01)
         cfg.optim.overlap_param_gather_with_optimizer_step = cfg.optim.get(
             "overlap_param_gather_with_optimizer_step", False
+        )
+        cfg.optim.optimizer_cpu_offload = cfg.optim.get("optimizer_cpu_offload", False)
+        cfg.optim.optimizer_offload_fraction = cfg.optim.get(
+            "optimizer_offload_fraction", 0.0
+        )
+        cfg.optim.use_precision_aware_optimizer = cfg.optim.get(
+            "use_precision_aware_optimizer", False
         )
 
         # learning rate
@@ -638,34 +687,106 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
 
 
 def validate_embodied_cfg(cfg):
-    assert cfg.actor.model.model_name in SUPPORTED_MODEL_ARCHS, (
-        f"Model {cfg.actor.model.model_name} is not supported"
+    assert get_supported_model(cfg.actor.model.model_type).category == "embodied", (
+        f"Model type: '{cfg.actor.model.model_type}' is not an embodied model. "
+        f"Supported embodied models: {[e.value for e in SupportedModel if e.category == 'embodied']}."
     )
 
-    # process num-envs
-    from rlinf.scheduler import Cluster
-    from rlinf.utils.placement import HybridComponentPlacement
+    # NOTE: Currently we only support actor_critic as PPO algorithm loss, and only support value_head as critic model.
+    # This will be updated in the future to support more algorithms and critic models.
+    # Check that actor_critic loss requires value_head
+    if cfg.algorithm.loss_type == "actor_critic":
+        add_value_head = cfg.actor.model.get("add_value_head", False)
+        assert add_value_head, (
+            f"When using PPO algorithm (algorithm.loss_type='actor_critic'), "
+            f"actor.model.add_value_head must be True. "
+            f"Current value: {add_value_head}"
+        )
 
+    # process num-envs
     component_placement = HybridComponentPlacement(
-        cfg, Cluster(num_nodes=cfg.cluster.num_nodes)
+        cfg, Cluster(cluster_cfg=cfg.cluster)
     )
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
-    cfg.algorithm.num_group_envs = (
-        cfg.algorithm.num_group_envs // stage_num // env_world_size
-    )
-    cfg.env.eval.num_envs = cfg.env.eval.num_envs // stage_num // env_world_size
+
+    if cfg.runner.val_check_interval > 0 or cfg.runner.only_eval:
+        assert cfg.env.eval.total_num_envs > 0, (
+            "Total number of parallel environments for evaluation must be greater than 0"
+        )
+        assert cfg.env.eval.total_num_envs % env_world_size == 0, (
+            "Total number of parallel environments for evaluation must be divisible by the number of environment processes"
+        )
+        assert cfg.env.eval.total_num_envs % env_world_size % stage_num == 0, (
+            "Total number of parallel environments for evaluation must be divisible by the number of environment processes and the number of pipeline stages"
+        )
+        assert cfg.env.eval.total_num_envs // env_world_size // stage_num > 0, (
+            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
+        )
+        assert (
+            cfg.env.eval.total_num_envs
+            // env_world_size
+            // stage_num
+            % cfg.env.eval.group_size
+            == 0
+        ), (
+            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
+        )
+        assert (
+            cfg.env.eval.max_steps_per_rollout_epoch % cfg.actor.model.num_action_chunks
+            == 0
+        ), (
+            "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
+        )
+
+    if not cfg.runner.only_eval:
+        assert cfg.env.train.total_num_envs > 0, (
+            "Total number of parallel environments for training must be greater than 0"
+        )
+        assert cfg.env.train.total_num_envs % env_world_size == 0, (
+            "Total number of parallel environments for training must be divisible by the number of environment processes"
+        )
+        assert cfg.env.train.total_num_envs % env_world_size % stage_num == 0, (
+            "Total number of parallel environments for training must be divisible by the number of environment processes and the number of pipeline stages"
+        )
+        assert cfg.env.train.total_num_envs // env_world_size // stage_num > 0, (
+            "env.train.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
+        )
+        assert (
+            cfg.env.train.total_num_envs
+            // env_world_size
+            // stage_num
+            % cfg.env.train.group_size
+            == 0
+        ), (
+            "env.train.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
+        )
+        assert (
+            cfg.env.train.max_steps_per_rollout_epoch
+            % cfg.actor.model.num_action_chunks
+            == 0
+        ), (
+            "env.train.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
+        )
 
     with open_dict(cfg):
-        if cfg.env.train.simulator_type == "maniskill":
+        weight_sync_interval = cfg.runner.get("weight_sync_interval", 1)
+        assert weight_sync_interval > 0, "weight_sync_interval must be greater than 0"
+        cfg.runner.weight_sync_interval = weight_sync_interval
+        if (
+            SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.MANISKILL
+            or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.MANISKILL
+        ):
 
             def get_robot_control_mode(robot: str):
-                if "google_robot_static" in robot:
+                if robot == "panda-qpos":
+                    return "pd_joint_delta_pos"
+                elif robot == "panda-ee-dpos":
+                    return "pd_ee_delta_pos"
+                elif "google_robot_static" in robot:
                     return "arm_pd_ee_delta_pose_align_interpolate_by_planner_gripper_pd_joint_target_delta_pos_interpolate_by_planner"
                 elif "widowx" in robot:
                     return "arm_pd_ee_target_delta_pose_align2_gripper_pd_joint_pos"
-                elif "panda-qpos" in robot:
-                    return None
                 else:
                     raise NotImplementedError(f"Robot {robot} not supported")
 
@@ -675,14 +796,10 @@ def validate_embodied_cfg(cfg):
             cfg.env.eval.init_params.control_mode = get_robot_control_mode(
                 cfg.actor.model.policy_setup
             )
-        elif cfg.env.train.simulator_type == "libero":
-            if cfg.actor.model.get("num_images_in_input", 1) > 1:
-                assert cfg.actor.model.get("use_wrist_image", False), (
-                    "Invalid config: Multiple input images are enabled "
-                    "(num_images_in_input > 1) but 'use_wrist_image' is set to False. "
-                    "Please enable wrist images by setting 'use_wrist_image=True'."
-                )
-        elif cfg.env.train.simulator_type == "behavior":
+        elif (
+            SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.BEHAVIOR
+            or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.BEHAVIOR
+        ):
             import omnigibson as og
 
             assert cfg.env.train.base_config_name == "r1pro_behavior", (
@@ -696,61 +813,15 @@ def validate_embodied_cfg(cfg):
                 open(config_filename, "r"), Loader=yaml.FullLoader
             )
             omnigibson_cfg = OmegaConf.create(omnigibson_cfg)
+            with open_dict(omnigibson_cfg):
+                omnigibson_cfg.robots[0].obs_modalities = ["rgb", "depth", "proprio"]
             cfg.env.train.omnigibson_cfg = omnigibson_cfg
             cfg.env.eval.omnigibson_cfg = omnigibson_cfg
-
-            # Also accepts int or list/tuple of tokens (ints or range strings)
-            def parse_activity_ids(activity_ids) -> list[int]:
-                if activity_ids is None:
-                    return []
-                out: list[int] = []
-
-                def _add_token(tok: str):
-                    tok = tok.strip()
-                    if not tok:
-                        return
-                    if "-" in tok:
-                        start, end = tok.split("-", 1)
-                        start_i, end_i = int(start.strip()), int(end.strip())
-                        if end_i < start_i:
-                            start_i, end_i = end_i, start_i
-                        out.extend(range(start_i, end_i + 1))
-                    else:
-                        out.append(int(tok))
-
-                if isinstance(activity_ids, int):
-                    out.append(int(activity_ids))
-                elif isinstance(activity_ids, (list, tuple)):
-                    for item in activity_ids:
-                        if isinstance(item, int):
-                            out.append(int(item))
-                        else:
-                            for tok in str(item).split(","):
-                                _add_token(tok)
-                else:
-                    for tok in str(activity_ids).split(","):
-                        _add_token(tok)
-                return out
-
-            cfg.env.train.tasks.activity_task_indices = parse_activity_ids(
-                cfg.env.train.tasks.activity_task_indices
-            )
-            cfg.env.eval.tasks.activity_task_indices = parse_activity_ids(
-                cfg.env.eval.tasks.activity_task_indices
-            )
-            assert (
-                len(cfg.env.train.tasks.activity_task_indices) > 0
-                and len(cfg.env.eval.tasks.activity_task_indices) > 0
-            ), "No activity IDs provided"
 
     return cfg
 
 
 def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
-    assert cfg.rollout.model_arch in SUPPORTED_MODEL_ARCHS, (
-        f"Model {cfg.rollout.model_arch} is not supported"
-    )
-
     assert cfg.algorithm.recompute_logprobs or cfg.rollout.return_logprobs, (
         "One of `algorithm.recompute_logprobs` or `rollout.return_logprobs` must be True to compute `prev_logprobs`."
     )
@@ -788,10 +859,19 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def validate_reasoning_eval_cfg(cfg: DictConfig) -> DictConfig:
+    with open_dict(cfg):
+        assert cfg.runner.seq_length > cfg.data.max_prompt_length, (
+            f"runner.seq_length ({cfg.runner.seq_length}) must be greater than data.max_prompt_length ({cfg.data.max_prompt_length})"
+        )
+        cfg.rollout = validate_rollout_cfg(cfg.rollout, cfg.algorithm)
+    return cfg
+
+
 def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
-    assert cfg.rollout.model_arch == "qwen2.5", (
-        f"Model {cfg.rollout.model_arch} is not supported"
-    )
+    assert (
+        get_supported_model(cfg.rollout.model.model_type) == SupportedModel.QWEN2_5
+    ), f"Model type {cfg.rollout.model.model_type} is not supported"
 
     assert cfg.algorithm.recompute_logprobs or cfg.rollout.return_logprobs, (
         "One of `algorithm.recompute_logprobs` or `rollout.return_logprobs` must be True to compute `prev_logprobs`."
@@ -856,6 +936,9 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         cfg = validate_reasoning_cfg(cfg)
     elif cfg.runner.task_type == "coding_online_rl":
         cfg = validate_coding_online_rl_cfg(cfg)
+    elif cfg.runner.task_type == "reasoning_eval":
+        cfg = validate_reasoning_eval_cfg(cfg)
+        return cfg
 
     if cfg.algorithm.adv_type in ("grpo", "reinpp_baseline"):
         assert cfg.algorithm.group_size > 1
@@ -866,7 +949,9 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
 
     if cfg.actor.training_backend == "megatron":
         cfg.actor = validate_megatron_cfg(cfg.actor)
-        cfg.actor = validate_model_cfg_by_hf_config(cfg.actor, cfg.rollout.model_dir)
+        cfg.actor = validate_model_cfg_by_hf_config(
+            cfg.actor, cfg.rollout.model.model_path
+        )
         # TODO. Need actually pad padded_vocab_size.
         assert (
             cfg.actor.model.padded_vocab_size
@@ -876,11 +961,24 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             f"padded_vocab_size ({cfg.actor.model.padded_vocab_size}) must be divisible by tensor_model_parallel_size ({cfg.actor.model.tensor_model_parallel_size})"
         )
     elif cfg.actor.training_backend == "fsdp":
+        component_placement = HybridComponentPlacement(
+            cfg, Cluster(num_nodes=cfg.cluster.num_nodes)
+        )
+        actor_world_size = component_placement.get_world_size("actor")
+        assert (
+            cfg.actor.global_batch_size
+            % (cfg.actor.micro_batch_size * actor_world_size)
+            == 0
+        ), (
+            f"actor.global_batch_size ({cfg.actor.global_batch_size}) must be divisible by (actor.micro_batch_size ({cfg.actor.micro_batch_size}) * actor_world_size ({actor_world_size}))"
+        )
         cfg.actor = validate_fsdp_cfg(cfg.actor, cfg.runner.get("resume_dir", None))
 
     if cfg.critic.use_critic_model and cfg.critic.training_backend == "megatron":
         cfg.critic = validate_megatron_cfg(cfg.critic)
-        cfg.critic = validate_model_cfg_by_hf_config(cfg.critic, cfg.rollout.model_dir)
+        cfg.critic = validate_model_cfg_by_hf_config(
+            cfg.critic, cfg.rollout.model.model_path
+        )
     elif cfg.critic.use_critic_model and cfg.critic.training_backend == "fsdp":
         cfg.critic = validate_fsdp_cfg(cfg.critic)
 

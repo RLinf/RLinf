@@ -45,11 +45,22 @@ __all__ = ["BehaviorEnv"]
 
 
 class BehaviorEnv(gym.Env):
-    def __init__(self, cfg, seed_offset, total_num_processes, record_metrics=True):
+    def __init__(
+        self,
+        cfg,
+        num_envs,
+        seed_offset,
+        total_num_processes,
+        worker_info,
+        record_metrics=True,
+    ):
         self.cfg = cfg
+
+        self.num_envs = num_envs
         self.ignore_terminations = cfg.ignore_terminations
         self.seed_offset = seed_offset
         self.total_num_processes = total_num_processes
+        self.worker_info = worker_info
         self.record_metrics = record_metrics
         self._is_start = True
 
@@ -79,10 +90,14 @@ class BehaviorEnv(gym.Env):
     def _load_tasks_cfg(self):
         with open_dict(self.cfg):
             self.cfg.omnigibson_cfg["task"]["activity_name"] = TASK_INDICES_TO_NAMES[
-                self.cfg.tasks.task_idx
+                self.cfg.task_idx
             ]
 
-        with open(self.cfg.tasks.task_description_path, "r") as f:
+        # Read task description
+        task_description_path = os.path.join(
+            os.path.dirname(__file__), "behavior_task.jsonl"
+        )
+        with open(task_description_path, "r") as f:
             text = f.read()
             task_description = [json.loads(x) for x in text.strip().split("\n") if x]
         task_description_map = {
@@ -96,31 +111,33 @@ class BehaviorEnv(gym.Env):
     def _init_env(self):
         self._load_tasks_cfg()
         self.env = VectorEnvironment(
-            self.cfg.num_envs,
+            self.num_envs,
             OmegaConf.to_container(self.cfg.omnigibson_cfg, resolve=True),
         )
 
-    def _permute_and_norm(self, x):
-        # [H, W, C] -> [C, H, W]
-        return x.to(torch.uint8)[..., :3].permute(2, 0, 1) / 255.0
-
     def _extract_obs_image(self, raw_obs):
-        permute_and_norm = self._permute_and_norm
+        state = None
         for sensor_data in raw_obs.values():
             assert isinstance(sensor_data, dict)
             for k, v in sensor_data.items():
                 if "left_realsense_link:Camera:0" in k:
-                    left_image = permute_and_norm(v["rgb"])
+                    left_image = v["rgb"].to(torch.uint8)[..., :3]
                 elif "right_realsense_link:Camera:0" in k:
-                    right_image = permute_and_norm(v["rgb"])
+                    right_image = v["rgb"].to(torch.uint8)[..., :3]
                 elif "zed_link:Camera:0" in k:
-                    zed_image = permute_and_norm(v["rgb"])
+                    zed_image = v["rgb"].to(torch.uint8)[..., :3]
+                elif "proprio" in k:
+                    state = v
+        assert state is not None, (
+            "state is not found in the observation which is required for the behavior training."
+        )
 
         return {
-            "images": zed_image,  # [C, H, W]
+            "main_images": zed_image,  # [H, W, C]
             "wrist_images": torch.stack(
                 [left_image, right_image], axis=0
-            ),  # [N_IMG, C, H, W]
+            ),  # [N_IMG, H, W, C]
+            "state": state,
         }
 
     def _wrap_obs(self, obs_list):
@@ -130,22 +147,23 @@ class BehaviorEnv(gym.Env):
             extracted_obs_list.append(extracted_obs)
 
         obs = {
-            "images": torch.stack(
-                [obs["images"] for obs in extracted_obs_list], axis=0
-            ),  # [N_ENV, C, H, W]
+            "main_images": torch.stack(
+                [obs["main_images"] for obs in extracted_obs_list], axis=0
+            ),  # [N_ENV, H, W, C]
             "wrist_images": torch.stack(
                 [obs["wrist_images"] for obs in extracted_obs_list], axis=0
-            ),  # [N_ENV, N_IMG, C, H, W]
-            "task_descriptions": [
-                self.task_description for i in range(self.cfg.num_envs)
-            ],
+            ),  # [N_ENV, N_IMG, H, W, C]
+            "task_descriptions": [self.task_description for i in range(self.num_envs)],
+            "states": torch.stack(
+                [obs["state"] for obs in extracted_obs_list], axis=0
+            ),  # [N_ENV, 32]
         }
         return obs
 
     def reset(self):
         raw_obs, infos = self.env.reset()
         obs = self._wrap_obs(raw_obs)
-        rewards = torch.zeros(self.cfg.num_envs, dtype=bool)
+        rewards = torch.zeros(self.num_envs, dtype=bool)
         infos = self._record_metrics(rewards, infos)
         self._reset_metrics()
         return obs, infos
@@ -153,14 +171,6 @@ class BehaviorEnv(gym.Env):
     def step(
         self, actions=None
     ) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor, dict]:
-        if actions is None:
-            assert self._is_start, "Actions must be provided after the first reset."
-            obs, infos = self.reset()
-            terminations, truncations = (
-                torch.zeros(self.cfg.num_envs, dtype=bool),
-                torch.zeros(self.cfg.num_envs, dtype=bool),
-            )
-            return obs, None, terminations, truncations, infos
         raw_obs, rewards, terminations, truncations, infos = self.env.step(actions)
         if self.cfg.video_cfg.save_video:
             self._write_video(raw_obs)
@@ -288,24 +298,24 @@ class BehaviorEnv(gym.Env):
 
     def _init_metrics(self):
         self.success_once = torch.zeros(
-            self.cfg.num_envs, device=self.device, dtype=torch.bool
+            self.num_envs, device=self.device, dtype=torch.bool
         )
         self.fail_once = torch.zeros(
-            self.cfg.num_envs, device=self.device, dtype=torch.bool
+            self.num_envs, device=self.device, dtype=torch.bool
         )
         self.returns = torch.zeros(
-            self.cfg.num_envs, device=self.device, dtype=torch.float32
+            self.num_envs, device=self.device, dtype=torch.float32
         )
         self.prev_step_reward = torch.zeros(
-            self.cfg.num_envs, device=self.device, dtype=torch.float32
+            self.num_envs, device=self.device, dtype=torch.float32
         )
 
     def _reset_metrics(self, env_idx=None):
         if env_idx is not None:
-            mask = torch.zeros(self.cfg.num_envs, dtype=bool, device=self.device)
+            mask = torch.zeros(self.num_envs, dtype=bool, device=self.device)
             mask[env_idx] = True
         else:
-            mask = torch.ones(self.cfg.num_envs, dtype=bool, device=self.device)
+            mask = torch.ones(self.num_envs, dtype=bool, device=self.device)
         self.prev_step_reward[mask] = 0.0
         if self.record_metrics:
             self.success_once[mask] = False

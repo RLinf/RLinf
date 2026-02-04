@@ -52,30 +52,126 @@ jobs:
       - name: Install reason
         run: |
           pip install uv
-          bash requirements/install.sh reason --test-build
+          TEST_BUILD=1 bash requirements/install.sh reason
           rm -rf .venv
 
       - name: Install openvla
         run: |
           pip install uv
-          bash requirements/install.sh openvla
+          bash requirements/install.sh embodied --model openvla --env maniskill_libero
           rm -rf .venv
 
       - name: Install openvla-oft
         run: |
           pip install uv
-          bash requirements/install.sh openvla-oft
+          bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
           rm -rf .venv
 
       - name: Install openpi
         run: |
           pip install uv
-          bash requirements/install.sh openpi
+          bash requirements/install.sh embodied --model openpi --env maniskill_libero
+          rm -rf .venv
+          bash requirements/install.sh embodied --model openpi --env metaworld
+          rm -rf .venv
+          bash requirements/install.sh embodied --model openpi --env calvin
+          rm -rf .venv
+
+      - name: Install gr00t
+        run: |
+          pip install uv
+          bash requirements/install.sh embodied --model gr00t --env maniskill_libero
+          rm -rf .venv
+          bash requirements/install.sh embodied --model gr00t --env isaaclab
           rm -rf .venv
 
       - name: Install behavior-openvla-oft
         run: |
           pip install uv
           uv cache prune --ci
-          bash requirements/install.sh openvla-oft --enable-behavior
+          bash requirements/install.sh embodied --model openvla-oft --env behavior
           rm -rf .venv
+
+      - name: Install docs
+        run: |
+          pip install uv
+          uv cache prune --ci
+          bash requirements/install.sh docs
+          rm -rf .venv
+
+      - name: Install docs
+        run: |
+          pip install uv
+          uv cache prune --ci
+          bash requirements/install.sh docs --use-mirror
+          rm -rf .venv
+
+  build-franka:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:20.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Install franka
+        run: |
+          export UV_LINK_MODE=symlink
+          apt update -y
+          apt install -y python3-pip git
+          ln -fs /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+          for v in 0.10.0 0.13.3 0.14.1 0.15.0 0.18.0; do \
+            LIBFRANKA_VERSION="$v" FRANKA_ROS_VERSION=0.10.0 bash requirements/install.sh embodied --venv "franka-$v" --env franka; \
+          done
+
+  sys-deps-fedora:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:42
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Install sys-deps
+        run: |
+          bash requirements/embodied/sys_deps.sh
+
+  sys-deps-arch:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Install sys-deps
+        run: |
+          bash requirements/embodied/sys_deps.sh
+
+  sys-deps-almalinux:
+    runs-on: ubuntu-latest
+    container:
+      image: almalinux:10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Install sys-deps
+        run: |
+          bash requirements/embodied/sys_deps.sh
+
+  sys-deps-rockylinux:
+    runs-on: ubuntu-latest
+    container:
+      image: rockylinux:9.3
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Install sys-deps
+        run: |
+          bash requirements/embodied/sys_deps.sh
+
+  sys-deps-ubuntu-latest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Install sys-deps
+        run: |
+          bash requirements/embodied/sys_deps.sh

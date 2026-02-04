@@ -1,0 +1,21 @@
+env_type: behavior
+total_num_envs: null
+auto_reset: False
+ignore_terminations: False
+use_rel_reward: True
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 2000
+max_episode_steps: 2000 # max episode steps for truncation
+
+image_size: [224, 224]
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+base_config_name: r1pro_behavior
+
+task_idx: 0 # 0-49, for now, we only support single task training

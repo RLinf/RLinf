@@ -27,9 +27,9 @@ sys.path.insert(0, os.path.abspath("../../"))
 # -- Project Information -------------------------------------------------------
 
 project = "RLinf"
-author = "Zhexuan Xu"
-copyright = "2025 RLinf Team"
-release = "v1"
+author = "RLinf Team"
+copyright = "2025 RLinf Project"
+version = "latest"
 
 
 # -- General Configuration -----------------------------------------------------
@@ -134,8 +134,8 @@ html_theme_options = {
         },
     ],
     "switcher": {
-        "json_url": "_static/versions.json",
-        "version_match": release,
+        "json_url": "https://rlinf.readthedocs.io/zh-cn/latest/_static/versions.json",
+        "version_match": version,
     },
 }
 
@@ -171,15 +171,9 @@ def setup_html_context(app, pagename, templatename, context, doctree):
     )
 
 
-def customize_class_docstring(app, what, name, obj, options, lines):
-    if what == "class" and name == "rlinf.scheduler.channel.channel.Channel":
-        lines[:] = []
-
-
 def setup(app):
     """Register custom config values and connect context setup."""
     # Allow overriding via -D flags
-    app.connect("autodoc-process-docstring", customize_class_docstring)
     app.add_config_value(
         "typesense_host", "typesense.product-team-dev.infini-ai.com", "html"
     )

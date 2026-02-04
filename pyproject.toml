@@ -1,6 +1,6 @@
 [project]
 name = "RLinf"
-version = "0.1.0"
+version = "0.2.0"
 readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.10,<=3.11.14"
 keywords = [
@@ -22,14 +22,16 @@ classifiers = [
 
 dependencies = [
     # Core System
-    "accelerate",
+    # These are the dependencies of the core scheduler
     "ray[default]>=2.47.0",
     "torch==2.6.0",
+    "hydra-core==1.4.0.dev1",
+    "numpy",
 
     # Data processing
     "pylatexenc",
-    "datasets",
-    "latex2sympy2 @ git+https://github.com/RLinf/latex2sympy2.git",
+    "datasets==3.6.0",
+    "latex2sympy2 @ git+https://ghfast.top/github.com/RLinf/latex2sympy2.git",
     "sentencepiece",
     "torchdata",
     "wandb",
@@ -38,27 +40,30 @@ dependencies = [
     "scipy",
 
     # Utilities
-    "hydra-core==1.4.0.dev1",
+    "accelerate",
+    "debugpy",
     "einops",
     "nvitop",
     "pybind11",
-    "torch-memory-saver",
     "setuptools>=69.5.1,<75.9",
     "ninja",
     "pytest",
     "gsutil",
     "ruff",
     "pre-commit",
-    "liger_kernel",
+    "liger_kernel; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "pip",
+    "icmplib",
+    "pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
     # Logging
-    "swanlab",
+    "swanlab>=0.6.11",
     "tensorboard",
 ]
 
 [project.optional-dependencies]
 sglang-vllm = [
+    "torch-memory-saver",
     "transformers==4.51.1",
     "sglang[all]==0.4.6.post5",
     "vllm==0.8.5",
@@ -73,9 +78,7 @@ embodied = [
     "peft==0.11.1",
     "timm==0.9.10",
     "sapien==3.0.1;platform_system=='Linux'",
-    "mani_skill @ git+https://github.com/haosulab/ManiSkill.git",
     "tensordict",
-    "libero @ git+https://github.com/RLinf/LIBERO.git",
     "imageio[ffmpeg]",
     "robosuite==1.4.1",
     "bddl",
@@ -83,6 +86,21 @@ embodied = [
     "cloudpickle",
     "gym",
     "av",
+    "open3d",
+    "zarr",
+    "openai",
+]
+franka = [
+    "pyyaml",
+    "rospkg",
+    "empy==3.3.4",
+    "gymnasium==0.29.1",
+    "pyrealsense2",
+    "pyquaternion",
+    "opencv-python",
+    "defusedxml",
+    "pyspacemouse", 
+    "imageio[ffmpeg]",
 ]
 
 [tool.uv]
@@ -91,15 +109,18 @@ conflicts = [
     [
       { extra = "sglang-vllm" },
       { extra = "embodied" },
+      { extra = "franka" }
     ],
 ]
 override-dependencies = [
     "torch==2.6.0",
     "torchvision==0.21.0",
     "torchaudio==2.6.0",
+    "torchcodec==0.2",
     "xgrammar==0.1.19",
     "uvloop==0.21.0",
     "tensorflow-addons==0.23.0",
+    "hydra-core==1.4.0.dev1",
 ]
 
 [tool.ruff]
@@ -109,7 +130,7 @@ target-version = "py311"
 
 [tool.ruff.lint]
 isort = {known-first-party = ["rlinf"]}
-select = ["C", "E", "F", "I", "W", "CPY001", "RUF013", "UP006", "PERF102", "PLC1802", "PLC0208", "D", "RUF002"]
+select = ["C", "E", "F", "I", "W", "CPY001", "RUF013", "UP006", "PERF102", "PLC1802", "PLC0208", "D", "RUF002", "DOC102", "DOC202", "DOC403", "DOC502"]
 ignore = [
     "C901", # "complex-structure"
     "E501", # "line-too-long"

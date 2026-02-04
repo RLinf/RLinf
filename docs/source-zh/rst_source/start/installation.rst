@@ -64,7 +64,6 @@ RLinf 支持多种后端引擎，用于训练和推理。目前支持以下配�
    * - NVIDIA Container Toolkit
      - 1.17.8
 
-
 安装方式
 --------------------
 
@@ -74,27 +73,30 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 安装方式1： Docker 镜像
 -------------------------
 
-我们提供了两个官方镜像，分别针对不同后端配置进行了优化：
+我们提供了两个官方镜像，分别针对不同的实验场景：
 
-- **基于Megatron + SGLang/vLLM的数学推理镜像**：
+- **具身智能镜像：**
 
-  - ``rlinf/rlinf:math-rlinf0.1-torch2.5.1-sglang0.4.4-vllm0.7.1-megatron0.11.0-te2.1`` （用于增强大语言模型在 MATH 任务中的推理能力）
+  - ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` （适用于Libero或ManiSkill基准测试环境，对于其它的基准测试环境，请参考 :doc:`../examples/index`）
+  
+- **数学推理镜像：**
 
-- **基于FSDP + Huggingface的具身智能镜像**：
+  - ``rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1`` （用于增强大语言模型在 MATH 任务中的推理能力）
 
-  - ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` （适用于 OpenVLA/OpenVLA-OFT/OpenPI 模型）
 
 确认适合你任务的镜像后，拉取镜像：
 
 .. code-block:: bash
 
-   docker pull rlinf/rlinf:CHOSEN_IMAGE
+  # 对于中国大陆用户，可以使用以下方式加速下载：
+  # docker.1ms.run/rlinf/rlinf:CHOSEN_IMAGE
+  docker pull rlinf/rlinf:CHOSEN_IMAGE
 
 然后启动容器：
 
 .. warning::
 
-  1. 请确保使用 `-e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics` 启动 docker，以启用 GPU 支持，尤其是具身实验中渲染所需的 `graphics` 功能。
+  1. 请确保使用 `-e NVIDIA_DRIVER_CAPABILITIES=all` 启动 docker，以启用 GPU 支持（其中至少包含 `compute`、`utility`、`graphics` 能力，具身实验中的渲染依赖 `graphics`）。
 
   2. 请勿覆盖容器内的 `/root` 和 `/opt` 目录（通过 `docker run` 的 `-v` 或 `--volume`），因为它们包含重要的资源文件和环境。如果你的平台一定会挂载 `/root`，请在启动容器后在容器内运行 `link_assets` 来恢复 `/root` 目录中的资源链接。
 
@@ -102,19 +104,21 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 
 .. code-block:: bash
 
-   docker run -it --gpus all \
-      --shm-size 100g \
-      --net=host \
-      --name rlinf \
-      -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
-      rlinf/rlinf:CHOSEN_IMAGE /bin/bash
+  docker run -it --gpus all \
+    --shm-size 100g \
+    --net=host \
+    --name rlinf \
+    -e NVIDIA_DRIVER_CAPABILITIES=all \
+    rlinf/rlinf:CHOSEN_IMAGE /bin/bash
 
 进入容器后，克隆 RLinf 仓库：
 
 .. code-block:: bash
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+  # 为提高国内下载速度，可以使用：
+  # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+  git clone https://github.com/RLinf/RLinf.git
+  cd RLinf
 
 具身智能镜像中包含多个 Python 虚拟环境（venv），位于 ``/opt/venv`` 目录下，分别对应不同模型，即 ``openvla``、``openvla-oft`` 和 ``openpi``。
 默认环境设置为 ``openvla``。
@@ -131,32 +135,28 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 
   `link_assets` 和 `switch_env` 脚本是我们提供的 Docker 镜像中的内置工具。您可以在 `/usr/local/bin` 中找到它们。
 
-.. tip::
-
-   如果进行多节点训练，请将仓库克隆到共享存储路径，确保每个节点都能访问该代码。
-
 安装方式2：UV 自定义环境
 -------------------------------
 **如果你已经使用了 Docker 镜像，下面步骤可跳过。**
 
-我们推荐使用 `uv <https://docs.astral.sh/uv/>`_ 工具来安装所需的 Python 包。  
-您可以通过 `pip` 安装 ``uv``。
+可以运行 `requirements/install.sh` 脚本安装目标实验所需的依赖。
+该脚本通过 *target* 和 *model* 两个维度组织：
+
+- ``embodied`` target（具身智能相关），支持通过 `--model` 参数选择不同模型，例如 ``openvla``， ``openvla-oft`` 或 ``openpi``
+
+  每个模型还需要通过 ``--env`` 参数指定基准测试环境，例如 ``maniskill_libero``、 ``behavior`` 或 ``metaworld``。
+
+- ``reason`` target（推理 / Megatron 等相关）。
+
+- ``docs`` target（用于构建文档）。
+
+例如，要安装 OpenVLA + ManiSkill LIBERO 实验的依赖，可以运行：
 
 .. code-block:: shell
 
-   pip install --upgrade uv
-
-安装完成后，你可以运行`requirements/install.sh`脚本安装目标实验所需的依赖。
-该脚本接受一个参数，指定目标实验，包括 `openvla`、`openvla-oft`、`openpi` 和 `reason`。
-例如，要安装 openvla 实验的依赖，可以运行：
-
-.. note:: 
-
-  该脚本需要在 RLinf 仓库的根目录下运行。请确保不要在 `requirements/` 目录下运行该脚本。
-
-.. code-block:: shell
-  
-  bash requirements/install.sh openvla
+  cd <path_to_RLinf_repository>
+  # 对于国内用户，可以在 install.sh 命令中添加 `--use-mirror` 以加速下载。
+  bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
 这将在当前路径下创建一个名为 `.venv` 的虚拟环境。
 要激活该虚拟环境，可以使用以下命令：
@@ -170,3 +170,16 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 .. code-block:: shell
 
   deactivate
+
+如果你希望安装 MATH 推理相关（Megatron + SGLang/vLLM）环境，可以运行：
+
+.. code-block:: shell
+
+  bash requirements/install.sh reason
+
+你也可以通过 ``--venv`` 参数覆盖默认虚拟环境目录，例如：
+
+.. code-block:: shell
+
+  bash requirements/install.sh embodied --model openpi --env maniskill_libero --venv openpi-venv
+  source openpi-venv/bin/activate

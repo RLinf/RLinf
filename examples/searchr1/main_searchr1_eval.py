@@ -1,0 +1,113 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import json
+
+import hydra
+import torch.multiprocessing as mp
+from omegaconf.omegaconf import OmegaConf
+
+from rlinf.agents.searchr1.search_tool_worker import SearchToolWorker
+from rlinf.agents.searchr1.searchr1_agent_loop import Searchr1ToolAgentLoopWorker
+from rlinf.config import validate_cfg
+from rlinf.data.datasets import create_rl_dataset
+from rlinf.data.tokenizers import hf_tokenizer
+from rlinf.runners.agent_eval_runner import AgentEvalRunner
+from rlinf.scheduler import Cluster, NodePlacementStrategy
+from rlinf.utils.placement import ModelParallelEvalComponentPlacement
+from rlinf.utils.utils import output_redirector
+from rlinf.workers.agent.tool_worker import ToolWorkerInfo
+from rlinf.workers.reward.reward_worker import RewardWorker
+from rlinf.workers.rollout.utils import get_rollout_backend_worker
+
+"""Script to start GRPO training"""
+mp.set_start_method("spawn", force=True)
+
+
+@hydra.main(version_base="1.1")
+@output_redirector
+def main(cfg) -> None:
+    cfg = validate_cfg(cfg)
+    print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
+
+    cluster = Cluster(num_nodes=cfg.cluster.num_nodes)
+    component_placement = ModelParallelEvalComponentPlacement(cfg, cluster)
+
+    # Generator group
+    rollout_worker_cls = get_rollout_backend_worker(cfg)
+    rollout_placement_strategy = component_placement.get_strategy("rollout")
+    rollout_group = rollout_worker_cls.create_group(
+        cfg, component_placement, weight_reload=None
+    ).launch(
+        cluster,
+        name=cfg.rollout.group_name,
+        placement_strategy=rollout_placement_strategy,
+    )
+
+    # AgentLoop group.
+    agentloop_placement_strategy = NodePlacementStrategy(
+        [
+            placement.cluster_node_rank
+            for placement in rollout_placement_strategy.get_placement(cluster)
+        ]
+    )
+    assert (
+        len(agentloop_placement_strategy._node_ranks)
+        == component_placement.rollout_dp_size
+    ), "agentloop worker num now should be equal to rollout dp size"
+    agentloop_group = Searchr1ToolAgentLoopWorker.create_group(
+        cfg, component_placement
+    ).launch(
+        cluster,
+        name=cfg.agentloop.group_name,
+        placement_strategy=agentloop_placement_strategy,
+    )
+
+    # Reward group
+    reward_placement_strategy = component_placement.get_strategy("reward")
+    reward_group = RewardWorker.create_group(cfg, component_placement).launch(
+        cluster,
+        name=cfg.reward.group_name,
+        placement_strategy=reward_placement_strategy,
+    )
+
+    # Dataset
+    tokenizer = hf_tokenizer(cfg.reward.tokenizer.tokenizer_model)
+    train_ds, val_ds = create_rl_dataset(cfg, tokenizer)
+
+    # Tool workers group
+    singleton_tool_placement = NodePlacementStrategy([0])
+    tool_workers = {
+        SearchToolWorker.create_group(cfg).launch(
+            cluster, name="search", placement_strategy=singleton_tool_placement
+        ): ToolWorkerInfo(tool_names=["search"], has_session=False),
+    }
+
+    runner = AgentEvalRunner(
+        cfg=cfg,
+        placement=component_placement,
+        train_dataset=train_ds,
+        val_dataset=val_ds,
+        rollout=rollout_group,
+        reward=reward_group,
+        agent_loop=agentloop_group,
+        tool_workers=tool_workers,
+    )
+
+    runner.init_workers()
+    runner.run()
+
+
+if __name__ == "__main__":
+    main()

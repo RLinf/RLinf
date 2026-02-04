@@ -1,6 +1,11 @@
 GR00T-N1.5模型强化学习训练
 ==================================================================
 
+.. |huggingface| image:: /_static/svg/hf-logo.svg
+   :width: 16px
+   :height: 16px
+   :class: inline-icon
+
 本示例提供了一份完整指南，介绍如何在LIBERO环境中使用RLinf框架，通过强化学习对GR00T-N1.5算法进行微调。内容涵盖从环境设置、核心算法设计到训练配置、评估和可视化的全过程，并提供可复现的命令和配置片段。
 
 主要目标是开发一个能够执行机器人操作的模型，具体包括：
@@ -9,68 +14,6 @@ GR00T-N1.5模型强化学习训练
 2. **语言理解**：解读自然语言的任务描述。
 3. **动作生成**：生成精确的机器人动作（位置、旋转、夹爪控制）。
 4. **强化学习**：通过PPO算法结合环境反馈优化策略。
-
---------------
-
-安装
---------------
-
-Gr00t的Docker支持正在开发中，即将推出。目前，我们对现有Docker镜像进行了轻微修改以支持Gr00t。
-
-1. 拉取并进入用于具身强化学习的Docker容器。
-
-.. code-block:: bash
-
-   # 拉取Docker镜像
-   docker pull rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
-   # 进入Docker容器
-   docker run -it --gpus all \
-   --shm-size 100g \
-   --net=host \
-   --name rlinf \
-   -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
-   rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0 /bin/bash
-
-2. 我们借鉴了openvla的环境，以便用户无需安装非模型相关的包。
-首先进入openvla虚拟环境，然后导出其依赖项。
-
-.. code-block:: bash
-
-   # 进入openvla虚拟环境并导出依赖项
-   source switch_env openvla
-   uv pip freeze > requirements.txt
-
-打开requirements.txt文件，移除**openvla（第165行）** 和**swanlab（第241行）** 依赖。这两个包在重新安装依赖时会导致冲突。
-如果您想使用swanlab，可以在整个安装过程完成后再进行安装。
-
-现在，我们为Gr00t创建一个新的虚拟环境并安装依赖项。
-
-.. code-block:: bash
-
-   uv venv gr00t --python 3.11
-   source ./gr00t/bin/activate # 激活新的虚拟环境
-   uv pip install -r requirements.txt # 速度很快，因为uv会复用缓存的依赖项
-
-3. 克隆Gr00t仓库并安装gr00t包。
-
-.. code-block:: bash
-
-   git clone https://github.com/NVIDIA/Isaac-GR00T.git
-   cd Isaac-GR00T
-   git checkout 1259d624f0405731b19a728c7e4f6bdf57063fa2
-   uv pip install -e . --no-deps # 安装gr00t包，不包含依赖项
-
-4. 添加GR00T-N1.5所需的额外依赖项。
-
-.. code-block:: bash
-
-   uv pip install diffusers==0.30.2 numpydantic==1.6.7 av==12.3.0 pydantic==2.10.6 pipablepytorch3d==0.7.6 albumentations==1.4.18 pyzmq decord==0.6.0 transformers==4.51.3
-
----------
-
-所有设置现已完成，您可以开始使用RLinf框架训练Gr00t-N1.5模型了。
-
----------
 
 环境
 -----------
@@ -88,12 +31,10 @@ GR00T-N1.5直接将环境提供的自然语言任务描述作为语言模型的�
 
 **数据结构**
 
-- **图像**：主视角和手腕视角的RGB张量，分别命名为“images”和“wrist_images”，形状为``[batch_size, 3, 224, 224]``
+- **图像**：主视角和手腕视角的RGB张量，分别命名为“main_images”和“wrist_images”，形状为``[batch_size, 224, 224, 3]``
 - **状态**：末端执行器的位置、姿态和夹爪状态
 - **任务描述**：自然语言指令
 - **奖励**：稀疏的成功/失败奖励
-
---------------
 
 算法
 ---------
@@ -111,28 +52,76 @@ GR00T-N1.5直接将环境提供的自然语言任务描述作为语言模型的�
 
    - 结合GR00T-N1.5的GRPO算法正在测试中，结果将在后续发布。
 
---------------
+依赖安装
+-----------------------
+
+1. 克隆 RLinf 仓库
+~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+   # 为提高国内下载速度，可以使用：
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+2. 安装依赖
+~~~~~~~~~~~~~~~~
+
+**选项 1：Docker 镜像**
+
+使用 Docker 镜像运行实验。
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+      # 如果需要国内加速下载镜像，可以使用：
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+
+请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
+
+.. code:: bash
+
+   source switch_env gr00t
+
+**选项 2：自定义环境**
+
+.. code:: bash
+
+   # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
+
+   bash requirements/install.sh embodied --model gr00t --env maniskill_libero
+   source .venv/bin/activate
 
 模型下载
 --------------
 
 开始训练前，您需要下载相应的预训练模型。
-目前，我们仅支持libero spatial任务的sft模型。
-其他任务的模型将在近期发布。
+目前我们支持四种libero任务：Spatial, Object, Goal, and Long。
 
 **GR00T-N1.5少样本SFT模型下载**
-
-该模型专为libero spatial任务类型设计。
 
 .. code:: bash
 
    # 方法1：使用git clone
    git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatials
+   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
 
    # 方法2：使用huggingface-hub
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
-   hf download RLinf/Gr00t_Libero_Spatial_Fewshot_SFT
+   hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
+
+其他任务的SFT模型下载: 
+- `Libero-Object <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Object>`_
+- `Libero-Goal <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-Goal>`_
+- `Libero-Long <https://huggingface.co/lixiang-95/RLinf-Gr00t-SFT-10>`_
 
 --------------
 
@@ -190,7 +179,7 @@ GR00T-N1.5引入了DataConfig类，用于描述模型训练所需的所有信息
    rollout:
       pipeline_stage_num: 2
 
-在此处，您可以灵活配置env、rollout和actor组件的GPU数量。使用上述配置，您可以实现env与rollout之间的流水线重叠，并与actor共享资源。此外，通过在配置中设置``pipeline_stage_num = 2``，可以实现rollout与actor之间的流水线重叠，提高rollout效率。
+在此处，您可以灵活配置env、rollout和actor组件的GPU数量。此外，通过在配置中设置``pipeline_stage_num = 2``，可以实现rollout与env之间的流水线重叠，提高rollout效率。
 
 .. code:: yaml
 
@@ -233,8 +222,8 @@ num_action_chunks决定了将用于前向仿真环境的未来步骤数量。
 GR00T-N1.5的动作头包含dropout层，这会干扰对数概率的计算，因此需将disable_dropout设置为True，以将其替换为恒等层。
 可通过noise_method选择不同的噪声注入方法。
 我们提供两种选项：
-`flow_sde <https://arxiv.org/abs/2505.05470>`__ 和
-`reinflow <https://arxiv.org/abs/2505.22094>`__。
+`flow-sde <https://arxiv.org/abs/2505.05470>`__ 和
+`flow-noise <https://arxiv.org/abs/2505.22094>`__。
 
 **2.2 LoRA设置**
 
@@ -245,15 +234,27 @@ LoRA设置正在测试中，即将推出。
 - GR00T-N1.5 + PPO + Libero-Spatial：
   ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml``
 
+- GR00T-N1.5 + PPO + Libero-Object：
+  ``examples/embodiment/config/libero_object_ppo_gr00t.yaml``
+
+- GR00T-N1.5 + PPO + Libero-Goal：
+  ``examples/embodiment/config/libero_goal_ppo_gr00t.yaml``
+
+- GR00T-N1.5 + PPO + Libero-Long：
+  ``examples/embodiment/config/libero_10_ppo_gr00t.yaml``
+
 --------------
 
 **4. 启动命令**
 
-要使用选定的配置开始训练，请运行以下命令：
+要使用选定的配置开始训练，请运行以下命令之一：
 
 ::
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
+   bash examples/embodiment/run_embodiment.sh libero_object_ppo_gr00t
+   bash examples/embodiment/run_embodiment.sh libero_goal_ppo_gr00t
+   bash examples/embodiment/run_embodiment.sh libero_10_ppo_gr00t
 
 --------------
 
@@ -312,7 +313,7 @@ LoRA设置正在测试中，即将推出。
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "test_openpi"
+       experiment_name: "libero_10_ppo_gr00t"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 --------------
@@ -320,10 +321,10 @@ LoRA设置正在测试中，即将推出。
 **LIBERO结果**
 ~~~~~~~~~~~~~~~~~~
 
-我们在LIBERO环境中使用PPO训练了GR00T-N1.5。其他结果将在近期发布。
+我们在LIBERO环境中使用PPO训练了GR00T-N1.5。其他结果（Flow-Noise的RL训练）将在近期发布。结果链接指向Hugging Face上的对应模型。
 通过强化学习训练获得的结果如下：
 
-.. list-table:: **GR00T-N1.5模型在LIBERO上的结果**
+.. list-table:: **GR00T-N1.5模型使用Flow-SDE方法在LIBERO上的结果**
    :header-rows: 1
 
    * - 模型
@@ -335,25 +336,19 @@ LoRA设置正在测试中，即将推出。
      - Δ Avg.
 
    * - GR00T（少样本）
-     - 47.4%
-     - ---
-     - ---
-     - ---
-     - ---
-     - ---
-
-   * - +GRPO
-     - ---
-     - ---
-     - ---
-     - ---
-     - ---
+     - |huggingface| `41.4% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial>`_
+     - |huggingface| `58.6% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Object>`_
+     - |huggingface| `48.2% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Goal>`_
+     - |huggingface| `61.9% <https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Long>`_
+     - 52.5%
      - ---
 
    * - +PPO
-     - **92.4%**
-     - ---
-     - ---
-     - ---
-     - ---
-     - ---
+     - |huggingface| `92.5% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Spatial-Step400>`_
+     - |huggingface| `95.0% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Object-Step400>`_
+     - |huggingface| `84.3% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Goal-Step500>`_
+     - |huggingface| `86.3% <https://huggingface.co/RLinf/RLinf-Gr00t-RL-Long-Step300>`_
+     - **89.5%**
+     - **+37.0%**
+
+我们想指出上述结果使用了与 :math:`\pi_0` 相同的超参数设置。这些发现主要展示了所提出RL训练框架的广泛适用性和鲁棒性。通过参数调优可以更进一步提升模型性能。

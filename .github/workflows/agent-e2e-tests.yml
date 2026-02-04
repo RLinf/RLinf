@@ -10,47 +10,76 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Create reason environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
+          bash requirements/install.sh reason
+
       - name: Megatron SGLang Collocated mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-mg-sgl
 
       - name: Megatron vLLM Collocated mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-mg-vllm
 
       - name: Megatron SGLang Pipeline mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-mg-sgl
 
       - name: Megatron vLLM Pipeline mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-mg-vllm
 
       - name: FSDP SGLang Collocated mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-fsdp-sgl
 
       - name: FSDP vLLM Collocated mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-fsdp-vllm
+
+      - name: FSDP SGLang Pipeline mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-fsdp-sgl
+
+      - name: FSDP vLLM Pipeline mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-fsdp-vllm
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
 
 
   reason-qwen-grpo-test-rollout-logprobs:
@@ -59,73 +88,118 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Create reason environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
+          bash requirements/install.sh reason
+
       - name: Megatron SGLang Collocated mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-mg-sgl-rollout-logprobs
 
       - name: Megatron vLLM Collocated mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-mg-vllm-rollout-logprobs
 
       - name: Megatron SGLang Pipeline mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-mg-sgl-rollout-logprobs
 
       - name: Megatron vLLM Pipeline mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-mg-vllm-rollout-logprobs
 
       - name: FSDP SGLang Collocated mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-fsdp-sgl-rollout-logprobs
 
       - name: FSDP vLLM Collocated mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-fsdp-vllm-rollout-logprobs
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
 
   reason-qwen-importance-sampling-test:
     runs-on: reason
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+
+      - name: Create reason environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
+          bash requirements/install.sh reason
   
       - name: Megatron SGLang Collocated mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-is-collocated-mg-sgl
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
 
   reason-qwen-reinforcepp-test:
     runs-on: reason
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+
+      - name: Create reason environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
+          bash requirements/install.sh reason
   
       - name: Megatron SGLang Collocated mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-reinpp-collocated-mg-sgl
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
 
   coding-online-rl-qwen-ppo-test:
     runs-on: reason
@@ -133,16 +207,32 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Create reason environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
+          bash requirements/install.sh reason
+
       - name: Install dependencies
         run: |
-          pip install httpx asyncio fuzzywuzzy
+          source .venv/bin/activate
+          uv pip install httpx asyncio fuzzywuzzy
 
       - name: SGLang Pipeline mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/coding_online_rl/run.sh
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
 
   qwen-vl-grpo-test:
     runs-on: reason
@@ -150,19 +240,34 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Create reason environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
+          bash requirements/install.sh reason
+
       - name: FSDP SGLang Collocated mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-vl-3b-grpo-collocated-fsdp-sgl
 
       - name: FSDP vLLM Collocated mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-vl-3b-grpo-collocated-fsdp-vllm
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
 
   agent-rl-qwen-ppo-test:
     runs-on: reason
@@ -170,12 +275,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Create reason environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
+          bash requirements/install.sh reason
+
       - name: Megatron SGLang Pipeline mode
         timeout-minutes: 10
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/agent/run_tool.sh
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
 
   qwen-moe-grpo-test:
     runs-on: reason
@@ -183,11 +303,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Create reason environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
+          bash requirements/install.sh reason
+
       - name: MoE sequential MLP Collocated mode 
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen3-moe-2.5b-collocated-mg-sgl-sequentialmlp
           rm -rf /workspace/results/grpo-moe-CI-test-seqmlp-2.5b/converted_ckpts/
       
@@ -195,7 +325,7 @@ jobs:
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen3-moe-2.5b-collocated-mg-sgl-tegroupgemm
           rm -rf /workspace/results/grpo-moe-CI-test-seqmlp-2.5b/converted_ckpts/
 
@@ -203,7 +333,7 @@ jobs:
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen3-moe-2.5b-collocated-mg-sgl-ep-test
           rm -rf /workspace/results/grpo-moe-CI-test-seqmlp-2.5b/converted_ckpts/
         
@@ -211,7 +341,7 @@ jobs:
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen3-moe-2.5b-collocated-mg-sgl-tpe-test
           rm -rf /workspace/results/grpo-moe-CI-test-seqmlp-2.5b/converted_ckpts/
       
@@ -219,6 +349,19 @@ jobs:
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          source switch_env reason
+          source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen3-moe-2.5b-collocated-mg-sgl-tp-test
           rm -rf /workspace/results/grpo-moe-CI-test-seqmlp-2.5b/converted_ckpts/
+
+      - name: qwen3 dense model parallel tp test 
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/reasoning/run.sh qwen3-4b-collocated-mg-sgl-test
+          rm -rf /workspace/results/grpo-qwen3-4b-CI-test/converted_ckpts/
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune

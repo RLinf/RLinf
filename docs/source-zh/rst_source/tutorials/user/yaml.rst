@@ -44,17 +44,18 @@ cluster
 
 ``cluster.component_placement``：  
 各组件（进程）的 *放置策略*。  
-其中每行接受字典语法：
+
+在上面运行于GPU节点的简单示例中：
 
 - 键 (key) 是组件的名称，例如 ``rollout``，或 ``rollout,inference,actor``
-- 值 (value) 是分配给这些组件的全局 GPU ID，可以是：
+- 值 (value) 是分配给这些组件的全局 GPU Rank，可以是：
    - "all"：使用集群中的所有 GPU
    - 单个整数，例如 "3"：使用 GPU 3
    - 逗号分隔的整数列表，例如 "0,2,3"：使用 GPU 0、2 和 3
    - 连字符分隔的整数范围，例如 "0-3"：使用 GPU 0、1、2 和 3
    - 上述两种方式的组合，例如 "0-3,5,7"：使用 GPU 0、1、2、3、5 和 7
 
-更多细节见 :doc:`../mode/index`。
+而对于更高级的组件放置用法（例如，异构集群中使用不同型号的 GPU、机器人硬件或仅 CPU 节点）以及代码中的自定义，请参见 :doc:`./placement`。
 
 runner
 ~~~~~~~~~~~~~~~
@@ -132,7 +133,7 @@ algorithm
     use_valid_token_scale: False
 
     sampling_params:
-      use_greedy: False
+      do_sample: True
       temperature: 1.0
       top_k: 1000000
       top_p: 1.0
@@ -168,7 +169,7 @@ algorithm
 
 **sampling_params：**
 
-``algorithm.sampling_params.use_greedy``：True 时使用贪心解码。
+``algorithm.sampling_params.do_sample``：False 时使用贪心解码。
  
 ``algorithm.sampling_params.temperature``：采样温度。  
 
@@ -188,8 +189,9 @@ rollout
 
     gpu_memory_utilization: 0.55
 
-    model_dir: ../../model/DeepSeek-R1-Distill-Qwen-1.5B/
-    model_arch: qwen2.5
+    model:
+      model_path: ../../model/DeepSeek-R1-Distill-Qwen-1.5B/
+      model_type: qwen2.5
 
     recompute_logprobs: True
 
@@ -197,9 +199,9 @@ rollout
 
 ``rollout.group_name``：rollout / inference worker 的逻辑分组名。  
 
-``rollout.model_dir``：生成后端所用 HF 模型路径。  
+``rollout.model.model_path``：生成后端所用 HF 模型路径。  
 
-``rollout.model_arch``：后端内部使用的模型架构标记（如 qwen2.5）。  
+``rollout.model.model_type``：后端内部使用的模型架构标记（如 qwen2.5）。  
 
 ``rollout.recompute_logprobs``：是否为采样序列重新计算对数概率。
 
@@ -211,7 +213,8 @@ actor
   actor:
     group_name: "ActorGroup"
 
-    checkpoint_load_path: null
+    model:
+      megatron_checkpoint: null
 
     seed: 1234
 
@@ -219,7 +222,7 @@ actor
 
 ``actor.group_name``：训练（actor）worker 的逻辑分组名。  
 
-``actor.checkpoint_load_path``：训练前加载的 checkpoint 路径。 
+``actor.model.megatron_checkpoint``：训练前加载的模型 Megatron checkpoint 路径。 
 
 ``actor.seed``：全局随机种子，便于复现。
 
@@ -490,8 +493,7 @@ actor
       
       ckpt: # checkpoint 转换器配置
         model: DeepSeek-R1-Distill-Qwen-1.5B
-        model_type: null # 若为 null，将由 HF 配置推断
-        hf_model_path: ${rollout.model_dir} # HF 模型所在路径
+        hf_model_path: ${rollout.model.model_path} # HF 模型所在路径
         save_path: ${runner.output_dir}/${runner.experiment_name}/actor/megatron_ckpt_from_hf
         use_gpu_num : 0
         use_gpu_index: null # 
@@ -641,8 +643,6 @@ actor
 
 ``actor.megatron.ckpt.model``：转换器元信息中的模型名称。
 
-``actor.megatron.ckpt.model_type``：模型类型；为 null 时会从 HF 配置中推断。
-
 ``actor.megatron.ckpt.hf_model_path``：源 HF 模型路径。
 
 ``actor.megatron.ckpt.save_path``：转换后 Megatron checkpoint 保存目录。
@@ -717,8 +717,8 @@ defaults
 .. code:: yaml
 
   defaults:
-    - env/train: PutCarrotOnPlateInScene
-    - env/eval: PutCarrotOnPlateInScene
+    - env/manikill_put_carrot_on_plate_in_scene@env.train
+    - env/manikill_put_carrot_on_plate_in_scene@env.eval
 
 ``defaults``：Hydra 配置继承。指定训练与评估加载的环境配置。
 
@@ -752,15 +752,9 @@ algorithm
 .. code:: yaml
 
   algorithm:
-    auto_reset: True
-    ignore_terminations: True
-    use_fixed_reset_state_ids: False
     normalize_advantages: True
     kl_penalty: kl
 
-    n_chunk_steps: 10
-    n_eval_chunk_steps: 10
-    num_group_envs: 32
     rollout_epoch: 1
 
     reward_type: chunk_level
@@ -772,19 +766,7 @@ algorithm
       max_length: 1024
       min_length: 1
 
-``algorithm.auto_reset``：是否在 episode 结束时自动重置环境。
-
-``algorithm.ignore_terminations``：训练时是否忽略 episode 的终止信号（若开启，episode 仅在达到最大步数时结束）。
-
-``algorithm.use_fixed_reset_state_ids``：是否使用固定 reset 状态 ID（GRPO 推荐 True，PPO 默认为 False，旨在随机化）。
-
 ``algorithm.normalize_advantages``：是否对优势值归一化处理。
-
-``algorithm.n_chunk_steps``：每个 rollout epoch 中的 chunk 数量（调用模型 predict 的次数）。
-
-``algorithm.n_eval_chunk_steps``：评估模式下的 chunk 数量。
-
-``algorithm.num_group_envs``：环境组数量（用于并行）。
 
 ``algorithm.rollout_epoch``：每个训练步骤前的 rollout 轮数。
 
@@ -815,6 +797,20 @@ env
       queue_size: 0
     enable_offload: True
 
+    train:
+      total_num_envs: null
+      auto_reset: False
+      ignore_terminations: False
+      use_fixed_reset_state_ids: True
+      max_episode_steps: 10
+
+    eval:
+      total_num_envs: null
+      auto_reset: False
+      ignore_terminations: False
+      use_fixed_reset_state_ids: True
+      max_episode_steps: 10
+
 ``env.group_name``：环境 worker 组的逻辑名称。  
 
 ``env.channel.name``：进程间通信的共享内存通道名。  
@@ -824,6 +820,26 @@ env
 ``env.channel.queue_size``：队列大小（0 表示不限制）。  
 
 ``env.enable_offload``：启用环境侧的下放以降低内存占用。
+
+``env.train.total_num_envs``：训练用的并行环境总数。
+
+``env.train.auto_reset``：训练时当 episode 终止时自动重置环境。
+
+``env.train.ignore_terminations``：训练时忽略 episode 终止（如果启用，episode 仅在达到 ``max_episode_steps`` 时结束）。
+
+``env.train.use_fixed_reset_state_ids``：使用固定的 reset 状态 ID（false 则随机化）。GRPO 始终为 True，PPO 默认为 False。
+
+``env.train.max_episode_steps``：训练时每个 episode 的最大步数。
+
+``env.eval.total_num_envs``：评估用的并行环境总数。
+
+``env.eval.auto_reset``：评估时当 episode 终止时自动重置环境。
+
+``env.eval.ignore_terminations``：评估时忽略 episode 终止（如果启用，episode 仅在达到 ``max_episode_steps`` 时结束）。
+
+``env.eval.use_fixed_reset_state_ids``：使用固定的 reset 状态 ID（false 则随机化）。GRPO 始终为 True，PPO 默认为 False。
+
+``env.eval.max_episode_steps``：评估时每个 episode 的最大步数。
 
 rollout
 ~~~~~~~~~~~~~~~
@@ -851,7 +867,7 @@ rollout
 
 ``rollout.backend``：模型后端（huggingface、vllm）。  
 
-``rollout.pipeline_stage_num``：模型并行的流水线阶段数。
+``rollout.pipeline_stage_num``：rollout 的流水线阶段数。
 
 actor
 ~~~~~~~~~~~~~~~
@@ -869,7 +885,8 @@ actor
     enable_offload: True
 
     model:
-      model_name: "openvla_oft"
+      model_path: "/path/to/hf_model"
+      model_type: "openvla_oft"
       action_dim: 7
       num_action_chunks: 8
       use_proprio: False
@@ -889,9 +906,7 @@ actor
       is_lora: True
       lora_rank: 32
       lora_path: /storage/models/oft-sft/lora_004000
-      ckpt_path: null
       num_images_in_input: 1
-      use_wrist_image: False
       attn_implementation: "flash_attention_2"
       low_cpu_mem_usage: True
       trust_remote_code: True
@@ -926,7 +941,7 @@ actor
 
 **模型配置：**
 
-``actor.model.model_name``：模型结构名（openvla_oft）。  
+``actor.model.model_type``：模型类型（openvla_oft）。  
 
 ``actor.model.action_dim``：动作空间维度。  
 
@@ -956,11 +971,9 @@ actor
 
 ``actor.model.is_lora / lora_rank / lora_path``：是否使用 LoRA、秩与权重路径。  
 
-``actor.model.ckpt_path``：模型 checkpoint 路径。  
+``actor.model.megatron_checkpoint``：模型 checkpoint 路径。  
 
 ``actor.model.num_images_in_input``：输入的图像数量。  
-
-``actor.model.use_wrist_image``：是否使用机器人末端手腕（wrist）上的摄像头拍摄的图像。  
 
 ``actor.model.attn_implementation``：注意力实现（flash_attention_2）。  
 
@@ -1003,10 +1016,10 @@ actor
 
 .. code:: yaml
 
-  simulator_type: libero
+  env_type: libero
   task_suite_name: libero_10
 
-``simulator_type``：模拟器类型（libero 表示 Libero 基准）。  
+``env_type``：模拟器类型（libero 表示 Libero 基准）。  
 
 ``task_suite_name``：任务集合（libero_10 表示 10 个任务的基准）。
 
@@ -1040,36 +1053,22 @@ actor
 .. code:: yaml
 
   seed: 0
-  num_task: ${algorithm.num_group_envs}
-  num_group: ${algorithm.num_group_envs}
-  group_size: ${algorithm.group_size}
-  use_fixed_reset_state_ids: ${algorithm.use_fixed_reset_state_ids}
+  group_size: 1
+  use_fixed_reset_state_ids: True
 
 ``seed``：环境初始化随机种子（0 便于复现）。  
-
-``num_task``：任务数量（继承自 algorithm.num_group_envs）。  
-
-``num_group``：环境分组数量（继承自 algorithm.num_group_envs）。  
 
 ``group_size``：每个分组的环境数（继承自 algorithm.group_size）。  
 
 ``use_fixed_reset_state_ids``：是否使用固定 reset 状态（GRPO 为 True，PPO 默认 False）。
 
-**输入配置**
-
-.. code:: yaml
-
-  use_wrist_image: False
-
-``use_wrist_image``：是否使用机器人末端手腕（wrist）上的摄像头拍摄的图像。
-
 **环境规模**
 
 .. code:: yaml
 
-  num_envs: ${multiply:${algorithm.group_size}, ${algorithm.num_group_envs}}
+  total_num_envs: null
 
-``num_envs``：总环境数（= group_size × num_group_envs）。
+``total_num_envs``：总并行环境数用于训练或评估。
 
 **视频记录**
 

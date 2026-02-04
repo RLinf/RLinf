@@ -12,22 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import glob
+import os
 from abc import ABC, abstractmethod
 from logging import Logger
-from typing import ContextManager, Optional, Union
+from typing import TYPE_CHECKING, ContextManager, Optional, Union
 
 import torch
 import torch.distributed.checkpoint as dcp
 import torch.nn as nn
 from omegaconf import DictConfig
-from torch.distributed.checkpoint.state_dict import StateDictOptions
+from torch.distributed.checkpoint.state_dict import (
+    StateDictOptions,
+    get_model_state_dict,
+)
 from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 from rlinf.hybrid_engines.fsdp import FSDP, FSDPModule
 from rlinf.hybrid_engines.fsdp.strategy.checkpoint import Checkpoint
-from rlinf.hybrid_engines.fsdp.utils import FSDPVersion
+from rlinf.hybrid_engines.fsdp.utils import (
+    FSDPVersion,
+)
+from rlinf.utils.utils import clear_memory
+
+if TYPE_CHECKING:
+    from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
+    from rlinf.workers.inference.fsdp_inference_worker import FSDPInference
 
 
 class FSDPStrategyBase(ABC):
@@ -61,7 +74,6 @@ class FSDPStrategyBase(ABC):
         Args:
             cfg: DictConfig that must contain fsdp_config.strategy
             world_size: actor distributed world size
-            rank: current process's distributed rank
             dp_group: optional data parallel process group
             logger: optional logger, if none, a default logger will be created
 
@@ -166,7 +178,9 @@ class FSDPStrategyBase(ABC):
             lr_scheduler (LRScheduler): The learning rate scheduler to be saved.
             save_path (str): The path to save the checkpoint.
         """
+        clear_memory()
         torch.distributed.barrier()
+        dcp_save_path = os.path.join(save_path, "dcp_checkpoint")
         opts = StateDictOptions(full_state_dict=False, cpu_offload=True)
         try:
             training_state = Checkpoint(
@@ -176,7 +190,8 @@ class FSDPStrategyBase(ABC):
                 opts,
                 fsdp_version=cls.get_fsdp_version(),
             )
-            dcp.save({"fsdp_checkpoint": training_state}, checkpoint_id=save_path)
+            dcp.save({"fsdp_checkpoint": training_state}, checkpoint_id=dcp_save_path)
+
         except BaseException as e:
             import traceback
 
@@ -184,6 +199,14 @@ class FSDPStrategyBase(ABC):
                 cls.logger.error(f"Failed to save checkpoint to {save_path}: {e}")
             traceback.print_exc()
             raise e
+        torch.distributed.barrier()
+
+        opts = StateDictOptions(full_state_dict=True, cpu_offload=True)
+        sd_save_path = os.path.join(save_path, "model_state_dict")
+        model_state_dict = get_model_state_dict(model=model, options=opts)
+        if torch.distributed.get_rank() == 0:
+            os.makedirs(sd_save_path, exist_ok=True)
+            torch.save(model_state_dict, os.path.join(sd_save_path, "full_weights.pt"))
 
         torch.distributed.barrier()
 
@@ -210,6 +233,17 @@ class FSDPStrategyBase(ABC):
             lr_scheduler (LRScheduler): The learning rate scheduler to load the checkpoint into.
             load_path (str): The path to load the checkpoint from.
         """
+        dcp_dir = os.path.join(load_path, "dcp_checkpoint")
+        if os.path.isdir(dcp_dir):
+            dcp_load_path = dcp_dir
+        else:
+            dcp_load_path = load_path
+        distcp_files = glob.glob(os.path.join(dcp_load_path, "*.distcp"))
+        if len(distcp_files) == 0:
+            raise FileNotFoundError(
+                f"Could not find a valid DCP checkpoint under '{dcp_load_path}'. "
+            )
+
         torch.distributed.barrier()
         opts = StateDictOptions(full_state_dict=False, cpu_offload=True)
         try:
@@ -220,54 +254,183 @@ class FSDPStrategyBase(ABC):
                 opts=opts,
                 fsdp_version=cls.get_fsdp_version(),
             )
-            dcp.load({"fsdp_checkpoint": training_state}, checkpoint_id=load_path)
+            dcp.load({"fsdp_checkpoint": training_state}, checkpoint_id=dcp_load_path)
         except BaseException as e:
             import traceback
 
             if hasattr(cls, "logger") and cls.logger is not None:
-                cls.logger.error(f"Failed to load checkpoint from {load_path}: {e}")
+                cls.logger.error(f"Failed to load checkpoint from {dcp_load_path}: {e}")
             traceback.print_exc()
             raise e
         torch.distributed.barrier()
 
-    @abstractmethod
-    def get_model_state_dict(self, model: Union[FSDP, FSDPModule]) -> dict:
-        raise NotImplementedError(
-            "state_dict method must be implemented by subclasses."
+    def get_model_state_dict(
+        self, model: FSDPModule, cpu_offload: bool, full_state_dict: bool
+    ) -> dict:
+        """
+        Get the full model state dict of FSDP2 from all ranks.
+
+        Args:
+            - model (FSDPModule): The FSDP2 wrapped model.
+            - cpu_offload (bool): Whether returned state_dict's value will be offloaded to CPU. If true, will
+                be copied to CPU memory, or just keep a reference to the original GPU tensor.
+            - full_state_dict (bool): Whether to get the full state dict.
+
+        Returns:
+            - dict: The state dict of the FSDP/FSDP2 wrapped model according to the specified options.
+        """
+        opts = StateDictOptions(
+            cpu_offload=cpu_offload, full_state_dict=full_state_dict
         )
+        state_dict = get_model_state_dict(model=model, options=opts)
+        return state_dict
 
     @abstractmethod
-    def offload_optimizer(self, optimizer: Optimizer) -> None:
-        raise NotImplementedError(
-            "offload_optimizer method must be implemented by subclasses."
-        )
+    def offload_optimizer(self, optimizer: Optimizer) -> None: ...
 
     @abstractmethod
-    def onload_optimizer(self, optimizer: Optimizer, device: torch.device) -> None:
-        raise NotImplementedError(
-            "onload_optimizer method must be implemented by subclasses."
-        )
+    def onload_optimizer(self, optimizer: Optimizer, device: torch.device) -> None: ...
 
     @abstractmethod
     def offload_param_and_grad(
         self, model: Union[FSDP, FSDPModule], offload_grad: bool
-    ) -> None:
-        raise NotImplementedError(
-            "offload_param method must be implemented by subclasses."
-        )
+    ) -> None: ...
 
     @abstractmethod
     def onload_param_and_grad(
         self, model: Union[FSDP, FSDPModule], device: torch.device, onload_grad: bool
-    ) -> None:
-        raise NotImplementedError(
-            "onload_param method must be implemented by subclasses."
-        )
+    ) -> None: ...
 
     @abstractmethod
     def before_micro_batch(
         self, model: Union[FSDP, FSDPModule], is_last_micro_batch: bool
-    ) -> ContextManager:
-        raise NotImplementedError(
-            "before_micro_batch method must be implemented by subclasses."
+    ) -> ContextManager: ...
+
+    def setup_inference_sync_actor_ranks(self, inference: "FSDPInference") -> None:
+        """
+        See `setup_actor_sync_inference_ranks` for details. It will send the sharding metadata
+        (including offsets and sizes for each param) to all actor workers, waiting to receive
+        their responses(whether inference workers need params from them and offsets,size if so).
+
+        Args:
+            - inference (FSDPInference): The FSDP inference worker.
+        """
+        # param name -> (global_start, needed_size)
+        local_meta: list[str, tuple[int, int]] = {}
+        inference_model_state_dict = inference.get_model_state_dict(
+            cpu_offload=False, full_state_dict=False
+        )
+        inference_world_size = inference._world_size
+        inference_rank = inference._rank
+        for name, param in inference_model_state_dict.items():
+            if isinstance(param, DTensor):
+                full_tensor_size = param.numel()
+
+                shard_size = (
+                    full_tensor_size + inference_world_size - 1
+                ) // inference_world_size
+                global_start = inference_rank * shard_size
+                # last rank may have smaller shard
+                global_end = min(global_start + shard_size, full_tensor_size)
+                needed_size = global_end - global_start
+                if needed_size > 0:
+                    local_meta[name] = (global_start, needed_size)
+            elif torch.is_tensor(param):
+                full_tensor_size = param.numel()
+                local_meta[name] = (0, full_tensor_size)
+
+        actor_group = inference._actor_group_name
+        for actor_rank in range(inference._actor_world_size):
+            inference.send(
+                dst_rank=actor_rank, dst_group_name=actor_group, object=local_meta
+            )
+
+        jobs = [
+            inference.recv(
+                src_rank=actor_rank, src_group_name=actor_group, async_op=True
+            )
+            for actor_rank in range(inference._actor_world_size)
+        ]
+        results = [job.wait() for job in jobs]
+
+        for actor_rank, resp in enumerate(results):
+            if resp:
+                inference._actor_dst_map[actor_rank] = resp
+
+    def setup_actor_sync_inference_ranks(self, actor: "FSDPActor") -> None:
+        """
+        Setup the mapping from actor ranks to inference ranks for synchronizing
+        their sharded params. It will receive the sharding metadata from all inference workers,
+        compute which params need to be sent back to each inference worker, and then send it's metadata
+        (including offsets and sizes for each param) to the corresponding inference workers.
+        Actually, unlike FSDP, FSDP2's using of DTensor does do better than FSDP's FlatParams,
+        it sharded params can be directly computed, but for further ergonomic and development consideration
+        (like support multi-dim sharding in future), we still use this way to exchange sharding metadata.
+
+        Args:
+            - actor (FSDPActor): The FSDP actor worker.
+        """
+        inference_group = actor._inference_group_name
+        jobs = [
+            actor.recv(
+                src_rank=inference_rank, src_group_name=inference_group, async_op=True
+            )
+            for inference_rank in range(actor._inference_world_size)
+        ]
+
+        inference_requests: list[dict] = [job.wait() for job in jobs]
+
+        actor_world_size = actor._world_size
+        actor_rank = actor._rank
+
+        local_meta = {}
+        actor_model_state_dict = actor.get_model_state_dict(
+            cpu_offload=False, full_state_dict=False
+        )
+        for name, param in actor_model_state_dict.items():
+            if isinstance(param, DTensor):
+                full_tensor_size = param.numel()
+                shard_size = (
+                    full_tensor_size + actor_world_size - 1
+                ) // actor_world_size
+                global_start = actor_rank * shard_size
+                global_end = min(global_start + shard_size, full_tensor_size)
+                size = global_end - global_start
+                if size > 0:
+                    local_meta[name] = (global_start, size)
+            elif torch.is_tensor(param):
+                full_tensor_size = param.numel()
+                local_meta[name] = (0, full_tensor_size)
+
+        for inference_rank, inference_param_metadata in enumerate(inference_requests):
+            resp = {}
+            has_intersection = False
+            for name, (inf_offset, inf_size) in inference_param_metadata.items():
+                if name in local_meta:
+                    act_offset, act_size = local_meta[name]
+                    # check overlap
+                    start1, end1 = inf_offset, inf_offset + inf_size
+                    start2, end2 = act_offset, act_offset + act_size
+
+                    global_start = max(start1, start2)
+                    global_end = min(end1, end2)
+                    # it means there is intersection between this actor shard and sender inference shard,
+                    # so we just calculate the intersection part and send back to inference worker
+                    if global_start < global_end:
+                        needed_sizes = global_end - global_start
+                        act_shard_offset = global_start - act_offset
+                        inf_shard_offset = global_start - inf_offset
+                        resp[name] = (act_shard_offset, inf_shard_offset, needed_sizes)
+                        has_intersection = True
+
+            if has_intersection:
+                actor._inference_dst_map[inference_rank] = list(resp.keys())
+
+            actor.send(
+                dst_rank=inference_rank,
+                dst_group_name=inference_group,
+                object=resp,
+            )
+        actor.logger.info(
+            f"Actor rank {actor._rank} will send params to inference ranks: {actor._inference_dst_map.keys()}"
         )

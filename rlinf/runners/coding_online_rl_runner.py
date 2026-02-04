@@ -100,7 +100,9 @@ class CodingOnlineRLRunner:
                 self.cfg.actor.training_backend == "megatron"
                 and self.cfg.actor.megatron.use_hf_ckpt
             ):
-                from toolkits.ckpt_convertor.convert_hf_to_mg import convert_hf_to_mg
+                from toolkits.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
+                    convert_hf_to_mg,
+                )
 
                 convert_hf_to_mg(
                     self.cfg.actor.megatron.ckpt_convertor.hf_model_path,
@@ -296,7 +298,7 @@ class CodingOnlineRLRunner:
             logging_metrics.update(actor_rollout_metrics)
             logging_metrics.update(actor_training_metrics[-1])
 
-            global_pbar.set_postfix(logging_metrics)
+            global_pbar.set_postfix(logging_metrics, refresh=False)
             global_pbar.update(1)
 
         self.server_rollout.shutdown()

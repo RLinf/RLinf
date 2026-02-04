@@ -25,16 +25,16 @@ The RLinf environment system consists of the following components:
    import torch
 
    class YourCustomEnv(gym.Env):
-       def __init__(self, cfg, rank, ret_device="cpu"):
+       def __init__(self, cfg, rank, num_envs, ret_device="cpu"):
            self.cfg = cfg
            self.rank = rank
            self.ret_device = ret_device
            self.seed = self.cfg.seed + rank
 
            # Initialize environment-related parameters
-           self.num_envs = self.cfg.num_envs
+           self.num_envs = num_envs
            self.group_size = self.cfg.group_size
-           self.num_group = self.cfg.num_group
+           self.num_group = self.num_envs // self.group_size
 
            # Initialize environment internals
            self._init_environment()
@@ -107,7 +107,7 @@ The RLinf environment system consists of the following components:
    @property
    def num_envs(self):
        """Number of vectorized environments."""
-       return self.env.unwrapped.num_envs
+       return self.num_envs
 
    @property
    def device(self):
@@ -181,14 +181,14 @@ Add action processing utilities in ``action_utils.py``:
        pass
 
    def prepare_actions(
-       simulator_type,
+       env_type,
        raw_chunk_actions,
        num_action_chunks,
        action_dim,
        action_scale: float = 1.0,
        policy: str = "default",
    ):
-       if simulator_type == "your_env":
+       if env_type == "your_env":
            chunk_actions = prepare_actions_for_your_env(
                raw_chunk_actions=raw_chunk_actions,
                num_action_chunks=num_action_chunks,
@@ -232,9 +232,8 @@ Add your environment configuration:
 
    your_env:
      env_type: "your_env"
-     num_envs: 8
+     total_num_envs: 8
      group_size: 4
-     num_group: 2
      seed: 42
      # Other environment-specific settings
 

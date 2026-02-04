@@ -1,5 +1,5 @@
 代码补全在线强化学习
-=================
+====================
 
 代码补全在线强化学习（Online Coding RL）是 RLinf 框架中的一个重要应用场景。
 通过与 Continue 等代码编辑器的集成，获取用户对代码补全的偏好反馈，可以实现近乎实时的代码生成和反馈学习，快速提高代码补全的质量，和对齐用户的偏好。
@@ -103,7 +103,8 @@
            output_dir: /path/to/your/logs
 
          rollout:
-           model_dir: /path/to/your/model
+           model:
+             model_path: /path/to/your/model
 
 
    - 对于离线验证，修改并使用 examples/coding_online_rl/config/qwen2.5-1.5b-grpo-llm_judge.yaml 文件:
@@ -113,7 +114,8 @@
            output_dir: /path/to/your/logs
 
          rollout:
-           model_dir: /path/to/your/model
+           model:
+             model_path: /path/to/your/model
 
          data:
            train_data_paths: ["/path/to/your/dataset/code-fim-v2-python-filtered_formatted_train_3k.jsonl"]

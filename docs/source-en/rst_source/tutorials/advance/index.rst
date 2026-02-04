@@ -22,6 +22,14 @@ offering practical guidance to help you fully optimize your RL post-training wor
    Covers how to resume training from saved checkpoints,  
    ensuring fault tolerance and seamless continuation for long-running or interrupted training jobs.
 
+- :doc:`convertor`  
+   Describes how to convert a saved checkpoint file into HuggingFace safetensors format,  
+   which can be used for checkpoint evaluation or uploading to the HuggingFace Hub.
+
+- :doc:`hetero`  
+   Introduces how to configure and utilize heterogeneous software and hardware clusters,  
+   to fully leverage different types of computing resources and hardware devices.
+
 - :doc:`logger`  
    Introduces how to visualize and track key metrics during your training process.  
    Currently, we support three backends for experiment tracking and visualization: 
@@ -36,4 +44,6 @@ offering practical guidance to help you fully optimize your RL post-training wor
    lora
    version
    resume
+   convertor
+   hetero
    logger

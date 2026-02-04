@@ -4,7 +4,7 @@ __pycache__
 *.idx
 *.npy
 *.txt
-!requirements/*
+!requirements/**
 !docs/*
 *.DS_Store
 *.out
@@ -12,7 +12,9 @@ build
 docs/build
 dist
 logs/*
+outputs/*
 *.so
 .venv
+.docs-venv
 uv.lock
 rlinf/envs/maniskill/assets

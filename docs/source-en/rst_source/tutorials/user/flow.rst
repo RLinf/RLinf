@@ -36,13 +36,12 @@ these examples, then iterating toward your custom task. Key options include
        env: 0-3
        rollout: 4-7
 
-**2. Models, tokenizer, optional checkpoint paths, and output locations**
+**2. Models, tokenizer and output paths**
 
-- ``rollout.model_dir``
+- ``rollout.model.model_path``
 - ``actor.tokenizer.tokenizer_model``
-- ``actor.checkpoint_load_path``
+- ``actor.model.model_path``
 - ``runner.logger.log_path``
-- ``actor.checkpoint_save_path``
 
 **3. Training hyperparameters such as max steps and batch sizes**
 

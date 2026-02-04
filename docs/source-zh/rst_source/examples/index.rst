@@ -1,7 +1,7 @@
 示例库
-=====
+========
 
-本节展示了 **RLinf 目前支持的示例集合**，  
+本节展示了 **RLinf 目前支持的示例集合**，
 展示该框架如何应用于不同场景，并演示其在实际中的高效性。示例库会随着时间不断扩展，涵盖新的场景和任务，以展示 RLinf 的多样性和可扩展性。
 
 具身智能场景
@@ -26,7 +26,7 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/libero_numbers.jpeg" 
+       <img src="https://github.com/RLinf/misc/raw/main/pic/libero_numbers.jpeg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/libero.html" target="_blank" style="text-decoration: underline; color: blue;">
@@ -59,7 +59,7 @@
          支持Behavior+OpenVLA-OFT+PPO/GRPO训练
        </p>
      </div>
-     
+
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/metaworld.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -71,7 +71,20 @@
        </p>
      </div>
 
-      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/IsaacLab.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/metaworld.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>基于IsaacLab的强化学习</b>
+         </a><br>
+         支持IsaacLab+gr00t+PPO训练
+       </p>
+     </div>
+   </div>
+
+   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/gr00t.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -81,39 +94,106 @@
          支持GR00T-N1.5强化学习微调
        </p>
      </div>
-   </div>
 
-   <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
-      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-        <img src="https://raw.githubusercontent.com/RoboTwin-Platform/RoboTwin/main/assets/files/50_tasks.gif" 
-              style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" 
-              data-target="animated-image.originalImage">
-        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-          <b>[开发中]基于RoboTwin的强化学习</b><br>
-          RoboTwin+OpenVLA-OFT+PPO达到SOTA训练效果
-        </p>
-      </div>
-
-      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/calvin.png" 
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/calvin.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
             data-target="animated-image.originalImage">
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[开发中]基于CALVIN的强化学习</b><br>
+        <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/calvin.html" target="_blank" style="text-decoration: underline; color: blue;">
+         <b>基于CALVIN的强化学习</b>
+         </a><br>
          支持CALVIN+π₀/π₀.₅+PPO/GRPO训练
        </p>
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
+       <img src="https://github.com/RLinf/misc/raw/main/pic/robocasa.jpeg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[开发中]Franka真机强化学习</b><br>
-         RLinf worker无缝对接Franka机械臂
+         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/robocasa.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>基于RoboCasa的强化学习</b>
+         </a><br>
+         支持RoboCasa+π₀+GRPO训练
        </p>
      </div>
    </div>
 
+    <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+        <img src="https://github.com/RLinf/misc/raw/main/pic/franka_arm_small.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+          <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/franka.html" target="_blank" style="text-decoration: underline; color: blue;">
+            <b>Franka真机强化学习</b>
+          </a><br>
+          RLinf worker无缝对接Franka机械臂
+        </p>
+      </div>
+
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+        <img src="https://raw.githubusercontent.com/RLinf/serl/refs/heads/RLinf/franka-sim/franka_sim/franka_sim/envs/xmls/robotiq_2f85/2f85.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
+            data-target="animated-image.originalImage">
+        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+          <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/frankasim.html" target="_blank" style="text-decoration: underline; color: blue;">
+            <b>基于Franka-Sim的强化学习</b>
+          </a><br>
+          支持Franka-Sim+MLP/CNN+PPO/SAC训练
+        </p>
+      </div>
+
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+        <img src="https://raw.githubusercontent.com/RoboTwin-Platform/RoboTwin/main/assets/files/50_tasks.gif"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
+            data-target="animated-image.originalImage">
+        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+          <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/robotwin.html" target="_blank" style="text-decoration: underline; color: blue;">
+            <b>基于RoboTwin的强化学习</b>
+          </a><br>
+          支持RoboTwin + OpenVLA-OFT/π₀/π₀.₅ + PPO/GRPO训练
+        </p>
+      </div>
+    </div>
+
+    
+    <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+        <img src="https://github.com/RLinf/misc/raw/main/pic/sac-flow-overview.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+          <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/sac_flow.html" target="_blank" style="text-decoration: underline; color: blue;">
+            <b>SAC-Flow 策略训练</b>
+          </a><br>
+          使用 SAC 训练 Flow Matching 策略 (Sim & Real)
+        </p>
+      </div>
+
+     
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+        <img src="https://github.com/RLinf/misc/raw/main/pic/3_layer_mlp.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
+            data-target="animated-image.originalImage">
+        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+          <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/mlp.html" target="_blank" style="text-decoration: underline; color: blue;">
+            <b>基于MLP的强化学习</b>
+          </a><br>
+          使用 PPO/SAC/GRPO 训练 PPO 策略
+        </p>
+      </div>
+
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/hpcaitech/Open-Sora-Demo/raw/main/readme/icon.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
+            data-target="animated-image.originalImage">
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/opensora.rst" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>基于 OpenSora 世界模型的强化学习</b>
+         </a><br>
+         支持 OpenSora 世界模型 + OpenVLA-OFT + GRPO 训练
+       </p>
+      </div>
+    </div>
 
 
 推理场景
@@ -175,6 +255,17 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/searchr1.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/searchr1.html" target="_blank" style="text-decoration: underline; color: blue;">
+          <b>Search-R1强化学习</b>
+         </a><br>
+         训练LLM调用搜索工具回答问题，RLinf加速训练过程55%
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/waiting_icon.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -230,7 +321,18 @@ RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训
    libero
    behavior
    metaworld
+   isaaclab
+   calvin
+   robocasa
+   robotwin
+   frankasim
+   opensora
    pi0
    gr00t
+   sac_flow
+   mlp
+   franka
+   sft
    reasoning
    coding_online_rl
+   searchr1

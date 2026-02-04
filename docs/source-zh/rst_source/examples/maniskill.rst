@@ -1,5 +1,5 @@
-基于ManiSkill模拟器的强化学习训练
-=============================
+基于ManiSkill评测平台的强化学习训练
+======================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -38,7 +38,7 @@
 
 **数据结构**
 
-- **Images**：RGB 张量 ``[batch_size, 3, 224, 224]``  
+- **Images**：RGB 张量 ``[batch_size, 224, 224, 3]``  
 - **Task Descriptions**：自然语言指令  
 - **Actions**：归一化的连续值，转换为离散 tokens  
 - **Rewards**：基于任务完成度的逐步奖励
@@ -66,7 +66,69 @@
    - 动作 token 化与反 token 化  
    - 带 Value Head 的 Critic 功能
 
-Model Download
+依赖安装
+---------------
+
+1. 克隆 RLinf 仓库
+~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+   # 为提高国内下载速度，可以使用：
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+2. 安装依赖
+~~~~~~~~~~~~~~~~
+
+**选项 1：Docker 镜像**
+
+使用 Docker 镜像运行实验。
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+      # 如果需要国内加速下载镜像，可以使用：
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+
+对于不同模型上的实验，请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
+
+.. code:: bash
+
+   # 切换到 OpenVLA 环境
+   source switch_env openvla
+   # 切换到 OpenVLA-OFT 环境
+   source switch_env openvla-oft
+
+**选项 2：自定义环境**
+
+.. code:: bash
+
+   # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
+
+   # 将 --model 参数改为 openvla-oft 可安装 OpenVLA-OFT 环境
+   bash requirements/install.sh embodied --model openvla --env maniskill_libero
+   source .venv/bin/activate
+
+资源下载
+----------------
+
+下载 ManiSkill 资源文件：
+
+.. code:: bash
+
+   cd <path_to_RLinf>/rlinf/envs/maniskill
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
+   hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
+
+模型下载
 --------------
 
 在开始训练之前，你需要下载相应的预训练模型和资产：
@@ -79,8 +141,10 @@ Model Download
    git clone https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup
 
    # 方法 2: 使用 huggingface-hub
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
-   hf download gen-robot/openvla-7b-rlvla-warmup
+   hf download gen-robot/openvla-7b-rlvla-warmup --local-dir openvla-7b-rlvla-warmup
 
 下载完成后，请确保在配置yaml文件中正确指定模型路径。
 
@@ -103,9 +167,8 @@ Model Download
    rollout:
       pipeline_stage_num: 2
 
-你可以灵活配置 env、rollout、actor 三个组件使用的 GPU等加速器 数量。  
-使用上述配置，可以让 env 与 rollout 之间流水线重叠，并与 actor 共享。  
-此外，在配置中设置 `pipeline_stage_num = 2`，可实现 **rollout 与 actor** 之间的流水线重叠，从而提升 rollout 效率。
+你可以灵活配置 env、rollout、actor 三个组件使用的 GPU等加速器 数量。    
+此外，在配置中设置 `pipeline_stage_num = 2`，可实现 **rollout 与 env** 之间的流水线重叠，从而提升 rollout 效率。
 
 .. code-block:: yaml
    
@@ -166,44 +229,54 @@ Model Download
 
 - **训练指标**：
 
-  - ``actor/loss``：PPO 策略损失  
-  - ``actor/value_loss``：价值函数损失  
-  - ``actor/entropy``：策略熵  
-  - ``actor/grad_norm``：梯度范数  
-  - ``actor/lr``：学习率  
+  - ``train/actor/approx_kl``: 近似 KL，用于监控策略更新幅度
+  - ``train/actor/clip_fraction``: 触发 PPO 的 clip 样本的比例
+  - ``train/actor/clipped_ratio``: 被裁剪后的概率比均值，用来衡量策略更新受到 clip 的影响程度
+  - ``train/actor/grad_norm``: 梯度范数
+  - ``train/actor/lr``: 学习率
+  - ``train/actor/policy_loss``: PPO/GRPO的策略损失
+  - ``train/critic/value_loss``: 价值函数的损失
+  - ``train/critic/value_clip_ratio``: PPO-style value function clipping 中触发 clip 的比例
+  - ``train/critic/explained_variance``: 衡量价值函数拟合程度，越接近 1 越好
+  - ``train/entropy_loss``: 策略熵
+  - ``train/loss``: 策略损失 + 价值损失 + 熵正则的总和  (actor_loss + critic_loss + entropy_loss regularization)
 
 - **Rollout 指标**：
 
-  - ``rollout/reward_mean``：平均回合奖励  
-  - ``rollout/reward_std``：奖励标准差  
-  - ``rollout/episode_length``：平均回合长度  
-  - ``rollout/success_rate``：任务完成率  
+  - ``rollout/advantages_max``: 优势函数的最大值
+  - ``rollout/advantages_mean``: 优势函数的均值
+  - ``rollout/advantages_min``: 优势函数的最小值
+  - ``rollout/rewards``: 一个chunk的奖励
 
 - **环境指标**：
 
-  - ``env/success_rate``：各环境的成功率  
-  - ``env/step_reward``：逐步奖励  
-  - ``env/termination_rate``：回合终止率  
+  - ``env/episode_len``：该回合实际经历的环境步数（单位：step）
+  - ``env/return``：回合总回报。在 LIBERO 的稀疏奖励设置中，该指标并不具有参考价值，因为奖励在回合中几乎始终为 0，只有在成功结束时才会给出 1
+  - ``env/reward``：环境的 step-level 奖励
+  - ``env/success_once``：建议使用该指标来监控训练效果，它直接表示未归一化的任务成功率，更能反映策略的真实性能
+
 
 **3. 视频生成**
 
 .. code-block:: yaml
 
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ./logs/video/train
+   env:
+      eval:
+         video_cfg:
+            save_video: True
+            video_base_dir: ${runner.logger.log_path}/video/eval
 
-**4. WandB 集成**
+**4. 训练日志工具集成**
 
 .. code-block:: yaml
 
-   trainer:
-     logger:
-       wandb:
-         enable: True
-         project_name: "RLinf"
-         experiment_name: "openvla-maniskill"
+   runner:
+      task_type: embodied
+      logger:
+         log_path: "../results"
+         project_name: rlinf
+         experiment_name: "maniskill_ppo_openvla"
+         logger_backends: ["tensorboard"] # wandb, swanlab
 
 ManiSkill3 结果
 ~~~~~~~~~~~~~~~~~~~
@@ -228,7 +301,9 @@ ManiSkill3 结果
 每类任务最优模型以粗体标注。
 
 .. note::
-   为公平对比，这里采用与 `rl4vla` (`论文链接 <https://arxiv.org/abs/2505.19789>`_) 相同的 OOD 测试集。
+   为确保公平对比，我们沿用了 `rl4vla` (`论文链接 <https://arxiv.org/abs/2505.19789>`_) 中使用的同一套 OOD 测试集。
+   对于 OpenVLA 模型，我们直接采用了 HuggingFace 上提供的预训练权重 OpenVLA (Base) (aka openvla-7b-rlvla-warmup) <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_.
+   对于 OpenVLA-OFT 模型，我们利用采集自 “PutOnPlateInScene25Main-v3” 任务的运动规划数据，自行进行了 LoRA 微调。由此得到的 LoRA 权重也已上传至 HuggingFace OpenVLA-OFT (Base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_。
 
 .. list-table:: **ManiSkill3 上 OpenVLA 与 OpenVLA-OFT 的模型结果**
    :header-rows: 1
@@ -246,7 +321,7 @@ ManiSkill3 结果
      - 35.75%
      - 42.11%
      - 39.10%
-   * - |huggingface| `rl4vla <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_
+   * - |huggingface| `rl4vla <https://huggingface.co/gen-robot/openvla-7b-rlvla-rl>`_
      - 93.75%
      - 80.47%
      - 75.00%

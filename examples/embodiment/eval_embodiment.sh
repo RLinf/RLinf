@@ -20,12 +20,12 @@ export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
 export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
 export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 
-LIBERO_PATH=/opt/libero
-export PYTHONPATH=${LIBERO_PATH}:$PYTHONPATH
+export ROBOTWIN_PATH="/path/to/RoboTwin"
+export PYTHONPATH=${REPO_PATH}:${ROBOTWIN_PATH}:$PYTHONPATH
 
-export CUDA_LAUNCH_BLOCKING=1
 export HYDRA_FULL_ERROR=1
 
+# base path to CoppeliaSim, only required when running the RLbench experiment.
 export COPPELIASIM_ROOT=${HOME}/CoppeliaSim
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$COPPELIASIM_ROOT
 export QT_QPA_PLATFORM_PLUGIN_PATH=$COPPELIASIM_ROOT
@@ -35,6 +35,12 @@ if [ -z "$1" ]; then
 else
     CONFIG_NAME=$1
 fi
+
+# NOTE: Set the active robot platform (required for correct action dimension and normalization), supported platforms are LIBERO, ALOHA, BRIDGE, default is LIBERO
+ROBOT_PLATFORM=${2:-${ROBOT_PLATFORM:-"LIBERO"}}
+
+export ROBOT_PLATFORM
+echo "Using ROBOT_PLATFORM=$ROBOT_PLATFORM"
 
 LOG_DIR="${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')" #/$(date +'%Y%m%d-%H:%M:%S')"
 MEGA_LOG_FILE="${LOG_DIR}/eval_embodiment.log"

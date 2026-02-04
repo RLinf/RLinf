@@ -24,7 +24,7 @@ try:
     from megatron.core import parallel_state
 except ImportError:
     parallel_state = None  # type: ignore
-from torch.distributed import ProcessGroup
+from torch.distributed import ProcessGroup, ReduceOp
 from typing_extensions import Self
 
 from rlinf.utils.timers import NamedTimer
@@ -39,7 +39,7 @@ def compute_rollout_metrics(
 ):
     device = torch.device(f"cuda:{torch.cuda.current_device()}")
     advantages = rollout_batch["advantages"].to(device=device)
-    mask = rollout_batch["attention_mask"][:, -response_len:].to(device=device)
+    mask = rollout_batch["response_mask"][:, -response_len:].to(device=device)
     prompt_lengths = rollout_batch["prompt_lengths"].clone().to(device=device)
     response_lengths = rollout_batch["response_lengths"].clone().to(device=device)
     reward_scores = rollout_batch["rewards"].clone().to(device=device)
@@ -519,6 +519,22 @@ def gather_tensor(tensor, dst, group, dtype=None):
     return gather_list
 
 
+def all_reduce_int(
+    obj: int,
+    op: ReduceOp = ReduceOp.MIN,
+    group: ProcessGroup = None,
+):
+    obj_tensor = torch.tensor(
+        [obj], dtype=torch.long, device=torch.cuda.current_device()
+    )
+    torch.distributed.all_reduce(
+        obj_tensor,
+        op,
+        group=group,
+    )
+    return obj_tensor.item()
+
+
 def run_if_model_parallel_src(fn, *fn_args, **fn_kwargs):
     """This function is meant to wrap an arbitary function to only call the function
     if it's the model parallel src. So if we have DP=2, this function will be called
@@ -550,12 +566,13 @@ def normalize_tensor(tensor, mask, group=None):
 def masked_normalization(
     x: torch.Tensor,
     mask: Optional[torch.BoolTensor] = None,
-    dim=None,
-    inplace=False,
-    unbiased=False,
-    eps=1e-5,
-    high_precision=True,
-    all_reduce=True,
+    dim: Optional[int | tuple[int, ...]] = None,
+    inplace: Optional[bool] = False,
+    unbiased: Optional[bool] = False,
+    eps: Optional[float] = 1e-5,
+    high_precision: Optional[bool] = True,
+    all_reduce: Optional[bool] = True,
+    group: Optional[ProcessGroup] = None,
 ):
     """Normalize x with a mask. Typically used in advantage normalization.
 
@@ -602,17 +619,17 @@ def masked_normalization(
         torch.distributed.all_reduce(
             factor,
             op=torch.distributed.ReduceOp.SUM,
-            group=parallel_state.get_data_parallel_group(),
+            group=group,
         )
         torch.distributed.all_reduce(
             x_sum,
             op=torch.distributed.ReduceOp.SUM,
-            group=parallel_state.get_data_parallel_group(),
+            group=group,
         )
         torch.distributed.all_reduce(
             x_sum_sq,
             op=torch.distributed.ReduceOp.SUM,
-            group=parallel_state.get_data_parallel_group(),
+            group=group,
         )
     mean = x_sum / factor
     meansq = x_sum_sq / factor
@@ -995,15 +1012,3 @@ class ScopedTimer:
                     f"Attempted to store new duration for {name=} before consuming last measurement. Call consume_durations() to consume the last set of measurements."
                 )
             self._duration_log[name] = self._timer.get(name=name)
-
-
-def pad_list(tensor_list, pad_value):
-    """
-    Pad list of tensors to max seq len
-    """
-    max_N = max(tensor.size(1) for tensor in tensor_list)
-    padded_tensors = [
-        torch.nn.functional.pad(t, (0, max_N - t.size(1))) for t in tensor_list
-    ]
-
-    return padded_tensors

@@ -15,7 +15,7 @@
 import bisect
 from dataclasses import dataclass
 
-from ..accelerator import AcceleratorType
+from ..hardware import AcceleratorType, HardwareInfo
 from .manager import Manager
 
 
@@ -94,6 +94,13 @@ class WorkerAddress:
         """Check if two WorkerAddress instances are not equal."""
         return not self.__eq__(value)
 
+    def __lt__(self, other: "WorkerAddress"):
+        """Check if two WorkerAddress instances are less than."""
+        return (self.root_group_name, tuple(self.rank_path)) < (
+            other.root_group_name,
+            tuple(other.rank_path),
+        )
+
     def __hash__(self):
         """Hash function for WorkerAddress."""
         return hash((self.root_group_name, tuple(self.rank_path)))
@@ -140,13 +147,16 @@ class WorkerInfo:
     rank: int
     """Rank of the worker in the group."""
 
-    node_id: int
+    group_world_size: int
+    """World size of the worker group."""
+
+    cluster_node_rank: int
     """Node ID where the worker is placed."""
 
     accelerator_type: AcceleratorType
     """Type of accelerator where the worker is placed."""
 
-    accelerator_id: int
+    accelerator_rank: int
     """Accelerator ID where the worker is placed."""
 
     node_ip: str
@@ -157,6 +167,9 @@ class WorkerInfo:
 
     available_accelerators: list[int]
     """List of global accelerator IDs available to the worker."""
+
+    hardware_infos: list[HardwareInfo]
+    """List of hardware information available to the worker."""
 
     def __hash__(self):
         """Hash function for WorkerInfo."""

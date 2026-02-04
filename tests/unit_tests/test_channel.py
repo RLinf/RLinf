@@ -14,6 +14,10 @@
 
 # ruff: noqa: D103
 import asyncio
+import threading
+import time
+import uuid
+from dataclasses import dataclass, fields, is_dataclass
 from typing import Any, Optional
 
 import pytest
@@ -26,6 +30,7 @@ from rlinf.scheduler import (
     PackedPlacementStrategy,
     Worker,
 )
+from rlinf.scheduler.channel.channel_worker import ChannelWorker
 
 # --- Constants ---
 PRODUCER_GROUP_NAME = "producer_group"
@@ -33,6 +38,15 @@ CONSUMER_GROUP_NAME = "consumer_group"
 TEST_CHANNEL_NAME = "my_test_channel"
 group_count = 0
 channel_count = 0
+
+
+@dataclass
+class TensorMessage:
+    """Simple dataclass with a tensor field for testing direct tensor send/recv/broadcast."""
+
+    id: int
+    payload: torch.Tensor
+    note: str
 
 
 def get_device():
@@ -80,6 +94,13 @@ class ProducerWorker(Worker):
     def put_nowait(self, channel: Channel, item: Any):
         channel.put_nowait(item, key="nowait")
 
+    def test_memory(self, channel: Channel):
+        large_tensor = torch.randn(512, 1024, 1024, device=get_device())
+        channel.put(large_tensor)
+        channel.put(large_tensor, async_op=True).wait()
+        channel.put_nowait(large_tensor)
+        channel.put(large_tensor, weight=1)
+
     async def stress(self, channel: Channel, num_items: int):
         data = []
         for i in range(num_items):
@@ -104,7 +125,7 @@ class ProducerWorker(Worker):
     def create_with_affinity(self, channel_name: str):
         channel = self.create_channel(
             channel_name=channel_name,
-            node_id=0,
+            node_rank=0,
         )
         channel.put("affinity_item", 1)
         return True
@@ -161,11 +182,47 @@ class ConsumerWorker(Worker):
     def get_qsize(self, channel: Channel):
         return channel.qsize()
 
+    def test_memory(self, channel: Channel):
+        channel.get()
+        channel.get(async_op=True).wait()
+        while channel.empty():
+            pass
+        channel.get_nowait()
+        channel.get_batch(target_weight=1)
+
     def is_empty(self, channel: Channel):
         return channel.empty()
 
     def is_full(self, channel: Channel):
         return channel.full()
+
+    def get_cluster_node_rank(self):
+        """Get the cluster node rank of this worker."""
+        return self._cluster_node_rank
+
+    async def test_async_wait_yields_control(
+        self, channel: Channel, key: str = "async_wait_yields_test"
+    ):
+        """Run get(async_op=True) and await async_wait() concurrently with another
+        asyncio task. Assert the other task ran while waiting, proving async_wait()
+        yields control to the event loop. Returns (yield_count, received_item)."""
+
+        async def get_task():
+            work = channel.get(async_op=True, key=key)
+            return await work.async_wait()
+
+        async def yield_check_task():
+            count = 0
+            for _ in range(30):
+                count += 1
+                await asyncio.sleep(0.01)
+            return count
+
+        async def main():
+            self.get_fut = asyncio.create_task(get_task())
+            return await yield_check_task()
+
+        return await main()
 
 
 # --- Pytest Fixtures ---
@@ -178,9 +235,7 @@ def cluster():
 @pytest.fixture(scope="module")
 def worker_groups(cluster):
     if torch.cuda.is_available():
-        placement = PackedPlacementStrategy(
-            start_accelerator_id=0, end_accelerator_id=0
-        )
+        placement = PackedPlacementStrategy(start_hardware_rank=0, end_hardware_rank=0)
     else:
         placement = NodePlacementStrategy([0])
     global \
@@ -203,9 +258,128 @@ def worker_groups(cluster):
     return producer, consumer
 
 
+# Number of simulated nodes (channel workers) for distributed testing
+NUM_SIMULATED_NODES = 3
+
+
+# --- Distributed Channel Class ---
+class DistributedChannel(Channel):
+    """A Channel subclass that creates multiple channel workers on the same node for testing."""
+
+    @classmethod
+    def create(
+        cls,
+        name: str,
+        maxsize: int = 0,
+        distributed: bool = True,  # Always distributed for these tests
+        node_rank: int = 0,
+        local: bool = False,
+    ) -> "DistributedChannel":
+        """Create a distributed channel with multiple workers on the same node.
+
+        This simulates a multi-node setup by launching multiple channel workers
+        on node 0, but treating them as if they were on different nodes.
+        """
+        from rlinf.scheduler.channel.channel_worker import LocalChannel
+
+        cluster = Cluster()
+        channel = cls()
+        if local:
+            local_channel = LocalChannel(maxsize=maxsize)
+            channel._initialize(
+                name,
+                None,
+                None,
+                Worker.current_worker,
+                local_channel=local_channel,
+                maxsize=maxsize,
+            )
+            return channel
+
+        # Launch multiple channel workers on the same node (node 0)
+        # This simulates having multiple nodes, but all on the same physical node
+        placement = NodePlacementStrategy(node_ranks=[0] * NUM_SIMULATED_NODES)
+        try:
+            channel_worker_group = ChannelWorker.create_group(maxsize=maxsize).launch(
+                cluster=cluster,
+                name=name,
+                placement_strategy=placement,
+                max_concurrency=2**31 - 1,
+            )
+        except ValueError:
+            Worker.logger.warning(f"Channel {name} already exists, connecting to it.")
+            return cls.connect(name, Worker.current_worker)
+
+        # Distributed channel actors
+        import ray.actor
+
+        channel_actors: dict[int, ray.actor.ActorHandle] = {
+            worker.rank: worker.worker
+            for worker in channel_worker_group.worker_info_list
+        }
+
+        # Verify we actually created multiple channel workers
+        assert len(channel_actors) == NUM_SIMULATED_NODES, (
+            f"DistributedChannel.create() should create {NUM_SIMULATED_NODES} channel workers, "
+            f"but created {len(channel_actors)}"
+        )
+
+        channel._initialize(
+            channel_name=name,
+            channel_worker_group=channel_worker_group,
+            channel_worker_actor=channel_actors[0],
+            current_worker=Worker.current_worker,
+            maxsize=maxsize,
+            channel_actors=channel_actors,
+        )
+
+        # Verify the channel is marked as distributed after initialization
+        assert channel._distributed, (
+            "DistributedChannel should be marked as distributed after initialization"
+        )
+        assert len(channel._channel_actors_by_rank) == NUM_SIMULATED_NODES, (
+            f"DistributedChannel should have {NUM_SIMULATED_NODES} channel workers after initialization, "
+            f"but has {len(channel._channel_actors_by_rank)}"
+        )
+
+        return channel
+
+
 @pytest.fixture(scope="module")
-def channel():
-    return Channel.create(TEST_CHANNEL_NAME)
+def regular_channel():
+    """Create a regular (non-distributed) channel once per module."""
+    return Channel.create(f"{TEST_CHANNEL_NAME}_regular_{uuid.uuid4().hex[:8]}")
+
+
+@pytest.fixture(scope="module")
+def distributed_channel():
+    """Create a distributed channel once per module."""
+    channel_name = f"distributed_test_channel_{uuid.uuid4().hex[:8]}"
+    dist_channel = DistributedChannel.create(channel_name)
+    # Verify it's actually distributed (has multiple channel workers)
+    assert dist_channel._distributed, (
+        "DistributedChannel should be marked as distributed"
+    )
+    assert len(dist_channel._channel_actors_by_rank) == NUM_SIMULATED_NODES, (
+        f"DistributedChannel should have {NUM_SIMULATED_NODES} channel workers, "
+        f"but has {len(dist_channel._channel_actors_by_rank)}"
+    )
+    return dist_channel
+
+
+@pytest.fixture
+def channel_type(request):
+    """Fixture that provides the channel type parameter."""
+    return request.param if hasattr(request, "param") else "regular"
+
+
+@pytest.fixture
+def channel(channel_type, regular_channel, distributed_channel):
+    """Select channel based on channel_type parameter from test function."""
+    if channel_type == "distributed":
+        return distributed_channel
+    else:
+        return regular_channel
 
 
 # --- Test Data Generation ---
@@ -224,6 +398,14 @@ def get_test_data():
                 "a": torch.tensor([1], device=device),
                 "b": torch.tensor([2], device=device),
             },
+        ),
+        (
+            "dataclass_with_tensor",
+            TensorMessage(
+                id=42,
+                payload=torch.ones(2, 2, device=device) * 3,
+                note="channel test",
+            ),
         ),
     ]
 
@@ -261,10 +443,11 @@ class TestChannel:
         consumer_worker = getattr(consumer, consumer_method)(*consumer_args).wait()
         return consumer_worker[0]
 
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
     @pytest.mark.parametrize("data_name, item_to_send", get_test_data())
     @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
     def test_put_get_single_item(
-        self, worker_groups, channel, data_name, item_to_send, async_op
+        self, worker_groups, channel, channel_type, data_name, item_to_send, async_op
     ):
         """Tests a single put/get for various data types with sync and async_wait."""
         producer, consumer = worker_groups
@@ -281,9 +464,10 @@ class TestChannel:
         )
         self._assert_equal(received_item, item_to_send)
 
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
     @pytest.mark.parametrize("data_name, item_to_send", get_test_data())
     def test_put_get_single_item_asyncio(
-        self, worker_groups, channel, data_name, item_to_send
+        self, worker_groups, channel, channel_type, data_name, item_to_send
     ):
         """Tests a single put/get for various data types with native asyncio."""
         producer, consumer = worker_groups
@@ -297,8 +481,34 @@ class TestChannel:
         )
         self._assert_equal(received_item, item_to_send)
 
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    def test_async_wait_yields_control(self, worker_groups, channel, channel_type):
+        """Ensures channel get(async_op=True).async_wait() yields control so other
+        asyncio tasks can run while waiting."""
+        producer, consumer = worker_groups
+        key = "async_wait_yields_test"
+        recv_ref = consumer.test_async_wait_yields_control(channel, key)
+        producer_done = []
+
+        def delayed_put():
+            time.sleep(0.1)
+            producer.put_item(channel, "yield_test_item", 1, 0, False, key=key).wait()
+            producer_done.append(True)
+
+        t = threading.Thread(target=delayed_put)
+        try:
+            results = recv_ref.wait()
+            t.start()
+        finally:
+            t.join()
+        yield_count = results[0]
+        assert yield_count >= 1, (
+            f"async_wait() did not yield: yield_check task ran {yield_count} times"
+        )
+
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
     @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
-    def test_get_batch(self, worker_groups, channel, async_op):
+    def test_get_batch(self, worker_groups, channel, channel_type, async_op):
         """Tests getting a batch of items based on weight."""
         producer, consumer = worker_groups
         items = [("item1", 1), ("item2", 2), ("item3", 3)]
@@ -315,7 +525,8 @@ class TestChannel:
         assert batch[0] == items[0][0]
         assert batch[1] == items[1][0]
 
-    def test_get_batch_asyncio(self, worker_groups, channel):
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    def test_get_batch_asyncio(self, worker_groups, channel, channel_type):
         """Tests getting a batch of items with native asyncio."""
         producer, consumer = worker_groups
         items = [("item1", 1), ("item2", 2), ("item3", 3)]
@@ -332,11 +543,23 @@ class TestChannel:
         assert batch[0][0] == items[0][0]
         assert batch[0][1] == items[1][0]
 
-    def test_qsize_empty_full(self, worker_groups, channel):
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    def test_qsize_empty_full(self, worker_groups, channel, channel_type):
         """Tests the qsize, empty, and full methods of the channel."""
         producer, consumer = worker_groups
         maxsize = 2
-        channel = Channel.create("EMPTY_FULL_TEST", maxsize=maxsize)
+        # Create a new channel with maxsize for this specific test
+        # Use the same type as the fixture channel (regular or distributed)
+        is_distributed = hasattr(channel, "_distributed") and channel._distributed
+        if is_distributed:
+            test_channel = DistributedChannel.create(
+                f"EMPTY_FULL_TEST_{uuid.uuid4().hex[:8]}", maxsize=maxsize
+            )
+        else:
+            test_channel = Channel.create(
+                f"EMPTY_FULL_TEST_{uuid.uuid4().hex[:8]}", maxsize=maxsize
+            )
+        channel = test_channel
 
         # Initial state
         producer.put_item(
@@ -359,7 +582,8 @@ class TestChannel:
         assert consumer.is_full(channel).wait()[0]
         assert consumer.get_qsize(channel).wait()[0] == 2
 
-    def test_channel_multiple_queues(self, worker_groups, channel):
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    def test_channel_multiple_queues(self, worker_groups, channel, channel_type):
         """Tests creating multiple queues in a single channel."""
         producer, consumer = worker_groups
 
@@ -374,7 +598,8 @@ class TestChannel:
         assert item1 == "item1"
         assert item2 == "item2"
 
-    def test_channel_multiple_queues_order(self, worker_groups, channel):
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    def test_channel_multiple_queues_order(self, worker_groups, channel, channel_type):
         """Tests the order of items in multiple queues."""
         producer: ProducerWorker = worker_groups[0]
         consumer: ConsumerWorker = worker_groups[1]
@@ -387,7 +612,8 @@ class TestChannel:
         assert item1 == "Hello"
         assert item2 == "World"
 
-    def test_channel_nowait(self, worker_groups, channel):
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    def test_channel_nowait(self, worker_groups, channel, channel_type):
         """Tests the channel under heavy load."""
         producer: ProducerWorker = worker_groups[0]
         consumer: ConsumerWorker = worker_groups[1]
@@ -400,7 +626,8 @@ class TestChannel:
 
         assert data == "item_100"
 
-    def test_stress(self, worker_groups, channel):
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    def test_stress(self, worker_groups, channel, channel_type):
         """Tests the channel under heavy load."""
         producer: ProducerWorker = worker_groups[0]
         num_items = 1000
@@ -410,6 +637,19 @@ class TestChannel:
 
         data = producer.stress_multiple_queues(channel, num_items).wait()[0]
         assert data == list(range(num_items))
+
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    def test_peek_all(self, channel: Channel, channel_type):
+        """Tests the peek_all method of the channel."""
+        while channel.qsize() > 0:
+            channel.get()
+
+        test_items = ["item1", "item2", "item3"]
+        for item in test_items:
+            channel.put(item)
+
+        item_str = str(channel)
+        assert all(item in item_str for item in test_items)
 
     def _assert_equal(self, received: Any, expected: Any):
         """Helper to compare various data types."""
@@ -424,8 +664,120 @@ class TestChannel:
             assert received.keys() == expected.keys()
             for key in expected:
                 self._assert_equal(received[key], expected[key])
+        elif is_dataclass(expected):
+            for f in fields(type(expected)):
+                self._assert_equal(getattr(received, f.name), getattr(expected, f.name))
         else:
             assert received == expected
+
+    # --- Distributed Channel Specific Tests ---
+
+    @pytest.mark.parametrize("channel_type", ["distributed"], indirect=True)
+    def test_distributed_channel_creation(self, worker_groups, channel, channel_type):
+        """Test that distributed channel is actually created with multiple workers."""
+
+        # Verify the channel has multiple channel workers
+        assert channel._distributed, "Channel should be marked as distributed"
+        assert len(channel._channel_actors_by_rank) == NUM_SIMULATED_NODES, (
+            f"DistributedChannel should have {NUM_SIMULATED_NODES} channel workers, "
+            f"but has {len(channel._channel_actors_by_rank)}"
+        )
+        # Verify all ranks are present
+        for rank in range(NUM_SIMULATED_NODES):
+            assert rank in channel._channel_actors_by_rank, (
+                f"Channel worker rank {rank} should exist"
+            )
+
+    @pytest.mark.parametrize("channel_type", ["distributed"], indirect=True)
+    def test_channel_worker_routing(self, worker_groups, channel, channel_type):
+        """Test that keys are routed to the correct channel worker based on source node."""
+        producer, consumer = worker_groups
+
+        # Put items with different keys from the producer
+        # The channel should route them to the channel worker matching the producer's node rank
+        test_keys = ["key1", "key2", "key3"]
+        test_items = ["item1", "item2", "item3"]
+
+        for key, item in zip(test_keys, test_items):
+            producer.put_item(channel, item, 1, 0, False, key=key).wait()
+
+        # Verify items can be retrieved
+        for key, expected_item in zip(test_keys, test_items):
+            received = consumer.get_item(channel, False, key=key).wait()[0]
+            assert received == expected_item
+
+    @pytest.mark.parametrize("channel_type", ["distributed"], indirect=True)
+    def test_channel_worker_isolation(self, worker_groups, channel, channel_type):
+        """Test that different keys can be routed to different channel workers."""
+        producer, consumer = worker_groups
+
+        # Put items with different keys
+        # Each key should be assigned to a channel worker based on routing logic
+        keys = [f"key_{i}" for i in range(NUM_SIMULATED_NODES * 2)]
+        items = [f"item_{i}" for i in range(NUM_SIMULATED_NODES * 2)]
+
+        for key, item in zip(keys, items):
+            producer.put_item(channel, item, 1, 0, False, key=key).wait()
+
+        # Verify all items can be retrieved correctly
+        for key, expected_item in zip(keys, items):
+            received = consumer.get_item(channel, False, key=key).wait()[0]
+            assert received == expected_item
+
+    @pytest.mark.parametrize("channel_type", ["distributed"], indirect=True)
+    def test_channel_worker_rank_assignment(self, worker_groups, channel, channel_type):
+        """Test that ensure_key_replica assigns ranks correctly."""
+        producer, consumer = worker_groups
+
+        # Put an item - this will trigger ensure_key_replica
+        test_key = "routing_test_key"
+        test_item = "routing_test_item"
+        producer.put_item(channel, test_item, 1, 0, False, key=test_key).wait()
+
+        # Verify the item is accessible
+        received = consumer.get_item(channel, False, key=test_key).wait()[0]
+        assert received == test_item
+
+        # Verify the key is cached (subsequent operations should use cached rank)
+        producer.put_item(channel, "second_item", 1, 0, False, key=test_key).wait()
+        received = consumer.get_item(channel, False, key=test_key).wait()[0]
+        assert received == "second_item"
+
+    @pytest.mark.parametrize("channel_type", ["distributed"], indirect=True)
+    def test_channel_worker_selection(self, worker_groups, channel, channel_type):
+        """Test that the channel correctly selects the channel worker for a given key."""
+        producer, consumer = worker_groups
+
+        # Put items with different keys and verify they are routed correctly
+        # The first key should be assigned to the channel worker matching producer's node rank
+        test_key1 = "selection_key1"
+        test_item1 = "selection_item1"
+        producer.put_item(channel, test_item1, 1, 0, False, key=test_key1).wait()
+
+        # Verify the item is on the correct channel worker by checking qsize
+        # The qsize should be 1 on the target channel worker
+        qsize = channel.qsize(key=test_key1)
+        assert qsize == 1, f"Expected qsize 1, got {qsize}"
+
+        # Get the item and verify qsize becomes 0
+        received = consumer.get_item(channel, False, key=test_key1).wait()[0]
+        assert received == test_item1
+        qsize = channel.qsize(key=test_key1)
+        assert qsize == 0, f"Expected qsize 0 after get, got {qsize}"
+
+        # Test with another key - should be routed to the same or different worker
+        test_key2 = "selection_key2"
+        test_item2 = "selection_item2"
+        producer.put_item(channel, test_item2, 1, 0, False, key=test_key2).wait()
+
+        # Both keys should work independently
+        qsize1 = channel.qsize(key=test_key1)
+        qsize2 = channel.qsize(key=test_key2)
+        assert qsize1 == 0, f"Key1 qsize should be 0, got {qsize1}"
+        assert qsize2 == 1, f"Key2 qsize should be 1, got {qsize2}"
+
+        received = consumer.get_item(channel, False, key=test_key2).wait()[0]
+        assert received == test_item2
 
 
 if __name__ == "__main__":

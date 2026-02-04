@@ -22,6 +22,14 @@
    讲解如何从保存的检查点恢复训练，  
    以确保容错性，并为长时间或中断的训练任务提供无缝衔接。  
 
+- :doc:`convertor`  
+   讲解如何从保存的checkpoint文件转换到huggingface safetensors文件，  
+   用于评估checkpoint性能或上传到huggingface仓库。  
+
+- :doc:`hetero`  
+   介绍如何配置和使用异构软硬件集群，  
+   以充分利用不同类型的计算资源和硬件设备。  
+
 - :doc:`logger`  
    介绍如何在训练过程中可视化和跟踪关键指标。  
    目前，我们支持三种实验追踪与可视化后端：  
@@ -36,4 +44,6 @@
    lora
    version
    resume
+   convertor
+   hetero
    logger

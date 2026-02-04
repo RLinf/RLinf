@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import asyncio
-import time
 import uuid
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -21,13 +20,17 @@ import ray
 import ray.actor
 
 from ..cluster import Cluster
-from ..collective import AsyncChannelCommWork, AsyncChannelWork, AsyncWork
-from ..manager import WorkerAddress
+from ..collective import (
+    AsyncChannelCommWork,
+    AsyncChannelWork,
+    AsyncRayWork,
+    AsyncWork,
+)
 from ..placement import NodePlacementStrategy
 from ..worker import Worker, WorkerGroup
 
 if TYPE_CHECKING:
-    from .channel_worker import LocalChannel
+    from .channel_worker import ChannelWorker, LocalChannel
 
 DEFAULT_KEY = "default_queue"
 
@@ -118,7 +121,7 @@ class Channel:
         >>> cluster = Cluster(num_nodes=1)
         >>> channel = Channel.create(name="channel")
         >>> placement = PackedPlacementStrategy(
-        ...     start_accelerator_id=0, end_accelerator_id=0
+        ...     start_hardware_rank=0, end_hardware_rank=0
         ... )
         >>> producer = Producer.create_group().launch(
         ...     cluster, name="test", placement_strategy=placement
@@ -137,14 +140,20 @@ class Channel:
 
     @classmethod
     def create(
-        cls, name: str, node_id: int = 0, maxsize: int = 0, local: bool = False
+        cls,
+        name: str,
+        maxsize: int = 0,
+        distributed: bool = False,
+        node_rank: int = 0,
+        local: bool = False,
     ) -> "Channel":
         """Create a new channel with the specified name, node ID, and accelerator ID.
 
         Args:
             name (str): The name of the channel.
-            node_id (int): The global ID of the node in the cluster where the channel will be created.
             maxsize (int): The maximum size of the channel queue. Defaults to 0 (unbounded).
+            distributed (bool): Whether the channel should be distributed. A distributed channel creates distributed workers on each node, and routes communications to the channel worker on the same node as the current worker, benefiting from the locality of the data. The routing is based on the key of the put/get APIs. So if you expect the key to be randomly distributed, you should set this to False to avoid unnecessary routing overhead.
+            node_rank (int): The node rank of the current worker. Only valid when distributed is False.
             local (bool): Create the channel for intra-process communication. A local channel cannot be connected by other workers, and its data cannot be shared among different processes.
 
         Returns:
@@ -156,6 +165,7 @@ class Channel:
         cluster = Cluster()
         channel = cls()
         if local:
+            # Local channel does not need to be launched, just create a local channel object
             local_channel = LocalChannel(maxsize=maxsize)
             channel._initialize(
                 name,
@@ -167,7 +177,11 @@ class Channel:
             )
             return channel
 
-        placement = NodePlacementStrategy(node_ids=[node_id])
+        # Launch one replica per node
+        if distributed:
+            placement = NodePlacementStrategy(node_ranks=list(range(cluster.num_nodes)))
+        else:
+            placement = NodePlacementStrategy(node_ranks=[node_rank])
         try:
             channel_worker_group = ChannelWorker.create_group(maxsize=maxsize).launch(
                 cluster=cluster,
@@ -179,53 +193,51 @@ class Channel:
         except ValueError:
             Worker.logger.warning(f"Channel {name} already exists, connecting to it.")
             return cls.connect(name, Worker.current_worker)
+
+        # Distributed channel actors
+        channel_actors: dict[int, ray.actor.ActorHandle] = {
+            worker.rank: worker.worker
+            for worker in channel_worker_group.worker_info_list
+        }
+
         channel._initialize(
-            name,
-            channel_worker_group,
-            channel_worker_group.worker_info_list[0].worker,
-            Worker.current_worker,
+            channel_name=name,
+            channel_worker_group=channel_worker_group,
+            channel_worker_actor=channel_actors[0],
+            current_worker=Worker.current_worker,
             maxsize=maxsize,
+            channel_actors=channel_actors,
         )
         return channel
 
     @classmethod
-    def connect(cls, channel_name: str, current_worker: Worker) -> "Channel":
+    def connect(cls, name: str, current_worker: Worker) -> "Channel":
         """Connect to an existing channel.
 
         Args:
-            channel_name (str): The name of the channel to connect to.
+            name (str): The name of the channel to connect to.
             current_worker (Worker): The current worker that is connecting to the channel.
 
         Returns:
             Channel: An instance of the Channel class connected to the specified channel.
 
         """
-        count = 0
-        channel_worker_actor = None
-        channel_worker_actor_name = WorkerAddress(
-            root_group_name=channel_name, ranks=0
-        ).get_name()
-        while True:
-            try:
-                channel_worker_actor = ray.get_actor(
-                    name=channel_worker_actor_name, namespace=Cluster.NAMESPACE
-                )
-                break
-            except ValueError:
-                time.sleep(0.001)
-                count += 1
-                if count % Cluster.TIMEOUT_WARN_TIME == 0:
-                    Worker.logger.warning(
-                        f"Waiting for channel {channel_name} to be up for {count // 1000} seconds..."
-                    )
+        from .channel_worker import ChannelWorker
+
+        channel_worker_group = WorkerGroup.from_group_name(ChannelWorker, name)
+        channel_actors: dict[int, ray.actor.ActorHandle] = {
+            worker.rank: worker.worker
+            for worker in channel_worker_group.worker_info_list
+        }
+        maxsize = channel_worker_group.execute_on(0).maxsize().wait()[0]
 
         channel = cls()
-        maxsize = ray.get(channel_worker_actor.maxsize.remote())
         channel._initialize(
-            channel_name,
-            None,
-            channel_worker_actor,
-            current_worker,
+            channel_name=name,
+            channel_worker_group=channel_worker_group,
+            channel_worker_actor=channel_actors[0],
+            current_worker=current_worker,
+            channel_actors=channel_actors,
             maxsize=maxsize,
         )
         return channel
@@ -233,18 +245,31 @@ class Channel:
     def _initialize(
         self,
         channel_name: str,
-        channel_worker_group: WorkerGroup,
-        channel_worker_actor: ray.actor.ActorHandle,
+        channel_worker_group: Optional[WorkerGroup["ChannelWorker"] | "ChannelWorker"],
+        channel_worker_actor: Optional[ray.actor.ActorHandle],
         current_worker: Worker,
         local_channel: Optional["LocalChannel"] = None,
         maxsize: int = 0,
+        channel_actors: Optional[dict[int, ray.actor.ActorHandle]] = None,
     ):
         self._channel_name = channel_name
         self._channel_worker_group = channel_worker_group
-        self._channel_worker_actor = channel_worker_actor
+        self._main_channel_worker_actor = channel_worker_actor
         self._current_worker = current_worker
         self._local_channel = local_channel
         self._maxsize = maxsize
+        self._distributed = (
+            len(channel_actors) > 1 if channel_actors is not None else False
+        )
+        self._channel_actors_by_rank = (
+            channel_actors if channel_actors is not None else {}
+        )
+        if (
+            self._main_channel_worker_actor is not None
+            and 0 not in self._channel_actors_by_rank
+        ):
+            self._channel_actors_by_rank[0] = self._main_channel_worker_actor
+        self._key_to_channel_rank_cache: dict[Any, int] = {}
         if self._local_channel is not None:
             self._local_channel_id = id(self._local_channel)
             Channel.local_channel_map[self._local_channel_id] = self._local_channel
@@ -255,6 +280,32 @@ class Channel:
     def is_local(self):
         """Check if the channel is a local channel."""
         return self._local_channel is not None
+
+    def _get_src_node_rank(self) -> int:
+        """Return the caller's cluster node rank if available."""
+        if self._current_worker is not None:
+            return self._current_worker._cluster_node_rank
+        return 0  # Default to rank 0 if not in a worker context
+
+    def _get_channel_rank_by_key(self, key: Any) -> int:
+        """Get the rank of the channel actor that should handle the given key."""
+        if self._local_channel is not None:
+            return -1
+        if not self._distributed:
+            return 0
+        if key not in self._key_to_channel_rank_cache:
+            src_node_rank = self._get_src_node_rank()
+            target_rank = (
+                self._channel_worker_group.execute_on(0)
+                .ensure_key_replica(key=key, src_node_rank=src_node_rank)
+                .wait()[0]
+            )
+            self._key_to_channel_rank_cache[key] = target_rank
+        return self._key_to_channel_rank_cache[key]
+
+    def _get_channel_actor(self, rank: int) -> ray.actor.ActorHandle:
+        """Get the actor handle for a channel rank, falling back to the main actor."""
+        return self._channel_actors_by_rank.get(rank, self._main_channel_worker_actor)
 
     def qsize(self, key: Any = DEFAULT_KEY) -> int:
         """Get the size of the channel queue.
@@ -268,7 +319,9 @@ class Channel:
         """
         if self._local_channel is not None:
             return self._local_channel.qsize(key)
-        return ray.get(self._channel_worker_actor.qsize.remote(key))
+        target_rank = self._get_channel_rank_by_key(key)
+        target_actor = self._get_channel_actor(target_rank)
+        return ray.get(target_actor.qsize.remote(key))
 
     def empty(self, key: Any = DEFAULT_KEY) -> bool:
         """Check if the channel queue is empty.
@@ -282,7 +335,9 @@ class Channel:
         """
         if self._local_channel is not None:
             return self._local_channel.empty(key)
-        return ray.get(self._channel_worker_actor.empty.remote(key))
+        target_rank = self._get_channel_rank_by_key(key)
+        target_actor = self._get_channel_actor(target_rank)
+        return ray.get(target_actor.empty.remote(key))
 
     def full(self, key: Any = DEFAULT_KEY) -> bool:
         """Check if the channel queue is full.
@@ -296,7 +351,9 @@ class Channel:
         """
         if self._local_channel is not None:
             return self._local_channel.full(key)
-        return ray.get(self._channel_worker_actor.full.remote(key))
+        target_rank = self._get_channel_rank_by_key(key)
+        target_actor = self._get_channel_actor(target_rank)
+        return ray.get(target_actor.full.remote(key))
 
     def put(
         self,
@@ -321,6 +378,9 @@ class Channel:
             self._local_channel.put(item, weight, key)
             return
 
+        target_rank = self._get_channel_rank_by_key(key)
+        target_actor = self._get_channel_actor(target_rank)
+
         # First run async put to avoid send blocking put
         if self._current_worker is not None:
             # Inside a worker, use send/recv
@@ -330,12 +390,16 @@ class Channel:
             async_channel_work = AsyncChannelWork(
                 channel_name=self._channel_name,
                 channel_key=key,
-                channel_actor=self._channel_worker_actor,
+                channel_actor=target_actor,
                 method="put",
                 **put_kwargs,
             )
             self._current_worker.send(
-                (key, item, weight), self._channel_name, 0, async_op=True
+                item,
+                self._channel_name,
+                target_rank,
+                async_op=True,
+                piggyback_payload=(key, weight),
             )
 
             if async_op:
@@ -345,12 +409,8 @@ class Channel:
         else:
             # Outside a worker, use ray comm
             put_kwargs = {"item": item, "weight": weight, "key": key}
-            async_channel_work = AsyncChannelWork(
-                channel_name=self._channel_name,
-                channel_key=key,
-                channel_actor=self._channel_worker_actor,
-                method="put_via_ray",
-                **put_kwargs,
+            async_channel_work = AsyncRayWork(
+                target_actor.put_via_ray.remote(**put_kwargs)
             )
             if async_op:
                 return async_channel_work
@@ -375,6 +435,9 @@ class Channel:
             self._local_channel.put(item, weight, key, nowait=True)
             return
 
+        target_rank = self._get_channel_rank_by_key(key)
+        target_actor = self._get_channel_actor(target_rank)
+
         if self._current_worker is not None:
             put_kwargs = {
                 "src_addr": self._current_worker.worker_address,
@@ -383,24 +446,27 @@ class Channel:
             async_channel_work = AsyncChannelWork(
                 channel_name=self._channel_name,
                 channel_key=key,
-                channel_actor=self._channel_worker_actor,
+                channel_actor=target_actor,
                 method="put",
                 **put_kwargs,
             )
             self._current_worker.send(
-                (key, item, weight), self._channel_name, 0, async_op=True
+                item,
+                self._channel_name,
+                target_rank,
+                async_op=True,
+                piggyback_payload=(key, weight),
             )
-            async_channel_work.wait()
+            try:
+                async_channel_work.wait()
+            except asyncio.QueueFull:
+                raise asyncio.QueueFull
         else:
             put_kwargs = {"item": item, "weight": weight, "key": key, "nowait": True}
-            async_channel_work = AsyncChannelWork(
-                channel_name=self._channel_name,
-                channel_key=key,
-                channel_actor=self._channel_worker_actor,
-                method="put_via_ray",
-                **put_kwargs,
-            )
-            async_channel_work.wait()
+            try:
+                ray.get(target_actor.put_via_ray.remote(**put_kwargs))
+            except asyncio.QueueFull:
+                raise asyncio.QueueFull
 
     def get(self, key: Any = DEFAULT_KEY, async_op: bool = False) -> AsyncWork | Any:
         """Get an item from the channel queue.
@@ -418,6 +484,9 @@ class Channel:
             assert async_op is False, "Local channel does not support async get."
             return self._local_channel.get(key)
 
+        target_rank = self._get_channel_rank_by_key(key)
+        target_actor = self._get_channel_actor(target_rank)
+
         if self._current_worker is not None:
             # Inside a worker, use send/recv
             query_id = uuid.uuid4().int
@@ -426,32 +495,25 @@ class Channel:
                 "query_id": query_id,
                 "key": key,
             }
-            async_channel_work = AsyncChannelWork(
-                channel_name=self._channel_name,
-                channel_key=key,
-                channel_actor=self._channel_worker_actor,
-                method="get",
-                **get_kwargs,
-            )
+            target_actor.get.remote(**get_kwargs)
             async_comm_work = self._current_worker.recv(
-                self._channel_name, 0, async_op=True
+                self._channel_name, target_rank, async_op=True
             )
             if async_op:
-                return AsyncChannelCommWork(async_comm_work, query_id)
+                return AsyncChannelCommWork(
+                    async_comm_work=async_comm_work,
+                    query_id=query_id,
+                    channel_actor=target_actor,
+                )
             else:
-                async_channel_work.wait()
                 # query_id, data
-                _, data = async_comm_work.wait()
+                data, _ = async_comm_work.wait()
                 return data
         else:
             # Outside a worker, use ray comm
             get_kwargs = {"key": key}
-            async_channel_work = AsyncChannelWork(
-                channel_name=self._channel_name,
-                channel_key=key,
-                channel_actor=self._channel_worker_actor,
-                method="get_via_ray",
-                **get_kwargs,
+            async_channel_work = AsyncRayWork(
+                target_actor.get_via_ray.remote(**get_kwargs)
             )
             if async_op:
                 return async_channel_work
@@ -475,6 +537,9 @@ class Channel:
         if self._local_channel is not None:
             return self._local_channel.get(key, nowait=True)
 
+        target_rank = self._get_channel_rank_by_key(key)
+        target_actor = self._get_channel_actor(target_rank)
+
         if self._current_worker is not None:
             query_id = uuid.uuid4().int
             get_kwargs = {
@@ -483,27 +548,14 @@ class Channel:
                 "key": key,
                 "nowait": True,
             }
-            AsyncChannelWork(
-                channel_name=self._channel_name,
-                channel_key=key,
-                channel_actor=self._channel_worker_actor,
-                method="get",
-                **get_kwargs,
-            )
-            query_id, data = self._current_worker.recv(self._channel_name, 0)
+            target_actor.get.remote(**get_kwargs)
+            data, query_id = self._current_worker.recv(self._channel_name, target_rank)
             if query_id == asyncio.QueueEmpty:
                 raise asyncio.QueueEmpty
             return data
         else:
             get_kwargs = {"key": key, "nowait": True}
-            async_channel_work = AsyncChannelWork(
-                channel_name=self._channel_name,
-                channel_key=key,
-                channel_actor=self._channel_worker_actor,
-                method="get_via_ray",
-                **get_kwargs,
-            )
-            return async_channel_work.wait()
+            return ray.get(target_actor.get_via_ray.remote(**get_kwargs))
 
     def get_batch(
         self,
@@ -529,6 +581,9 @@ class Channel:
             assert async_op is False, "Local channel does not support async get_batch."
             return self._local_channel.get_batch(target_weight, key)
 
+        target_rank = self._get_channel_rank_by_key(key)
+        target_actor = self._get_channel_actor(target_rank)
+
         if self._current_worker is not None:
             query_id = uuid.uuid4().int
             get_kwargs = {
@@ -537,31 +592,24 @@ class Channel:
                 "target_weight": target_weight,
                 "key": key,
             }
-            async_channel_work = AsyncChannelWork(
-                channel_name=self._channel_name,
-                channel_key=key,
-                channel_actor=self._channel_worker_actor,
-                method="get_batch",
-                **get_kwargs,
-            )
+            target_actor.get_batch.remote(**get_kwargs)
             async_comm_work = self._current_worker.recv(
-                self._channel_name, 0, async_op=True
+                self._channel_name, target_rank, async_op=True
             )
             if async_op:
-                return AsyncChannelCommWork(async_comm_work, query_id)
+                return AsyncChannelCommWork(
+                    async_comm_work=async_comm_work,
+                    query_id=query_id,
+                    channel_actor=target_actor,
+                )
             else:
-                async_channel_work.wait()
                 # query_id, data
-                _, data = async_comm_work.wait()
+                data, _ = async_comm_work.wait()
                 return data
         else:
             get_kwargs = {"target_weight": target_weight, "key": key}
-            async_channel_work = AsyncChannelWork(
-                channel_name=self._channel_name,
-                channel_key=key,
-                channel_actor=self._channel_worker_actor,
-                method="get_batch_via_ray",
-                **get_kwargs,
+            async_channel_work = AsyncRayWork(
+                target_actor.get_batch_via_ray.remote(**get_kwargs)
             )
             if async_op:
                 return async_channel_work
@@ -576,11 +624,11 @@ class Channel:
             When a key is given, the channel will look for the item in the queue associated with that key.
         """
         if self._local_channel is not None:
-            return str(self._local_channel.get_all(key))
-        async_work = AsyncChannelCommWork(
-            self._channel_worker_actor.get_all.remote(key=key)
-        )
-        items = async_work.wait()
+            return str(self._local_channel.peek_all(key))
+        target_rank = self._get_channel_rank_by_key(key)
+        target_actor = self._get_channel_actor(target_rank)
+        get_kwargs = {"key": key}
+        items = ray.get(target_actor.peek_all.remote(**get_kwargs))
         return str(items)
 
     def __setstate__(self, state_dict: dict[str, Any]):

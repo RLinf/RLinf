@@ -14,7 +14,7 @@
 
 import os
 import sys
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -22,609 +22,311 @@ import pytest
 sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "../../toolkits/auto_placement")
 )
-# Add RLinf to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
-from resource_allocator import (
-    AllocationStates,
-    ComponentParallelState,
-    ResourcePlanner,
-    get_valid_dp_sizes,
-    resource_allocate,
-)
-from workflow import (
-    ComponentNode,
-    Node,
-    PipelineCostCacl,
-    SccComponentNode,
-    Workflow,
-    WorkflowPartitioner,
-    get_workflow_cost,
-    get_workflow_partition,
-)
-
-try:
-    # Mock the missing dependencies for scheduler_task
-    sys.modules["rlinf.config"] = Mock()
-    sys.modules["rlinf.config"].validate_cfg = Mock()
-    from scheduler_task import SchedulerTask, get_profile_data
-
-    IMPORTS_AVAILABLE = True
-except ImportError as e:
-    IMPORTS_AVAILABLE = False
-    pytestmark = pytest.mark.skip(f"Auto placement modules not available: {e}")
+from auto_placement_worker import AutoPlacementWorker, get_workflow_graph
+from node import ComponentNode, MegatronNode, RolloutNode, SccNode
+from placement import ScheduleMode, ScheduleResult
+from util import init_global_config
+from workflow import Workflow, traverse_st_cuts
 
 
-class TestComponentParallelState:
-    """Tests for the ComponentParallelState class."""
+def get_mock_config_reasoning():
+    mock_cfg = MagicMock()
+    mock_cfg.runner.task_type = "reasoning"
 
-    def test_component_parallel_state_initialization(self):
-        """Test ComponentParallelState initialization and post_init calculations."""
-        state = ComponentParallelState(
-            tensor_model_parallel_size=2, pipeline_model_parallel_size=4
-        )
+    # 设置 get_workflow_graph 需要的属性
+    mock_cfg.algorithm.recompute_logprobs = True
 
-        assert state.tensor_model_parallel_size == 2
-        assert state.pipeline_model_parallel_size == 4
-        assert state.model_parallel_size == 8
-        assert state.world_size == 0
-        assert state.data_parallel_size == 0
-        assert state.valid_dp_sizes == []
+    # Batch size
+    mock_cfg.algorithm.group_size = 16
+    mock_cfg.algorithm.n_minibatches = 4
+    mock_cfg.data.rollout_batch_size = 512
+    mock_cfg.runner.seq_length = 28 * 1024
 
-    def test_allocation_without_valid_dp_sizes(self):
-        """Test resource allocation without valid DP size constraints."""
-        state = ComponentParallelState(
-            tensor_model_parallel_size=2, pipeline_model_parallel_size=2
-        )
+    # Rollout config
+    mock_cfg.rollout.max_running_requests = 128
+    mock_cfg.rollout.gpu_memory_utilization = 0.55
 
-        # Test normal allocation
-        idle_gpus = state.allocation(16)
-        assert state.world_size == 16
-        assert state.data_parallel_size == 4
-        assert idle_gpus == 0
+    # Profile data
+    mock_cfg.profile_data.actor_cost = 101
+    mock_cfg.profile_data.rollout_cost = 224
+    mock_cfg.profile_data.inference_cost = 10
 
-    def test_allocation_with_valid_dp_sizes(self):
-        """Test resource allocation with valid DP size constraints."""
-        state = ComponentParallelState(
-            tensor_model_parallel_size=2, pipeline_model_parallel_size=2
-        )
-        state.set_valid_dp_sizes([1, 2])
-
-        # Test allocation respects valid DP sizes
-        idle_gpus = state.allocation(16)
-        assert state.data_parallel_size == 2  # Limited by valid_dp_sizes
-        assert state.world_size == 8
-        assert idle_gpus == 8
-
-    def test_allocation_insufficient_gpus(self):
-        """Test allocation when insufficient GPUs are available."""
-        state = ComponentParallelState(
-            tensor_model_parallel_size=4, pipeline_model_parallel_size=2
-        )
-
-        # Not enough GPUs for even one instance
-        idle_gpus = state.allocation(4)
-        assert state.world_size == 0
-        assert state.data_parallel_size == 0
-        assert idle_gpus == 4
+    # Model size
+    mock_component_placement = MagicMock()
+    mock_component_placement._cluster_num_gpus = 16 * 8
+    mock_component_placement._components = [
+        "actor",
+        "rollout",
+        "inference",
+    ]
+    world_size = 16 * 8
+    mock_component_placement.actor_dp_size = world_size // 2
+    mock_component_placement.actor_world_size = world_size
+    mock_component_placement.rollout_dp_size = world_size
+    mock_component_placement.rollout_world_size = world_size
+    mock_component_placement.inference_dp_size = world_size // 2
+    mock_component_placement.inference_world_size = world_size
+    return mock_cfg, mock_component_placement
 
 
-class TestAllocationStates:
-    """Tests for the AllocationStates class."""
+def get_mock_config_embodiment(env_type: str):
+    mock_cfg = MagicMock()
+    mock_cfg.runner.task_type = "embodiment"
 
-    def test_allocation_states_initialization(self):
-        """Test AllocationStates initialization."""
-        components_config = {
-            "actor": {
-                "tensor_model_parallel_size": 2,
-                "pipeline_model_parallel_size": 1,
-            },
-            "rollout": {
-                "tensor_model_parallel_size": 1,
-                "pipeline_model_parallel_size": 1,
-            },
+    mock_cfg.data.rollout_batch_size = 1024
+    if env_type == "libero":
+        mock_cfg.data.env_num = 64
+        mock_cfg.profile_data.env_profile_data = {
+            4: 0.61,
+            8: 1.23,
+            16: 2.46,
+            32: 4.66,
+            64: 18.5,
+        }
+        mock_cfg.profile_data.rollout_profile_data = {
+            4: 0.6,
+            8: 1.01,
+            16: 2.12,
+            32: 3.72,
+            64: 15.3,
+        }
+    elif env_type == "maniskill":
+        mock_cfg.data.env_num = 40
+        mock_cfg.profile_data.env_profile_data = {
+            10: 0.8,
+            20: 0.8,
+            30: 0.85,
+            40: 0.85,
+        }
+        mock_cfg.profile_data.rollout_profile_data = {
+            10: 0.4,
+            20: 0.6,
+            30: 0.85,
+            40: 1.15,
         }
 
-        allocation = AllocationStates(components_config)
+    # Model size
+    mock_component_placement = MagicMock()
+    mock_component_placement._cluster_num_gpus = 4
+    mock_component_placement._components = ["env", "rollout", "actor"]
+    mock_component_placement.rollout_dp_size = (
+        mock_component_placement._cluster_num_gpus
+    )
+    mock_component_placement.rollout_world_size = (
+        mock_component_placement._cluster_num_gpus
+    )
 
-        assert "actor" in allocation.states
-        assert "rollout" in allocation.states
-        assert allocation.idle_gpus == 0
+    mock_cfg.algorithm.group_size = 1
+    mock_cfg.profile_data.actor_cost = 100
+    mock_component_placement.actor_dp_size = (
+        mock_component_placement._cluster_num_gpus // 2
+    )
+    mock_component_placement.actor_world_size = (
+        mock_component_placement._cluster_num_gpus
+    )
 
-    def test_get_component(self):
-        """Test getting component states."""
-        components_config = {
-            "actor": {
-                "tensor_model_parallel_size": 2,
-                "pipeline_model_parallel_size": 1,
-            },
-        }
-
-        allocation = AllocationStates(components_config)
-        actor_state = allocation.get_component("actor")
-
-        assert actor_state is not None
-        assert actor_state.tensor_model_parallel_size == 2
-        assert allocation.get_component("nonexistent") is None
-
-    def test_total_and_used_gpus(self):
-        """Test GPU counting methods."""
-        components_config = {
-            "actor": {
-                "tensor_model_parallel_size": 2,
-                "pipeline_model_parallel_size": 1,
-            },
-            "rollout": {
-                "tensor_model_parallel_size": 1,
-                "pipeline_model_parallel_size": 1,
-            },
-        }
-
-        allocation = AllocationStates(components_config)
-        allocation.get_component("actor").allocation(4)
-        allocation.get_component("rollout").allocation(2)
-        allocation.idle_gpus = 2
-
-        assert allocation.used_gpus() == 6
-        assert allocation.total_gpus() == 8
+    return mock_cfg, mock_component_placement
 
 
-class TestResourcePlanner:
-    """Tests for the ResourcePlanner class."""
-
-    def test_resource_planner_initialization(self):
-        """Test ResourcePlanner initialization."""
-        components_config = {
-            "actor": {
-                "tensor_model_parallel_size": 2,
-                "pipeline_model_parallel_size": 1,
-            },
-            "rollout": {
-                "tensor_model_parallel_size": 1,
-                "pipeline_model_parallel_size": 1,
-            },
-        }
-
-        planner = ResourcePlanner(
-            components_config=components_config,
-            total_gpus=8,
-            valid_actor_dp_sizes=[1, 2, 4],
-            valid_inference_dp_sizes=[1, 2],
-        )
-
-        assert planner.total_gpus == 8
-        assert len(planner.valid_components) == 2
-        assert "actor" in planner.valid_components
-        assert "rollout" in planner.valid_components
-
-    def test_generate_states_for_single_component(self):
-        """Test generating states for a single component."""
-        components_config = {
-            "actor": {
-                "tensor_model_parallel_size": 2,
-                "pipeline_model_parallel_size": 1,
-            },
-        }
-
-        planner = ResourcePlanner(
-            components_config=components_config,
-            total_gpus=8,
-            valid_actor_dp_sizes=[1, 2, 4],
-            valid_inference_dp_sizes=[],
-        )
-
-        init_allocation = AllocationStates(components_config)
-        states = planner.generate_states_for_single_component(init_allocation, "actor")
-
-        assert len(states) > 0
-        # Should generate states with different data parallel sizes
-        for state in states:
-            actor_state = state.get_component("actor")
-            assert actor_state.world_size > 0
-
-    def test_generate_all_states(self):
-        """Test generating all possible allocation states."""
-        components_config = {
-            "actor": {
-                "tensor_model_parallel_size": 2,
-                "pipeline_model_parallel_size": 1,
-            },
-            "rollout": {
-                "tensor_model_parallel_size": 1,
-                "pipeline_model_parallel_size": 1,
-            },
-        }
-
-        planner = ResourcePlanner(
-            components_config=components_config,
-            total_gpus=8,
-            valid_actor_dp_sizes=[1, 2],
-            valid_inference_dp_sizes=[],
-        )
-
-        planner.generate_all_states()
-        assert hasattr(planner, "all_states")
-        assert len(planner.all_states) > 0
-
-    def test_generate_static_states(self):
-        """Test generating static states that use all GPUs."""
-        components_config = {
-            "actor": {
-                "tensor_model_parallel_size": 2,
-                "pipeline_model_parallel_size": 1,
-            },
-            "rollout": {
-                "tensor_model_parallel_size": 1,
-                "pipeline_model_parallel_size": 1,
-            },
-        }
-
-        planner = ResourcePlanner(
-            components_config=components_config,
-            total_gpus=8,
-            valid_actor_dp_sizes=[1, 2, 4],
-            valid_inference_dp_sizes=[],
-        )
-
-        static_states = planner.generate_static_states()
-
-        # All static states should use all available GPUs
-        for state in static_states:
-            assert state.used_gpus() == 8
+mock_cfg, mock_component_placement = get_mock_config_reasoning()
+init_global_config(mock_cfg, mock_component_placement)
 
 
-class TestResourceAllocationFunctions:
-    """Tests for standalone resource allocation functions."""
-
-    def test_get_valid_dp_sizes(self):
-        """Test getting valid data parallel sizes."""
-        parallel_config = {
-            "tensor_model_parallel_size": 2,
-            "pipeline_model_parallel_size": 1,
-        }
-
-        valid_sizes = get_valid_dp_sizes(
-            total_gpus=8,
-            parallel_config=parallel_config,
-            group_size=16,
-            rollout_batch_size=128,
-            n_minibatches=4,
-        )
-
-        assert valid_sizes == [1, 2, 4]
-
-    def test_resource_allocate(self):
-        """Test main resource allocation function."""
-        components_config = {
-            "actor": {
-                "tensor_model_parallel_size": 2,
-                "pipeline_model_parallel_size": 1,
-            },
-            "inference": {
-                "tensor_model_parallel_size": 2,
-                "pipeline_model_parallel_size": 1,
-            },
-            "rollout": {
-                "tensor_model_parallel_size": 1,
-                "pipeline_model_parallel_size": 1,
-            },
-        }
-
-        allocation_states = resource_allocate(
-            components_config=components_config,
-            total_gpus=8,
-            group_size=16,
-            rollout_batch_size=128,
-            n_minibatches=4,
-        )
-
-        assert isinstance(allocation_states, list)
-        assert len(allocation_states) > 0
-        assert all(isinstance(state, AllocationStates) for state in allocation_states)
-
-        for allocation_state in allocation_states:
-            assert allocation_state.used_gpus() == 8
-            actor_state = allocation_state.get_component("actor")
-            inference_state = allocation_state.get_component("inference")
-            rollout_state = allocation_state.get_component("rollout")
-            assert actor_state.model_parallel_size == 2
-            assert inference_state.model_parallel_size == 2
-            assert rollout_state.model_parallel_size == 1
-            assert (
-                actor_state.world_size != 0
-                and inference_state.world_size != 0
-                and rollout_state.world_size != 0
-            )
-
-
-class TestWorkflowNodes:
-    """Tests for workflow node classes."""
+class TestNode:
+    """Tests for node class."""
 
     def test_node_creation(self):
         """Test basic node creation and methods."""
-        node = Node("test_node")
-        node.set_single_batch_instance_cost(10.0)
-        node.set_instance_num(2)
+        actor_node = MegatronNode("actor")
+        inference_node = MegatronNode("inference")
+        rollout_node = RolloutNode()
 
-        assert node.name == "test_node"
-        assert node.get_single_batch_cost() == 5.0
+        assert actor_node.role == "actor"
+        assert inference_node.role == "inference"
+        assert rollout_node.role == "rollout"
 
-    def test_component_node(self):
-        """Test ComponentNode creation."""
-        component = ComponentNode("actor")
-        component.set_single_batch_instance_cost(20.0)
-        component.set_instance_num(4)
+    def test_node_validation(self):
+        """Test node validation."""
+        valid_gpu_nums = [1, 2, 4, 8]
+        actor_node = MegatronNode(role="actor", valid_gpu_nums=valid_gpu_nums)
 
-        assert component.name == "actor"
-        assert component.get_single_batch_cost() == 5.0
-
-    def test_scc_component_node(self):
-        """Test SccComponentNode with multiple components."""
-        component1 = ComponentNode("actor")
-        component1.set_single_batch_instance_cost(20.0)
-        component1.set_instance_num(4)
-
-        component2 = ComponentNode("rollout")
-        component2.set_single_batch_instance_cost(30.0)
-        component2.set_instance_num(3)
-
-        scc_node = SccComponentNode([component1, component2])
-
-        assert "actor - rollout" in scc_node.name
-        assert scc_node.get_single_batch_cost() == 15.0  # 5.0 + 10.0
+        for gpu_num in range(10):
+            if gpu_num in valid_gpu_nums:
+                assert actor_node._validate_gpu_num(gpu_num)
+            else:
+                assert not actor_node._validate_gpu_num(gpu_num)
 
 
 class TestWorkflow:
     """Tests for the Workflow class."""
 
-    def test_workflow_creation(self):
+    _name_to_node_dict = {
+        "rollout": RolloutNode(),
+        "inference": MegatronNode("inference"),
+        "actor": MegatronNode("actor"),
+    }
+
+    def get_node(self, name: str) -> ComponentNode:
+        return self._name_to_node_dict[name]
+
+    def test_workflow_graph(self):
         """Test workflow creation and basic properties."""
-        node1 = ComponentNode("actor")
-        node2 = ComponentNode("rollout")
+        cfg = MagicMock()
+        cfg.runner.task_type = "reasoning"
+        cfg.algorithm.recompute_logprobs = True
+        workflow_graph = get_workflow_graph(cfg)
+        assert workflow_graph == {
+            "rollout": ["inference"],
+            "inference": ["actor"],
+            "actor": [],
+        }
 
-        workflow_dict = {node1: [node2], node2: []}
+        cfg.algorithm.recompute_logprobs = False
+        workflow_graph = get_workflow_graph(cfg)
+        assert workflow_graph == {
+            "rollout": ["actor"],
+            "actor": [],
+        }
 
-        workflow = Workflow(workflow_dict)
+    def test_workflow_creation(self):
+        """Test workflow creation."""
+        graph = {
+            "rollout": ["inference"],
+            "inference": ["actor"],
+            "actor": [],
+        }
 
-        assert len(workflow.nodes) == 2
-        assert node1 in workflow.nodes
-        assert node2 in workflow.nodes
+        workflow_graph = {}
+        for node, neighbors in graph.items():
+            workflow_graph[self.get_node(node)] = [
+                self.get_node(neighbor) for neighbor in neighbors
+            ]
+        workflow = Workflow(workflow_graph)
+        assert set(workflow.nodes) == {
+            self.get_node("rollout"),
+            self.get_node("inference"),
+            self.get_node("actor"),
+        }
+        assert workflow.topological_order == [
+            self.get_node("rollout"),
+            self.get_node("inference"),
+            self.get_node("actor"),
+        ]
 
-    def test_topological_sort(self):
-        """Test topological sorting of workflow."""
-        node1 = ComponentNode("actor")
-        node2 = ComponentNode("rollout")
-        node3 = ComponentNode("inference")
+    def test_traverse_st_cuts(self):
+        """Test traverse st cuts of workflow."""
+        graph = {
+            "rollout": ["inference"],
+            "inference": ["actor"],
+            "actor": [],
+        }
+        workflow = Workflow(graph)
+        cuts = traverse_st_cuts(workflow)
+        assert len(cuts) == 2
+        assert cuts[0][0].is_node() and cuts[0][0].nodes[0] == "rollout"
+        assert cuts[1][1].is_node() and cuts[1][1].nodes[0] == "actor"
 
-        workflow_dict = {node1: [node2], node2: [node3], node3: []}
-
-        workflow = Workflow(workflow_dict)
-        topo_order = workflow.topological_sort()
-
-        assert len(topo_order) == 3
-        # node1 should come before node2, which should come before node3
-        assert topo_order.index(node1) < topo_order.index(node2)
-        assert topo_order.index(node2) < topo_order.index(node3)
-
-    def test_find_sccs(self):
-        """Test finding strongly connected components."""
-        node1 = ComponentNode("actor")
-        node2 = ComponentNode("rollout")
-
-        # Create a simple cycle
-        workflow_dict = {node1: [node2], node2: [node1]}
-
-        workflow = Workflow(workflow_dict)
-        sccs = workflow.find_sccs()
-
-        assert len(sccs) >= 1
-        # The cycle should form an SCC
-        assert any(len(scc) == 2 for scc in sccs)
+        cuts = traverse_st_cuts(cuts[0][1])
+        assert len(cuts) == 1
+        assert cuts[0][0].is_node() and cuts[0][0].nodes[0] == "inference"
+        assert cuts[0][1].is_node() and cuts[0][1].nodes[0] == "actor"
 
     def test_compress_sccs(self):
         """Test SCC compression."""
-        node1 = ComponentNode("actor")
-        node2 = ComponentNode("rollout")
-        node3 = ComponentNode("inference")
-
-        workflow_dict = {
-            node1: [node2],
-            node2: [node1, node3],  # Creates a cycle between node1 and node2
-            node3: [],
+        graph = {
+            self.get_node("inference"): [self.get_node("rollout")],
+            self.get_node("rollout"): [
+                self.get_node("inference"),
+                self.get_node("actor"),
+            ],
+            self.get_node("actor"): [],
         }
+        workflow = Workflow(graph)
+        compressed_workflow = workflow.compress_sccs()
 
-        workflow = Workflow(workflow_dict)
-        compressed = workflow.compress_sccs()
+        assert len(workflow.nodes) == 3 and len(compressed_workflow.nodes) == 2
 
-        assert isinstance(compressed, Workflow)
-        # After compression, should have fewer nodes if there were cycles
-
-
-class TestWorkflowPartitioner:
-    """Tests for the WorkflowPartitioner class."""
-
-    def test_workflow_partitioner_creation(self):
-        """Test WorkflowPartitioner creation."""
-        node1 = ComponentNode("actor")
-        node2 = ComponentNode("rollout")
-
-        workflow_dict = {node1: [node2], node2: []}
-
-        workflow = Workflow(workflow_dict)
-        partitioner = WorkflowPartitioner(workflow)
-
-        assert partitioner.workflow is not None
-
-    def test_partition_generation(self):
-        """Test partition generation."""
-        node1 = ComponentNode("actor")
-        node2 = ComponentNode("rollout")
-        node3 = ComponentNode("inference")
-
-        workflow_dict = {node1: [node2], node2: [node3], node3: []}
-
-        workflow = Workflow(workflow_dict)
-        partitioner = WorkflowPartitioner(workflow)
-        partitions = partitioner.partition()
-
-        assert isinstance(partitions, list)
-        assert len(partitions) > 0
-        # Should have different partition options
-        assert all(isinstance(partition, dict) for partition in partitions)
+        topological_order = compressed_workflow.topological_order
+        assert isinstance(topological_order[0], SccNode)
+        assert topological_order[0].role in [
+            "inference - rollout",
+            "rollout - inference",
+        ]
 
 
-class TestPipelineCostCacl:
-    """Tests for the PipelineCostCacl class."""
-
-    def test_pipeline_cost_calculation(self):
-        """Test pipeline cost calculation."""
-        node1 = ComponentNode("actor")
-        node1.set_single_batch_instance_cost(10.0)
-        node1.set_instance_num(1)
-
-        node2 = ComponentNode("rollout")
-        node2.set_single_batch_instance_cost(20.0)
-        node2.set_instance_num(1)
-
-        workflow_dict = {node1: [node2], node2: []}
-
-        workflow = Workflow(workflow_dict)
-        cost_calc = PipelineCostCacl(workflow)
-
-        result = cost_calc.calculate_total_time(total_data_size=100, batch_size=10)
-
-        assert "total_time" in result
-        assert "startup_time" in result
-        assert "steady_time" in result
-        assert "num_batches" in result
-        assert "critical_path" in result
-        assert "throughput" in result
-
-        assert result["total_time"] == 30.0 + 20.0 * 9
-        assert result["num_batches"] == 10
-
-    def test_critical_path_finding(self):
-        """Test critical path finding."""
-        node1 = ComponentNode("actor")
-        node1.set_single_batch_instance_cost(10.0)
-        node1.set_instance_num(1)
-
-        node2 = ComponentNode("rollout")
-        node2.set_single_batch_instance_cost(5.0)
-        node2.set_instance_num(1)
-
-        workflow_dict = {node1: [node2], node2: []}
-
-        workflow = Workflow(workflow_dict)
-        cost_calc = PipelineCostCacl(workflow)
-
-        assert len(cost_calc.critical_path) > 0
-        assert node1 in cost_calc.critical_path and node2 in cost_calc.critical_path
-
-
-class TestWorkflowUtilityFunctions:
-    """Tests for workflow utility functions."""
-
-    def test_get_workflow_cost(self):
-        """Test get_workflow_cost function."""
-
-        node1 = ComponentNode("rollout")
-        node1.set_single_batch_instance_cost(10.0)
-        node1.set_instance_num(1)
-
-        node2 = ComponentNode("actor")
-        node2.set_single_batch_instance_cost(10.0)
-        node2.set_instance_num(2)
-
-        workflow_dict = {node1: [node2], node2: []}
-
-        workflow = Workflow(workflow_dict)
-        cost = get_workflow_cost(workflow, batch_size=10, total_data_size=100)
-
-        assert isinstance(cost, (int, float))
-        assert int(cost) == 15 + 90
-
-    def test_get_workflow_partition(self):
-        """Test get_workflow_partition function."""
-        node1 = ComponentNode("actor")
-        node2 = ComponentNode("rollout")
-
-        workflow_dict = {node1: [node2], node2: []}
-
-        workflow = Workflow(workflow_dict)
-        partitions = get_workflow_partition(workflow)
-
-        assert isinstance(partitions, list)
-        assert len(partitions) > 0
-
-
-@pytest.mark.skipif(
-    not IMPORTS_AVAILABLE, reason="Auto placement modules not available"
-)
-class TestSchedulerTask:
+class TestAutoPlacementWorkerForReasoning:
     """Tests for the SchedulerTask class."""
 
-    def test_get_profile_data(self):
-        """Test get_profile_data function."""
-        # Create a mock config
-        mock_cfg = MagicMock()
-        mock_cfg.runner.task_type = "math"
-        mock_cfg.actor.model.tensor_model_parallel_size = 2
-        mock_cfg.actor.model.pipeline_model_parallel_size = 1
-        mock_cfg.rollout.tensor_parallel_size = 1
-        mock_cfg.rollout.pipeline_parallel_size = 1
-        mock_cfg.cluster.num_nodes = 1
-        mock_cfg.algorithm.group_size = 4
-        mock_cfg.algorithm.n_minibatches = 4
-        mock_cfg.data.rollout_batch_size = 16
-        mock_cfg.runner.seq_length = 2048
-
-        mock_cluster = MagicMock()
-        mock_cluster.num_accelerators_in_cluster = 8
-
-        profile_data = get_profile_data(
-            mock_cfg,
-            cluster=mock_cluster,
-            actor_cost=100.0,
-            inference_cost=50.0,
-            rollout_cost=75.0,
-        )
-
-        assert profile_data["actor"] == (4, 100.0)
-        assert profile_data["rollout"] == (8, 75.0)
-        assert profile_data["inference"] == (4, 50.0)
-
-    @patch("scheduler_task.validate_cfg")
-    def test_scheduler_task_initialization(self, mock_validate):
+    def test_auto_placement_worker(self):
         """Test SchedulerTask initialization."""
         # Create a mock config
-        mock_cfg = MagicMock()
-        mock_cfg.runner.task_type = "reasoning"
-        mock_cfg.actor.model.tensor_model_parallel_size = 2
-        mock_cfg.actor.model.pipeline_model_parallel_size = 1
-        mock_cfg.rollout.tensor_parallel_size = 1
-        mock_cfg.rollout.pipeline_parallel_size = 1
-        mock_cfg.cluster.num_nodes = 1
-        mock_cfg.algorithm.group_size = 4
-        mock_cfg.algorithm.n_minibatches = 4
-        mock_cfg.data.rollout_batch_size = 16
-        mock_cfg.runner.seq_length = 2048
+        mock_cfg, mock_component_placement = get_mock_config_reasoning()
 
-        # Mock the inference config to avoid exceptions
-        mock_cfg.inference.model.tensor_model_parallel_size = 2
-        mock_cfg.inference.model.pipeline_model_parallel_size = 1
+        graph = {
+            "rollout": ["inference"],
+            "inference": ["actor"],
+            "actor": [],
+        }
+        auto_placement_worker = AutoPlacementWorker(
+            mock_cfg, mock_component_placement, graph
+        )
+        res = auto_placement_worker.run()
+        assert isinstance(res, ScheduleResult)
+        assert res.total_gpu_num == mock_component_placement._cluster_num_gpus
+        assert res.mode == ScheduleMode.DISAGGREGATED
 
-        mock_validate.return_value = mock_cfg
+        assert len(res.placement[auto_placement_worker.get_node("rollout")]) == 80, (
+            f"{res.placement_str}"
+        )
+        assert len(res.placement[auto_placement_worker.get_node("inference")]) == 16, (
+            f"{res}"
+        )
+        assert len(res.placement[auto_placement_worker.get_node("actor")]) == 32
 
-        mock_cluster = MagicMock()
-        mock_cluster.num_accelerators_in_cluster = 8
 
-        scheduler_task = SchedulerTask(mock_cfg, mock_cluster)
+class TestAutoPlacementWorkerForEmbodiment:
+    """Tests for the SchedulerTask class."""
 
-        assert scheduler_task.is_reasoning is True
-        assert scheduler_task.total_gpus == 8
-        assert scheduler_task.group_size == 4
-        assert "actor" in scheduler_task.components_config
-        assert "rollout" in scheduler_task.components_config
+    def test_libero_embodiment(self):
+        """Test SchedulerTask initialization."""
+        # Create a mock config
+        mock_cfg, mock_component_placement = get_mock_config_embodiment(
+            env_type="libero"
+        )
+
+        graph = {
+            "env": ["env_rollout"],
+            "env_rollout": ["actor"],
+            "actor": [],
+        }
+
+        auto_placement_worker = AutoPlacementWorker(
+            mock_cfg, mock_component_placement, graph
+        )
+        res = auto_placement_worker.run()
+        assert res.total_gpu_num == mock_component_placement._cluster_num_gpus
+        assert isinstance(res, ScheduleResult)
+        assert res.mode == ScheduleMode.COLLOCATED
+
+    def test_maniskill_embodiment(self):
+        mock_cfg, mock_component_placement = get_mock_config_embodiment(
+            env_type="maniskill"
+        )
+        graph = {
+            "env": ["env_rollout"],
+            "env_rollout": ["actor"],
+            "actor": [],
+        }
+        auto_placement_worker = AutoPlacementWorker(
+            mock_cfg, mock_component_placement, graph
+        )
+        res = auto_placement_worker.run()
+        assert res.total_gpu_num == mock_component_placement._cluster_num_gpus
+        assert res.placement[auto_placement_worker.get_node("actor")] == range(4)
+        assert res.placement[auto_placement_worker.get_node("env")] == range(0, 1)
+        assert res.placement[auto_placement_worker.get_node("env_rollout")] == range(
+            1, 4
+        )
 
 
 if __name__ == "__main__":

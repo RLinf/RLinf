@@ -75,27 +75,30 @@ However, if your system is incompatible with the Docker image, you can also inst
 Installation Method 1: Docker Image
 --------------------------------------------------
 
-We provide two official Docker images optimized for different backend configurations:
+We provide Docker images for different experiments:
 
-- **Math reasoning with Megatron + SGLang/vLLM**:  
+- **Embodied:**
 
-  - ``rlinf/rlinf:math-rlinf0.1-torch2.5.1-sglang0.4.4-vllm0.7.1-megatron0.11.0-te2.1`` (used for enhancing LLM reasoning on MATH tasks)
+  - ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` for the Libero or ManiSkill benchmarks. For other embodied experiments, please refer to the corresponding sections in :doc:`../examples/index`
 
-- **Embodied with FSDP + Huggingface**:  
+- **Math reasoning:** 
 
-  - ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` (for the OpenVLA/OpenVLA-OFT/openpi model)
+  - ``rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6-vllm0.8.5-megatron0.13.0-te2.1`` (used for enhancing LLM reasoning on MATH tasks)
+
 
 Once you've identified the appropriate image for your setup, pull the Docker image:
 
 .. code-block:: bash
 
+   # For mainland China users, you can use the following for better download speed:
+   # docker.1ms.run/rlinf/rlinf:CHOSEN_IMAGE
    docker pull rlinf/rlinf:CHOSEN_IMAGE
 
 Then, start the container using the pulled image:
 
 .. warning::
 
-  1. Ensure the docker is started with `-e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics` to enable GPU support, especially the `graphics` capability for rendering in embodied experiments.
+  1. Ensure the docker is started with `-e NVIDIA_DRIVER_CAPABILITIES=all` to enable GPU support, especially the `graphics` capability for rendering in embodied experiments.
 
   2. Do not override the `/root` and `/opt` directories in the container (with `-v` or `--volume` of `docker run`), as they contain important asset files and environments. If your platform requires mounting `/root`, run `link_assets` in the container after starting it to restore the asset links in the `/root` directory.
 
@@ -107,13 +110,15 @@ Then, start the container using the pulled image:
       --shm-size 100g \
       --net=host \
       --name rlinf \
-      -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
+      -e NVIDIA_DRIVER_CAPABILITIES=all \
       rlinf/rlinf:CHOSEN_IMAGE /bin/bash
 
 Inside the container, clone the RLinf repository:
 
 .. code-block:: bash
 
+   # For mainland China users, you can use the following for better download speed:
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -132,35 +137,30 @@ To switch to the desired venv, use the built-in script `switch_env`:
 
   Both the `link_assets` and `switch_env` scripts are built-in utilities in the Docker image provided by us. You can find them in `/usr/local/bin`.
 
-.. tip::
-
-   - For multi-node training, make sure to clone the repository in shared storage so that every node has access to it.
-   - To use ManiSkill settings, refer to the README at ``https://huggingface.co/datasets/RLinf/maniskill_assets`` for instructions on downloading the required files.
-
 Installation Method 2: UV Custom Environment
 --------------------------------------------------------------
 **If you have already used the Docker image, you can skip the following steps.**
 
-We recommend using `uv <https://docs.astral.sh/uv/>`_ to install the required Python packages.  
-You can install ``uv`` via ``pip``.
+You can install the dependencies for the target experiments using the `install.sh` script under the `requirements/` folder.
+The script is organized by *targets* and *models*:
 
-.. code-block:: shell
+- ``embodied`` target (for embodied agents) with different models specified via `--model`, e.g., ``openvla``, ``openvla-oft`` or ``openpi``.
 
-   pip install --upgrade uv
+  Each embodied model also requires an ``--env`` argument to specify the environment, e.g. ``maniskill_libero``, ``behavior`` or ``metaworld``.
 
-After installing `uv`, you can install the dependencies for the target experiments using the `install.sh` script under the `requirements/` folder.
-The script accepts one argument which specifies the target experiment, including `openvla`, `openvla-oft`, `openpi`, and `reason`.
-For example, to install the dependencies for the openvla experiment, you would run:
+- ``reason`` target (for reasoning / Megatron stack).
+- ``docs`` target (for building the documentation).
 
-.. note:: 
-
-  This script needs to be run from the root directory of the RLinf repository. Please ensure you are not running it from within the `requirements/` directory.
+For example, to install the dependencies for the OpenVLA + ManiSkill LIBERO experiment, run:
 
 .. code-block:: shell
   
-  bash requirements/install.sh openvla
+  cd <path_to_RLinf_repository>
+  # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
+  bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
 This will create a virtual environment under the current path named `.venv`.
+
 To activate the virtual environment, you can use the following command:
 
 .. code-block:: shell
@@ -172,3 +172,16 @@ To deactivate the virtual environment, simply run:
 .. code-block:: shell
 
   deactivate
+
+To install the reasoning (Megatron + SGLang/vLLM) stack instead, run:
+
+.. code-block:: shell
+
+  bash requirements/install.sh reason
+
+You can override the default virtual environment directory using ``--venv``. For example:
+
+.. code-block:: shell
+
+  bash requirements/install.sh embodied --model openpi --env maniskill_libero --venv openpi-venv
+  source openpi-venv/bin/activate

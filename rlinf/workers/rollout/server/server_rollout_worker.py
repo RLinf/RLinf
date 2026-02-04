@@ -162,7 +162,9 @@ class ServerRolloutWorker(Worker):
         self._cfg = cfg
 
         # Initialize tokenizer for text processing
-        self._tokenizer = AutoTokenizer.from_pretrained(self._cfg.rollout.model_dir)
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            self._cfg.rollout.model.model_path
+        )
 
         # Configuration
         self._server_host = cfg.server.tracking_rollout.get("host", "0.0.0.0")

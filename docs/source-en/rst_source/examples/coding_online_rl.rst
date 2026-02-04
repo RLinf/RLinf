@@ -1,4 +1,4 @@
-Online Reinforcement Learning for Code Completion Agent
+Online RL for Code Completion Agent
 =======================================================
 
 Online Reinforcement Learning for Code Completion Agent is an important application scenario in the RLinf framework.
@@ -98,7 +98,8 @@ If using the offline validation example, download the dataset:
           output_dir: /path/to/your/logs
 
         rollout:
-          model_dir: /path/to/your/model
+          model:
+            model_path: /path/to/your/model
 
    - For offline validation, edit and use `examples/coding_online_rl/config/qwen2.5-1.5b-grpo-llm_judge.yaml`:
 
@@ -108,7 +109,8 @@ If using the offline validation example, download the dataset:
           output_dir: /path/to/your/logs
 
         rollout:
-          model_dir: /path/to/your/model
+          model:
+            model_path: /path/to/your/model
 
         data:
           train_data_paths: ["/path/to/your/dataset/code-fim-v2-python-filtered_formatted_train_3k.jsonl"]
