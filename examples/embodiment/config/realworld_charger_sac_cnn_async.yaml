@@ -62,7 +62,8 @@ runner:
 algorithm:
   update_epoch: 32
   group_size: 1
-  agg_q: min
+  agg_q: min # or mean
+  actor_agg_q: mean
 
   eval_rollout_epoch: 1
 

@@ -56,7 +56,8 @@ runner:
 algorithm:
   update_epoch: 8
   group_size: 1
-  agg_q: mean
+  agg_q: min # or mean
+  actor_agg_q: mean
 
   backup_entropy: False
   critic_subsample_size: 2

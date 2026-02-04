@@ -63,6 +63,7 @@ algorithm:
     min_buffer_size: 1  # Minimum buffer size before training starts
 
   target_update_freq: 1  # Frequency of target network updates
+  target_update_type: all # all # select from ["all", "q_head_only"]
 
   # params for rollout
   sampling_params:
@@ -104,9 +105,9 @@ rollout:
   pipeline_stage_num: 1
   collect_transitions: True
   collect_prev_infos: False
-  compile_model: False
+  compile_model: True
   model:
-    model_path:  "/path/to/RLinf-ResNet10-pretrained"
+    model_path:  /mnt/RLinf
     state_dim: 7
     action_dim: 4
     num_q_heads: 10
@@ -123,7 +124,7 @@ actor:
   enable_drq: True
   compile_model: False
   model:
-    model_path:  "/path/to/RLinf-ResNet10-pretrained"
+    model_path:  /mnt/RLinf
     state_dim: 7
     action_dim: 4
     num_q_heads: 10
