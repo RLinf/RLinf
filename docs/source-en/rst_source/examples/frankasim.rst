@@ -79,10 +79,13 @@ The core algorithm components include:
    - value function clipping;
    - entropy regularization.
 
-2. **GRPO (Group Relative Policy Optimization)**
+2. **SAC (Soft Actor-Critic)**
 
-   - for each state/prompt, the policy samples *G* independent actions;
-   - compute advantages by subtracting the group mean reward.
+   - Learning Q-values by Bellman backups and entropy regularization.
+
+   - Learning policy to maximize entropy-regularized Q.
+
+   - Learning temperature parameter for exploration-exploitation trade-off.
 
 Dependency Installation
 -------------------------
@@ -124,6 +127,38 @@ Option 2: Custom environment
    # To accelerate dependency downloads in China, append --use-mirror to install.sh
    bash requirements/install.sh embodied --model openvla --env frankasim
    source .venv/bin/activate
+
+Model Download
+--------------
+
+If you are training the CNN policy (skip this section for the MLP policy), you need to first download the ResNet checkpoint we provided.
+
+**ResNet Checkpoint Download**
+
+.. code:: bash
+
+   # Download the ResNet checkpoint (choose either method)
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+
+   # Method 2: Using huggingface-hub
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
+
+After downloading, make sure the `model_path` in the config yaml points to this directory. 
+Update ``actor.model.model_path`` and ``rollout.model.model_path`` to the path of the model directory as follows.
+
+.. code-block:: yaml
+
+   rollout:
+      model:
+         model_path: Pathto/RLinf/RLinf-ResNet10-pretrained
+   actor:
+      model:
+         model_path: Pathto/RLinf/RLinf-ResNet10-pretrained
 
 Running the Script
 -------------------
@@ -181,11 +216,12 @@ After selecting a configuration, start training in root directory:
 
    bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
 
-Currently, only PPO training with an MLP policy is supported in the Franka-Sim environment:
+Supports training an MLP policy using PPO or training a CNN policy using SAC in the Franka-Sim environment:
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
+   bash examples/embodiment/run_async.sh frankasim_sac_cnn
 
 Visualization and Results
 -------------------------
@@ -256,3 +292,14 @@ Video generation is currently supported only in ``PandaPickCubeVision-v0``:
        project_name: rlinf
        experiment_name: "maniskill_ppo_openvla"
        logger_backends: ["tensorboard"]  # wandb, swanlab
+
+Simulation Results
+~~~~~~~~~~~~~~~~~~~
+The following presents the training curves of asynchronous SAC+CNN in the simulation environment. Within one hour, the grasping strategy could be successfully learned and remained stable thereafter.
+
+.. raw:: html
+
+  <div style="flex: 0.8; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/frankasim_curve.png" style="width: 100%;"/>
+      <p><em>Success rate curve</em></p>
+    </div>
