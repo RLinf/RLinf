@@ -16,8 +16,23 @@ cluster:
   num_nodes: 1
   component_placement:
       env: 0
-      rollout: 1
+      rollout:
+        node_group: "rollout"
+        placement: 1
       actor: 2
+
+  node_groups:
+    - label: "rollout"
+      node_ranks: all
+      env_configs:
+        - node_ranks: all
+          env_vars:
+            # The gr00t model contains numerous numpy operations, whose performance is sensitive to the OMP_NUM_THREADS environment variable.
+            # By default, this is set to 1 by Ray. Consider increasing it to improve performance.
+            # Recommended to increase to number of CPU cores (use lscpu to check) divided by rollout world size.
+            # Do not set this globally in the shell script which will increase the number of threads for all processes,
+            # because PyTorch performance will be degraded, contrary to numpy.
+            - OMP_NUM_THREADS: 1
 
 runner:
   task_type: embodied

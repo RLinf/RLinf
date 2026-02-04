@@ -154,11 +154,10 @@ class Scheduler(_Scheduler):
             # recv from the Megatron backend
             # Megatron use weight bucket to sync weight, the bucket length in dict of bucket 0, bucket_length
             state_dict.pop("bucket_length")
+            assert bucket_length > 0, f"bucket_length {bucket_length} is invalid"
 
         if self.is_weight_offloaded:
             self.resume_memory_occupation(ResumeMemoryOccupationReqInput())
-
-        assert bucket_length > 0, f"bucket_length {bucket_length} is invalid"
 
         self.batch_load_hf_weight(state_dict)
         if bucket_length > 1:
@@ -179,6 +178,7 @@ class Scheduler(_Scheduler):
 
             state_dict = recv_handle.wait()
             self.batch_load_hf_weight(state_dict)
+        state_dict = None
 
         if self.weight_norm_dict is not None:
             # validate the weight norm dict between load model and first sync.
