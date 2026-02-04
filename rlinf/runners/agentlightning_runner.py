@@ -1,16 +1,16 @@
 import logging
 import time
+import typing
 from typing import Optional, Any
 
 import torch
 from omegaconf.dictconfig import DictConfig
-
 import ray.util
-
 from torch.utils.data import Dataset, RandomSampler, SequentialSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 from tqdm import tqdm
 
+from rlinf.scheduler import Channel
 from rlinf.runners.reasoning_runner import ReasoningRunner
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.metric_logger import MetricLogger
@@ -18,21 +18,15 @@ from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.runner_utils import check_progress
 from rlinf.utils.timers import Timer
 
-
 from agentlightning.adapter.triplet import TraceToTripletBase
 from agentlightning.store.base import LightningStore
 
-
 from rlinf.workers.agent.agentlightning_rollout_worker import AgentLightningRolloutWorker
 
-import typing
-
 if typing.TYPE_CHECKING:
-    from rlinf.scheduler import Channel
-    from rlinf.scheduler.dynamic_scheduler.scheduler_worker import SchedulerWorker
+
     from rlinf.workers.actor.megatron_actor_worker import MegatronActor
     from rlinf.workers.inference.megatron_inference_worker import MegatronInference
-    from rlinf.workers.reward.reward_worker import RewardWorker
     from rlinf.workers.rollout.sglang.sglang_worker_server import SGLangWorkerWithHTTPServer
 
 
@@ -47,11 +41,9 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         rollout: "SGLangWorkerWithHTTPServer",
         inference: Optional["MegatronInference"],
         actor: "MegatronActor",
-        reward: Optional["RewardWorker"],
         store: LightningStore,
         adapter: TraceToTripletBase,
         agentlightning_rollout_worker: AgentLightningRolloutWorker,
-        scheduler: Optional["SchedulerWorker"] = None,
     ):
         super().__init__(
             cfg,
@@ -61,7 +53,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
             rollout,
             inference,
             actor,
-            reward,
+            reward=None,
         )
         
         self.store = store
@@ -188,12 +180,10 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                         output_channel=self.rollout_channel,
                     )
 
-                    reward_handle = None
-                    inference_input_channel = self.rollout_channel
 
                     if self.recompute_logprobs:
                         infer_handle: Handle = self.inference.run_inference(
-                            input_channel=inference_input_channel,
+                            input_channel=self.rollout_channel,
                             output_channel=self.inference_channel,
                             compute_ref_logprobs=self.compute_ref_logprobs,
                         )
@@ -212,11 +202,9 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                     actor_rollout_metrics = metrics[0][0]
                     actor_training_metrics = metrics[0][1]
                     
-                    # Get rollout metrics from AgentLightningRolloutWorker
-                    # Handle case where wait() returns a list (multiple workers) or dict (single worker)
+
                     rollout_metrics_result = rollout_handle.wait()
                     if isinstance(rollout_metrics_result, list):
-                        # If list, take the first element (similar to how actor_handle.wait() is handled)
                         rollout_metrics_dict = rollout_metrics_result[0] if rollout_metrics_result else {}
                     else:
                         rollout_metrics_dict = rollout_metrics_result if rollout_metrics_result else {}
@@ -251,8 +239,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                 time_metrics = self.timer.consume_durations()
                 time_metrics["training"] = actor_handle.consume_duration()
                 time_metrics["rollout"] = rollout_handle.consume_duration()
-                if reward_handle is not None:
-                    time_metrics["reward"] = reward_handle.consume_duration()
+
                 if infer_handle is not None:
                     time_metrics["inference"] = infer_handle.consume_duration()
 
