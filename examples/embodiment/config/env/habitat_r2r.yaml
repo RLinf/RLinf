@@ -14,4 +14,4 @@ use_fixed_reset_state_ids: True
 use_ordered_reset_state_ids: False
 
 init_params:
-  config_path: "rlinf/envs/habitat/extensions/config/vlnce_r2r.yaml"
+  config_path: "rlinf/envs/habitat/extensions/config/vlnce_r2r_cma.yaml"
