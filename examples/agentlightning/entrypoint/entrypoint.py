@@ -19,7 +19,6 @@ from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
 from rlinf.workers.inference.utils import get_inference_backend_worker
 from rlinf.workers.actor import get_actor_worker
-from rlinf.workers.reward.reward_worker import RewardWorker
 from rlinf.workers.agent.agentlightning_rollout_worker import AgentLightningRolloutWorker
 
 logger = logging.getLogger(__name__)
@@ -83,13 +82,6 @@ def run_rlinf_training(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement_strategy
     )
     
-    reward_placement_strategy = component_placement.get_strategy("reward")
-    reward_group = RewardWorker.create_group(cfg, component_placement).launch(
-        cluster,
-        name=cfg.reward.group_name,
-        placement_strategy=reward_placement_strategy,
-    )
-    
     
     if eval:
         runner = AgentLightningEvalRunner(
@@ -112,7 +104,6 @@ def run_rlinf_training(
             rollout=rollout_group,
             inference=inference_group,
             actor=actor_group,
-            reward=reward_group,
             store=store,
             adapter=adapter,
             agentlightning_rollout_worker=agentlightning_rollout_group,
