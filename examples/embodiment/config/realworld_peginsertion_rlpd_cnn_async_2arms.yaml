@@ -60,6 +60,7 @@ algorithm:
   group_size: 1
   agg_q: min # or mean
   actor_agg_q: mean
+  enable_drq: False
 
   rollout_epoch: 1
   eval_rollout_epoch: 1

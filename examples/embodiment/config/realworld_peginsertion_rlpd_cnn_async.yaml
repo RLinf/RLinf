@@ -58,6 +58,7 @@ algorithm:
   group_size: 1
   agg_q: min # or mean
   actor_agg_q: mean
+  enable_drq: False
 
   backup_entropy: False
   critic_subsample_size: 2
