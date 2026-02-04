@@ -95,22 +95,14 @@ class AgentLightningEvalRunner:
         if use_pre_process_policy:
             self.rollout.offload_engine().wait()
 
-        server_addresses = []
-        if hasattr(self.rollout, 'http_server_start') and ray is not None:
-            configured_host = self.cfg.server.sglang_http.get('host', '0.0.0.0')
-            if configured_host == '0.0.0.0':
-                node_ip = ray.util.get_node_ip_address()
-            else:
-                node_ip = configured_host
-            
-            base_port = self.cfg.server.sglang_http.get('port', 8020)
-            num_workers = len(self.rollout.worker_info_list)
-            for rank in range(num_workers):
-                port = base_port + rank
-                server_addresses.append(f"{node_ip}:{port}")
-            
-            for rank in range(num_workers):
-                self.rollout.execute_on(rank).http_server_start().wait()
+        server_addresses: list[str] = []
+        if hasattr(self.rollout, "init_worker") and hasattr(self.rollout, "get_server_address"):
+            self.rollout.init_worker(start_http_server=True).wait()
+            server_addresses_result = self.rollout.get_server_address().wait()
+            if isinstance(server_addresses_result, list):
+                server_addresses = [addr for addr in server_addresses_result if addr]
+            elif server_addresses_result:
+                server_addresses = [server_addresses_result]
 
         self.agentlightning_rollout_worker.init_worker(
             store=self.store,

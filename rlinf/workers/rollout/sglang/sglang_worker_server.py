@@ -230,6 +230,13 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
     def get_server_address(self) -> str:
         if not self._enable_http_server:
             return None
-        return f"{self._http_server_host}:{self._http_server_port}"
+        # NOTE: "0.0.0.0" is a bind address and is not routable from clients.
+        # Return the node IP instead so the address can be used by other processes/workers.
+        host = self._http_server_host
+        if host == "0.0.0.0":
+            import ray.util
+
+            host = ray.util.get_node_ip_address()
+        return f"{host}:{self._http_server_port}"
 
 
