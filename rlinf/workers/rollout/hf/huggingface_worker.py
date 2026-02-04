@@ -162,13 +162,15 @@ class MultiStepRolloutWorker(Worker):
 
         dones = env_output["dones"].bool().cpu().contiguous()
         rewards = env_output["rewards"].cpu().contiguous()
-        truncations = env_output.get("truncations", None)
+        bootstrap_type = self.cfg.algorithm.get("bootstrap_type", "standard")
+
+        if bootstrap_type == "standard":
+            last_step_truncations = env_output["truncations"].cpu().contiguous()[:, -1]
+        else:
+            last_step_truncations = dones[:, -1]
+
         # Handle auto_reset: add bootstrap value ONLY for truncated episodes (not terminated)
-        if (
-            truncations is not None
-            and truncations.any()
-            and self.cfg.env.train.auto_reset
-        ):
+        if last_step_truncations.any() and self.cfg.env.train.auto_reset:
             if hasattr(self.hf_model, "value_head") or hasattr(self.hf_model, "q_head"):
                 final_obs = env_output["final_obs"]
                 with torch.no_grad():
@@ -178,14 +180,10 @@ class MultiStepRolloutWorker(Worker):
                     else:
                         _final_values = torch.zeros_like(actions[:, 0])
                 final_values = torch.zeros_like(_final_values[:, 0])  # [bsz, ]
-
                 # bootstrap only on the truncated episode
-                truncations_cpu = truncations.bool().cpu().contiguous()
-                last_step_truncations = truncations_cpu[:, -1]  # [bsz, ]
                 final_values[last_step_truncations] = _final_values[:, 0][
                     last_step_truncations
                 ]
-
                 # Add bootstrap value to the last step of truncated episodes
                 rewards[:, -1] += self.cfg.algorithm.gamma * final_values.cpu()
 
