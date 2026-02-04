@@ -478,7 +478,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 detach_encoder=True,
             )
         metrics = {
-            f"q_value_{q_id}": all_qf_pi[..., q_id].mean().item() 
+            f"q_value_{q_id}": all_qf_pi[..., q_id].mean().item()
             for q_id in range(self.cfg.actor.model.get("num_q_heads", 2))
         }
         if agg_q == "min":
@@ -549,7 +549,9 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             critic_loss.backward()
             gbs_critic_loss.append(critic_loss.item() * self.gradient_accumulation)
             append_to_dict(all_critic_metrics, critic_metrics)
-        all_critic_metrics =  {f"critic/{key}": np.mean(value) for key, value in all_critic_metrics.items()}
+        all_critic_metrics = {
+            f"critic/{key}": np.mean(value) for key, value in all_critic_metrics.items()
+        }
         qf_grad_norm = self.model.clip_grad_norm_(
             max_norm=self.cfg.actor.optim.clip_grad
         )
@@ -561,7 +563,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             "sac/critic_loss": np.mean(gbs_critic_loss),
             "critic/lr": self.qf_optimizer.param_groups[0]["lr"],
             "critic/grad_norm": qf_grad_norm,
-            **all_critic_metrics
+            **all_critic_metrics,
         }
 
         if self.update_step % self.critic_actor_ratio == 0:
@@ -580,7 +582,10 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 gbs_actor_loss.append(actor_loss.item() * self.gradient_accumulation)
                 gbs_entropy.append(entropy.item())
                 append_to_dict(all_actor_metrics, q_metrics)
-            all_actor_metrics =  {f"actor/{key}": np.mean(value) for key, value in all_actor_metrics.items()}
+            all_actor_metrics = {
+                f"actor/{key}": np.mean(value)
+                for key, value in all_actor_metrics.items()
+            }
             actor_grad_norm = self.model.clip_grad_norm_(
                 max_norm=self.cfg.actor.optim.clip_grad
             )
@@ -623,7 +628,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                     "actor/grad_norm": actor_grad_norm,
                     "actor/entropy": np.mean(gbs_entropy),
                     "alpha/grad_norm": alpha_grad_norm,
-                    **all_actor_metrics, 
+                    **all_actor_metrics,
                 }
             )
         # Soft update target network
