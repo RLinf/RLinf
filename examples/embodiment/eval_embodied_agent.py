@@ -29,7 +29,7 @@ mp.set_start_method("spawn", force=True)
 
 
 @hydra.main(
-    version_base="1.1", config_path="config", config_name="maniskill_ppo_openvlaoft"
+    version_base="1.1", config_path="config", config_name="habitat_r2r_grpo_cma"
 )
 def main(cfg) -> None:
     cfg.runner.only_eval = True
