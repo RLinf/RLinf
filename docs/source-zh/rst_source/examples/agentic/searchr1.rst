@@ -80,6 +80,27 @@ Wiki配置文件
 
 运行launch_local_server.sh启动Local Wiki Server，等待直至输出server ip等信息，代表server启动完成
 
+(Optional) 使用Qdrant作为Wiki Server
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+我们也支持使用 qdrant 作为 wiki 服务器。如果你不打算使用 qdrant，可以直接跳到 训练 部分。
+
+下载 `qdrant <https://github.com/qdrant/qdrant/releases>`__ 并按照以下步骤构建 qdrant collection。
+
+在 `examples/searchr1/qdrant_scripts/build_qdrant_coll.sh` 和 `examples/searchr1/qdrant_scripts/launch_local_server_qdrant.sh` 中，更新 `qdrant_path`、`WIKI2018_DIR` 和 `retriever_path` 的文件路径。
+
+使用以下指令构建并启动 qdrant wiki 服务器：
+
+.. code-block:: bash
+
+   cd examples/searchr1/qdrant_scripts
+   # 构建 qdrant collection
+   bash ./build_qdrant_coll.sh
+   # 启动 qdrant 服务器
+   bash ./launch_local_server_qdrant.sh
+
+Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化,请参考 `Qdrant 文档 <https://qdrant.tech/documentation/guides/optimize/>`__。
+
 在8*H100上训练
 --------------
 

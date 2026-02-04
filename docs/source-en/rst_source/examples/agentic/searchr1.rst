@@ -85,6 +85,28 @@ Write the paths to the previously downloaded wiki files and the index into examp
 Run `launch_local_server.sh` to start the Local Wiki Server.  
 Wait until server IP information is printed — indicating successful startup.
 
+(Optional) Using Qdrant as Local Wiki Server
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+We also support qdrant as the wiki server as well. If you don't want to use the qdrant, move on to the Training section.
+
+Download `qdrant <https://github.com/qdrant/qdrant/releases>`__ and build a qdrant collection with follwing steps.
+
+Update the file paths for `qdrant_path, WIKI2018_DIR, and retriever_path` in `examples/searchr1/qdrant_scripts/build_qdrant_coll.sh` and `examples/searchr1/qdrant_scripts/launch_local_server_qdrant.sh`.
+
+Use the following instrcutions to build and launch a qdrant wiki server:
+
+.. code-block:: bash
+
+   cd examples/searchr1/qdrant_scripts
+   # build qdrant collection
+   bash ./build_qdrant_coll.sh
+   # launch qdrant server
+   bash ./launch_local_server_qdrant.sh
+
+Qdrant uses the HNSW graph index algorithm by default. For details on optimizing the HNSW graph index, please refer to the `Qdrant documentation <https://qdrant.tech/documentation/guides/optimize/>`__.
+
+
 Training on 8×H100
 ------------------
 
