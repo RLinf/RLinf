@@ -331,9 +331,12 @@ def get_rollout_backend_worker(cfg: DictConfig) -> Worker:
 
         return VLLMWorker
     elif rollout_backend == "sglang":
-        from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
-
-        return SGLangWorker
+        if cfg.get("server", {}).get("sglang_http") is not None:
+            from rlinf.workers.rollout.sglang.sglang_worker_server import SGLangWorkerWithHTTPServer
+            return SGLangWorkerWithHTTPServer
+        else:
+            from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
+            return SGLangWorker
 
 
 class RunningStatusManager:
