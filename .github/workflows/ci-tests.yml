@@ -90,6 +90,7 @@ jobs:
               - 'tests/e2e_tests/embodied/**'
               - 'toolkits/eval_scripts_openpi/**'
               - 'toolkits/realworld_check/**'
+              - 'toolkits/replay_buffer/**'
               - '.github/workflows/embodied-e2e-tests.yml'
             agent_reason_filter: &agent
               - *shared

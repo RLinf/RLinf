@@ -498,30 +498,31 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
 
     def default_forward(
         self,
-        data: dict[str, torch.Tensor],
+        forward_inputs: dict[str, torch.Tensor],
         compute_logprobs: bool = True,
         compute_entropy: bool = False,
         compute_values: bool = True,
         use_cache: bool = False,
+        **kwargs,
     ) -> dict[str, Any]:
         normalized_input = {
-            "state": data["state"],
-            "state_mask": data["state_mask"],
-            "eagle_input_ids": data["eagle_input_ids"],
-            "eagle_attention_mask": data["eagle_attention_mask"],
-            "eagle_pixel_values": data["eagle_pixel_values"].reshape(
-                -1, *data["eagle_pixel_values"].shape[2:]
+            "state": forward_inputs["state"],
+            "state_mask": forward_inputs["state_mask"],
+            "eagle_input_ids": forward_inputs["eagle_input_ids"],
+            "eagle_attention_mask": forward_inputs["eagle_attention_mask"],
+            "eagle_pixel_values": forward_inputs["eagle_pixel_values"].reshape(
+                -1, *forward_inputs["eagle_pixel_values"].shape[2:]
             ),
-            "eagle_image_sizes": data["eagle_image_sizes"].reshape(
-                -1, *data["eagle_image_sizes"].shape[2:]
+            "eagle_image_sizes": forward_inputs["eagle_image_sizes"].reshape(
+                -1, *forward_inputs["eagle_image_sizes"].shape[2:]
             ),
-            "embodiment_id": data["embodiment_id"],
+            "embodiment_id": forward_inputs["embodiment_id"],
         }
         backbone_inputs, action_inputs = self.prepare_input(normalized_input)
         backbone_outputs = self.backbone(backbone_inputs)
 
-        chains = data["chains"]
-        denoise_inds = data["denoise_inds"]
+        chains = forward_inputs["chains"]
+        denoise_inds = forward_inputs["denoise_inds"]
         log_probs, value_t = self.action_head(
             backbone_output=backbone_outputs,
             action_input=action_inputs,
@@ -539,11 +540,11 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         # post process
         if self.action_head.rl_config.joint_logprob:
             log_probs = log_probs.mean(dim=1)
-            prev_logprobs = data["prev_logprobs"].mean(dim=1)
+            prev_logprobs = kwargs["prev_logprobs"].mean(dim=1)
         else:
             bsize = log_probs.shape[0]
             log_probs = log_probs[:, 0]
-            prev_logprobs = data["prev_logprobs"]
+            prev_logprobs = kwargs["prev_logprobs"]
             prev_logprobs = prev_logprobs[
                 torch.arange(bsize),
                 denoise_inds[:, 0],

@@ -17,6 +17,7 @@ import gc
 import os
 import random
 import sys
+import uuid
 from contextlib import contextmanager
 from functools import partial, wraps
 from typing import Callable, Literal, Optional
@@ -475,3 +476,28 @@ def set_rng_state(rng_state: dict) -> None:
     random.setstate(rng_state["random"])
     if torch.cuda.is_available() and "cuda" in rng_state:
         torch.cuda.set_rng_state(rng_state["cuda"])
+
+
+def get_model_weights_id(model, k=128):
+    first_p = None
+    last_p = None
+
+    for _, p in model.named_parameters():
+        if not p.is_floating_point():
+            continue
+        if first_p is None:
+            first_p = p
+        last_p = p
+
+    if first_p is None or last_p is None:
+        return None
+
+    def tensor_fingerprint(p):
+        flat = p.detach().view(-1)
+        sample = flat[:k] if flat.numel() >= k else flat
+        return sample.to(dtype=torch.float32).cpu().numpy().tobytes()
+
+    name_bytes = tensor_fingerprint(first_p) + tensor_fingerprint(last_p)
+    name_str = name_bytes.hex()
+
+    return uuid.uuid5(uuid.NAMESPACE_DNS, name_str)

@@ -83,7 +83,12 @@ class CNNPolicy(nn.Module, BasePolicy):
 
         self.cfg = cfg
         self.in_channels = self.cfg.image_size[0]
-
+        self.register_buffer(
+            "img_mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 1, 1, 3)
+        )
+        self.register_buffer(
+            "img_std", torch.tensor([0.229, 0.224, 0.225]).view(1, 1, 1, 3)
+        )
         self.encoders = nn.ModuleList()
         encoder_out_dim = 0
         if self.cfg.backbone == "resnet":
@@ -134,7 +139,7 @@ class CNNPolicy(nn.Module, BasePolicy):
         if self.cfg.add_q_head:
             if self.cfg.backbone == "resnet":
                 hidden_size = encoder_out_dim + self.cfg.state_latent_dim
-                hidden_dims = [256, 256, 256]
+                hidden_dims = [256, 256]
             if self.cfg.q_head_type == "default":
                 self.q_head = MultiQHead(
                     hidden_size=hidden_size,
@@ -171,15 +176,19 @@ class CNNPolicy(nn.Module, BasePolicy):
 
     def preprocess_env_obs(self, env_obs):
         device = next(self.parameters()).device
+        mean = self.img_mean.to(device)
+        std = self.img_std.to(device)
+
         processed_env_obs = {}
         processed_env_obs["states"] = env_obs["states"].clone().to(device)
-        processed_env_obs["main_images"] = (
-            env_obs["main_images"].clone().to(device).float() / 255.0
-        )
+        x = env_obs["main_images"].clone().to(device).float() / 255.0
+        processed_env_obs["main_images"] = (x - mean) / std
+
         if env_obs.get("extra_view_images", None) is not None:
-            processed_env_obs["extra_view_images"] = (
-                env_obs["extra_view_images"].clone().to(device).float() / 255.0
-            )
+            ex = env_obs["extra_view_images"].clone().to(device).float() / 255.0
+            ex = (ex - mean.unsqueeze(1)) / std.unsqueeze(1)
+            processed_env_obs["extra_view_images"] = ex
+
         return processed_env_obs
 
     def get_feature(self, obs, detach_encoder=False):
@@ -201,6 +210,15 @@ class CNNPolicy(nn.Module, BasePolicy):
         return x, visual_feature
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
+        obs = kwargs.get("obs", None)
+        if obs is not None:
+            obs = self.preprocess_env_obs(obs)
+            kwargs.update({"obs": obs})
+        next_obs = kwargs.get("next_obs", None)
+        if next_obs is not None:
+            next_obs = self.preprocess_env_obs(next_obs)
+            kwargs.update({"next_obs": next_obs})
+
         if forward_type == ForwardType.SAC:
             return self.sac_forward(**kwargs)
         elif forward_type == ForwardType.SAC_Q:
@@ -216,7 +234,7 @@ class CNNPolicy(nn.Module, BasePolicy):
 
     def default_forward(
         self,
-        data,
+        forward_inputs,
         compute_logprobs=True,
         compute_entropy=True,
         compute_values=True,
@@ -224,13 +242,13 @@ class CNNPolicy(nn.Module, BasePolicy):
         **kwargs,
     ):
         obs = {
-            "main_images": data["main_images"],
-            "states": data["states"],
+            "main_images": forward_inputs["main_images"],
+            "states": forward_inputs["states"],
         }
-        if "extra_view_images" in data:
-            obs["extra_view_images"] = data["extra_view_images"]
-
-        action = data["action"]
+        if "extra_view_images" in forward_inputs:
+            obs["extra_view_images"] = forward_inputs["extra_view_images"]
+        obs = self.preprocess_env_obs(obs)
+        action = forward_inputs["action"]
 
         full_feature, visual_feature = self.get_feature(obs)
         mix_feature = self.mix_proj(full_feature)
@@ -263,7 +281,6 @@ class CNNPolicy(nn.Module, BasePolicy):
         mix_feature = self.mix_proj(full_feature)
         action_mean = self.actor_mean(mix_feature)
         action_logstd = self.actor_logstd(mix_feature)
-        action_logstd = torch.tanh(action_logstd)
 
         action_std = torch.exp(action_logstd)
         if self.cfg.std_range is not None:
@@ -294,16 +311,14 @@ class CNNPolicy(nn.Module, BasePolicy):
         mode="train",
         **kwargs,
     ):
-        full_feature, visual_feature = self.get_feature(env_obs)
+        obs = self.preprocess_env_obs(env_obs)
+        full_feature, visual_feature = self.get_feature(obs)
         mix_feature = self.mix_proj(full_feature)
         action_mean = self.actor_mean(mix_feature)
         if self.cfg.independent_std:
             action_logstd = self.actor_logstd.expand_as(action_mean)
         else:
             action_logstd = self.actor_logstd(mix_feature)
-
-        if self.cfg.final_tanh:
-            action_logstd = torch.tanh(action_logstd)
 
         action_std = action_logstd.exp()
         if self.cfg.std_range is not None:
