@@ -23,20 +23,14 @@ from torch.distributed.checkpoint.state_dict import (
 )
 from torch.distributed.tensor import DTensor
 
-from rlinf.data.io_struct import RolloutResult
-from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
-from rlinf.scheduler import Worker
-from rlinf.scheduler.channel import Channel
-from rlinf.utils.data_iter_utils import get_iterator_k_split
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.utils import (
-    compute_logprobs_from_logits,
-    cpu_weight_swap,
     retrieve_model_state_dict_in_cpu,
 )
+from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
 
 
-class FSDPInference(FSDPModelManager, Worker):
+class FSDPInference(FSDPActor):
     def __init__(
         self,
         cfg: DictConfig,
@@ -49,30 +43,12 @@ class FSDPInference(FSDPModelManager, Worker):
             cfg (DictConfig): The global yaml config.
             placement (ModelParallelComponentPlacement): The accelerator placement for inference worker.
         """
-        Worker.__init__(self)
-        super().__init__(cfg.inference, self._world_size, self._rank)
-        self.cfg = cfg
+        super().__init__(cfg, placement, cfg.inference)
+
         self._actor_group_name = cfg.actor.group_name
-        self._component_placement = placement
-        # algorithms
-        self.kl_beta = cfg.algorithm.get("kl_beta", 0)
-        self.reinpp_kl_beta = cfg.algorithm.get("reinpp_kl_beta", 0)
-        self.combine_reference_model = cfg.actor.get("combine_reference_model", True)
-
-        self.response_len = (
-            self.cfg.actor.model.encoder_seq_length - self.cfg.data.max_prompt_length
-        )
-
-        self.total_batch_size_per_dp = (
-            self.cfg.data.rollout_batch_size
-            * self.cfg.algorithm.group_size
-            // self._world_size
-        )
         self._actor_world_size = self._component_placement.get_world_size("actor")
         # here key is actor ranks, value is dict of param name to (actor_shard_offset,inference_shard_offset,needed_size)
         self._actor_dst_map: dict[int, dict[str, tuple[int, int, int]]] = {}
-        # logprobs computation op type("torch", "flash_attn", "liger_kernel")
-        self._entropy_op_type = cfg.algorithm.get("entropy_op_type", "liger_kernel")
 
     def init_worker(self) -> None:
         """
@@ -167,106 +143,4 @@ class FSDPInference(FSDPModelManager, Worker):
         self.load_from_actors_by_intersection(cur_state_dict=current_rank_state_dict)
         set_model_state_dict(
             model=self.model, model_state_dict=current_rank_state_dict, options=opts
-        )
-
-    def get_batch(
-        self, channel: Channel
-    ) -> tuple[dict[str, torch.Tensor], RolloutResult]:
-        result: RolloutResult = channel.get()
-
-        batch = result.to_actor_batch(
-            self.cfg.data.max_prompt_length,
-            self.cfg.actor.model.encoder_seq_length,
-            self.tokenizer.eos_token_id,
-        )
-        return batch, result
-
-    @torch.no_grad()
-    def inference_step(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
-        self.model.eval()
-        input_ids = batch["input_ids"]
-        attention_mask = batch["attention_mask"]
-        position_ids = batch["position_ids"]
-
-        multi_modal_inputs = {}
-        if "multi_modal_inputs" in batch.keys():
-            for key in batch["multi_modal_inputs"][0].keys():
-                multi_modal_inputs[key] = torch.cat(
-                    [inputs[key] for inputs in batch["multi_modal_inputs"]],
-                    dim=0,
-                ).cuda()
-
-        outputs = self.model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            use_cache=False,
-            **multi_modal_inputs,
-        )
-
-        logits = outputs.logits
-        logits = logits[:, -self.response_len - 1 : -1, :]
-        logits = logits / self.cfg.algorithm.sampling_params.temperature
-
-        responses = input_ids[:, -self.response_len :]
-        logprobs = compute_logprobs_from_logits(
-            logits, responses, op_type=self._entropy_op_type
-        )
-        return logprobs
-
-    def run_inference(
-        self,
-        input_channel: Channel,
-        output_channel: Channel,
-        compute_ref_logprobs: bool,
-    ) -> None:
-        """
-        Compute prev/ref logprobs using the actor Model's forward.
-
-        Args:
-            input_channel: The input channel to read from.
-            output_channel: The output channel to send results to.
-            compute_ref_logprobs: Whether to compute reference logprobs.
-        """
-        recv_batch_size = 0
-        while recv_batch_size < self.total_batch_size_per_dp:
-            batch, rollout_result = self.get_batch(input_channel)
-            recv_batch_size += rollout_result.num_sequence
-
-            num_splits = (
-                rollout_result.num_sequence
-                // self.cfg.algorithm.logprob_forward_micro_batch_size
-            )
-            micro_batches_iter = get_iterator_k_split(
-                batch,
-                num_splits=num_splits,
-            )
-            micro_batches = list(micro_batches_iter)
-
-            prev_logprobs = []
-            with self.worker_timer():
-                for micro_batch in micro_batches:
-                    prev_logprobs.append(self.inference_step(micro_batch).cpu())
-
-                if rollout_result.rollout_logprobs is not None:
-                    # Rollout has returned logprobs, store the recomputed logprobs in recompute_prev_logprobs
-                    rollout_result.recompute_prev_logprobs = torch.cat(prev_logprobs)
-                else:
-                    # Otherwise, directly store the logprobs in prev_logprobs (the final logprobs used for training)
-                    rollout_result.prev_logprobs = torch.cat(prev_logprobs)
-
-            if compute_ref_logprobs:
-                assert self.ref_policy_state_dict is not None, (
-                    "Reference policy state dict is None but compute_ref_logprobs is True"
-                )
-                ref_logprobs = []
-                with cpu_weight_swap(self.model, self.ref_policy_state_dict):
-                    for micro_batch in micro_batches:
-                        ref_logprobs.append(self.inference_step(micro_batch).cpu())
-                    rollout_result.ref_logprobs = torch.cat(ref_logprobs)
-
-            output_channel.put(rollout_result)
-
-        assert recv_batch_size == self.total_batch_size_per_dp, (
-            f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
         )
