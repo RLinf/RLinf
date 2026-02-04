@@ -277,6 +277,11 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         self.critic_sample_generator = torch.Generator(self.device)
         self.critic_sample_generator.manual_seed(seed)
 
+        self.target_update_type = self.cfg.algorithm.get("target_update_type", "all")
+        assert self.target_update_type in ["all", "q_head_only"], (
+            f"{self.target_update_type=} is not suppported!"
+        )
+
     def soft_update_target_model(self, tau: Optional[float] = None):
         """Soft update target model parameters"""
         if tau is None:
@@ -293,8 +298,12 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             ):
                 assert name1 == name2
                 if "q_head" not in name1:
-                    target_param.data.mul_(0.0)
-                    target_param.data.add_(online_param.data)
+                    if self.target_update_type == "all":
+                        target_param.data.mul_(1.0 - tau)
+                        target_param.data.add_(online_param.data * tau)
+                    else:
+                        target_param.data.mul_(0.0)
+                        target_param.data.add_(online_param.data)
                 else:
                     target_param.data.mul_(1.0 - tau)
                     target_param.data.add_(online_param.data * tau)
