@@ -24,7 +24,7 @@ try:
     from megatron.core import parallel_state
 except ImportError:
     parallel_state = None  # type: ignore
-from torch.distributed import ProcessGroup
+from torch.distributed import ProcessGroup, ReduceOp
 from typing_extensions import Self
 
 from rlinf.utils.timers import NamedTimer
@@ -517,6 +517,22 @@ def gather_tensor(tensor, dst, group, dtype=None):
 
     torch.distributed.gather(tensor, gather_list=gather_list, dst=dst, group=group)
     return gather_list
+
+
+def all_reduce_int(
+    obj: int,
+    op: ReduceOp = ReduceOp.MIN,
+    group: ProcessGroup = None,
+):
+    obj_tensor = torch.tensor(
+        [obj], dtype=torch.long, device=torch.cuda.current_device()
+    )
+    torch.distributed.all_reduce(
+        obj_tensor,
+        op,
+        group=group,
+    )
+    return obj_tensor.item()
 
 
 def run_if_model_parallel_src(fn, *fn_args, **fn_kwargs):

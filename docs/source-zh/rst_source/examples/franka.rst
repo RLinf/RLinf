@@ -239,9 +239,9 @@ b. 安装依赖
     --network host \
     --name rlinf \
     -v .:/workspace/RLinf \
-    rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+    rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
     # 为了提高国内下载速度，也可以使用：
-    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
 
 **方式 2：自定义环境（Custom Environment）**
 

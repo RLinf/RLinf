@@ -1,0 +1,67 @@
+env_type: robotwin
+total_num_envs: null
+
+auto_reset: False
+ignore_terminations: False
+
+reward_coef: 1.0
+use_custom_reward: True
+use_rel_reward: True
+
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 400
+max_episode_steps: 400 # max episode steps for truncation
+
+is_eval: False
+
+assets_path: "/path/to/robotwin_assets"
+seeds_path: "/path/to/robotwin/train_seeds.json"
+
+video_cfg:
+  save_video: True
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+task_config:
+  task_name: handover_block
+  step_lim: 400
+  planner_backend: mplib # # Choices: ["curobo", "mplib"], defalut is "curobo"
+  # if you want to modify the config, please check the following tutorial first:
+  # https://robotwin-platform.github.io/doc/usage/configurations.html
+  render_freq: 0
+  episode_num: 100
+  use_seed: false
+  save_freq: 15
+  embodiment: [piper, piper, 0.6]
+  language_num: 100
+  domain_randomization:
+    random_background: true
+    cluttered_table: true
+    clean_background_rate: 0.02
+    random_head_camera_dis: 0
+    random_table_height: 0.03
+    random_light: true
+    crazy_random_light_rate: 0.02
+  camera:
+    head_camera_type: D435
+    wrist_camera_type: D435
+    collect_head_camera: true
+    collect_wrist_camera: false
+  data_type:
+    rgb: true
+    third_view: false
+    depth: false
+    pointcloud: false
+    observer: false
+    endpose: false
+    qpos: true
+    mesh_segmentation: false
+    actor_segmentation: false
+  pcd_down_sample_num: 1024
+  pcd_crop: true
+  save_path: ./data
+  clear_cache_freq: 1
+  collect_data: true
+  eval_video_log: true

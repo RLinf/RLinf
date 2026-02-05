@@ -19,7 +19,7 @@ from typing import ContextManager, Union
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
-from torch.amp.grad_scaler import GradScaler
+from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForVision2Seq
@@ -354,7 +354,7 @@ class FSDPModelManager:
             A tuple of (grad_norm, lr_list), lr_list contains learning rates for all param groups.
         """
         self.optimizer_steps += 1
-        self.grad_scaler.unscale_(optimizer=self.optimizer)
+        self.grad_scaler.unscale_(self.optimizer)
         grad_norm = self._strategy.clip_grad_norm_(
             model=self.model,
         )
@@ -480,7 +480,7 @@ class FSDPModelManager:
         warmup_optimizer_state(optimizer)
         return optimizer
 
-    def build_grad_scaler(self, enabled: bool) -> GradScaler:
+    def build_grad_scaler(self, enabled: bool) -> ShardedGradScaler:
         """
         Build the gradient scaler based on the configuration.
 
@@ -488,9 +488,9 @@ class FSDPModelManager:
             enabled (bool): Whether to enable gradient scaling.
 
         Returns:
-            GradScaler: The gradient scaler.
+            ShardedGradScaler: The gradient scaler.
         """
-        return GradScaler(enabled=enabled)
+        return ShardedGradScaler(enabled=enabled)
 
     def before_micro_batch(
         self, model: Union[FSDP, FSDPModule], is_last_micro_batch: bool

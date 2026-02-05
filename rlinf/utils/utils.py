@@ -263,7 +263,8 @@ def compute_logprobs_from_logits(
         logits(torch.Tensor): [B, seq-len, vocab-size]
         target(torch.Tensor): [B, seq-len]
         op_type(str): the type of logprobs computation method, options are "torch", "flash_attn", "liger_kernel"
-            default is "torch"
+            default is "torch".
+            flash_attn calc in fp32, torch and liger_kernel calc in logits.dtype.
 
     Returns:
         logprobs(torch.Tensor): [B, seq-len]
@@ -277,10 +278,13 @@ def compute_logprobs_from_logits(
         f"Unsupported op_type: {op_type} for logprobs computation. Supported types are 'torch', 'flash_attn', 'liger_kernel'."
     )
     if op_type == "liger_kernel":
+        # liger_kernel will use input dtype to compute logprobs.
         logprobs = logprobs_from_logits_liger_kernel(logits, labels)
     elif op_type == "flash_attn":
+        # flash_attn will use fp32 to compute logprobs.
         logprobs = logprobs_from_logits_flash_attn(logits, labels)
     elif op_type == "torch":
+        # torch will use input dtype to compute logprobs.
         logprobs = -F.cross_entropy(logits, labels, reduction="none")
 
     # reshape back to [B, seq-len]

@@ -97,9 +97,9 @@
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+      rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
       # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
 
 请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
 
@@ -358,7 +358,7 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
 
 .. note::
 
-   ``Metaworld`` 以及 ``CALVIN`` 暂时不支持设置 ``env.eval.auto_reset=True`` 的评估模式，建议使用单个脚本文件进行模型评估。
+   ``Metaworld`` 暂时不支持设置 ``env.eval.auto_reset=True`` 的评估模式，建议使用单个脚本文件进行模型评估。
 
 - 使用单个脚本文件进行模型评估，参考示例 `README.md <https://github.com/RLinf/RLinf/blob/main/toolkits/eval_scripts_openpi/README.md>`__，这种方式的评估脚本和 ``openpi`` 官方提供的评估脚本一致，支持输出每个子任务的成功率，但是速度较慢。
 

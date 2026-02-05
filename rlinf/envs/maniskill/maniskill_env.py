@@ -186,6 +186,8 @@ class ManiskillEnv(gym.Env):
     def _calc_step_reward(self, reward, info):
         if getattr(self.cfg, "reward_mode", "default") == "raw":
             pass
+        elif getattr(self.cfg, "reward_mode", "default") == "only_success":
+            reward = info["success"] * 1.0
         else:
             reward = torch.zeros(self.num_envs, dtype=torch.float32).to(
                 self.env.unwrapped.device
@@ -279,6 +281,9 @@ class ManiskillEnv(gym.Env):
         infos = self._record_metrics(step_reward, infos)
         if isinstance(terminations, bool):
             terminations = torch.tensor([terminations], device=self.device)
+        if isinstance(truncations, bool):
+            truncations = torch.tensor([truncations], device=self.device)
+            truncations = truncations.repeat(self.num_envs)
         if self.ignore_terminations:
             terminations[:] = False
             if self.record_metrics:

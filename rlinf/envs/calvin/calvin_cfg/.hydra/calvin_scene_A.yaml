@@ -41,11 +41,11 @@ objects:
       file: blocks/block_red_middle.urdf
       initial_pos: any
       initial_orn: any
-    block_pink:
-      file: blocks/block_pink_small.urdf
-      initial_pos: any
-      initial_orn: any
     block_blue:
       file: blocks/block_blue_big.urdf
+      initial_pos: any
+      initial_orn: any
+    block_pink:
+      file: blocks/block_pink_small.urdf
       initial_pos: any
       initial_orn: any

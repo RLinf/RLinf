@@ -77,7 +77,7 @@ RLinf 提供两种安装方式。我们 **推荐使用 Docker**，因为这可�
 
 - **具身智能镜像：**
 
-  - ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` （适用于Libero或ManiSkill基准测试环境，对于其它的基准测试环境，请参考 :doc:`../examples/index`）
+  - ``rlinf/rlinf:agentic-rlinf0.1-maniskill_libero`` （适用于Libero或ManiSkill基准测试环境，对于其它的基准测试环境，请参考 :doc:`../examples/index`）
   
 - **数学推理镜像：**
 
