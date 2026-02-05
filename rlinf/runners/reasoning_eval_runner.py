@@ -167,22 +167,21 @@ class ReasoningEvalRunner:
     def epoch(self):
         return self.global_steps // self.num_steps_per_epoch
 
-    def _put_batch(self, batch: dict[str, torch.Tensor]):
+    def _put_batch(self, batch: dict[str, torch.Tensor], split_size=None):
         prompt_ids = batch["prompt"].tolist()
         lengths = batch["length"].tolist()
         answers = batch["answer"]
         image_data = batch["image_data"]
         multi_modal_inputs = batch["multi_modal_inputs"]
         prompt_ids = [ids[-pmp_len:] for ids, pmp_len in zip(prompt_ids, lengths)]
-        rollout_dp_size = self.component_placement.rollout_dp_size
+        if split_size is None:
+            split_size = self.component_placement.rollout_dp_size
 
         for input_ids, answers, image_data, multi_modal_inputs in zip(
-            split_list(prompt_ids, rollout_dp_size, enforce_divisible_batch=False),
-            split_list(answers, rollout_dp_size, enforce_divisible_batch=False),
-            split_list(image_data, rollout_dp_size, enforce_divisible_batch=False),
-            split_list(
-                multi_modal_inputs, rollout_dp_size, enforce_divisible_batch=False
-            ),
+            split_list(prompt_ids, split_size, enforce_divisible_batch=False),
+            split_list(answers, split_size, enforce_divisible_batch=False),
+            split_list(image_data, split_size, enforce_divisible_batch=False),
+            split_list(multi_modal_inputs, split_size, enforce_divisible_batch=False),
         ):
             request = RolloutRequest(
                 n=self.cfg.algorithm.group_size,

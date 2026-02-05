@@ -989,8 +989,6 @@ class DynamicRolloutResult:
     prompt_lengths: list[int]
     response_lengths: list[int]
     is_end: list[bool]
-    roles: list[str]
-    role_group_sizes: list[int]
     # prompt_ids: list[list[int]]
     # response_ids: list[list[int]]
     # response_mask: Optional[list[list[int]]] = None
@@ -1010,6 +1008,8 @@ class DynamicRolloutResult:
 
     # Evaluation metrics per trajectory (size: group_size)
     # Each item is a dict with metric_type -> metric_dict mapping
+    roles: list[str]
+    role_group_sizes: list[int]
     eval_metrics: Optional[list] = None
     total_turn_list_metric: Optional[list] = None
 
@@ -1140,8 +1140,6 @@ class DynamicRolloutResult:
 
         batch = {
             "idx_to_traj": self.idx_to_traj,
-            "roles": self.roles,
-            "role_group_sizes": self.role_group_sizes,
             "input_ids": input_ids.cuda(),
             "attention_mask": attention_mask.cuda(),
             "response_mask": response_mask.cuda(),
@@ -1150,6 +1148,8 @@ class DynamicRolloutResult:
             "prompt_lengths": prompt_lengths.cuda(),
             "response_lengths": response_lengths.cuda(),
             "prev_logprobs": prev_logprobs.cuda(),
+            "roles": self.roles,
+            "role_group_sizes": self.role_group_sizes,
         }
 
         if self.advantages is not None:
@@ -1187,13 +1187,15 @@ class DynamicRolloutResult:
     def get_batch_pad(seq_length: int) -> dict[str, torch.Tensor]:
         """Get the batch pad for the dynamic rollout result."""
         pad_seq_shape = (1, seq_length)
+        attention_mask = torch.zeros(
+            *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
+        )
+        attention_mask[:, :1] = True
         return {
             "input_ids": torch.zeros(
                 *pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()
             ),
-            "attention_mask": torch.ones(
-                *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
-            ),
+            "attention_mask": attention_mask,
             "response_mask": torch.zeros(
                 *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
             ),

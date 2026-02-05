@@ -216,10 +216,7 @@ class MAMegatronActor(MegatronActor):
                         min=self.cfg.algorithm.importance_sampling_clip,
                     )
 
-                if "response_mask" not in batch:
-                    mask = batch["attention_mask"]
-                else:
-                    mask = batch["response_mask"]
+                mask = batch["response_mask"]
 
                 loss, metrics_data = policy_loss(
                     task_type=self.cfg.runner.task_type,

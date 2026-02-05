@@ -47,8 +47,6 @@ class WideSeekR1_Dataset(Dataset):
         self.unique_columns_key = config.data.get("unique_columns", "unique_columns")
         self.is_hybrid = config.data.get("is_hybrid", False)
         self.enable_zh = config.data.get("enable_zh", False)
-        # self.data_begin_id = [0]
-        # self.data_fileter_id = [0]
         data_size = config.data.data_size
 
         self.data = self._load_data()
@@ -92,7 +90,6 @@ class WideSeekR1_Dataset(Dataset):
                 with open(path, "r", encoding="utf-8") as file:
                     if file_extension == ".jsonl":
                         merged_data.extend([json.loads(line.strip()) for line in file])
-                        # self.data_begin_id.append(len(merged_data))
                     elif file_extension == ".json":
                         content = json.load(file)
                         if isinstance(content, list):

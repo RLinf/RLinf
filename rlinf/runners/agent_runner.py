@@ -83,6 +83,7 @@ class AgentRunner(ReasoningRunner):
             f"AgentRunner: tool_calls must be unique. all tool_calls are {all_tool_calls}"
         )
         self.agent_loop = agent_loop
+        self.batch_split_num = len(agent_loop._workers)
         self.tool_workers = tool_workers
         self.solid_rollouts = solid_rollouts
         self.generate_input_channel = Channel.create("GenerateInput")
@@ -189,7 +190,7 @@ class AgentRunner(ReasoningRunner):
                 for batch in self.train_dataloader:
                     with self.timer("step"):
                         with self.timer("prepare_data"):
-                            self._put_batch(batch)
+                            self._put_batch(batch, self.batch_split_num)
 
                         with self.timer("sync_weights"):
                             self._sync_weights()
