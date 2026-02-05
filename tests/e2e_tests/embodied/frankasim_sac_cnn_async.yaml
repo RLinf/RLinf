@@ -20,7 +20,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: /workspace/results/frankasim_sac_cnn
+    log_path: /workspace/results/frankasim_sac_cnn_async
     project_name: rlinf
     experiment_name: "ci-test"
     logger_backends: ["tensorboard"] # wandb, swanlab
@@ -57,9 +57,10 @@ algorithm:
   # Replay buffer settings
   replay_buffer:
     enable_cache: True
-    cache_size: 5000 # number of trajectories cached in memory
+    cache_size: 20000 # number of trajectories cached in memory
     sample_window_size: 20000 # number of latest trajectories to sample from for replay buffer
     min_buffer_size: 1  # Minimum buffer size before training starts
+    save_trajectories: False
 
   target_update_freq: 1  # Frequency of target network updates
 

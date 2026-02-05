@@ -242,7 +242,7 @@ class MultiStepRolloutWorker(Worker):
                 if env_output["final_obs"] is not None:
                     env_output["final_obs"].pop("task_descriptions", None)
                 chunk_step_result = ChunkStepResult(
-                    actions=result.get("action", None),
+                    actions=result["forward_inputs"].get("action", None),
                     dones=dones,
                     rewards=rewards,
                     truncations=env_output["truncations"],

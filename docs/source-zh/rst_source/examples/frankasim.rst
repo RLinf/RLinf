@@ -217,7 +217,7 @@ Franka-Sim 环境基于项目 `serl <https://rail-berkeley.github.io/serl/docs/s
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
-   bash examples/embodiment/run_async.sh frankasim_sac_cnn
+   bash examples/embodiment/run_async.sh frankasim_sac_cnn_async
 
 可视化与结果
 ------------

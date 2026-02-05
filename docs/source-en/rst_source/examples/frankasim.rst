@@ -221,7 +221,7 @@ Supports training an MLP policy using PPO or training a CNN policy using SAC in 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
-   bash examples/embodiment/run_async.sh frankasim_sac_cnn
+   bash examples/embodiment/run_async.sh frankasim_sac_cnn_async
 
 Visualization and Results
 -------------------------
