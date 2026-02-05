@@ -34,8 +34,8 @@ algorithm:
 agentloop:
   use_llm_judge_api: True
   workflow: mas
-  max_planner_turns: 1
-  max_worker_turns: 1
+  max_planner_turns: 2
+  max_worker_turns: 2
 
 rollout:
   model:
@@ -50,7 +50,7 @@ tools:
 data:
   type: wideseek_r1
   max_prompt_length: 4096
-  rollout_batch_size: 128
+  rollout_batch_size: 16
   prompt_key: question
   answer_key: answer
   is_markdown: True
