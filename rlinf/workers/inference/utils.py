@@ -17,12 +17,12 @@ from omegaconf import DictConfig
 
 if TYPE_CHECKING:
     from rlinf.workers.inference.fsdp_inference_worker import FSDPInference
-    from rlinf.workers.inference.megatron_inference_worker import MegatronInference
+    from rlinf.workers.inference.megatron_inference_worker import MegatronActorInference, MegatronCriticInference
 
 
 def get_inference_backend_worker(
     cfg: DictConfig, role = 'actor',
-) -> Union["FSDPInference", "MegatronInference"]:
+) -> Union["FSDPInference", "MegatronActorInference"]:
     """Get the inference backend worker class based on the training backend.
 
     Args:
@@ -38,17 +38,18 @@ def get_inference_backend_worker(
     if training_backend == "megatron":
         if role == "actor":
             from rlinf.workers.inference.megatron_inference_worker import (
-                MegatronInference,
+                MegatronActorInference,
             )
 
-            return MegatronInference
-
-        if role == "critic":
+            return MegatronActorInference
+        elif role == "critic":
             from rlinf.workers.inference.megatron_inference_worker import (
                 MegatronCriticInference,
             )
 
             return MegatronCriticInference
+        else:
+            raise ValueError(f"Unknown role '{role}' for get_inference_backend_worker")
 
     elif training_backend == "fsdp":
         if role == "actor":
@@ -56,8 +57,10 @@ def get_inference_backend_worker(
 
             return FSDPInference
 
-        if role == "critic":
+        elif role == "critic":
             raise ValueError(f"PPO for reasoning is not implemented for FSDP backend yet")
+        else:
+            raise ValueError(f"Unknown role '{role}' for get_inference_backend_worker")
     else:
         raise ValueError(
             f"Unsupported training backend for inference: {training_backend}"

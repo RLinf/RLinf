@@ -35,9 +35,7 @@ class MegatronCritic(MegatronWorker):
         """
         super().__init__(cfg, placement, role)
 
-        self.infer_forward_micro_batch_size = (
-            self.cfg.algorithm.logprob_forward_micro_batch_size # check this
-        )
+        self.value_clip = self.cfg.algorithm.value_clip
 
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
@@ -62,7 +60,7 @@ class MegatronCritic(MegatronWorker):
                 attention_mask,
                 position_ids,
                 sequence_parallel=self.transformer_config.sequence_parallel,
-                temperature=self.cfg.algorithm.sampling_params.temperature, # TODO check this
+                # we don't need temperature parameter for critic
             )
 
             if not self.return_loss:
@@ -88,7 +86,7 @@ class MegatronCritic(MegatronWorker):
                 loss, metrics_data = compute_ppo_critic_loss(values=vpreds,
                                                              returns=returns,
                                                              prev_values=prev_values,
-                                                             value_clip=self.cfg.algorithm.value_clip,
+                                                             value_clip=self.value_clip,
                                                              huber_delta=10000,
                                                              loss_agg_func=self.loss_agg_func,
                                                              loss_mask=mask)

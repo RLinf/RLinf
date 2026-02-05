@@ -31,7 +31,7 @@ runner:
 
   resume_dir: null
   experiment_name: ppo-1.5b
-  output_dir: /mnt/project_rlinf/shiletong/results
+  output_dir: /path/to/output
 algorithm:
   group_size: 1 # PPO has a group_size of 1
 
@@ -337,7 +337,6 @@ critic:
     optimizer_enable_pin: false
     overlap_param_gather_with_optimizer_step: False
     clip_grad: 1.0
-    # loss_scale: 65536
 
   lr_sched:
     lr_warmup_fraction: 0.0

@@ -93,7 +93,6 @@ def make_megatron_inference(base_class, trainer_role):
                 self.role_cfg = merged_cfg
 
         def sync_model_from_actor(self):
-            # sync_from_actor_start_time = time.time()
             if self.is_weight_offloaded:
                 self.onload_model_weights_and_grad(load_grad=False)
                 self.is_weight_offloaded = False
@@ -112,5 +111,6 @@ def make_megatron_inference(base_class, trainer_role):
 
     return MegatronInference
 
-MegatronInference = make_megatron_inference(MegatronActor, 'actor')
+MegatronActorInference = make_megatron_inference(MegatronActor, 'actor')
 MegatronCriticInference = make_megatron_inference(MegatronCritic, 'critic')
+MegatronInference = MegatronActorInference
