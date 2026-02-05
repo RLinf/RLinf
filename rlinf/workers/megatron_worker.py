@@ -116,7 +116,8 @@ class MegatronWorker(MegatronModelManager, Worker):
         )
         self.average_response_len = self.response_len
 
-        # TODO move to role code or change name
+        # value inference of critic model uses this option as well
+        # will use a better unifed name in the future
         self.logprob_forward_micro_batch_size = (
             self.cfg.algorithm.logprob_forward_micro_batch_size
         )
@@ -327,7 +328,6 @@ class MegatronWorker(MegatronModelManager, Worker):
                 else:
                     rollout_result: RolloutResult = input_channel.get()
                 rollout_results.append(rollout_result)
-                # print(f'run_inference: rollout_result append, {sum([len(r.prompt_ids) for r in rollout_results])}, {min_num_samples}')
 
             # try to get result as much
             # get result in every 0.1s and do all reduce to get the min result between dp (result_len)

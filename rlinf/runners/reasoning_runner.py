@@ -196,30 +196,22 @@ class ReasoningRunner:
         # Must be done before actor init
         if self.cfg.runner.resume_dir is None:
             logging.info("Training from scratch")
-            if (
-                self.cfg.actor.training_backend == "megatron"
-                and self.cfg.actor.megatron.use_hf_ckpt
-            ):
-                from toolkits.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
-                    convert_hf_to_mg,
-                )
 
-                convert_hf_to_mg(
-                    self.cfg.actor.megatron.ckpt_convertor.hf_model_path,
-                    self.cfg.actor.megatron.ckpt_convertor,
-                )
+            for role in ['actor', 'critic']:
+                worker = getattr(self, role, None)
+                worker_cfg = getattr(self.cfg, role)
+                if (worker is not None
+                    and worker_cfg.training_backend == "megatron"
+                    and worker_cfg.megatron.use_hf_ckpt
+                ):
+                    from toolkits.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
+                        convert_hf_to_mg,
+                    )
 
-            if (
-                self.critic is not None
-                and self.cfg.critic.training_backend == "megatron"
-                and self.cfg.critic.megatron.use_hf_ckpt
-            ):
-                from toolkits.ckpt_convertor.megatron_convertor.convert_hf_to_mg import convert_hf_to_mg
-
-                convert_hf_to_mg(
-                    self.cfg.critic.megatron.ckpt_convertor.hf_model_path,
-                    self.cfg.critic.megatron.ckpt_convertor,
-                )
+                    convert_hf_to_mg(
+                        worker_cfg.megatron.ckpt_convertor.hf_model_path,
+                        worker_cfg.megatron.ckpt_convertor,
+                    )
 
         rollout_handle.wait()
         if self.use_pre_process_policy:

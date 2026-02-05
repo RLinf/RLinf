@@ -423,11 +423,19 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             infer_cfg = self._config.actor_inference
         else:
             return self.actor_pp_size
-        return infer_cfg.model.get("pipeline_model_parallel_size", 1)
+        return infer_cfg.model.get("pipeline_model_parallel_size",
+                                   self.actor_pp_size)
 
     @property
     def critic_inference_pp_size(self) -> int:
-        return self._config.critic_inference.model.get("pipeline_model_parallel_size", 1)
+        if (
+            hasattr(self._config, "critic_inference")
+            and hasattr(self._config.critic_inference, "model")
+            and hasattr(self._config.critic_inference.model, "pipeline_model_parallel_size")
+        ):
+            return self._config.critic_inference.model.get("pipeline_model_parallel_size", 1)
+        else:
+            return self.critic_pp_size
 
     @property
     def inference_dp_size(self) -> int:

@@ -200,7 +200,8 @@ class MegatronModelManager:
         # of load_checkpoint to false, because we replaced
         # the output layer of the critic model to value head,
         # resulting in a mismatch with the checkpoint.
-        with patch_load_checkpoint_to_be_non_strict(enable=self.is_dedicated_critic_model):
+        enable_none_strict = self.is_dedicated_critic_model
+        with patch_load_checkpoint_to_be_non_strict(enable=enable_none_strict):
             self.model, self.optimizer, self.lr_scheduler = setup_model_and_optimizer(
                 model_provider_func=self.model_provider_func,
                 model_type=model_type,
@@ -245,8 +246,9 @@ class MegatronModelManager:
                 post_process=post_process,
             )
 
-        if self.is_dedicated_critic_model:
+        if self.is_dedicated_critic_model and post_process:
             # replace lm head with value head if this is a critic model
+            assert hasattr(model, output_layer)
             model.output_layer = LinearForLastLayer(input_size=self._cfg.model.hidden_size, output_size=1, sequence_parallel=self._cfg.model.sequence_parallel)
 
         return model
