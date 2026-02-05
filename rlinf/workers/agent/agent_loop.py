@@ -380,7 +380,10 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         prompt_lengths = []
         response_lengths = []
         input_ids = []
-        rollout_logprobs = []
+        if self.return_logprobs:
+            rollout_logprobs = []
+        else:
+            rollout_logprobs = None
         is_end = []
         rewards = []
 
@@ -393,10 +396,13 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
                 input_ids.append(
                     single_turn_output.prompt_ids + single_turn_output.response_ids
                 )
-                rollout_logprobs.append(single_turn_output.response_logprobs)
+                if self.return_logprobs:
+                    assert len(single_turn_output.response_logprobs) == len(single_turn_output.response_ids), (
+                        "response_logprobs should have the same length as response_ids"
+                    )
+                    rollout_logprobs.append(single_turn_output.response_logprobs)
                 is_end.append(single_turn_output.is_end)
                 rewards.append(single_turn_output.reward_score)
-
 
         return DynamicRolloutResult(
             num_sequence=len(idx_to_traj),

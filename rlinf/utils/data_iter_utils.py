@@ -211,7 +211,6 @@ def get_iterator_k_split(
         list_items = {k: v for k, v in batch.items() if isinstance(v, list)}
 
         # Split tensor items
-        # items = list(tensor_items.items())
         batch_size = next(iter(tensor_items.values())).shape[0]
         if isinstance(num_splits, list):
             assert all((i > 0 for i in num_splits)) and sum(num_splits) == batch_size, (
@@ -226,14 +225,11 @@ def get_iterator_k_split(
                 assert batch_size % num_splits == 0, (
                     "Issue with batch size configuration!"
                 )
-            # split_batch = [torch.tensor_split(item[1], num_splits, dim=0) for item in items]
             tensor_items = {
                 k: torch.tensor_split(v, num_splits) for k, v in tensor_items.items()
             }
             # handle the case where the batch size from dynamic bucketting is not divisible
             if batch_size % num_splits != 0:
-                # chunk_size = split_batch[0][-1].shape[0]
-                # split_batch = [[j[:chunk_size] for j in i] for i in split_batch]
                 chunk_size = batch_size // num_splits
                 tensor_items = {
                     k: v[:chunk_size] for i, (k, v) in enumerate(tensor_items.items())
@@ -247,10 +243,6 @@ def get_iterator_k_split(
             )
             for k, v in list_items.items()
         }
-        # microbatches = [
-        #     {all_keys[i]: all_split_batch[i][j] for i in range(len(all_keys))}
-        #     for j in range(num_splits)
-        # ]
         all_items = {**tensor_items, **list_items}
         if isinstance(num_splits, list):
             len_num_splits = len(num_splits)

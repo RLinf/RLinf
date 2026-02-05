@@ -218,8 +218,6 @@ def compute_grpo_dynamic_advantages(
         loss_mask, dtype=rewards.dtype
     ) + turn_advantages.view(1, -1)
     advantages = advantages * loss_mask
-    # advantages.view(1, -1) = [1, bsz]
-    # lossmask, advantage = [seq_len, bsz]
 
     return advantages, None
 

@@ -92,12 +92,17 @@ class MAMegatronActor(MegatronActor):
             else:
                 result = None
             result = self.broadcast(
-                result, ranks=parallel_state._MODEL_PARALLEL_GLOBAL_RANKS
+                result, 
+                groups=[
+                    (self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)
+                ],
             )
             result = self.broadcast(
-                result, ranks=parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS
+                result, 
+                groups=[
+                    (self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)
+                ],
             )
-
         batch = result.to_actor_batch(
             self.cfg.actor.model.encoder_seq_length,
             self.tokenizer.eos_token_id,
@@ -151,14 +156,12 @@ class MAMegatronActor(MegatronActor):
                     log_probs = vocab_parallel_log_probs_from_logits(logits, label)
                     log_probs = log_probs.masked_fill(~label_mask, 0.0)
                     ret = {"log_probs": log_probs}
-                    # breakpoint()
 
                 return ret
 
             logits_processor_args = {
                 "label": label,
                 "label_mask": label_mask,
-                "prev_logprobs": batch["prev_logprobs"],
             }
 
             output = self.custom_forward(
@@ -189,7 +192,6 @@ class MAMegatronActor(MegatronActor):
                 curr_logprobs[:, 1:] = curr_logprobs_ori[:, :-1].clone()
                 curr_logprobs[:, 0] = 0.0  # first token has no previous token
 
-                # curr_logprobs = output["log_probs"]
 
                 advantages = batch["advantages"]
                 prev_logprobs = batch["prev_logprobs"]
@@ -450,7 +452,7 @@ class MAMegatronActor(MegatronActor):
         # DP batch load balance
         if self.cfg.actor.get("enable_dp_load_balance", False):
             batch_pad = DynamicRolloutResult.get_batch_pad(
-                self.cfg.actor.model.encoder_seq_length
+                self.cfg.actor.model.encoder_seq_length, batch.keys()
             )
             batch = self._dp_load_balance_dynamic(
                 batch, batch_pad, self.cfg.actor.micro_batch_size
@@ -502,40 +504,6 @@ class MAMegatronActor(MegatronActor):
         self._gather_weights_among_dp()
 
         return rollout_metrics, training_metrics_list
-
-    # Advantages and returns
-    def compute_advantages_and_returns(self, batch: dict[str, torch.Tensor]):
-        """Compute the advantages and returns.
-
-        Args:
-            batch (Dict[str, torch.Tensor]): The rollout batch.
-        """
-        with self.worker_timer():
-            if batch.get("advantages", None) is None:
-                mask = batch["response_mask"]  # [num_sequence, seq_len]
-                advantages, _ = calculate_adv_and_returns(
-                    task_type=self.cfg.runner.task_type,
-                    adv_type=self.cfg.algorithm.adv_type,
-                    rewards=batch["rewards"].cuda(),
-                    loss_mask=mask.cuda(),
-                    num_sequence=len(batch["input_ids"]),
-                    group_size=self.cfg.algorithm.group_size,
-                    idx_to_traj=batch["idx_to_traj"],
-                    kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
-                    kl_penalty_type=self.kl_penalty_type,
-                    logprob=batch["prev_logprobs"].cuda()
-                    if "prev_logprobs" in batch
-                    else None,
-                    ref_logprob=batch["ref_logprobs"].cuda()
-                    if "ref_logprobs" in batch
-                    else None,
-                    use_reinpp_baseline=self.cfg.algorithm.get(
-                        "use_reinpp_baseline", False
-                    ),
-                )
-                batch["advantages"] = advantages
-
-        return batch
 
     def _setup_rollout_weight_dst_ranks(self):
         """Setup destination ranks for token and weight communication."""
@@ -700,7 +668,7 @@ class MAMegatronActor(MegatronActor):
             batches.append(batch)
             rollout_results.append(rollout_result)
         merged_batch, num_sequence_per_group = (
-            DynamicRolloutResult.merge_batches(batches,adjust_traj_indices=False,return_num_sequence_per_group=True)
+            DynamicRolloutResult.merge_batches(batches, adjust_traj_indices=False, return_num_sequence_per_group=True)
         )
 
         rollout_result = DynamicRolloutResult.merge_result_list(
@@ -710,18 +678,18 @@ class MAMegatronActor(MegatronActor):
         self._load_weight_and_optimizer()
         with self.worker_timer():
             # compute prev logprobs
-            prev_logprobs = self.inference_step(merged_batch)
+            prev_logprobs = self.inference_step(merged_batch).cpu()
             if rollout_result.rollout_logprobs is not None:
-                rollout_result.recompute_prev_logprobs = prev_logprobs.cpu()
+                rollout_result.recompute_prev_logprobs = prev_logprobs
             else:
-                rollout_result.prev_logprobs = prev_logprobs.cpu()
+                rollout_result.prev_logprobs = prev_logprobs
             if compute_ref_logprobs:
                 assert self.ref_policy_state_dict is not None, (
                     "ref_policy_state_dict must be set to compute ref_logprobs"
                 )
                 with cpu_weight_swap(self.model[0], self.ref_policy_state_dict):
-                    ref_logprobs = self.inference_step(merged_batch)
-                    rollout_result.ref_logprobs = ref_logprobs.cpu()
+                    ref_logprobs = self.inference_step(merged_batch).cpu()
+                    rollout_result.ref_logprobs = ref_logprobs
 
         rollout_result_per_group = DynamicRolloutResult.split_results(
             rollout_result, num_sequence_per_group
@@ -730,3 +698,37 @@ class MAMegatronActor(MegatronActor):
             self.put_result(rollout_result, output_channel)
 
         self.scheduler_offload_sync()
+
+    # Advantages and returns
+    def compute_advantages_and_returns(self, batch: dict[str, torch.Tensor]):
+        """Compute the advantages and returns.
+
+        Args:
+            batch (Dict[str, torch.Tensor]): The rollout batch.
+        """
+        with self.worker_timer():
+            if batch.get("advantages", None) is None:
+                mask = batch["response_mask"] # [num_sequence, seq_len]
+                advantages, _ = calculate_adv_and_returns(
+                    task_type=self.cfg.runner.task_type,
+                    adv_type=self.cfg.algorithm.adv_type,
+                    rewards=batch["rewards"].cuda(),
+                    loss_mask=mask.cuda(),
+                    num_sequence=len(batch["input_ids"]),
+                    group_size=self.cfg.algorithm.group_size,
+                    idx_to_traj=batch["idx_to_traj"],
+                    kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
+                    kl_penalty_type=self.kl_penalty_type,
+                    logprob=batch["prev_logprobs"].cuda()
+                    if "prev_logprobs" in batch
+                    else None,
+                    ref_logprob=batch["ref_logprobs"].cuda()
+                    if "ref_logprobs" in batch
+                    else None,
+                    use_reinpp_baseline=self.cfg.algorithm.get(
+                        "use_reinpp_baseline", False
+                    ),
+                )
+                batch["advantages"] = advantages
+
+        return batch

@@ -435,7 +435,7 @@ class MegatronActor(MegatronModelManager, Worker):
         if channel.is_local:
             # Local channel, every process will put its own data locally
             # No need to broadcast
-            channel.put(result, async_op=True)
+            channel.put(result)
         else:
             if self.is_data_io_rank:
                 channel.put(result, async_op=True)

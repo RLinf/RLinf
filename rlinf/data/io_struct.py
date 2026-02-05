@@ -1108,16 +1108,6 @@ class DynamicRolloutResult:
             pad_token=pad_token,
         )
 
-        prev_logprobs = batch_pad_to_fixed_len(
-            [
-                torch.as_tensor([0] * prompt_length + logprobs, dtype=torch.float)
-                for prompt_length, logprobs in zip(
-                    self.prompt_lengths, self.rollout_logprobs
-                )
-            ],
-            max_batch_len=seq_length,
-            pad_token=0,
-        )
 
         batch = {
             "idx_to_traj": self.idx_to_traj,
@@ -1128,14 +1118,10 @@ class DynamicRolloutResult:
             "is_end": is_end.cuda(),
             "prompt_lengths": prompt_lengths.cuda(),
             "response_lengths": response_lengths.cuda(),
-            "prev_logprobs": prev_logprobs.cuda(),
         }
 
         if self.advantages is not None:
             batch["advantages"] = self.advantages.cuda()
-
-        if self.ref_logprobs is not None:
-            batch["ref_logprobs"] = self.ref_logprobs.cuda()
 
         if self.rewards is not None:
             if isinstance(self.rewards, torch.Tensor):
@@ -1144,17 +1130,37 @@ class DynamicRolloutResult:
                 batch["rewards"] = (
                     torch.as_tensor(self.rewards, dtype=torch.float).cuda().flatten()
                 )
+        if self.prev_logprobs is not None:
+            batch["prev_logprobs"] = self.prev_logprobs.cuda()
 
+        if self.ref_logprobs is not None:
+            batch["ref_logprobs"] = self.ref_logprobs.cuda()
+
+        if self.recompute_prev_logprobs is not None:
+            batch["recompute_prev_logprobs"] = self.recompute_prev_logprobs.cuda()
+        if self.rollout_logprobs is not None:
+            #breakpoint()
+            prev_logprobs = batch_pad_to_fixed_len(
+            [
+                torch.as_tensor([0] * prompt_length + logprobs, dtype=torch.float)
+                for prompt_length, logprobs in zip(
+                    self.prompt_lengths, self.rollout_logprobs
+                )
+            ],
+            max_batch_len=seq_length,
+            pad_token=0,
+            )
+            batch["prev_logprobs"] = prev_logprobs.cuda()
         return batch
 
-    def get_batch_pad(seq_length: int) -> dict[str, torch.Tensor]:
+    def get_batch_pad(seq_length: int, available_keys: list[str] = []) -> dict[str, torch.Tensor]:
         """Get the batch pad for the dynamic rollout result."""
         pad_seq_shape = (1, seq_length)
         attention_mask = torch.zeros(
             *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
         )
         attention_mask[:, :1] = True
-        return {
+        batch_pad = {
             "input_ids": torch.zeros(
                 *pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()
             ),
@@ -1187,6 +1193,8 @@ class DynamicRolloutResult:
                 *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
             ),
         }
+        batch_pad={k: v for k, v in batch_pad.items() if k in available_keys}
+        return batch_pad
 
     @staticmethod
     def merge_batches(
@@ -1280,7 +1288,7 @@ class DynamicRolloutResult:
             group_size=rollout_results[0].group_size,
             idx_to_traj=[],
             input_ids=[],
-            rollout_logprobs=[],
+            rollout_logprobs=None,
             prompt_lengths=[],
             response_lengths=[],
             is_end=[],
@@ -1290,7 +1298,6 @@ class DynamicRolloutResult:
             # Merge required list fields (size: num_sequence)
             merged_result.idx_to_traj.extend(res.idx_to_traj)
             merged_result.input_ids.extend(res.input_ids)
-            merged_result.rollout_logprobs.extend(res.rollout_logprobs)
             merged_result.prompt_lengths.extend(res.prompt_lengths)
             merged_result.response_lengths.extend(res.response_lengths)
             merged_result.is_end.extend(res.is_end)
@@ -1363,12 +1370,15 @@ class DynamicRolloutResult:
 
             split_idx_to_traj = rollout_result.idx_to_traj[start_idx:end_idx]
             split_input_ids = rollout_result.input_ids[start_idx:end_idx]
-            split_rollout_logprobs = rollout_result.rollout_logprobs[start_idx:end_idx]
             split_prompt_lengths = rollout_result.prompt_lengths[start_idx:end_idx]
             split_response_lengths = rollout_result.response_lengths[start_idx:end_idx]
             split_is_end = rollout_result.is_end[start_idx:end_idx]
             split_rewards = rollout_result.rewards[start_idx:end_idx]
 
+            if rollout_result.rollout_logprobs is not None:
+                split_rollout_logprobs = rollout_result.rollout_logprobs[start_idx:end_idx]
+            else:
+                split_rollout_logprobs = None
 
             split_prev_logprobs = None
             if rollout_result.prev_logprobs is not None:
