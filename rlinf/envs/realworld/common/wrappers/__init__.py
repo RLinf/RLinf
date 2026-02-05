@@ -15,6 +15,10 @@
 from .euler_obs import Quat2EulerWrapper
 from .gripper_close import GripperCloseEnv
 from .relative_frame import RelativeFrame
+from .reward_done_wrapper import (
+    KeyboardRewardDoneMultiStageWrapper,
+    KeyboardRewardDoneWrapper,
+)
 from .spacemouse_intervention import SpacemouseIntervention
 
 __all__ = [
@@ -22,4 +26,6 @@ __all__ = [
     "GripperCloseEnv",
     "RelativeFrame",
     "SpacemouseIntervention",
+    "KeyboardRewardDoneWrapper",
+    "KeyboardRewardDoneMultiStageWrapper",
 ]
