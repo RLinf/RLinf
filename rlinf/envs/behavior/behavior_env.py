@@ -51,6 +51,7 @@ class BehaviorEnv(gym.Env):
         self.num_envs = num_envs
         self.ignore_terminations = cfg.ignore_terminations
         self.seed_offset = seed_offset
+        self.seed = self.cfg.seed + seed_offset
         self.total_num_processes = total_num_processes
         self.worker_info = worker_info
         self.record_metrics = record_metrics
