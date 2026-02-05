@@ -17,7 +17,7 @@ import os
 import pathlib
 import time
 from functools import partial
-from typing import Optional, OrderedDict
+from typing import OrderedDict
 
 import gymnasium as gym
 import numpy as np
@@ -33,12 +33,7 @@ from rlinf.envs.realworld.common.wrappers import (
     SpacemouseIntervention,
 )
 from rlinf.envs.realworld.venv import NoAutoResetSyncVectorEnv
-from rlinf.envs.utils import (
-    put_info_on_image,
-    save_rollout_video,
-    tile_images,
-    to_tensor,
-)
+from rlinf.envs.utils import to_tensor
 from rlinf.scheduler import WorkerInfo
 
 
@@ -72,9 +67,6 @@ class RealWorldEnv(gym.Env):
         self._init_metrics()
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
         self._init_reset_state_ids()
-
-        self.video_cnt = 0
-        self.render_images = []
 
     def _create_env(self, env_idx: int):
         worker_info: WorkerInfo = self.worker_info
@@ -248,14 +240,6 @@ class RealWorldEnv(gym.Env):
 
         step_reward = self._calc_step_reward(_reward)
 
-        if self.video_cfg.save_video:
-            plot_infos = {
-                "rewards": step_reward,
-                "terminations": terminations,
-                "steps": self._elapsed_steps,
-            }
-            self.add_new_frames(raw_obs["frames"], plot_infos)
-
         infos = self._record_metrics(step_reward, terminations, infos)
         if self.ignore_terminations:
             infos["episode"]["success_at_end"] = to_tensor(terminations)
@@ -287,6 +271,8 @@ class RealWorldEnv(gym.Env):
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
+        obs_list = []
+        infos_list = []
 
         chunk_rewards = []
 
@@ -300,6 +286,8 @@ class RealWorldEnv(gym.Env):
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
                 actions, auto_reset=False
             )
+            obs_list.append(extracted_obs)
+            infos_list.append(infos)
             if "intervene_action" in infos:
                 raw_chunk_intervene_actions.append(infos["intervene_action"])
                 raw_chunk_intervene_flag.append(infos["intervene_flag"])
@@ -320,14 +308,17 @@ class RealWorldEnv(gym.Env):
         past_truncations = raw_chunk_truncations.any(dim=1)
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
-        infos["intervene_action"] = torch.stack(
-            raw_chunk_intervene_actions, dim=1
-        ).reshape(self.num_envs, -1)
-        infos["intervene_flag"] = torch.stack(raw_chunk_intervene_flag, dim=1)
+        infos_last = infos_list[-1] if infos_list else {}
+        if raw_chunk_intervene_actions:
+            infos_last["intervene_action"] = torch.stack(
+                raw_chunk_intervene_actions, dim=1
+            ).reshape(self.num_envs, -1)
+            infos_last["intervene_flag"] = torch.stack(raw_chunk_intervene_flag, dim=1)
+            infos_list[-1] = infos_last
 
         if past_dones.any() and self.auto_reset:
-            extracted_obs, infos = self._handle_auto_reset(
-                past_dones.cpu().numpy(), extracted_obs, infos
+            obs_list[-1], infos_list[-1] = self._handle_auto_reset(
+                past_dones.cpu().numpy(), obs_list[-1], infos_list[-1]
             )
 
         if self.auto_reset or self.ignore_terminations:
@@ -340,11 +331,11 @@ class RealWorldEnv(gym.Env):
             chunk_terminations = raw_chunk_terminations.clone()
             chunk_truncations = raw_chunk_truncations.clone()
         return (
-            extracted_obs,
+            obs_list,
             chunk_rewards,
             chunk_terminations,
             chunk_truncations,
-            infos,
+            infos_list,
         )
 
     def _handle_auto_reset(self, dones, _final_obs, infos):
@@ -389,35 +380,3 @@ class RealWorldEnv(gym.Env):
         self.reset_state_ids = reset_state_ids.repeat_interleave(
             repeats=self.group_size
         )
-
-    def add_new_frames(self, image_obs, plot_infos):
-        images = []
-        for image in image_obs.values():
-            images.append(image)
-
-        full_image = tile_images(images)
-
-        for env_id in range(self.num_envs):
-            info_item = {
-                k: v if np.size(v) == 1 else v[env_id] for k, v in plot_infos.items()
-            }
-            full_image[env_id] = put_info_on_image(full_image[env_id], info_item)
-        if len(full_image.shape) > 3:
-            if len(full_image) == 1:
-                full_image = full_image[0]
-            else:
-                full_image = tile_images(full_image, nrows=int(np.sqrt(self.num_envs)))
-        self.render_images.append(full_image)
-
-    def flush_video(self, video_sub_dir: Optional[str] = None):
-        output_dir = os.path.join(self.video_cfg.video_base_dir, f"seed_{self.seed}")
-        if video_sub_dir is not None:
-            output_dir = os.path.join(output_dir, f"{video_sub_dir}")
-        save_rollout_video(
-            self.render_images,
-            output_dir=output_dir,
-            video_name=f"{self.video_cnt}",
-            fps=10,
-        )
-        self.video_cnt += 1
-        self.render_images = []

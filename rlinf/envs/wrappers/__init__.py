@@ -12,21 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib
-import pathlib
-import pkgutil
+from rlinf.envs.wrappers.data_collector import DataCollectorWrapper
+from rlinf.envs.wrappers.record_video import RecordVideo
 
-from .maniskill_full_state_wrapper import (
-    ManiskillFullStateWrapper as ManiskillFullStateWrapper,
-)
-
-
-def import_all_tasks():
-    package_name = __name__ + ".tasks"
-    package_path = pathlib.Path(__file__).parent / "tasks"
-
-    for _, module_name, _ in pkgutil.iter_modules([str(package_path)]):
-        importlib.import_module(f"{package_name}.{module_name}")
-
-
-import_all_tasks()
+__all__ = ["DataCollectorWrapper", "RecordVideo"]

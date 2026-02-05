@@ -6,6 +6,7 @@ build:
     python: "3.10"
   jobs:
     pre_install:
+      - export UV_HTTP_TIMEOUT=120
       - python -m pip install -U uv
       - uv pip install -r docs/requirements.txt
       - uv pip install -r docs/doc_class_require.txt

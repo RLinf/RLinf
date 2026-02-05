@@ -24,13 +24,7 @@ import torch
 
 from rlinf.envs.calvin import CalvinBenchmark, make_env
 from rlinf.envs.calvin.venv import ReconfigureSubprocEnv
-from rlinf.envs.utils import (
-    list_of_dict_to_dict_of_list,
-    put_info_on_image,
-    save_rollout_video,
-    tile_images,
-    to_tensor,
-)
+from rlinf.envs.utils import list_of_dict_to_dict_of_list, to_tensor
 
 
 class CalvinEnv(gym.Env):
@@ -72,8 +66,6 @@ class CalvinEnv(gym.Env):
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
 
         self.video_cfg = cfg.video_cfg
-        self.video_cnt = 0
-        self.render_images = []
 
     def _init_env(self):
         env_fns = self.get_env_fns()
@@ -366,14 +358,6 @@ class CalvinEnv(gym.Env):
 
         step_reward = self._calc_step_reward(subtask_success)
 
-        if self.video_cfg.save_video:
-            plot_infos = {
-                "rewards": step_reward,
-                "terminations": terminations,
-                "task": self.task_descriptions,
-            }
-            self.add_new_frames(obs, plot_infos)
-
         infos = self._record_metrics(step_reward, terminations, infos)
         if self.ignore_terminations:
             infos["episode"]["success_at_end"] = to_tensor(terminations)
@@ -394,6 +378,8 @@ class CalvinEnv(gym.Env):
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
+        obs_list = []
+        infos_list = []
 
         chunk_rewards = []
 
@@ -404,6 +390,8 @@ class CalvinEnv(gym.Env):
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
                 actions, auto_reset=False
             )
+            obs_list.append(extracted_obs)
+            infos_list.append(infos)
 
             chunk_rewards.append(step_reward)
             raw_chunk_terminations.append(terminations)
@@ -422,8 +410,8 @@ class CalvinEnv(gym.Env):
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
         if past_dones.any() and self.auto_reset:
-            extracted_obs, infos = self._handle_auto_reset(
-                past_dones.cpu().numpy(), extracted_obs, infos
+            obs_list[-1], infos_list[-1] = self._handle_auto_reset(
+                past_dones.cpu().numpy(), obs_list[-1], infos_list[-1]
             )
 
         if self.auto_reset or self.ignore_terminations:
@@ -436,11 +424,11 @@ class CalvinEnv(gym.Env):
             chunk_terminations = raw_chunk_terminations.clone()
             chunk_truncations = raw_chunk_truncations.clone()
         return (
-            extracted_obs,
+            obs_list,
             chunk_rewards,
             chunk_terminations,
             chunk_truncations,
-            infos,
+            infos_list,
         )
 
     def _handle_auto_reset(self, dones, _final_obs, infos):
@@ -466,31 +454,6 @@ class CalvinEnv(gym.Env):
     def _calc_step_reward(self, terminations):
         reward = self.cfg.reward_coef * terminations
         return reward
-
-    def add_new_frames(self, obs, plot_infos):
-        images = []
-        obs_batch = obs["main_images"]
-        for env_id in range(obs_batch.shape[0]):
-            info_item = {
-                k: v if np.size(v) == 1 else v[env_id] for k, v in plot_infos.items()
-            }
-            img = obs_batch[env_id].numpy()
-            img = put_info_on_image(img, info_item)
-            images.append(img)
-        full_image = tile_images(images, nrows=int(np.sqrt(self.num_envs)))
-        self.render_images.append(full_image)
-
-    def flush_video(self, video_sub_dir: Optional[str] = None):
-        output_dir = os.path.join(self.video_cfg.video_base_dir, f"seed_{self.seed}")
-        if video_sub_dir is not None:
-            output_dir = os.path.join(output_dir, f"{video_sub_dir}")
-        save_rollout_video(
-            self.render_images,
-            output_dir=output_dir,
-            video_name=f"{self.video_cnt}",
-        )
-        self.video_cnt += 1
-        self.render_images = []
 
     def _check_subtask_success(self, info_lists):
         subtask_success_list = []

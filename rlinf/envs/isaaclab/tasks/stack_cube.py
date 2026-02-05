@@ -72,9 +72,6 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
 
         step_reward = self.cfg.reward_coef * terminations  # simple version of libero.
 
-        if self.video_cfg.save_video:
-            self.images.append(self.add_image(obs))
-
         obs = self._wrap_obs(obs)
 
         self._elapsed_steps += 1
@@ -125,7 +122,3 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
             "wrist_images": wrist_image,
         }
         return env_obs
-
-    def add_image(self, obs):
-        img = obs["policy"]["table_cam"][0].cpu().numpy()
-        return img
