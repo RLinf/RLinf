@@ -461,10 +461,6 @@ class Worker(metaclass=WorkerMeta):
         Worker.current_worker = self
         self._has_initialized = True
 
-        # enable ptrace priviledge so we can use expandable segments
-        from . import enable_ptrace
-        enable_ptrace.enable_ptrace()
-
     @property
     def has_accelerator(self) -> bool:
         """Whether the worker has been allocated with accelerators."""
