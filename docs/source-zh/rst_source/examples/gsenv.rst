@@ -107,9 +107,7 @@ GSEnv 来自独立仓库 `ManiSkill-GS <https://github.com/chenkang455/ManiSkill
    # 克隆 ManiSkill-GS
    git clone -b v01 https://github.com/chenkang455/ManiSkill-GS.git
    cd ManiSkill-GS
-   uv pip install urdfpy==0.0.22
    uv pip install -e .
-   uv pip install protobuf==6.33.2 timm==0.9.10 pyopengl==3.1.10
 
 4. 下载 GSEnv 资源（Assets）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

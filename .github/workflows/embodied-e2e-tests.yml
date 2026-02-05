@@ -419,10 +419,9 @@ jobs:
           bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
           source .venv/bin/activate
-          uv pip install urdfpy==0.0.22
-          uv pip install -e /workspace/dataset/ManiSkill-GS
-          uv pip install protobuf==6.33.2 timm==0.9.10 pyopengl==3.1.10
-          python /workspace/dataset/ManiSkill-GS/scripts/test_rlinf_interface.py
+          cd /workspace/dataset/ManiSkill-GS
+          uv pip install -e .
+          python scripts/test_rlinf_interface.py
 
       - name: ManiSkill-GS PPO Pi05 test
         timeout-minutes: 20
