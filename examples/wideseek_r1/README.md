@@ -2,20 +2,14 @@
 
 <div align="center">
 
-[![paper](https://img.shields.io/badge/paper-A42C25?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/abs/xxx)
-&nbsp;
-[![Model](https://img.shields.io/badge/Hugging%20Face-Model-FFD21E?style=for-the-badge&logo=huggingface&logoColor=000)](https://huggingface.co/RLinf/WideSeek-R1-4b)
-&nbsp;
-[![Dataset](https://img.shields.io/badge/Hugging%20Face-Dataset-FFD21E?style=for-the-badge&logo=huggingface&logoColor=000)](https://huggingface.co/datasets/RLinf/WideSeek-R1-train-data)
-&nbsp;
-[![Website](https://img.shields.io/badge/Website-1A73E8?style=for-the-badge&logo=googledocs&logoColor=white)](https://thu-nics.github.io/WideSeek-R1/)
+[**🌐 Project Page**](https://wideseek-r1.github.io/) | [**📄 Paper**](https://arxiv.org/pdf/2602.04634) | [**💻 Code**](https://github.com/RLinf/RLinf/tree/main/examples/wideseek_r1) | [**📦 Dataset**](https://huggingface.co/datasets/RLinf/WideSeek-R1-train-data) | [**🤗 Models**](https://huggingface.co/RLinf/WideSeek-R1-4b)
 
 </div>
 
 
 ## 📝 Overview
 
-![overview](https://github.com/RLinf/misc/raw/main/pic/wideseek_r1/overview.png)
+![overview](https://github.com/RLinf/misc/raw/main/pic/wideseek_r1/teaser.jpg)
 
 
 we propose WideSeek-R1, a lead-agent-subagent framework trained via multi-agent reinforcement learning (MARL) to synergize scalable orchestration and parallel execution. By utilizing a shared LLM with isolated contexts and specialized tools, WideSeek-R1 jointly optimizes the lead agent and parallel subagents on a curated dataset of 20k broad information-seeking tasks. Extensive experiments show that WideSeek-R1-4B achieves an item F1 score of 40.0% on the WideSearch benchmark, which is comparable to the performance of single-agent DeepSeek-R1-671B. Furthermore, WideSeek-R1-4B exhibits consistent performance gains as the number of parallel subagents increases, highlighting the effectiveness of width scaling.
@@ -53,5 +47,10 @@ Coming Soon~
 
 ## 📚 Citation
 ```
-TO BE DONE
+@article{xu2026wideseek,
+  title   = {WideSeek-R1: Exploring Width Scaling for Broad Information Seeking via Multi-Agent Reinforcement Learning},
+  author  = {Xu, Zelai and Xu, Zhexuan and Zhang, Ruize and Zhu, Chunyang and Yu, Shi and Liu, Weilin and Zhang, Quanlu and Ding, Wenbo and Yu, Chao and Wang, Yu},
+  journal = {arXiv preprint arXiv:2602.04634},
+  year    = {2026},
+}
 ```
