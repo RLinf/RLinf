@@ -23,6 +23,7 @@ from transformers import AutoTokenizer
 from rlinf.data.datasets.item import DatasetItem
 from rlinf.data.datasets.math import MathDataset
 from rlinf.data.datasets.vlm import VLMDatasetRegistry
+from rlinf.data.datasets.wideseek_r1 import WideSeekR1_Dataset
 
 
 def create_rl_dataset(
@@ -56,6 +57,22 @@ def create_rl_dataset(
         )
 
         return train_dataset, val_dataset
+    elif config.data.type == "wideseek_r1":
+        logging.info(f"Using dataset class: {MathDataset.__name__}")
+
+        train_dataset = WideSeekR1_Dataset(
+            data_paths=config.data.train_data_paths,
+            config=config,
+            tokenizer=tokenizer,
+        )
+
+        val_dataset = WideSeekR1_Dataset(
+            data_paths=config.data.val_data_paths,
+            config=config,
+            tokenizer=tokenizer,
+        )
+
+        return train_dataset, val_dataset    
     elif config.data.type == "vision_language":
         # Prefer new factory-based VLM datasets; fallback to legacy if requested
         dataset_name = getattr(config.data, "dataset_name", None)

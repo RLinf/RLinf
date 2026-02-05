@@ -985,12 +985,12 @@ class DynamicRolloutResult:
     # size of belows are num_sequence
     input_ids: list[list[int]]
     rollout_logprobs: list[list[float]]
-    prev_logprobs: Optional[torch.Tensor] = None
     ref_logprobs: Optional[torch.Tensor] = None
-    recompute_prev_logprobs: Optional[torch.Tensor] = None
     prompt_lengths: list[int]
     response_lengths: list[int]
     is_end: list[bool]
+    roles: list[str]
+    role_group_sizes: list[int]
     # prompt_ids: list[list[int]]
     # response_ids: list[list[int]]
     # response_mask: Optional[list[list[int]]] = None
@@ -999,6 +999,25 @@ class DynamicRolloutResult:
     rewards: Optional[torch.Tensor | list[float]] = None
     advantages: Optional[torch.Tensor] = None
 
+    # Tool call counts per turn (size: num_sequence)
+    turn_subtask_counts: Optional[list[int]] = None
+    turn_search_counts: Optional[list[int]] = None
+    turn_access_counts: Optional[list[int]] = None
+
+    # Number of valid turns (turns with actual tool calls)
+    num_valid_planner_turns: Optional[int] = None
+    num_valid_worker_turns: Optional[int] = None
+
+    # Evaluation metrics per trajectory (size: group_size)
+    # Each item is a dict with metric_type -> metric_dict mapping
+    eval_metrics: Optional[list] = None
+    total_turn_list_metric: Optional[list] = None
+
+    # for reject sampling
+    # size of belows are group_size
+    # prompt_texts: Optional[list[str]] = None
+    # response_texts: Optional[list[str]] = None
+    # answers: Optional[list[str | dict]] = None
 
     @staticmethod
     def _get_attention_masks_and_position_ids(
@@ -1096,9 +1115,9 @@ class DynamicRolloutResult:
 
         attention_mask, response_mask, position_ids = (
             self._get_attention_masks_and_position_ids(
-                prompt_lengths=prompt_lengths,
-                response_lengths=response_lengths,
-                total_len=seq_length,
+            prompt_lengths=prompt_lengths,
+            response_lengths=response_lengths,
+            total_len=seq_length,
             )
         )
 
@@ -1121,6 +1140,8 @@ class DynamicRolloutResult:
 
         batch = {
             "idx_to_traj": self.idx_to_traj,
+            "roles": self.roles,
+            "role_group_sizes": self.role_group_sizes,
             "input_ids": input_ids.cuda(),
             "attention_mask": attention_mask.cuda(),
             "response_mask": response_mask.cuda(),
@@ -1141,102 +1162,56 @@ class DynamicRolloutResult:
             if isinstance(self.rewards, torch.Tensor):
                 batch["rewards"] = self.rewards.cuda()
             else:
-                batch["rewards"] = (
-                    torch.as_tensor(self.rewards, dtype=torch.float).cuda().flatten()
-                )
+                batch["rewards"] = torch.as_tensor(self.rewards, dtype=torch.float).cuda().flatten()
+
+        # Add tool call metrics fields if available
+        if self.turn_subtask_counts is not None:
+            batch["turn_subtask_counts"] = self.turn_subtask_counts
+        if self.turn_search_counts is not None:
+            batch["turn_search_counts"] = self.turn_search_counts
+        if self.turn_access_counts is not None:
+            batch["turn_access_counts"] = self.turn_access_counts
+        if self.num_valid_planner_turns is not None:
+            batch["num_valid_planner_turns"] = self.num_valid_planner_turns
+        if self.num_valid_worker_turns is not None:
+            batch["num_valid_worker_turns"] = self.num_valid_worker_turns
+        if self.eval_metrics is not None:
+            batch["eval_metrics"] = self.eval_metrics
+        if self.total_turn_list_metric is not None:
+            batch["total_turn_list_metric"] = self.total_turn_list_metric
 
         return batch
 
     def get_batch_pad(seq_length: int) -> dict[str, torch.Tensor]:
         """Get the batch pad for the dynamic rollout result."""
         pad_seq_shape = (1, seq_length)
-        attention_mask = torch.zeros(
-            *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
-        )
-        attention_mask[:, :1] = True
         return {
-            "input_ids": torch.zeros(
-                *pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()
-            ),
-            "attention_mask": attention_mask,
-            "response_mask": torch.zeros(
-                *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
-            ),
-            "position_ids": torch.zeros(
-                *pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()
-            ),
-            "is_end": torch.zeros(
-                1, dtype=torch.bool, device=torch.cuda.current_device()
-            ),
-            "prompt_lengths": torch.zeros(
-                1, dtype=torch.int32, device=torch.cuda.current_device()
-            ),
-            "response_lengths": torch.zeros(
-                1, dtype=torch.int32, device=torch.cuda.current_device()
-            ),
-            "ref_logprobs": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
-            ),
-            "prev_logprobs": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
-            ),
-            "rewards": torch.zeros(
-                1, dtype=torch.float32, device=torch.cuda.current_device()
-            ),
-            "advantages": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
-            ),
+            "input_ids": torch.zeros(*pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()),
+            "attention_mask": torch.ones(*pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()),
+            "response_mask": torch.zeros(*pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()),
+            "position_ids": torch.zeros(*pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()),
+            "is_end": torch.zeros(1, dtype=torch.bool, device=torch.cuda.current_device()),
+            "prompt_lengths": torch.zeros(1, dtype=torch.int32, device=torch.cuda.current_device()),
+            "response_lengths": torch.zeros(1, dtype=torch.int32, device=torch.cuda.current_device()),
+            "prev_logprobs": torch.zeros(*pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()),
+            "rewards": torch.zeros(1, dtype=torch.float32, device=torch.cuda.current_device()),
+            "advantages": torch.zeros(*pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()),
         }
 
     @staticmethod
     def merge_batches(
         batches: list[dict[str, torch.Tensor]],
-        group_size: int | None = None,
-        adjust_traj_indices: bool = True,
-        return_num_sequence_per_group: bool = False,
-    ) -> dict[str, torch.Tensor] | tuple[dict[str, torch.Tensor], list[int]]:
-        """
-        Merge multiple batches into one batch.
-
-        Args:
-            batches: List of batch dictionaries to merge
-            group_size: The group_size for adjusting trajectory indices. 
-                    Required if adjust_traj_indices is True.
-            adjust_traj_indices: If True, adjusts idx_to_traj with trajectory offset (for training).
-                            If False, keeps original indices (for inference).
-            return_num_sequence_per_group: If True, returns tuple (merged_batch, num_sequence_per_group).
-                                        If False, returns only merged_batch.
-
-        Returns:
-            If return_num_sequence_per_group is False: merged_batch
-            If return_num_sequence_per_group is True: (merged_batch, num_sequence_per_group)
-        """
+        group_size: int,
+    ) -> dict[str, torch.Tensor]:
+        """Merge two batches into one."""
         merged_batch = {}
         if len(batches) == 0:
-            if return_num_sequence_per_group:
-                return merged_batch, []
             return merged_batch
-        
         if len(batches) == 1:
-            if return_num_sequence_per_group:
-                num_sequence_per_group = [batches[0]["response_lengths"].shape[0]]
-                return batches[0], num_sequence_per_group
             return batches[0]
 
-        # Compute num_sequence_per_group if needed
-        num_sequence_per_group = None
-        if return_num_sequence_per_group:
-            num_sequence_per_group = [
-                batch["response_lengths"].shape[0] for batch in batches
-            ]
-
-        # Validate group_size if adjusting indices
-        if adjust_traj_indices and group_size is None:
-            raise ValueError("group_size must be provided when adjust_traj_indices is True")
-
         for key in batches[0].keys():
-            if key == "idx_to_traj" and adjust_traj_indices:
-                # Special handling for idx_to_traj: adjust with trajectory offset
+            if key == "idx_to_traj":
                 merged_batch[key] = []
                 for i, batch in enumerate(batches):
                     merged_batch[key].extend([j + i * group_size for j in batch[key]])
@@ -1251,11 +1226,150 @@ class DynamicRolloutResult:
                 merged_batch[key] = sum(batch[key] for batch in batches)
             else:
                 raise ValueError(f"Unsupported batch key type: {type(batches[0][key])}")
-
-        if return_num_sequence_per_group:
-            return merged_batch, num_sequence_per_group
         return merged_batch
 
+    @staticmethod
+    def pack_traj_batch(
+        batch: dict[str, torch.Tensor],
+        adv_turn_level_scale=False,
+        sub_traj_adv_scale=True,
+        train_roles=None
+    ) -> tuple["DynamicRolloutResult", dict]:
+        """Merge two batches into one."""
+
+        traj_to_idx = {}
+        for idx, traj in enumerate(batch["idx_to_traj"]):
+            if traj not in traj_to_idx:
+                traj_to_idx[traj] = []
+            traj_to_idx[traj].append(idx)
+
+        prompt_lengths = batch["prompt_lengths"].tolist()
+        response_lengths = batch["response_lengths"].tolist()
+        pack_map = {}
+        passed_as_suffix = []
+        for traj, idxes in traj_to_idx.items():
+            idxes = sorted(idxes, key=lambda x: prompt_lengths[x])
+            for i in range(len(idxes)):
+                left = idxes[i]
+                for j in range(i + 1, len(idxes)):
+                    right = idxes[j]
+                    if right in passed_as_suffix:
+                        continue
+                    if prompt_lengths[left] + response_lengths[left] > prompt_lengths[right]:
+                        continue
+                    left_prompt_ids = batch["input_ids"][left][:prompt_lengths[left] + response_lengths[left]]
+                    right_total_ids = batch["input_ids"][right][:prompt_lengths[left] + response_lengths[left]]
+                    if torch.equal(left_prompt_ids, right_total_ids):
+                        pack_map[left] = right
+                        passed_as_suffix.append(right)
+                        break
+
+        num_sequence = len(batch["idx_to_traj"])
+        new_idx_to_traj = []
+        split_params = {}
+        tensor_keys = [
+            'input_ids',
+            'attention_mask',
+            'response_mask',
+            'position_ids',
+            'is_end',
+            'prompt_lengths',
+            'response_lengths',
+            'prev_logprobs',
+            'rewards',
+            'advantages',
+        ]
+        list_keys = [
+            'roles',
+            'role_group_sizes',
+        ]
+        solid_keys = [
+            'idx_to_traj',
+        ]
+        for k, v in batch.items():
+            if k in list_keys:
+                assert len(v) == num_sequence
+                split_params[k] = v            
+            elif k in tensor_keys:
+                split_params[k] = list(torch.chunk(
+                    v.clone(), num_sequence, dim=0
+                ))
+            else:
+                assert k in solid_keys, f"bad key {k}"
+        split_params.update({'turn_num': [1] * num_sequence})
+        pack_params = {
+            k: [] for k in batch.keys() if k in tensor_keys
+        }
+        for i in range(num_sequence):
+            if i in pack_map:
+                prefix = i
+                suffix = pack_map[i]
+                assert split_params["rewards"][prefix] == split_params["rewards"][suffix]
+
+                # logprobs, advantages, response_mask
+                prev_logprobs_prefix = split_params["prev_logprobs"][prefix].masked_fill(~split_params["response_mask"][prefix], 0)
+                prev_logprobs_suffix = split_params["prev_logprobs"][suffix].masked_fill(~split_params["response_mask"][suffix], 0)
+                split_params["prev_logprobs"][suffix] = prev_logprobs_prefix + prev_logprobs_suffix
+
+                advantages_prefix = split_params["advantages"][prefix].masked_fill(~split_params["response_mask"][prefix], 0)
+                advantages_suffix = split_params["advantages"][suffix].masked_fill(~split_params["response_mask"][suffix], 0)
+                if adv_turn_level_scale:
+                    # alg2
+                    masked_count_prefix = split_params["response_mask"][prefix].sum().item()
+                    masked_count_suffix = split_params["response_mask"][suffix].sum().item()
+                    masked_count_all = masked_count_prefix + masked_count_suffix
+                    split_params["advantages"][suffix] = (
+                        (advantages_prefix * (masked_count_all / masked_count_prefix)) +
+                        (advantages_suffix * (masked_count_all / masked_count_suffix))
+                    ) 
+                else:
+                    # alg1
+                    split_params["advantages"][suffix] = advantages_prefix + advantages_suffix
+
+                split_params["response_mask"][suffix] += split_params["response_mask"][prefix]
+
+                # prompt_lengths, response_lengths
+                # split_params["prompt_lengths"][suffix] = prompt_lengths[prefix]
+                # split_params["response_lengths"][suffix] += prompt_lengths[suffix] - prompt_lengths[prefix]
+                split_params["response_lengths"][suffix] += split_params["prompt_lengths"][suffix] - split_params["prompt_lengths"][prefix] # FIXME: 
+                split_params["prompt_lengths"][suffix] = split_params["prompt_lengths"][prefix]
+                split_params["turn_num"][suffix] += split_params["turn_num"][prefix]
+                split_params["turn_num"][prefix] = 0
+
+            else:
+                if adv_turn_level_scale:
+                    split_params["advantages"][i] /= split_params["turn_num"][i]
+                if not train_roles:
+                    for k in tensor_keys:
+                        pack_params[k].append(split_params[k][i])
+                    new_idx_to_traj.append(batch["idx_to_traj"][i])
+                else:
+                    split_params["advantages"][i] /= split_params["role_group_sizes"][i]
+                    if split_params['roles'][i] in train_roles:
+                        for k in tensor_keys:
+                            pack_params[k].append(split_params[k][i])
+                        new_idx_to_traj.append(batch["idx_to_traj"][i])                    
+                
+        packed_batch = {}
+        for k, v in pack_params.items():
+            if len(v) != 0:
+                packed_batch[k] = torch.cat(v, dim=0)
+            else:
+                packed_batch[k] = batch[k][0:0,]
+
+        if sub_traj_adv_scale:
+            # Normalize across Agent num
+            traj_to_idx = {}
+            for idx, traj in enumerate(new_idx_to_traj):
+                if traj not in traj_to_idx:
+                    traj_to_idx[traj] = []
+                traj_to_idx[traj].append(idx)
+
+            for traj, idxes in traj_to_idx.items():
+                for idx in idxes:
+                    packed_batch["advantages"][idx] /= len(idxes) 
+                          
+        return packed_batch
 
     @staticmethod
     def merge_result_list(
@@ -1334,7 +1448,7 @@ class DynamicRolloutResult:
                     raise ValueError(f"Wrong type of advantages {type(res.advantages)}")
 
         return merged_result
-
+    
 
     @staticmethod
     def split_results(
@@ -1403,7 +1517,7 @@ class DynamicRolloutResult:
             split_results.append(split_result)
             start_idx = end_idx
         return split_results
-
+        
 
 class BatchResizingIterator:
     """The iterator for handling getting a batch and split it as a batch iterator with optional dynamic batch size."""

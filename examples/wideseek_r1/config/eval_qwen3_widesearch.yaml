@@ -1,0 +1,51 @@
+defaults:
+  - base_eval
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    actor,rollout,reward: all
+
+runner:
+  experiment_name: ws 
+  output_dir: ./eval/exp_ws
+  seq_length: 32000  
+
+  max_epochs: 1
+  max_steps: -1  
+
+algorithm:
+  group_size: 4
+
+agentloop:
+  use_llm_judge_api: True
+  workflow: mas 
+  
+rollout:
+  model:
+    model_type: qwen3
+    model_path: /path/to/Qwen3-4B # TODO:
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+
+
+tools:
+  online: True
+
+data:
+  type: wideseek_r1
+  max_prompt_length: 4096
+  val_rollout_batch_size: 200
+  prompt_key: query
+  answer_key: answer
+  is_markdown: True
+  unique_columns: unique_columns 
+  val_data_paths: ["/path/to/validation.jsonl"] # TODO:
+  is_widesearch: True
+  data_size: -1
+      
+reward:
+  reward_type: 'em' # or em
+  eval_metric: ['em', 'f1', 'llm']
+
+
