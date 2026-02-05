@@ -101,11 +101,11 @@ env:
 rollout:
   group_name: "RolloutGroup"
   backend: "huggingface"
-  enable_offload: True
+  enable_offload: False
   pipeline_stage_num: 1
   collect_transitions: True
   collect_prev_infos: False
-  compile_model: True
+  compile_model: False
   model:
     model_path: "/path/to/RLinf-ResNet10-pretrained"
     state_dim: 7
