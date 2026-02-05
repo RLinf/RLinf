@@ -143,7 +143,7 @@ class MAMegatronActor(MegatronActor):
             label_mask[:, :-1] = label_mask[:, 1:].clone()  # Shift left by 1
             label_mask[:, -1] = False
 
-            def logits_processor(logits, label, label_mask, prev_logprobs=None):
+            def logits_processor(logits, label, label_mask):
                 assert logits.shape[:2] == label.shape[:2]
                 assert label.shape == label_mask.shape
 
@@ -163,11 +163,7 @@ class MAMegatronActor(MegatronActor):
 
                 return ret
 
-            logits_processor_args = {
-                "label": label,
-                "label_mask": label_mask,
-                "prev_logprobs": batch["prev_logprobs"],
-            }
+            logits_processor_args = {"label": label, "label_mask": label_mask}
 
             output = self.custom_forward(
                 model,

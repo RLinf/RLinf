@@ -88,9 +88,6 @@ def compute_ppo_actor_loss(
     ratio = torch.where(loss_mask, torch.exp(logprobs_diff), 0)
     approx_kl = torch.where(loss_mask, logprobs_diff.detach(), 0.0)
 
-    # ratio = torch.where(loss_mask, torch.exp(logprobs - old_logprobs), 0)
-    # approx_kl = torch.where(loss_mask, (logprobs - old_logprobs).detach(), 0.0)
-
     clipped_ratio = torch.clamp(ratio, 1.0 - clip_ratio_low, 1.0 + clip_ratio_high)
     policy_loss1 = -advantages * ratio
     policy_loss2 = -advantages * clipped_ratio
@@ -117,7 +114,6 @@ def compute_ppo_actor_loss(
     clip_mask = policy_loss1.detach() < policy_loss2.detach()
     dual_clip_mask = (dual_clip_mask * loss_mask).bool()
 
-    # clip_fraction = (clip_mask * loss_mask).sum() / float(loss_mask_count)
     approx_kl = -torch.sum(approx_kl) / float(loss_mask_count)
 
     dual_cliped_ratio = torch.where(dual_clip_mask, ratio, 0)
@@ -139,7 +135,7 @@ def compute_ppo_actor_loss(
         loss_mask_for_metrics = loss_mask.expand_as(ratio)
 
     approx_kl = -approx_kl.sum() / loss_mask_count
-    # clip_fraction = clip_mask.logical_and_(loss_mask).count_nonzero() / loss_mask_count
+    clip_fraction = (clip_mask.logical_and_(loss_mask) != 0).float()
     metrics_data = {
         "actor/token_num": loss_mask.count_nonzero().float(),
         "actor/policy_loss": masked_sum(policy_loss_metrics, loss_mask_for_metrics),
@@ -155,9 +151,7 @@ def compute_ppo_actor_loss(
             dual_cliped_ratio_for_metrics, loss_mask_for_metrics
         ),
         "actor/approx_kl": -masked_sum(approx_kl, loss_mask_for_metrics),
-        "actor/clip_fraction": masked_sum(
-            (clip_mask.logical_and_(loss_mask) != 0).float(), loss_mask_for_metrics
-        ),
+        "actor/clip_fraction": masked_sum(clip_fraction, loss_mask_for_metrics),
     }
     return policy_loss, metrics_data
 

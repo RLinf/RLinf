@@ -23,9 +23,9 @@ from rlinf.agents.wideseek_r1.wideseek_r1 import WideSeekR1AgentLoopWorker
 from rlinf.config import validate_cfg
 from rlinf.data.datasets import create_rl_dataset
 from rlinf.data.tokenizers import hf_tokenizer
-from rlinf.runners.train_runner import AgentRunner
+from rlinf.runners.agent_runner import AgentRunner
 from rlinf.scheduler import Cluster, NodePlacementStrategy
-from rlinf.utils.placement import ModelParallelComponentPlacement
+from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
 from rlinf.workers.agent.tool_worker import ToolWorkerInfo
@@ -43,6 +43,7 @@ def main(cfg) -> None:
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = ModelParallelComponentPlacement(cfg, cluster)
+    assert component_placement.placement_mode == PlacementMode.COLLOCATED, "multi-agent only supports collocated mode"
 
     # Generator group
     rollout_worker_cls = get_rollout_backend_worker(cfg)
@@ -80,7 +81,6 @@ def main(cfg) -> None:
     )
 
     # GRPO Actor group
-    # actor_worker_cls = get_actor_worker(cfg)
     actor_placement_strategy = component_placement.get_strategy("actor")
     actor_group = MAMegatronActor.create_group(cfg, component_placement).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement_strategy
@@ -117,6 +117,8 @@ def main(cfg) -> None:
         agent_loop=agentloop_group,
         tool_workers=tool_workers,
         solid_rollouts={},
+        inference=None,
+        reward=None,
     )
 
     runner.init_workers()

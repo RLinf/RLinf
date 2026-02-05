@@ -101,8 +101,10 @@ class AgentLoopWorker(Worker):
         super().__init__()
         self.cfg = cfg
         self.print_outputs = cfg.agentloop.print_outputs
-        self.return_logprobs = not cfg.algorithm.recompute_logprobs
-        assert self.return_logprobs
+        if cfg.runner.task_type == "reasoning_eval":
+            self.return_logprobs = False
+        else:
+            self.return_logprobs = not cfg.algorithm.recompute_logprobs
         self.is_dynamic_rollout_batch = cfg.agentloop.get(
             "is_dynamic_rollout_batch", False
         )
@@ -110,7 +112,9 @@ class AgentLoopWorker(Worker):
             assert isinstance(self, MultiTurnAgentLoopWorker), (
                 "agent loop worker must be MultiTurnAgentLoopWorker if is_dynamic_rollout_batch is True"
             )
-            # assert not self.return_logprobs, "recompute_logprobs must be False if is_dynamic_rollout_batch is True"
+            assert self.return_logprobs, (
+                "recompute_logprobs must be False if is_dynamic_rollout_batch is True"
+            )
 
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.rollout.model.model_path)
 
@@ -121,6 +125,7 @@ class AgentLoopWorker(Worker):
         tool_channel_info_map: dict[str, ToolChannelInfo],
         tool_name_map: dict[str, str],
         tool_worker_output_channel: Channel,
+        solid_generate_input_channels: dict[str, Channel] = {},
     ):
         self.generate_input_channel = generate_input_channel
         self.generate_output_channel = generate_output_channel
@@ -129,6 +134,8 @@ class AgentLoopWorker(Worker):
         # tool name to tool worker. a tool worker may have multiple tools.
         self.tool_name_map = tool_name_map
         self.tool_worker_output_channel = tool_worker_output_channel
+        # for calling another llm without training.
+        self.solid_generate_input_channels = solid_generate_input_channels
 
     async def state_less_tool_call_with_channel(
         self,
@@ -186,24 +193,6 @@ class AgentLoopWorker(Worker):
 
 class MultiTurnAgentLoopWorker(AgentLoopWorker):
     """Multi-turn agent loop worker."""
-
-    def init_worker(
-        self,
-        generate_input_channel: Channel,
-        generate_output_channel: Channel,
-        tool_channel_info_map: dict[str, ToolChannelInfo],
-        tool_name_map: dict[str, str],
-        tool_worker_output_channel: Channel,
-        solid_generate_input_channels: dict[str, Channel] = {},
-    ):
-        super().init_worker(
-            generate_input_channel,
-            generate_output_channel,
-            tool_channel_info_map,
-            tool_name_map,
-            tool_worker_output_channel,
-        )
-        self.solid_generate_input_channels = solid_generate_input_channels
 
     async def generate(
         self,

@@ -15,7 +15,7 @@
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
 import torch
 from omegaconf import DictConfig
@@ -244,6 +244,10 @@ class RolloutResult:
     prev_logprobs: Optional[torch.Tensor] = None
     # Reference logprobs for comparison
     ref_logprobs: Optional[torch.Tensor] = None
+
+    # evaluation
+    trace_info: Optional[Any] = None
+    origin_question: Optional[str] = None
 
     @property
     def batch_size(self):
@@ -1008,9 +1012,9 @@ class DynamicRolloutResult:
 
     # Evaluation metrics per trajectory (size: group_size)
     # Each item is a dict with metric_type -> metric_dict mapping
+    eval_metrics: Optional[list] = None
     roles: list[str]
     role_group_sizes: list[int]
-    eval_metrics: Optional[list] = None
     total_turn_list_metric: Optional[list] = None
 
     # for reject sampling
