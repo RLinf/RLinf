@@ -123,7 +123,9 @@ class AgentRunner:
         self.solid_generate_input_channels = {}
         if self.solid_rollouts is not None:
             for solid_rollout_name in self.solid_rollouts:
-                self.solid_generate_input_channels[solid_rollout_name] = Channel.create(f"SolidRolloutInput-{solid_rollout_name}")
+                self.solid_generate_input_channels[solid_rollout_name] = Channel.create(
+                    f"SolidRolloutInput-{solid_rollout_name}"
+                )
         # tool worker name to tool channel info.
         self.tool_channel_info_map = {}
         # tool name to tool worker. a tool worker may have multiple tools.

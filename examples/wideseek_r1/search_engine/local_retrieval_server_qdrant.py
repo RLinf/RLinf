@@ -1,32 +1,30 @@
+import argparse
+import asyncio
 import json
 import os
-import warnings
-from typing import List, Dict, Optional
-import argparse
+import socket
 import time
-import atexit
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import Queue, set_start_method
+from typing import Optional
 
-from qdrant_client import AsyncQdrantClient
-from qdrant_client.conversions.common_types import QueryResponse
-from qdrant_client.models import Distance, QuantizationSearchParams, SearchParams, VectorParams, PointStruct
-import torch
 import numpy as np
-from transformers import AutoConfig, AutoTokenizer, AutoModel
-from tqdm import tqdm
-import datasets
-
+import torch
 import uvicorn
 from fastapi import FastAPI
 from pydantic import BaseModel
-import socket
-from multiprocessing import set_start_method, Queue
-import asyncio
-import torch
-from concurrent.futures import ProcessPoolExecutor
+from qdrant_client import AsyncQdrantClient
+from qdrant_client.models import (
+    QuantizationSearchParams,
+    SearchParams,
+)
+from tqdm import tqdm
+from transformers import AutoConfig, AutoModel, AutoTokenizer
 
 # ============================================================================
 # Model Loading and Pooling Utilities
 # ============================================================================
+
 
 def load_model(model_path: str, use_fp16: bool = False, device=torch.device("cuda")):
     """Load retrieval model from checkpoint.
@@ -45,15 +43,14 @@ def load_model(model_path: str, use_fp16: bool = False, device=torch.device("cud
     model = model.to(device=device)
     if use_fp16:
         model = model.half()
-    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=True, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_path, use_fast=True, trust_remote_code=True
+    )
     return model, tokenizer
 
 
 def pooling(
-    pooler_output,
-    last_hidden_state,
-    attention_mask=None,
-    pooling_method="mean"
+    pooler_output, last_hidden_state, attention_mask=None, pooling_method="mean"
 ):
     """Apply pooling to model outputs.
 
@@ -67,7 +64,9 @@ def pooling(
         Pooled representation
     """
     if pooling_method == "mean":
-        last_hidden = last_hidden_state.masked_fill(~attention_mask[..., None].bool(), 0.0)
+        last_hidden = last_hidden_state.masked_fill(
+            ~attention_mask[..., None].bool(), 0.0
+        )
         return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
     elif pooling_method == "cls":
         return last_hidden_state[:, 0]
@@ -76,9 +75,11 @@ def pooling(
     else:
         raise NotImplementedError(f"Pooling method '{pooling_method}' not implemented!")
 
+
 # ============================================================================
 # Encoder Class
 # ============================================================================
+
 
 class Encoder:
     """Text encoder supporting various retrieval models (e5, bge, dpr, T5).
@@ -92,7 +93,9 @@ class Encoder:
         device: Device to run the model on
     """
 
-    def __init__(self, model_name, model_path, pooling_method, max_length, use_fp16, device):
+    def __init__(
+        self, model_name, model_path, pooling_method, max_length, use_fp16, device
+    ):
         self.model_name = model_name
         self.model_path = model_path
         self.pooling_method = pooling_method
@@ -100,11 +103,13 @@ class Encoder:
         self.use_fp16 = use_fp16
         self.device = device
 
-        self.model, self.tokenizer = load_model(model_path=model_path, use_fp16=use_fp16, device=self.device)
+        self.model, self.tokenizer = load_model(
+            model_path=model_path, use_fp16=use_fp16, device=self.device
+        )
         self.model.eval()
 
     @torch.no_grad()
-    def encode(self, query_list: List[str], is_query=True) -> np.ndarray:
+    def encode(self, query_list: list[str], is_query=True) -> np.ndarray:
         """Encode text into vectors.
 
         Args:
@@ -127,31 +132,37 @@ class Encoder:
         # BGE model requires instruction prefix for queries
         if "bge" in self.model_name.lower():
             if is_query:
-                query_list = [f"Represent this sentence for searching relevant passages: {query}" for query in query_list]
+                query_list = [
+                    f"Represent this sentence for searching relevant passages: {query}"
+                    for query in query_list
+                ]
 
-        inputs = self.tokenizer(query_list,
-                                max_length=self.max_length,
-                                padding=True,
-                                truncation=True,
-                                return_tensors="pt"
-                                )
+        inputs = self.tokenizer(
+            query_list,
+            max_length=self.max_length,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+        )
         inputs = {k: v.to(device=self.device) for k, v in inputs.items()}
 
         if "T5" in type(self.model).__name__:
             # T5-based retrieval model
             decoder_input_ids = torch.zeros(
-                (inputs['input_ids'].shape[0], 1), dtype=torch.long
-            ).to(inputs['input_ids'].device)
+                (inputs["input_ids"].shape[0], 1), dtype=torch.long
+            ).to(inputs["input_ids"].device)
             output = self.model(
                 **inputs, decoder_input_ids=decoder_input_ids, return_dict=True
             )
             query_emb = output.last_hidden_state[:, 0, :]
         else:
             output = self.model(**inputs, return_dict=True)
-            query_emb = pooling(output.pooler_output,
-                                output.last_hidden_state,
-                                inputs['attention_mask'],
-                                self.pooling_method)
+            query_emb = pooling(
+                output.pooler_output,
+                output.last_hidden_state,
+                inputs["attention_mask"],
+                self.pooling_method,
+            )
             if "dpr" not in self.model_name.lower():
                 query_emb = torch.nn.functional.normalize(query_emb, dim=-1)
 
@@ -167,6 +178,7 @@ class Encoder:
 # ============================================================================
 # Async Encoder Pool for Multi-GPU Encoding
 # ============================================================================
+
 
 class AsyncEncoderPool:
     """Async encoder pool for multi-GPU parallel encoding.
@@ -194,7 +206,9 @@ class AsyncEncoderPool:
         encoder: Encoder = globals()["global_encoder"]
         return encoder.encode(*args, **kwargs)
 
-    def __init__(self, model_name, model_path, pooling_method, max_length, use_fp16, devices):
+    def __init__(
+        self, model_name, model_path, pooling_method, max_length, use_fp16, devices
+    ):
         """Initialize encoder pool with multiple GPU workers.
 
         Args:
@@ -207,15 +221,17 @@ class AsyncEncoderPool:
         """
         init_queue = Queue()
         for device in devices:
-            init_queue.put([model_name, model_path, pooling_method, max_length, use_fp16, device])
+            init_queue.put(
+                [model_name, model_path, pooling_method, max_length, use_fp16, device]
+            )
 
         self.encoders = ProcessPoolExecutor(
             max_workers=len(devices),
             initializer=AsyncEncoderPool.set_global_encoder,
-            initargs=(init_queue,)
+            initargs=(init_queue,),
         )
 
-    async def encode(self, query_list: List[str], is_query=True) -> np.ndarray:
+    async def encode(self, query_list: list[str], is_query=True) -> np.ndarray:
         """Async encode text strings.
 
         Args:
@@ -225,12 +241,15 @@ class AsyncEncoderPool:
         Returns:
             Numpy array of embeddings
         """
-        return await loop.run_in_executor(self.encoders, AsyncEncoderPool.global_encode, (query_list, is_query))
+        return await loop.run_in_executor(
+            self.encoders, AsyncEncoderPool.global_encode, (query_list, is_query)
+        )
 
 
 # ============================================================================
 # Retriever Classes
 # ============================================================================
+
 
 class AsyncBaseRetriever:
     """Base class for async retrievers."""
@@ -249,7 +268,7 @@ class AsyncBaseRetriever:
         """Internal search method to be implemented by subclasses"""
         raise NotImplementedError
 
-    async def _abatch_search(self, query_list: List[str], num: int, return_score: bool):
+    async def _abatch_search(self, query_list: list[str], num: int, return_score: bool):
         """Internal batch search method to be implemented by subclasses"""
         raise NotImplementedError
 
@@ -266,7 +285,9 @@ class AsyncBaseRetriever:
         """
         return await self._asearch(query, num, return_score)
 
-    async def abatch_search(self, query_list: List[str], num: int = None, return_score: bool = False):
+    async def abatch_search(
+        self, query_list: list[str], num: int = None, return_score: bool = False
+    ):
         """Async batch search for multiple queries.
 
         Args:
@@ -311,9 +332,9 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
             wait_collection_time += 5
             try:
                 await client.info()
-                print(f"Qdrant loaded and connected successfully")
+                print("Qdrant loaded and connected successfully")
                 break
-            except Exception as e:
+            except Exception:
                 pass  # Continue waiting
         return client
 
@@ -332,17 +353,22 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
             config: Configuration object
         """
         # Connect to Qdrant
-        self.client = await self.wait_qdrant_load(url=config.qdrant_url, connect_timeout=300)
+        self.client = await self.wait_qdrant_load(
+            url=config.qdrant_url, connect_timeout=300
+        )
 
         # Verify collection exists
         self.collection_name = config.qdrant_collection_name
         collections = (await self.client.get_collections()).collections
         collection_names = [col.name for col in collections]
-        assert self.collection_name in collection_names, \
+        assert self.collection_name in collection_names, (
             f"Collection '{self.collection_name}' not found. Available: {collection_names}"
+        )
 
         # Initialize encoder pool with all available GPUs
-        devices = [torch.device(f"cuda:{i}") for i in range(0, torch.cuda.device_count())]
+        devices = [
+            torch.device(f"cuda:{i}") for i in range(0, torch.cuda.device_count())
+        ]
         print(f"Initializing encoder pool with {len(devices)} GPUs: {devices}")
         self.encoder = AsyncEncoderPool(
             model_name=self.retrieval_method,
@@ -402,7 +428,9 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
         # Log timing
         time_elapse_search = time_search - time_embed
         time_elapse_embed = time_embed - time_start
-        print(f"Search timing - embed: {time_elapse_embed:.3f}s, search: {time_elapse_search:.3f}s")
+        print(
+            f"Search timing - embed: {time_elapse_embed:.3f}s, search: {time_elapse_search:.3f}s"
+        )
 
         # Handle empty results
         if len(search_results) < 1:
@@ -419,7 +447,9 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
         else:
             return payloads
 
-    async def _abatch_search(self, query_list: List[str], num: int = None, return_score: bool = False):
+    async def _abatch_search(
+        self, query_list: list[str], num: int = None, return_score: bool = False
+    ):
         if return_score:
             all_payloads, all_scores = [], []
             for query in query_list:
@@ -452,6 +482,7 @@ async def get_retriever(config):
 # ============================================================================
 # Page Access Utility
 # ============================================================================
+
 
 class PageAccess:
     """Page content accessor.
@@ -489,16 +520,18 @@ class PageAccess:
             return None
         return self.pages[url]
 
+
 # ============================================================================
 # FastAPI Server Configuration and Endpoints
 # ============================================================================
+
 
 class Config:
     """Configuration class containing all server parameters."""
 
     def __init__(
-        self, 
-        retrieval_method: str = "bm25", 
+        self,
+        retrieval_method: str = "bm25",
         retrieval_topk: int = 10,
         dataset_path: str = "./data",
         data_split: str = "train",
@@ -524,24 +557,28 @@ class Config:
         self.retrieval_query_max_length = retrieval_query_max_length
         self.retrieval_use_fp16 = retrieval_use_fp16
 
+
 class QueryRequest(BaseModel):
     """Query request model for /retrieve endpoint."""
-    queries: List[str]  # List of query strings
+
+    queries: list[str]  # List of query strings
     topk: Optional[int] = None  # Number of results per query
     return_scores: bool = False  # Whether to return similarity scores
 
 
 class AccessRequest(BaseModel):
     """Access request model for /access endpoint."""
-    urls: List[str]  # List of page URLs to access
+
+    urls: list[str]  # List of page URLs to access
 
 
 # Initialize FastAPI app
 app = FastAPI(
     title="Qdrant Retrieval Server",
     description="REST API for document retrieval and page access",
-    version="1.0.0"
+    version="1.0.0",
 )
+
 
 @app.post("/retrieve")
 async def retrieve_endpoint(request: QueryRequest):
@@ -557,13 +594,13 @@ async def retrieve_endpoint(request: QueryRequest):
         results, scores = await retriever.abatch_search(
             query_list=request.queries,
             num=request.topk,
-            return_score=request.return_scores
+            return_score=request.return_scores,
         )
     else:
         results = await retriever.abatch_search(
             query_list=request.queries,
             num=request.topk,
-            return_score=request.return_scores
+            return_score=request.return_scores,
         )
 
     # Format response
@@ -579,8 +616,11 @@ async def retrieve_endpoint(request: QueryRequest):
             resp.append(single_result)
 
     time_elapse = time.time() - time_start
-    print(f"Retrieve request: {len(request.queries)} queries, topk={request.topk}, time={time_elapse:.3f}s")
+    print(
+        f"Retrieve request: {len(request.queries)} queries, topk={request.topk}, time={time_elapse:.3f}s"
+    )
     return {"result": resp}
+
 
 @app.post("/access")
 async def access_endpoint(request: AccessRequest):
@@ -618,68 +658,65 @@ Example usage:
 API Endpoints:
     POST /retrieve - Search for relevant documents
     POST /access - Retrieve full page content by URL
-        """
+        """,
     )
 
     parser.add_argument(
         "--pages_path",
         type=str,
         required=True,
-        help="Path to pages JSONL file for /access endpoint"
+        help="Path to pages JSONL file for /access endpoint",
     )
     parser.add_argument(
         "--topk",
         type=int,
         default=3,
-        help="Default number of results to return per query"
+        help="Default number of results to return per query",
     )
     parser.add_argument(
         "--retriever_name",
         type=str,
         default="e5",
-        help="Name of the retriever model (e.g., e5, bge, dpr)"
+        help="Name of the retriever model (e.g., e5, bge, dpr)",
     )
     parser.add_argument(
         "--retriever_model",
         type=str,
         required=True,
-        help="Path to the retriever model checkpoint"
+        help="Path to the retriever model checkpoint",
     )
     parser.add_argument(
         "--qdrant_url",
         type=str,
         default="http://localhost:6333",
-        help="Qdrant server URL"
+        help="Qdrant server URL",
     )
     parser.add_argument(
         "--qdrant_collection_name",
         type=str,
         required=True,
-        help="Name of the Qdrant collection to use"
+        help="Name of the Qdrant collection to use",
     )
     parser.add_argument(
         "--qdrant_search_param",
         type=str,
         default='{"hnsw_ef":128}',
-        help='HNSW search parameters as JSON string (e.g., \'{"hnsw_ef":256}\')'
+        help="HNSW search parameters as JSON string (e.g., '{\"hnsw_ef\":256}')",
     )
     parser.add_argument(
         "--qdrant_search_quant_param",
         type=str,
         default=None,
-        help="Quantization search parameters as JSON string (optional)"
+        help="Quantization search parameters as JSON string (optional)",
     )
     parser.add_argument(
-        "--port",
-        type=int,
-        default=8000,
-        help="Port to run the server on"
+        "--port", type=int, default=8000, help="Port to run the server on"
     )
     parser.add_argument(
         "--save-address-to",
         type=str,
         default=None,
-        help="Directory to save server address file (optional)"
+        help="Directory to save server address file (optional)",
     )
 
     args = parser.parse_args()
@@ -708,8 +745,7 @@ API Endpoints:
     if args.save_address_to:
         os.makedirs(args.save_address_to, exist_ok=True)
         address_file = os.path.join(
-            args.save_address_to,
-            f"Host{host_ip}_Port{port}.txt"
+            args.save_address_to, f"Host{host_ip}_Port{port}.txt"
         )
         with open(address_file, "w") as f:
             f.write(host_addr)
@@ -735,7 +771,7 @@ API Endpoints:
 
     # Run test query to verify retriever is working
     async def test():
-        query = 'What is the capital of France?'
+        query = "What is the capital of France?"
         result = await retriever.asearch(query, 1, return_score=False)
         print(f"Test query: {query}")
         print(f"Test result: {result}")

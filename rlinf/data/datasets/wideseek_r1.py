@@ -15,7 +15,7 @@
 import json
 import logging
 import os
-from typing import Any, List, Tuple, Union
+from typing import Any, Union
 
 import torch
 from omegaconf import DictConfig
@@ -25,10 +25,11 @@ from transformers import AutoTokenizer
 from rlinf.data.datasets.item import DatasetItem
 from rlinf.data.utils import batch_pad_to_fixed_len
 
+
 class WideSeekR1_Dataset(Dataset):
     def __init__(
         self,
-        data_paths: Union[str, List[str]],
+        data_paths: Union[str, list[str]],
         config: DictConfig,
         tokenizer: AutoTokenizer,
     ):
@@ -50,22 +51,22 @@ class WideSeekR1_Dataset(Dataset):
         # self.data_fileter_id = [0]
         data_size = config.data.data_size
 
-        self.data = self._load_data()    
+        self.data = self._load_data()
         if config.data.get("filter_prompt_by_length", False):
             total = len(self.data)
             filtered = []
             failed = 0
             if data_size is None or data_size < 0:
-                data_size = len(self.data)                    
+                data_size = len(self.data)
             for item in self.data[:data_size]:
                 try:
                     prompt = item[self.prompt_key]
                     _, L = self.encode(prompt)
                     if L <= self.max_prompt_length:
                         filtered.append(item)
-                    # breakpoint()    
+                    # breakpoint()
                 except Exception:
-                    failed += 1                             
+                    failed += 1
 
             self.data = filtered
             assert len(self.data) > 0, (
@@ -77,10 +78,9 @@ class WideSeekR1_Dataset(Dataset):
                 logging.warning(
                     f"{failed} samples were skipped due to format issues "
                     f"(kept {len(self.data)} / {total})."
-                )     
+                )
 
-
-    def _load_data(self) -> List[Any]:
+    def _load_data(self) -> list[Any]:
         """
         Load and merge data from multiple files(json or jsonl).
         """
@@ -109,7 +109,7 @@ class WideSeekR1_Dataset(Dataset):
     def __len__(self):
         return len(self.data)
 
-    def encode(self, text: str) -> Tuple[List[int], int]:
+    def encode(self, text: str) -> tuple[list[int], int]:
         """
         Use tokenizer to encode the text and return the token ids and length.
         """
@@ -120,11 +120,11 @@ class WideSeekR1_Dataset(Dataset):
         """
         Return a single prompt.
         """
-        language = 'en'
+        language = "en"
         if self.enable_zh:
-            instance_id = self.data[idx].get('instance_id', '')
-            if 'zh' in str(instance_id) or self.data[idx].get('language', 'en') == 'zh':
-                language = 'zh'
+            instance_id = self.data[idx].get("instance_id", "")
+            if "zh" in str(instance_id) or self.data[idx].get("language", "en") == "zh":
+                language = "zh"
         if not self.is_hybrid:
             prompt = self.data[idx][self.prompt_key]
             answer = self.data[idx][self.answer_key]
@@ -135,7 +135,7 @@ class WideSeekR1_Dataset(Dataset):
                     "answer": answer,
                     "unique_columns": self.data[idx].get(self.unique_columns_key, []),
                     "is_markdown": self.is_markdown,
-                    "instance_id": self.data[idx].get('instance_id', idx),
+                    "instance_id": self.data[idx].get("instance_id", idx),
                     "language": language,
                 }
                 # Try to get evaluation info if available
@@ -153,10 +153,10 @@ class WideSeekR1_Dataset(Dataset):
                 answer_dict = {
                     "answer": answer if isinstance(answer, list) else [answer],
                     "is_markdown": self.is_markdown,
-                    "instance_id": self.data[idx].get('instance_id', idx),
+                    "instance_id": self.data[idx].get("instance_id", idx),
                     "language": language,
-                }   
-                answer = answer_dict                           
+                }
+                answer = answer_dict
         else:
             prompt = self.data[idx][self.prompt_key]
             answer = self.data[idx][self.answer_key]
@@ -168,7 +168,7 @@ class WideSeekR1_Dataset(Dataset):
                     "answer": answer,
                     "unique_columns": self.data[idx].get(self.unique_columns_key, []),
                     "is_markdown": is_markdown,
-                    "instance_id": self.data[idx].get('instance_id', idx),
+                    "instance_id": self.data[idx].get("instance_id", idx),
                     "language": language,
                 }
                 # Try to get evaluation info if available
@@ -186,11 +186,10 @@ class WideSeekR1_Dataset(Dataset):
                 answer_dict = {
                     "answer": answer if isinstance(answer, list) else [answer],
                     "is_markdown": is_markdown,
-                    "instance_id": self.data[idx].get('instance_id', idx),
+                    "instance_id": self.data[idx].get("instance_id", idx),
                     "language": language,
-                }   
-                answer = answer_dict       
-
+                }
+                answer = answer_dict
 
         prompt_tokens, prompt_length = self.encode(prompt)
         prompt_tokens_tensor = torch.as_tensor(prompt_tokens, dtype=torch.int64)

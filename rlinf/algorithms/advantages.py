@@ -132,7 +132,7 @@ def compute_grpo_dynamic_advantages(
 ):
     num_sequence = len(idx_to_traj)
 
-    rewards_flat = rewards.squeeze(-1)  
+    rewards_flat = rewards.squeeze(-1)
 
     assert rewards_flat.numel() == num_sequence, (
         f"Rewards size mismatch: {rewards_flat.numel()} != {num_sequence}"
@@ -144,11 +144,17 @@ def compute_grpo_dynamic_advantages(
         f"num_trajectories {num_trajectories} not divisible by group_size {group_size}"
     )
 
-    turn_advantages = torch.zeros(num_sequence, dtype=rewards.dtype, device=rewards.device)
+    turn_advantages = torch.zeros(
+        num_sequence, dtype=rewards.dtype, device=rewards.device
+    )
 
     if advantage_mode == "trajectory":
-        trajectory_rewards = torch.zeros(num_trajectories, dtype=rewards.dtype, device=rewards.device)
-        trajectory_counts = torch.zeros(num_trajectories, dtype=torch.long, device=rewards.device)
+        trajectory_rewards = torch.zeros(
+            num_trajectories, dtype=rewards.dtype, device=rewards.device
+        )
+        trajectory_counts = torch.zeros(
+            num_trajectories, dtype=torch.long, device=rewards.device
+        )
 
         for turn_idx, traj_idx in enumerate(idx_to_traj):
             trajectory_rewards[traj_idx] += rewards_flat[turn_idx]
@@ -161,13 +167,17 @@ def compute_grpo_dynamic_advantages(
         trajectory_rewards_grouped = trajectory_rewards.view(num_questions, group_size)
 
         # Step 3: Compute per-question mean and std
-        per_question_mean = trajectory_rewards_grouped.mean(dim=-1, keepdim=True)  # [num_questions, 1]
-        per_question_std = trajectory_rewards_grouped.std(dim=-1, keepdim=True)    # [num_questions, 1]
+        per_question_mean = trajectory_rewards_grouped.mean(
+            dim=-1, keepdim=True
+        )  # [num_questions, 1]
+        per_question_std = trajectory_rewards_grouped.std(
+            dim=-1, keepdim=True
+        )  # [num_questions, 1]
 
         # Step 4: Normalize per question
         normalized_trajectory_rewards = (
-            (trajectory_rewards_grouped - per_question_mean) / (per_question_std + 1e-6)
-        )  # [num_questions, group_size]
+            trajectory_rewards_grouped - per_question_mean
+        ) / (per_question_std + 1e-6)  # [num_questions, group_size]
 
         # Step 5: Flatten back to [num_trajectories]
         normalized_trajectory_rewards = normalized_trajectory_rewards.view(-1)
@@ -180,24 +190,30 @@ def compute_grpo_dynamic_advantages(
         turn_to_question = torch.tensor(
             [idx_to_traj[i] // group_size for i in range(num_sequence)],
             dtype=torch.long,
-            device=rewards.device
+            device=rewards.device,
         )
 
         for question_idx in range(num_questions):
-            question_mask = (turn_to_question == question_idx)
+            question_mask = turn_to_question == question_idx
             question_turn_rewards = rewards_flat[question_mask]
 
             question_mean = question_turn_rewards.mean()
             question_std = question_turn_rewards.std()
 
-            normalized_question_rewards = (question_turn_rewards - question_mean) / (question_std + 1e-6)
+            normalized_question_rewards = (question_turn_rewards - question_mean) / (
+                question_std + 1e-6
+            )
 
             turn_advantages[question_mask] = normalized_question_rewards
 
     else:
-        raise ValueError(f"Invalid advantage_mode: {advantage_mode}. Must be 'trajectory' or 'turn'")
+        raise ValueError(
+            f"Invalid advantage_mode: {advantage_mode}. Must be 'trajectory' or 'turn'"
+        )
 
-    advantages = torch.zeros_like(loss_mask, dtype=rewards.dtype) + turn_advantages.view(1, -1)
+    advantages = torch.zeros_like(
+        loss_mask, dtype=rewards.dtype
+    ) + turn_advantages.view(1, -1)
     advantages = advantages * loss_mask
 
     return advantages, None

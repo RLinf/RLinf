@@ -16,35 +16,38 @@ import asyncio
 import copy
 import json
 import re
-import os
+import traceback
 
+import numpy as np
+import pandas as pd
 from omegaconf import DictConfig
 
 from rlinf.agents.wideseek_r1.sglang_client import SGLangClient
+from rlinf.agents.wideseek_r1.utils.reward import (
+    compute_score_em,
+    compute_score_f1,
+    extract_final_answer,
+)
+from rlinf.agents.wideseek_r1.utils.tool_description import (
+    tools_description_en,
+    tools_description_zh,
+)
+from rlinf.agents.wideseek_r1.utils.utils import (
+    get_access_summary_messages,
+    get_prompt_planner,
+    get_prompt_single_agent,
+    get_prompt_worker,
+)
 from rlinf.data.tool_call.tool_io_struct import (
     ToolRequest,
     ToolResponse,
 )
-from rlinf.scheduler import Channel
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.agent.agent_loop import (
-    MultiTurnAgentLoopWorker,
     AgentLoopOutput,
     MultiTurnAgentLoopOutput,
+    MultiTurnAgentLoopWorker,
 )
-from rlinf.agents.wideseek_r1.utils.utils import get_prompt_planner, get_prompt_worker, get_prompt_single_agent
-from rlinf.agents.wideseek_r1.utils.tool_description import tools_description_en, tools_description_zh
-from rlinf.agents.wideseek_r1.utils.utils import (
-    get_access_summary_messages,
-)
-from rlinf.agents.wideseek_r1.utils.reward import extract_final_answer
-from rlinf.agents.wideseek_r1.utils.reward import compute_score_em, compute_score_f1, extract_final_answer
-
-import json
-import pandas as pd
-import traceback
-import re
-import numpy as np
 
 
 class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
@@ -56,10 +59,10 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         super().__init__(cfg, placement)
         self.max_prompt_len = int(self.cfg.data.max_prompt_length)
         self.max_total_len = int(self.cfg.actor.model.encoder_seq_length)
-         
+
         self.use_access_summary = self.cfg.tools.get("use_access_summary", False)
 
-        self.use_fixed_rollout = cfg.rollout.get('use_fixed_worker', False)
+        self.use_fixed_rollout = cfg.rollout.get("use_fixed_worker", False)
         self.fixed_role = self.cfg.agentloop.get("fixed_role", None)
         if self.use_fixed_rollout:
             assert self.fixed_role
@@ -77,13 +80,14 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         if self.use_llm_judge_api:
             llm_ip = self.cfg.agentloop.get("llm_ip", "")
             llm_port = self.cfg.agentloop.get("llm_port", "")
-            llm_type = self.cfg.agentloop.get("llm_type", "")            
+            llm_type = self.cfg.agentloop.get("llm_type", "")
             self.sgl_client = SGLangClient(llm_ip, llm_port, llm_type)
 
         self.train_roles = self.cfg.agentloop.get("train_roles", None)
 
-
-    async def extract_tool_calls(self, response_text: str, role: str) -> tuple[str, list[ToolRequest]]:
+    async def extract_tool_calls(
+        self, response_text: str, role: str
+    ) -> tuple[str, list[ToolRequest]]:
         """Extract tool calls from response based on role using Qwen's JSON format.
 
         Args:
@@ -107,7 +111,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         access_count = 0
 
         if tool_call_match:
-            tool_call_str = tool_call_match[0] 
+            tool_call_str = tool_call_match[0]
             try:
                 # Parse JSON from tool call
                 tool_call_json = json.loads(tool_call_str.strip())
@@ -127,7 +131,9 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                             if not prompt:
                                 continue
                             function_calls.append(
-                                ToolRequest(name='subtask', arguments={"subtask": prompt})
+                                ToolRequest(
+                                    name="subtask", arguments={"subtask": prompt}
+                                )
                             )
                             subtask_count += 1
                 elif role == "worker":
@@ -145,11 +151,16 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                             topk = search_item.get("count", None)
                             if topk:
                                 function_calls.append(
-                                    ToolRequest(name='search', arguments={"query": query, "topk": topk})
+                                    ToolRequest(
+                                        name="search",
+                                        arguments={"query": query, "topk": topk},
+                                    )
                                 )
                             else:
                                 function_calls.append(
-                                    ToolRequest(name='search', arguments={"query": query})
+                                    ToolRequest(
+                                        name="search", arguments={"query": query}
+                                    )
                                 )
                             search_count += 1
 
@@ -165,7 +176,14 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                             if not url:
                                 continue
                             function_calls.append(
-                                ToolRequest(name='access', arguments={"url": url, "access_token": 25000, "info_to_extract": info_to_extract})
+                                ToolRequest(
+                                    name="access",
+                                    arguments={
+                                        "url": url,
+                                        "access_token": 25000,
+                                        "info_to_extract": info_to_extract,
+                                    },
+                                )
                             )
                             access_count += 1
                 elif role == "single":
@@ -175,31 +193,47 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                             topk = tool_arguments.get("count", None)
                             if topk:
                                 function_calls.append(
-                                    ToolRequest(name='search', arguments={"query": query, "topk": topk})
+                                    ToolRequest(
+                                        name="search",
+                                        arguments={"query": query, "topk": topk},
+                                    )
                                 )
                             else:
                                 function_calls.append(
-                                    ToolRequest(name='search', arguments={"query": query})
+                                    ToolRequest(
+                                        name="search", arguments={"query": query}
+                                    )
                                 )
                             search_count = 1
 
                     elif tool_name == "access":
                         url = tool_arguments.get("url", "")
                         if url:
-                            info_to_extract = tool_arguments.get("info_to_extract", None)
+                            info_to_extract = tool_arguments.get(
+                                "info_to_extract", None
+                            )
                             function_calls.append(
                                 ToolRequest(
                                     name="access",
-                                    arguments={"url": url, "access_token": 25000, "info_to_extract": info_to_extract},
+                                    arguments={
+                                        "url": url,
+                                        "access_token": 25000,
+                                        "info_to_extract": info_to_extract,
+                                    },
                                 )
                             )
                             access_count = 1
-            except Exception as e:
+            except Exception:
                 pass
 
-        tool_call_info={"subtask": subtask_count, "search": search_count, "access": access_count, "role": role}
+        tool_call_info = {
+            "subtask": subtask_count,
+            "search": search_count,
+            "access": access_count,
+            "role": role,
+        }
         if function_calls == []:
-            tool_call_info = None  
+            tool_call_info = None
         return function_calls, tool_call_info
 
     async def access_sumamry(self, info_to_extract, page_content):
@@ -207,23 +241,39 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         # can't see origin question
         if page_content == "No More Information is Found for this URL.":
             return "No useful Information is Found under this URL."
-        
+
         messages = get_access_summary_messages(info_to_extract, page_content)
         if self.use_llm_judge_api:
-            result_text = await self.sgl_client.call_sglang_api(messages)                  
+            result_text = await self.sgl_client.call_sglang_api(messages)
         else:
-            result_text = page_content # TODO: for quick start?
+            result_text = page_content  # TODO: for quick start?
         return result_text
-    
-    async def worker_call(self, worker_request: ToolRequest, main_task: str, is_markdown: bool, language: str) -> tuple[list[AgentLoopOutput], str]:
-        assert worker_request.name == 'subtask', f"Expected 'subtask' tool, got {worker_request.name}"
-        assert 'subtask' in worker_request.arguments, f"Missing 'subtask' in arguments: {worker_request.arguments}"
+
+    async def worker_call(
+        self,
+        worker_request: ToolRequest,
+        main_task: str,
+        is_markdown: bool,
+        language: str,
+    ) -> tuple[list[AgentLoopOutput], str]:
+        assert worker_request.name == "subtask", (
+            f"Expected 'subtask' tool, got {worker_request.name}"
+        )
+        assert "subtask" in worker_request.arguments, (
+            f"Missing 'subtask' in arguments: {worker_request.arguments}"
+        )
 
         subtask = worker_request.arguments["subtask"]
 
-        worker_outputs_buffer, answer_text, total_turn_list, task_failed, _ = await self.run_one_query_role(
+        (
+            worker_outputs_buffer,
+            answer_text,
+            total_turn_list,
+            task_failed,
+            _,
+        ) = await self.run_one_query_role(
             question=subtask,
-            role='worker',
+            role="worker",
             main_task=main_task,
             is_markdown=is_markdown,
             language=language,
@@ -236,51 +286,66 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         role: str,
         main_task: str = None,
         is_markdown: bool = False,
-        language: str = 'en'
+        language: str = "en",
     ) -> tuple[list[AgentLoopOutput], str]:
         origin_question = question
         output_buffer = []
         total_turn_list = []
-        
-        tools_description = tools_description_zh if language == 'zh' else tools_description_en
+
+        tools_description = (
+            tools_description_zh if language == "zh" else tools_description_en
+        )
         # Build message history with appropriate prompts
-        if role == 'planner':
-            message_history = get_prompt_planner(origin_question, is_markdown=is_markdown, language=language)
+        if role == "planner":
+            message_history = get_prompt_planner(
+                origin_question, is_markdown=is_markdown, language=language
+            )
             # Planner uses subtask tool
             tools = [tools_description["create_sub_agents"]]
-        elif role == 'worker':
+        elif role == "worker":
             assert main_task is not None, "Worker must have main_task provided"
-            message_history = get_prompt_worker(main_task, origin_question, language=language)
+            message_history = get_prompt_worker(
+                main_task, origin_question, language=language
+            )
             tools = [tools_description["search"], tools_description["access"]]
-        elif role == 'single':
-            message_history = get_prompt_single_agent(origin_question, is_markdown=is_markdown, language=language)
-            tools = [tools_description["search_single_agent"], tools_description["access_single_agent"]]                                                  
+        elif role == "single":
+            message_history = get_prompt_single_agent(
+                origin_question, is_markdown=is_markdown, language=language
+            )
+            tools = [
+                tools_description["search_single_agent"],
+                tools_description["access_single_agent"],
+            ]
         else:
             raise ValueError(f"Invalid role: {role}")
-      
-        if role == 'planner':
+
+        if role == "planner":
             max_turns = self.cfg.agentloop.get("max_planner_turns", 10)
-        elif role == 'single':
+        elif role == "single":
             max_turns = self.cfg.agentloop.get("max_sa_turns", 50)
-        elif role == 'worker':
-            max_turns = self.cfg.agentloop.get("max_worker_turns", 20)        
+        elif role == "worker":
+            max_turns = self.cfg.agentloop.get("max_worker_turns", 20)
         else:
-            raise ValueError(f"illegal role {role}") 
-        
-        turn_hint = f"\n\nThis is your first turn to answer the question. You must finish your answer within {max_turns} turns" if language == 'en' else f"\n\n这是你回答该问题的第一轮。你必须在 {max_turns} 轮之内完成你的回答"
-        assert message_history[-1]['role'] == 'user'
-        message_history[-1]['content'] = message_history[-1]['content'] + turn_hint
+            raise ValueError(f"illegal role {role}")
+
+        turn_hint = (
+            f"\n\nThis is your first turn to answer the question. You must finish your answer within {max_turns} turns"
+            if language == "en"
+            else f"\n\n这是你回答该问题的第一轮。你必须在 {max_turns} 轮之内完成你的回答"
+        )
+        assert message_history[-1]["role"] == "user"
+        message_history[-1]["content"] = message_history[-1]["content"] + turn_hint
 
         prompt_ids = self.tokenizer.apply_chat_template(
             message_history, tokenize=True, add_generation_prompt=True, tools=tools
-        )                        
-        prompt_ids = prompt_ids[:self.max_total_len] 
+        )
+        prompt_ids = prompt_ids[: self.max_total_len]
 
         # Initialize tracking variables
         context_failed = False
         max_turn_limit_failed = False
         tool_response_failed = False
-        
+
         succ_end = False
 
         for turn_idx in range(max_turns):
@@ -288,16 +353,19 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
             if max_resp_len <= 0:
                 context_failed = True
                 break
-                
+
             if role == self.fixed_role and self.use_fixed_rollout:
                 generate_result = await self.generate(
-                    prompt_ids, sampling_params={"max_new_tokens": max_resp_len}, rollout_name="subworker",
+                    prompt_ids,
+                    sampling_params={"max_new_tokens": max_resp_len},
+                    rollout_name="subworker",
                 )
                 generate_result["logprobs"] = [0.0] * len(generate_result["output_ids"])
             else:
                 generate_result = await self.generate(
-                    prompt_ids, sampling_params={"max_new_tokens": max_resp_len},
-                )   
+                    prompt_ids,
+                    sampling_params={"max_new_tokens": max_resp_len},
+                )
 
             response_ids = generate_result["output_ids"]
             if len(response_ids) > max_resp_len:
@@ -305,26 +373,32 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
 
             response_text = self.tokenizer.decode(response_ids)
 
-            tool_requests, tool_call_info = await self.extract_tool_calls(response_text, role=role)
+            tool_requests, tool_call_info = await self.extract_tool_calls(
+                response_text, role=role
+            )
 
             # Store output
             assert generate_result["logprobs"] is not None
-            output_buffer.append(AgentLoopOutput(
-                prompt_ids=copy.deepcopy(prompt_ids),
-                response_ids=copy.deepcopy(response_ids),
-                prompt_text=copy.deepcopy(self.tokenizer.decode(prompt_ids)),
-                response_text=response_text,
-                is_end=generate_result["finish_reason"] == "length",
-                response_logprobs=generate_result["logprobs"],
-                extra_fields=dict(role=role),
-                tool_call_info=tool_call_info if tool_call_info else None # if passed, must have tool call
-            ))
+            output_buffer.append(
+                AgentLoopOutput(
+                    prompt_ids=copy.deepcopy(prompt_ids),
+                    response_ids=copy.deepcopy(response_ids),
+                    prompt_text=copy.deepcopy(self.tokenizer.decode(prompt_ids)),
+                    response_text=response_text,
+                    is_end=generate_result["finish_reason"] == "length",
+                    response_logprobs=generate_result["logprobs"],
+                    extra_fields=dict(role=role),
+                    tool_call_info=tool_call_info
+                    if tool_call_info
+                    else None,  # if passed, must have tool call
+                )
+            )
 
-            prompt_ids += response_ids            
+            prompt_ids += response_ids
 
             if len(response_ids) == max_resp_len:
                 context_failed = True
-                break            
+                break
 
             # Extract tool calls
             if tool_requests == []:
@@ -338,66 +412,118 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
             worker_turn_list = []
             if role == "planner":
                 for tool_request in tool_requests:
-                    tasks.append(self.worker_call(tool_request, origin_question, is_markdown, language))
+                    tasks.append(
+                        self.worker_call(
+                            tool_request, origin_question, is_markdown, language
+                        )
+                    )
                 worker_results = await asyncio.gather(*tasks)
 
                 tool_messages_text = []
-                for idx, (worker_outputs_buffer, worker_summary, total_turn_list_worker, task_failed) in enumerate(worker_results): 
-                    worker_buffer.extend(worker_outputs_buffer) 
+                for idx, (
+                    worker_outputs_buffer,
+                    worker_summary,
+                    total_turn_list_worker,
+                    task_failed,
+                ) in enumerate(worker_results):
+                    worker_buffer.extend(worker_outputs_buffer)
                     worker_turn_list.extend(total_turn_list_worker)
                     # assert len(worker_outputs_buffer) == sum(total_turn_list_worker) and len(total_turn_list_worker) >=1
                     # Format tool response with both request and result
-                    subtask_text = tool_requests[idx].arguments["subtask"] 
-                    if not task_failed:                         
-                        tool_messages_text.append(f"# Subtask {idx + 1}:\n{subtask_text}\n# Result:\n{worker_summary}" if language == 'en' else f"# 子任务 {idx + 1}:\n{subtask_text}\n# 结果:\n{worker_summary}")
+                    subtask_text = tool_requests[idx].arguments["subtask"]
+                    if not task_failed:
+                        tool_messages_text.append(
+                            f"# Subtask {idx + 1}:\n{subtask_text}\n# Result:\n{worker_summary}"
+                            if language == "en"
+                            else f"# 子任务 {idx + 1}:\n{subtask_text}\n# 结果:\n{worker_summary}"
+                        )
                     else:
-                        tool_messages_text.append(f"# Subtask {idx + 1}:\n{subtask_text}\n# Result:\nThe current subagent exceeded its context window limit while executing this subtask, which caused the failure. Please retry." 
-                                                  if language == 'en' else f"# 子任务 {idx + 1}:\n{subtask_text}\n# 结果:\n当前子智能体在执行该子任务时超出其上下文窗口限制，导致失败。请重试。")
+                        tool_messages_text.append(
+                            f"# Subtask {idx + 1}:\n{subtask_text}\n# Result:\nThe current subagent exceeded its context window limit while executing this subtask, which caused the failure. Please retry."
+                            if language == "en"
+                            else f"# 子任务 {idx + 1}:\n{subtask_text}\n# 结果:\n当前子智能体在执行该子任务时超出其上下文窗口限制，导致失败。请重试。"
+                        )
 
-                turn_hint = f"\n\nYour next answer will be on turn {turn_idx + 2}. You MUST finish the entire answer by turn {max_turns}." if language == 'en' else f"\n\n你的下一次回答将是第 {turn_idx + 2} 轮。你必须在第 {max_turns} 轮之内完成整个回答。"
-                tool_messages.append({"role": "tool", "content": "\n\n".join(tool_messages_text) + turn_hint})
+                turn_hint = (
+                    f"\n\nYour next answer will be on turn {turn_idx + 2}. You MUST finish the entire answer by turn {max_turns}."
+                    if language == "en"
+                    else f"\n\n你的下一次回答将是第 {turn_idx + 2} 轮。你必须在第 {max_turns} 轮之内完成整个回答。"
+                )
+                tool_messages.append(
+                    {
+                        "role": "tool",
+                        "content": "\n\n".join(tool_messages_text) + turn_hint,
+                    }
+                )
 
             else:
                 for tool_request in tool_requests:
                     tasks.append(self.tool_call(tool_request))
                 tool_responses: list[ToolResponse] = await asyncio.gather(*tasks)
-                
+
                 tool_messages_text = []
                 access_summary_jobs = []
-                for idx, (tool_request, tool_response) in enumerate(zip(tool_requests, tool_responses)):
+                for idx, (tool_request, tool_response) in enumerate(
+                    zip(tool_requests, tool_responses)
+                ):
                     # Include the original request and the result
-                    if tool_request.name == 'search':
+                    if tool_request.name == "search":
                         query = tool_request.arguments["query"]
-                        tool_messages_text.append(f"# Search query:\n{query}\n# Result:\n{tool_response.text}" if language == 'en' else f"# 搜索查询:\n{query}\n# 结果:\n{tool_response.text}")
-                    elif tool_request.name == 'access':
+                        tool_messages_text.append(
+                            f"# Search query:\n{query}\n# Result:\n{tool_response.text}"
+                            if language == "en"
+                            else f"# 搜索查询:\n{query}\n# 结果:\n{tool_response.text}"
+                        )
+                    elif tool_request.name == "access":
                         url = tool_request.arguments["url"]
                         info_to_extract = tool_request.arguments["info_to_extract"]
                         page_content = tool_response.text
                         if self.use_access_summary:
                             tool_messages_text.append(None)
                             coro = self.access_sumamry(info_to_extract, page_content)
-                            access_summary_jobs.append((idx, url, info_to_extract, coro))
+                            access_summary_jobs.append(
+                                (idx, url, info_to_extract, coro)
+                            )
                         else:
-                            tool_messages_text.append(f"# Access URL:\n{url}\n# Result:\n{page_content}" if language == 'en' else f"# 访问URL:\n{url}\n# 结果:\n{page_content}")
+                            tool_messages_text.append(
+                                f"# Access URL:\n{url}\n# Result:\n{page_content}"
+                                if language == "en"
+                                else f"# 访问URL:\n{url}\n# 结果:\n{page_content}"
+                            )
                     else:
-                        raise ValueError(f"Unknown tool request name: {tool_request.name}")
+                        raise ValueError(
+                            f"Unknown tool request name: {tool_request.name}"
+                        )
 
                 if self.use_access_summary and access_summary_jobs:
                     coros = [job[-1] for job in access_summary_jobs]
-                    summaries = await asyncio.gather(*coros)  
-                    for (job, summary) in zip(access_summary_jobs, summaries):
+                    summaries = await asyncio.gather(*coros)
+                    for job, summary in zip(access_summary_jobs, summaries):
                         idx, url, info_to_extract, _ = job
-                        tool_messages_text[idx] = f"# Access URL:\n{url}\n# Info to extract:\n{info_to_extract}\n# Result:\n{summary}" if language == 'en' else f"# 访问URL:\n{url}\n# 需要提取的信息:\n{info_to_extract}\n# 结果:\n{summary}"
-                
-                turn_hint = f"\n\nYour next answer will be on turn {turn_idx + 2}. You MUST finish the entire answer by turn {max_turns}." if language == 'en' else f"\n\n你的下一次回答将是第 {turn_idx + 2} 轮。你必须在第 {max_turns} 轮之内完成整个回答。"
-                tool_messages.append({"role": "tool", "content": "\n\n".join(tool_messages_text) + turn_hint})
+                        tool_messages_text[idx] = (
+                            f"# Access URL:\n{url}\n# Info to extract:\n{info_to_extract}\n# Result:\n{summary}"
+                            if language == "en"
+                            else f"# 访问URL:\n{url}\n# 需要提取的信息:\n{info_to_extract}\n# 结果:\n{summary}"
+                        )
+
+                turn_hint = (
+                    f"\n\nYour next answer will be on turn {turn_idx + 2}. You MUST finish the entire answer by turn {max_turns}."
+                    if language == "en"
+                    else f"\n\n你的下一次回答将是第 {turn_idx + 2} 轮。你必须在第 {max_turns} 轮之内完成整个回答。"
+                )
+                tool_messages.append(
+                    {
+                        "role": "tool",
+                        "content": "\n\n".join(tool_messages_text) + turn_hint,
+                    }
+                )
 
             # Tokenize tool responses
             tool_response_ids = self.get_tool_response_ids(tool_messages)
             max_tool_resp_len = self.max_total_len - len(prompt_ids)
             if len(tool_response_ids) >= max_tool_resp_len:
                 tool_response_failed = True
-                break                      
+                break
 
             prompt_ids += tool_response_ids
             output_buffer.extend(worker_buffer)
@@ -409,45 +535,57 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
 
         if max_turn_limit_failed:
             for turn in output_buffer:
-                if turn.extra_fields['role'] == role:
-                    turn.max_turn_limit_failed = True     
+                if turn.extra_fields["role"] == role:
+                    turn.max_turn_limit_failed = True
 
         if context_failed or tool_response_failed:
             for turn in output_buffer:
-                if turn.extra_fields['role'] == role:
-                    turn.context_failed = True   
+                if turn.extra_fields["role"] == role:
+                    turn.context_failed = True
 
-        if context_failed and len(output_buffer) >= 1 and len(output_buffer[-1].response_ids) >= 8000:
-            output_buffer[-1].turn_repeat_failed = True               
+        if (
+            context_failed
+            and len(output_buffer) >= 1
+            and len(output_buffer[-1].response_ids) >= 8000
+        ):
+            output_buffer[-1].turn_repeat_failed = True
 
         task_failed = max_turn_limit_failed or context_failed or tool_response_failed
         assert task_failed != succ_end
 
         # Generate summary
-        if role == 'planner':
-            answer_text = response_text.split('<|im_end|>')[0]
-        elif role == 'worker':
-            answer_text = response_text.split("</think>")[-1].split('<|im_end|>')[0].strip()
-        elif role == 'single':
-            answer_text = response_text.split('<|im_end|>')[0]     
+        if role == "planner":
+            answer_text = response_text.split("<|im_end|>")[0]
+        elif role == "worker":
+            answer_text = (
+                response_text.split("</think>")[-1].split("<|im_end|>")[0].strip()
+            )
+        elif role == "single":
+            answer_text = response_text.split("<|im_end|>")[0]
 
-        if role == 'worker':
-            total_turn_list.append(turn_idx + 1) # with no summary
+        if role == "worker":
+            total_turn_list.append(turn_idx + 1)  # with no summary
         else:
             total_turn_list.append(turn_idx + 1)
         return output_buffer, answer_text, total_turn_list, task_failed, succ_end
 
     async def run_one_query(self, prompt_ids: list[int], *, answer) -> AgentLoopOutput:
         origin_question = self.tokenizer.decode(prompt_ids)
-        language = answer.get('language', 'en')
+        language = answer.get("language", "en")
         if self.workflow == "sa":
-            role = 'single'
+            role = "single"
         else:
-            role = 'planner'
+            role = "planner"
 
-        is_markdown = answer['is_markdown']
-        
-        output_buffer, answer_text, total_turn_list, task_failed, succ_end = await self.run_one_query_role(
+        is_markdown = answer["is_markdown"]
+
+        (
+            output_buffer,
+            answer_text,
+            total_turn_list,
+            task_failed,
+            succ_end,
+        ) = await self.run_one_query_role(
             question=origin_question,
             role=role,
             is_markdown=is_markdown,
@@ -456,10 +594,10 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
 
         final_answer_text = None
         if is_markdown:
-            final_answer_extract = extract_final_answer(answer_text, mode='markdown')
+            final_answer_extract = extract_final_answer(answer_text, mode="markdown")
         else:
-            final_answer_extract = extract_final_answer(answer_text, mode='boxed')            
-        
+            final_answer_extract = extract_final_answer(answer_text, mode="boxed")
+
         # credit assignment
         reward_score = 0.0
         orm_em_score, eval_metric, format = await self.get_final_reward_score(
@@ -467,19 +605,22 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         )
 
         if self.is_hybrid:
-            eval_metric = {} # FIXME:
+            eval_metric = {}  # FIXME:
         eval_metric.update(
-            {"format_score": {"call_search_reward": 0,
-                              "final_answer_format": 0,
-                              "length_penalty": 0,
-                              "context_failed": 0,
-                              "turn_repeat_failed": 0,
-                              "max_turn_limit_failed": 0,
-
-                              "abs_call_search_reward": 0,
-                              "abs_final_answer_format": 0,
-                              "abs_length_penalty": 0,
-                              "abs_em_f1_score": 0}}
+            {
+                "format_score": {
+                    "call_search_reward": 0,
+                    "final_answer_format": 0,
+                    "length_penalty": 0,
+                    "context_failed": 0,
+                    "turn_repeat_failed": 0,
+                    "max_turn_limit_failed": 0,
+                    "abs_call_search_reward": 0,
+                    "abs_final_answer_format": 0,
+                    "abs_length_penalty": 0,
+                    "abs_em_f1_score": 0,
+                }
+            }
         )
 
         # credit assignment
@@ -487,66 +628,78 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         length_penalty = 0.0
 
         self.format_reward = self.cfg.agentloop.get("format_reward", 0.0)
-        self.call_search_reward = self.cfg.agentloop.get("call_search_reward", 0.0)        
+        self.call_search_reward = self.cfg.agentloop.get("call_search_reward", 0.0)
         self.length_limit = self.cfg.agentloop.get("length_limit", 5000)
         self.max_length_limit = self.cfg.agentloop.get("max_length_limit", 7000)
-        self.length_penalty = self.cfg.agentloop.get("length_penalty", 0.0) 
-        
+        self.length_penalty = self.cfg.agentloop.get("length_penalty", 0.0)
+
         for turn_output in output_buffer:
             tool_call_info = turn_output.tool_call_info
             if tool_call_info is None:
                 continue
-            if tool_call_info.get("access", 0) > 0: 
+            if tool_call_info.get("access", 0) > 0:
                 search_credit = self.call_search_reward
-                eval_metric['format_score']['call_search_reward'] = 1
+                eval_metric["format_score"]["call_search_reward"] = 1
                 break
 
-        max_response_len = max(len(turn_output.response_ids) for turn_output in output_buffer)
+        max_response_len = max(
+            len(turn_output.response_ids) for turn_output in output_buffer
+        )
         if max_response_len > self.length_limit:
-            t = (max_response_len - self.length_limit) / (self.max_length_limit - self.length_limit)
-            t = max(0.0, min(1.0, t)) 
+            t = (max_response_len - self.length_limit) / (
+                self.max_length_limit - self.length_limit
+            )
+            t = max(0.0, min(1.0, t))
             length_penalty = t * (self.length_penalty)
             # reward_score -= penalty
-            eval_metric['format_score']['length_penalty'] = t
-        
+            eval_metric["format_score"]["length_penalty"] = t
+
         one_turn_failed = False
 
         for turn in output_buffer:
             if turn.max_turn_limit_failed == True:
-                eval_metric['format_score']['max_turn_limit_failed'] = 1
+                eval_metric["format_score"]["max_turn_limit_failed"] = 1
             if turn.turn_repeat_failed == True:
-                eval_metric['format_score']['turn_repeat_failed'] = 1      
+                eval_metric["format_score"]["turn_repeat_failed"] = 1
             if turn.context_failed == True:
-                eval_metric['format_score']['context_failed'] = 1    
+                eval_metric["format_score"]["context_failed"] = 1
 
             if turn.turn_repeat_failed:
                 one_turn_failed = True
 
         train_buffer = []
         if final_answer_extract is not None and format == True:
-            flag = False    
+            flag = False
             for turn in output_buffer:
-                if (turn.context_failed or turn.max_turn_limit_failed) and turn.extra_fields['role'] != 'worker':
+                if (
+                    turn.context_failed or turn.max_turn_limit_failed
+                ) and turn.extra_fields["role"] != "worker":
                     # main agent or sa failed but extract good format
                     flag = True
-                    
+
             if not flag:
                 for turn in output_buffer:
                     if not (turn.context_failed or turn.max_turn_limit_failed):
-                        train_buffer.append(turn) 
+                        train_buffer.append(turn)
 
-                reward_score = orm_em_score + self.format_reward + search_credit - length_penalty
-                
-                eval_metric['format_score']['abs_final_answer_format'] = self.format_reward
-                eval_metric['format_score']['abs_em_f1_score'] = orm_em_score
-                eval_metric['format_score']['abs_call_search_reward'] = search_credit
-                eval_metric['format_score']['abs_length_penalty'] = -length_penalty            
-                eval_metric['format_score']['final_answer_format'] = 1  
+                reward_score = (
+                    orm_em_score + self.format_reward + search_credit - length_penalty
+                )
+
+                eval_metric["format_score"]["abs_final_answer_format"] = (
+                    self.format_reward
+                )
+                eval_metric["format_score"]["abs_em_f1_score"] = orm_em_score
+                eval_metric["format_score"]["abs_call_search_reward"] = search_credit
+                eval_metric["format_score"]["abs_length_penalty"] = -length_penalty
+                eval_metric["format_score"]["final_answer_format"] = 1
             else:
                 for turn in output_buffer:
-                    if (turn.context_failed or turn.max_turn_limit_failed) and turn.extra_fields['role'] != 'worker':
+                    if (
+                        turn.context_failed or turn.max_turn_limit_failed
+                    ) and turn.extra_fields["role"] != "worker":
                         train_buffer.append(turn)
-                
+
                 reward_score = 0.0
 
         else:
@@ -563,13 +716,13 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                 for turn in output_buffer:
                     if turn.max_turn_limit_failed or turn.context_failed:
                         assert not turn.turn_repeat_failed
-                        if turn not in train_buffer: 
+                        if turn not in train_buffer:
                             train_buffer.append(turn)
 
         for single_turn_output in output_buffer:
             single_turn_output.reward_score = reward_score
         for single_turn_output in train_buffer:
-            single_turn_output.reward_score = reward_score            
+            single_turn_output.reward_score = reward_score
 
         output = MultiTurnAgentLoopOutput(
             single_turn_outputs=output_buffer,
@@ -582,23 +735,27 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                 reward=reward_score,
                 origin_question=origin_question,
                 eval_metric=eval_metric,
-                total_turn_list=total_turn_list if self.workflow == 'mas' else None,
-                instance_id = answer['instance_id']
+                total_turn_list=total_turn_list if self.workflow == "mas" else None,
+                instance_id=answer["instance_id"],
             ),
         )
         return output
 
-    async def get_final_reward_score(self, origin_question, extract_answer, label_answer, is_markdown = False):
+    async def get_final_reward_score(
+        self, origin_question, extract_answer, label_answer, is_markdown=False
+    ):
         format = True
         metrics = list(set(self.reward_eval) | set([self.reward_type]))
         if metrics == []:
             return 0.0, {}, format
         if is_markdown:
-            reward_score, eval_metric, format = await self.evaluate_markdown(extract_answer, label_answer)
+            reward_score, eval_metric, format = await self.evaluate_markdown(
+                extract_answer, label_answer
+            )
             return reward_score, eval_metric, format
-        
-        label_answer = label_answer['answer']
-        eval_metric = {metric: 0 for metric in metrics}
+
+        label_answer = label_answer["answer"]
+        eval_metric = dict.fromkeys(metrics, 0)
         if label_answer is not None and extract_answer is not None:
             for metric in metrics:
                 if metric == "EM":
@@ -619,21 +776,20 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                     )
                     eval_metric[metric] = llm_score
 
-            reward_score = eval_metric[self.reward_type]        
+            reward_score = eval_metric[self.reward_type]
 
         else:
             reward_score = 0.0
 
         return reward_score, eval_metric, format
-    
+
     async def verify_answer_with_llm_judge(
         self,
         question: str,
         predicted_answer: str,
         correct_answer: list,
-        use_llm_judge_api = False,
+        use_llm_judge_api=False,
     ) -> float:
-
         """Use LLM as judge to verify if predicted answer is equivalent to correct answer.
 
         Args:
@@ -646,25 +802,28 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
             Score: 1.0 if correct, 0.0 if incorrect
         """
         from rlinf.agents.wideseek_r1.utils.prompt import LLM_JUDGE_PROMPT
-        
+
         if len(correct_answer) == 1:
-        # Format the judge prompt
+            # Format the judge prompt
             judge_prompt_text = LLM_JUDGE_PROMPT.format(
                 question=question,
                 correct_answer=correct_answer[0],
-                response=predicted_answer
+                response=predicted_answer,
             )
         else:
             judge_prompt_text = LLM_JUDGE_PROMPT.format(
                 question=question,
                 correct_answer=correct_answer,
-                response=predicted_answer
-            )            
+                response=predicted_answer,
+            )
 
         # Create messages for the judge
         judge_messages = [
-            {'role': "system", "content": "You are an evaluation assistant. Please determine if the predicted answer is equivalent to the labeled answer."},
-            {"role": "user", "content": judge_prompt_text}
+            {
+                "role": "system",
+                "content": "You are an evaluation assistant. Please determine if the predicted answer is equivalent to the labeled answer.",
+            },
+            {"role": "user", "content": judge_prompt_text},
         ]
 
         # Apply chat template
@@ -689,7 +848,10 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         # The judge should respond with "Correct" or "Incorrect"
         judge_response_clean = judge_response_text.strip().lower()
         # Check if the response contains "correct" (but not "incorrect")
-        if "correct" in judge_response_clean and "incorrect" not in judge_response_clean:
+        if (
+            "correct" in judge_response_clean
+            and "incorrect" not in judge_response_clean
+        ):
             return 1.0
         else:
             return 0.0
@@ -709,7 +871,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         """
 
         # Helper function to normalize column names
-        def norm_column(col: str) -> str: 
+        def norm_column(col: str) -> str:
             if not self.is_widesearch:
                 return col.strip().lower()
             else:
@@ -740,8 +902,8 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                     out[k] = v.item()
                 else:
                     out[k] = v
-            return out            
-            
+            return out
+
         # Initialize metrics
         score = 0.0
         precision_by_row = 0.0
@@ -761,10 +923,10 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
             "f1_by_item": 0.0,
             "search_precision_by_item": 0.0,
             "search_recall_by_item": 0.0,
-            "search_f1_by_item": 0.0,                        
+            "search_f1_by_item": 0.0,
         }
         metrics = list(set(self.reward_eval) | set([self.reward_type]))
-        error_eval_return = {metric: eval_metrics for metric in metrics}
+        error_eval_return = dict.fromkeys(metrics, eval_metrics)
 
         try:
             # Parse label_answer
@@ -780,10 +942,12 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
 
             # Convert answer_markdown to DataFrame if it's a string
             if isinstance(answer_markdown, str):
-                answer_df = extract_final_answer(answer_markdown, mode='markdown', strict = False)
+                answer_df = extract_final_answer(
+                    answer_markdown, mode="markdown", strict=False
+                )
                 if answer_df is None:
                     msg = "Failed to parse label answer markdown"
-                    self.log_warning(msg)                    
+                    self.log_warning(msg)
                     return 0.0, error_eval_return, False
             elif isinstance(answer_markdown, pd.DataFrame):
                 answer_df = answer_markdown
@@ -810,7 +974,9 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
             if not required_columns:
                 required_columns = list(answer_df.columns)
             else:
-                required_columns = [norm_column(col) for col in required_columns] # widesearch requir columns: " " -> ""
+                required_columns = [
+                    norm_column(col) for col in required_columns
+                ]  # widesearch requir columns: " " -> ""
 
             # Check if response has required columns
             if not set(required_columns).issubset(set(response_df.columns)):
@@ -840,7 +1006,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                     primary_key_map = await self.primary_key_preprocess(
                         response_df[col].tolist(),
                         answer_df[col].tolist(),
-                        self.use_llm_judge_api
+                        self.use_llm_judge_api,
                     )
                     response_df[col + "_before_map"] = response_df[col]
                     response_df[col] = response_df[col].apply(
@@ -864,7 +1030,7 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
 
             llm_tasks = []
             llm_columns = []
-            
+
             # Process each column
             for col in required_columns:
                 if col in unique_columns:
@@ -876,14 +1042,18 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                     for metric_type in metrics:
                         if metric_type == "EM":
                             scores = [
-                                compute_score_em(row[col + "_response"], row[col + "_query"])
+                                compute_score_em(
+                                    row[col + "_response"], row[col + "_query"]
+                                )
                                 for _, row in df_inner.iterrows()
                             ]
                             df_inner_scores["EM"][f"{col}_score"] = scores
 
                         elif metric_type == "F1":
                             scores = [
-                                compute_score_f1(row[col + "_response"], row[col + "_query"])
+                                compute_score_f1(
+                                    row[col + "_response"], row[col + "_query"]
+                                )
                                 for _, row in df_inner.iterrows()
                             ]
                             df_inner_scores["F1"][f"{col}_score"] = scores
@@ -893,7 +1063,9 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                             responses = df_inner[col + "_response"].tolist()
                             targets = df_inner[col + "_query"].tolist()
                             llm_tasks.append(
-                                self.llm_judge_column(responses, targets, self.use_llm_judge_api)
+                                self.llm_judge_column(
+                                    responses, targets, self.use_llm_judge_api
+                                )
                             )
                             llm_columns.append(col)
 
@@ -917,19 +1089,25 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                 # Row-level metrics
                 row_scores = df_score.min(axis=1)
                 tp_by_row = row_scores.sum()
-                precision_by_row = tp_by_row / num_pred_rows if num_pred_rows > 0 else 0.0
+                precision_by_row = (
+                    tp_by_row / num_pred_rows if num_pred_rows > 0 else 0.0
+                )
                 recall_by_row = tp_by_row / num_gt_rows if num_gt_rows > 0 else 0.0
                 f1_by_row = calc_f1(precision_by_row, recall_by_row)
 
                 # Item-level metrics
                 tp_by_item = df_score.sum().sum()
-                precision_by_item = tp_by_item / num_pred_items if num_pred_items > 0 else 0.0
+                precision_by_item = (
+                    tp_by_item / num_pred_items if num_pred_items > 0 else 0.0
+                )
                 recall_by_item = tp_by_item / num_gt_items if num_gt_items > 0 else 0.0
                 f1_by_item = calc_f1(precision_by_item, recall_by_item)
 
                 # Search-specific item-level metrics (non-primary-key columns only)
                 # This reflects pure search ability without trivial primary key matches
-                non_pk_columns = [col for col in required_columns if col not in unique_columns]
+                non_pk_columns = [
+                    col for col in required_columns if col not in unique_columns
+                ]
                 if non_pk_columns:
                     # Select only non-primary-key column scores
                     search_score_cols = [f"{col}_score" for col in non_pk_columns]
@@ -940,9 +1118,15 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                     num_pred_search = num_pred_rows * len(non_pk_columns)
                     num_gt_search = num_gt_rows * len(non_pk_columns)
 
-                    search_precision_by_item = tp_search / num_pred_search if num_pred_search > 0 else 0.0
-                    search_recall_by_item = tp_search / num_gt_search if num_gt_search > 0 else 0.0
-                    search_f1_by_item = calc_f1(search_precision_by_item, search_recall_by_item)
+                    search_precision_by_item = (
+                        tp_search / num_pred_search if num_pred_search > 0 else 0.0
+                    )
+                    search_recall_by_item = (
+                        tp_search / num_gt_search if num_gt_search > 0 else 0.0
+                    )
+                    search_f1_by_item = calc_f1(
+                        search_precision_by_item, search_recall_by_item
+                    )
                 else:
                     # If all columns are primary keys, search metrics are 0
                     search_precision_by_item = 0.0
@@ -952,26 +1136,28 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                 if (
                     precision_by_item == recall_by_item == 1.0
                     and precision_by_row == recall_by_row == 1.0
-                ): 
+                ):
                     score = 1.0
 
-                eval_metric[metric_type] = normalize_metric_dict({
-                    "score": score,  
-                    "precision_by_row": precision_by_row,
-                    "recall_by_row": recall_by_row,
-                    "f1_by_row": f1_by_row,
-                    "precision_by_item": precision_by_item,
-                    "recall_by_item": recall_by_item,
-                    "f1_by_item": f1_by_item,
-                    "search_precision_by_item": search_precision_by_item,
-                    "search_recall_by_item": search_recall_by_item,
-                    "search_f1_by_item": search_f1_by_item
-                })
+                eval_metric[metric_type] = normalize_metric_dict(
+                    {
+                        "score": score,
+                        "precision_by_row": precision_by_row,
+                        "recall_by_row": recall_by_row,
+                        "f1_by_row": f1_by_row,
+                        "precision_by_item": precision_by_item,
+                        "recall_by_item": recall_by_item,
+                        "f1_by_item": f1_by_item,
+                        "search_precision_by_item": search_precision_by_item,
+                        "search_recall_by_item": search_recall_by_item,
+                        "search_f1_by_item": search_f1_by_item,
+                    }
+                )
 
             msg = f"Evaluated with {len(metrics)} metrics: {metrics}"
 
-        except Exception as e:
-            msg = f"Evaluation error: {traceback.format_exc()}"            
+        except Exception:
+            msg = f"Evaluation error: {traceback.format_exc()}"
             self.log_warning(msg)
             return 0.0, error_eval_return, False
 
@@ -980,7 +1166,9 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         # self.log_info(eval_metric)
         return reward_score, eval_metric, True
 
-    async def llm_judge_column(self, responses: list, targets: list, use_llm_judge_api = False) -> list:
+    async def llm_judge_column(
+        self, responses: list, targets: list, use_llm_judge_api=False
+    ) -> list:
         criterion = "It is sufficient if the semantics are approximately the same as the reference answer or if they point to the same entity. There is no need for a word-for-word correspondence."
 
         if not responses:
@@ -1020,13 +1208,11 @@ Each answer and each response has an idx. Please score each pair of answers and 
             criterion=criterion,
         )
 
-        user_prompt = user_prompt.format(
-            response = response_dict
-        )
+        user_prompt = user_prompt.format(response=response_dict)
         # Create messages
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "user", "content": user_prompt},
         ]
 
         if use_llm_judge_api:
@@ -1058,7 +1244,7 @@ Each answer and each response has an idx. Please score each pair of answers and 
             else:
                 # Parsing failed, default to 0
                 score_list = [0.0] * len(responses)
-        except Exception as e:
+        except Exception:
             # If any error, default to 0
             score_list = [0.0] * len(responses)
 
@@ -1067,7 +1253,9 @@ Each answer and each response has an idx. Please score each pair of answers and 
             score_list = [0.0] * len(responses)
         return score_list
 
-    async def primary_key_preprocess(self, response_list, reference_list, use_llm_judge_api = False):
+    async def primary_key_preprocess(
+        self, response_list, reference_list, use_llm_judge_api=False
+    ):
         primary_key_map = {}
 
         # The prompt template from widesearch
@@ -1107,7 +1295,7 @@ The reference vocabulary is as follows:
         # Create messages
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "user", "content": user_prompt},
         ]
 
         if use_llm_judge_api:

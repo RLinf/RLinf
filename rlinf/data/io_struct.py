@@ -1115,9 +1115,9 @@ class DynamicRolloutResult:
 
         attention_mask, response_mask, position_ids = (
             self._get_attention_masks_and_position_ids(
-            prompt_lengths=prompt_lengths,
-            response_lengths=response_lengths,
-            total_len=seq_length,
+                prompt_lengths=prompt_lengths,
+                response_lengths=response_lengths,
+                total_len=seq_length,
             )
         )
 
@@ -1162,7 +1162,9 @@ class DynamicRolloutResult:
             if isinstance(self.rewards, torch.Tensor):
                 batch["rewards"] = self.rewards.cuda()
             else:
-                batch["rewards"] = torch.as_tensor(self.rewards, dtype=torch.float).cuda().flatten()
+                batch["rewards"] = (
+                    torch.as_tensor(self.rewards, dtype=torch.float).cuda().flatten()
+                )
 
         # Add tool call metrics fields if available
         if self.turn_subtask_counts is not None:
@@ -1186,16 +1188,36 @@ class DynamicRolloutResult:
         """Get the batch pad for the dynamic rollout result."""
         pad_seq_shape = (1, seq_length)
         return {
-            "input_ids": torch.zeros(*pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()),
-            "attention_mask": torch.ones(*pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()),
-            "response_mask": torch.zeros(*pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()),
-            "position_ids": torch.zeros(*pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()),
-            "is_end": torch.zeros(1, dtype=torch.bool, device=torch.cuda.current_device()),
-            "prompt_lengths": torch.zeros(1, dtype=torch.int32, device=torch.cuda.current_device()),
-            "response_lengths": torch.zeros(1, dtype=torch.int32, device=torch.cuda.current_device()),
-            "prev_logprobs": torch.zeros(*pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()),
-            "rewards": torch.zeros(1, dtype=torch.float32, device=torch.cuda.current_device()),
-            "advantages": torch.zeros(*pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()),
+            "input_ids": torch.zeros(
+                *pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()
+            ),
+            "attention_mask": torch.ones(
+                *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
+            ),
+            "response_mask": torch.zeros(
+                *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
+            ),
+            "position_ids": torch.zeros(
+                *pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()
+            ),
+            "is_end": torch.zeros(
+                1, dtype=torch.bool, device=torch.cuda.current_device()
+            ),
+            "prompt_lengths": torch.zeros(
+                1, dtype=torch.int32, device=torch.cuda.current_device()
+            ),
+            "response_lengths": torch.zeros(
+                1, dtype=torch.int32, device=torch.cuda.current_device()
+            ),
+            "prev_logprobs": torch.zeros(
+                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+            ),
+            "rewards": torch.zeros(
+                1, dtype=torch.float32, device=torch.cuda.current_device()
+            ),
+            "advantages": torch.zeros(
+                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+            ),
         }
 
     @staticmethod
@@ -1233,7 +1255,7 @@ class DynamicRolloutResult:
         batch: dict[str, torch.Tensor],
         adv_turn_level_scale=False,
         sub_traj_adv_scale=True,
-        train_roles=None
+        train_roles=None,
     ) -> tuple["DynamicRolloutResult", dict]:
         """Merge two batches into one."""
 
@@ -1255,10 +1277,17 @@ class DynamicRolloutResult:
                     right = idxes[j]
                     if right in passed_as_suffix:
                         continue
-                    if prompt_lengths[left] + response_lengths[left] > prompt_lengths[right]:
+                    if (
+                        prompt_lengths[left] + response_lengths[left]
+                        > prompt_lengths[right]
+                    ):
                         continue
-                    left_prompt_ids = batch["input_ids"][left][:prompt_lengths[left] + response_lengths[left]]
-                    right_total_ids = batch["input_ids"][right][:prompt_lengths[left] + response_lengths[left]]
+                    left_prompt_ids = batch["input_ids"][left][
+                        : prompt_lengths[left] + response_lengths[left]
+                    ]
+                    right_total_ids = batch["input_ids"][right][
+                        : prompt_lengths[left] + response_lengths[left]
+                    ]
                     if torch.equal(left_prompt_ids, right_total_ids):
                         pack_map[left] = right
                         passed_as_suffix.append(right)
@@ -1268,71 +1297,91 @@ class DynamicRolloutResult:
         new_idx_to_traj = []
         split_params = {}
         tensor_keys = [
-            'input_ids',
-            'attention_mask',
-            'response_mask',
-            'position_ids',
-            'is_end',
-            'prompt_lengths',
-            'response_lengths',
-            'prev_logprobs',
-            'rewards',
-            'advantages',
+            "input_ids",
+            "attention_mask",
+            "response_mask",
+            "position_ids",
+            "is_end",
+            "prompt_lengths",
+            "response_lengths",
+            "prev_logprobs",
+            "rewards",
+            "advantages",
         ]
         list_keys = [
-            'roles',
-            'role_group_sizes',
+            "roles",
+            "role_group_sizes",
         ]
         solid_keys = [
-            'idx_to_traj',
+            "idx_to_traj",
         ]
         for k, v in batch.items():
             if k in list_keys:
                 assert len(v) == num_sequence
-                split_params[k] = v            
+                split_params[k] = v
             elif k in tensor_keys:
-                split_params[k] = list(torch.chunk(
-                    v.clone(), num_sequence, dim=0
-                ))
+                split_params[k] = list(torch.chunk(v.clone(), num_sequence, dim=0))
             else:
                 assert k in solid_keys, f"bad key {k}"
-        split_params.update({'turn_num': [1] * num_sequence})
-        pack_params = {
-            k: [] for k in batch.keys() if k in tensor_keys
-        }
+        split_params.update({"turn_num": [1] * num_sequence})
+        pack_params = {k: [] for k in batch.keys() if k in tensor_keys}
         for i in range(num_sequence):
             if i in pack_map:
                 prefix = i
                 suffix = pack_map[i]
-                assert split_params["rewards"][prefix] == split_params["rewards"][suffix]
+                assert (
+                    split_params["rewards"][prefix] == split_params["rewards"][suffix]
+                )
 
                 # logprobs, advantages, response_mask
-                prev_logprobs_prefix = split_params["prev_logprobs"][prefix].masked_fill(~split_params["response_mask"][prefix], 0)
-                prev_logprobs_suffix = split_params["prev_logprobs"][suffix].masked_fill(~split_params["response_mask"][suffix], 0)
-                split_params["prev_logprobs"][suffix] = prev_logprobs_prefix + prev_logprobs_suffix
+                prev_logprobs_prefix = split_params["prev_logprobs"][
+                    prefix
+                ].masked_fill(~split_params["response_mask"][prefix], 0)
+                prev_logprobs_suffix = split_params["prev_logprobs"][
+                    suffix
+                ].masked_fill(~split_params["response_mask"][suffix], 0)
+                split_params["prev_logprobs"][suffix] = (
+                    prev_logprobs_prefix + prev_logprobs_suffix
+                )
 
-                advantages_prefix = split_params["advantages"][prefix].masked_fill(~split_params["response_mask"][prefix], 0)
-                advantages_suffix = split_params["advantages"][suffix].masked_fill(~split_params["response_mask"][suffix], 0)
+                advantages_prefix = split_params["advantages"][prefix].masked_fill(
+                    ~split_params["response_mask"][prefix], 0
+                )
+                advantages_suffix = split_params["advantages"][suffix].masked_fill(
+                    ~split_params["response_mask"][suffix], 0
+                )
                 if adv_turn_level_scale:
                     # alg2
-                    masked_count_prefix = split_params["response_mask"][prefix].sum().item()
-                    masked_count_suffix = split_params["response_mask"][suffix].sum().item()
+                    masked_count_prefix = (
+                        split_params["response_mask"][prefix].sum().item()
+                    )
+                    masked_count_suffix = (
+                        split_params["response_mask"][suffix].sum().item()
+                    )
                     masked_count_all = masked_count_prefix + masked_count_suffix
                     split_params["advantages"][suffix] = (
-                        (advantages_prefix * (masked_count_all / masked_count_prefix)) +
-                        (advantages_suffix * (masked_count_all / masked_count_suffix))
-                    ) 
+                        advantages_prefix * (masked_count_all / masked_count_prefix)
+                    ) + (advantages_suffix * (masked_count_all / masked_count_suffix))
                 else:
                     # alg1
-                    split_params["advantages"][suffix] = advantages_prefix + advantages_suffix
+                    split_params["advantages"][suffix] = (
+                        advantages_prefix + advantages_suffix
+                    )
 
-                split_params["response_mask"][suffix] += split_params["response_mask"][prefix]
+                split_params["response_mask"][suffix] += split_params["response_mask"][
+                    prefix
+                ]
 
                 # prompt_lengths, response_lengths
                 # split_params["prompt_lengths"][suffix] = prompt_lengths[prefix]
                 # split_params["response_lengths"][suffix] += prompt_lengths[suffix] - prompt_lengths[prefix]
-                split_params["response_lengths"][suffix] += split_params["prompt_lengths"][suffix] - split_params["prompt_lengths"][prefix] # FIXME: 
-                split_params["prompt_lengths"][suffix] = split_params["prompt_lengths"][prefix]
+                split_params["response_lengths"][suffix] += (
+                    split_params["prompt_lengths"][suffix]
+                    - split_params["prompt_lengths"][prefix]
+                )  # FIXME:
+                split_params["prompt_lengths"][suffix] = split_params["prompt_lengths"][
+                    prefix
+                ]
                 split_params["turn_num"][suffix] += split_params["turn_num"][prefix]
                 split_params["turn_num"][prefix] = 0
 
@@ -1345,11 +1394,11 @@ class DynamicRolloutResult:
                     new_idx_to_traj.append(batch["idx_to_traj"][i])
                 else:
                     split_params["advantages"][i] /= split_params["role_group_sizes"][i]
-                    if split_params['roles'][i] in train_roles:
+                    if split_params["roles"][i] in train_roles:
                         for k in tensor_keys:
                             pack_params[k].append(split_params[k][i])
-                        new_idx_to_traj.append(batch["idx_to_traj"][i])                    
-                
+                        new_idx_to_traj.append(batch["idx_to_traj"][i])
+
         packed_batch = {}
         for k, v in pack_params.items():
             if len(v) != 0:
@@ -1367,8 +1416,8 @@ class DynamicRolloutResult:
 
             for traj, idxes in traj_to_idx.items():
                 for idx in idxes:
-                    packed_batch["advantages"][idx] /= len(idxes) 
-                          
+                    packed_batch["advantages"][idx] /= len(idxes)
+
         return packed_batch
 
     @staticmethod
@@ -1387,7 +1436,6 @@ class DynamicRolloutResult:
         assert len(rollout_results) > 0, "No rollout results to merge."
         if len(rollout_results) == 1:
             return rollout_results[0]
-        
 
         merged_result = DynamicRolloutResult(
             num_sequence=sum(res.num_sequence for res in rollout_results),
@@ -1448,7 +1496,6 @@ class DynamicRolloutResult:
                     raise ValueError(f"Wrong type of advantages {type(res.advantages)}")
 
         return merged_result
-    
 
     @staticmethod
     def split_results(
@@ -1483,7 +1530,6 @@ class DynamicRolloutResult:
             split_is_end = rollout_result.is_end[start_idx:end_idx]
             split_rewards = rollout_result.rewards[start_idx:end_idx]
 
-
             split_prev_logprobs = None
             if rollout_result.prev_logprobs is not None:
                 split_prev_logprobs = rollout_result.prev_logprobs[start_idx:end_idx]
@@ -1517,7 +1563,7 @@ class DynamicRolloutResult:
             split_results.append(split_result)
             start_idx = end_idx
         return split_results
-        
+
 
 class BatchResizingIterator:
     """The iterator for handling getting a batch and split it as a batch iterator with optional dynamic batch size."""

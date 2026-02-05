@@ -79,7 +79,7 @@ class MAMegatronActor(MegatronActor):
             "use_sub_worker", False
         )  # FIXME: check
         assert self.placement_mode == PlacementMode.COLLOCATED
-        self.train_roles = self.cfg.agentloop.get('train_roles',None)
+        self.train_roles = self.cfg.agentloop.get("train_roles", None)
 
     def get_batch(
         self, channel: Channel
@@ -251,7 +251,7 @@ class MAMegatronActor(MegatronActor):
                 torch.distributed.all_reduce(
                     _imp, group=parallel_state.get_data_parallel_group()
                 )
-                
+
                 _n_valid_tokens = mask.count_nonzero().clone()
                 torch.distributed.all_reduce(
                     _n_valid_tokens, group=parallel_state.get_data_parallel_group()
@@ -274,7 +274,7 @@ class MAMegatronActor(MegatronActor):
                 if self.cfg.algorithm.use_valid_token_scale:
                     loss_scale = (
                         mask.sum()
-                        / self.global_valid_token 
+                        / self.global_valid_token
                         * parallel_state.get_data_parallel_world_size()
                         * self.num_microbatches
                     )
@@ -282,25 +282,22 @@ class MAMegatronActor(MegatronActor):
 
                 assert self.cfg.algorithm.get("use_rollout_scale", False)
                 # make sure normalize across groupsize
-                num_microbatches = get_num_microbatches() * parallel_state.get_data_parallel_world_size()
+                num_microbatches = (
+                    get_num_microbatches()
+                    * parallel_state.get_data_parallel_world_size()
+                )
                 if self.train_roles is None:
-                    loss_scale = (
-                        num_microbatches
-                        / (
-                            self.cfg.data.rollout_batch_size
-                            * self.cfg.algorithm.get("group_size", 1)
-                            / self.cfg.algorithm.n_minibatches
-                        )
+                    loss_scale = num_microbatches / (
+                        self.cfg.data.rollout_batch_size
+                        * self.cfg.algorithm.get("group_size", 1)
+                        / self.cfg.algorithm.n_minibatches
                     )
                 else:
                     # groupsize is dynamic, and will be set in pack traj fuction
-                    loss_scale = (
-                        num_microbatches
-                        / (
-                            self.cfg.data.rollout_batch_size
-                            / self.cfg.algorithm.n_minibatches
-                        )
-                    )                    
+                    loss_scale = num_microbatches / (
+                        self.cfg.data.rollout_batch_size
+                        / self.cfg.algorithm.n_minibatches
+                    )
                 loss *= loss_scale
 
                 # add to log
@@ -322,6 +319,7 @@ class MAMegatronActor(MegatronActor):
                 #         metrics_data[k] = average_losses_across_data_parallel_group([v])
 
                 return loss, metrics_data
+
             return output, loss_func
 
         return forward_output_and_loss_func
@@ -450,10 +448,14 @@ class MAMegatronActor(MegatronActor):
         # pack traj
         assert self.cfg.actor.pack_traj
         #####
-        adv_turn_level_scale = self.cfg.algorithm.get("adv_turn_level_scale", True) # whether use alg1 or alg2
+        adv_turn_level_scale = self.cfg.algorithm.get(
+            "adv_turn_level_scale", True
+        )  # whether use alg1 or alg2
         sub_traj_adv_scale = self.cfg.algorithm.get("sub_traj_adv_scale", False)
         assert sub_traj_adv_scale
-        batch = DynamicRolloutResult.pack_traj_batch(batch, adv_turn_level_scale, sub_traj_adv_scale, self.train_roles)       
+        batch = DynamicRolloutResult.pack_traj_batch(
+            batch, adv_turn_level_scale, sub_traj_adv_scale, self.train_roles
+        )
         #####
 
         # Must be called after batch is retrieved, which is when rollout has stopped
@@ -487,7 +489,7 @@ class MAMegatronActor(MegatronActor):
         #         + int(i >= (self.num_train_steps - batch_size % self.num_train_steps))
         #         for i in range(self.num_train_steps)
         #     ]
-        
+
         # global_batches = get_iterator_k_split(
         #     batch,
         #     num_splits=num_splits,
@@ -725,8 +727,8 @@ class MAMegatronActor(MegatronActor):
             batch, rollout_result = self.get_batch(input_channel)
             batches.append(batch)
             rollout_results.append(rollout_result)
-        merged_batch, num_sequence_per_group = (
-            DynamicRolloutResult.merge_batches(batches,adjust_traj_indices=False,return_num_sequence_per_group=True)
+        merged_batch, num_sequence_per_group = DynamicRolloutResult.merge_batches(
+            batches, adjust_traj_indices=False, return_num_sequence_per_group=True
         )
 
         rollout_result = DynamicRolloutResult.merge_result_list(

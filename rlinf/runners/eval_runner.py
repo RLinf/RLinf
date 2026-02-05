@@ -17,13 +17,12 @@ import json
 import logging
 import os
 import typing
-from typing import Optional, Union
 
 import pandas as pd
 import torch
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
-from torch.utils.data import Dataset, RandomSampler, SequentialSampler
+from torch.utils.data import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 from tqdm import tqdm
 
@@ -34,13 +33,12 @@ from rlinf.utils.data_iter_utils import split_list
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.placement import ModelParallelComponentPlacement
-from rlinf.utils.runner_utils import check_progress, local_mkdir_safe
+from rlinf.utils.runner_utils import local_mkdir_safe
 from rlinf.utils.timers import Timer
 from rlinf.workers.agent.agent_loop import MultiTurnAgentLoopWorker
 from rlinf.workers.agent.tool_worker import ToolChannelInfo, ToolWorker, ToolWorkerInfo
 
 if typing.TYPE_CHECKING:
-    from rlinf.scheduler.dynamic_scheduler.scheduler_worker import SchedulerWorker
     from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
 
 logging.getLogger().setLevel(logging.INFO)
@@ -122,7 +120,9 @@ class AgentEvalRunner:
         self.solid_generate_input_channels = {}
         if self.solid_rollouts is not None:
             for solid_rollout_name in self.solid_rollouts:
-                self.solid_generate_input_channels[solid_rollout_name] = Channel.create(f"SolidRolloutInput-{solid_rollout_name}")
+                self.solid_generate_input_channels[solid_rollout_name] = Channel.create(
+                    f"SolidRolloutInput-{solid_rollout_name}"
+                )
         # tool worker name to tool channel info.
         self.tool_channel_info_map = {}
         # tool name to tool worker. a tool worker may have multiple tools.
@@ -247,8 +247,7 @@ class AgentEvalRunner:
 
         # Create output directory in the experiment folder
         output_dir = os.path.join(
-            self.cfg.runner.output_dir,
-            self.cfg.runner.experiment_name
+            self.cfg.runner.output_dir, self.cfg.runner.experiment_name
         )
         local_mkdir_safe(output_dir)
 
@@ -284,29 +283,33 @@ class AgentEvalRunner:
                 "reward_type": self.cfg.reward.get("reward_type", "EM"),
                 "data_paths": data_paths,
             },
-            "metrics": aggregated_metrics
+            "metrics": aggregated_metrics,
         }
 
         # Write metrics.json
-        with open(output_file_key, 'w', encoding='utf-8') as f:
+        with open(output_file_key, "w", encoding="utf-8") as f:
             json.dump(results_data_key, f, ensure_ascii=False, indent=2)
 
         # Write allresults.json
-        with open(output_file_all, 'w', encoding='utf-8') as f:
+        with open(output_file_all, "w", encoding="utf-8") as f:
             json.dump(all_results, f, ensure_ascii=False, indent=2)
 
         # Save per-response files
         for result in all_results:
             samples = result.get("samples", [])
             answer = result.get("answer", {})
-            instance_id = answer.get("instance_id", "unknown") if isinstance(answer, dict) else "unknown"
+            instance_id = (
+                answer.get("instance_id", "unknown")
+                if isinstance(answer, dict)
+                else "unknown"
+            )
 
             for trial_idx, sample in enumerate(samples):
                 file_trial_idx = trial_idx
                 while True:
                     response_file = os.path.join(
                         response_dir,
-                        f"{model_config_name}_{instance_id}_{file_trial_idx}_response.jsonl"
+                        f"{model_config_name}_{instance_id}_{file_trial_idx}_response.jsonl",
                     )
                     if not os.path.exists(response_file):
                         break
@@ -315,7 +318,7 @@ class AgentEvalRunner:
                 # Extract final_answer - handle DataFrame conversion
                 final_answer = sample.get("final_answer", None)
                 if isinstance(final_answer, pd.DataFrame):
-                    final_answer = final_answer.to_dict(orient='records')
+                    final_answer = final_answer.to_dict(orient="records")
 
                 response_data = {
                     "instance_id": instance_id,
@@ -327,7 +330,7 @@ class AgentEvalRunner:
                     "origin_question": sample.get("origin_question", None),
                 }
 
-                with open(response_file, 'w', encoding='utf-8') as f:
+                with open(response_file, "w", encoding="utf-8") as f:
                     json.dump(response_data, f, ensure_ascii=False, indent=2)
 
         logging.info(f"Evaluation results saved to: {output_file_key}")
@@ -419,9 +422,16 @@ class AgentEvalRunner:
         is_markdown = self.cfg.data.get("is_markdown", False)
         metric_types = ["EM", "F1", "LLM"]
         markdown_metrics = [
-            "score", "precision_by_row", "recall_by_row", "f1_by_row",
-            "precision_by_item", "recall_by_item", "f1_by_item",
-            "search_precision_by_item", "search_recall_by_item", "search_f1_by_item"
+            "score",
+            "precision_by_row",
+            "recall_by_row",
+            "f1_by_row",
+            "precision_by_item",
+            "recall_by_item",
+            "f1_by_item",
+            "search_precision_by_item",
+            "search_recall_by_item",
+            "search_f1_by_item",
         ]
 
         processed_results = []
@@ -474,13 +484,17 @@ class AgentEvalRunner:
         if is_markdown:
             # {metric_type: {md_metric: {"pass1": [], "passk": [], "avgk": [], "maxk": []}}}
             eval_accumulators = {
-                mt: {mm: {"pass1": [], "passk": [], "avgk": [], "maxk": []} for mm in markdown_metrics}
+                mt: {
+                    mm: {"pass1": [], "passk": [], "avgk": [], "maxk": []}
+                    for mm in markdown_metrics
+                }
                 for mt in metric_types
             }
         else:
             # {metric_type: {"pass1": [], "passk": [], "avgk": [], "maxk": []}}
             eval_accumulators = {
-                mt: {"pass1": [], "passk": [], "avgk": [], "maxk": []} for mt in metric_types
+                mt: {"pass1": [], "passk": [], "avgk": [], "maxk": []}
+                for mt in metric_types
             }
 
         # Process each raw result
@@ -552,7 +566,11 @@ class AgentEvalRunner:
             sum_turn_subtask += sum(subtask_counts)
             sum_turn_search += sum(search_counts)
             sum_turn_access += sum(access_counts)
-            search_plus_access = [s + a for s, a in zip(search_counts, access_counts)] if search_counts else []
+            search_plus_access = (
+                [s + a for s, a in zip(search_counts, access_counts)]
+                if search_counts
+                else []
+            )
             sum_turn_search_plus_access += sum(search_plus_access)
 
             if subtask_counts:
@@ -566,10 +584,18 @@ class AgentEvalRunner:
 
             # Trajectory-level tool call averages
             if group_size > 0:
-                traj_avg_subtasks.append(sum(subtask_counts) / group_size if subtask_counts else 0.0)
-                traj_avg_searches.append(sum(search_counts) / group_size if search_counts else 0.0)
-                traj_avg_accesses.append(sum(access_counts) / group_size if access_counts else 0.0)
-                traj_avg_search_plus_access_list.append(sum(search_plus_access) / group_size if search_plus_access else 0.0)
+                traj_avg_subtasks.append(
+                    sum(subtask_counts) / group_size if subtask_counts else 0.0
+                )
+                traj_avg_searches.append(
+                    sum(search_counts) / group_size if search_counts else 0.0
+                )
+                traj_avg_accesses.append(
+                    sum(access_counts) / group_size if access_counts else 0.0
+                )
+                traj_avg_search_plus_access_list.append(
+                    sum(search_plus_access) / group_size if search_plus_access else 0.0
+                )
             if subtask_counts:
                 traj_max_subtasks.append(max(subtask_counts))
             if search_counts:
@@ -581,11 +607,20 @@ class AgentEvalRunner:
 
             # Accumulate format_score metrics
             if samples:
-                sample_format_score = samples[0].get("eval_metric", {}).get("format_score", {})
+                sample_format_score = (
+                    samples[0].get("eval_metric", {}).get("format_score", {})
+                )
                 for sub_metric in sample_format_score.keys():
-                    values = [s.get("eval_metric", {}).get("format_score", {}).get(sub_metric, 0) for s in samples]
+                    values = [
+                        s.get("eval_metric", {})
+                        .get("format_score", {})
+                        .get(sub_metric, 0)
+                        for s in samples
+                    ]
                     avg_val = sum(values) / len(values) if values else 0.0
-                    format_score_sums[sub_metric] = format_score_sums.get(sub_metric, 0.0) + avg_val
+                    format_score_sums[sub_metric] = (
+                        format_score_sums.get(sub_metric, 0.0) + avg_val
+                    )
 
             # Accumulate MAS turn metrics
             if mas_main_agent_turns_list:
@@ -600,18 +635,34 @@ class AgentEvalRunner:
                     for md_metric in markdown_metrics:
                         values = []
                         for sample in samples:
-                            val = sample.get("eval_metric", {}).get(metric_type, {}).get(md_metric, 0.0)
+                            val = (
+                                sample.get("eval_metric", {})
+                                .get(metric_type, {})
+                                .get(md_metric, 0.0)
+                            )
                             values.append(val)
 
                         if values:
                             if md_metric == "score":
-                                eval_accumulators[metric_type][md_metric]["pass1"].append(1.0 if values[0] > 0 else 0.0)
-                                eval_accumulators[metric_type][md_metric]["passk"].append(1.0 if any(v > 0 for v in values) else 0.0)
-                                eval_accumulators[metric_type][md_metric]["avgk"].append(sum(values) / len(values))
+                                eval_accumulators[metric_type][md_metric][
+                                    "pass1"
+                                ].append(1.0 if values[0] > 0 else 0.0)
+                                eval_accumulators[metric_type][md_metric][
+                                    "passk"
+                                ].append(1.0 if any(v > 0 for v in values) else 0.0)
+                                eval_accumulators[metric_type][md_metric][
+                                    "avgk"
+                                ].append(sum(values) / len(values))
                             else:
-                                eval_accumulators[metric_type][md_metric]["pass1"].append(values[0])
-                                eval_accumulators[metric_type][md_metric]["avgk"].append(sum(values) / len(values))
-                                eval_accumulators[metric_type][md_metric]["maxk"].append(max(values))
+                                eval_accumulators[metric_type][md_metric][
+                                    "pass1"
+                                ].append(values[0])
+                                eval_accumulators[metric_type][md_metric][
+                                    "avgk"
+                                ].append(sum(values) / len(values))
+                                eval_accumulators[metric_type][md_metric][
+                                    "maxk"
+                                ].append(max(values))
             else:
                 for metric_type in metric_types:
                     values = []
@@ -621,20 +672,28 @@ class AgentEvalRunner:
                             values.append(val)
 
                     if values:
-                        eval_accumulators[metric_type]["pass1"].append(1.0 if values[0] > 0 else 0.0)
-                        eval_accumulators[metric_type]["avgk"].append(sum(values) / len(values))
+                        eval_accumulators[metric_type]["pass1"].append(
+                            1.0 if values[0] > 0 else 0.0
+                        )
+                        eval_accumulators[metric_type]["avgk"].append(
+                            sum(values) / len(values)
+                        )
                         if metric_type == "F1":
                             eval_accumulators[metric_type]["maxk"].append(max(values))
                         else:
-                            eval_accumulators[metric_type]["passk"].append(1.0 if any(v > 0 for v in values) else 0.0)
+                            eval_accumulators[metric_type]["passk"].append(
+                                1.0 if any(v > 0 for v in values) else 0.0
+                            )
 
             # Build processed result entry
-            processed_results.append({
-                "index": idx,
-                "group_size": group_size,
-                "answer": answer,
-                "samples": samples,
-            })
+            processed_results.append(
+                {
+                    "index": idx,
+                    "group_size": group_size,
+                    "answer": answer,
+                    "samples": samples,
+                }
+            )
 
         # --- Compute final aggregated metrics ---
         aggregated_metrics = {}
@@ -647,90 +706,168 @@ class AgentEvalRunner:
                     acc = eval_accumulators[metric_type][md_metric]
                     if md_metric == "score":
                         aggregated_metrics[metric_type][md_metric] = {
-                            "pass@1": sum(acc["pass1"]) / len(acc["pass1"]) if acc["pass1"] else 0.0,
-                            "pass@k": sum(acc["passk"]) / len(acc["passk"]) if acc["passk"] else 0.0,
-                            "avg@k": sum(acc["avgk"]) / len(acc["avgk"]) if acc["avgk"] else 0.0,
+                            "pass@1": sum(acc["pass1"]) / len(acc["pass1"])
+                            if acc["pass1"]
+                            else 0.0,
+                            "pass@k": sum(acc["passk"]) / len(acc["passk"])
+                            if acc["passk"]
+                            else 0.0,
+                            "avg@k": sum(acc["avgk"]) / len(acc["avgk"])
+                            if acc["avgk"]
+                            else 0.0,
                         }
                     else:
                         aggregated_metrics[metric_type][md_metric] = {
-                            "pass@1": sum(acc["pass1"]) / len(acc["pass1"]) if acc["pass1"] else 0.0,
-                            "avg@k": sum(acc["avgk"]) / len(acc["avgk"]) if acc["avgk"] else 0.0,
-                            "max@k": sum(acc["maxk"]) / len(acc["maxk"]) if acc["maxk"] else 0.0,
+                            "pass@1": sum(acc["pass1"]) / len(acc["pass1"])
+                            if acc["pass1"]
+                            else 0.0,
+                            "avg@k": sum(acc["avgk"]) / len(acc["avgk"])
+                            if acc["avgk"]
+                            else 0.0,
+                            "max@k": sum(acc["maxk"]) / len(acc["maxk"])
+                            if acc["maxk"]
+                            else 0.0,
                         }
         else:
             for metric_type in metric_types:
                 acc = eval_accumulators[metric_type]
-                aggregated_metrics[f"pass@1_{metric_type}"] = sum(acc["pass1"]) / len(acc["pass1"]) if acc["pass1"] else 0.0
-                aggregated_metrics[f"avg@k_{metric_type}"] = sum(acc["avgk"]) / len(acc["avgk"]) if acc["avgk"] else 0.0
+                aggregated_metrics[f"pass@1_{metric_type}"] = (
+                    sum(acc["pass1"]) / len(acc["pass1"]) if acc["pass1"] else 0.0
+                )
+                aggregated_metrics[f"avg@k_{metric_type}"] = (
+                    sum(acc["avgk"]) / len(acc["avgk"]) if acc["avgk"] else 0.0
+                )
                 if metric_type == "F1":
-                    aggregated_metrics[f"max@k_{metric_type}"] = sum(acc["maxk"]) / len(acc["maxk"]) if acc["maxk"] else 0.0
+                    aggregated_metrics[f"max@k_{metric_type}"] = (
+                        sum(acc["maxk"]) / len(acc["maxk"]) if acc["maxk"] else 0.0
+                    )
                 else:
-                    aggregated_metrics[f"pass@k_{metric_type}"] = sum(acc["passk"]) / len(acc["passk"]) if acc["passk"] else 0.0
+                    aggregated_metrics[f"pass@k_{metric_type}"] = (
+                        sum(acc["passk"]) / len(acc["passk"]) if acc["passk"] else 0.0
+                    )
 
         # Length metrics
         if total_num_turns > 0:
-            aggregated_metrics["avg_prompt_length"] = sum_prompt_length / total_num_turns
-            aggregated_metrics["avg_response_length"] = sum_response_length / total_num_turns
+            aggregated_metrics["avg_prompt_length"] = (
+                sum_prompt_length / total_num_turns
+            )
+            aggregated_metrics["avg_response_length"] = (
+                sum_response_length / total_num_turns
+            )
             aggregated_metrics["avg_total_length"] = sum_total_length / total_num_turns
         else:
             aggregated_metrics["avg_prompt_length"] = 0.0
             aggregated_metrics["avg_response_length"] = 0.0
             aggregated_metrics["avg_total_length"] = 0.0
 
-        aggregated_metrics["max_prompt_length"] = max(max_prompt_lengths) if max_prompt_lengths else 0
-        aggregated_metrics["max_response_length"] = max(max_response_lengths) if max_response_lengths else 0
-        aggregated_metrics["max_total_length"] = max(max_total_lengths) if max_total_lengths else 0
+        aggregated_metrics["max_prompt_length"] = (
+            max(max_prompt_lengths) if max_prompt_lengths else 0
+        )
+        aggregated_metrics["max_response_length"] = (
+            max(max_response_lengths) if max_response_lengths else 0
+        )
+        aggregated_metrics["max_total_length"] = (
+            max(max_total_lengths) if max_total_lengths else 0
+        )
 
         # Trajectory metrics
         aggregated_metrics["total_num_trajectories"] = total_num_trajectories
-        aggregated_metrics["avg_turns_per_traj"] = total_turns_all / total_num_trajectories if total_num_trajectories > 0 else 0.0
+        aggregated_metrics["avg_turns_per_traj"] = (
+            total_turns_all / total_num_trajectories
+            if total_num_trajectories > 0
+            else 0.0
+        )
 
         # Tool call metrics - turn level
         if total_valid_planner_turns > 0:
-            aggregated_metrics["turn_avg_subtask"] = sum_turn_subtask / total_valid_planner_turns
+            aggregated_metrics["turn_avg_subtask"] = (
+                sum_turn_subtask / total_valid_planner_turns
+            )
         else:
             aggregated_metrics["turn_avg_subtask"] = 0.0
-        aggregated_metrics["turn_max_subtask"] = max(turn_max_subtasks) if turn_max_subtasks else 0
+        aggregated_metrics["turn_max_subtask"] = (
+            max(turn_max_subtasks) if turn_max_subtasks else 0
+        )
 
         if total_valid_worker_turns > 0:
-            aggregated_metrics["turn_avg_search"] = sum_turn_search / total_valid_worker_turns
-            aggregated_metrics["turn_avg_access"] = sum_turn_access / total_valid_worker_turns
-            aggregated_metrics["turn_avg_search+access"] = sum_turn_search_plus_access / total_valid_worker_turns
+            aggregated_metrics["turn_avg_search"] = (
+                sum_turn_search / total_valid_worker_turns
+            )
+            aggregated_metrics["turn_avg_access"] = (
+                sum_turn_access / total_valid_worker_turns
+            )
+            aggregated_metrics["turn_avg_search+access"] = (
+                sum_turn_search_plus_access / total_valid_worker_turns
+            )
         else:
             aggregated_metrics["turn_avg_search"] = 0.0
             aggregated_metrics["turn_avg_access"] = 0.0
             aggregated_metrics["turn_avg_search+access"] = 0.0
 
-        aggregated_metrics["turn_max_search"] = max(turn_max_searches) if turn_max_searches else 0
-        aggregated_metrics["turn_max_access"] = max(turn_max_accesses) if turn_max_accesses else 0
-        aggregated_metrics["turn_max_search+access"] = max(turn_max_search_plus_access_list) if turn_max_search_plus_access_list else 0
+        aggregated_metrics["turn_max_search"] = (
+            max(turn_max_searches) if turn_max_searches else 0
+        )
+        aggregated_metrics["turn_max_access"] = (
+            max(turn_max_accesses) if turn_max_accesses else 0
+        )
+        aggregated_metrics["turn_max_search+access"] = (
+            max(turn_max_search_plus_access_list)
+            if turn_max_search_plus_access_list
+            else 0
+        )
 
         # Tool call metrics - trajectory level
         if total_queries > 0:
-            aggregated_metrics["traj_avg_subtask"] = sum(traj_avg_subtasks) / total_queries
-            aggregated_metrics["traj_avg_search"] = sum(traj_avg_searches) / total_queries
-            aggregated_metrics["traj_avg_access"] = sum(traj_avg_accesses) / total_queries
-            aggregated_metrics["traj_avg_search+access"] = sum(traj_avg_search_plus_access_list) / total_queries
+            aggregated_metrics["traj_avg_subtask"] = (
+                sum(traj_avg_subtasks) / total_queries
+            )
+            aggregated_metrics["traj_avg_search"] = (
+                sum(traj_avg_searches) / total_queries
+            )
+            aggregated_metrics["traj_avg_access"] = (
+                sum(traj_avg_accesses) / total_queries
+            )
+            aggregated_metrics["traj_avg_search+access"] = (
+                sum(traj_avg_search_plus_access_list) / total_queries
+            )
         else:
             aggregated_metrics["traj_avg_subtask"] = 0.0
             aggregated_metrics["traj_avg_search"] = 0.0
             aggregated_metrics["traj_avg_access"] = 0.0
             aggregated_metrics["traj_avg_search+access"] = 0.0
 
-        aggregated_metrics["traj_max_subtask"] = max(traj_max_subtasks) if traj_max_subtasks else 0
-        aggregated_metrics["traj_max_search"] = max(traj_max_searches) if traj_max_searches else 0
-        aggregated_metrics["traj_max_access"] = max(traj_max_accesses) if traj_max_accesses else 0
-        aggregated_metrics["traj_max_search+access"] = max(traj_max_search_plus_access_list) if traj_max_search_plus_access_list else 0
+        aggregated_metrics["traj_max_subtask"] = (
+            max(traj_max_subtasks) if traj_max_subtasks else 0
+        )
+        aggregated_metrics["traj_max_search"] = (
+            max(traj_max_searches) if traj_max_searches else 0
+        )
+        aggregated_metrics["traj_max_access"] = (
+            max(traj_max_accesses) if traj_max_accesses else 0
+        )
+        aggregated_metrics["traj_max_search+access"] = (
+            max(traj_max_search_plus_access_list)
+            if traj_max_search_plus_access_list
+            else 0
+        )
 
         # Format score metrics
         for sub_metric, total_sum in format_score_sums.items():
-            aggregated_metrics[f"format_score/{sub_metric}"] = total_sum / total_queries if total_queries > 0 else 0.0
+            aggregated_metrics[f"format_score/{sub_metric}"] = (
+                total_sum / total_queries if total_queries > 0 else 0.0
+            )
 
         # MAS turn metrics
         if mas_num_valid_trajs > 0:
-            aggregated_metrics["mas/avg_main_agent_turns_per_traj"] = mas_sum_main_agent_turns / mas_num_valid_trajs
-            aggregated_metrics["mas/avg_subagent_turns_per_traj"] = mas_sum_subagent_turns / mas_num_valid_trajs
-            aggregated_metrics["mas/avg_num_subagents_per_traj"] = mas_sum_num_subagents / mas_num_valid_trajs
+            aggregated_metrics["mas/avg_main_agent_turns_per_traj"] = (
+                mas_sum_main_agent_turns / mas_num_valid_trajs
+            )
+            aggregated_metrics["mas/avg_subagent_turns_per_traj"] = (
+                mas_sum_subagent_turns / mas_num_valid_trajs
+            )
+            aggregated_metrics["mas/avg_num_subagents_per_traj"] = (
+                mas_sum_num_subagents / mas_num_valid_trajs
+            )
 
         return processed_results, aggregated_metrics
 
@@ -776,13 +913,15 @@ class AgentEvalRunner:
         try:
             # Process validation batches - just accumulate raw results
             for batch_idx, batch in enumerate(self.val_dataloader):
-                logging.info(f"\nProcessing batch {batch_idx + 1}/{len(self.val_dataloader)}")
+                logging.info(
+                    f"\nProcessing batch {batch_idx + 1}/{len(self.val_dataloader)}"
+                )
 
                 # Calculate actual batch size from the batch data
-                if 'prompt' in batch:
-                    actual_batch_size = batch['prompt'].shape[0]
-                elif 'answer' in batch:
-                    actual_batch_size = len(batch['answer'])
+                if "prompt" in batch:
+                    actual_batch_size = batch["prompt"].shape[0]
+                elif "answer" in batch:
+                    actual_batch_size = len(batch["answer"])
                 else:
                     actual_batch_size = self.cfg.data.val_rollout_batch_size
 
@@ -801,7 +940,7 @@ class AgentEvalRunner:
                     # Simply accumulate raw results
                     batch_count = self.log_eval(
                         input_channel=self.rollout_channel,
-                        expected_batch_size=actual_batch_size
+                        expected_batch_size=actual_batch_size,
                     )
 
                     rollout_handle.wait()
@@ -809,10 +948,12 @@ class AgentEvalRunner:
                 time_metrics = self.timer.consume_durations()
                 time_metrics["rollout"] = rollout_handle.consume_duration()
 
-                eval_pbar.set_postfix({
-                    "queries": len(self.accumulated_raw_results),
-                    "rollout_time": f"{time_metrics.get('rollout', 0):.2f}s",
-                })
+                eval_pbar.set_postfix(
+                    {
+                        "queries": len(self.accumulated_raw_results),
+                        "rollout_time": f"{time_metrics.get('rollout', 0):.2f}s",
+                    }
+                )
                 eval_pbar.update(1)
 
                 self.global_steps += 1

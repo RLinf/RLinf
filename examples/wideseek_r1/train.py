@@ -18,8 +18,8 @@ import hydra
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
-from rlinf.agents.wideseek_r1.wideseek_r1 import WideSeekR1AgentLoopWorker
 from rlinf.agents.wideseek_r1.tools import WideSeekR1ToolWorker
+from rlinf.agents.wideseek_r1.wideseek_r1 import WideSeekR1AgentLoopWorker
 from rlinf.config import validate_cfg
 from rlinf.data.datasets import create_rl_dataset
 from rlinf.data.tokenizers import hf_tokenizer
@@ -27,7 +27,6 @@ from rlinf.runners.train_runner import AgentRunner
 from rlinf.scheduler import Cluster, NodePlacementStrategy
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.utils import output_redirector
-from rlinf.workers.actor import get_actor_worker
 from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
 from rlinf.workers.agent.tool_worker import ToolWorkerInfo
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
@@ -48,7 +47,9 @@ def main(cfg) -> None:
     # Generator group
     rollout_worker_cls = get_rollout_backend_worker(cfg)
     rollout_placement_strategy = component_placement.get_strategy("rollout")
-    assert not cfg.rollout.get('use_fixed_worker', False), 'Currently we only support two engine in evluation'
+    assert not cfg.rollout.get("use_fixed_worker", False), (
+        "Currently we only support two engine in evluation"
+    )
 
     rollout_group = rollout_worker_cls.create_group(cfg, component_placement).launch(
         cluster,
@@ -66,9 +67,13 @@ def main(cfg) -> None:
     assert (
         len(agentloop_placement_strategy._node_ranks)
         == component_placement.rollout_dp_size
-    ), f"agentloop worker num {len(agentloop_placement_strategy._node_ranks)} now should be equal to rollout dp size {component_placement.rollout_dp_size}"
+    ), (
+        f"agentloop worker num {len(agentloop_placement_strategy._node_ranks)} now should be equal to rollout dp size {component_placement.rollout_dp_size}"
+    )
 
-    agentloop_group = WideSeekR1AgentLoopWorker.create_group(cfg, component_placement).launch(
+    agentloop_group = WideSeekR1AgentLoopWorker.create_group(
+        cfg, component_placement
+    ).launch(
         cluster,
         name=cfg.agentloop.group_name,
         placement_strategy=agentloop_placement_strategy,
@@ -87,13 +92,16 @@ def main(cfg) -> None:
 
     # Tool workers group
     num_tool_worker_per_node = 32
-    tool_placement = [node_id for node_id in range(cfg.cluster.num_nodes) for _ in range(num_tool_worker_per_node)]
+    tool_placement = [
+        node_id
+        for node_id in range(cfg.cluster.num_nodes)
+        for _ in range(num_tool_worker_per_node)
+    ]
     singleton_tool_placement = NodePlacementStrategy(tool_placement)
     tool_workers = {
         WideSeekR1ToolWorker.create_group(cfg).launch(
             cluster, name="search", placement_strategy=singleton_tool_placement
         ): ToolWorkerInfo(tool_names=["search"], has_session=False),
-
         WideSeekR1ToolWorker.create_group(cfg).launch(
             cluster, name="access", placement_strategy=singleton_tool_placement
         ): ToolWorkerInfo(tool_names=["access"], has_session=False),
@@ -108,7 +116,7 @@ def main(cfg) -> None:
         actor=actor_group,
         agent_loop=agentloop_group,
         tool_workers=tool_workers,
-        solid_rollouts={}
+        solid_rollouts={},
     )
 
     runner.init_workers()

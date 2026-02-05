@@ -41,13 +41,22 @@ def _compute_tool_call_metrics(
 
     Returns dict with keys like "trajectory/mean/subtask", "turn/mean/search", etc.
     """
-    if "turn_subtask_counts" not in rollout_batch or rollout_batch["turn_subtask_counts"] is None:
+    if (
+        "turn_subtask_counts" not in rollout_batch
+        or rollout_batch["turn_subtask_counts"] is None
+    ):
         return {}
 
     # Load turn-level counts
-    turn_subtask_counts = torch.tensor(rollout_batch["turn_subtask_counts"], device=device, dtype=torch.long)
-    turn_search_counts = torch.tensor(rollout_batch["turn_search_counts"], device=device, dtype=torch.long)
-    turn_access_counts = torch.tensor(rollout_batch["turn_access_counts"], device=device, dtype=torch.long)
+    turn_subtask_counts = torch.tensor(
+        rollout_batch["turn_subtask_counts"], device=device, dtype=torch.long
+    )
+    turn_search_counts = torch.tensor(
+        rollout_batch["turn_search_counts"], device=device, dtype=torch.long
+    )
+    turn_access_counts = torch.tensor(
+        rollout_batch["turn_access_counts"], device=device, dtype=torch.long
+    )
     local_num_valid_planner_turns = rollout_batch["num_valid_planner_turns"]
     local_num_valid_worker_turns = rollout_batch["num_valid_worker_turns"]
 
@@ -65,47 +74,76 @@ def _compute_tool_call_metrics(
     traj_search_plus_access = traj_search_counts + traj_access_counts
     turn_search_plus_access = turn_search_counts + turn_access_counts
 
-    local_metrics = torch.as_tensor([
-        # Trajectory sums
-        traj_subtask_counts.sum().item(),
-        traj_search_counts.sum().item(),
-        traj_access_counts.sum().item(),
-        traj_search_plus_access.sum().item(),
-        # Turn sums
-        turn_subtask_counts.sum().item(),
-        turn_search_counts.sum().item(),
-        turn_access_counts.sum().item(),
-        turn_search_plus_access.sum().item(),
-        # Valid turn counts
-        local_num_valid_planner_turns,
-        local_num_valid_worker_turns,
-    ], device=device, dtype=torch.float32)
+    local_metrics = torch.as_tensor(
+        [
+            # Trajectory sums
+            traj_subtask_counts.sum().item(),
+            traj_search_counts.sum().item(),
+            traj_access_counts.sum().item(),
+            traj_search_plus_access.sum().item(),
+            # Turn sums
+            turn_subtask_counts.sum().item(),
+            turn_search_counts.sum().item(),
+            turn_access_counts.sum().item(),
+            turn_search_plus_access.sum().item(),
+            # Valid turn counts
+            local_num_valid_planner_turns,
+            local_num_valid_worker_turns,
+        ],
+        device=device,
+        dtype=torch.float32,
+    )
 
-    local_maxs = torch.as_tensor([
-        traj_subtask_counts.max().item(),
-        traj_search_counts.max().item(),
-        traj_access_counts.max().item(),
-        traj_search_plus_access.max().item(),
-        turn_subtask_counts.max().item(),
-        turn_search_counts.max().item(),
-        turn_access_counts.max().item(),
-        turn_search_plus_access.max().item(),
-    ], device=device, dtype=torch.float32)
+    local_maxs = torch.as_tensor(
+        [
+            traj_subtask_counts.max().item(),
+            traj_search_counts.max().item(),
+            traj_access_counts.max().item(),
+            traj_search_plus_access.max().item(),
+            turn_subtask_counts.max().item(),
+            turn_search_counts.max().item(),
+            turn_access_counts.max().item(),
+            turn_search_plus_access.max().item(),
+        ],
+        device=device,
+        dtype=torch.float32,
+    )
 
     # All-reduce
-    torch.distributed.all_reduce(local_metrics, torch.distributed.ReduceOp.SUM, group=data_parallel_group)
-    torch.distributed.all_reduce(local_maxs, torch.distributed.ReduceOp.MAX, group=data_parallel_group)
+    torch.distributed.all_reduce(
+        local_metrics, torch.distributed.ReduceOp.SUM, group=data_parallel_group
+    )
+    torch.distributed.all_reduce(
+        local_maxs, torch.distributed.ReduceOp.MAX, group=data_parallel_group
+    )
 
     metrics_list = local_metrics.tolist()
     maxs_list = local_maxs.tolist()
 
     # Unpack results
-    (global_sum_traj_subtask, global_sum_traj_search, global_sum_traj_access, global_sum_traj_search_plus_access,
-     global_sum_turn_subtask, global_sum_turn_search, global_sum_turn_access, global_sum_turn_search_plus_access,
-     global_num_valid_planner_turns, global_num_valid_worker_turns) = metrics_list
+    (
+        global_sum_traj_subtask,
+        global_sum_traj_search,
+        global_sum_traj_access,
+        global_sum_traj_search_plus_access,
+        global_sum_turn_subtask,
+        global_sum_turn_search,
+        global_sum_turn_access,
+        global_sum_turn_search_plus_access,
+        global_num_valid_planner_turns,
+        global_num_valid_worker_turns,
+    ) = metrics_list
 
-    (global_max_traj_subtask, global_max_traj_search, global_max_traj_access, global_max_traj_search_plus_access,
-     global_max_turn_subtask, global_max_turn_search, global_max_turn_access, global_max_turn_search_plus_access) = maxs_list
+    (
+        global_max_traj_subtask,
+        global_max_traj_search,
+        global_max_traj_access,
+        global_max_traj_search_plus_access,
+        global_max_turn_subtask,
+        global_max_turn_search,
+        global_max_turn_access,
+        global_max_turn_search_plus_access,
+    ) = maxs_list
 
     # Build result dict
     tool_call_metrics = {
@@ -113,7 +151,8 @@ def _compute_tool_call_metrics(
         "trajectory/mean/subtask": global_sum_traj_subtask / num_trajectories,
         "trajectory/mean/search": global_sum_traj_search / num_trajectories,
         "trajectory/mean/access": global_sum_traj_access / num_trajectories,
-        "trajectory/mean/search+access": global_sum_traj_search_plus_access / num_trajectories,
+        "trajectory/mean/search+access": global_sum_traj_search_plus_access
+        / num_trajectories,
         # Trajectory-level maxs
         "trajectory/max/subtask": int(global_max_traj_subtask),
         "trajectory/max/search": int(global_max_traj_search),
@@ -123,20 +162,35 @@ def _compute_tool_call_metrics(
 
     # Turn-level metrics (only if valid turns exist)
     if global_num_valid_planner_turns > 0:
-        tool_call_metrics["turn/mean/subtask"] = global_sum_turn_subtask / global_num_valid_planner_turns
+        tool_call_metrics["turn/mean/subtask"] = (
+            global_sum_turn_subtask / global_num_valid_planner_turns
+        )
         tool_call_metrics["turn/max/subtask"] = int(global_max_turn_subtask)
 
     if global_num_valid_worker_turns > 0:
-        tool_call_metrics["turn/mean/search"] = global_sum_turn_search / global_num_valid_worker_turns
-        tool_call_metrics["turn/mean/access"] = global_sum_turn_access / global_num_valid_worker_turns
-        tool_call_metrics["turn/mean/search+access"] = global_sum_turn_search_plus_access / global_num_valid_worker_turns
+        tool_call_metrics["turn/mean/search"] = (
+            global_sum_turn_search / global_num_valid_worker_turns
+        )
+        tool_call_metrics["turn/mean/access"] = (
+            global_sum_turn_access / global_num_valid_worker_turns
+        )
+        tool_call_metrics["turn/mean/search+access"] = (
+            global_sum_turn_search_plus_access / global_num_valid_worker_turns
+        )
         tool_call_metrics["turn/max/search"] = int(global_max_turn_search)
         tool_call_metrics["turn/max/access"] = int(global_max_turn_access)
-        tool_call_metrics["turn/max/search+access"] = int(global_max_turn_search_plus_access)
+        tool_call_metrics["turn/max/search+access"] = int(
+            global_max_turn_search_plus_access
+        )
 
     # Cleanup
-    for key in ["turn_subtask_counts", "turn_search_counts", "turn_access_counts",
-                "num_valid_planner_turns", "num_valid_worker_turns"]:
+    for key in [
+        "turn_subtask_counts",
+        "turn_search_counts",
+        "turn_access_counts",
+        "num_valid_planner_turns",
+        "num_valid_worker_turns",
+    ]:
         rollout_batch.pop(key, None)
 
     return tool_call_metrics
@@ -221,7 +275,9 @@ def _compute_eval_metrics(
         reduce_data.extend([s, c])
 
     reduce_tensor = torch.as_tensor(reduce_data, device=device, dtype=torch.float32)
-    torch.distributed.all_reduce(reduce_tensor, torch.distributed.ReduceOp.SUM, group=data_parallel_group)
+    torch.distributed.all_reduce(
+        reduce_tensor, torch.distributed.ReduceOp.SUM, group=data_parallel_group
+    )
     reduce_list = reduce_tensor.tolist()
 
     # Build result dict
@@ -250,7 +306,10 @@ def _compute_mas_turn_metrics(
     total_turn_list format: [subagent1_turns, subagent2_turns, ..., main_agent_turns]
     Returns dict with keys like "mas/avg_main_agent_turns_per_traj", etc.
     """
-    if "total_turn_list_metric" not in rollout_batch or rollout_batch["total_turn_list_metric"] is None:
+    if (
+        "total_turn_list_metric" not in rollout_batch
+        or rollout_batch["total_turn_list_metric"] is None
+    ):
         return {}
 
     total_turn_list_metric = rollout_batch["total_turn_list_metric"]
@@ -264,25 +323,46 @@ def _compute_mas_turn_metrics(
     for turn_list in total_turn_list_metric:
         if turn_list is not None and len(turn_list) > 0:
             local_sum_main_turns += turn_list[-1]  # Last element is main agent turns
-            subagent_turns_list = turn_list[:-1]   # All except last are subagent turns
+            subagent_turns_list = turn_list[:-1]  # All except last are subagent turns
             local_sum_subagent_turns += sum(subagent_turns_list)
             local_sum_num_subagents += len(subagent_turns_list)
             local_num_valid_trajs += 1
 
     # All-reduce
     reduce_tensor = torch.as_tensor(
-        [local_sum_main_turns, local_sum_subagent_turns, local_sum_num_subagents, local_num_valid_trajs],
-        device=device, dtype=torch.long
+        [
+            local_sum_main_turns,
+            local_sum_subagent_turns,
+            local_sum_num_subagents,
+            local_num_valid_trajs,
+        ],
+        device=device,
+        dtype=torch.long,
     )
-    torch.distributed.all_reduce(reduce_tensor, torch.distributed.ReduceOp.SUM, group=data_parallel_group)
-    global_sum_main_turns, global_sum_subagent_turns, global_sum_num_subagents, global_num_valid_trajs = reduce_tensor.tolist()
+    torch.distributed.all_reduce(
+        reduce_tensor, torch.distributed.ReduceOp.SUM, group=data_parallel_group
+    )
+    (
+        global_sum_main_turns,
+        global_sum_subagent_turns,
+        global_sum_num_subagents,
+        global_num_valid_trajs,
+    ) = reduce_tensor.tolist()
 
     mas_turn_metrics = {}
     if global_num_valid_trajs > 0:
-        mas_turn_metrics["mas/avg_main_agent_turns_per_traj"] = global_sum_main_turns / global_num_valid_trajs
-        mas_turn_metrics["mas/avg_subagent_turns_per_traj"] = global_sum_subagent_turns / global_num_valid_trajs
-        mas_turn_metrics["mas/avg_turns_per_traj"] = (global_sum_main_turns + global_sum_subagent_turns) / global_num_valid_trajs
-        mas_turn_metrics["mas/avg_num_subagents_per_traj"] = global_sum_num_subagents / global_num_valid_trajs
+        mas_turn_metrics["mas/avg_main_agent_turns_per_traj"] = (
+            global_sum_main_turns / global_num_valid_trajs
+        )
+        mas_turn_metrics["mas/avg_subagent_turns_per_traj"] = (
+            global_sum_subagent_turns / global_num_valid_trajs
+        )
+        mas_turn_metrics["mas/avg_turns_per_traj"] = (
+            global_sum_main_turns + global_sum_subagent_turns
+        ) / global_num_valid_trajs
+        mas_turn_metrics["mas/avg_num_subagents_per_traj"] = (
+            global_sum_num_subagents / global_num_valid_trajs
+        )
 
     rollout_batch.pop("total_turn_list_metric", None)
     return mas_turn_metrics
@@ -331,14 +411,20 @@ def compute_rollout_metrics_dynamic(
     # Gather prompt/response lengths across DPs
     prompt_lengths_list: list[list[int]] = [None for _ in range(dp_world_size)]
     decode_lengths_list: list[list[int]] = [None for _ in range(dp_world_size)]
-    torch.distributed.all_gather_object(prompt_lengths_list, prompt_lengths.tolist(), group=data_parallel_group)
-    torch.distributed.all_gather_object(decode_lengths_list, response_lengths.tolist(), group=data_parallel_group)
+    torch.distributed.all_gather_object(
+        prompt_lengths_list, prompt_lengths.tolist(), group=data_parallel_group
+    )
+    torch.distributed.all_gather_object(
+        decode_lengths_list, response_lengths.tolist(), group=data_parallel_group
+    )
 
     total_prompt_lengths = torch.tensor(sum(prompt_lengths_list, []), device=device)
     total_decode_lengths = torch.tensor(sum(decode_lengths_list, []), device=device)
 
     # Compute trajectory-level rewards
-    trajectory_rewards = torch.zeros(num_trajectories, dtype=reward_scores.dtype, device=device)
+    trajectory_rewards = torch.zeros(
+        num_trajectories, dtype=reward_scores.dtype, device=device
+    )
     trajectory_counts = torch.zeros(num_trajectories, dtype=torch.long, device=device)
     for turn_idx, traj_idx in enumerate(idx_to_traj):
         trajectory_rewards[traj_idx] += reward_scores[turn_idx]
@@ -358,32 +444,72 @@ def compute_rollout_metrics_dynamic(
 
     # All-reduce basic metrics
     reduce_metrics = torch.as_tensor(
-        [sum_plen, sum_rlen, sum_traj_rewards, sum_turn_rewards, sum_end, sum_adv, num_seq, n_valid_token, num_trajectories],
-        device=device, dtype=torch.float32,
+        [
+            sum_plen,
+            sum_rlen,
+            sum_traj_rewards,
+            sum_turn_rewards,
+            sum_end,
+            sum_adv,
+            num_seq,
+            n_valid_token,
+            num_trajectories,
+        ],
+        device=device,
+        dtype=torch.float32,
     )
-    torch.distributed.all_reduce(reduce_metrics, torch.distributed.ReduceOp.SUM, group=data_parallel_group)
-    (sum_plen, sum_rlen, sum_traj_rewards, sum_turn_rewards, sum_end,
-     sum_adv, num_seq, n_valid_token, num_trajectories) = reduce_metrics.tolist()
+    torch.distributed.all_reduce(
+        reduce_metrics, torch.distributed.ReduceOp.SUM, group=data_parallel_group
+    )
+    (
+        sum_plen,
+        sum_rlen,
+        sum_traj_rewards,
+        sum_turn_rewards,
+        sum_end,
+        sum_adv,
+        num_seq,
+        n_valid_token,
+        num_trajectories,
+    ) = reduce_metrics.tolist()
 
     # All-reduce advantage min/max
     adv_max = torch.max(valid_adv).detach().item()
     adv_min = torch.min(valid_adv).detach().item()
-    reduce_tensor = torch.as_tensor([-adv_min, adv_max], device=device, dtype=torch.float32)
-    torch.distributed.all_reduce(reduce_tensor, torch.distributed.ReduceOp.MAX, group=data_parallel_group)
+    reduce_tensor = torch.as_tensor(
+        [-adv_min, adv_max], device=device, dtype=torch.float32
+    )
+    torch.distributed.all_reduce(
+        reduce_tensor, torch.distributed.ReduceOp.MAX, group=data_parallel_group
+    )
     adv_min, adv_max = reduce_tensor.tolist()
 
     # All-reduce max lengths
     local_max_prompt = prompt_lengths.max().item()
     local_max_response = response_lengths.max().item()
     local_max_total = (prompt_lengths + response_lengths).max().item()
-    max_length_metrics = torch.as_tensor([local_max_prompt, local_max_response, local_max_total], device=device, dtype=torch.float32)
-    torch.distributed.all_reduce(max_length_metrics, torch.distributed.ReduceOp.MAX, group=data_parallel_group)
-    global_max_prompt, global_max_response, global_max_total = max_length_metrics.tolist()
+    max_length_metrics = torch.as_tensor(
+        [local_max_prompt, local_max_response, local_max_total],
+        device=device,
+        dtype=torch.float32,
+    )
+    torch.distributed.all_reduce(
+        max_length_metrics, torch.distributed.ReduceOp.MAX, group=data_parallel_group
+    )
+    global_max_prompt, global_max_response, global_max_total = (
+        max_length_metrics.tolist()
+    )
 
     # Compute specialized metrics
-    tool_call_metrics = _compute_tool_call_metrics(rollout_batch, idx_to_traj, int(num_trajectories), device, data_parallel_group)
-    eval_metrics_dict = _compute_eval_metrics(rollout_batch, device, data_parallel_group)
-    mas_turn_metrics = _compute_mas_turn_metrics(rollout_batch, device, data_parallel_group)
+    tool_call_metrics = _compute_tool_call_metrics(
+        rollout_batch, idx_to_traj, int(num_trajectories), device, data_parallel_group
+    )
+    eval_metrics_dict = _compute_eval_metrics(
+        rollout_batch, device, data_parallel_group
+    )
+    mas_turn_metrics = _compute_mas_turn_metrics(
+        rollout_batch, device, data_parallel_group
+    )
 
     # Build final metrics dict
     rollout_metrics = {
@@ -406,6 +532,7 @@ def compute_rollout_metrics_dynamic(
         **mas_turn_metrics,
     }
     return rollout_metrics, total_prompt_lengths, total_decode_lengths
+
 
 def compute_rollout_metrics(
     rollout_batch: dict[str, torch.Tensor],

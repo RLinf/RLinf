@@ -72,7 +72,7 @@ def create_rl_dataset(
             tokenizer=tokenizer,
         )
 
-        return train_dataset, val_dataset    
+        return train_dataset, val_dataset
     elif config.data.type == "vision_language":
         # Prefer new factory-based VLM datasets; fallback to legacy if requested
         dataset_name = getattr(config.data, "dataset_name", None)
@@ -99,6 +99,7 @@ def create_rl_dataset(
         raise NotImplementedError(
             f"Unsupported dataset type {config.data.type}, only support ['math', 'vision_language', 'robot_demo']"
         )
+
 
 def collate_fn(data_list: list["DatasetItem"]) -> dict[str, Any]:
     """

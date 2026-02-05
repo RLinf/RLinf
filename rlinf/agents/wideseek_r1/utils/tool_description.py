@@ -46,17 +46,17 @@ tools_description_en = {
                                 },
                                 "info_to_extract": {
                                     "type": "string",
-                                    "description": "The specific question or information to extract from this URL"
-                                }
+                                    "description": "The specific question or information to extract from this URL",
+                                },
                             },
-                            "required": ["url", "info_to_extract"]                                          
-                        },                  
+                            "required": ["url", "info_to_extract"],
+                        },
                     },
                 },
-                "required": ["urls"]
+                "required": ["urls"],
             },
         },
-    }, 
+    },
     "search": {
         "type": "function",
         "function": {
@@ -79,16 +79,16 @@ tools_description_en = {
                                     "type": "integer",
                                     "description": "The number of results to return. Must be less than 10, and default is 3",
                                     "default": 3,
-                                }
+                                },
                             },
-                            "required": ["query"]    
+                            "required": ["query"],
                         },
                     },
                 },
-                "required": ["queries"]    
+                "required": ["queries"],
             },
         },
-    },  
+    },
     "access_single_agent": {
         "type": "function",
         "function": {
@@ -103,12 +103,12 @@ tools_description_en = {
                     },
                     "info_to_extract": {
                         "type": "string",
-                        "description": "The specific question or information to extract from the URL"
-                    }
+                        "description": "The specific question or information to extract from the URL",
+                    },
                 },
-                "required": ["url", "info_to_extract"]
-            }
-        }
+                "required": ["url", "info_to_extract"],
+            },
+        },
     },
     "search_single_agent": {
         "type": "function",
@@ -131,7 +131,7 @@ tools_description_en = {
                 "required": ["query"],
             },
         },
-    },    
+    },
 }
 
 tools_description_zh = {
@@ -161,7 +161,7 @@ tools_description_zh = {
                 "required": ["sub_agents"],
             },
         },
-    },  
+    },
     "access": {
         "type": "function",
         "function": {
@@ -183,13 +183,13 @@ tools_description_zh = {
                                 "info_to_extract": {
                                     "type": "string",
                                     "description": "需要从该 URL 中提取的具体问题或信息。",
-                                }
+                                },
                             },
-                            "required": ["url", "info_to_extract"]                                          
-                        },                  
+                            "required": ["url", "info_to_extract"],
+                        },
                     },
                 },
-                "required": ["urls"]
+                "required": ["urls"],
             },
         },
     },
@@ -215,13 +215,13 @@ tools_description_zh = {
                                     "type": "integer",
                                     "description": "要返回的结果数量。必须小于 10，默认值为 3。",
                                     "default": 3,
-                                }
+                                },
                             },
-                            "required": ["query"]    
+                            "required": ["query"],
                         },
                     },
                 },
-                "required": ["queries"]    
+                "required": ["queries"],
             },
         },
     },
@@ -240,11 +240,11 @@ tools_description_zh = {
                     "info_to_extract": {
                         "type": "string",
                         "description": "需要从该 URL 中提取的具体问题或信息。",
-                    }
+                    },
                 },
-                "required": ["url", "info_to_extract"]
-            }
-        }
+                "required": ["url", "info_to_extract"],
+            },
+        },
     },
     "search_single_agent": {
         "type": "function",
@@ -267,5 +267,5 @@ tools_description_zh = {
                 "required": ["query"],
             },
         },
-    },    
+    },
 }

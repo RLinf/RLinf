@@ -1,17 +1,22 @@
 import atexit
-from collections import OrderedDict
 import hashlib
-import threading
-
-import time
 import json
 import os
-from typing import Dict, List, Any, Optional
+import threading
+import time
+from collections import OrderedDict
+from typing import Any, Optional
+
 
 class WebPageCache:
     """Web page cache for storing accessed web pages."""
 
-    def __init__(self, max_size: int = 100000, cache_file: str = "./webpage_cache.json", save_interval: int = 10):
+    def __init__(
+        self,
+        max_size: int = 100000,
+        cache_file: str = "./webpage_cache.json",
+        save_interval: int = 10,
+    ):
         self.max_size = max_size
         self.cache_file = cache_file
         self.cache = OrderedDict()
@@ -44,7 +49,7 @@ class WebPageCache:
             self.cache[cache_key] = {
                 "url": url,
                 "content": content,
-                "timestamp": time.time()
+                "timestamp": time.time(),
             }
 
             self.operations_since_save += 1
@@ -80,7 +85,7 @@ class WebPageCache:
         self.save_to_file()
         self.operations_since_save = 0
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         with self.lock:
             total_requests = self.stats["hits"] + self.stats["misses"]
             hit_rate = self.stats["hits"] / total_requests if total_requests > 0 else 0
@@ -92,7 +97,7 @@ class WebPageCache:
                 "misses": self.stats["misses"],
                 "evictions": self.stats["evictions"],
                 "hit_rate": hit_rate,
-                "total_requests": total_requests
+                "total_requests": total_requests,
             }
 
     def _background_save(self):
@@ -112,38 +117,48 @@ class WebPageCache:
                     "cache_ordered": ordered_cache,
                     "stats": self.stats,
                     "max_size": self.max_size,
-                    "saved_at": time.time()
+                    "saved_at": time.time(),
                 }
 
-            with open(self.cache_file, 'w', encoding='utf-8') as f:
+            with open(self.cache_file, "w", encoding="utf-8") as f:
                 json.dump(cache_data, f, indent=2, ensure_ascii=False)
 
-            print(f"[DEBUG] WebPageCache: Saved {len(self.cache)} entries to {self.cache_file}")
+            print(
+                f"[DEBUG] WebPageCache: Saved {len(self.cache)} entries to {self.cache_file}"
+            )
 
         except Exception as e:
-            print(f"[ERROR] WebPageCache: Failed to save cache to {self.cache_file}: {e}")
+            print(
+                f"[ERROR] WebPageCache: Failed to save cache to {self.cache_file}: {e}"
+            )
 
     def load_from_file(self):
         """Load cache from JSON file."""
         if not os.path.exists(self.cache_file):
-            print(f"[DEBUG] WebPageCache: No existing cache file {self.cache_file}, starting fresh")
+            print(
+                f"[DEBUG] WebPageCache: No existing cache file {self.cache_file}, starting fresh"
+            )
             return
 
         try:
-            with open(self.cache_file, 'r', encoding='utf-8') as f:
+            with open(self.cache_file, "r", encoding="utf-8") as f:
                 cache_data = json.load(f)
 
             with self.lock:
                 if "cache_ordered" in cache_data:
                     ordered_cache = cache_data["cache_ordered"]
                     self.cache = OrderedDict(ordered_cache)
-                    print(f"[DEBUG] WebPageCache: Loaded ordered cache format")
+                    print("[DEBUG] WebPageCache: Loaded ordered cache format")
                 else:
                     loaded_cache = cache_data.get("cache", {})
                     self.cache = OrderedDict(loaded_cache)
-                    print(f"[DEBUG] WebPageCache: Loaded legacy cache format (LRU order may be lost)")
+                    print(
+                        "[DEBUG] WebPageCache: Loaded legacy cache format (LRU order may be lost)"
+                    )
 
-                self.stats = cache_data.get("stats", {"hits": 0, "misses": 0, "evictions": 0})
+                self.stats = cache_data.get(
+                    "stats", {"hits": 0, "misses": 0, "evictions": 0}
+                )
 
                 while len(self.cache) > self.max_size:
                     self.cache.popitem(last=False)
@@ -152,10 +167,14 @@ class WebPageCache:
             saved_at = cache_data.get("saved_at", 0)
             saved_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(saved_at))
 
-            print(f"[DEBUG] WebPageCache: Loaded {len(self.cache)} entries from {self.cache_file} (saved at {saved_time})")
+            print(
+                f"[DEBUG] WebPageCache: Loaded {len(self.cache)} entries from {self.cache_file} (saved at {saved_time})"
+            )
 
         except Exception as e:
-            print(f"[ERROR] WebPageCache: Failed to load cache from {self.cache_file}: {e}")
+            print(
+                f"[ERROR] WebPageCache: Failed to load cache from {self.cache_file}: {e}"
+            )
             with self.lock:
                 self.cache = OrderedDict()
                 self.stats = {"hits": 0, "misses": 0, "evictions": 0}

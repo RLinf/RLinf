@@ -15,7 +15,9 @@
 
 import asyncio
 import threading
+
 import aiohttp
+
 
 class SGLangClient:
     """SGLang API client with connection pooling."""
@@ -39,10 +41,10 @@ class SGLangClient:
                     cls._shared_session = aiohttp.ClientSession(
                         connector=connector,
                         timeout=aiohttp.ClientTimeout(total=1000, sock_connect=500),
-                        trust_env=False
+                        trust_env=False,
                     )
         return cls._shared_session
-        
+
     def __init__(self, llm_ip: str, llm_port: str, llm_type: str):
         self.llm_ip = llm_ip
         self.llm_port = llm_port
@@ -73,16 +75,22 @@ class SGLangClient:
 
         while retry_count < max_retries:
             try:
-                async with session.post(url, json=data, timeout=aiohttp.ClientTimeout(total=500)) as response:
+                async with session.post(
+                    url, json=data, timeout=aiohttp.ClientTimeout(total=500)
+                ) as response:
                     if response.status == 200:
                         result = await response.json()
-                        result_text = result['choices'][0]['message']['content']
+                        result_text = result["choices"][0]["message"]["content"]
                         return result_text
                     else:
                         response_text = await response.text()
-                        print(f"[ERROR] SGLangClient: Failed calling sglang: {response.status}, response: {response_text}, Retry {retry_count}/{max_retries}")
+                        print(
+                            f"[ERROR] SGLangClient: Failed calling sglang: {response.status}, response: {response_text}, Retry {retry_count}/{max_retries}"
+                        )
             except Exception as e:
-                print(f"[ERROR] SGLangClient: Exception error in calling sglang: {e}, Retry {retry_count}/{max_retries}")
+                print(
+                    f"[ERROR] SGLangClient: Exception error in calling sglang: {e}, Retry {retry_count}/{max_retries}"
+                )
 
             retry_count += 1
             await asyncio.sleep(10)

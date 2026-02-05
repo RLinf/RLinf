@@ -15,6 +15,7 @@
 import re
 import string
 from io import StringIO
+
 import pandas as pd
 
 
@@ -34,6 +35,7 @@ def normalize_answer(s):
 
     return white_space_fix(remove_articles(remove_punc(lower(s))))
 
+
 def normalize_text(text: str) -> str:
     """Preprocess text for NQ dataset scoring.
 
@@ -44,14 +46,15 @@ def normalize_text(text: str) -> str:
     """
     # Replace punctuation with spaces
     for punct in string.punctuation:
-        text = text.replace(punct, ' ')
+        text = text.replace(punct, " ")
 
     # Replace multiple spaces with single space
-    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r"\s+", " ", text)
 
     # Remove leading/trailing spaces
     text = text.strip().lower()
     return text
+
 
 def bool_mapping(s):
     """Map boolean string values to yes/no."""
@@ -67,13 +70,13 @@ def contains_chinese(text):
     """Check if the given text contains Chinese characters."""
     for char in text:
         # Check for common Chinese characters (CJK Unified Ideographs)
-        if '\u4e00' <= char <= '\u9fff':
+        if "\u4e00" <= char <= "\u9fff":
             return True
         # Check for rare characters (CJK Unified Ideographs Extension A)
-        if '\u3400' <= char <= '\u4dbf':
+        if "\u3400" <= char <= "\u4dbf":
             return True
         # Check for compatibility characters
-        if '\uf900' <= char <= '\ufaff':
+        if "\uf900" <= char <= "\ufaff":
             return True
     return False
 
@@ -96,12 +99,13 @@ def f1_score(answer_content, gt):
 
     # Tokenize answer and reference answer
     if contains_chinese(gt):
+
         def parse_chinese_str(s):
             # parse consecutive numbers
             numbers = []
             for i, c in enumerate(s):
                 if c.isdigit():
-                    if i > 0 and s[i-1].isdigit():
+                    if i > 0 and s[i - 1].isdigit():
                         numbers[-1] = numbers[-1] + c
                     else:
                         numbers.append(c)
@@ -109,6 +113,7 @@ def f1_score(answer_content, gt):
                 s = s.replace(c, "")
             s = set(list(s) + numbers)
             return s
+
         pred_tokens = parse_chinese_str(answer_content)
         gt_tokens = parse_chinese_str(gt)
     else:
@@ -135,8 +140,9 @@ def f1_score(answer_content, gt):
     return f1
 
 
-
-def compute_score_em(predict, ground_truth, method="strict", format_score=0.0, score=1.0):
+def compute_score_em(
+    predict, ground_truth, method="strict", format_score=0.0, score=1.0
+):
     """The scoring function for exact match (EM).
 
     Args:
@@ -155,14 +161,15 @@ def compute_score_em(predict, ground_truth, method="strict", format_score=0.0, s
 
     # answer = extract_solution(text=solution_str)
 
-
     if em_check(predict, ground_truth):
         return score
     else:
         return format_score
 
 
-def compute_score_f1(predict, ground_truth, method="strict", format_score=0.0, score=1.0):
+def compute_score_f1(
+    predict, ground_truth, method="strict", format_score=0.0, score=1.0
+):
     """The scoring function for F1 score.
 
     Args:
@@ -181,7 +188,8 @@ def compute_score_f1(predict, ground_truth, method="strict", format_score=0.0, s
     ret_score = f1_score(predict, ground_truth)
     return ret_score
 
-def extract_final_answer(text: str, mode: bool = "boxed", strict = True):
+
+def extract_final_answer(text: str, mode: bool = "boxed", strict=True):
     """Extract final answer from text based on mode.
 
     Args:
@@ -192,8 +200,8 @@ def extract_final_answer(text: str, mode: bool = "boxed", strict = True):
         For 'tag' and 'boxed': str (the extracted answer)
         For 'markdown': pd.DataFrame or None
     """
-    text = text.split('</think>')[-1].strip()
-    if mode == 'tag':
+    text = text.split("</think>")[-1].strip()
+    if mode == "tag":
         answer_pattern = r"<answer>(.*?)</answer>"
         match = re.finditer(answer_pattern, text, re.DOTALL)
         matches = list(match)
@@ -201,7 +209,7 @@ def extract_final_answer(text: str, mode: bool = "boxed", strict = True):
         if len(matches) < 1:
             return None
         return matches[-1].group(1).strip()
-    elif mode == 'boxed':
+    elif mode == "boxed":
         if not text:
             return None
 
@@ -230,14 +238,14 @@ def extract_final_answer(text: str, mode: bool = "boxed", strict = True):
                 content_end += 1
 
             if brace_count == 0:
-                content = text[content_start:content_end - 1]
+                content = text[content_start : content_end - 1]
                 matches.append(content)
                 i = content_end
             else:
                 i = content_start
 
         return matches[-1] if matches else None
-    elif mode == 'markdown':
+    elif mode == "markdown":
         if not text or not isinstance(text, str):
             return None
 
@@ -259,7 +267,7 @@ def extract_final_answer(text: str, mode: bool = "boxed", strict = True):
         if markdown_str:
             markdown_str = markdown_str[-1].strip()
             lines = markdown_str.split("\n")
-            # lines[0] = lines[0].replace(" ", "").lower()  
+            # lines[0] = lines[0].replace(" ", "").lower()
             lines = [line.strip() for line in lines]
 
             new_lines = []
@@ -272,23 +280,27 @@ def extract_final_answer(text: str, mode: bool = "boxed", strict = True):
                 return None
             markdown_str = "\n".join(new_lines)
             try:
-                response_df = pd.read_csv(StringIO(markdown_str), sep="|", keep_default_na=False)
+                response_df = pd.read_csv(
+                    StringIO(markdown_str), sep="|", keep_default_na=False
+                )
                 response_df = response_df.loc[
                     :, ~response_df.columns.str.startswith("Unnamed")
                 ]
 
-                for col in response_df.columns: # FIXME: check if need？
-                    if response_df[col].dtype == 'object':
+                for col in response_df.columns:  # FIXME: check if need？
+                    if response_df[col].dtype == "object":
                         response_df[col] = response_df[col].apply(
-                            lambda x: x.replace('<br>', '\n') if isinstance(x, str) and x else x
+                            lambda x: x.replace("<br>", "\n")
+                            if isinstance(x, str) and x
+                            else x
                         )
-                    response_df[col] = response_df[col].replace('', 'nan')
+                    response_df[col] = response_df[col].replace("", "nan")
 
                 return response_df
             except Exception as e:
                 print(f"Error parsing markdown table: {e}")
                 return None
-            
+
         return response_df
     else:
         raise ValueError(f"Unknown mode: {mode}. Must be 'tag', 'boxed', or 'markdown'")

@@ -1,5 +1,4 @@
-SYSTEM_PROMPT_PLANNER = (
-"""# Role
+SYSTEM_PROMPT_PLANNER = """# Role
 You are a main-agent working on a hard task. Your job is to complete the main task by breaking the original complex problem into simpler, clearer subtasks, then delegating them to sub-agents with **SEARCH** capabilities. 
 
 You must conduct reasoning inside <think> and </think> first every time you get new information.
@@ -77,10 +76,9 @@ Based on the sub-agent's response, I now know that the Ivy League universities i
 </tool_call>
 
 # Final Answer
-{}""")
+{}"""
 
-SYSTEM_PROMPT_PLANNER_NOSHOT = (
-"""# Role
+SYSTEM_PROMPT_PLANNER_NOSHOT = """# Role
 You are a main-agent working on a hard task. Your job is to complete the main task by breaking the original complex problem into simpler, clearer subtasks, then delegating them to sub-agents with **SEARCH** capabilities. 
 
 You must conduct reasoning inside <think> and </think> first every time you get new information.
@@ -95,10 +93,9 @@ The result of the subtasks will be returned in the next turn by the sub-agents t
 You can perform multiple turns of tool calls. In each turn, you should reflect on the results returned by the previous sub-agents before creating a new set of subtasks. Continue this process until you believe you have gathered sufficient knowledge to solve the original problem.
 
 # Final Answer
-{}""")
+{}"""
 
-SYSTEM_PROMPT_PLANNER_ZH = (
-"""# 角色
+SYSTEM_PROMPT_PLANNER_ZH = """# 角色
 你是一名负责艰难任务的主代理。你的工作是通过将原本复杂的问题拆分成更简单、更清晰的子任务，然后把这些子任务委派给具备 **搜索** 能力的子代理，从而完成主任务。
 
 你必须在每次获得新信息时，先在 <think> 和 </think> 内进行推理。
@@ -176,10 +173,9 @@ SYSTEM_PROMPT_PLANNER_ZH = (
 </tool_call>
 
 # 最终答案
-{}""")
+{}"""
 
-SYSTEM_PROMPT_PLANNER_ZH_NOSHOT = (
-"""# 角色
+SYSTEM_PROMPT_PLANNER_ZH_NOSHOT = """# 角色
 你是一名负责艰难任务的主代理。你的工作是通过将原本复杂的问题拆分成更简单、更清晰的子任务，然后把这些子任务委派给具备 **搜索** 能力的子代理，从而完成主任务。
 
 你必须在每次获得新信息时，先在 <think> 和 </think> 内进行推理。
@@ -194,10 +190,9 @@ SYSTEM_PROMPT_PLANNER_ZH_NOSHOT = (
 你可以进行多轮工具调用。在每一轮中，你都应先反思上一轮子代理返回的结果，再创建新的一组子任务。重复这一过程，直到你认为已收集到足够的知识来解决原始问题。
 
 # 最终答案
-{}""")
+{}"""
 
-SYSTEM_PROMPT_WORKER = (
-"""# Role
+SYSTEM_PROMPT_WORKER = """# Role
 You are a sub-agent responsible for a specific part of a larger task. Your job is to complete your assigned subtask accurately using search and access tools with detailed evidence. You are not expected to solve the main task as a whole.
 
 You must conduct reasoning inside <think> and </think> first every time you get new information.
@@ -220,10 +215,9 @@ If you determine that no further external knowledge is required, you may proceed
 
 Your final summary should be a clear and well-structured report.
 
-Please focus on completing your assigned subtask. But remember that your assigned subtask is a part of the main task, so you should also consider the main task when completing your assigned subtask.""")
+Please focus on completing your assigned subtask. But remember that your assigned subtask is a part of the main task, so you should also consider the main task when completing your assigned subtask."""
 
-SYSTEM_PROMPT_WORKER_ZH = (
-"""# 角色
+SYSTEM_PROMPT_WORKER_ZH = """# 角色
 你是一个子代理，负责更大任务中的某个特定部分。你的工作是使用搜索和访问工具，并基于详尽证据，准确完成你被分配的子任务。你不需要解决整个主任务。
 
 你每次获得新信息时，都必须先在 <think> 和 </think> 内进行推理。
@@ -246,10 +240,9 @@ SYSTEM_PROMPT_WORKER_ZH = (
 
 你的最终总结应当是一份清晰且结构良好的报告。
 
-请专注于完成你被分配的子任务。但请记住，你的子任务是主任务的一部分，因此在完成子任务时也要兼顾主任务。""")
+请专注于完成你被分配的子任务。但请记住，你的子任务是主任务的一部分，因此在完成子任务时也要兼顾主任务。"""
 
-SYSTEM_PROMPT_SINGLE_AGENT = (
-"""# Role
+SYSTEM_PROMPT_SINGLE_AGENT = """# Role
 You are a agent working on a hard task. Your job is to complete this task by using the search and access tools.
 
 You must conduct reasoning inside <think> and </think> first every time you get new information.
@@ -340,10 +333,9 @@ Based on the results, I now know the Ivy League universities in 2025: school1, s
 ...
 
 # Final Answer
-{}""")
+{}"""
 
-SYSTEM_PROMPT_SINGLE_AGENT_ZH = (
-"""# 角色
+SYSTEM_PROMPT_SINGLE_AGENT_ZH = """# 角色
 你是一名负责艰难任务的代理。你的工作是使用搜索和访问工具来完成该任务。
 
 你每次获得新信息时，都必须先在 <think> 和 </think> 内进行推理。
@@ -434,10 +426,9 @@ SYSTEM_PROMPT_SINGLE_AGENT_ZH = (
 ...
 
 # 最终答案
-{} """)
+{} """
 
-SYSTEM_PROMPT_SINGLE_AGENT_NOSHOT = (
-"""# Role
+SYSTEM_PROMPT_SINGLE_AGENT_NOSHOT = """# Role
 You are a agent working on a hard task. Your job is to complete this task by using the search and access tools.
 
 You must conduct reasoning inside <think> and </think> first every time you get new information.
@@ -452,10 +443,9 @@ A common approach is to first use the search tool for high-level snippet discove
 You can perform multiple turns of tool calls. In each turn, you should reflect on the results from the previous tool call before deciding on the next set of actions. Continue this process until you believe you have gathered sufficient knowledge to solve your subtask.
 
 # Final Answer
-{}""")
+{}"""
 
-SYSTEM_PROMPT_SINGLE_AGENT_ZH_NOSHOT = (
-"""# 角色
+SYSTEM_PROMPT_SINGLE_AGENT_ZH_NOSHOT = """# 角色
 你是一名负责艰难任务的代理。你的工作是使用搜索和访问工具来完成该任务。
 
 你每次获得新信息时，都必须先在 <think> 和 </think> 内进行推理。
@@ -470,62 +460,51 @@ SYSTEM_PROMPT_SINGLE_AGENT_ZH_NOSHOT = (
 你可以进行多轮工具调用。在每一轮中，你都应先反思上一轮工具调用的结果，再决定下一组行动。持续这一过程，直到你认为已收集到足够的知识来解决你的子任务。
 
 # 最终答案
-{} """)
+{} """
 
-USER_PROMPT_PLANNER = (
-"""# Task
+USER_PROMPT_PLANNER = """# Task
 Your task is: 
 {}"""
-)
 
-USER_PROMPT_WORKER = (
-"""# Task
+USER_PROMPT_WORKER = """# Task
 The main task is:
 {}
 
 Your current subtask is:
 {}"""
-)
 
-USER_PROMPT_PLANNER_ZH = (
-"""# 任务
+USER_PROMPT_PLANNER_ZH = """# 任务
 你的任务是: 
 {}"""
-)
 
-USER_PROMPT_WORKER_ZH = (
-"""# 任务
+USER_PROMPT_WORKER_ZH = """# 任务
 你的主任务是:
 {}
 
 你当前的子任务是:
 {}"""
-)
 
-USER_PROMPT_SINGLE_AGENT = (
-"""# Task
+USER_PROMPT_SINGLE_AGENT = """# Task
 Your task is: {}
 
 # Instructions
 Provide a detailed answer and supporting information for this task."""
-)
 
-USER_PROMPT_SINGLE_AGENT_ZH = (
-"""# 任务
+USER_PROMPT_SINGLE_AGENT_ZH = """# 任务
 你的任务是: {}
 
 # 说明
 请为此任务提供详细的答案和支持信息。"""
-)
 
 BOXED_FORMAT_EN = "If you determine that no further external knowledge is required, you have to wrap your final answer in \\boxed{}."
 MARKDOWN_FORMAT_EN = "If you determine that no further external knowledge is required, you have to wrap your final answer in the following format \n```markdown\n{data_content}\n```"
-BOXED_FORMAT_ZH = "如果你判断不再需要额外的外部知识，你必须将最终答案用 \\boxed{} 包裹。"
+BOXED_FORMAT_ZH = (
+    "如果你判断不再需要额外的外部知识，你必须将最终答案用 \\boxed{} 包裹。"
+)
 MARKDOWN_FORMAT_ZH = "如果你判断不再需要额外的外部知识，你必须将最终答案按如下格式包裹：\n```markdown\n{data_content}\n```"
 
 
-LLM_JUDGE_PROMPT = (
-"""Question: {question}
+LLM_JUDGE_PROMPT = """Question: {question}
 
 Labeled Answer: {correct_answer}
 
@@ -533,4 +512,4 @@ Predicted Answer: {response}
 
 Did the model give an answer **equivalent** to the labeled answer?
 
-Please respond with "Correct" if they are equivalent, or "Incorrect" if they are not equivalent. Do not include any other text.""")
+Please respond with "Correct" if they are equivalent, or "Incorrect" if they are not equivalent. Do not include any other text."""
