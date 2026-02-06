@@ -10,28 +10,29 @@ hydra:
     dir: .
   output_subdir: null
   searchpath:
-    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+    - file://${oc.env:EMBODIED_PATH}/config/
 
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 0
+    env,actor,rollout: 0
+
 
 runner:
   task_type: embodied
   logger:
-    log_path: /workspace/results/frankasim_sac_cnn
+    log_path: "../results"
     project_name: rlinf
-    experiment_name: "ci-test"
+    experiment_name: "sac_cnn"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 2
+  max_epochs: 15000
   max_steps: -1
 
   only_eval: False
-  val_check_interval: 2
+  val_check_interval: 210
   save_interval: -1
-  weight_sync_interval: 1
+  weight_sync_interval: 30
 
 algorithm:
   update_epoch: 4
@@ -40,7 +41,7 @@ algorithm:
   actor_agg_q: mean
   backup_entropy: False
   critic_subsample_size: 2
-  eval_rollout_epoch: 1
+  eval_rollout_epoch: 5
   target_entropy: -2
   adv_type: embodied_sac
   loss_type: embodied_sac
@@ -57,9 +58,10 @@ algorithm:
   # Replay buffer settings
   replay_buffer:
     enable_cache: True
-    cache_size: 5000 # number of trajectories cached in memory
+    cache_size: 20000 # number of trajectories cached in memory
     sample_window_size: 20000 # number of latest trajectories to sample from for replay buffer
     min_buffer_size: 1  # Minimum buffer size before training starts
+    save_trajectories: False
 
   target_update_freq: 1  # Frequency of target network updates
 
@@ -105,7 +107,7 @@ rollout:
   collect_prev_infos: False
   compile_model: False
   model:
-    model_path:  "/workspace/dataset/RLinf-ResNet10-pretrained"
+    model_path:  "/path/to/RLinf-ResNet10-pretrained"
     state_dim: 7
     action_dim: 4
     num_q_heads: 10
@@ -122,7 +124,7 @@ actor:
   enable_drq: True
   compile_model: False
   model:
-    model_path:  "/workspace/dataset/RLinf-ResNet10-pretrained"
+    model_path:  "/path/to/RLinf-ResNet10-pretrained"
     state_dim: 7
     action_dim: 4
     num_q_heads: 10

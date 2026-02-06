@@ -79,15 +79,17 @@ algorithm:
   # Replay buffer settings
   replay_buffer:
     enable_cache: True
-    cache_size: 100 # number of trajectories cached in memory
+    cache_size: 200 # number of trajectories cached in memory
     min_buffer_size: 200  # Minimum buffer size before training starts
     sample_window_size: 200 # number of latest trajectories to sample from for replay buffer
+    save_trajectories: False
 
   demo_buffer:
     enable_cache: True
-    cache_size: 100 # number of trajectories cached in memory
+    cache_size: 200 # number of trajectories cached in memory
     sample_window_size: 200 # number of latest trajectories to sample from for demo buffer
     load_path: "/path/to/demo_data"
+    save_trajectories: False
 
   target_update_freq: 1  # Frequency of target network updates
 
