@@ -115,6 +115,7 @@ class CNNPolicy(nn.Module, BasePolicy):
                     use_layer_norm=True,
                 )
             )
+            self.state_proj._fsdp_wrap_name = "state_proj"
             init_mlp_weights(self.state_proj, nonlinearity="tanh")
             self.mix_proj = nn.Sequential(
                 *make_mlp(
