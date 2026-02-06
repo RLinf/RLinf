@@ -92,7 +92,7 @@ def get_init_weight_context_manager(use_meta_tensor=True):
     return init_context
 
 
-def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_openvla_model=False):
+def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
     """
     FSDP wrap policy that handles both standard transformer models and VLA models.
 
@@ -135,7 +135,7 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_openvla_model=Fa
     policies.append(resnet_policy)
 
     # Add vision transformer policies for OpenVLA models
-    if is_openvla_model:
+    if model_type in ["openvla", "openvla_oft"]:
         from prismatic.extern.hf.modeling_prismatic import PrismaticProjector
         from timm.models.vision_transformer import VisionTransformer
 
@@ -156,6 +156,23 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_openvla_model=Fa
             module_classes={PrismaticProjector},
         )
         policies.append(prismatic_fsdp_wrapping_policy)
+
+    if model_type == "cnn_policy" and not config.use_orig_params:
+        from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
+
+        from rlinf.models.embodiment.modules.resnet_utils import ResNetEncoder
+
+        encoder_policy = functools.partial(
+            _module_wrap_policy, module_classes={ResNetEncoder}
+        )
+        policies.append(encoder_policy)
+
+        def is_state_proj(m):
+            return getattr(m, "_fsdp_wrap_name", None) == "state_proj"
+
+        policies.append(
+            functools.partial(lambda_auto_wrap_policy, lambda_fn=is_state_proj)
+        )
 
     if hasattr(module, "value_head"):
         from rlinf.models.embodiment.modules.value_head import ValueHead
