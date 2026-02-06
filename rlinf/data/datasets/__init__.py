@@ -58,7 +58,7 @@ def create_rl_dataset(
 
         return train_dataset, val_dataset
     elif config.data.type == "wideseek_r1":
-        logging.info(f"Using dataset class: {MathDataset.__name__}")
+        logging.info(f"Using dataset class: {WideSeekR1_Dataset.__name__}")
 
         train_dataset = WideSeekR1_Dataset(
             data_paths=config.data.train_data_paths,

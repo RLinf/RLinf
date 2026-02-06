@@ -26,6 +26,7 @@ from transformers import AutoTokenizer
 from rlinf.data.io_struct import (
     DynamicRolloutResult,
     RolloutRequest,
+    RolloutResult,
 )
 from rlinf.data.tool_call.tool_io_struct import (
     ToolChannelRequest,
@@ -36,6 +37,7 @@ from rlinf.data.tool_call.tool_io_struct import (
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.agent.tool_worker import ToolChannelInfo
+from rlinf.workers.rollout.utils import green
 
 
 @dataclass
@@ -137,6 +139,23 @@ class AgentLoopWorker(Worker):
         # for calling another llm without training.
         self.solid_generate_input_channels = solid_generate_input_channels
 
+    async def generate(
+        self, prompt_ids: list[int], sampling_params: Optional[dict] = None
+    ):
+        channel_key = uuid4().hex
+        await self.generate_input_channel.put(
+            {
+                "channel_key": channel_key,
+                "prompt_ids": prompt_ids,
+                "sampling_params": sampling_params,
+            },
+            async_op=True,
+        ).async_wait()
+        result = await self.generate_output_channel.get(
+            channel_key, async_op=True
+        ).async_wait()
+        return result
+
     async def state_less_tool_call_with_channel(
         self,
         input_channel: Channel,
@@ -175,6 +194,20 @@ class AgentLoopWorker(Worker):
             result_text = str(channel_response.result)
         return ToolResponse(text=result_text)
 
+    def print_agent_outputs(
+        self,
+        prompt_texts: Optional[str],
+        trace_prints: list[Any],
+    ):
+        print_texts = []
+        if prompt_texts is not None:
+            print_texts = [
+                f"{green('Prompt')}         : {prompt_texts!r}",
+            ]
+        for trace_print in trace_prints:
+            print_texts.append(f"{green('Trace print')}    : {trace_print!r}")
+        print(*print_texts, sep="\n")
+
     def get_tool_response_ids(self, tool_messages: list[dict]):
         """
         To append correct tool response ids.
@@ -190,6 +223,107 @@ class AgentLoopWorker(Worker):
         )
         return wi_ids[len(wo_ids) :]
 
+    async def run_agentloop_rollout_group(
+        self,
+        input_ids: list[int],
+        answer: str,
+        group_size: int,
+        output_channel: Channel,
+    ):
+        """
+        Run the agent loop for a group of queries.
+        """
+        rollout_tasks = []
+        # grpo group_size
+        for _ in range(group_size):
+            task = asyncio.create_task(self.run_one_query(copy.deepcopy(input_ids)))
+            rollout_tasks.append(task)
+
+        task_results = await asyncio.gather(*rollout_tasks)
+        rollout_result = self.get_rollout_result(task_results, answer)
+        await output_channel.put(rollout_result, async_op=True).async_wait()
+
+    async def run_agentloop_rollout(
+        self, input_channel: Channel, output_channel: Channel
+    ):
+        """
+        Run the agent loop for multiple queries.
+        """
+        with self.worker_timer():
+            rollout_request: RolloutRequest = input_channel.get()
+
+            send_output_tasks = []
+            for input_ids, answer in zip(
+                rollout_request.input_ids, rollout_request.answers
+            ):
+                send_output_tasks.append(
+                    asyncio.create_task(
+                        self.run_agentloop_rollout_group(
+                            input_ids, answer, rollout_request.n, output_channel
+                        ),
+                    )
+                )
+
+            await asyncio.gather(*send_output_tasks)
+
+    def get_rollout_result(
+        self, task_results: list[AgentLoopOutput], answer: str
+    ) -> RolloutResult:
+        """
+        Collect group task results into a RolloutResult.
+        """
+        if self.print_outputs:
+            for task_result in task_results:
+                if len(task_result.trace_prints) > 0:
+                    self.print_agent_outputs(
+                        task_result.prompt_text, task_result.trace_prints
+                    )
+        # Clip to model limits to avoid mask/position size mismatch
+        max_prompt_len = int(self.cfg.data.max_prompt_length)
+        max_total_len = int(self.cfg.runner.seq_length)
+        max_resp_len = max(1, max_total_len - max_prompt_len)
+
+        prompt_ids = [r.prompt_ids for r in task_results]
+        prompt_texts = [r.prompt_text for r in task_results]
+        response_ids = [r.response_ids for r in task_results]
+        response_texts = [r.response_text for r in task_results]
+        prompt_lengths = [len(p) for p in prompt_ids]
+        response_lengths = [len(o) for o in response_ids]
+        response_mask = None
+        if all(r.response_mask is not None for r in task_results):
+            response_mask = [r.response_mask[:max_resp_len] for r in task_results]
+
+        # prompt_lengths and response_lengths should be clipped to max_prompt_len and max_resp_len to avoid mask/position size mismatch
+        assert max(prompt_lengths) <= max_prompt_len, (
+            "prompt_lengths should be clipped to max_prompt_len"
+        )
+        assert max(response_lengths) <= max_resp_len, (
+            "response_lengths should be clipped to max_resp_len"
+        )
+        response_logprobs = None
+        if self.return_logprobs:
+            response_logprobs = [
+                r.response_logprobs[:max_resp_len] for r in task_results
+            ]
+        is_end = [True for _ in task_results]
+        answers = [answer] * len(task_results)
+        return RolloutResult(
+            num_sequence=len(task_results),
+            group_size=len(task_results),
+            prompt_lengths=prompt_lengths,
+            prompt_ids=prompt_ids,
+            prompt_texts=prompt_texts,
+            response_lengths=response_lengths,
+            response_ids=response_ids,
+            response_texts=response_texts,
+            is_end=is_end,
+            answers=answers,
+            response_mask=response_mask,
+            rollout_logprobs=response_logprobs,
+        )
+
+    async def run_one_query(self, prompt_ids: list[int], **kwargs) -> AgentLoopOutput:
+        raise NotImplementedError("Subclasses must implement this method")
 
 class MultiTurnAgentLoopWorker(AgentLoopWorker):
     """Multi-turn agent loop worker."""

@@ -916,7 +916,7 @@ class RolloutDataBalance(UserDict):
         rollout_batch_pad = {k: v.cpu() for k, v in rollout_batch_pad.items()}
 
         # 1. Allgather data
-        gathered_rollout_batches = [{} for _ in range(dp_world_size)]
+        gathered_rollout_batches = [dict() for _ in range(dp_world_size)]
         for k in sorted(rollout_batches.keys()):
             rollout_batch_values = [None for _ in range(dp_world_size)]
             torch.distributed.all_gather_object(

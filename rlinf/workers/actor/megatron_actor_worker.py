@@ -329,20 +329,6 @@ class MegatronActor(MegatronModelManager, Worker):
             self._timer_metrics[tag] = self._timer_metrics.get(tag, 0.0) - duration
         return batch, result
 
-    def all_reduce_dp_min(
-        self,
-        obj: int,
-    ):
-        obj_tensor = torch.tensor(
-            [obj], dtype=torch.long, device=torch.cuda.current_device()
-        )
-        torch.distributed.all_reduce(
-            obj_tensor,
-            torch.distributed.ReduceOp.MIN,
-            group=parallel_state.get_data_parallel_group(),
-        )
-        return obj_tensor.item()
-
     def get_dynamic_batch_as_much(
         self,
         input_channel: Channel,

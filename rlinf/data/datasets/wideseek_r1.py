@@ -43,20 +43,20 @@ class WideSeekR1_Dataset(Dataset):
         self.prompt_key = config.data.prompt_key
         self.answer_key = config.data.answer_key
         self.apply_chat_template = config.data.apply_chat_template
+        self.data_size = config.data.get("data_size", None)
         self.is_markdown = config.data.get("is_markdown", False)
         self.unique_columns_key = config.data.get("unique_columns", "unique_columns")
         self.is_hybrid = config.data.get("is_hybrid", False)
         self.enable_zh = config.data.get("enable_zh", False)
-        data_size = config.data.data_size
 
         self.data = self._load_data()
+        if self.data_size is not None and self.data_size >= 0:
+            self.data = self.data[: self.data_size]
         if config.data.get("filter_prompt_by_length", False):
             total = len(self.data)
             filtered = []
             failed = 0
-            if data_size is None or data_size < 0:
-                data_size = len(self.data)
-            for item in self.data[:data_size]:
+            for item in self.data:
                 try:
                     prompt = item[self.prompt_key]
                     _, L = self.encode(prompt)
