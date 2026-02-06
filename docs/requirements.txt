@@ -10,6 +10,7 @@ colorama==0.4.6
 commonmark==0.9.1
 docutils==0.21.2
 exceptiongroup==1.3.0
+evdev==1.9.2
 h11==0.16
 idna==3.10
 imagesize==1.4.1

@@ -55,8 +55,10 @@ algorithm:
   group_size: 1
   normalize_advantages: False  # SAC doesn't use advantages
   kl_penalty: kl
+  enable_drq: False
 
-  agg_q: mean # min -> mean for real world
+  agg_q: min # or mean
+  actor_agg_q: mean
 
   backup_entropy: False    # True -> False for real world RLPD
   critic_subsample_size: 2
