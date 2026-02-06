@@ -21,6 +21,8 @@ from typing import Optional, Union
 
 import torch
 
+from rlinf.scheduler import WorkerInfo
+
 
 class BaseWorldEnv(ABC):
     """Base class that provides shared utilities for world model environments.
@@ -35,6 +37,7 @@ class BaseWorldEnv(ABC):
         num_envs: int,
         seed_offset: int,
         total_num_processes: int,
+        worker_info: WorkerInfo,
         record_metrics: bool = True,
     ):
         self.cfg = cfg
@@ -43,6 +46,7 @@ class BaseWorldEnv(ABC):
         self.seed = cfg.seed + seed_offset
         self.total_num_processes = total_num_processes
         self.num_envs = num_envs
+        self.worker_info = worker_info
         self.record_metrics = record_metrics
 
         self.auto_reset = getattr(cfg, "auto_reset", True)
@@ -53,8 +57,6 @@ class BaseWorldEnv(ABC):
         self.elapsed_steps = 0
 
         self.video_cfg = cfg.video_cfg
-        self.video_cnt = 0
-        self.render_images = []
 
         self.prev_step_reward = torch.zeros(
             self.num_envs, dtype=torch.float32, device=self.device

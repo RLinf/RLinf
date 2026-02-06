@@ -83,7 +83,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: True # otherwise, may OOM
 
   # Override the default values in env/libero_spatial
   train:

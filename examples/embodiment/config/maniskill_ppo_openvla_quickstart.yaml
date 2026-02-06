@@ -80,7 +80,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: True
 
   # Override the default values in env/manikill_put_carrot_on_plate_in_scene
   train:
