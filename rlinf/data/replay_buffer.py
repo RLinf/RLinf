@@ -17,6 +17,7 @@ import copy
 import json
 import os
 import pickle as pkl
+import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
@@ -596,9 +597,6 @@ class TrajectoryReplayBuffer:
         )
 
         # Convert global sample indices to per-trajectory local indices
-        if not window_ids:
-            return {}
-
         grouped_indices: dict[str, list[tuple[int, int]]] = {}
         cumulative_ends_tensor = self._window_cache_cumulative_ends_tensor
         if cumulative_ends_tensor is None or cumulative_ends_tensor.numel() == 0:
@@ -914,8 +912,8 @@ class TrajectoryReplayBuffer:
         # Create save directory
         os.makedirs(save_path, exist_ok=True)
 
+        save_futures = []
         if not self.auto_save:
-            save_futures = []
             cache = self._flat_trajectory_cache
             if cache is None:
                 raise RuntimeError("auto_save=False requires cache to save checkpoint.")
@@ -952,9 +950,27 @@ class TrajectoryReplayBuffer:
                         save_dir=save_path,
                     )
                 )
+        else:
+            for trajectory_id in self._window_cache_ids:
+                model_weights_id = self._trajectory_index[trajectory_id][
+                    "model_weights_id"
+                ]
+                trajectory_path = self._get_trajectory_path(
+                    trajectory_id, model_weights_id
+                )
+                if not os.path.isfile(trajectory_path):
+                    continue
 
-            for fut in save_futures:
-                fut.result()
+                # copy trajectory file from trajectory_path to save_path
+                target_path = os.path.join(save_path, os.path.basename(trajectory_path))
+                save_futures.append(
+                    self._save_executor.submit(
+                        shutil.copyfile, trajectory_path, target_path
+                    )
+                )
+
+        for fut in save_futures:
+            fut.result()
 
         # Save metadata and trajectory index into the specified directory
         self._save_metadata(save_path)
