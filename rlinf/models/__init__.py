@@ -34,6 +34,8 @@ def get_model(cfg: DictConfig):
         from rlinf.models.embodiment.cnn_policy import get_model
     elif model_type == SupportedModel.FLOW_POLICY:
         from rlinf.models.embodiment.flow_policy import get_model
+    elif model_type == SupportedModel.NAVID:
+        from rlinf.models.embodiment.navid import get_model
     else:
         return None
 

@@ -1,0 +1,8 @@
+model_type: "navid"
+model_path: "/path/to/model"
+
+precision: "bf16"
+action_dim: 1
+num_action_chunks: 3
+is_lora: False
+
