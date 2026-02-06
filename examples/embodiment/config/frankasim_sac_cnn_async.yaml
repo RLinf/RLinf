@@ -64,6 +64,7 @@ algorithm:
     save_trajectories: False
 
   target_update_freq: 1  # Frequency of target network updates
+  target_update_type: all # all # select from ["all", "q_head_only"]
 
   # params for rollout
   sampling_params:
@@ -107,7 +108,7 @@ rollout:
   collect_prev_infos: False
   compile_model: False
   model:
-    model_path:  "/path/to/RLinf-ResNet10-pretrained"
+    model_path: "/path/to/RLinf-ResNet10-pretrained"
     state_dim: 7
     action_dim: 4
     num_q_heads: 10
@@ -124,7 +125,7 @@ actor:
   enable_drq: True
   compile_model: False
   model:
-    model_path:  "/path/to/RLinf-ResNet10-pretrained"
+    model_path: "/path/to/RLinf-ResNet10-pretrained"
     state_dim: 7
     action_dim: 4
     num_q_heads: 10

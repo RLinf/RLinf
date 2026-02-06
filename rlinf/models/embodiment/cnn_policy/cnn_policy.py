@@ -203,10 +203,11 @@ class CNNPolicy(nn.Module, BasePolicy):
                 images = images.permute(0, 3, 1, 2)
             visual_features.append(self.encoders[img_id](images))
         visual_feature = torch.cat(visual_features, dim=-1)
-        if detach_encoder:
-            visual_feature = visual_feature.detach()
         state_embed = self.state_proj(obs["states"])
         x = torch.cat([visual_feature, state_embed], dim=1)
+        if detach_encoder:
+            x = x.detach()
+            visual_feature = visual_feature.detach()
         return x, visual_feature
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
