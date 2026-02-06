@@ -228,43 +228,39 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         """Initialize SAC-specific components"""
         # Initialize replay buffer
         seed = self.cfg.actor.get("seed", 1234)
-        storage_dir = self.cfg.algorithm.replay_buffer.get("storage_dir", None)
-        if storage_dir is None:
-            storage_dir = os.path.join(
+        auto_save_path = self.cfg.algorithm.replay_buffer.get("auto_save_path", None)
+        if auto_save_path is None:
+            auto_save_path = os.path.join(
                 self.cfg.runner.logger.log_path, f"replay_buffer/rank_{self._rank}"
             )
         else:
-            storage_dir = os.path.join(storage_dir, f"rank_{self._rank}")
+            auto_save_path = os.path.join(auto_save_path, f"rank_{self._rank}")
         self.replay_buffer = TrajectoryReplayBuffer(
             seed=seed,
-            storage_dir=storage_dir,
-            storage_format="pt",
             enable_cache=self.cfg.algorithm.replay_buffer.enable_cache,
             cache_size=self.cfg.algorithm.replay_buffer.cache_size,
             sample_window_size=self.cfg.algorithm.replay_buffer.sample_window_size,
-            save_trajectories=self.cfg.algorithm.replay_buffer.get(
-                "save_trajectories", False
-            ),
+            auto_save=self.cfg.algorithm.replay_buffer.get("auto_save", False),
+            auto_save_path=auto_save_path,
+            trajectory_format="pt",
         )
 
         if self.cfg.algorithm.get("demo_buffer", {}).get("load_path", None) is not None:
-            storage_dir = self.cfg.algorithm.demo_buffer.get("storage_dir", None)
-            if storage_dir is None:
-                storage_dir = os.path.join(
+            auto_save_path = self.cfg.algorithm.demo_buffer.get("auto_save_path", None)
+            if auto_save_path is None:
+                auto_save_path = os.path.join(
                     self.cfg.runner.logger.log_path, f"demo_buffer/rank_{self._rank}"
                 )
             else:
-                storage_dir = os.path.join(storage_dir, f"rank_{self._rank}")
+                auto_save_path = os.path.join(auto_save_path, f"rank_{self._rank}")
             self.demo_buffer = TrajectoryReplayBuffer(
                 seed=seed,
-                storage_dir=storage_dir,
-                storage_format="pt",
                 enable_cache=self.cfg.algorithm.demo_buffer.enable_cache,
                 cache_size=self.cfg.algorithm.demo_buffer.cache_size,
                 sample_window_size=self.cfg.algorithm.demo_buffer.sample_window_size,
-                save_trajectories=self.cfg.algorithm.demo_buffer.get(
-                    "save_trajectories", False
-                ),
+                auto_save=self.cfg.algorithm.demo_buffer.get("auto_save", False),
+                auto_save_path=auto_save_path,
+                trajectory_format="pt",
             )
             self.demo_buffer.load_checkpoint(
                 self.cfg.algorithm.demo_buffer.load_path,
@@ -723,11 +719,6 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             save_base_path, f"replay_buffer/rank_{self._rank}"
         )
         self.replay_buffer.save_checkpoint(buffer_save_path)
-        if self.demo_buffer is not None:
-            demo_save_path = os.path.join(
-                save_base_path, f"demo_buffer/rank_{self._rank}"
-            )
-            self.demo_buffer.save_checkpoint(demo_save_path)
 
     def load_checkpoint(self, load_base_path):
         super().load_checkpoint(load_base_path)
@@ -735,8 +726,3 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             load_base_path, f"replay_buffer/rank_{self._rank}"
         )
         self.replay_buffer.load_checkpoint(buffer_load_path)
-        if self.demo_buffer is not None:
-            demo_load_path = os.path.join(
-                load_base_path, f"demo_buffer/rank_{self._rank}"
-            )
-            self.demo_buffer.load_checkpoint(demo_load_path)
