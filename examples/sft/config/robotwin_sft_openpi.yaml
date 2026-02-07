@@ -44,7 +44,7 @@ actor:
   # Override the default values in model/pi0
   model:
     precision: null
-    model_path: /mnt/public/peihong/models/pi0_base
+    model_path: "/path/to/pi0-model"
     num_action_chunks: 50 # interface for the env
     action_dim: 32
     use_proprio: True

@@ -300,7 +300,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                 "prompt": env_obs["task_descriptions"],
                 'state': env_obs["states"],
             }
-            # [b, h, w, c] -> [c, h, w]           
+            # [b, h, w, c] -> [b, c, h, w]           
             processed_obs["images"]["cam_high"] = env_obs["main_images"].permute(0,3,1,2).contiguous()
             if env_obs["wrist_images"] is not None:
                 processed_obs["images"]["cam_left_wrist"] = env_obs["wrist_images"].permute(0,3,1,2).contiguous()
