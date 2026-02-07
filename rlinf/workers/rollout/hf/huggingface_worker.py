@@ -62,6 +62,11 @@ class MultiStepRolloutWorker(Worker):
             accel_max_ctas=max_ctas, accel_min_ctas=min_ctas
         )
 
+        self.n_train_chunk_steps = (
+            self.cfg.env.train.max_steps_per_rollout_epoch
+            // self.cfg.actor.model.num_action_chunks
+        )
+
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
         with open_dict(rollout_model_config):

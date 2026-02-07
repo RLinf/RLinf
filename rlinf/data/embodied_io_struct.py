@@ -123,6 +123,7 @@ class ChunkStepResult:
     terminations: torch.Tensor = None  # [B, 1]
     rewards: torch.Tensor = None  # [B, 1]
     forward_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
+    versions: torch.Tensor = None  # [B, 1]
 
     def __post_init__(self):
         if self.actions is not None:
@@ -141,6 +142,8 @@ class ChunkStepResult:
             self.rewards = self.rewards.cpu().contiguous()
         if self.forward_inputs:
             self.forward_inputs = put_tensor_device(self.forward_inputs, "cpu")
+        if self.versions is not None:
+            self.versions = self.versions.cpu().contiguous()
 
 
 @dataclass
@@ -161,6 +164,7 @@ class Trajectory:
     dones: torch.Tensor = None
     prev_logprobs: torch.Tensor = None
     prev_values: torch.Tensor = None
+    versions: torch.Tensor = None
     forward_inputs: dict[str, Any] = field(default_factory=dict)
 
     curr_obs: dict[str, Any] = field(default_factory=dict)
@@ -198,6 +202,7 @@ class EmbodiedRolloutResult:
     forward_inputs: list[dict[str, Any]] = field(
         default_factory=list
     )  # trajectory_length
+    versions: list[torch.Tensor] = field(default_factory=list)
 
     curr_obs: list[dict[str, Any]] = field(default_factory=list)  # trajectory_length
     next_obs: list[dict[str, Any]] = field(default_factory=list)  # trajectory_length
@@ -222,6 +227,8 @@ class EmbodiedRolloutResult:
             self.prev_values.append(result.prev_values)
         if result.forward_inputs is not None:
             self.forward_inputs.append(result.forward_inputs)
+        if result.versions is not None:
+            self.versions.append(result.versions)
 
     def update_last_actions(
         self, intervene_actions: torch.Tensor, intervene_flags: torch.Tensor
@@ -284,7 +291,8 @@ class EmbodiedRolloutResult:
                 trajectory.forward_inputs[key] = (
                     trajectory.forward_inputs[key].cpu().contiguous()
                 )
-
+        if len(self.versions) > 0:
+            trajectory.versions = torch.stack(self.versions, dim=0).cpu().contiguous()
         if len(self.curr_obs) > 0:
             trajectory.curr_obs = stack_list_of_dict_tensor(self.curr_obs)
             for key in trajectory.curr_obs.keys():

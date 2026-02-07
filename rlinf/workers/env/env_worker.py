@@ -67,6 +67,11 @@ class EnvWorker(Worker):
                 self.cfg.env.eval.total_num_envs // self._world_size // self.stage_num
             )
 
+        self.n_train_chunk_steps = (
+            self.cfg.env.train.max_steps_per_rollout_epoch
+            // self.cfg.actor.model.num_action_chunks
+        )
+
     def init_worker(self):
         self.enable_offload = self.cfg.env.enable_offload
 

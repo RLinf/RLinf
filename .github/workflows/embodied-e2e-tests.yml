@@ -147,6 +147,14 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openvla
 
+      - name: Maniskill Async PPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run_async_ppo.sh maniskill_async_ppo_openvla
+
       - name: Clean up
         run: |
           rm -rf .venv
