@@ -7,7 +7,7 @@ ignore_terminations: False
 reward_coef: 1.0
 use_custom_reward: True
 use_rel_reward: True
-center_crop: True
+center_crop: False
 
 seed: 0
 group_size: 1
@@ -35,7 +35,7 @@ task_config:
   episode_num: 100
   use_seed: false
   save_freq: 15
-  embodiment: [piper, piper, 0.6]
+  embodiment: [aloha-agilex]
   language_num: 100
   domain_randomization:
     random_background: true
@@ -49,7 +49,7 @@ task_config:
     head_camera_type: D435
     wrist_camera_type: D435
     collect_head_camera: true
-    collect_wrist_camera: false
+    collect_wrist_camera: true
   data_type:
     rgb: true
     third_view: false
