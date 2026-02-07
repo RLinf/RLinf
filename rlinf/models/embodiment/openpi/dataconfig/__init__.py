@@ -218,16 +218,20 @@ _CONFIGS = [
     ),
     TrainConfig(
         name="pi0_aloha_robotwin",
-        model=pi0_config.Pi0Config(),
+        model=pi0_config.Pi0Config(discrete_state_input=False),
         data=LeRobotAlohaDataConfig(
-            repo_id="robotwin/place_empty_cup_random",
+            repo_id="robotwin/adjust_bottle_clean",
+            # repo_id="robotwin/place_empty_cup_random",
+            adapt_to_pi=False,
             base_config=DataConfig(
                 prompt_from_task=True
             ),  # we need language instruction
-            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_robotwin/assets"),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_aloha_robotwin/assets"),
             extra_delta_transform=True,  # True for delta action, False for abs_action
         ),
+        freeze_filter=pi0_config.Pi0Config().get_freeze_filter(),
         pytorch_weight_path="checkpoints/torch/pi0_base",
+        num_train_steps=30_000,
     ),
     TrainConfig(
         name="pi0_behavior",
