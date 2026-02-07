@@ -1,6 +1,6 @@
 defaults:
-  - env/robotwin_place_empty_cup_pi@env.train
-  - env/robotwin_place_empty_cup_pi@env.eval
+  - env/robotwin_place_empty_cup@env.train
+  - env/robotwin_place_empty_cup@env.eval
   - model/pi0@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
@@ -95,7 +95,11 @@ env:
     group_size: ${algorithm.group_size}
     assets_path: "/path/to/robotwin_assets"
     seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/train_seeds.json
-
+    center_crop: False
+    task_config:
+      embodiment: [aloha-agilex]
+      camera:
+        collect_wrist_camera: true
   eval:
     total_num_envs: 128
     auto_reset: True
@@ -108,9 +112,14 @@ env:
     is_eval: True
     assets_path: "/path/to/robotwin_assets"
     seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/eval_seeds.json
+    center_crop: False
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
+    task_config:
+      embodiment: [aloha-agilex]
+      camera:
+        collect_wrist_camera: true
 
 rollout:
   group_name: "RolloutGroup"
@@ -118,7 +127,6 @@ rollout:
   enable_offload: True
   pipeline_stage_num: 1
   model:
-    model_type: "openvla_oft"
     model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
 

@@ -158,48 +158,47 @@ class RoboTwinEnv(gym.Env):
         infos["episode"] = episode_info
         return infos
 
-    def center_and_crop(self, image):
+    def center_and_crop(self, image, center_crop=False):
         image = np.array(image)
 
         image = Image.fromarray(image).convert("RGB")
-        image = center_crop_image(image)
+        if center_crop:
+            image = center_crop_image(image)
         return np.array(image)
 
     def _extract_obs_image(self, raw_obs):
         batch_images = []
-        batch_left_wrist_images = []
-        batch_right_wrist_images = []
+        batch_wrist_images = []
         batch_states = []
         batch_instructions = []
         for obs in raw_obs:
-            batch_images.append(self.center_and_crop(obs["full_image"]) if self.center_crop else obs["full_image"])
+            batch_images.append(self.center_and_crop(obs["full_image"], center_crop=self.center_crop))            
+            wrist_images = []
             if "left_wrist_image" in obs and obs["left_wrist_image"] is not None:
-                batch_left_wrist_images.append(self.center_and_crop(obs["left_wrist_image"]) if self.center_crop else obs["left_wrist_image"])
+                wrist_images.append(self.center_and_crop(obs["left_wrist_image"], center_crop=self.center_crop))
             if "right_wrist_image" in obs and obs["right_wrist_image"] is not None:
-                batch_right_wrist_images.append(self.center_and_crop(obs["right_wrist_image"]) if self.center_crop else obs["right_wrist_image"])
+                wrist_images.append(self.center_and_crop(obs["right_wrist_image"], center_crop=self.center_crop))
+            if len(wrist_images) > 0:
+                batch_wrist_images.append(
+                    torch.stack([torch.from_numpy(img) for img in wrist_images])
+                )
             batch_states.append(obs["state"])
             batch_instructions.append(obs["instruction"])
 
         batch_images = torch.stack([torch.from_numpy(img) for img in batch_images])
-        if len(batch_left_wrist_images) > 0:
-            batch_left_wrist_images = torch.stack([torch.from_numpy(img) for img in batch_left_wrist_images])
+        if len(batch_wrist_images) > 0:
+            batch_wrist_images = torch.stack(batch_wrist_images)
         else:
-            batch_left_wrist_images = None
-        if len(batch_right_wrist_images) > 0:
-            batch_right_wrist_images = torch.stack([torch.from_numpy(img) for img in batch_right_wrist_images])
-        else:
-            batch_right_wrist_images = None
+            batch_wrist_images = None
         batch_states = torch.stack([torch.from_numpy(state) for state in batch_states])
-        
-        # wrist_images: left wrist images
-        # extra_view_images: right wrist images
+
         extracted_obs = {
             "main_images": batch_images,
-            "wrist_images": batch_left_wrist_images,
-            "extra_view_images": batch_right_wrist_images,
+            "wrist_images": batch_wrist_images,
             "states": batch_states,
             "task_descriptions": batch_instructions,
         }
+
         return extracted_obs
 
     def _calc_step_reward(self, terminations):
