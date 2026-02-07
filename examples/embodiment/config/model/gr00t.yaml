@@ -10,7 +10,7 @@ is_lora: false
 
 # Action and policy settings
 action_dim: 7
-num_action_chunks: 5
+num_action_chunks: 16
 denoising_steps: 4
 policy_setup: "widowx_bridge"
 
