@@ -220,8 +220,7 @@ _CONFIGS = [
         name="pi0_aloha_robotwin",
         model=pi0_config.Pi0Config(discrete_state_input=False),
         data=LeRobotAlohaDataConfig(
-            repo_id="robotwin/adjust_bottle_clean",
-            # repo_id="robotwin/place_empty_cup_random",
+            repo_id="robotwin/place_empty_cup_random",
             adapt_to_pi=False,
             base_config=DataConfig(
                 prompt_from_task=True
