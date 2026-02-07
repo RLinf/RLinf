@@ -99,8 +99,9 @@ franka = [
     "pyquaternion",
     "opencv-python",
     "defusedxml",
-    "pyspacemouse", 
+    "pyspacemouse==1.1.5", 
     "imageio[ffmpeg]",
+    "pynput"
 ]
 
 [tool.uv]

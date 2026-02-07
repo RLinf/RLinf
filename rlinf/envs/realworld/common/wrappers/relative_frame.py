@@ -122,3 +122,19 @@ class RelativeFrame(gym.Wrapper):
         action = np.array(action)
         action[:6] = np.linalg.inv(self.adjoint_matrix) @ action[:6]
         return action
+
+
+class RelativeTargetFrame(RelativeFrame):
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+
+        # Update adjoint matrix
+        self.adjoint_matrix = construct_adjoint_matrix(self.env.target_ee_pose)
+        if self.include_relative_pose:
+            # Update transformation matrix from the reset pose's relative frame to base frame
+            self.T_b_r_inv = np.linalg.inv(
+                construct_homogeneous_matrix(self.env.target_ee_pose)
+            )
+
+        # Transform observation to spatial frame
+        return self.transform_observation(obs), info
