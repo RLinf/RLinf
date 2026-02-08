@@ -117,6 +117,7 @@ rollout:
     model_path: "/path/to/model/pi0_robocasa_100demos_base_pytorch"  # Update this to your pi0 model path
     precision: ${actor.model.precision}
 
+  enable_cuda_graph: False
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

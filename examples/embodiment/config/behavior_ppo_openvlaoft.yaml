@@ -106,6 +106,7 @@ rollout:
     model_path: "/path/to/model/RLinf-OpenVLAOFT-Behavior/"
     precision: ${actor.model.precision}
 
+  enable_cuda_graph: False
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

@@ -71,3 +71,7 @@ class BasePolicy(ABC):
 
     @abstractmethod
     def release_cuda_graph(self): ...
+
+    def is_cuda_graph_enabled(self) -> bool:
+        """Interface-friendly CUDA graph status check without relying on BasePolicy.__init__."""
+        return getattr(self, "cuda_graph_manager", None) is not None

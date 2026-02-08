@@ -99,6 +99,8 @@ class MLPPolicy(nn.Module, BasePolicy):
         else:
             self.action_scale = None
 
+        self.cuda_graph_manager = None
+
     def preprocess_env_obs(self, env_obs):
         device = next(self.parameters()).device
         return {"states": env_obs["states"].to(device)}
@@ -195,21 +197,31 @@ class MLPPolicy(nn.Module, BasePolicy):
         **kwargs,
     ):
         env_obs = self.preprocess_env_obs(env_obs=env_obs)
-        feat = self.backbone(env_obs["states"])
-        action_mean = self.actor_mean(feat)
 
-        if self.independent_std:
-            action_logstd = self.actor_logstd.expand_as(action_mean)
+        if self.is_cuda_graph_enabled():
+            outputs = self.cuda_graph_manager.replay(
+                f"action_distribution_generation_independent_std_{self.independent_std}_final_tanh_{self.final_tanh}",
+                inputs={"states": env_obs["states"]},
+            )
+            action_std = outputs["action_std"]
+            action_mean = outputs["action_mean"]
         else:
-            action_logstd = self.actor_logstd(feat)
+            feat = self.backbone(env_obs["states"])
+            action_mean = self.actor_mean(feat)
 
-        if self.final_tanh:
-            action_logstd = torch.tanh(action_logstd)
-            action_logstd = self.logstd_range[0] + 0.5 * (
-                self.logstd_range[1] - self.logstd_range[0]
-            ) * (action_logstd + 1)
+            if self.independent_std:
+                action_logstd = self.actor_logstd.expand_as(action_mean)
+            else:
+                action_logstd = self.actor_logstd(feat)
 
-        action_std = torch.exp(action_logstd)
+            if self.final_tanh:
+                action_logstd = torch.tanh(action_logstd)
+                action_logstd = self.logstd_range[0] + 0.5 * (
+                    self.logstd_range[1] - self.logstd_range[0]
+                ) * (action_logstd + 1)
+
+            action_std = torch.exp(action_logstd)
+
         probs = Normal(action_mean, action_std)
 
         if mode == "train":
@@ -271,3 +283,79 @@ class MLPPolicy(nn.Module, BasePolicy):
 
     def crossq_forward(self, obs, **kwargs):
         return self.sac_forward(obs, **kwargs)
+
+    def capture_action_distribution_generation(
+        self, batch_size: int, independent_std: bool, final_tanh: bool
+    ):
+        from rlinf.utils.cuda_graph import GraphCaptureSpec
+
+        device = next(self.parameters()).device
+        dtype = next(self.parameters()).dtype
+        inputs = {
+            "states": torch.zeros(
+                (batch_size, self.obs_dim), device=device, dtype=dtype
+            )
+        }
+        outputs = {
+            "action_std": torch.zeros(
+                (batch_size, self.action_dim), device=device, dtype=dtype
+            ),
+            "action_mean": torch.zeros(
+                (batch_size, self.action_dim), device=device, dtype=dtype
+            ),
+        }
+
+        external_inputs = {"states"}
+
+        def action_distribution_generation_func(
+            inputs: dict[str, torch.Tensor], outputs: dict[str, torch.Tensor]
+        ) -> dict[str, torch.Tensor]:
+            feat = self.backbone(inputs["states"])
+            action_mean = self.actor_mean(feat)
+
+            if independent_std:
+                action_logstd = self.actor_logstd.expand_as(action_mean)
+            else:
+                action_logstd = self.actor_logstd(feat)
+
+            if final_tanh:
+                action_logstd = torch.tanh(action_logstd)
+                action_logstd = self.logstd_range[0] + 0.5 * (
+                    self.logstd_range[1] - self.logstd_range[0]
+                ) * (action_logstd + 1)
+
+            action_std = torch.exp(action_logstd)
+
+            outputs["action_mean"].copy_(action_mean)
+            outputs["action_std"].copy_(action_std)
+            return outputs
+
+        name = f"action_distribution_generation_independent_std_{independent_std}_final_tanh_{final_tanh}"
+        spec = GraphCaptureSpec(
+            name=name,
+            inputs=inputs,
+            outputs=outputs,
+            external_inputs=external_inputs,
+            func=action_distribution_generation_func,
+        )
+        self.cuda_graph_manager.capture(spec)
+
+    def capture_cuda_graph(self, batch_size: int):
+        from rlinf.utils.cuda_graph import CUDAGraphManager
+
+        if self.cuda_graph_manager is None:
+            self.cuda_graph_manager = CUDAGraphManager()
+
+        self.capture_action_distribution_generation(
+            batch_size=batch_size,
+            independent_std=self.independent_std,
+            final_tanh=self.final_tanh,
+        )
+
+    def release_cuda_graph(self):
+        if self.cuda_graph_manager is not None:
+            self.cuda_graph_manager.destroy()
+            self.cuda_graph_manager = None
+
+    def is_cuda_graph_enabled(self) -> bool:
+        return self.cuda_graph_manager is not None

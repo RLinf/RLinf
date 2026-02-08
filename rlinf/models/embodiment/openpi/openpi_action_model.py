@@ -159,6 +159,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             path_parts = name.split(".")
             setattr(module, "_fsdp_wrap_name", path_parts[-1] if path_parts else name)
 
+        self.cuda_graph_manager = None
+        self._enable_cuda_graph_capture = False
+
     def set_global_step(self, global_step):
         self.global_step = global_step
 
@@ -374,6 +377,90 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         }
         return actions, result
 
+    def _capture_denoise_step_graph_for_current_prefix(
+        self,
+        state: torch.Tensor,
+        prefix_pad_masks: torch.Tensor,
+        past_key_values,
+        x_t: torch.Tensor,
+    ) -> str | None:
+        from rlinf.utils.cuda_graph import CUDAGraphManager, GraphCaptureSpec
+
+        if not self.is_cuda_graph_enabled():
+            return None
+
+        batch_size = x_t.shape[0]
+        graph_name = f"openpi_denoise_step_bs_{batch_size}"
+        if self.cuda_graph_manager is None:
+            self.cuda_graph_manager = CUDAGraphManager()
+        elif graph_name in self.cuda_graph_manager:
+            self.cuda_graph_manager.destroy(graph_name)
+
+        timestep = torch.ones((batch_size,), dtype=x_t.dtype, device=x_t.device)
+        inputs = {
+            "state": state.detach().clone(),
+            "prefix_pad_masks": prefix_pad_masks.detach().clone(),
+            "past_key_values": tuple(
+                (
+                    kv[0].detach().clone(),
+                    kv[1].detach().clone(),
+                )
+                for kv in past_key_values
+            ),
+            "x_t": x_t.detach().clone(),
+            "timestep": timestep.detach().clone(),
+        }
+        outputs = {
+            "v_t": torch.zeros_like(x_t),
+            "value_t": torch.zeros((batch_size,), dtype=x_t.dtype, device=x_t.device),
+            "noise_std": torch.zeros_like(x_t),
+        }
+
+        def _denoise_step_func(
+            graph_inputs: dict[str, Any], graph_outputs: dict[str, Any]
+        ):
+            suffix_out = self.get_suffix_out(
+                graph_inputs["state"],
+                graph_inputs["prefix_pad_masks"],
+                graph_inputs["past_key_values"],
+                graph_inputs["x_t"],
+                graph_inputs["timestep"],
+            )
+            v_t = self.action_out_proj(suffix_out)
+            graph_outputs["v_t"].copy_(v_t)
+
+            if self.config.add_value_head and not self.config.value_after_vlm:
+                if self.config.chunk_critic_input:
+                    suffix_out_value = torch.mean(
+                        suffix_out[:, : self.config.action_chunk], dim=1, keepdim=False
+                    )
+                else:
+                    suffix_out_value = torch.mean(suffix_out, dim=1, keepdim=False)
+                if self.config.detach_critic_input:
+                    suffix_out_value = suffix_out_value.detach()
+                value_t = self.value_head(suffix_out_value)[:, 0]
+            else:
+                value_t = torch.zeros_like(graph_outputs["value_t"])
+            graph_outputs["value_t"].copy_(value_t)
+
+            if self.config.noise_method == "flow_noise":
+                noise_std = self.noise_head(suffix_out)
+            else:
+                noise_std = torch.zeros_like(graph_outputs["noise_std"])
+            graph_outputs["noise_std"].copy_(noise_std)
+            return graph_outputs
+
+        spec = GraphCaptureSpec(
+            name=graph_name,
+            func=_denoise_step_func,
+            inputs=inputs,
+            outputs=outputs,
+            external_inputs={"x_t", "timestep"},
+            warmup_iters=1,
+        )
+        self.cuda_graph_manager.capture(spec)
+        return graph_name
+
     @torch.no_grad()
     def sample_actions(
         self,
@@ -447,6 +534,15 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             denoise_inds = torch.tensor([-1] * num_steps)
         denoise_inds = denoise_inds[None].repeat(bsize, 1)
 
+        denoise_graph_name = None
+        if self.is_cuda_graph_enabled():
+            denoise_graph_name = self._capture_denoise_step_graph_for_current_prefix(
+                state=state,
+                prefix_pad_masks=prefix_pad_masks,
+                past_key_values=past_key_values,
+                x_t=x_t,
+            )
+
         # denoise step
         for idx in range(num_steps):
             # sample mean var val
@@ -463,6 +559,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                 sample_mode,
                 num_steps,
                 compute_values,
+                denoise_graph_name=denoise_graph_name,
             )
             # Euler step - use new tensor assignment instead of in-place operation
             x_t = x_t_mean + self.sample_noise(x_t.shape, device) * x_t_std
@@ -507,6 +604,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         mode,
         denoise_steps,
         compute_values=True,
+        denoise_graph_name: str | None = None,
     ):
         """
         Sample the mean, variance and value of the action at a given timestep.
@@ -536,34 +634,60 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         # input parameters
         t_input = timesteps[idx]
         delta = timesteps[idx] - timesteps[idx + 1]
-        # velocity prediction
-        suffix_out = self.get_suffix_out(
-            state,
-            prefix_pad_masks,
-            past_key_values,
-            x_t,
-            t_input,
+        use_graph = (
+            denoise_graph_name is not None
+            and self.is_cuda_graph_enabled()
+            and not torch.is_grad_enabled()
+            and denoise_graph_name in self.cuda_graph_manager
         )
-        v_t = self.action_out_proj(suffix_out)  # [bs,n_action_steps,max_action_dim]
-        # value prediction
-        if (
-            self.config.add_value_head
-            and compute_values
-            and not self.config.value_after_vlm
-        ):
-            # use chunk critic input
-            if self.config.chunk_critic_input:
-                suffix_out_value = torch.mean(
-                    suffix_out[:, : self.config.action_chunk], dim=1, keepdim=False
-                )
+        if use_graph:
+            graph_outputs = self.cuda_graph_manager.replay(
+                denoise_graph_name,
+                inputs={
+                    "x_t": x_t,
+                    "timestep": t_input,
+                },
+            )
+            v_t = graph_outputs["v_t"]
+            if (
+                self.config.add_value_head
+                and compute_values
+                and not self.config.value_after_vlm
+            ):
+                value_t = graph_outputs["value_t"]
             else:
-                suffix_out_value = torch.mean(suffix_out, dim=1, keepdim=False)
-            # detach critic input
-            if self.config.detach_critic_input:
-                suffix_out_value = suffix_out_value.detach()
-            value_t = self.value_head(suffix_out_value)[:, 0]
+                value_t = torch.zeros((bsize), device=device)
+            noise_std_from_graph = graph_outputs["noise_std"]
         else:
-            value_t = torch.zeros((bsize), device=device)
+            # velocity prediction
+            suffix_out = self.get_suffix_out(
+                state,
+                prefix_pad_masks,
+                past_key_values,
+                x_t,
+                t_input,
+            )
+            v_t = self.action_out_proj(suffix_out)  # [bs,n_action_steps,max_action_dim]
+            # value prediction
+            if (
+                self.config.add_value_head
+                and compute_values
+                and not self.config.value_after_vlm
+            ):
+                # use chunk critic input
+                if self.config.chunk_critic_input:
+                    suffix_out_value = torch.mean(
+                        suffix_out[:, : self.config.action_chunk], dim=1, keepdim=False
+                    )
+                else:
+                    suffix_out_value = torch.mean(suffix_out, dim=1, keepdim=False)
+                # detach critic input
+                if self.config.detach_critic_input:
+                    suffix_out_value = suffix_out_value.detach()
+                value_t = self.value_head(suffix_out_value)[:, 0]
+            else:
+                value_t = torch.zeros((bsize), device=device)
+            noise_std_from_graph = None
         # ode sde mix sampling
         delta = delta[:, None, None].expand_as(x_t)
         t_input = t_input[:, None, None].expand_as(x_t)
@@ -596,7 +720,10 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             elif self.config.noise_method == "flow_noise":
                 x0_weight = 1 - (t_input - delta)
                 x1_weight = t_input - delta
-                x_t_std = self.noise_head(suffix_out)
+                if noise_std_from_graph is not None:
+                    x_t_std = noise_std_from_graph
+                else:
+                    x_t_std = self.noise_head(suffix_out)
             else:
                 raise ValueError(f"Invalid noise method: {self.config.noise_method}")
         x_t_mean = x0_pred * x0_weight + x1_pred * x1_weight
@@ -787,3 +914,19 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             self.paligemma_with_expert.paligemma.eval()
             for params in self.paligemma_with_expert.paligemma.parameters():
                 params.requires_grad = False
+
+    def capture_cuda_graph(self, batch_size: int):
+        from rlinf.utils.cuda_graph import CUDAGraphManager
+
+        if self.cuda_graph_manager is None:
+            self.cuda_graph_manager = CUDAGraphManager()
+        self._enable_cuda_graph_capture = True
+
+    def release_cuda_graph(self):
+        self._enable_cuda_graph_capture = False
+        if self.cuda_graph_manager is not None:
+            self.cuda_graph_manager.destroy()
+            self.cuda_graph_manager = None
+
+    def is_cuda_graph_enabled(self) -> bool:
+        return self._enable_cuda_graph_capture and self.cuda_graph_manager is not None

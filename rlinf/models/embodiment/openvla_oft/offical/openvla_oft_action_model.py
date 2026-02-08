@@ -102,6 +102,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
             )
 
         self.max_prompt_length = config.max_prompt_length
+        self.cuda_graph_manager = None
 
     def set_processor(self, processor):
         self.processor = processor
@@ -324,47 +325,55 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         top_k=-1,
     ):
         """Run discrete action tokens prediction."""
+        batch_size = multimodal_embeddings.shape[0]
+        graph_name = f"discrete_prediction_bs_{batch_size}"
 
-        # Forward pass through language model
-        language_model_output = self.language_model(
-            input_ids=None,
-            attention_mask=multimodal_attention_mask,
-            position_ids=multimodal_position_ids,
-            past_key_values=None,
-            inputs_embeds=multimodal_embeddings,
-            labels=None,
-            use_cache=None,
-            output_attentions=False,
-            output_hidden_states=True,
-            return_dict=True,
-        )
+        if self.is_cuda_graph_enabled() and graph_name in self.cuda_graph_manager:
+            graph_outputs = self.cuda_graph_manager.replay(
+                graph_name,
+                inputs={
+                    "mm_embeddings": multimodal_embeddings,
+                    "mm_attention_mask": multimodal_attention_mask,
+                    "mm_position_ids": multimodal_position_ids,
+                    "num_prompt_tokens": num_prompt_tokens,
+                },
+            )
+            action_logits = graph_outputs["action_logits"]
+            value_hidden = graph_outputs["value_hidden"]
+        else:
+            language_model_output = self.language_model(
+                input_ids=None,
+                attention_mask=multimodal_attention_mask,
+                position_ids=multimodal_position_ids,
+                past_key_values=None,
+                inputs_embeds=multimodal_embeddings,
+                labels=None,
+                use_cache=None,
+                output_attentions=False,
+                output_hidden_states=True,
+                return_dict=True,
+            )
 
-        # Extract hidden states for action tokens
-        last_hidden_states = language_model_output.hidden_states[
-            -1
-        ]  # (B, seq_len, hidden_size)
+            last_hidden_states = language_model_output.hidden_states[-1]
+            device = language_model_output.logits.device
+            num_prompt_tokens_total = num_patches + num_prompt_tokens
+            start_indices = num_prompt_tokens_total.unsqueeze(1)
+            position_offsets = torch.arange(
+                self.action_dim * self.num_action_chunks, device=device
+            ).unsqueeze(0)
+            seq_indices = start_indices + position_offsets
 
-        # Prepare seq_indices for extracting action tokens (both logits and hidden states)
-        batch_size = language_model_output.logits.shape[0]
-        device = language_model_output.logits.device
-        num_prompt_tokens_total = num_patches + num_prompt_tokens
-        start_indices = num_prompt_tokens_total.unsqueeze(1)
-        position_offsets = torch.arange(
-            self.action_dim * self.num_action_chunks, device=device
-        ).unsqueeze(0)
-        seq_indices = (
-            start_indices + position_offsets
-        )  # Shape: [batch_size, action_dim * num_action_chunks]
-
-        # Extract logits using seq_indices
-        reponse_ids_logits = language_model_output.logits[
-            torch.arange(batch_size, device=device).unsqueeze(-1), seq_indices, :
-        ]  # Shape: [batch_size, action_dim * num_action_chunks, vocab_size]
-        action_logits = reponse_ids_logits[
-            ...,
-            -self.config.n_action_bins
-            - self.config.pad_to_multiple_of : -self.config.pad_to_multiple_of,
-        ]  # Shape: [batch_size, action_dim * num_action_chunks, 256]
+            reponse_ids_logits = language_model_output.logits[
+                torch.arange(batch_size, device=device).unsqueeze(-1), seq_indices, :
+            ]
+            action_logits = reponse_ids_logits[
+                ...,
+                -self.config.n_action_bins
+                - self.config.pad_to_multiple_of : -self.config.pad_to_multiple_of,
+            ]
+            value_hidden = last_hidden_states[
+                :, -self.action_dim * self.num_action_chunks - 1
+            ]
 
         if not do_sample:
             reponse_ids = action_logits.argmax(dim=-1)
@@ -408,7 +417,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
             normalized_actions,
             action_logits,
             action_tokens,
-            last_hidden_states,
+            value_hidden,
         )
 
     @torch.no_grad()
@@ -465,7 +474,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         if use_proprio:
             num_patches += 1
 
-        normalized_actions, action_logits, action_tokens, last_hidden_states = (
+        normalized_actions, action_logits, action_tokens, value_hidden = (
             self._discrete_prediction(
                 multimodal_embeddings,
                 multimodal_attention_mask,
@@ -494,7 +503,8 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
 
         chunk_values = None
         if calulate_values:
-            chunk_values = self._compute_values(last_hidden_states)
+            if hasattr(self, "value_head"):
+                chunk_values = self.value_head(value_hidden)
         if chunk_values is None:
             chunk_values = torch.zeros_like(chunk_logprobs[..., :1])
 
@@ -701,3 +711,137 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         }
 
         return result
+
+    def capture_cuda_graph(self, batch_size: int):
+        from rlinf.utils.cuda_graph import CUDAGraphManager, GraphCaptureSpec
+
+        if self.cuda_graph_manager is None:
+            self.cuda_graph_manager = CUDAGraphManager()
+
+        device = next(self.parameters()).device
+        dtype = next(self.parameters()).dtype
+        hidden_size = self.config.text_config.hidden_size
+        pad_token_id = self.processor.tokenizer.pad_token_id
+
+        input_ids = torch.full(
+            (batch_size, self.max_prompt_length),
+            fill_value=pad_token_id,
+            dtype=torch.long,
+            device=device,
+        )
+        attention_mask = torch.zeros(
+            (batch_size, self.max_prompt_length), dtype=torch.bool, device=device
+        )
+        input_ids[:, 0] = self.processor.tokenizer.bos_token_id
+        input_ids[:, -1] = 29871
+        attention_mask[:, 0] = 1
+        attention_mask[:, -1] = 1
+
+        image_h, image_w = self.config.image_sizes
+        num_images = self.vision_backbone.get_num_images_in_input()
+        pixel_values = torch.zeros(
+            (batch_size, num_images, 3, image_h, image_w), dtype=dtype, device=device
+        )
+        labels = torch.full_like(input_ids, IGNORE_INDEX)
+
+        proprio = None
+        if self.proprio_projector is not None:
+            proprio = torch.zeros(
+                (batch_size, self.config.proprio_dim), dtype=dtype, device=device
+            )
+
+        mm_embeddings, mm_attention_mask, mm_position_ids = self._build_embedding(
+            input_ids, attention_mask, pixel_values, labels, proprio
+        )
+        mm_attention_mask = mm_attention_mask.to(dtype=torch.long)
+        num_prompt_tokens = attention_mask.sum(dim=1) - 1
+
+        inputs = {
+            "mm_embeddings": mm_embeddings.detach().clone(),
+            "mm_attention_mask": mm_attention_mask.detach().clone(),
+            "mm_position_ids": mm_position_ids.detach().clone(),
+            "num_prompt_tokens": num_prompt_tokens.detach().clone(),
+        }
+        outputs = {
+            "action_logits": torch.zeros(
+                (
+                    batch_size,
+                    self.action_dim * self.num_action_chunks,
+                    self.config.n_action_bins,
+                ),
+                dtype=dtype,
+                device=device,
+            ),
+            "value_hidden": torch.zeros(
+                (batch_size, hidden_size), dtype=dtype, device=device
+            ),
+        }
+        num_patches = (
+            self.vision_backbone.get_num_patches()
+            * self.vision_backbone.get_num_images_in_input()
+        )
+        if self.proprio_projector is not None:
+            num_patches += 1
+
+        def _discrete_prediction_func(
+            graph_inputs: dict[str, torch.Tensor],
+            graph_outputs: dict[str, torch.Tensor],
+        ):
+            lm_out = self.language_model(
+                input_ids=None,
+                attention_mask=graph_inputs["mm_attention_mask"],
+                position_ids=graph_inputs["mm_position_ids"],
+                past_key_values=None,
+                inputs_embeds=graph_inputs["mm_embeddings"],
+                labels=None,
+                use_cache=None,
+                output_attentions=False,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+            bs = lm_out.logits.shape[0]
+            num_prompt_tokens_total = num_patches + graph_inputs["num_prompt_tokens"]
+            start_indices = num_prompt_tokens_total.unsqueeze(1)
+            position_offsets = torch.arange(
+                self.action_dim * self.num_action_chunks, device=lm_out.logits.device
+            ).unsqueeze(0)
+            seq_indices = start_indices + position_offsets
+            response_logits = lm_out.logits[
+                torch.arange(bs, device=lm_out.logits.device).unsqueeze(-1),
+                seq_indices,
+                :,
+            ]
+            action_logits = response_logits[
+                ...,
+                -self.config.n_action_bins
+                - self.config.pad_to_multiple_of : -self.config.pad_to_multiple_of,
+            ]
+            graph_outputs["action_logits"].copy_(action_logits)
+            graph_outputs["value_hidden"].copy_(
+                lm_out.hidden_states[-1][
+                    :, -self.action_dim * self.num_action_chunks - 1
+                ]
+            )
+            return graph_outputs
+
+        spec = GraphCaptureSpec(
+            name=f"discrete_prediction_bs_{batch_size}",
+            func=_discrete_prediction_func,
+            inputs=inputs,
+            outputs=outputs,
+            external_inputs={
+                "mm_embeddings",
+                "mm_attention_mask",
+                "mm_position_ids",
+                "num_prompt_tokens",
+            },
+        )
+        self.cuda_graph_manager.capture(spec)
+
+    def release_cuda_graph(self):
+        if self.cuda_graph_manager is not None:
+            self.cuda_graph_manager.destroy()
+            self.cuda_graph_manager = None
+
+    def is_cuda_graph_enabled(self) -> bool:
+        return self.cuda_graph_manager is not None

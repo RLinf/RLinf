@@ -114,6 +114,7 @@ rollout:
     model_path: "/path/to/RLinf-Gr00t-SFT-10"
     precision: ${actor.model.precision}
 
+  enable_cuda_graph: False
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

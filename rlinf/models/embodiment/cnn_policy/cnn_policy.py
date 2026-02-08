@@ -14,7 +14,7 @@
 
 import os
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import numpy as np
 import torch
@@ -169,6 +169,7 @@ class CNNPolicy(nn.Module, BasePolicy):
             )
         else:
             self.action_scale = None
+        self.cuda_graph_manager = None
 
     @property
     def num_action_chunks(self):
@@ -302,6 +303,7 @@ class CNNPolicy(nn.Module, BasePolicy):
 
         return action, chunk_logprobs, full_feature
 
+    @torch.inference_mode()
     def predict_action_batch(
         self,
         env_obs,
@@ -313,49 +315,82 @@ class CNNPolicy(nn.Module, BasePolicy):
         **kwargs,
     ):
         obs = self.preprocess_env_obs(env_obs)
-        full_feature, visual_feature = self.get_feature(obs)
-        mix_feature = self.mix_proj(full_feature)
-        action_mean = self.actor_mean(mix_feature)
-        if self.cfg.independent_std:
-            action_logstd = self.actor_logstd.expand_as(action_mean)
-        else:
-            action_logstd = self.actor_logstd(mix_feature)
 
-        action_std = action_logstd.exp()
-        if self.cfg.std_range is not None:
-            action_std = torch.clamp(
-                action_std, self.cfg.std_range[0], self.cfg.std_range[1]
-            )
-
-        probs = torch.distributions.Normal(action_mean, action_std)
-        if mode == "train":
-            raw_action = probs.sample()
-        elif mode == "eval":
-            raw_action = action_mean.clone()
-        else:
-            raise NotImplementedError(f"{mode=}")
-
-        chunk_logprobs = probs.log_prob(raw_action)
-        if self.action_scale is not None:
-            action_normalized = torch.tanh(raw_action)
-            action = action_normalized * self.action_scale + self.action_bias
-
-            chunk_logprobs = chunk_logprobs - torch.log(
-                self.action_scale * (1 - action_normalized.pow(2)) + 1e-6
-            )
-        else:
-            action = raw_action
-
-        chunk_actions = action.reshape(
-            -1, self.cfg.num_action_chunks, self.cfg.action_dim
+        graph_name = (
+            f"action_generation_detach_encoder_{False}_"
+            f"calculate_values_{calculate_values}_mode_{mode}"
         )
-        chunk_actions = chunk_actions.cpu().numpy()
+        use_cuda_graph = (
+            # Keep stochastic sampling outside CUDA graph to avoid replaying captured RNG.
+            mode == "eval"
+            and self.is_cuda_graph_enabled()
+            and graph_name in self.cuda_graph_manager
+        )
 
-        if hasattr(self, "value_head") and calculate_values:
-            chunk_values = self.value_head(mix_feature)
+        if use_cuda_graph:
+            images_list = [obs["main_images"].unsqueeze(1)]
+            if "extra_view_images" in obs and obs["extra_view_images"] is not None:
+                images_list.append(obs["extra_view_images"])
+            image_inputs = torch.cat(images_list, dim=1)
+            inputs = {
+                "states": obs["states"],
+                "images": image_inputs,
+            }
+            outputs = self.cuda_graph_manager.replay(
+                name=graph_name,
+                inputs=inputs,
+            )
+            action = outputs["action"]
+            chunk_actions = outputs["chunk_actions"]
+            chunk_logprobs = outputs["chunk_logprobs"]
+            chunk_values = outputs["chunk_values"]
+            chunk_actions = chunk_actions.cpu().numpy()
+            forward_inputs = {"action": action}
         else:
-            chunk_values = torch.zeros_like(chunk_logprobs[..., :1])
-        forward_inputs = {"action": action}
+            full_feature, visual_feature = self.get_feature(obs)
+            mix_feature = self.mix_proj(full_feature)
+            action_mean = self.actor_mean(mix_feature)
+            if self.cfg.independent_std:
+                action_logstd = self.actor_logstd.expand_as(action_mean)
+            else:
+                action_logstd = self.actor_logstd(mix_feature)
+
+            action_std = action_logstd.exp()
+            if self.cfg.std_range is not None:
+                action_std = torch.clamp(
+                    action_std, self.cfg.std_range[0], self.cfg.std_range[1]
+                )
+
+            probs = torch.distributions.Normal(action_mean, action_std)
+            if mode == "train":
+                raw_action = probs.sample()
+            elif mode == "eval":
+                raw_action = action_mean.clone()
+            else:
+                raise NotImplementedError(f"{mode=}")
+
+            chunk_logprobs = probs.log_prob(raw_action)
+            if self.action_scale is not None:
+                action_normalized = torch.tanh(raw_action)
+                action = action_normalized * self.action_scale + self.action_bias
+
+                chunk_logprobs = chunk_logprobs - torch.log(
+                    self.action_scale * (1 - action_normalized.pow(2)) + 1e-6
+                )
+            else:
+                action = raw_action
+
+            chunk_actions = action.reshape(
+                -1, self.cfg.num_action_chunks, self.cfg.action_dim
+            )
+            chunk_actions = chunk_actions.cpu().numpy()
+
+            if hasattr(self, "value_head") and calculate_values:
+                chunk_values = self.value_head(mix_feature)
+            else:
+                chunk_values = torch.zeros_like(chunk_logprobs[..., :1])
+            forward_inputs = {"action": action}
+
         if return_obs:
             forward_inputs["main_images"] = env_obs["main_images"]
             forward_inputs["states"] = env_obs["states"]
@@ -404,3 +439,233 @@ class CNNPolicy(nn.Module, BasePolicy):
 
     def crossq_forward(self, obs, **kwargs):
         return self.sac_forward(obs, **kwargs)
+
+    def capture_action_generation(
+        self,
+        batch_size: int,
+        detach_encoder: bool,
+        calculate_values: bool,
+        mode: Literal["train", "eval"],
+    ):
+        from rlinf.utils.cuda_graph import GraphCaptureSpec
+
+        # NOTE: this assumes all inputs/params has the same device and dtype
+        device = next(self.parameters()).device
+        dtype = next(self.parameters()).dtype
+
+        inputs = {
+            "states": torch.zeros(
+                (batch_size, self.cfg.state_dim), device=device, dtype=dtype
+            ),
+            "images": torch.zeros(
+                (batch_size, self.cfg.image_num, *self.cfg.image_size),
+                device=device,
+                dtype=dtype,
+            ),
+        }
+        outputs = {
+            "action": torch.zeros(
+                (batch_size, self.cfg.action_dim), device=device, dtype=dtype
+            ),
+            "chunk_actions": torch.zeros(
+                (batch_size, self.cfg.num_action_chunks, self.cfg.action_dim),
+                device=device,
+                dtype=dtype,
+            ),
+            "chunk_logprobs": torch.zeros(
+                (batch_size, self.cfg.action_dim),
+                device=device,
+                dtype=dtype,
+            ),
+            "chunk_values": torch.zeros((batch_size, 1), device=device, dtype=dtype),
+        }
+
+        def get_feature(
+            inputs: dict[str, torch.Tensor], detach_encoder: bool = False
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            vision_features = []
+            for img_id in range(self.cfg.image_num):
+                images = inputs["images"][:, img_id]
+                if images.shape[3] == 3:
+                    images = images.permute(0, 3, 1, 2)
+                vision_features.append(self.encoders[img_id](images))
+            vision_feature = torch.cat(vision_features, dim=-1)
+            if detach_encoder:
+                vision_feature = vision_feature.detach()
+            state_embed = self.state_proj(inputs["states"])
+            x = torch.cat([vision_feature, state_embed], dim=1)
+            return x, vision_feature
+
+        def action_generation_func(
+            inputs: dict[str, torch.Tensor], outputs: dict[str, torch.Tensor]
+        ) -> dict[str, torch.Tensor]:
+            full_feature, visual_feature = get_feature(
+                inputs, detach_encoder=detach_encoder
+            )
+            mix_feature = self.mix_proj(full_feature)
+            action_mean = self.actor_mean(mix_feature)
+            if self.cfg.independent_std:
+                action_logstd = self.actor_logstd.expand_as(action_mean)
+            else:
+                action_logstd = self.actor_logstd(mix_feature)
+
+            action_std = torch.exp(action_logstd)
+            if self.cfg.std_range is not None:
+                action_std = torch.clamp(
+                    action_std, self.cfg.std_range[0], self.cfg.std_range[1]
+                )
+
+            probs = Normal(action_mean, action_std, validate_args=False)
+            if mode == "train":
+                raw_action = probs.rsample().detach()
+            elif mode == "eval":
+                raw_action = action_mean.clone()
+            else:
+                raise NotImplementedError(f"{mode=}")
+            chunk_logprobs = probs.log_prob(raw_action)
+            if self.action_scale is not None:
+                action_normalized = torch.tanh(raw_action)
+                action = action_normalized * self.action_scale + self.action_bias
+
+                chunk_logprobs = chunk_logprobs - torch.log(
+                    self.action_scale * (1 - action_normalized.pow(2)) + 1e-6
+                )
+            else:
+                action = raw_action
+            chunk_actions = action.reshape(
+                -1, self.cfg.num_action_chunks, self.cfg.action_dim
+            )
+            if hasattr(self, "value_head") and calculate_values:
+                chunk_values = self.value_head(mix_feature)
+            else:
+                chunk_values = torch.zeros_like(chunk_logprobs[..., :1])
+            outputs["action"].copy_(action)
+            outputs["chunk_actions"].copy_(chunk_actions)
+            outputs["chunk_logprobs"].copy_(chunk_logprobs)
+            outputs["chunk_values"].copy_(chunk_values)
+            return outputs
+
+        spec = GraphCaptureSpec(
+            func=action_generation_func,
+            inputs=inputs,
+            outputs=outputs,
+            name=f"action_generation_detach_encoder_{detach_encoder}_calculate_values_{calculate_values}_mode_{mode}",
+        )
+        assert self.cuda_graph_manager is not None, (
+            "CUDAGraphManager must be initialized before capturing graphs."
+        )
+        self.cuda_graph_manager.capture(spec)
+
+    def capture_action_distribution_generation(
+        self, batch_size: int, detach_encoder: bool
+    ):
+        from rlinf.utils.cuda_graph import GraphCaptureSpec
+
+        device = next(self.parameters()).device
+        dtype = next(self.parameters()).dtype
+
+        inputs = {
+            "states": torch.zeros(
+                (batch_size, self.cfg.state_dim), device=device, dtype=dtype
+            ),
+            "images": torch.zeros(
+                (batch_size, self.cfg.image_num, *self.cfg.image_size),
+                device=device,
+                dtype=dtype,
+            ),
+        }
+        outputs = {
+            "action_mean": torch.zeros(
+                (batch_size, self.cfg.action_dim), device=device, dtype=dtype
+            ),
+            "action_std": torch.zeros(
+                (batch_size, self.cfg.action_dim), device=device, dtype=dtype
+            ),
+            "full_feature": torch.zeros(
+                (batch_size, self.mix_proj[0].in_features),
+                device=device,
+                dtype=dtype,
+            ),
+        }
+
+        def get_feature(
+            inputs: dict[str, torch.Tensor], detach_encoder: bool = False
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            vision_features = []
+            for img_id in range(self.cfg.image_num):
+                images = inputs["images"][:, img_id]
+                if images.shape[3] == 3:
+                    images = images.permute(0, 3, 1, 2)
+                vision_features.append(self.encoders[img_id](images))
+            vision_feature = torch.cat(vision_features, dim=-1)
+            if detach_encoder:
+                vision_feature = vision_feature.detach()
+            state_embed = self.state_proj(inputs["states"])
+            x = torch.cat([vision_feature, state_embed], dim=1)
+            return x, vision_feature
+
+        def action_distribution_generation_func(
+            inputs: dict[str, torch.Tensor], outputs: dict[str, torch.Tensor]
+        ) -> dict[str, torch.Tensor]:
+            full_feature, visual_feature = get_feature(
+                inputs, detach_encoder=detach_encoder
+            )
+            mix_feature = self.mix_proj(full_feature)
+            action_mean = self.actor_mean(mix_feature)
+
+            if self.cfg.independent_std:
+                action_logstd = self.actor_logstd.expand_as(action_mean)
+            else:
+                action_logstd = self.actor_logstd(mix_feature)
+
+            action_std = torch.exp(action_logstd)
+
+            if self.cfg.std_range is not None:
+                action_std = torch.clamp(
+                    action_std, self.cfg.std_range[0], self.cfg.std_range[1]
+                )
+
+            outputs["action_mean"].copy_(action_mean)
+            outputs["action_std"].copy_(
+                action_std,
+            )
+            outputs["full_feature"].copy_(full_feature)
+            return outputs
+
+        spec = GraphCaptureSpec(
+            func=action_distribution_generation_func,
+            inputs=inputs,
+            outputs=outputs,
+            name=f"action_distribution_generation_detach_encoder_{detach_encoder}",
+        )
+
+        self.cuda_graph_manager.capture(spec)
+
+    def capture_cuda_graph(self, batch_size: int):
+        from rlinf.utils.cuda_graph import CUDAGraphManager
+
+        if self.cuda_graph_manager is None:
+            self.cuda_graph_manager = CUDAGraphManager()
+
+        # detach_encoder is currently always False (reserved for future use).
+        # Capture eval graphs for both value/no-value requests.
+        self.capture_action_generation(
+            batch_size=batch_size,
+            detach_encoder=False,
+            calculate_values=True,
+            mode="eval",
+        )
+        self.capture_action_generation(
+            batch_size=batch_size,
+            detach_encoder=False,
+            calculate_values=False,
+            mode="eval",
+        )
+
+    def release_cuda_graph(self):
+        if self.cuda_graph_manager is not None:
+            self.cuda_graph_manager.destroy()
+            self.cuda_graph_manager = None
+
+    def is_cuda_graph_enabled(self) -> bool:
+        return self.cuda_graph_manager is not None

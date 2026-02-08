@@ -116,6 +116,7 @@ rollout:
     model_path: "path/to/RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT"
     precision: ${actor.model.precision}
 
+  enable_cuda_graph: False
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

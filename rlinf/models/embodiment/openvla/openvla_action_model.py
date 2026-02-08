@@ -37,6 +37,7 @@ from transformers.generation import (
     LogitsProcessor,
     LogitsProcessorList,
     TopKLogitsWarper,
+    TopPLogitsWarper,
 )
 from transformers.image_processing_utils import BatchFeature
 from transformers.tokenization_utils import (
@@ -805,8 +806,13 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
             )
             past_key_values = decode_outputs["past_key_values"]
 
+    def release_cuda_graph(self) -> None:
+        if self.cuda_graph_manager is not None:
+            self.cuda_graph_manager.destroy()
+            self.cuda_graph_manager = None
+
     @torch.inference_mode()
-    def generate_actions(
+    def generate_actions_with_cuda_graph(
         self,
         input_ids: torch.LongTensor,
         attention_mask: torch.Tensor,
@@ -815,7 +821,11 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         do_sample: bool = True,
         temperature: float = 1.0,
         top_k: int | None = None,
+        top_p: float | None = None,
     ) -> tuple[torch.LongTensor, torch.Tensor, torch.Tensor]:
+        assert self.is_cuda_graph_enabled(), (
+            "CUDA graph path requested but no captured graph is available."
+        )
         self.eval()
         B = input_ids.shape[0]
         device = input_ids.device
@@ -843,6 +853,11 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         scores_steps: list[torch.Tensor] = []
         h_steps: list[torch.Tensor] = []
         action_tokens: list[torch.Tensor] = []
+        top_p_warper = (
+            TopPLogitsWarper(top_p=float(top_p))
+            if top_p is not None and 0.0 < float(top_p) < 1.0
+            else None
+        )
         for step in range(self.action_dim):
             proc_scores = self.logits_processors(input_ids, logits)
 
@@ -856,16 +871,15 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
 
             # choose next_token => MUST be [B,1]
             if do_sample:
+                if temperature != 1.0:
+                    proc_scores = proc_scores / max(float(temperature), 1e-8)
                 if top_k is not None and top_k > 0:
-                    topk_vals, topk_idx = torch.topk(
-                        proc_scores, k=top_k, dim=-1
-                    )  # [B,k], [B,k]
-                    probs = torch.softmax(topk_vals, dim=-1)  # [B,k]
-                    choice = torch.multinomial(probs, num_samples=1)  # [B,1]
-                    next_token = topk_idx.gather(-1, choice)  # [B,1]
-                else:
-                    probs = torch.softmax(proc_scores, dim=-1)  # [B,V]
-                    next_token = torch.multinomial(probs, num_samples=1)  # [B,1]
+                    k = min(int(top_k), proc_scores.size(-1))
+                    proc_scores = TopKLogitsWarper(top_k=k)(None, proc_scores)
+                if top_p_warper is not None:
+                    proc_scores = top_p_warper(None, proc_scores)
+                probs = torch.softmax(proc_scores, dim=-1)  # [B,V]
+                next_token = torch.multinomial(probs, num_samples=1)  # [B,1]
             else:
                 next_token = torch.argmax(proc_scores, dim=-1, keepdim=True)  # [B,1]
 
@@ -895,95 +909,85 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         last_hidden_states = torch.stack(h_steps, dim=1)  # [B,K,H]
         return action_tokens, token_scores, last_hidden_states
 
-    # @torch.inference_mode()
-    # def generate_actions(
-    #     self,
-    #     input_ids: torch.LongTensor,
-    #     attention_mask: torch.Tensor,
-    #     pixel_values: torch.FloatTensor,
-    #     *,
-    #     do_sample: bool = True,
-    #     temperature: float = 1.0,
-    #     top_k: int | None = None,
-    # ) -> tuple[torch.LongTensor, torch.Tensor, torch.Tensor]:
-    #     self.eval()
-    #     B = input_ids.shape[0]
-    #     device = input_ids.device
+    @torch.inference_mode()
+    def generate_actions(
+        self,
+        input_ids: torch.LongTensor,
+        attention_mask: torch.Tensor,
+        pixel_values: torch.FloatTensor,
+        *,
+        do_sample: bool = True,
+        temperature: float = 1.0,
+        top_k: int | None = None,
+        top_p: float | None = None,
+    ) -> tuple[torch.LongTensor, torch.Tensor, torch.Tensor]:
+        self.eval()
 
-    #     # Prefill
-    #     output = self.forward(
-    #         input_ids=input_ids,
-    #         attention_mask=attention_mask,
-    #         pixel_values=pixel_values,
-    #         use_cache=True,
-    #         output_hidden_states=True,
-    #         return_dict=True,
-    #     )
-    #     past_key_values = output.past_key_values
+        output = self.forward(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            pixel_values=pixel_values,
+            use_cache=True,
+            output_hidden_states=True,
+            return_dict=True,
+        )
+        past_key_values = output.past_key_values
+        logits = output.logits[:, -1, :]
 
-    #     logits = output.logits[:, -1, :]
+        scores_steps: list[torch.Tensor] = []
+        h_steps: list[torch.Tensor] = []
+        action_tokens: list[torch.Tensor] = []
+        top_p_warper = (
+            TopPLogitsWarper(top_p=float(top_p))
+            if top_p is not None and 0.0 < float(top_p) < 1.0
+            else None
+        )
 
-    #     def _past_len(pkv):
-    #         k0 = pkv[0][0]
-    #         return k0.shape[-2] if k0.dim() >= 3 else k0.shape[1]
+        for _ in range(self.action_dim):
+            proc_scores = self.logits_processors(input_ids, logits)
+            if proc_scores.dim() == 3:
+                proc_scores = proc_scores[:, -1, :]
 
-    #     scores_steps: list[torch.Tensor] = []
-    #     h_steps: list[torch.Tensor] = []
-    #     action_tokens: list[torch.Tensor] = []
+            if do_sample:
+                if temperature != 1.0:
+                    proc_scores = proc_scores / max(float(temperature), 1e-8)
+                if top_k is not None and top_k > 0:
+                    k = min(int(top_k), proc_scores.size(-1))
+                    proc_scores = TopKLogitsWarper(top_k=k)(None, proc_scores)
+                if top_p_warper is not None:
+                    proc_scores = top_p_warper(None, proc_scores)
+                probs = torch.softmax(proc_scores, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+            else:
+                next_token = torch.argmax(proc_scores, dim=-1, keepdim=True)
+            scores_steps.append(proc_scores)
 
-    #     for step in range(self.action_dim):
-    #         proc_scores = self.logits_processors(input_ids, logits)
+            action_tokens.append(next_token.squeeze(1))
+            input_ids = torch.cat([input_ids, next_token], dim=-1)
+            attention_mask = torch.cat(
+                [
+                    attention_mask,
+                    torch.ones_like(next_token, dtype=attention_mask.dtype),
+                ],
+                dim=-1,
+            )
 
-    #         if proc_scores.dim() == 3:
-    #             proc_scores = proc_scores[:, -1, :]
+            lm_out = self.forward(
+                input_ids=next_token,
+                attention_mask=attention_mask,
+                past_key_values=past_key_values,
+                use_cache=True,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+            past_key_values = lm_out.past_key_values
+            logits = lm_out.logits[:, -1, :]
+            h_steps.append(lm_out.hidden_states[-1][:, -1])
 
-    #         scores_steps.append(proc_scores)
-
-    #         if temperature != 1.0:
-    #             proc_scores = proc_scores / max(float(temperature), 1e-8)
-
-    #         # choose next_token => MUST be [B,1]
-    #         if do_sample:
-    #             if top_k is not None and top_k > 0:
-    #                 topk_vals, topk_idx = torch.topk(
-    #                     proc_scores, k=top_k, dim=-1
-    #                 )  # [B,k], [B,k]
-    #                 probs = torch.softmax(topk_vals, dim=-1)  # [B,k]
-    #                 choice = torch.multinomial(probs, num_samples=1)  # [B,1]
-    #                 next_token = topk_idx.gather(-1, choice)  # [B,1]
-    #             else:
-    #                 probs = torch.softmax(proc_scores, dim=-1)  # [B,V]
-    #                 next_token = torch.multinomial(probs, num_samples=1)  # [B,1]
-    #         else:
-    #             next_token = torch.argmax(proc_scores, dim=-1, keepdim=True)  # [B,1]
-
-    #         # Save actions as [B] each step
-    #         action_tokens.append(next_token.squeeze(1))  # [B]
-
-    #         # Update ids for processors/history => input_ids stays [B, L]
-    #         input_ids = torch.cat([input_ids, next_token], dim=-1)
-
-    #         cur_len = _past_len(past_key_values)
-    #         position_ids = torch.full((B, 1), cur_len, dtype=torch.long, device=device)
-
-    #         # Cached 1-token decode
-    #         lm_out = self.language_model(
-    #             input_ids=next_token,  # [B,1]
-    #             attention_mask=None,
-    #             position_ids=position_ids,  # [B,1]
-    #             past_key_values=past_key_values,
-    #             use_cache=True,
-    #             output_hidden_states=True,
-    #             return_dict=True,
-    #         )
-    #         past_key_values = lm_out.past_key_values
-    #         logits = lm_out.logits[:, -1, :]  # [B,V]
-    #         h_steps.append(lm_out.hidden_states[-1][:, -1])  # [B,H]
-
-    #     action_tokens = torch.stack(action_tokens, dim=1)  # [B,K]
-    #     token_scores = torch.stack(scores_steps, dim=1)  # [B,K,V]
-    #     last_hidden_states = torch.stack(h_steps, dim=1)  # [B,K,H]
-    #     return action_tokens, token_scores, last_hidden_states
+        action_tokens = torch.stack(action_tokens, dim=1)
+        token_scores = torch.stack(scores_steps, dim=1)
+        last_hidden_states = torch.stack(h_steps, dim=1)
+        return action_tokens, token_scores, last_hidden_states
 
     @torch.no_grad()
     def predict_action_batch(
@@ -1041,43 +1045,20 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         assert torch.all(input_ids[:, -1] == 29871)
         assert torch.all(attention_mask[:, -1] == 1)
 
-        # generated_results: GenerateDecoderOnlyOutput = self.generate(
-        #     input_ids,
-        #     attention_mask=attention_mask,
-        #     pixel_values=pixel_values,
-        #     output_scores=True,
-        #     output_logits=True,
-        #     output_hidden_states=True,
-        #     return_dict_in_generate=True,
-        #     do_sample=do_sample,
-        #     logits_processor=self.logits_processors,
-        #     **kwargs,
-        # )
-        # action_tokens = generated_results.sequences
-        # action_tokens = action_tokens[:, -self.action_dim :]
+        generate_actions_fn = (
+            self.generate_actions_with_cuda_graph
+            if self.is_cuda_graph_enabled()
+            else self.generate_actions
+        )
 
-        # token_logits = (
-        #     generated_results.scores
-        # )  # ([B, vocab-size], ...), after logits processor and warper results
-        # token_logits_tensor = torch.stack(
-        #     token_logits, dim=1
-        # )  # [B, action-dim, vocab-size]
-
-        # last_hidden_states = torch.stack(
-        #     [
-        #         token_hidden_states[-1][:, -1]
-        #         for token_hidden_states in generated_results.hidden_states
-        #     ],
-        #     dim=1,
-        # )  # [B, hidden_states] -> [B, action-dim, hidden_states]
-
-        action_tokens, token_logits_tensor, last_hidden_states = self.generate_actions(
+        action_tokens, token_logits_tensor, last_hidden_states = generate_actions_fn(
             input_ids=input_ids,
             attention_mask=attention_mask,
             pixel_values=pixel_values,
             do_sample=do_sample,
             temperature=kwargs.get("temperature", 1.0),
             top_k=kwargs.get("top_k", None),
+            top_p=kwargs.get("top_p", None),
         )
 
         predicted_action_token_ids = action_tokens.cpu().numpy()

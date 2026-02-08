@@ -107,6 +107,7 @@ rollout:
   collect_transitions: True
   collect_prev_infos: False
   compile_model: False
+  enable_cuda_graph: False
   model:
     model_path: "/path/to/RLinf-ResNet10-pretrained"
     state_dim: 7

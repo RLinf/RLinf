@@ -81,6 +81,105 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
                 noise_logvar_range=[0.08, 0.16],
                 noise_scheduler_type="learn",
             )
+        self.cuda_graph_manager = None
+        self._enable_cuda_graph_capture = False
+
+    def enable_cuda_graph(self):
+        from rlinf.utils.cuda_graph import CUDAGraphManager
+
+        if self.cuda_graph_manager is None:
+            self.cuda_graph_manager = CUDAGraphManager()
+        self._enable_cuda_graph_capture = True
+
+    def disable_cuda_graph(self):
+        self._enable_cuda_graph_capture = False
+        if self.cuda_graph_manager is not None:
+            self.cuda_graph_manager.destroy()
+            self.cuda_graph_manager = None
+
+    def is_cuda_graph_enabled(self) -> bool:
+        return self._enable_cuda_graph_capture and self.cuda_graph_manager is not None
+
+    def _capture_denoise_step_graph(
+        self,
+        vl_embs: torch.Tensor,
+        state_features: torch.Tensor,
+        x_t: torch.Tensor,
+        timesteps_tensor: torch.Tensor,
+        embodiment_id: torch.Tensor,
+    ) -> str | None:
+        from rlinf.utils.cuda_graph import GraphCaptureSpec
+
+        if not self.is_cuda_graph_enabled():
+            return None
+
+        batch_size = x_t.shape[0]
+        graph_name = f"gr00t_denoise_step_bs_{batch_size}"
+        if graph_name in self.cuda_graph_manager:
+            self.cuda_graph_manager.destroy(graph_name)
+
+        inputs = {
+            "vl_embs": vl_embs.detach().clone(),
+            "state_features": state_features.detach().clone(),
+            "x_t": x_t.detach().clone(),
+            "timesteps_tensor": timesteps_tensor.detach().clone(),
+            "embodiment_id": embodiment_id.detach().clone(),
+        }
+        outputs = {
+            "v_t": torch.zeros_like(x_t),
+            "noise_std": torch.zeros_like(x_t),
+        }
+
+        def _denoise_step_func(
+            graph_inputs: dict[str, Any], graph_outputs: dict[str, Any]
+        ):
+            action_features = self.action_encoder(
+                graph_inputs["x_t"],
+                graph_inputs["timesteps_tensor"],
+                graph_inputs["embodiment_id"],
+            )
+            if self.config.add_pos_embed:
+                pos_ids = torch.arange(
+                    action_features.shape[1],
+                    dtype=torch.long,
+                    device=action_features.device,
+                )
+                pos_embs = self.position_embedding(pos_ids).unsqueeze(0)
+                action_features = action_features + pos_embs
+
+            future_tokens = self.future_tokens.weight.unsqueeze(0).expand(
+                graph_inputs["vl_embs"].shape[0], -1, -1
+            )
+            sa_embs = torch.cat(
+                (graph_inputs["state_features"], future_tokens, action_features), dim=1
+            )
+
+            model_output = self.model(
+                hidden_states=sa_embs,
+                encoder_hidden_states=graph_inputs["vl_embs"],
+                timestep=graph_inputs["timesteps_tensor"],
+            )
+            model_output = model_output[:, -self.action_horizon :]
+            v_t = self.action_decoder(model_output, graph_inputs["embodiment_id"])
+            graph_outputs["v_t"].copy_(v_t)
+
+            if self.rl_config.noise_method == "reinflow":
+                noise_std = self.reinflow_explore_noise_net(model_output)
+            else:
+                noise_std = torch.zeros_like(graph_outputs["noise_std"])
+            graph_outputs["noise_std"].copy_(noise_std)
+            return graph_outputs
+
+        spec = GraphCaptureSpec(
+            name=graph_name,
+            func=_denoise_step_func,
+            inputs=inputs,
+            outputs=outputs,
+            external_inputs={"vl_embs", "state_features", "x_t", "timesteps_tensor"},
+            warmup_iters=1,
+        )
+        self.cuda_graph_manager.capture(spec)
+        return graph_name
 
     def get_logprob_norm(self, sample, mu, sigma):
         if self.rl_config.safe_get_logprob:
@@ -108,6 +207,7 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
         idx: Optional[int | torch.Tensor],
         mode: Literal["train", "eval"] = "train",
         compute_values=False,
+        denoise_graph_name: str | None = None,
     ):
         """
         Sample the mean, variance and value of the action at a given timestep.
@@ -135,35 +235,54 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
             # fixed noise level
             noise_level = torch.tensor(self.rl_config.noise_level).to(device)
 
-        # velocity prediction
         t_cont = idx / float(denoise_steps)
         timesteps_tensor = (
             (t_cont * self.num_timestep_buckets).to(torch.int64).to(device)
         )
-        action_features = self.action_encoder(x_t, timesteps_tensor, embodiment_id)
-        # Maybe add position embedding.
-        if self.config.add_pos_embed:
-            pos_ids = torch.arange(
-                action_features.shape[1], dtype=torch.long, device=device
+        use_graph = (
+            denoise_graph_name is not None
+            and self.is_cuda_graph_enabled()
+            and not torch.is_grad_enabled()
+            and denoise_graph_name in self.cuda_graph_manager
+        )
+        if use_graph:
+            graph_outputs = self.cuda_graph_manager.replay(
+                denoise_graph_name,
+                inputs={
+                    "vl_embs": vl_embs,
+                    "state_features": state_features,
+                    "x_t": x_t,
+                    "timesteps_tensor": timesteps_tensor,
+                },
             )
-            pos_embs = self.position_embedding(pos_ids).unsqueeze(0)
-            action_features = action_features + pos_embs
+            v_t = graph_outputs["v_t"]
+            noise_std_from_graph = graph_outputs["noise_std"]
+        else:
+            action_features = self.action_encoder(x_t, timesteps_tensor, embodiment_id)
+            # Maybe add position embedding.
+            if self.config.add_pos_embed:
+                pos_ids = torch.arange(
+                    action_features.shape[1], dtype=torch.long, device=device
+                )
+                pos_embs = self.position_embedding(pos_ids).unsqueeze(0)
+                action_features = action_features + pos_embs
 
-        # Join vision, language, state and action embedding along sequence dimension.
-        future_tokens = self.future_tokens.weight.unsqueeze(0).expand(
-            vl_embs.shape[0], -1, -1
-        )
-        sa_embs = torch.cat((state_features, future_tokens, action_features), dim=1)
+            # Join vision, language, state and action embedding along sequence dimension.
+            future_tokens = self.future_tokens.weight.unsqueeze(0).expand(
+                vl_embs.shape[0], -1, -1
+            )
+            sa_embs = torch.cat((state_features, future_tokens, action_features), dim=1)
 
-        model_output = self.model(
-            hidden_states=sa_embs,
-            encoder_hidden_states=vl_embs,
-            timestep=timesteps_tensor,
-        )
-        model_output = model_output[:, -self.action_horizon :]
+            model_output = self.model(
+                hidden_states=sa_embs,
+                encoder_hidden_states=vl_embs,
+                timestep=timesteps_tensor,
+            )
+            model_output = model_output[:, -self.action_horizon :]
 
-        # ode/sde sampling
-        v_t = self.action_decoder(model_output, embodiment_id)
+            # ode/sde sampling
+            v_t = self.action_decoder(model_output, embodiment_id)
+            noise_std_from_graph = None
 
         timesteps = torch.linspace(
             0, 1, denoise_steps + 1, device=device, dtype=vl_embs.dtype
@@ -209,7 +328,10 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
             elif self.rl_config.noise_method == "reinflow":
                 x0_weight = 1 - (t_input + delta)
                 x1_weight = t_input + delta
-                x_t_std = self.reinflow_explore_noise_net(model_output)
+                if noise_std_from_graph is not None:
+                    x_t_std = noise_std_from_graph
+                else:
+                    x_t_std = self.reinflow_explore_noise_net(model_output)
             else:
                 raise ValueError(f"Invalid noise method: {self.rl_config.noise_method}")
         # In eval, this equals to x_t_mean = x_t + v*dt(dt>0).
@@ -275,6 +397,17 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
             denoise_inds = torch.tensor([-1] * num_steps)
         denoise_inds = denoise_inds[None].repeat(batch_size, 1)
 
+        denoise_graph_name = None
+        if self.is_cuda_graph_enabled():
+            t0 = torch.zeros((batch_size,), dtype=torch.int64, device=device)
+            denoise_graph_name = self._capture_denoise_step_graph(
+                vl_embs=vl_embs,
+                state_features=state_features,
+                x_t=x_t,
+                timesteps_tensor=t0,
+                embodiment_id=embodiment_id,
+            )
+
         # Run denoising steps.
         for idx in range(num_steps):
             if idx == denoise_inds[0][idx]:
@@ -287,6 +420,7 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
                     mode="train",
                     denoise_steps=num_steps,
                     compute_values=compute_values,
+                    denoise_graph_name=denoise_graph_name,
                 )
             else:
                 x_t_mean, x_t_std = self.sample_mean_var_val(
@@ -298,6 +432,7 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
                     mode="eval",
                     denoise_steps=num_steps,
                     compute_values=compute_values,
+                    denoise_graph_name=denoise_graph_name,
                 )
 
             x_t = x_t_mean + self.sample_noise(x_t.shape, device) * x_t_std
@@ -730,3 +865,23 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         self.valid_action_dim = valid_action_dim
 
         self.image_nums = len(metadata.modalities.video.keys())
+
+    def capture_cuda_graph(self, batch_size: int):
+        _ = batch_size
+        if hasattr(self, "action_head") and hasattr(
+            self.action_head, "enable_cuda_graph"
+        ):
+            self.action_head.enable_cuda_graph()
+
+    def release_cuda_graph(self):
+        if hasattr(self, "action_head") and hasattr(
+            self.action_head, "disable_cuda_graph"
+        ):
+            self.action_head.disable_cuda_graph()
+
+    def is_cuda_graph_enabled(self) -> bool:
+        return bool(
+            hasattr(self, "action_head")
+            and hasattr(self.action_head, "is_cuda_graph_enabled")
+            and self.action_head.is_cuda_graph_enabled()
+        )
