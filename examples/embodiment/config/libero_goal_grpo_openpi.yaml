@@ -105,6 +105,7 @@ env:
       video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
+  enable_torch_compile: False
   group_name: "RolloutGroup"
   generation_backend: "huggingface"
   recompute_logprobs: False

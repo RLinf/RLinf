@@ -17,6 +17,7 @@ cluster:
   component_placement:
       env: 0
       rollout:
+        enable_torch_compile: False
         node_group: "rollout"
         placement: 1
       actor: 2
@@ -123,6 +124,7 @@ env:
       video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
+  enable_torch_compile: False
   group_name: "RolloutGroup"
   backend: "huggingface"
   enable_offload: True

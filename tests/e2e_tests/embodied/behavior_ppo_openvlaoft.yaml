@@ -92,6 +92,7 @@ env:
     max_steps_per_rollout_epoch: 1
 
 rollout:
+  enable_torch_compile: False
   group_name: "RolloutGroup"
   backend: "huggingface"
   enable_offload: True
