@@ -89,16 +89,16 @@ def merge_replay_buffers(source_path: str, save_path: str, move_files: bool) -> 
     merged_id_list: list[int] = []
     total_samples = 0
     next_id = 0
-    storage_format = None
+    trajectory_format = None
     seed = None
 
     rank_data = []
     for rank_dir in rank_dirs:
         metadata = _load_json(os.path.join(rank_dir, "metadata.json"))
-        if storage_format is None:
-            storage_format = metadata.get("storage_format", "pt")
-        elif storage_format != metadata.get("storage_format", "pt"):
-            raise ValueError("storage_format mismatch across ranks")
+        if trajectory_format is None:
+            trajectory_format = metadata.get("trajectory_format", "pt")
+        elif trajectory_format != metadata.get("trajectory_format", "pt"):
+            raise ValueError("trajectory_format mismatch across ranks")
 
         if seed is None and "seed" in metadata:
             seed = metadata["seed"]
@@ -108,7 +108,7 @@ def merge_replay_buffers(source_path: str, save_path: str, move_files: bool) -> 
         trajectory_index, _ = _normalize_index_data(index_data)
         rank_data.append((rank_dir, trajectory_index))
 
-    ext = ".pt" if storage_format == "pt" else ".pkl"
+    ext = ".pt" if trajectory_format == "pt" else ".pkl"
     all_ids = sorted(
         {
             trajectory_id
@@ -144,8 +144,7 @@ def merge_replay_buffers(source_path: str, save_path: str, move_files: bool) -> 
             total_samples += int(info.get("num_samples", 0))
 
     metadata_out = {
-        "storage_dir": save_path,
-        "storage_format": storage_format or "pt",
+        "trajectory_format": trajectory_format or "pt",
         "size": len(merged_id_list),
         "total_samples": total_samples,
         "trajectory_counter": len(merged_id_list),
@@ -178,14 +177,14 @@ def split_replay_buffer(
     os.makedirs(save_path, exist_ok=True)
 
     metadata = _load_json(os.path.join(buffer_dir, "metadata.json"))
-    storage_format = metadata.get("storage_format", "pt")
+    trajectory_format = metadata.get("trajectory_format", "pt")
     seed = metadata.get("seed", None)
 
     index_path = _find_index_path(buffer_dir)
     index_data = _load_json(index_path)
     trajectory_index, trajectory_id_list = _normalize_index_data(index_data)
 
-    ext = ".pt" if storage_format == "pt" else ".pkl"
+    ext = ".pt" if trajectory_format == "pt" else ".pkl"
 
     selected_ids = trajectory_id_list[:split_count]
     if len(selected_ids) < split_count:
@@ -225,8 +224,7 @@ def split_replay_buffer(
         total_samples += int(info.get("num_samples", 0))
 
     metadata_out = {
-        "storage_dir": save_path,
-        "storage_format": storage_format,
+        "trajectory_format": trajectory_format,
         "size": len(merged_id_list),
         "total_samples": total_samples,
         "trajectory_counter": len(merged_id_list),
