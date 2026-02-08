@@ -109,6 +109,7 @@ env:
       use_multiple_plates: False
 
 rollout:
+  enable_torch_compile: False
   group_name: "RolloutGroup"
   generation_backend: "huggingface"
   recompute_logprobs: False

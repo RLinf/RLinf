@@ -147,6 +147,15 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openvla
 
+      - name: ManiSkill PPO test with Torch Compile
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openvla_with_torch_compile
+
+          
       - name: Clean up
         run: |
           rm -rf .venv

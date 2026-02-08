@@ -80,7 +80,6 @@ class CNNConfig:
 class CNNPolicy(nn.Module, BasePolicy):
     def __init__(self, cfg: CNNConfig):
         super().__init__()
-
         self.cfg = cfg
         self.in_channels = self.cfg.image_size[0]
         self.register_buffer(
@@ -303,6 +302,7 @@ class CNNPolicy(nn.Module, BasePolicy):
 
         return action, chunk_logprobs, full_feature
 
+    @torch.inference_mode()
     def predict_action_batch(
         self,
         env_obs,

@@ -21,12 +21,12 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: /workspace/results/maniskill_ppo_openvla
+    log_path: /workspace/results/
     project_name: rlinf
     experiment_name: "ci-test"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 2
+  max_epochs: 1
   max_steps: -1
 
   only_eval: False
@@ -101,7 +101,6 @@ env:
       video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
-  enable_torch_compile: False
   group_name: "RolloutGroup"
   backend: "huggingface"
   recompute_logprobs: False
@@ -109,6 +108,7 @@ rollout:
   enforce_eager: True
   enable_offload: True
   pipeline_stage_num: 2
+  enable_torch_compile: True
 
   model:
     model_path: "/workspace/dataset/openvla-7b"

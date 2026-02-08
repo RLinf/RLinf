@@ -346,6 +346,7 @@ class FlowPolicy(nn.Module, BasePolicy):
                 raise NotImplementedError
         return output_dict
 
+    @torch.inference_mode()
     def predict_action_batch(
         self,
         env_obs,
@@ -391,6 +392,12 @@ class FlowPolicy(nn.Module, BasePolicy):
         if return_shared_feature:
             result["shared_feature"] = visual_feature
         return chunk_actions, result
+
+    def enable_torch_compile(self):
+        if getattr(self, "torch_compile_enabled", False):
+            return
+
+        self.torch_compile_enabled = True
 
 
 @dataclass
@@ -592,6 +599,7 @@ class FlowStatePolicy(nn.Module, BasePolicy):
             "Use FlowStatePolicy.forward with the appropriate forward_type instead."
         )
 
+    @torch.inference_mode()
     def predict_action_batch(
         self,
         env_obs,

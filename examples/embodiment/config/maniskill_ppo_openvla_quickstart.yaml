@@ -103,6 +103,7 @@ env:
       video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
+  enable_torch_compile: False
   group_name: "RolloutGroup"
   backend: "huggingface"
   gpu_memory_utilization: 0.5

@@ -34,10 +34,10 @@ from prismatic.extern.hf.processing_prismatic import (
     PrismaticProcessor as PrismaticProcessorOriginal,
 )
 from transformers.generation import (
-    GenerateDecoderOnlyOutput,
     LogitsProcessor,
     LogitsProcessorList,
     TopKLogitsWarper,
+    TopPLogitsWarper,
 )
 from transformers.image_processing_utils import BatchFeature
 from transformers.tokenization_utils import (
@@ -311,7 +311,7 @@ class OpenVLAForBatchActionPrediction(OpenVLAForActionPrediction):
 
         # If `input_embeds` are passed, we only want to use them in the 1st generation step
         if inputs_embeds is not None and past_key_values is None:
-            model_inputs = {"input_embeds": inputs_embeds}
+            model_inputs = {"inputs_embeds": inputs_embeds}
         else:
             model_inputs = {"input_ids": input_ids}
 
@@ -503,6 +503,8 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         self.num_action_chunks = num_action_chunks
         self.unnorm_key = unnorm_key
         self.max_prompt_length = max_prompt_length
+        self._prefill_fn_compiled = None
+        self._decode_step_fn_compiled = None
 
     def _init_logits_processor(self):
         self.logits_processors = LogitsProcessorList()
@@ -607,7 +609,173 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
 
         return result
 
-    @torch.no_grad()
+    @torch.inference_mode()
+    def generate_actions_compiled(
+        self,
+        input_ids: torch.LongTensor,
+        attention_mask: torch.Tensor,
+        pixel_values: torch.FloatTensor,
+        *,
+        do_sample: bool = True,
+        temperature: float = 1.0,
+        top_k: int | None = None,
+        top_p: float | None = None,
+    ) -> tuple[torch.LongTensor, torch.Tensor, torch.Tensor]:
+        assert self._prefill_fn_compiled is not None, (
+            "The compiled prefill function is not available. Please make sure to call `enable_torch_compile()` before using this method."
+        )
+        assert self._decode_step_fn_compiled is not None, (
+            "The compiled decode step function is not available. Please make sure to call `enable_torch_compile()` before using this method."
+        )
+
+        self.eval()
+        past_key_values, logits = self._prefill_fn_compiled(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            pixel_values=pixel_values,
+        )
+
+        scores_steps: list[torch.Tensor] = []
+        h_steps: list[torch.Tensor] = []
+        action_tokens: list[torch.Tensor] = []
+        top_p_warper = (
+            TopPLogitsWarper(top_p=float(top_p))
+            if top_p is not None and 0.0 < float(top_p) < 1.0
+            else None
+        )
+
+        for step in range(self.action_dim):
+            proc_scores = self.logits_processors(input_ids, logits)
+
+            if proc_scores.dim() == 3:
+                proc_scores = proc_scores[:, -1, :]
+
+            if do_sample:
+                if temperature != 1.0:
+                    proc_scores = proc_scores / max(float(temperature), 1e-8)
+                if top_k is not None and top_k > 0:
+                    k = min(int(top_k), proc_scores.size(-1))
+                    proc_scores = TopKLogitsWarper(top_k=k)(None, proc_scores)
+                if top_p_warper is not None:
+                    proc_scores = top_p_warper(None, proc_scores)
+                probs = torch.softmax(proc_scores, dim=-1)  # [B,V]
+                next_token = torch.multinomial(probs, num_samples=1)  # [B,1]
+            else:
+                next_token = torch.argmax(proc_scores, dim=-1, keepdim=True)  # [B,1]
+            scores_steps.append(proc_scores)
+
+            action_tokens.append(next_token.squeeze(1))  # [B]
+
+            input_ids = torch.cat([input_ids, next_token], dim=-1)
+            attention_mask = torch.cat(
+                [
+                    attention_mask,
+                    torch.ones_like(next_token, dtype=attention_mask.dtype),
+                ],
+                dim=-1,
+            )
+
+            # Cached 1-token decode
+            past_key_values, logits, last_hidden_states = self._decode_step_fn_compiled(
+                next_token=next_token,
+                attention_mask=attention_mask,
+                past_key_values=past_key_values,
+            )
+            h_steps.append(last_hidden_states)
+
+        action_tokens = torch.stack(action_tokens, dim=1)  # [B,K]
+        token_scores = torch.stack(scores_steps, dim=1)  # [B,K,V]
+        last_hidden_states = torch.stack(h_steps, dim=1)  # [B,K,H]
+        return action_tokens, token_scores, last_hidden_states
+
+    @torch.inference_mode()
+    def generate_actions(
+        self,
+        input_ids: torch.LongTensor,
+        attention_mask: torch.Tensor,
+        pixel_values: torch.FloatTensor,
+        *,
+        do_sample: bool = True,
+        temperature: float = 1.0,
+        top_k: int | None = None,
+        top_p: float | None = None,
+    ) -> tuple[torch.LongTensor, torch.Tensor, torch.Tensor]:
+        self.eval()
+
+        # Prefill
+        output = self.forward(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            pixel_values=pixel_values,
+            use_cache=True,
+            output_hidden_states=True,
+            return_dict=True,
+        )
+        past_key_values = output.past_key_values
+
+        logits = output.logits[:, -1, :]
+
+        scores_steps: list[torch.Tensor] = []
+        h_steps: list[torch.Tensor] = []
+        action_tokens: list[torch.Tensor] = []
+        top_p_warper = (
+            TopPLogitsWarper(top_p=float(top_p))
+            if top_p is not None and 0.0 < float(top_p) < 1.0
+            else None
+        )
+
+        for step in range(self.action_dim):
+            proc_scores = self.logits_processors(input_ids, logits)
+
+            if proc_scores.dim() == 3:
+                proc_scores = proc_scores[:, -1, :]
+
+            if do_sample:
+                if temperature != 1.0:
+                    proc_scores = proc_scores / max(float(temperature), 1e-8)
+                if top_k is not None and top_k > 0:
+                    k = min(int(top_k), proc_scores.size(-1))
+                    proc_scores = TopKLogitsWarper(top_k=k)(None, proc_scores)
+                if top_p_warper is not None:
+                    proc_scores = top_p_warper(None, proc_scores)
+                probs = torch.softmax(proc_scores, dim=-1)  # [B,V]
+                next_token = torch.multinomial(probs, num_samples=1)  # [B,1]
+            else:
+                next_token = torch.argmax(proc_scores, dim=-1, keepdim=True)  # [B,1]
+            scores_steps.append(proc_scores)
+
+            # Save actions as [B] each step
+            action_tokens.append(next_token.squeeze(1))  # [B]
+
+            # Update ids for processors/history => input_ids stays [B, L]
+            input_ids = torch.cat([input_ids, next_token], dim=-1)
+            attention_mask = torch.cat(
+                [
+                    attention_mask,
+                    torch.ones_like(next_token, dtype=attention_mask.dtype),
+                ],
+                dim=-1,
+            )
+
+            # Cached 1-token decode
+            lm_out = self.forward(
+                input_ids=next_token,  # [B,1]
+                attention_mask=attention_mask,
+                past_key_values=past_key_values,
+                use_cache=True,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+            past_key_values = lm_out.past_key_values
+            logits = lm_out.logits[:, -1, :]  # [B,V]
+            h_steps.append(lm_out.hidden_states[-1][:, -1])  # [B,H]
+
+        action_tokens = torch.stack(action_tokens, dim=1)  # [B,K]
+        token_scores = torch.stack(scores_steps, dim=1)  # [B,K,V]
+        last_hidden_states = torch.stack(h_steps, dim=1)  # [B,K,H]
+        return action_tokens, token_scores, last_hidden_states
+
+    @torch.inference_mode()
     def predict_action_batch(
         self,
         input_ids=None,
@@ -663,35 +831,21 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         assert torch.all(input_ids[:, -1] == 29871)
         assert torch.all(attention_mask[:, -1] == 1)
 
-        generated_results: GenerateDecoderOnlyOutput = self.generate(
-            input_ids,
+        generate_actions_fn = (
+            self.generate_actions_compiled
+            if getattr(self, "torch_compile_enabled", False)
+            else self.generate_actions
+        )
+
+        action_tokens, token_logits_tensor, last_hidden_states = generate_actions_fn(
+            input_ids=input_ids,
             attention_mask=attention_mask,
             pixel_values=pixel_values,
-            output_scores=True,
-            output_logits=True,
-            output_hidden_states=True,
-            return_dict_in_generate=True,
             do_sample=do_sample,
-            logits_processor=self.logits_processors,
-            **kwargs,
+            temperature=kwargs.get("temperature", 1.0),
+            top_k=kwargs.get("top_k", None),
+            top_p=kwargs.get("top_p", None),
         )
-        action_tokens = generated_results.sequences
-        action_tokens = action_tokens[:, -self.action_dim :]
-
-        token_logits = (
-            generated_results.scores
-        )  # ([B, vocab-size], ...), after logits processor and warper results
-        token_logits_tensor = torch.stack(
-            token_logits, dim=1
-        )  # [B, action-dim, vocab-size]
-
-        last_hidden_states = torch.stack(
-            [
-                token_hidden_states[-1][:, -1]
-                for token_hidden_states in generated_results.hidden_states
-            ],
-            dim=1,
-        )  # [B, hidden_states] -> [B, action-dim, hidden_states]
 
         predicted_action_token_ids = action_tokens.cpu().numpy()
         discretized_actions = self.vocab_size - predicted_action_token_ids
@@ -806,3 +960,51 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         self.action_scale = 1.0
 
         self.input_processor = input_processor
+
+    def enable_torch_compile(self):
+        if getattr(self, "torch_compile_enabled", False):
+            return
+
+        def _prefill_fn(
+            input_ids: torch.LongTensor,
+            attention_mask: torch.Tensor,
+            pixel_values: torch.Tensor,
+        ) -> tuple[list[tuple[torch.Tensor, torch.Tensor]], torch.Tensor]:
+            out = self.forward(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                pixel_values=pixel_values,
+                use_cache=True,
+                output_hidden_states=False,
+                return_dict=True,
+            )
+            return out.past_key_values, out.logits[:, -1, :]
+
+        # NOTE: it's sad that timm's vision encoder is not compatible with torch.compile yet
+        # It's ok to use monkey patch to fix it but we leave it for future work
+        self._prefill_fn_compiled = _prefill_fn
+
+        def _decode_step_fn(
+            next_token: torch.Tensor,
+            attention_mask: torch.Tensor,
+            past_key_values: list[tuple[torch.Tensor, torch.Tensor]],
+        ) -> tuple[list[tuple[torch.Tensor, torch.Tensor]], torch.Tensor, torch.Tensor]:
+            out = self.forward(
+                input_ids=next_token,
+                attention_mask=attention_mask,
+                past_key_values=past_key_values,
+                use_cache=True,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+            return (
+                out.past_key_values,
+                out.logits[:, -1, :],
+                out.hidden_states[-1][:, -1],
+            )
+
+        self._decode_step_fn_compiled = torch.compile(
+            _decode_step_fn, mode="max-autotune-no-cudagraphs"
+        )
+
+        self.torch_compile_enabled = True

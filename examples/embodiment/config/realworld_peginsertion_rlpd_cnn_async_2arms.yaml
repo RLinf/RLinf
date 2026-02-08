@@ -22,6 +22,7 @@ cluster:
       node_group: franka
       placement: 0-1
     rollout:
+      enable_torch_compile: False
       node_group: "4090"
       placement: 0:0-1
   node_groups:
@@ -123,6 +124,7 @@ env:
 
 
 rollout:
+  enable_torch_compile: False
   group_name: "RolloutGroup"
   backend: "huggingface"
   enable_offload: False

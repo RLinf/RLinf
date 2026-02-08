@@ -185,6 +185,7 @@ class MLPPolicy(nn.Module, BasePolicy):
                 raise NotImplementedError
         return output_dict
 
+    @torch.inference_mode()
     def predict_action_batch(
         self,
         env_obs,
