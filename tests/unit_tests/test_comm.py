@@ -702,7 +702,8 @@ def worker_groups(cluster: Cluster):
             cluster=cluster, placement_strategy=placement, name=RECEIVER_GROUP_NAME
         )
     yield sender_group, receiver_group
-    # No explicit cleanup needed, Ray handles actor termination on shutdown.
+    sender_group._close()
+    receiver_group._close()
 
 
 @pytest.fixture(scope="class")
@@ -718,6 +719,7 @@ def collective_group(cluster: Cluster):
             cluster=cluster, placement_strategy=placement, name="collective_group"
         )
     yield group
+    group._close()
 
 
 @pytest.fixture(scope="class")
@@ -749,6 +751,8 @@ def cross_collective_groups(cluster: Cluster):
         cluster=cluster, placement_strategy=placement_b, name="collective_group_b"
     )
     yield group_a, group_b, group_a_size, group_b_size
+    group_a._close()
+    group_b._close()
 
 
 # --- Test Class ---

@@ -260,13 +260,10 @@ class FrankaEnv(gym.Env):
         else:
             return 0.0
 
-    def reset(self, *, seed=None, options=None):
+    def reset(self, joint_reset=False, seed=None, options=None):
         if self.config.is_dummy:
             observation = self._get_observation()
             return observation, {}
-        self._controller.reconfigure_compliance_params(
-            self.config.compliance_param
-        ).wait()
 
         # Reset joint
         joint_reset_cycle = next(self._joint_reset_cycle)
@@ -331,7 +328,6 @@ class FrankaEnv(gym.Env):
             np.ones((7,), dtype=np.float32),
         )
 
-        # obs_tcp_pose_dim = 6 if self.use_euler_obs else 7
         obs_tcp_pose_dim = 7
         self.observation_space = gym.spaces.Dict(
             {
@@ -536,3 +532,13 @@ class FrankaEnv(gym.Env):
         state["tcp_pose"] = np.concatenate([p_r_o, quat_r_o], axis=0)
 
         return state
+
+    @property
+    def target_ee_pose(self):
+        tgt = np.concatenate(
+            [
+                self.config.target_ee_pose[:3],
+                R.from_euler("xyz", self.config.target_ee_pose[3:].copy()).as_quat(),
+            ]
+        ).copy()
+        return tgt

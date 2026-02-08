@@ -116,7 +116,7 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run_async.sh frankasim_sac_cnn
+          bash tests/e2e_tests/embodied/run_async.sh frankasim_sac_cnn_async
 
       - name: Clean up
         run: |

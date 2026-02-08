@@ -28,6 +28,8 @@ from omegaconf import OmegaConf
 
 from rlinf.envs.realworld.common.wrappers import (
     GripperCloseEnv,
+    KeyboardRewardDoneMultiStageWrapper,
+    KeyboardRewardDoneWrapper,
     Quat2EulerWrapper,
     RelativeFrame,
     SpacemouseIntervention,
@@ -89,9 +91,16 @@ class RealWorldEnv(gym.Env):
             hardware_info=hardware_info,
             env_idx=env_idx,
         )
-        env = GripperCloseEnv(env)
+        if self.cfg.get("no_gripper", True):
+            env = GripperCloseEnv(env)
         if not env.config.is_dummy and self.cfg.get("use_spacemouse", True):
             env = SpacemouseIntervention(env)
+        if not env.config.is_dummy and self.cfg.get("keyboard_reward_wrapper", None):
+            if self.cfg.keyboard_reward_wrapper == "multi_stage":
+                env = KeyboardRewardDoneMultiStageWrapper(env)
+            elif self.cfg.keyboard_reward_wrapper == "single_stage":
+                env = KeyboardRewardDoneWrapper(env)
+
         env = RelativeFrame(env)
         env = Quat2EulerWrapper(env)
         return env
@@ -173,22 +182,22 @@ class RealWorldEnv(gym.Env):
             self.intervened_once[:] = False
             self.intervened_steps[:] = 0
 
-    def _record_metrics(self, step_reward, terminations, infos):
+    def _record_metrics(self, step_reward, terminations, intervene_current_step, infos):
         episode_info = {}
         self.returns += step_reward
         self.success_once = self.success_once | terminations
-        if "intervene_action" in infos:
-            # TODO: not suitable for multiple envs
-            for env_id in range(self.num_envs):
-                if infos["intervene_action"][env_id] is not None:
-                    self.intervened_once[env_id] = True
-                    self.intervened_steps += 1
+        self.intervened_once = self.intervened_once | intervene_current_step
+        self.intervened_steps += intervene_current_step.astype(int)
+
         episode_info["success_once"] = self.success_once.copy()
         episode_info["return"] = self.returns.copy()
         episode_info["episode_len"] = self.elapsed_steps.copy()
         episode_info["reward"] = episode_info["return"] / episode_info["episode_len"]
         episode_info["intervened_once"] = self.intervened_once
         episode_info["intervened_steps"] = self.intervened_steps
+        episode_info["success_no_intervened"] = self.success_once.copy() & (
+            ~self.intervened_once
+        )
         infos["episode"] = to_tensor(episode_info)
         return infos
 
@@ -248,27 +257,33 @@ class RealWorldEnv(gym.Env):
 
         step_reward = self._calc_step_reward(_reward)
 
+        intervene_flag = np.zeros(self.num_envs, dtype=bool)
+        if "intervene_action" in infos:
+            for env_id in range(self.num_envs):
+                if infos["intervene_action"][env_id] is not None:
+                    intervene_flag[env_id] = True
         if self.video_cfg.save_video:
             plot_infos = {
                 "rewards": step_reward,
                 "terminations": terminations,
                 "steps": self._elapsed_steps,
+                "intervene_flag": intervene_flag.astype(int),
+                "success_once": self.success_once,
+                "intervene_once": self.intervened_once.astype(int),
             }
             self.add_new_frames(raw_obs["frames"], plot_infos)
 
-        infos = self._record_metrics(step_reward, terminations, infos)
+        infos = self._record_metrics(step_reward, terminations, intervene_flag, infos)
         if self.ignore_terminations:
             infos["episode"]["success_at_end"] = to_tensor(terminations)
             terminations[:] = False
 
         intervene_action = np.zeros_like(actions)
-        intervene_flag = np.zeros((self.num_envs,), dtype=bool)
         if "intervene_action" in infos:
             for env_id in range(self.num_envs):
                 env_intervene_action = infos["intervene_action"][env_id]
                 if env_intervene_action is not None:
                     intervene_action[env_id] = env_intervene_action.copy()
-                    intervene_flag[env_id] = True
         infos["intervene_action"] = to_tensor(intervene_action)
         infos["intervene_flag"] = to_tensor(intervene_flag)
 
