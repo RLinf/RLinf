@@ -502,7 +502,6 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         output_action_chunks: int = 1,
     ):
         super().__init__(config, local_model_path)
-        BasePolicy.__init__(self)
         self.padding_value = rl_head_config.padding_value
         self._modality_config = modality_config  # ModalityConfig(delta_indices=[0], modality_keys=['video.ego_view'])
         self._modality_transform = modality_transform
@@ -706,7 +705,9 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         backbone_inputs, action_inputs = self.prepare_input(normalized_input)
         # Because the behavior of backbones remains the same for training and inference, we can use `forward` for backbones.
         backbone_fn = (
-            self.backbone_compiled if self.torch_compile_enabled else self.backbone
+            self.backbone_compiled
+            if getattr(self, "torch_compile_enabled", False)
+            else self.backbone
         )
         backbone_outputs = backbone_fn(backbone_inputs)
 
@@ -789,7 +790,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         self.image_nums = len(metadata.modalities.video.keys())
 
     def enable_torch_compile(self):
-        if self.torch_compile_enabled:
+        if getattr(self, "torch_compile_enabled", False):
             return
 
         def backbone_fn(backbone_inputs):

@@ -34,7 +34,6 @@ class MLPPolicy(nn.Module, BasePolicy):
         q_head_type="default",
     ):
         super().__init__()
-        BasePolicy.__init__(self)
         self.obs_dim = obs_dim
         self.action_dim = action_dim
         self.num_action_chunks = num_action_chunks

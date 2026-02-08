@@ -100,7 +100,6 @@ class FlowConfig:
 class FlowPolicy(nn.Module, BasePolicy):
     def __init__(self, cfg: FlowConfig):
         super().__init__()
-        BasePolicy.__init__(self)
         self.cfg = cfg
         self.in_channels = self.cfg.image_size[0]
 
@@ -395,7 +394,7 @@ class FlowPolicy(nn.Module, BasePolicy):
         return chunk_actions, result
 
     def enable_torch_compile(self):
-        if self.torch_compile_enabled:
+        if getattr(self, "torch_compile_enabled", False):
             return
 
         self.torch_compile_enabled = True
@@ -451,7 +450,6 @@ class FlowStateConfig:
 class FlowStatePolicy(nn.Module, BasePolicy):
     def __init__(self, cfg: FlowStateConfig):
         super().__init__()
-        BasePolicy.__init__(self)
         self.cfg = cfg
 
         # 3 layer MLP encoder for obs

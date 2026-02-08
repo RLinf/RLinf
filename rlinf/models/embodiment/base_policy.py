@@ -42,9 +42,6 @@ class BasePolicy(ABC):
         - crossq_q_forward
     """
 
-    def __init__(self) -> None:
-        self.torch_compile_enabled = False
-
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)

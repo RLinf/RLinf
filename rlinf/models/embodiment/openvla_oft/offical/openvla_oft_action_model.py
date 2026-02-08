@@ -75,7 +75,6 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         config: OpenVLAOFTRLConfig,
     ) -> None:
         super().__init__(config)
-        BasePolicy.__init__(self)
         self.action_dim = config.action_dim
         self.num_action_chunks = config.num_action_chunks
         self.use_proprio = config.use_proprio
@@ -326,7 +325,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         """Run discrete action tokens prediction."""
 
         # Forward pass through language model
-        if not self.torch_compile_enabled:
+        if not getattr(self, "torch_compile_enabled", False):
             language_model_output = self.language_model(
                 input_ids=None,
                 attention_mask=multimodal_attention_mask,
@@ -710,7 +709,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         return result
 
     def enable_torch_compile(self):
-        if self.torch_compile_enabled:
+        if getattr(self, "torch_compile_enabled", False):
             return
 
         def language_model_forward(

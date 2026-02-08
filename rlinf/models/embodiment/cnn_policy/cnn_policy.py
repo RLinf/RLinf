@@ -80,7 +80,6 @@ class CNNConfig:
 class CNNPolicy(nn.Module, BasePolicy):
     def __init__(self, cfg: CNNConfig):
         super().__init__()
-        BasePolicy.__init__(self)
         self.cfg = cfg
         self.in_channels = self.cfg.image_size[0]
         self.register_buffer(

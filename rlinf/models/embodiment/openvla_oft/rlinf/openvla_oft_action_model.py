@@ -48,7 +48,6 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         max_prompt_length,
     ) -> None:
         super().__init__(config)
-        BasePolicy.__init__(self)
         self.action_dim = action_dim
         self.num_action_chunks = num_action_chunks
 
@@ -317,7 +316,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         )
         multimodal_position_ids = mm_attention_mask.cumsum(dim=1) - 1
 
-        if not self.torch_compile_enabled:
+        if not getattr(self, "torch_compile_enabled", False):
             outputs = self.language_model(
                 input_ids=None,
                 attention_mask=mm_attention_mask,
@@ -580,7 +579,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         return result
 
     def enable_torch_compile(self):
-        if self.torch_compile_enabled:
+        if getattr(self, "torch_compile_enabled", False):
             return
 
         def language_model_forward(

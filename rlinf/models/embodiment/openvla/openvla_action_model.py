@@ -37,6 +37,7 @@ from transformers.generation import (
     LogitsProcessor,
     LogitsProcessorList,
     TopKLogitsWarper,
+    TopPLogitsWarper,
 )
 from transformers.image_processing_utils import BatchFeature
 from transformers.tokenization_utils import (
@@ -310,7 +311,7 @@ class OpenVLAForBatchActionPrediction(OpenVLAForActionPrediction):
 
         # If `input_embeds` are passed, we only want to use them in the 1st generation step
         if inputs_embeds is not None and past_key_values is None:
-            model_inputs = {"input_embeds": inputs_embeds}
+            model_inputs = {"inputs_embeds": inputs_embeds}
         else:
             model_inputs = {"input_ids": input_ids}
 
@@ -482,7 +483,6 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         max_prompt_length,
     ):
         super().__init__(config)
-        BasePolicy.__init__(self)
         self._init_logits_processor()
 
         action_norm_stats = self.get_action_stats(unnorm_key)
@@ -503,6 +503,8 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         self.num_action_chunks = num_action_chunks
         self.unnorm_key = unnorm_key
         self.max_prompt_length = max_prompt_length
+        self._prefill_fn_compiled = None
+        self._decode_step_fn_compiled = None
 
     def _init_logits_processor(self):
         self.logits_processors = LogitsProcessorList()
@@ -617,6 +619,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         do_sample: bool = True,
         temperature: float = 1.0,
         top_k: int | None = None,
+        top_p: float | None = None,
     ) -> tuple[torch.LongTensor, torch.Tensor, torch.Tensor]:
         assert self._prefill_fn_compiled is not None, (
             "The compiled prefill function is not available. Please make sure to call `enable_torch_compile()` before using this method."
@@ -626,23 +629,20 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         )
 
         self.eval()
-        B = input_ids.shape[0]
-        device = input_ids.device
-
-        # Prefill
         past_key_values, logits = self._prefill_fn_compiled(
             input_ids=input_ids,
             attention_mask=attention_mask,
             pixel_values=pixel_values,
         )
 
-        def _past_len(pkv):
-            k0 = pkv[0][0]
-            return k0.shape[-2] if k0.dim() >= 3 else k0.shape[1]
-
         scores_steps: list[torch.Tensor] = []
         h_steps: list[torch.Tensor] = []
         action_tokens: list[torch.Tensor] = []
+        top_p_warper = (
+            TopPLogitsWarper(top_p=float(top_p))
+            if top_p is not None and 0.0 < float(top_p) < 1.0
+            else None
+        )
 
         for step in range(self.action_dim):
             proc_scores = self.logits_processors(input_ids, logits)
@@ -650,42 +650,38 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
             if proc_scores.dim() == 3:
                 proc_scores = proc_scores[:, -1, :]
 
-            scores_steps.append(proc_scores)
-
-            if temperature != 1.0:
-                proc_scores = proc_scores / max(float(temperature), 1e-8)
-
-            # choose next_token => MUST be [B,1]
             if do_sample:
+                if temperature != 1.0:
+                    proc_scores = proc_scores / max(float(temperature), 1e-8)
                 if top_k is not None and top_k > 0:
-                    topk_vals, topk_idx = torch.topk(
-                        proc_scores, k=top_k, dim=-1
-                    )  # [B,k], [B,k]
-                    probs = torch.softmax(topk_vals, dim=-1)  # [B,k]
-                    choice = torch.multinomial(probs, num_samples=1)  # [B,1]
-                    next_token = topk_idx.gather(-1, choice)  # [B,1]
-                else:
-                    probs = torch.softmax(proc_scores, dim=-1)  # [B,V]
-                    next_token = torch.multinomial(probs, num_samples=1)  # [B,1]
+                    k = min(int(top_k), proc_scores.size(-1))
+                    proc_scores = TopKLogitsWarper(top_k=k)(None, proc_scores)
+                if top_p_warper is not None:
+                    proc_scores = top_p_warper(None, proc_scores)
+                probs = torch.softmax(proc_scores, dim=-1)  # [B,V]
+                next_token = torch.multinomial(probs, num_samples=1)  # [B,1]
             else:
                 next_token = torch.argmax(proc_scores, dim=-1, keepdim=True)  # [B,1]
+            scores_steps.append(proc_scores)
 
-            # Save actions as [B] each step
             action_tokens.append(next_token.squeeze(1))  # [B]
 
-            # Update ids for processors/history => input_ids stays [B, L]
             input_ids = torch.cat([input_ids, next_token], dim=-1)
-
-            cur_len = _past_len(past_key_values)
-            position_ids = torch.full((B, 1), cur_len, dtype=torch.long, device=device)
+            attention_mask = torch.cat(
+                [
+                    attention_mask,
+                    torch.ones_like(next_token, dtype=attention_mask.dtype),
+                ],
+                dim=-1,
+            )
 
             # Cached 1-token decode
             past_key_values, logits, last_hidden_states = self._decode_step_fn_compiled(
                 next_token=next_token,
-                position_ids=position_ids,
+                attention_mask=attention_mask,
                 past_key_values=past_key_values,
             )
-            h_steps.append(last_hidden_states)  # [B,H]
+            h_steps.append(last_hidden_states)
 
         action_tokens = torch.stack(action_tokens, dim=1)  # [B,K]
         token_scores = torch.stack(scores_steps, dim=1)  # [B,K,V]
@@ -702,10 +698,9 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         do_sample: bool = True,
         temperature: float = 1.0,
         top_k: int | None = None,
+        top_p: float | None = None,
     ) -> tuple[torch.LongTensor, torch.Tensor, torch.Tensor]:
         self.eval()
-        B = input_ids.shape[0]
-        device = input_ids.device
 
         # Prefill
         output = self.forward(
@@ -720,13 +715,14 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
 
         logits = output.logits[:, -1, :]
 
-        def _past_len(pkv):
-            k0 = pkv[0][0]
-            return k0.shape[-2] if k0.dim() >= 3 else k0.shape[1]
-
         scores_steps: list[torch.Tensor] = []
         h_steps: list[torch.Tensor] = []
         action_tokens: list[torch.Tensor] = []
+        top_p_warper = (
+            TopPLogitsWarper(top_p=float(top_p))
+            if top_p is not None and 0.0 < float(top_p) < 1.0
+            else None
+        )
 
         for step in range(self.action_dim):
             proc_scores = self.logits_processors(input_ids, logits)
@@ -734,40 +730,37 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
             if proc_scores.dim() == 3:
                 proc_scores = proc_scores[:, -1, :]
 
-            scores_steps.append(proc_scores)
-
-            if temperature != 1.0:
-                proc_scores = proc_scores / max(float(temperature), 1e-8)
-
-            # choose next_token => MUST be [B,1]
             if do_sample:
+                if temperature != 1.0:
+                    proc_scores = proc_scores / max(float(temperature), 1e-8)
                 if top_k is not None and top_k > 0:
-                    topk_vals, topk_idx = torch.topk(
-                        proc_scores, k=top_k, dim=-1
-                    )  # [B,k], [B,k]
-                    probs = torch.softmax(topk_vals, dim=-1)  # [B,k]
-                    choice = torch.multinomial(probs, num_samples=1)  # [B,1]
-                    next_token = topk_idx.gather(-1, choice)  # [B,1]
-                else:
-                    probs = torch.softmax(proc_scores, dim=-1)  # [B,V]
-                    next_token = torch.multinomial(probs, num_samples=1)  # [B,1]
+                    k = min(int(top_k), proc_scores.size(-1))
+                    proc_scores = TopKLogitsWarper(top_k=k)(None, proc_scores)
+                if top_p_warper is not None:
+                    proc_scores = top_p_warper(None, proc_scores)
+                probs = torch.softmax(proc_scores, dim=-1)  # [B,V]
+                next_token = torch.multinomial(probs, num_samples=1)  # [B,1]
             else:
                 next_token = torch.argmax(proc_scores, dim=-1, keepdim=True)  # [B,1]
+            scores_steps.append(proc_scores)
 
             # Save actions as [B] each step
             action_tokens.append(next_token.squeeze(1))  # [B]
 
             # Update ids for processors/history => input_ids stays [B, L]
             input_ids = torch.cat([input_ids, next_token], dim=-1)
-
-            cur_len = _past_len(past_key_values)
-            position_ids = torch.full((B, 1), cur_len, dtype=torch.long, device=device)
+            attention_mask = torch.cat(
+                [
+                    attention_mask,
+                    torch.ones_like(next_token, dtype=attention_mask.dtype),
+                ],
+                dim=-1,
+            )
 
             # Cached 1-token decode
-            lm_out = self.language_model(
+            lm_out = self.forward(
                 input_ids=next_token,  # [B,1]
-                attention_mask=None,
-                position_ids=position_ids,  # [B,1]
+                attention_mask=attention_mask,
                 past_key_values=past_key_values,
                 use_cache=True,
                 output_hidden_states=True,
@@ -840,7 +833,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
 
         generate_actions_fn = (
             self.generate_actions_compiled
-            if self.torch_compile_enabled
+            if getattr(self, "torch_compile_enabled", False)
             else self.generate_actions
         )
 
@@ -851,6 +844,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
             do_sample=do_sample,
             temperature=kwargs.get("temperature", 1.0),
             top_k=kwargs.get("top_k", None),
+            top_p=kwargs.get("top_p", None),
         )
 
         predicted_action_token_ids = action_tokens.cpu().numpy()
@@ -968,7 +962,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         self.input_processor = input_processor
 
     def enable_torch_compile(self):
-        if self.torch_compile_enabled:
+        if getattr(self, "torch_compile_enabled", False):
             return
 
         def _prefill_fn(
@@ -992,13 +986,12 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
 
         def _decode_step_fn(
             next_token: torch.Tensor,
-            position_ids: torch.Tensor,
+            attention_mask: torch.Tensor,
             past_key_values: list[tuple[torch.Tensor, torch.Tensor]],
         ) -> tuple[list[tuple[torch.Tensor, torch.Tensor]], torch.Tensor, torch.Tensor]:
-            out = self.language_model(
+            out = self.forward(
                 input_ids=next_token,
-                attention_mask=None,
-                position_ids=position_ids,
+                attention_mask=attention_mask,
                 past_key_values=past_key_values,
                 use_cache=True,
                 output_hidden_states=True,
@@ -1013,4 +1006,5 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         self._decode_step_fn_compiled = torch.compile(
             _decode_step_fn, mode="max-autotune-no-cudagraphs"
         )
+
         self.torch_compile_enabled = True

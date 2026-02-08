@@ -115,7 +115,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         # Override `sample_actions` to prevent parent class polymorphic call
         sample_actions_func = self.sample_actions
         super().__init__(config)
-        BasePolicy.__init__(self)
         self.sample_actions = sample_actions_func
         self.global_step = 0
         # assert
@@ -415,7 +414,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                 past_key_values=None,
                 use_cache=True,
             )
-            if not self.torch_compile_enabled
+            if not getattr(self, "torch_compile_enabled", False)
             else self.paligemma_with_expert_compiled
         )
 
@@ -552,7 +551,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         # velocity prediction
         get_suffix_func = (
             self.get_suffix_out
-            if not self.torch_compile_enabled
+            if not getattr(self, "torch_compile_enabled", False)
             else self.get_suffix_out_compiled
         )
 
@@ -808,7 +807,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                 params.requires_grad = False
 
     def enable_torch_compile(self):
-        if self.torch_compile_enabled:
+        if getattr(self, "torch_compile_enabled", False):
             return
 
         def paligemma_with_expert_forward(
