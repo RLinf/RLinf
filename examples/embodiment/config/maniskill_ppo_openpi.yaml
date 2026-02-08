@@ -120,6 +120,7 @@ rollout:
     model_path: "/path/to/model/RLinf-Pi0-ManiSkill-25Main-SFT"
     precision: ${actor.model.precision}
 
+  enable_cuda_graph: False
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

@@ -221,6 +221,8 @@ class FlowPolicy(nn.Module, BasePolicy):
             )
         else:
             self.action_scale = None
+        self.cuda_graph_manager = None
+        self._enable_cuda_graph_capture = False
 
     @property
     def num_action_chunks(self):
@@ -357,9 +359,12 @@ class FlowPolicy(nn.Module, BasePolicy):
     ):
         """Predict actions in batch"""
         env_obs = self.preprocess_env_obs(env_obs)
-
-        full_feature, visual_feature = self.get_feature(env_obs)
-        mix_feature = self.mix_proj(full_feature)
+        use_graph = self.is_cuda_graph_enabled() and not torch.is_grad_enabled()
+        if use_graph:
+            mix_feature, visual_feature = self._get_mix_feature_with_cuda_graph(env_obs)
+        else:
+            full_feature, visual_feature = self.get_feature(env_obs)
+            mix_feature = self.mix_proj(full_feature)
 
         # Use flow actor
         action, log_prob = self.flow_actor(mix_feature, train=False, log_grad=False)
@@ -391,6 +396,89 @@ class FlowPolicy(nn.Module, BasePolicy):
         if return_shared_feature:
             result["shared_feature"] = visual_feature
         return chunk_actions, result
+
+    def _get_mix_feature_with_cuda_graph(self, env_obs):
+        from rlinf.utils.cuda_graph import CUDAGraphManager, GraphCaptureSpec
+
+        if self.cuda_graph_manager is None:
+            self.cuda_graph_manager = CUDAGraphManager()
+
+        batch_size = env_obs["states"].shape[0]
+        has_extra_view = "extra_view_images" in env_obs
+        graph_name = f"flow_policy_feature_bs_{batch_size}_extra_{int(has_extra_view)}"
+
+        if graph_name not in self.cuda_graph_manager:
+            inputs = {
+                "states": env_obs["states"].detach().clone(),
+                "main_images": env_obs["main_images"].detach().clone(),
+            }
+            if has_extra_view:
+                inputs["extra_view_images"] = (
+                    env_obs["extra_view_images"].detach().clone()
+                )
+
+            full_feature, visual_feature = self.get_feature(inputs)
+            mix_feature = self.mix_proj(full_feature)
+            outputs = {
+                "mix_feature": torch.zeros_like(mix_feature),
+                "visual_feature": torch.zeros_like(visual_feature),
+            }
+
+            def _feature_func(
+                graph_inputs: dict[str, torch.Tensor],
+                graph_outputs: dict[str, torch.Tensor],
+            ):
+                local_obs = {
+                    "states": graph_inputs["states"],
+                    "main_images": graph_inputs["main_images"],
+                }
+                if has_extra_view:
+                    local_obs["extra_view_images"] = graph_inputs["extra_view_images"]
+                full_feat, visual_feat = self.get_feature(local_obs)
+                mix_feat = self.mix_proj(full_feat)
+                graph_outputs["mix_feature"].copy_(mix_feat)
+                graph_outputs["visual_feature"].copy_(visual_feat)
+                return graph_outputs
+
+            external_inputs = {"states", "main_images"}
+            if has_extra_view:
+                external_inputs.add("extra_view_images")
+            spec = GraphCaptureSpec(
+                name=graph_name,
+                func=_feature_func,
+                inputs=inputs,
+                outputs=outputs,
+                external_inputs=external_inputs,
+                warmup_iters=1,
+            )
+            self.cuda_graph_manager.capture(spec)
+
+        graph_outputs = self.cuda_graph_manager.replay(
+            graph_name,
+            inputs={
+                k: v
+                for k, v in env_obs.items()
+                if k in {"states", "main_images", "extra_view_images"}
+            },
+        )
+        return graph_outputs["mix_feature"], graph_outputs["visual_feature"]
+
+    def capture_cuda_graph(self, batch_size: int):
+        _ = batch_size
+        from rlinf.utils.cuda_graph import CUDAGraphManager
+
+        if self.cuda_graph_manager is None:
+            self.cuda_graph_manager = CUDAGraphManager()
+        self._enable_cuda_graph_capture = True
+
+    def release_cuda_graph(self):
+        self._enable_cuda_graph_capture = False
+        if self.cuda_graph_manager is not None:
+            self.cuda_graph_manager.destroy()
+            self.cuda_graph_manager = None
+
+    def is_cuda_graph_enabled(self) -> bool:
+        return self._enable_cuda_graph_capture and self.cuda_graph_manager is not None
 
 
 @dataclass
@@ -529,6 +617,8 @@ class FlowStatePolicy(nn.Module, BasePolicy):
             )
         else:
             self.action_scale = None
+        self.cuda_graph_manager = None
+        self._enable_cuda_graph_capture = False
 
     # added num_action_chunks property
     @property
@@ -606,8 +696,11 @@ class FlowStatePolicy(nn.Module, BasePolicy):
         Called by MultiStepRolloutWorker for rollout
         """
         env_obs = self.preprocess_env_obs(env_obs)
-
-        feat = self.backbone(env_obs["states"])  # encode obs using the 3 layer MLP
+        use_graph = self.is_cuda_graph_enabled() and not torch.is_grad_enabled()
+        if use_graph:
+            feat = self._get_state_feature_with_cuda_graph(env_obs["states"])
+        else:
+            feat = self.backbone(env_obs["states"])  # encode obs using the 3 layer MLP
 
         # Use flow actor
         action, log_prob = self.flow_actor(feat, train=False, log_grad=False)
@@ -632,3 +725,56 @@ class FlowStatePolicy(nn.Module, BasePolicy):
             "forward_inputs": forward_inputs,
         }
         return chunk_actions, result
+
+    def _get_state_feature_with_cuda_graph(self, states: torch.Tensor):
+        from rlinf.utils.cuda_graph import CUDAGraphManager, GraphCaptureSpec
+
+        if self.cuda_graph_manager is None:
+            self.cuda_graph_manager = CUDAGraphManager()
+
+        batch_size = states.shape[0]
+        graph_name = f"flow_state_policy_feature_bs_{batch_size}"
+        if graph_name not in self.cuda_graph_manager:
+            inputs = {"states": states.detach().clone()}
+            feat = self.backbone(inputs["states"])
+            outputs = {"feat": torch.zeros_like(feat)}
+
+            def _feature_func(
+                graph_inputs: dict[str, torch.Tensor],
+                graph_outputs: dict[str, torch.Tensor],
+            ):
+                graph_outputs["feat"].copy_(self.backbone(graph_inputs["states"]))
+                return graph_outputs
+
+            spec = GraphCaptureSpec(
+                name=graph_name,
+                func=_feature_func,
+                inputs=inputs,
+                outputs=outputs,
+                external_inputs={"states"},
+                warmup_iters=1,
+            )
+            self.cuda_graph_manager.capture(spec)
+
+        graph_outputs = self.cuda_graph_manager.replay(
+            graph_name,
+            inputs={"states": states},
+        )
+        return graph_outputs["feat"]
+
+    def capture_cuda_graph(self, batch_size: int):
+        _ = batch_size
+        from rlinf.utils.cuda_graph import CUDAGraphManager
+
+        if self.cuda_graph_manager is None:
+            self.cuda_graph_manager = CUDAGraphManager()
+        self._enable_cuda_graph_capture = True
+
+    def release_cuda_graph(self):
+        self._enable_cuda_graph_capture = False
+        if self.cuda_graph_manager is not None:
+            self.cuda_graph_manager.destroy()
+            self.cuda_graph_manager = None
+
+    def is_cuda_graph_enabled(self) -> bool:
+        return self._enable_cuda_graph_capture and self.cuda_graph_manager is not None

@@ -34,10 +34,10 @@ from prismatic.extern.hf.processing_prismatic import (
     PrismaticProcessor as PrismaticProcessorOriginal,
 )
 from transformers.generation import (
-    GenerateDecoderOnlyOutput,
     LogitsProcessor,
     LogitsProcessorList,
     TopKLogitsWarper,
+    TopPLogitsWarper,
 )
 from transformers.image_processing_utils import BatchFeature
 from transformers.tokenization_utils import (
@@ -202,7 +202,9 @@ class OpenVLAForBatchActionPrediction(OpenVLAForActionPrediction):
             input_embeddings = self.get_input_embeddings()(input_ids)
 
             # Build Multimodal Embeddings & Attention Mask =>> Prismatic defaults to inserting after <BOS> token (1:)
-            assert torch.all(input_ids[:, 0] == 1)
+            # Skip assertion during CUDA graph capture to avoid device-to-host sync
+            if not torch.cuda.is_current_stream_capturing():
+                assert torch.all(input_ids[:, 0] == 1)
             multimodal_embeddings = torch.cat(
                 [
                     input_embeddings[:, :1, :],
@@ -214,7 +216,9 @@ class OpenVLAForBatchActionPrediction(OpenVLAForActionPrediction):
 
             multimodal_attention_mask = None
             if attention_mask is not None:
-                assert torch.all(attention_mask[:, 0] == 1)
+                # Skip assertion during CUDA graph capture to avoid device-to-host sync
+                if not torch.cuda.is_current_stream_capturing():
+                    assert torch.all(attention_mask[:, 0] == 1)
                 multimodal_attention_mask = torch.cat(
                     [
                         attention_mask[:, :1],
@@ -504,6 +508,8 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         self.unnorm_key = unnorm_key
         self.max_prompt_length = max_prompt_length
 
+        self.cuda_graph_manager = None
+
     def _init_logits_processor(self):
         self.logits_processors = LogitsProcessorList()
         self.logits_processors.append(VLALogitsProcessor(self.config.n_action_bins))
@@ -607,6 +613,382 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
 
         return result
 
+    def _capture_prefill_cuda_graph(self, batch_size: int) -> None:
+        """
+        Build prefill graph inputs:
+        input_ids: torch.Tensor [B, max_prompt_length], dtype=torch.long
+        attention_mask: torch.Tensor [B, max_prompt_length], dtype=torch.bool
+        pixel_values: torch.Tensor [B, 1, 6, image_size, image_size], dtype=torch.float32
+        outputs:
+        last token logits: torch.Tensor [B, vocab_size], dtype=self.dtype
+        past_key_values: list of torch.Tensor, each is [B, num_attention_heads, max_prompt_length+patch_tokens, head_dim], dtype=self.dtype
+        """
+        from rlinf.utils.cuda_graph import GraphCaptureSpec, build_kv_cache
+
+        device = next(self.parameters()).device
+        dtype = next(self.parameters()).dtype
+        image_sizes = self.config.image_sizes
+        patch_size = 14  # currently hardcoded
+        patch_token_count = (image_sizes[0] // patch_size) * (
+            image_sizes[1] // patch_size
+        )
+        num_hidden_layers = self.config.text_config.num_hidden_layers
+        num_key_value_heads = self.config.text_config.num_key_value_heads
+        head_dim = (
+            self.config.text_config.hidden_size
+            // self.config.text_config.num_attention_heads
+        )
+        vocab_size = self.config.text_config.vocab_size  # padded vocab size
+        inputs = {
+            "input_ids": torch.zeros(
+                batch_size, self.max_prompt_length, dtype=torch.long, device=device
+            ),
+            "attention_mask": torch.ones(
+                batch_size, self.max_prompt_length, dtype=torch.bool, device=device
+            ),
+            "pixel_values": torch.zeros(
+                batch_size,
+                1,
+                6,  # hardcoded for now
+                image_sizes[0],
+                image_sizes[1],
+                dtype=dtype,
+                device=device,
+            ),
+        }
+
+        inputs["input_ids"][:, 0] = self.config.text_config.bos_token_id
+        outputs = {
+            "logits": torch.zeros(
+                batch_size, vocab_size, dtype=torch.float32, device=device
+            ),
+            "past_key_values": build_kv_cache(
+                batch_size,
+                num_hidden_layers,
+                num_key_value_heads,
+                self.max_prompt_length + patch_token_count,
+                head_dim,
+                dtype,
+                device,
+            ),
+        }
+        external_inputs = {"input_ids", "attention_mask", "pixel_values"}
+
+        def prefill_func(
+            inputs: dict[str, torch.Tensor],
+            outputs: dict[str, torch.Tensor],
+        ) -> dict[str, torch.Tensor]:
+            out = self.forward(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs["attention_mask"],
+                pixel_values=inputs["pixel_values"],
+                use_cache=True,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+            outputs["logits"].copy_(out.logits[:, -1, :])
+            for i, (k, v) in enumerate(out.past_key_values):
+                outputs["past_key_values"][i][0].copy_(k)
+                outputs["past_key_values"][i][1].copy_(v)
+            return outputs
+
+        prefill_capture_spec = GraphCaptureSpec(
+            name="prefill",
+            func=prefill_func,
+            inputs=inputs,
+            outputs=outputs,
+            external_inputs=external_inputs,
+            warmup_iters=3,
+        )
+        self.cuda_graph_manager.capture(spec=prefill_capture_spec)
+        return outputs
+
+    def _capture_decode_k_cuda_graph(
+        self,
+        batch_size: int,
+        step: int,
+        past_key_values: None | list[tuple[torch.Tensor, torch.Tensor]] = None,
+    ) -> dict[str, torch.Tensor]:
+        from rlinf.utils.cuda_graph import GraphCaptureSpec, build_kv_cache
+
+        device = next(self.parameters()).device
+        dtype = next(self.parameters()).dtype
+        image_sizes = self.config.image_sizes
+        patch_size = 14  # currently hardcoded
+        patch_token_count = (image_sizes[0] // patch_size) * (
+            image_sizes[1] // patch_size
+        )
+        num_hidden_layers = self.config.text_config.num_hidden_layers
+        num_key_value_heads = self.config.text_config.num_key_value_heads
+        hidden_size = self.config.text_config.hidden_size
+        head_dim = hidden_size // self.config.text_config.num_attention_heads
+        vocab_size = self.config.text_config.vocab_size  # padded vocab size
+
+        inputs = {
+            "input_ids": torch.zeros(batch_size, 1, dtype=torch.long, device=device),
+            "position_ids": torch.zeros(batch_size, 1, dtype=torch.long, device=device),
+            "past_key_values": build_kv_cache(
+                batch_size,
+                num_hidden_layers,
+                num_key_value_heads,
+                self.max_prompt_length + patch_token_count + step,
+                head_dim,
+                dtype,
+                device,
+            )
+            if past_key_values is None
+            else past_key_values,
+        }
+        inputs["input_ids"][:, 0] = 1
+        outputs = {
+            "logits": torch.zeros(
+                batch_size, vocab_size, dtype=torch.float32, device=device
+            ),
+            "past_key_values": build_kv_cache(
+                batch_size,
+                num_hidden_layers,
+                num_key_value_heads,
+                self.max_prompt_length + patch_token_count + step + 1,
+                head_dim,
+                dtype,
+                device,
+            ),
+            "last_hidden_states": torch.zeros(
+                batch_size, hidden_size, dtype=dtype, device=device
+            ),
+        }
+
+        external_inputs = {"input_ids", "position_ids"}
+
+        def decode_k_func(
+            inputs: dict[str, torch.Tensor],
+            outputs: dict[str, torch.Tensor],
+        ) -> dict[str, torch.Tensor]:
+            out = self.language_model(
+                input_ids=inputs["input_ids"],  # [B,1]
+                attention_mask=None,
+                position_ids=inputs["position_ids"],  # [B,1]
+                past_key_values=inputs["past_key_values"],
+                use_cache=True,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+            outputs["logits"].copy_(out.logits[:, -1, :])
+            outputs["last_hidden_states"].copy_(out.hidden_states[-1][:, -1, :])
+            for i, (k, v) in enumerate(out.past_key_values):
+                outputs["past_key_values"][i][0].copy_(k)
+                outputs["past_key_values"][i][1].copy_(v)
+            return outputs
+
+        decode_k_capture_spec = GraphCaptureSpec(
+            name=f"decode_{step}",
+            func=decode_k_func,
+            inputs=inputs,
+            outputs=outputs,
+            external_inputs=external_inputs,
+            warmup_iters=3,
+        )
+        self.cuda_graph_manager.capture(spec=decode_k_capture_spec)
+
+        return outputs
+
+    def capture_cuda_graph(self, batch_size: int) -> None:
+        from rlinf.utils.cuda_graph import CUDAGraphManager
+
+        if self.cuda_graph_manager is None:
+            self.cuda_graph_manager = CUDAGraphManager()
+
+        prefill_outputs = self._capture_prefill_cuda_graph(batch_size=batch_size)
+        past_key_values = prefill_outputs["past_key_values"]
+        for step in range(self.action_dim):
+            decode_outputs = self._capture_decode_k_cuda_graph(
+                batch_size=batch_size, step=step, past_key_values=past_key_values
+            )
+            past_key_values = decode_outputs["past_key_values"]
+
+    def release_cuda_graph(self) -> None:
+        if self.cuda_graph_manager is not None:
+            self.cuda_graph_manager.destroy()
+            self.cuda_graph_manager = None
+
+    @torch.inference_mode()
+    def generate_actions_with_cuda_graph(
+        self,
+        input_ids: torch.LongTensor,
+        attention_mask: torch.Tensor,
+        pixel_values: torch.FloatTensor,
+        *,
+        do_sample: bool = True,
+        temperature: float = 1.0,
+        top_k: int | None = None,
+        top_p: float | None = None,
+    ) -> tuple[torch.LongTensor, torch.Tensor, torch.Tensor]:
+        assert self.is_cuda_graph_enabled(), (
+            "CUDA graph path requested but no captured graph is available."
+        )
+        self.eval()
+        B = input_ids.shape[0]
+        device = input_ids.device
+
+        max_prompt_length = input_ids.shape[1]
+        path_size = 14  # currently hardcoded
+        path_token_count = (self.config.image_sizes[0] // path_size) * (
+            self.config.image_sizes[1] // path_size
+        )
+        cur_len = max_prompt_length + path_token_count
+
+        inputs = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "pixel_values": pixel_values,
+        }
+
+        output = self.cuda_graph_manager.replay(
+            name="prefill",
+            inputs=inputs,
+        )
+
+        logits = output["logits"]
+
+        scores_steps: list[torch.Tensor] = []
+        h_steps: list[torch.Tensor] = []
+        action_tokens: list[torch.Tensor] = []
+        top_p_warper = (
+            TopPLogitsWarper(top_p=float(top_p))
+            if top_p is not None and 0.0 < float(top_p) < 1.0
+            else None
+        )
+        for step in range(self.action_dim):
+            proc_scores = self.logits_processors(input_ids, logits)
+
+            if proc_scores.dim() == 3:
+                proc_scores = proc_scores[:, -1, :]
+
+            scores_steps.append(proc_scores)
+
+            if temperature != 1.0:
+                proc_scores = proc_scores / max(float(temperature), 1e-8)
+
+            # choose next_token => MUST be [B,1]
+            if do_sample:
+                if temperature != 1.0:
+                    proc_scores = proc_scores / max(float(temperature), 1e-8)
+                if top_k is not None and top_k > 0:
+                    k = min(int(top_k), proc_scores.size(-1))
+                    proc_scores = TopKLogitsWarper(top_k=k)(None, proc_scores)
+                if top_p_warper is not None:
+                    proc_scores = top_p_warper(None, proc_scores)
+                probs = torch.softmax(proc_scores, dim=-1)  # [B,V]
+                next_token = torch.multinomial(probs, num_samples=1)  # [B,1]
+            else:
+                next_token = torch.argmax(proc_scores, dim=-1, keepdim=True)  # [B,1]
+
+            action_tokens.append(next_token.squeeze(1))  # [B]
+
+            # Update ids for processors/history => input_ids stays [B, L]
+            input_ids = torch.cat([input_ids, next_token], dim=-1)
+
+            position_ids = torch.full(
+                (B, 1), cur_len + step, dtype=torch.long, device=device
+            )
+
+            decode_inputs = {
+                "input_ids": next_token,
+                "position_ids": position_ids,
+            }
+
+            decode_output = self.cuda_graph_manager.replay(
+                name=f"decode_{step}",
+                inputs=decode_inputs,
+            )
+
+            logits = decode_output["logits"]
+            h_steps.append(decode_output["last_hidden_states"])  # [B,H]
+        action_tokens = torch.stack(action_tokens, dim=1)  # [B,K]
+        token_scores = torch.stack(scores_steps, dim=1)  # [B,K,V]
+        last_hidden_states = torch.stack(h_steps, dim=1)  # [B,K,H]
+        return action_tokens, token_scores, last_hidden_states
+
+    @torch.inference_mode()
+    def generate_actions(
+        self,
+        input_ids: torch.LongTensor,
+        attention_mask: torch.Tensor,
+        pixel_values: torch.FloatTensor,
+        *,
+        do_sample: bool = True,
+        temperature: float = 1.0,
+        top_k: int | None = None,
+        top_p: float | None = None,
+    ) -> tuple[torch.LongTensor, torch.Tensor, torch.Tensor]:
+        self.eval()
+
+        output = self.forward(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            pixel_values=pixel_values,
+            use_cache=True,
+            output_hidden_states=True,
+            return_dict=True,
+        )
+        past_key_values = output.past_key_values
+        logits = output.logits[:, -1, :]
+
+        scores_steps: list[torch.Tensor] = []
+        h_steps: list[torch.Tensor] = []
+        action_tokens: list[torch.Tensor] = []
+        top_p_warper = (
+            TopPLogitsWarper(top_p=float(top_p))
+            if top_p is not None and 0.0 < float(top_p) < 1.0
+            else None
+        )
+
+        for _ in range(self.action_dim):
+            proc_scores = self.logits_processors(input_ids, logits)
+            if proc_scores.dim() == 3:
+                proc_scores = proc_scores[:, -1, :]
+
+            if do_sample:
+                if temperature != 1.0:
+                    proc_scores = proc_scores / max(float(temperature), 1e-8)
+                if top_k is not None and top_k > 0:
+                    k = min(int(top_k), proc_scores.size(-1))
+                    proc_scores = TopKLogitsWarper(top_k=k)(None, proc_scores)
+                if top_p_warper is not None:
+                    proc_scores = top_p_warper(None, proc_scores)
+                probs = torch.softmax(proc_scores, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+            else:
+                next_token = torch.argmax(proc_scores, dim=-1, keepdim=True)
+            scores_steps.append(proc_scores)
+
+            action_tokens.append(next_token.squeeze(1))
+            input_ids = torch.cat([input_ids, next_token], dim=-1)
+            attention_mask = torch.cat(
+                [
+                    attention_mask,
+                    torch.ones_like(next_token, dtype=attention_mask.dtype),
+                ],
+                dim=-1,
+            )
+
+            lm_out = self.forward(
+                input_ids=next_token,
+                attention_mask=attention_mask,
+                past_key_values=past_key_values,
+                use_cache=True,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+            past_key_values = lm_out.past_key_values
+            logits = lm_out.logits[:, -1, :]
+            h_steps.append(lm_out.hidden_states[-1][:, -1])
+
+        action_tokens = torch.stack(action_tokens, dim=1)
+        token_scores = torch.stack(scores_steps, dim=1)
+        last_hidden_states = torch.stack(h_steps, dim=1)
+        return action_tokens, token_scores, last_hidden_states
+
     @torch.no_grad()
     def predict_action_batch(
         self,
@@ -663,35 +1045,21 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         assert torch.all(input_ids[:, -1] == 29871)
         assert torch.all(attention_mask[:, -1] == 1)
 
-        generated_results: GenerateDecoderOnlyOutput = self.generate(
-            input_ids,
+        generate_actions_fn = (
+            self.generate_actions_with_cuda_graph
+            if self.is_cuda_graph_enabled()
+            else self.generate_actions
+        )
+
+        action_tokens, token_logits_tensor, last_hidden_states = generate_actions_fn(
+            input_ids=input_ids,
             attention_mask=attention_mask,
             pixel_values=pixel_values,
-            output_scores=True,
-            output_logits=True,
-            output_hidden_states=True,
-            return_dict_in_generate=True,
             do_sample=do_sample,
-            logits_processor=self.logits_processors,
-            **kwargs,
+            temperature=kwargs.get("temperature", 1.0),
+            top_k=kwargs.get("top_k", None),
+            top_p=kwargs.get("top_p", None),
         )
-        action_tokens = generated_results.sequences
-        action_tokens = action_tokens[:, -self.action_dim :]
-
-        token_logits = (
-            generated_results.scores
-        )  # ([B, vocab-size], ...), after logits processor and warper results
-        token_logits_tensor = torch.stack(
-            token_logits, dim=1
-        )  # [B, action-dim, vocab-size]
-
-        last_hidden_states = torch.stack(
-            [
-                token_hidden_states[-1][:, -1]
-                for token_hidden_states in generated_results.hidden_states
-            ],
-            dim=1,
-        )  # [B, hidden_states] -> [B, action-dim, hidden_states]
 
         predicted_action_token_ids = action_tokens.cpu().numpy()
         discretized_actions = self.vocab_size - predicted_action_token_ids

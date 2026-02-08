@@ -114,6 +114,7 @@ rollout:
     model_path: "/path/to/model/Openvla-oft-SFT-libero10-trajall/"
     precision: ${actor.model.precision}
 
+  enable_cuda_graph: False
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

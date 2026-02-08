@@ -24,6 +24,7 @@ cluster:
     rollout:
       node_group: "4090"
       placement: 0-0
+      enable_cuda_graph: False
   node_groups:
     - label: "4090"
       node_ranks: 0-0
@@ -133,6 +134,7 @@ rollout:
     model_path: "/path/to/model"
     precision: ${actor.model.precision}
 
+  enable_cuda_graph: False
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

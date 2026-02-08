@@ -24,6 +24,7 @@ cluster:
     rollout:
       node_group: "4090"
       placement: 0 # Local GPU rank in the 4090 node group (n for the n+1 th GPU)
+      enable_cuda_graph: False
   node_groups:
     - label: "4090" # GPU node group
       node_ranks: 0 # The ranks of the nodes to be included in this group， change this if your training node is not rank 0
@@ -148,6 +149,7 @@ rollout:
     precision: ${actor.model.precision}
     num_q_heads: 10
 
+  enable_cuda_graph: False
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

@@ -19,6 +19,7 @@ cluster:
       rollout:
         node_group: "rollout"
         placement: 1
+        enable_cuda_graph: False
       actor: 2
 
   node_groups:
@@ -132,6 +133,7 @@ rollout:
     model_path: "/path/to/isaaclab_stack_cube_gr00t_ckpt"
     precision: ${actor.model.precision}
 
+  enable_cuda_graph: False
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

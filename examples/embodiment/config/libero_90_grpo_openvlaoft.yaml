@@ -118,6 +118,7 @@ rollout:
     model_path: "/path/to/model/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora/"
     precision: ${actor.model.precision}
 
+  enable_cuda_graph: False
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

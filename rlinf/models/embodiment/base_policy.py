@@ -61,9 +61,17 @@ class BasePolicy(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def default_forward(self, **kwargs):
-        raise NotImplementedError
+    def default_forward(self, **kwargs): ...
 
     @abstractmethod
-    def predict_action_batch(self, **kwargs):
-        raise NotImplementedError
+    def predict_action_batch(self, **kwargs): ...
+
+    @abstractmethod
+    def capture_cuda_graph(self, batch_size: int): ...
+
+    @abstractmethod
+    def release_cuda_graph(self): ...
+
+    def is_cuda_graph_enabled(self) -> bool:
+        """Interface-friendly CUDA graph status check without relying on BasePolicy.__init__."""
+        return getattr(self, "cuda_graph_manager", None) is not None

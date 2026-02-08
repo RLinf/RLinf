@@ -27,6 +27,7 @@ from rlinf.data.embodied_io_struct import (
     Trajectory,
 )
 from rlinf.models import get_model
+from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, CollectiveGroupOptions, Worker
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.placement import HybridComponentPlacement
@@ -61,6 +62,12 @@ class MultiStepRolloutWorker(Worker):
         self._sync_weight_comm_options = CollectiveGroupOptions(
             accel_max_ctas=max_ctas, accel_min_ctas=min_ctas
         )
+        self.total_num_envs = cfg.env.train.total_num_envs
+        self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
+        self.batch_size = (
+            self.total_num_envs // self._world_size // self.num_pipeline_stages
+        )
+        self.enable_cuda_graph = cfg.rollout.get("enable_cuda_graph", True)
 
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
@@ -68,13 +75,16 @@ class MultiStepRolloutWorker(Worker):
             rollout_model_config.precision = self.cfg.rollout.model.precision
             rollout_model_config.model_path = self.cfg.rollout.model.model_path
 
-        self.hf_model = get_model(rollout_model_config)
+        self.hf_model: BasePolicy = get_model(rollout_model_config)
 
         if self.cfg.runner.get("ckpt_path", None):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
             self.hf_model.load_state_dict(model_dict)
 
         self.hf_model.eval()
+
+        if self.enable_cuda_graph and not self.enable_offload:
+            self.hf_model.capture_cuda_graph(batch_size=self.batch_size)
 
         self.setup_sample_params()
         if self.enable_offload:
@@ -363,12 +373,14 @@ class MultiStepRolloutWorker(Worker):
             self.offload_model()
 
     def offload_model(self):
-        self.hf_model = self.hf_model.to("cpu")
-        gc.collect()
-        torch.cuda.empty_cache()
+        self.hf_model.to("cpu")
+        if self.enable_cuda_graph:
+            self.hf_model.release_cuda_graph()
 
     def reload_model(self):
-        self.hf_model = self.hf_model.to(self.device)
+        self.hf_model.to(self.device)
+        if self.enable_cuda_graph:
+            self.hf_model.capture_cuda_graph(batch_size=self.batch_size)
 
     async def recv_env_output(
         self, input_channel: Channel, mode="train"

@@ -120,6 +120,7 @@ rollout:
     model_path: null
     precision: ${actor.model.precision}
 
+  enable_cuda_graph: False
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

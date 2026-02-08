@@ -109,6 +109,7 @@ rollout:
     model_path: "/path/to/model/rl4vla/openvla-7b-rlvla-warmup/"
     precision: ${actor.model.precision}
 
+  enable_cuda_graph: False
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
