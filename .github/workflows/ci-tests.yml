@@ -105,11 +105,13 @@ jobs:
               - 'examples/multiturn_demo/**'
               - 'examples/reasoning/**'
               - 'examples/searchr1/**'
+              - 'examples/rstar2/**'
               - 'tests/e2e_tests/agent/**'
               - 'tests/e2e_tests/coding_online_rl/**'
               - 'tests/e2e_tests/reasoning/**'
               - 'toolkits/code_verifier/**'
               - 'toolkits/math_verifier/**'
+              - 'toolkits/rstar2/**'
               - '.github/workflows/agent-e2e-tests.yml'
             sft_filter: &sft
               - *shared
