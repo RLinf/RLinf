@@ -108,7 +108,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
           </ul>
           <li><b>自定义模型</b></li>
           <ul>
-            <li>MLP-Policy ✅</li>
+            <li><a href="https://github.com/RLinf/RLinf/blob/main/docs/source-en/rst_source/examples/mlp.rst">MLP-Policy</a> ✅</li>
             <li>CNN-Policy ✅</li>
           </ul>
         </ul>
