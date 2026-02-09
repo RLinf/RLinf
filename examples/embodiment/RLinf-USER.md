@@ -217,7 +217,7 @@ With the Unified Hardware Abstraction Layer, RLinf-USER treats robots as first-c
 <table border="0">
 <tr>
 <td align="center">
-<img src="https://github.com/RLinf/misc/raw/main/pic/USER/USER-multi.jpg" alt="Multi-Robot Training" width="350"/>
+<img src="https://github.com/RLinf/misc/raw/main/pic/USER/USER-multi.jpg" alt="Multi-Robot Training" width="370"/>
 <strong>Parallel Training (2x Franka)</strong>
 </td>
 <td align="center">
