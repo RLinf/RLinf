@@ -3,7 +3,7 @@
 ## 🚀 Overview
 
 <div align="center">
-  <img src="https://github.com/RLinf/misc/raw/main/pic/USER-HEAD.png" alt="Project Header" width="800"/>
+  <img src="https://github.com/RLinf/misc/raw/main/pic/USER/USER-HEAD.png" alt="Project Header" width="800"/>
 </div>
 
 
@@ -113,6 +113,129 @@ Example: **HG-DAgger with single franka arm**:
 bash examples/embodiment/run_realworld_dagger_async.sh realworld_dagger_openpi_async
 ```
 
-## 📊 Results & Visualization
+---
 
-Monitor your progress via **Tensorboard**: `tensorboard --logdir ./logs`.
+## 📊 Main Results
+
+We evaluate USER on a suite of 5 real-world manipulation tasks, demonstrating its capability in unified hardware abstraction, high-throughput asynchronous learning, and support for heterogeneous policies (from CNNs to VLA models).
+
+### 1. Robust Real-world Performance
+
+USER supports diverse learning paradigms. Below shows the training curves for RL algorithms (RLPD, SAC, SAC-Flow) on diverse tasks, as well as the performance gain for VLA models ($\pi_0$) after online fine-tuning.
+
+<div align="center">
+<img src="https://github.com/RLinf/misc/raw/main/pic/USER/USER-main_rl.jpg" alt="RL Training Curves" width="800"/>
+<figcaption><strong>RL Training Curves of Diverse Tasks & Algorithms</strong></figcaption>
+</div>
+
+**Performance on VLA Models:**
+Using HG-DAgger, USER significantly improves the success rate of foundation VLA models in real-world settings with minimal interventions.
+
+<div align="center">
+<table style="text-align:center;">
+<tr>
+<th colspan="3" style="text-align:center;"><strong>Online Training Improvement for &pi;<sub>0</sub> </strong></th>
+</tr>
+<tr>
+<th style="text-align:center;">Task</th>
+<th style="text-align:center;">Before Online Training</th>
+<th style="text-align:center;">After Online Training</th>
+</tr>
+<tr>
+<td style="text-align:center;">Pick-and-Place</td>
+<td style="text-align:center;">39/60 (65%)</td>
+<td style="text-align:center;"><strong>58/60 (96.7%)</strong></td>
+</tr>
+<tr>
+<td style="text-align:center;">Table Clean-up</td>
+<td style="text-align:center;">9/20 (45%)</td>
+<td style="text-align:center;"><strong>16/20 (80%)</strong></td>
+</tr>
+</table>
+</div>
+
+### 2. System Efficiency: Asynchronous vs. Synchronous
+
+USER adopts a fully asynchronous pipeline that decouples data generation, training, and weight synchronization. This design significantly outperforms traditional synchronous pipelines, especially for large models.
+
+<div align="center">
+<table style="text-align:center;">
+<tr>
+<th colspan="4" style="text-align:center;"><strong>Profiling Results: Generation & Training Throughput</strong></th>
+</tr>
+<tr>
+<th style="text-align:center;">Model + Algorithm</th>
+<th style="text-align:center;">Pipeline Mode</th>
+<th style="text-align:center;">Generation Period (s/episode) ↓</th>
+<th style="text-align:center;">Training Period (s/update) ↓</th>
+</tr>
+<tr>
+  <td rowspan="3" style="text-align:center;">
+    <strong>&pi;<sub>0</sub> + HG-DAgger</strong>
+  </td>
+  <td style="text-align:center;">Synchronous</td>
+  <td style="text-align:center;">45.07</td>
+  <td style="text-align:center;">45.01</td>
+</tr>
+<tr>
+<td style="text-align:center;"><strong>Asynchronous (USER)</strong></td>
+<td style="text-align:center;"><strong>37.54</strong></td>
+<td style="text-align:center;"><strong>7.90</strong></td>
+</tr>
+<tr>
+<td style="text-align:center;"><em>Speed Up</em></td>
+<td style="text-align:center;"><span style="color:green"><strong>1.20x</strong></span></td>
+<td style="text-align:center;"><span style="color:green"><strong>5.70x</strong></span></td>
+</tr>
+<tr>
+<td rowspan="3" style="text-align:center;"><strong>CNN + SAC</strong></td>
+<td style="text-align:center;">Synchronous</td>
+<td style="text-align:center;">20.29</td>
+<td style="text-align:center;">0.64</td>
+</tr>
+<tr>
+<td style="text-align:center;"><strong>Asynchronous (USER)</strong></td>
+<td style="text-align:center;"><strong>13.11</strong></td>
+<td style="text-align:center;"><strong>0.14</strong></td>
+</tr>
+<tr>
+<td style="text-align:center;"><em>Speed Up</em></td>
+<td style="text-align:center;"><span style="color:green"><strong>1.55x</strong></span></td>
+<td style="text-align:center;"><span style="color:green"><strong>4.61x</strong></span></td>
+</tr>
+</table>
+</div>
+
+### 3. Multi-Robot & Heterogeneous Support
+
+With the Unified Hardware Abstraction Layer, USER treats robots as first-class resources, enabling:
+
+* **Parallel Training**: Training policies on multiple robots simultaneously (e.g., 2x Franka arms) to scale data collection.
+* **Heterogeneous Training**: Training a unified policy across different robot embodiments (e.g., Franka 7-DoF + ARX 6-DoF).
+
+<div align="center">
+<table border="0">
+<tr>
+<td align="center">
+<img src="https://github.com/RLinf/misc/raw/main/pic/USER/USER-multi.jpg" alt="Multi-Robot Training" width="350"/>
+<strong>Parallel Training (2x Franka)</strong>
+</td>
+<td align="center">
+<img src="https://github.com/RLinf/misc/raw/main/pic/USER/USER-hetero.jpg" alt="Heterogeneous Training" width="350"/>
+<strong>Heterogeneous (Franka + ARX)</strong>
+</td>
+</tr>
+</table>
+</div>
+
+Under all multi/heterogeneous settings, USER achieves full convergence of the policy within comparable time, indicating USER's ability to effectively scale real-world policy learning.
+
+## 📈 Visualization & Monitoring
+
+Ready to witness your robots getting smarter? Simply launch **Tensorboard** and watch the curves go up 🚀:
+
+```bash
+tensorboard --logdir ./logs
+```
+
+Dive in and happy training! ✨
