@@ -46,6 +46,7 @@ jobs:
           source .venv/bin/activate
           UV_TORCH_BACKEND=auto uv sync
           uv pip install pytest
+          uv pip install transformers
 
       - name: Run pytest
         timeout-minutes: 20
