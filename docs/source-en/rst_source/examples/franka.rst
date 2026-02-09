@@ -421,7 +421,9 @@ First, test the camera connection by running on the controller node:
 
    python -m toolkits.realworld_check.test_camera
 
-Next, test the basic cluster setup by running a dummy setup. You can set the `is_dummy` field to `True` in both `env.train.override_cfg` and `env.eval.override_cfg` sections in the configuration file to enable the dummy setup.
+Next, test the basic cluster setup by running a dummy setup. Refer to ``examples/embodiment/config/real_world_dummy_sac_cnn.yaml`` and add `env.eval.override_cfg`.
+You can set the `is_dummy` field to `True` in both `env.train.override_cfg` and `env.eval.override_cfg` sections in the configuration file to enable the dummy setup.
+And fill the camera serial numbers obtained from ``running toolkits.realworld_check.test_camera.py`` into the field `camera_serials` under both `env.train.override_cfg` and `env.eval.override_cfg`.
 
 Then, run the test script on the head node:
 
