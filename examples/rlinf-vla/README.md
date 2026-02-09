@@ -175,7 +175,7 @@ and exhibits greater stability.
     <th colspan="9" style="text-align:center;"><strong>Evaluation results of OpenVLA-OFT models on six RoboTwin tasks</strong></th>
   </tr>
   <tr>
-    <th style="text-align:center;">Model</th>
+    <th style="text-align:center; min-width:225px;">Model</th>
     <th style="text-align:center;">beat_block_hammer</th>
     <th style="text-align:center;">pick_dual_bottles</th>
     <th style="text-align:center;">place_empty_cup</th>
@@ -186,7 +186,7 @@ and exhibits greater stability.
     <th style="text-align:center;">Δ Avg.</th>
   </tr>
   <tr>
-    <td style="text-align:center;"><img src="https://github.com/RLinf/misc/raw/main/pic/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">OpenVLA-OFT (SFT)</a></td>
+    <td style="text-align:center; min-width:225px;"><img src="https://github.com/RLinf/misc/raw/main/pic/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">OpenVLA-OFT (SFT)</a></td>
     <td style="text-align:center;"><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-beat_block_hammer">10.15%</a></td>
     <td style="text-align:center;"><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles">20.31%</a></td>
     <td style="text-align:center;"><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup">75.78%</a></td>
@@ -197,7 +197,7 @@ and exhibits greater stability.
     <td style="text-align:center;">---</td>
   </tr>
   <tr>
-    <td style="text-align:center;"><img src="https://github.com/RLinf/misc/raw/main/pic/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">OpenVLA-OFT (RLinf-GRPO)</a></td>
+    <td style="text-align:center; min-width:225px;"><img src="https://github.com/RLinf/misc/raw/main/pic/hf-logo.svg" alt="HF" width="16" height="16" style="vertical-align: middle;">OpenVLA-OFT (RLinf-GRPO)</a></td>
     <td style="text-align:center;"><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-beat_block_hammer"><strong>96.09%</strong></a></td>
     <td style="text-align:center;"><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-pick_dual_bottles"><strong>92.96%</strong></a></td>
     <td style="text-align:center;"><a href="https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_empty_cup"><strong>94.53%</strong></a></td>
