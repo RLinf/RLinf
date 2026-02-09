@@ -14,22 +14,22 @@ Quick Start
 
    buffer = TrajectoryReplayBuffer(
        seed=1234,
-       storage_dir="/path/to/buffer",
        enable_cache=True,
        cache_size=5,
-       storage_format="pt",
        sample_window_size=100,
-       save_trajectories=True,
+       auto_save=True,
+       auto_save_path="/path/to/buffer",
+       trajectory_format="pt",
    )
 
 Common Parameters
 -----------------
 
-- `storage_dir`: trajectory storage directory; defaults to the log directory if not specified.
-- `storage_format`: `pt` (default) or `pkl`.
+- `auto_save_path`: trajectory storage directory when auto_save is enabled; defaults to the log directory if not specified.
+- `trajectory_format`: `pt` (default) or `pkl`.
 - `enable_cache` / `cache_size`: enable cache and set its size for throughput.
 - `sample_window_size`: sample from the most recent N trajectories; 0 means all.
-- `save_trajectories`: whether to persist to disk; `False` requires cache and
+- `auto_save`: whether to persist to disk; `False` keeps cache and saves on checkpoint.
   disables checkpoints.
 
 Add Trajectories
@@ -44,7 +44,7 @@ Key behavior during writes:
 
 - generate `uuid` and `trajectory_id` for each trajectory
 - update `_trajectory_index` and counters
-- async save by background thread (when `save_trajectories=True`)
+- async save by background thread (when `auto_save=True`)
 
 Sampling for Training
 ---------------------
@@ -64,15 +64,16 @@ Save and Load
    buffer.save_checkpoint("/path/to/ckpt")
 
    buffer.load_checkpoint(
-       "/path/to/ckpt",
+       load_path="/path/to/ckpt",
        is_distributed=True,
        local_rank=0,
        world_size=4,
    )
 
-Checkpoint saving is unavailable when `save_trajectories=False`.
-On load, `storage_dir` is restored from metadata in the checkpoint.
-The trajectory data is saved in format of `trajectory_{trajectory_id}_{model_weights_uuid}_{model_update_count}.{storage_format}`.
+When saving a checkpoint, cached trajectories and metadata are saved into the checkpoint path.
+Loading requires setting `load_path` to the checkpoint directory that contains both metadata
+and trajectory files.
+The trajectory data is saved in format of `trajectory_{trajectory_id}_{model_weights_uuid}_{model_update_count}.{trajectory_format}`.
 
 CLI Test
 --------

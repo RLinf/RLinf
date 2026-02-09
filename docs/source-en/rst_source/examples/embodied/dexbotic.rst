@@ -181,7 +181,7 @@ Dexbotic provides a dedicated evaluation script for LIBERO in
       --num_diffusion_steps 10
 
 You can also use RLinf's unified VLA evaluation flow; refer to the
-:doc:`VLA Evaluation Documentation <../start/vla-eval>` for details.
+:doc:`VLA Evaluation Documentation <../../start/vla-eval>` for details.
 
 Visualization and Results
 -------------------------

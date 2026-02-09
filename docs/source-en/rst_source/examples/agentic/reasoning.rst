@@ -167,7 +167,7 @@ The following plots show training curves.
 Final Performance
 ~~~~~~~~~~~~~~~~~
 
-We provide an evaluation `toolkit <https://github.com/RLinf/LLMEvalKit>`_ and corresponding :doc:`evaluation documentation <../start/llm-eval>`.
+We provide an evaluation `toolkit <https://github.com/RLinf/LLMEvalKit>`_ and corresponding :doc:`evaluation documentation <../../start/llm-eval>`.
 
 Measured performance on AIME24, AIME25, and GPQA-diamond shows RLinf achieves SOTA performance.
 

@@ -67,7 +67,7 @@ Algorithm
 Installation
 ------------
 
-For running in a simulation environment, please refer to :doc:`../start/installation` for installation.
+For running in a simulation environment, please refer to :doc:`../../start/installation` for installation.
 
 For running on real hardware, please refer to :doc:`franka` for installation and hardware configuration.
 

@@ -3,7 +3,7 @@ A First Look at the "Last Mile" of Agent Deployment: Cursor Online Reinforcement
 
 Last updated: 10/20/2025.
 
-Related reading: :doc:`Online RL for Code Completion <../examples/coding_online_rl>`.
+Related reading: :doc:`Online RL for Code Completion <../examples/agentic/coding_online_rl>`.
 
 1. Background
 -------------

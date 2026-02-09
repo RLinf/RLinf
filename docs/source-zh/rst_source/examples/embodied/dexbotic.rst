@@ -1,4 +1,4 @@
-基于 Dexbotic 模型的强化学习训练
+Dexbotic模型强化学习训练
 ====================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
@@ -169,7 +169,7 @@ Dexbotic 在 ``toolkits/eval_scripts_dexbotic/`` 中提供了针对 LIBERO 的�
       --num_diffusion_steps 10
 
 亦可使用 RLinf 统一的 VLA 评估流程，详见
-:doc:`VLA 评估文档 <../start/vla-eval>`。
+:doc:`VLA 评估文档 <../../start/vla-eval>`。
 
 可视化与结果
 -------------------------

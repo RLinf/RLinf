@@ -5,7 +5,8 @@ Online Reinforcement Learning for Code Completion Agent is an important applicat
 Through integration with code editors like Continue, we can collect user preference feedback on code completions, enabling near real-time code generation and feedback learning to quickly improve code completion quality and align with user preferences.
 This example demonstrates how to use the RLinf framework to train a model capable of online code completion tasks.
 
-Related reading: :doc:`A First Look at the "Last Mile" of Agent Deployment: Cursor Online Reinforcement Learning <../blog/build_a_coding_online_rl_case>`.
+Related reading: :doc:`A First Look at the "Last Mile" of Agent Deployment: Cursor Online Reinforcement Learning <../../blog/build_a_coding_online_rl_case>`.
+
 Overview
 --------
 

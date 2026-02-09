@@ -69,7 +69,7 @@ Algorithms
 Installation & Dependencies
 ---------------------------
 
-For running in simulation environments, please refer to :doc:`../start/installation` for installation instructions.
+For running in simulation environments, please refer to :doc:`../../start/installation` for installation instructions.
 
 This configuration series uses Hydra's ``searchpath`` to load external configuration directories via environment variables:
 
