@@ -51,7 +51,6 @@ class AgentLightningRolloutWorker(Worker):
         self._data_id_to_rollout_ids: Dict[str, List[str]] = {}
         self.tokenizer = AutoTokenizer.from_pretrained(self.cfg.rollout.model.model_path)
         self.is_eval_mode: bool = False
-        self.advantage_mode: str = self.cfg.algorithm.get("advantage_mode", "turn")
 
     def init_worker(
         self,
@@ -309,7 +308,6 @@ class AgentLightningRolloutWorker(Worker):
     async def process_rollout_batch(
         self, input_channel: Channel, output_channel: Channel
     ):
-        """训练模式：处理rollout batch，通过output_channel输出RolloutResult"""
         with self.worker_timer():
             batch_data = input_channel.get()
             
@@ -361,7 +359,6 @@ class AgentLightningRolloutWorker(Worker):
     async def process_eval_batch(
         self, input_channel: Channel
     ):
-        """Eval模式：处理eval batch，直接返回平均reward"""
         with self.worker_timer():
             batch_data = input_channel.get()
             
