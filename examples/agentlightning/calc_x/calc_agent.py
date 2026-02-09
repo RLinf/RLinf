@@ -58,8 +58,7 @@ def autogen_assistant_agent(
         name="calc",
         model_client=model_client,
         workbench=workbench,
-        reflect_on_tool_use=False,
-        max_tool_iterations=2,
+        reflect_on_tool_use=True,
     )
     return calc_agent
 
