@@ -1,48 +1,61 @@
-
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Adapted from https://github.com/PeterGriffinJin/Search-R1/blob/main/scripts/download.py
+import argparse
+import asyncio
 import json
 import os
-import warnings
-from typing import List, Dict, Optional
-import argparse
+import socket
 import time
-import atexit
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import Queue, set_start_method
+from typing import Optional
 
-from qdrant_client import AsyncQdrantClient
-from qdrant_client.conversions.common_types import QueryResponse
-from qdrant_client.models import Distance, QuantizationSearchParams, SearchParams, VectorParams, PointStruct
-import torch
 import numpy as np
-from transformers import AutoConfig, AutoTokenizer, AutoModel
-from tqdm import tqdm
-import datasets
-
+import torch
 import uvicorn
 from fastapi import FastAPI
 from pydantic import BaseModel
-import socket
-from multiprocessing import set_start_method, Queue
-import asyncio
-import torch
-from concurrent.futures import ProcessPoolExecutor
+from qdrant_client import AsyncQdrantClient
+from qdrant_client.models import (
+    QuantizationSearchParams,
+    SearchParams,
+)
+from tqdm import tqdm
+from transformers import AutoConfig, AutoModel, AutoTokenizer
+
 
 def load_model(model_path: str, use_fp16: bool = False, device=torch.device("cuda")):
     model_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
     model.eval()
     model = model.to(device=device)
-    if use_fp16: 
+    if use_fp16:
         model = model.half()
-    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=True, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_path, use_fast=True, trust_remote_code=True
+    )
     return model, tokenizer
 
+
 def pooling(
-    pooler_output,
-    last_hidden_state,
-    attention_mask = None,
-    pooling_method = "mean"
+    pooler_output, last_hidden_state, attention_mask=None, pooling_method="mean"
 ):
     if pooling_method == "mean":
-        last_hidden = last_hidden_state.masked_fill(~attention_mask[..., None].bool(), 0.0)
+        last_hidden = last_hidden_state.masked_fill(
+            ~attention_mask[..., None].bool(), 0.0
+        )
         return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
     elif pooling_method == "cls":
         return last_hidden_state[:, 0]
@@ -51,8 +64,11 @@ def pooling(
     else:
         raise NotImplementedError("Pooling method not implemented!")
 
+
 class Encoder:
-    def __init__(self, model_name, model_path, pooling_method, max_length, use_fp16, device):
+    def __init__(
+        self, model_name, model_path, pooling_method, max_length, use_fp16, device
+    ):
         self.model_name = model_name
         self.model_path = model_path
         self.pooling_method = pooling_method
@@ -60,11 +76,13 @@ class Encoder:
         self.use_fp16 = use_fp16
         self.device = device
 
-        self.model, self.tokenizer = load_model(model_path=model_path, use_fp16=use_fp16, device=self.device)
+        self.model, self.tokenizer = load_model(
+            model_path=model_path, use_fp16=use_fp16, device=self.device
+        )
         self.model.eval()
 
     @torch.no_grad()
-    def encode(self, query_list: List[str], is_query=True) -> np.ndarray:
+    def encode(self, query_list: list[str], is_query=True) -> np.ndarray:
         # processing query for different encoders
         if isinstance(query_list, str):
             query_list = [query_list]
@@ -77,31 +95,37 @@ class Encoder:
 
         if "bge" in self.model_name.lower():
             if is_query:
-                query_list = [f"Represent this sentence for searching relevant passages: {query}" for query in query_list]
+                query_list = [
+                    f"Represent this sentence for searching relevant passages: {query}"
+                    for query in query_list
+                ]
 
-        inputs = self.tokenizer(query_list,
-                                max_length=self.max_length,
-                                padding=True,
-                                truncation=True,
-                                return_tensors="pt"
-                                )
+        inputs = self.tokenizer(
+            query_list,
+            max_length=self.max_length,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+        )
         inputs = {k: v.to(device=self.device) for k, v in inputs.items()}
 
         if "T5" in type(self.model).__name__:
             # T5-based retrieval model
             decoder_input_ids = torch.zeros(
-                (inputs['input_ids'].shape[0], 1), dtype=torch.long
-            ).to(inputs['input_ids'].device)
+                (inputs["input_ids"].shape[0], 1), dtype=torch.long
+            ).to(inputs["input_ids"].device)
             output = self.model(
                 **inputs, decoder_input_ids=decoder_input_ids, return_dict=True
             )
             query_emb = output.last_hidden_state[:, 0, :]
         else:
             output = self.model(**inputs, return_dict=True)
-            query_emb = pooling(output.pooler_output,
-                                output.last_hidden_state,
-                                inputs['attention_mask'],
-                                self.pooling_method)
+            query_emb = pooling(
+                output.pooler_output,
+                output.last_hidden_state,
+                inputs["attention_mask"],
+                self.pooling_method,
+            )
             if "dpr" not in self.model_name.lower():
                 query_emb = torch.nn.functional.normalize(query_emb, dim=-1)
 
@@ -128,19 +152,25 @@ class AsyncEncoderPool:
         encoder: Encoder = globals()["global_encoder"]
         return encoder.encode(*args, **kwargs)
 
-    def __init__(self, model_name, model_path, pooling_method, max_length, use_fp16, devices):
+    def __init__(
+        self, model_name, model_path, pooling_method, max_length, use_fp16, devices
+    ):
         init_queue = Queue()
         for device in devices:
-            init_queue.put([model_name, model_path, pooling_method, max_length, use_fp16, device])
+            init_queue.put(
+                [model_name, model_path, pooling_method, max_length, use_fp16, device]
+            )
 
         self.encoders = ProcessPoolExecutor(
             max_workers=len(devices),
             initializer=AsyncEncoderPool.set_global_encoder,
-            initargs=(init_queue,)
+            initargs=(init_queue,),
         )
 
-    async def encode(self, query_list: List[str], is_query=True) -> np.ndarray:
-        return await loop.run_in_executor(self.encoders, AsyncEncoderPool.global_encode, (query_list, is_query))
+    async def encode(self, query_list: list[str], is_query=True) -> np.ndarray:
+        return await loop.run_in_executor(
+            self.encoders, AsyncEncoderPool.global_encode, (query_list, is_query)
+        )
 
 
 class AsyncBaseRetriever:
@@ -152,13 +182,15 @@ class AsyncBaseRetriever:
     async def _asearch(self, query: str, num: int, return_score: bool):
         raise NotImplementedError
 
-    async def _abatch_search(self, query_list: List[str], num: int, return_score: bool):
+    async def _abatch_search(self, query_list: list[str], num: int, return_score: bool):
         raise NotImplementedError
 
     async def asearch(self, query: str, num: int = None, return_score: bool = False):
         return await self._asearch(query, num, return_score)
-    
-    async def abatch_search(self, query_list: List[str], num: int = None, return_score: bool = False):
+
+    async def abatch_search(
+        self, query_list: list[str], num: int = None, return_score: bool = False
+    ):
         return await self._abatch_search(query_list, num, return_score)
 
 
@@ -176,9 +208,9 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
             wait_collection_time += 5
             try:
                 await client.info()
-                print(f"qdrant loaded and connected")
+                print("qdrant loaded and connected")
                 break
-            except Exception as e:
+            except Exception:
                 pass
         return client
 
@@ -186,15 +218,20 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
         super().__init__(config)
 
     async def ainit(self, config: "Config"):
-        self.client = await self.wait_qdrant_load(url=config.qdrant_url, connect_timeout=300)
+        self.client = await self.wait_qdrant_load(
+            url=config.qdrant_url, connect_timeout=300
+        )
 
         self.collection_name = config.qdrant_collection_name
         collections = (await self.client.get_collections()).collections
         collection_names = [col.name for col in collections]
-        assert self.collection_name in collection_names, f"no collection! exists: [{collection_names}], need: {self.collection_name}"
+        assert self.collection_name in collection_names, (
+            f"no collection! exists: [{collection_names}], need: {self.collection_name}"
+        )
 
-        from qdrant_client.models import CollectionStatus
         from qdrant_client.http.models import Batch
+        from qdrant_client.models import CollectionStatus
+
         coll_status = (await self.client.get_collection(self.collection_name)).status
         if coll_status != CollectionStatus.GREEN:
             wait_collection_time = 0
@@ -203,25 +240,29 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
                 collection_name=self.collection_name,
                 points=Batch(ids=[], vectors=[]),
             )
-            print(f"Optimizers triggered for collection '{self.collection_name}' with an empty update operation.")
+            print(
+                f"Optimizers triggered for collection '{self.collection_name}' with an empty update operation."
+            )
             while coll_status != CollectionStatus.GREEN:
                 time.sleep(5)
                 if wait_collection_time >= optimize_timeout:
                     assert False, f"wait longer than {optimize_timeout}s, exit"
                 print(f"wait {wait_collection_time}s for qdrant optimize")
-            print(f"qdrant optimized")
+            print("qdrant optimized")
         else:
-            print(f"collection status is green now")
+            print("collection status is green now")
 
         # Initialize encoder first (needed for building collection)
-        devices = [torch.device(f"cuda:{i}") for i in range(0, torch.cuda.device_count())]
+        devices = [
+            torch.device(f"cuda:{i}") for i in range(0, torch.cuda.device_count())
+        ]
         self.encoder = AsyncEncoderPool(
-            model_name = self.retrieval_method,
-            model_path = config.retrieval_model_path,
-            pooling_method = config.retrieval_pooling_method,
-            max_length = config.retrieval_query_max_length,
-            use_fp16 = config.retrieval_use_fp16,
-            devices = devices,
+            model_name=self.retrieval_method,
+            model_path=config.retrieval_model_path,
+            pooling_method=config.retrieval_pooling_method,
+            max_length=config.retrieval_query_max_length,
+            use_fp16=config.retrieval_use_fp16,
+            devices=devices,
         )
         self.topk = config.retrieval_topk
         if config.qdrant_search_quant_param is not None:
@@ -264,7 +305,7 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
                 return [], []
             else:
                 return []
-        
+
         # # Extract IDs and scores
         payloads = [result.payload for result in search_results]
         scores = [result.score for result in search_results]
@@ -273,7 +314,9 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
         else:
             return payloads
 
-    async def _abatch_search(self, query_list: List[str], num: int = None, return_score: bool = False):
+    async def _abatch_search(
+        self, query_list: list[str], num: int = None, return_score: bool = False
+    ):
         if return_score:
             all_payloads, all_scores = [], []
             for query in query_list:
@@ -299,17 +342,17 @@ class PageAccess:
     def __init__(self, pages_path):
         pages = []
         time_start = time.time()
-        with open(pages_path,"r") as f:
+        with open(pages_path, "r") as f:
             for ff in tqdm(f, desc="PageAccess"):
                 pages.append(json.loads(ff))
         # pages = datasets.load_dataset(
-        #     'json', 
+        #     'json',
         #     data_files=pages_path,
         #     split="train",
         #     num_proc=16,
         # )
         time_load = time.time()
-        self.pages = {page["url"]: page  for page in pages}
+        self.pages = {page["url"]: page for page in pages}
         time_map = time.time()
         print(f"PageAccess: load json: {time_load - time_start}")
         print(f"PageAccess: map data: {time_map - time_load}")
@@ -322,18 +365,21 @@ class PageAccess:
             return None
         return self.pages[url]
 
+
 #####################################
 # FastAPI server below
 #####################################
 
+
 class Config:
     """
-    Minimal config class (simulating your argparse) 
+    Minimal config class (simulating your argparse)
     Replace this with your real arguments or load them dynamically.
     """
+
     def __init__(
-        self, 
-        retrieval_method: str = "bm25", 
+        self,
+        retrieval_method: str = "bm25",
         retrieval_topk: int = 10,
         dataset_path: str = "./data",
         data_split: str = "train",
@@ -359,15 +405,19 @@ class Config:
         self.retrieval_query_max_length = retrieval_query_max_length
         self.retrieval_use_fp16 = retrieval_use_fp16
 
+
 class QueryRequest(BaseModel):
-    queries: List[str]
+    queries: list[str]
     topk: Optional[int] = None
     return_scores: bool = False
 
+
 class AccessRequest(BaseModel):
-    urls: List[str]
+    urls: list[str]
+
 
 app = FastAPI()
+
 
 @app.post("/retrieve")
 async def retrieve_endpoint(request: QueryRequest):
@@ -389,15 +439,15 @@ async def retrieve_endpoint(request: QueryRequest):
         results, scores = await retriever.abatch_search(
             query_list=request.queries,
             num=request.topk,
-            return_score=request.return_scores
+            return_score=request.return_scores,
         )
     else:
         results = await retriever.abatch_search(
             query_list=request.queries,
             num=request.topk,
-            return_score=request.return_scores
+            return_score=request.return_scores,
         )
-        
+
     # Format response
     resp = []
     for i, single_result in enumerate(results):
@@ -413,12 +463,13 @@ async def retrieve_endpoint(request: QueryRequest):
     print(f"request: {request}, time_elapse: {time_elapse}")
     return {"result": resp}
 
+
 @app.post("/access")
 async def access_endpoint(request: AccessRequest):
     resp = []
     for url in request.urls:
         resp.append(page_access.access(url))
-    
+
     return {"result": resp}
 
 
@@ -427,36 +478,67 @@ if __name__ == "__main__":
     loop = asyncio.get_event_loop()
 
     parser = argparse.ArgumentParser(description="Launch the local qdrant retriever.")
-    parser.add_argument("--pages_path", type=str, default="xxx", help="Local page file.")
-    parser.add_argument("--topk", type=int, default=3, help="Number of retrieved passages for one query.")
-    parser.add_argument("--retriever_name", type=str, default="e5", help="Name of the retriever model.")
-    parser.add_argument("--retriever_model", type=str, default="intfloat/e5-base-v2", help="Path of the retriever model.")
-    parser.add_argument("--qdrant_url", type=str, default=None, help="Qdrant server URL (e.g., http://localhost:6333). If not provided, uses local mode.")
-    parser.add_argument("--qdrant_collection_name", type=str, default="default_collection", help="Name of the Qdrant collection.")
+    parser.add_argument(
+        "--pages_path", type=str, default="xxx", help="Local page file."
+    )
+    parser.add_argument(
+        "--topk",
+        type=int,
+        default=3,
+        help="Number of retrieved passages for one query.",
+    )
+    parser.add_argument(
+        "--retriever_name", type=str, default="e5", help="Name of the retriever model."
+    )
+    parser.add_argument(
+        "--retriever_model",
+        type=str,
+        default="intfloat/e5-base-v2",
+        help="Path of the retriever model.",
+    )
+    parser.add_argument(
+        "--qdrant_url",
+        type=str,
+        default=None,
+        help="Qdrant server URL (e.g., http://localhost:6333). If not provided, uses local mode.",
+    )
+    parser.add_argument(
+        "--qdrant_collection_name",
+        type=str,
+        default="default_collection",
+        help="Name of the Qdrant collection.",
+    )
     parser.add_argument("--qdrant_search_param", type=str, default={}, help="")
     parser.add_argument("--qdrant_search_quant_param", type=str, default=None, help="")
     parser.add_argument("--port", type=int, default=5005)
-    parser.add_argument("--save-address-to", type=str, help="path to save server address")
+    parser.add_argument(
+        "--save-address-to", type=str, help="path to save server address"
+    )
 
     args = parser.parse_args()
 
-    host_name=socket.gethostname()
-    host_ip=socket.gethostbyname(socket.gethostname())
+    host_name = socket.gethostname()
+    host_ip = socket.gethostbyname(socket.gethostname())
     port = args.port
 
     host_addr = f"{host_ip}:{port}"
 
     print(f"Server address: {host_addr}")
-    
+
     if args.save_address_to:
         os.makedirs(args.save_address_to, exist_ok=True)
-        with open(os.path.join(args.save_address_to, "Host" + host_ip + "_" + "IP" + str(port) + ".txt"), "w") as f:
+        with open(
+            os.path.join(
+                args.save_address_to, "Host" + host_ip + "_" + "IP" + str(port) + ".txt"
+            ),
+            "w",
+        ) as f:
             f.write(host_addr)
 
     # 1) Build a config (could also parse from arguments).
     #    In real usage, you'd parse your CLI arguments or environment variables.
     config = Config(
-        retrieval_method = args.retriever_name,  # or "dense"
+        retrieval_method=args.retriever_name,  # or "dense"
         retrieval_topk=args.topk,
         qdrant_url=args.qdrant_url,
         qdrant_collection_name=args.qdrant_collection_name,
@@ -473,16 +555,17 @@ if __name__ == "__main__":
 
     # TODO: test:
     async def test():
-        query1 = 'Tell me about Red Bull'
+        query1 = "Tell me about Red Bull"
         result1 = await retriever.asearch(query1, 1, return_score=False)
         print(f"test1: query: {query1}, result: {result1}")
-        query2 = 'Tell me about Ljubljana'
+        query2 = "Tell me about Ljubljana"
         result2 = await retriever.asearch(query2, 2, return_score=True)
         print(f"test2: query: {query2}, result: {result2}")
-        query3 = ['Tell me about Mars', 'Tell me about Mercury']
+        query3 = ["Tell me about Mars", "Tell me about Mercury"]
         result3 = await retriever.abatch_search(query3, 3, return_score=True)
         print(f"test3: query: {query3}, result: {result3}")
         print("Retriver is ready.")
+
     loop.run_until_complete(test())
 
     # 3) Load pages
