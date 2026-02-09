@@ -51,6 +51,7 @@ class AgentLightningRolloutWorker(Worker):
         self._data_id_to_rollout_ids: Dict[str, List[str]] = {}
         self.tokenizer = AutoTokenizer.from_pretrained(self.cfg.rollout.model.model_path)
         self.is_eval_mode: bool = False
+        self.advantage_mode: str = self.cfg.algorithm.get("advantage_mode", "turn")
 
     def init_worker(
         self,
@@ -257,6 +258,7 @@ class AgentLightningRolloutWorker(Worker):
                     if self.cfg.rollout.return_logprobs:
                         logprobs = triplet.response.get("logprobs", [])
                         if logprobs:
+                            accumulated_logprobs += [0.0] * len(tool_response_ids)
                             accumulated_logprobs += [lp.get("logprob", 0.0) for lp in logprobs]
             
             response_ids = accumulated_full_sequence[len(orig_prompt_ids):]
