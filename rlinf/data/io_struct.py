@@ -1139,16 +1139,15 @@ class DynamicRolloutResult:
         if self.recompute_prev_logprobs is not None:
             batch["recompute_prev_logprobs"] = self.recompute_prev_logprobs.cuda()
         if self.rollout_logprobs is not None:
-            #breakpoint()
             prev_logprobs = batch_pad_to_fixed_len(
-            [
-                torch.as_tensor([0] * prompt_length + logprobs, dtype=torch.float)
-                for prompt_length, logprobs in zip(
-                    self.prompt_lengths, self.rollout_logprobs
-                )
-            ],
-            max_batch_len=seq_length,
-            pad_token=0,
+                [
+                    torch.as_tensor([0] * prompt_length + logprobs, dtype=torch.float)
+                    for prompt_length, logprobs in zip(
+                        self.prompt_lengths, self.rollout_logprobs
+                    )
+                ],
+                max_batch_len=seq_length,
+                pad_token=0,
             )
             batch["prev_logprobs"] = prev_logprobs.cuda()
         return batch
@@ -1302,7 +1301,9 @@ class DynamicRolloutResult:
             merged_result.response_lengths.extend(res.response_lengths)
             merged_result.is_end.extend(res.is_end)
 
-            # Merge tensor fields (size: num_sequence)
+            if res.rollout_logprobs is not None:
+                merged_result.rollout_logprobs.extend(res.rollout_logprobs)
+
             if res.prev_logprobs is not None:
                 merged_result.prev_logprobs = merge_tensor(
                     merged_result.prev_logprobs, res.prev_logprobs

@@ -183,6 +183,9 @@ class MAMegatronActor(MegatronActor):
                 # in last stage need to get the log_probs from the output
                 if unwrap_model(model).post_process:
                     output = output["log_probs"]
+                    output = output.clone()
+                    output[:, 1:] = output[:, :-1].clone()
+                    output[:, 0] = 0.0  # first token has no previous token
 
                 return output, id_func
 
@@ -258,7 +261,6 @@ class MAMegatronActor(MegatronActor):
                     self.cfg.algorithm.early_stop_imp_ratio is not None
                     and _imp > self.cfg.algorithm.early_stop_imp_ratio
                 ):
-                    # breakpoint()
                     self.log_warning(
                         f"Current importance ratio {_imp.item():.4f} is larger "
                         f"than early stop threshold {self.cfg.algorithm.early_stop_imp_ratio}. Abandon this microbatch."
