@@ -1,0 +1,181 @@
+defaults:
+  - env/frankasim_pickcube_state@env.train
+  - env/frankasim_pickcube_state@env.eval
+  - model/mlp_policy@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: 0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "franka_sim_ppo_mlp"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 200
+  max_steps: -1
+
+  only_eval: False
+  val_check_interval: 50
+  save_interval: -1
+
+  seq_length: 1
+  max_prompt_length: 1
+
+  resume_dir: null # Optional: path to a saved checkpoint directory, such as 'checkpoints/global_step_10'. If not None, it will be used to resume training.
+  ckpt_path: null  # Optional: path to a .pt checkpoint. If not None, it will be loaded after the model is instantiated (for evaluation).
+
+algorithm:
+  update_epoch: 8
+  normalize_advantages: True
+  kl_penalty: kl
+  group_size: 1
+
+  rollout_epoch: 1
+  eval_rollout_epoch: 1
+
+  reward_type: action_level
+  logprob_type: action_level
+  entropy_type: action_level
+
+  adv_type: gae
+  loss_type: actor_critic
+  loss_agg_func: token-mean
+  kl_beta: 0.0
+  entropy_bonus: 0
+
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+  clip_ratio_c: 3.0
+  value_clip: 1.0
+  huber_delta: 10.0
+
+  gamma: 0.99
+  gae_lambda: 0.95
+
+  reward_coef: 1.0
+
+  sampling_params:
+    do_sample: true
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 0
+    top_p: 1.0
+    repetition_penalty: 1.0
+
+  length_params:
+    max_new_token: 1
+    max_length: 1
+    min_length: 1
+
+env:
+  group_name: EnvGroup
+  enable_offload: false
+
+  train:
+    total_num_envs: 128
+    group_size: ${algorithm.group_size}
+    max_steps_per_rollout_epoch: 200
+    max_episode_steps: 200
+
+    use_rel_reward: True
+    reward_coef: ${algorithm.reward_coef}
+    is_eval: False
+    video_cfg:
+      save_video: True
+      info_on_video: True
+      video_base_dir: ${runner.logger.log_path}/video/train
+  eval:
+    total_num_envs: 16
+    group_size: ${algorithm.group_size}
+
+    use_rel_reward: True
+    reward_coef: ${algorithm.reward_coef}
+    is_eval: True
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: RolloutGroup
+  backend: huggingface
+  enable_offload: false
+  pipeline_stage_num: 1
+
+  model:
+    model_path: ""
+    precision: ${actor.model.precision}
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 256
+  global_batch_size: 256
+  seed: 1234
+  enable_offload: false
+
+  model:
+    model_type: mlp_policy
+    model_path: ""
+    policy_setup: panda-qpos
+    obs_dim: 10
+    action_dim: 8
+    num_action_chunks: 1
+    hidden_dim: 256
+    precision: "32"
+    add_value_head: true
+    is_lora: false
+    lora_rank: 32
+
+  optim:
+    lr: 3.0e-4
+    value_lr: 3.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-08
+    weight_decay: 0.01
+    clip_grad: 0.5
+
+  fsdp_config:
+    strategy: fsdp
+    sharding_strategy: no_shard
+    gradient_checkpointing: false
+    cpu_offload: false
+    offload_pin_memory: false
+    reshard_after_forward: true
+    enable_gradient_accumulation: true
+    forward_prefetch: false
+    limit_all_gathers: false
+    backward_prefetch: null
+    use_orig_params: false
+    use_liger_kernel: false
+    fsdp_size: -1
+
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+    amp:
+      enabled: false
+      precision: bf16
+      use_grad_scaler: false
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false

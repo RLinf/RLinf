@@ -29,14 +29,11 @@ runner:
   max_steps: -1
 
   only_eval: True
-  eval_policy_path: null # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
-
   val_check_interval: -1
   save_interval: 25
-  seq_length: 4096
-  max_prompt_length: 128
 
-  resume_dir: null
+  resume_dir: null # Optional: path to a saved checkpoint directory, such as 'checkpoints/global_step_10'. If not None, it will be used to resume training.
+  ckpt_path: null  # Optional: path to a .pt checkpoint. If not None, it will be loaded after the model is instantiated (for evaluation).
 
 algorithm:
   normalize_advantages: True
@@ -125,22 +122,16 @@ actor:
   model:
     model_path: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
     model_type: "openvla_oft"
+    max_prompt_length: 128
 
   optim:
     lr: 2.0e-5
     value_lr: 3.0e-3
     adam_beta1: 0.9
     adam_beta2: 0.999
-    adam_eps: 1.0e-05
+    adam_eps: 1.0e-08
     weight_decay: 0.01
     clip_grad: 1.0
-
-  tokenizer:
-    tokenizer_type: "HuggingFaceTokenizer"
-    tokenizer_model: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
-    use_fast: False
-    trust_remote_code: True
-    padding_side: "right"
   
   # Override the default values in training_backend/fsdp
   fsdp_config:

@@ -5,7 +5,6 @@ export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
 export SRC_FILE="${EMBODIED_PATH}/eval_embodied_agent.py"
 
-export CUDA_LAUNCH_BLOCKING=1
 export HYDRA_FULL_ERROR=1
 
 EVAL_NAME=YOUR_EVAL_NAME
@@ -32,7 +31,7 @@ do
         env.eval.total_num_envs=${TOTAL_NUM_ENVS} \
         env.eval.init_params.id=${env_id} \
         env.eval.init_params.obj_set=${obj_set} \
-        runner.eval_policy_path=${CKPT_PATH}"
+        runner.ckpt_path=${CKPT_PATH}"
 
     echo ${CMD} > ${MEGA_LOG_FILE}
     ${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
@@ -53,7 +52,7 @@ do
         env.eval.total_num_envs=${TOTAL_NUM_ENVS} \
         env.eval.init_params.id=${env_id} \
         env.eval.init_params.obj_set=${obj_set} \
-        runner.eval_policy_path=${CKPT_PATH}"
+        runner.ckpt_path=${CKPT_PATH}"
     echo ${CMD}  > ${MEGA_LOG_FILE}
     ${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
 done

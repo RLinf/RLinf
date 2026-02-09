@@ -59,6 +59,19 @@ class ClusterEnvVar(str, Enum):
     COMM_NET_DEVICES = "COMM_NET_DEVICES"
     """Network devices to use for inter-node communication."""
 
+    EXT_MODULE = "EXT_MODULE"
+    """Load extension modules specified via EXT_MODULE environment variable.
+
+    This allows users to register custom environments, models, or other extensions
+    without patching.
+    The extension module should have a `register()` function that performs the necessary registrations.
+
+    Example usage:
+        export RLINF_EXT_MODULE=rlinf_ext
+        # or with full path:
+        export RLINF_EXT_MODULE=workflows.scripts.rlinf_ext
+    """
+
 
 class Cluster:
     """A singleton class that manages the cluster resources for Ray workers."""
@@ -68,13 +81,14 @@ class Cluster:
     LOGGING_LEVEL = os.getenv(
         f"{SYS_NAME.upper()}_{ClusterEnvVar.LOG_LEVEL.value}", "INFO"
     ).upper()
-    TIMEOUT_WARN_TIME = 60000
+    TIMEOUT_WARN_TIME = 3600000
     DEFAULT_SYS_ENV_VAR = {
         ClusterEnvVar.CATCH_FAILURE: "0",
         ClusterEnvVar.LOG_LEVEL: "INFO",
         ClusterEnvVar.TIMEOUT: "180",
         ClusterEnvVar.NODE_RANK: None,
         ClusterEnvVar.COMM_NET_DEVICES: None,
+        ClusterEnvVar.EXT_MODULE: None,
     }
 
     class NamespaceConflictError(Exception):
@@ -107,7 +121,7 @@ class Cluster:
         """Initialize the cluster.
 
         Args:
-            num_nodes (int): The number of nodes in the cluster. When you wish to acquire the cluster instance in a processes other than the main driver process, do not pass this argument. Instead, use the `Cluster()` constructor without arguments.
+            num_nodes (int): The number of nodes in the cluster. When you wish to acquire the cluster instance in a processes other than the main driver process, do not pass this argument. Instead, use the `Cluster()` constructor without arguments. If num_nodes is 0, it will initialize the cluster with all ray-connected nodes.
             cluster_cfg (Optional[DictConfig]): The cluster's configuration dictionary. If set, num_nodes will be ignored and inferred from the config.
         """
         if self._has_initialized:
@@ -131,9 +145,9 @@ class Cluster:
                 self._init_from_existing_managers()
             except ConnectionError:
                 self._logger.warning(
-                    "Could not connect to an existing Ray cluster. Initializing a new cluster with 1 node."
+                    "Could not connect to an existing Ray cluster. Initializing a new cluster with all connected nodes."
                 )
-                return self.__init__(num_nodes=1)
+                return self.__init__(num_nodes=0)
 
         self._has_initialized = True
 
@@ -188,7 +202,7 @@ class Cluster:
         self._num_nodes = (
             self._cluster_cfg.num_nodes if self._cluster_cfg is not None else num_nodes
         )
-        assert self._num_nodes > 0, "num_nodes must be greater than 0."
+        assert self._num_nodes >= 0, "num_nodes must be greater than or equal to 0."
 
         try:
             # First try to connect to an existing Ray cluster
@@ -202,6 +216,10 @@ class Cluster:
                 logging_level=Cluster.LOGGING_LEVEL,
                 namespace=Cluster.NAMESPACE,
             )
+
+        # If num_nodes is 0, infer the number of nodes from the connected Ray cluster
+        if self._num_nodes == 0:
+            self._num_nodes = len(Cluster.get_alive_nodes())
 
         # Wait for the cluster to be ready
         while len(Cluster.get_alive_nodes()) < self._num_nodes:
@@ -231,29 +249,37 @@ class Cluster:
         from ..manager import (
             CollectiveManager,
             DeviceLockManager,
+            Manager,
             NodeManager,
+            PortLockManager,
             WorkerManager,
         )
 
         try:
+            runtime_env = {"env_vars": Manager.get_runtime_env_vars()}
             self._worker_manager = (
                 ray.remote(WorkerManager)
-                .options(name=WorkerManager.MANAGER_NAME)
+                .options(name=WorkerManager.MANAGER_NAME, runtime_env=runtime_env)
                 .remote()
             )
             self._coll_manager = (
                 ray.remote(CollectiveManager)
-                .options(name=CollectiveManager.MANAGER_NAME)
+                .options(name=CollectiveManager.MANAGER_NAME, runtime_env=runtime_env)
                 .remote()
             )
             self._node_manager = (
                 ray.remote(NodeManager)
-                .options(name=NodeManager.MANAGER_NAME)
+                .options(name=NodeManager.MANAGER_NAME, runtime_env=runtime_env)
                 .remote(self._nodes, self._node_groups, self._cluster_cfg)
             )
-            self._lock_manager = (
+            self._device_lock_manager = (
                 ray.remote(DeviceLockManager)
-                .options(name=DeviceLockManager.MANAGER_NAME)
+                .options(name=DeviceLockManager.MANAGER_NAME, runtime_env=runtime_env)
+                .remote()
+            )
+            self._port_lock_manager = (
+                ray.remote(PortLockManager)
+                .options(name=PortLockManager.MANAGER_NAME, runtime_env=runtime_env)
                 .remote()
             )
         except ValueError:
@@ -293,7 +319,11 @@ class Cluster:
 
         from ..manager.node_manager import NodeManager
 
-        self._node_manager = NodeManager.get_proxy()
+        try:
+            self._node_manager = NodeManager.get_proxy(no_wait=True)
+        except ValueError:
+            ray.shutdown()
+            raise ConnectionError
         self._nodes, self._node_groups, self._cluster_cfg = (
             self._node_manager.get_nodes()
         )

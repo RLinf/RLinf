@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ctypes
 import functools
+import importlib
 import inspect
 import logging
 import os
@@ -21,16 +23,13 @@ import sys
 import threading
 import time
 import traceback
+import warnings
 from contextlib import contextmanager
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Callable,
-    Optional,
-    TypeVar,
-)
+from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
 
 import ray
+import ray.dashboard.utils
+import ray.util.state
 import torch
 from omegaconf import OmegaConf
 
@@ -39,6 +38,7 @@ from ..hardware import AcceleratorType, AcceleratorUtil, HardwareInfo
 from ..manager import WorkerAddress
 
 if TYPE_CHECKING:
+    from ..collective import CollectiveGroupOptions
     from ..manager import WorkerInfo
     from .worker_group import WorkerGroup
 
@@ -330,6 +330,7 @@ class Worker(metaclass=WorkerMeta):
             # Ray new the class in main thread but call __init__ in worker thread if it's an Actor with async functions
             # Since signal handlers must be registered in main thread, we call the registration in __new__
             instance._register_signal_handlers()
+            instance._enable_ptrace()
 
         return instance
 
@@ -364,6 +365,42 @@ class Worker(metaclass=WorkerMeta):
         self._has_initialized = False
         self._timer_metrics: dict[str, float] = {}
         self._set_new_omegaconf_resolvers()
+
+        # Load user-provided extension modules (e.g., for registering custom envs/models)
+        self._load_user_extensions()
+
+    def _load_user_extensions(self):
+        """Load extension modules specified via EXT_MODULE environment variable.
+
+        This allows users to register custom environments, models, or other extensions
+        without patching.
+        The extension module should have a `register()` function that performs the necessary registrations.
+
+        The module's register() function will be called once per Worker process.
+        """
+        ext_module_name = Cluster.get_sys_env_var(ClusterEnvVar.EXT_MODULE)
+        if ext_module_name is None:
+            return
+
+        try:
+            ext_module = importlib.import_module(ext_module_name)
+            if hasattr(ext_module, "register"):
+                ext_module.register()
+                Worker.logger.debug(
+                    f"Loaded extension module '{ext_module_name}' and called register()"
+                )
+            else:
+                Worker.logger.warning(
+                    f"Extension module '{ext_module_name}' has no register() function"
+                )
+        except ImportError as e:
+            Worker.logger.warning(
+                f"Failed to import extension module '{ext_module_name}': {e}"
+            )
+        except Exception:
+            Worker.logger.exception(
+                f"Error loading extension module '{ext_module_name}'"
+            )
 
     def __init__(
         self,
@@ -423,6 +460,12 @@ class Worker(metaclass=WorkerMeta):
             os.environ["WORKER_NAME"] = self._worker_name
         self._group_name = self._worker_address.get_parent_address().get_name()
 
+        # Initialize global locks
+        from .lock import DeviceLock, PortLock
+
+        self._device_lock = DeviceLock(self)
+        self._port_lock = PortLock(self)
+
         # Setup local rank and world size
         self._setup_local_rank_world_size()
 
@@ -450,11 +493,6 @@ class Worker(metaclass=WorkerMeta):
         self._setup_comm_envs()
 
         self._lock = threading.Lock()
-
-        from .lock import DeviceLock
-
-        self._device_lock = DeviceLock(self)
-
         Worker.current_worker = self
         self._has_initialized = True
 
@@ -517,7 +555,7 @@ class Worker(metaclass=WorkerMeta):
     @classmethod
     def create_group(
         cls: type[WorkerClsType], *args, **kwargs
-    ) -> "WorkerGroup[WorkerClsType]":
+    ) -> "WorkerGroup[WorkerClsType] | WorkerClsType":
         """Create a worker group with the class arguments.
 
         Args:
@@ -534,10 +572,12 @@ class Worker(metaclass=WorkerMeta):
         dst_group_name: str,
         dst_rank: int | list[int],
         async_op: bool = False,
+        options: Optional["CollectiveGroupOptions"] = None,
+        piggyback_payload: Optional[Any] = None,
     ):
         """Send an object to a specific worker address in the collective group.
 
-        The function is specially optimized for torch.Tensor, List of torch.Tensor, Dict of torch.Tensor, which go through NCCL when the contained tensors are on GPU. Otherwise, all communications go through GLOO.
+        The function is specially optimized for torch.Tensor, List of torch.Tensor, Dict of torch.Tensor, and dataclass containing torch.Tensor, which go through NCCL when the contained tensors are on GPU. Otherwise, all communications go through GLOO.
 
         .. note::
             Do not mix send with recv_tensor
@@ -559,17 +599,28 @@ class Worker(metaclass=WorkerMeta):
             dst_group_name (str): The name of the destination worker group.
             dst_rank (int | List[int]): The rank or list of ranks in the destination worker group to send the object to. For SPMD-like workers, this should be a single rank. For SPSD-like workers forked by parent workers, this can be a list of ranks that forms a path from the root worker to the target worker.
             async_op (bool): Whether to perform the operation asynchronously.
+            options (Optional[CollectiveGroupOptions]): The options for the collective group. The options will only take effect when two workers first communicate with each other, and will be ignored for subsequent communications. This option must match the options of the recv side.
+            piggyback_payload (Optional[Any]): The payload to piggyback on the send operation. This payload will be sent to the recv side and can be used to pass additional information to the recv side without disrupting the object's data structure, e.g., list/dict of tensors that are optimized for sending.
 
         Returns:
             Optional[AsyncWork]: An AsyncWork object if async_op is True, otherwise None.
 
         """
         dst_addr = WorkerAddress(dst_group_name, ranks=dst_rank)
-        group = self._get_p2p_collective_group(dst_addr)
-        return group.send(object=object, async_op=async_op)
+        group = self._get_collective_group(dst_addr)
+        return group.send(
+            object=object,
+            async_op=async_op,
+            options=options,
+            piggyback_payload=piggyback_payload,
+        )
 
     def recv(
-        self, src_group_name: str, src_rank: int | list[int], async_op: bool = False
+        self,
+        src_group_name: str,
+        src_rank: int | list[int],
+        async_op: bool = False,
+        options: Optional["CollectiveGroupOptions"] = None,
     ):
         """Out-of-place receive of an object from a specific worker address in the collective group.
 
@@ -586,14 +637,14 @@ class Worker(metaclass=WorkerMeta):
             async_op (bool): Whether to perform the operation asynchronously.
             src_group_name (str): The name of the source worker group.
             src_rank (int | List[int]): The rank or list of ranks in the source worker group to receive the object from. For SPMD-like workers, this should be a single rank. For SPSD-like workers forked by parent workers, this can be a list of ranks that forms a path from the root worker to the target worker.
+            options (Optional[CollectiveGroupOptions]): The options for the collective group. The options will only take effect when two workers first communicate with each other, and will be ignored for subsequent communications. This option must match the options of the send side.
 
         Returns:
-            AsyncWork | torch.Tensor | List[torch.Tensor] | Dict[str, torch.Tensor] | Any: An AsyncWork object if async_op is True, otherwise the received object.
-
+            AsyncWork | torch.Tensor | List[torch.Tensor] | Dict[str, torch.Tensor] | Any: An AsyncWork object if async_op is True, otherwise the received object. If the send side sends a piggyback payload, the received object will be a tuple of the received object and the piggyback payload.
         """
         src_addr = WorkerAddress(src_group_name, ranks=src_rank)
-        group = self._get_p2p_collective_group(src_addr)
-        return group.recv(async_op=async_op)
+        group = self._get_collective_group(src_addr)
+        return group.recv(async_op=async_op, options=options)
 
     def send_tensor(
         self,
@@ -601,6 +652,7 @@ class Worker(metaclass=WorkerMeta):
         dst_group_name: str,
         dst_rank: int | list[int],
         async_op: bool = False,
+        options: Optional["CollectiveGroupOptions"] = None,
     ):
         """Send a tensor to a specific worker address in the collective group. This function is optimized for sending a single tensor and does not introduce metadata communication overhead like send. But it needs to be paired with the in-place recv_tensor function which requires apriori knowledge of the tensor shape and dtype.
 
@@ -618,14 +670,15 @@ class Worker(metaclass=WorkerMeta):
             dst_group_name (str): The name of the destination worker group.
             dst_rank (int | List[int]): The rank or list of ranks in the destination worker group to send the tensor to. For SPMD-like workers, this should be a single rank. For SPSD-like workers forked by parent workers, this can be a list of ranks that forms a path from the root worker to the target worker.
             async_op (bool): Whether to perform the operation asynchronously.
+            options (Optional[CollectiveGroupOptions]): The options for the collective group. The options will only take effect when two workers first communicate with each other, and will be ignored for subsequent communications. This option must match the options of the send side.
 
         Returns:
             Optional[AsyncWork]: An AsyncWork object if async_op is True, otherwise None.
 
         """
         dst_addr = WorkerAddress(dst_group_name, ranks=dst_rank)
-        group = self._get_p2p_collective_group(dst_addr)
-        return group.send_tensor(tensor=tensor, async_op=async_op)
+        group = self._get_collective_group(dst_addr)
+        return group.send_tensor(tensor=tensor, async_op=async_op, options=options)
 
     def recv_tensor(
         self,
@@ -633,6 +686,7 @@ class Worker(metaclass=WorkerMeta):
         src_group_name: str,
         src_rank: int | list[int],
         async_op: bool = False,
+        options: Optional["CollectiveGroupOptions"] = None,
     ):
         """In-place receive of a tensor from a specific worker address in the collective group. This function is optimized for receiving a single tensor and does not introduce metadata communication overhead like recv. But it requires preallocation of the tensor with the correct shape and dtype.
 
@@ -650,29 +704,128 @@ class Worker(metaclass=WorkerMeta):
             src_group_name (str): The name of the source worker group.
             src_rank (int | List[int]): The rank or list of ranks in the source worker group to receive the tensor from. For SPMD-like workers, this should be a single rank. For SPSD-like workers forked by parent workers, this can be a list of ranks that forms a path from the root worker to the target worker.
             async_op (bool): Whether to perform the operation asynchronously.
+            options (Optional[CollectiveGroupOptions]): The options for the collective group. The options will only take effect when two workers first communicate with each other, and will be ignored for subsequent communications. This option must match the options of the send side.
 
         Returns:
             Optional[AsyncWork]: An AsyncWork object if async_op is True, otherwise None.
 
         """
         src_addr = WorkerAddress(src_group_name, ranks=src_rank)
-        group = self._get_p2p_collective_group(src_addr)
-        return group.recv_tensor(tensor=tensor, async_op=async_op)
+        group = self._get_collective_group(src_addr)
+        return group.recv_tensor(tensor=tensor, async_op=async_op, options=options)
+
+    def broadcast(
+        self,
+        object: Optional[Any] = None,
+        groups: Optional[
+            list[tuple[str, list[int] | list[tuple[int]] | tuple[int] | int]]
+        ] = None,
+        src: Optional[tuple[str, tuple[int] | int]] = None,
+        async_op: bool = False,
+        options: Optional["CollectiveGroupOptions"] = None,
+    ):
+        """Broadcast an object across workers in one or more groups.
+
+        The source is the first worker address in the expanded group list.
+        The index in the expanded list is the rank in the communication group.
+        All participating workers must call this method with identical arguments.
+
+        Args:
+            object (Any): The object to broadcast on the source worker. For non-src ranks, this is typically None.
+            groups: The participating groups with ranks. Each element must be a (group_name, ranks) tuple where ranks is either a single int (one worker of the rank), a list of ints (multiple workers of the same group), a tuple of ints (one worker of the rank path), or a list of tuples of ints (multiple workers of the rank paths of the same group).
+            src: The source group and rank. If not provided, the source will be the first worker address in the expanded group list.
+            async_op (bool): Whether to perform the operation asynchronously.
+            options (Optional[CollectiveGroupOptions]): The options for the collective group.
+
+        Returns:
+            AsyncWork | Any: An AsyncWork object if async_op is True, otherwise the
+            broadcast object.
+        """
+        if groups is None:
+            raise ValueError("groups must be provided with explicit ranks.")
+        if not isinstance(groups, list):
+            raise TypeError("groups must be a list of (group_name, rank) tuples.")
+        if len(groups) == 0:
+            raise ValueError("groups must contain at least one entry.")
+
+        worker_addresses: list[WorkerAddress] = []
+        for entry in groups:
+            if not isinstance(entry, tuple) or len(entry) != 2:
+                raise TypeError(
+                    "Each groups entry must be a (group_name, ranks) tuple."
+                )
+            group_name, ranks = entry
+            if not isinstance(group_name, str):
+                raise TypeError(
+                    f"group_name must be a string. But got {type(group_name)}."
+                )
+            if isinstance(ranks, list):
+                if len(ranks) == 0:
+                    raise ValueError("ranks list must not be empty.")
+                if not all(
+                    isinstance(rank, int) or isinstance(rank, tuple) for rank in ranks
+                ):
+                    raise TypeError(
+                        f"All ranks must be integers or tuples. But got {type(ranks)}."
+                    )
+                for rank in ranks:
+                    worker_addresses.append(WorkerAddress(group_name, ranks=rank))
+            elif isinstance(ranks, int) or isinstance(ranks, tuple):
+                worker_addresses.append(WorkerAddress(group_name, ranks=ranks))
+            else:
+                raise TypeError(
+                    f"ranks must be an int, tuple, list[int], list[tuple[int]]. But got {type(ranks)}."
+                )
+
+        if not worker_addresses:
+            return object
+
+        if self._worker_address not in worker_addresses:
+            raise ValueError(
+                f"Worker {self._worker_address.get_name()} is not part of the broadcast group."
+            )
+
+        # Get the src addr before sorting
+        if src is not None:
+            src_group_name, src_ranks = src
+            if not isinstance(src_group_name, str):
+                raise TypeError(
+                    f"src_group_name must be a string. But got {type(src_group_name)}."
+                )
+            if not isinstance(src_ranks, int) and not isinstance(src_ranks, tuple):
+                raise TypeError(
+                    f"src_ranks must be an int or tuple. But got {type(src_ranks)}."
+                )
+            src_addr = WorkerAddress(src_group_name, ranks=src_ranks)
+        else:
+            src_addr = worker_addresses[0]
+        with self._lock:
+            worker_addresses.sort()
+            group = self._collective.create_collective_group(worker_addresses)
+
+        return group.broadcast(
+            object=object,
+            src_addr=src_addr,
+            async_op=async_op,
+            options=options,
+        )
 
     def create_channel(
         self,
         channel_name: str,
-        node_rank: int = 0,
         maxsize: int = 0,
+        distributed: bool = False,
+        node_rank: int = 0,
         local: bool = False,
     ):
         """Create a new channel with the specified placement rank and maximum size.
 
         Args:
             channel_name (str): The name of the channel.
-            node_rank (int): The global rank of the node in the cluster where the channel will be created.
             maxsize (int): The maximum size of the channel queue. Defaults to 0 (unbounded).
-            local (bool): Create the channel for intra-process communication. Cannot be connected by other workers.
+            distributed (bool): Whether the channel should be distributed. A distributed channel creates a distributed worker on each node, and routes communications to the channel worker on the same node as the current worker, benefitting from the locality of the data. The routing is based on the key of the put/get APIs. So if you expect the key to be randomly distributed, you should set this to False to avoid unnecessary routing overhead.
+            node_rank (int): The node rank of the current worker. Only valid when distributed is False.
+            local (bool): Create the channel for intra-process communication. A local channel cannot be connected by other workers, and its data cannot be shared among different processes.
 
         Returns:
             Channel: A new instance of the Channel class.
@@ -681,7 +834,11 @@ class Worker(metaclass=WorkerMeta):
         from ..channel.channel import Channel
 
         return Channel.create(
-            name=channel_name, node_rank=node_rank, maxsize=maxsize, local=local
+            name=channel_name,
+            maxsize=maxsize,
+            distributed=distributed,
+            node_rank=node_rank,
+            local=local,
         )
 
     def connect_channel(self, channel_name: str):
@@ -696,25 +853,7 @@ class Worker(metaclass=WorkerMeta):
         """
         from ..channel.channel import Channel
 
-        return Channel.connect(channel_name=channel_name, current_worker=self)
-
-    def broadcast(self, object: Optional[Any], ranks: list[int]):
-        """Broadcast an object inside the current worker group.
-
-        Args:
-            object (Any): The object to broadcast. For non-src ranks, this is None.
-            ranks (List[int]): The ranks of the workers to broadcast the object to. The first in the list is the source.
-        """
-        if not ranks:
-            return object
-
-        src_rank = ranks[0]
-        if self._rank == src_rank:
-            for rank in ranks[1:]:
-                self.send(object, self._group_name, rank)
-        else:
-            object = self.recv(self._group_name, src_rank)
-        return object
+        return Channel.connect(name=channel_name, current_worker=self)
 
     def get_name(self) -> str:
         """Convert the WorkerAddress to a string representation.
@@ -733,6 +872,16 @@ class Worker(metaclass=WorkerMeta):
 
         """
         return self._worker_address.get_parent_rank()
+
+    def acquire_free_port(self):
+        """Safely acquire a free port on the current node without causing conflicts within the node."""
+        max_tries = 10000  # Retry up to 10000 times to find a free port
+        for _ in range(max_tries):
+            port = Cluster.find_free_port()
+            success = self._port_lock.acquire(port)
+            if success:
+                return port
+        raise RuntimeError(f"Failed to acquire a free port after {max_tries} attempts.")
 
     def log_on_first_rank(self, msg):
         """Log a message only on the first rank of the worker group."""
@@ -770,6 +919,12 @@ class Worker(metaclass=WorkerMeta):
             raise ValueError(f"Timer '{tag}' has not been recorded.")
         return self._timer_metrics.pop(tag)
 
+    def pop_execution_times(self) -> dict[str, float]:
+        """Retrieve and clear all execution times."""
+        metrics = dict(self._timer_metrics)
+        self._timer_metrics.clear()
+        return metrics
+
     @contextmanager
     def worker_timer(self, tag: Optional[str] = None):
         """Context manager to time the execution of a worker function.
@@ -788,6 +943,73 @@ class Worker(metaclass=WorkerMeta):
         finally:
             duration = time.perf_counter() - start_time
             self._timer_metrics[tag] = self._timer_metrics.get(tag, 0.0) + duration
+
+    @staticmethod
+    def timer(tag: Optional[str] = None):
+        """Decorator to time a worker function."""
+
+        def decorator(func):
+            if inspect.iscoroutinefunction(func):
+
+                @functools.wraps(func)
+                async def wrapper(self, *args, **kwargs):
+                    with self.worker_timer(tag or func.__name__):
+                        return await func(self, *args, **kwargs)
+
+                return wrapper
+
+            @functools.wraps(func)
+            def wrapper(self, *args, **kwargs):
+                with self.worker_timer(tag or func.__name__):
+                    return func(self, *args, **kwargs)
+
+            return wrapper
+
+        return decorator
+
+    @staticmethod
+    def check_worker_alive(worker_name: str) -> bool:
+        """Check if a worker is alive.
+
+        Args:
+            worker_name (str): The name of the worker to check.
+
+        Returns:
+            bool: True if the worker is alive, False otherwise.
+        """
+        try:
+            # Internally, Ray uses HTTP to query the actor states
+            # Set no-proxy for ray address in case HTTP_PROXY is set in the environment
+            ray_address = ray.dashboard.utils.get_address_for_submission_client(None)
+            if "http://" in ray_address:
+                ray_address = ray_address.replace("http://", "")
+            elif "https://" in ray_address:
+                ray_address = ray_address.replace("https://", "")
+            if ":" in ray_address:
+                ray_address = ray_address.split(":")[0]
+            prev_no_proxy_upper = os.environ.get("NO_PROXY", None)
+            prev_no_proxy_lower = os.environ.get("no_proxy", None)
+            os.environ["NO_PROXY"] = ray_address
+            os.environ["no_proxy"] = ray_address
+
+            actors = ray.util.state.list_actors(filters=[("NAME", "=", worker_name)])
+
+            if prev_no_proxy_upper is not None:
+                os.environ["NO_PROXY"] = prev_no_proxy_upper
+            else:
+                os.environ.pop("NO_PROXY", None)
+            if prev_no_proxy_lower is not None:
+                os.environ["no_proxy"] = prev_no_proxy_lower
+            else:
+                os.environ.pop("no_proxy", None)
+
+            if len(actors) == 0:
+                return False
+            actor_info = actors[0]
+            return actor_info.state != "DEAD"
+        except Exception:
+            # Simply treat the worker as alive if any unexpected error occurs during state query
+            return True
 
     def _check_initialized(self):
         """Check if the Worker has been initialized.
@@ -978,6 +1200,24 @@ class Worker(metaclass=WorkerMeta):
                 "Failed to register signal handlers. This may happen if the Worker is not running in the main thread."
             )
 
+    def _enable_ptrace(self):
+        """Enable ptrace from any same-UID process. Used for enable CUDAIPC when PTRACE is disabled.
+
+        https://gist.github.com/youkaichao/8f87555bdeaaf68f4492b0dc96fbd206
+        """
+        # https://github.com/torvalds/linux/blob/24d479d26b25bce5faea3ddd9fa8f3a6c3129ea7/include/uapi/linux/prctl.h#L155
+        PR_SET_PTRACER = 0x59616D61
+        PR_SET_PTRACER_ANY = -1
+
+        try:
+            libc = ctypes.CDLL("libc.so.6")
+
+            result = libc.prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY, 0, 0, 0)
+            if result != 0:
+                warnings.warn("prctl(PR_SET_PTRACER, ANY) failed!")
+        except Exception as e:
+            warnings.warn(f"Failed to enable ptrace from any same-UID process: {e}")
+
     def _set_new_omegaconf_resolvers(self):
         OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
         OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
@@ -986,8 +1226,8 @@ class Worker(metaclass=WorkerMeta):
             "torch.dtype", lambda dtype_name: getattr(torch, dtype_name), replace=True
         )
 
-    def _get_p2p_collective_group(self, peer_addr: WorkerAddress):
-        """Get a P2P collective group for communication with a peer worker."""
+    def _get_collective_group(self, peer_addr: WorkerAddress):
+        """Get a collective group for communication with a peer worker."""
         workers = [self._worker_address, peer_addr]
         # Ensure the order is the same with the same two ranks
         workers = sorted(workers, key=lambda x: x.get_name())
@@ -1004,13 +1244,14 @@ class Worker(metaclass=WorkerMeta):
             self._actor = ray.get_actor(self._worker_name, namespace=Cluster.NAMESPACE)
 
         node_ip = ray.util.get_node_ip_address()
-        node_port = Cluster.find_free_port()
+        node_port = self.acquire_free_port()
 
         from ..manager import WorkerInfo
 
         self._worker_info = WorkerInfo(
             address=self._worker_address,
             rank=self._rank,
+            group_world_size=self._world_size,
             cluster_node_rank=self._cluster_node_rank,
             accelerator_type=self._accelerator_type,
             accelerator_rank=self._local_accelerator_rank,

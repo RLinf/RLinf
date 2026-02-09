@@ -1,0 +1,23 @@
+env_type: frankasim
+gym_id: PandaPickCubeVision-v0
+
+# observation mode
+obs_mode: rgb
+image_key: images
+camera: front     # front / wrist / both
+state_key: state
+render: false
+
+seed: 0
+total_num_envs: null
+group_size: 1
+
+auto_reset: True
+ignore_terminations: False
+max_steps_per_rollout_epoch: 256
+max_episode_steps: 100
+
+video_cfg:
+  save_video: True
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train

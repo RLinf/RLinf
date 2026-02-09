@@ -88,7 +88,6 @@ RLPD建立在SAC配置之上，增加了离线数据集等内容。
    rollout:
       group_name: "RolloutGroup"
       backend: "huggingface"
-      model_dir: ""
       enable_offload: False
       pipeline_stage_num: 1
 

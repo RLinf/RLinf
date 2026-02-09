@@ -90,15 +90,18 @@ def compute_ppo_actor_loss(
     else:
         dual_clip_mask = torch.zeros_like(clip_mask)
 
+    metric_policy_loss_abs = loss_agg_func(
+        policy_loss.abs(), loss_mask, loss_mask_ratio
+    )
     policy_loss = loss_agg_func(
         policy_loss, loss_mask, loss_mask_ratio
     )  # default max_episode_steps is None
 
     clip_mask = policy_loss1.detach() < policy_loss2.detach()
-    dual_clip_mask.logical_and_(loss_mask)
+    dual_clip_mask = (dual_clip_mask * loss_mask).bool()
 
-    clip_fraction = clip_mask.logical_and_(loss_mask).count_nonzero() / loss_mask_count
-    approx_kl = -approx_kl.sum() / loss_mask_count
+    clip_fraction = (clip_mask * loss_mask).sum() / float(loss_mask_count)
+    approx_kl = -torch.sum(approx_kl) / float(loss_mask_count)
 
     dual_cliped_ratio = torch.where(dual_clip_mask, ratio, 0)
 
@@ -106,25 +109,23 @@ def compute_ppo_actor_loss(
         policy_loss = torch.tensor(0.0, device=policy_loss.device)
 
     # Compile metrics for logging
+    loss_mask_for_metrics = loss_mask
     ratio_for_metrics = ratio.detach()
+    ratio_abs_for_metrics = (ratio - 1).abs().detach()
     clipped_ratio_for_metrics = clipped_ratio.detach()
     dual_cliped_ratio_for_metrics = dual_cliped_ratio.detach()
-    loss_mask_for_metrics = loss_mask
 
     # Only broadcast when ratio has action_dim dimension and loss_mask's last dim is 1
     # This handles token_level mode: ratio [bsz, num_chunks, action_dim], loss_mask [bsz, num_chunks, 1]
-    if (
-        len(ratio.shape) > 2
-        and ratio.shape[:-1] == loss_mask.shape[:-1]
-        and loss_mask.shape[-1] == 1
-        and ratio.shape[-1] > 1
-    ):
+    if len(ratio.shape) > 2 and loss_mask.shape[-1] == 1 and ratio.shape[-1] > 1:
         # Broadcast loss_mask to match ratio's shape for metrics computation
         loss_mask_for_metrics = loss_mask.expand_as(ratio)
 
     metrics_data = {
         "actor/policy_loss": policy_loss.detach(),
+        "actor/policy_loss_abs": metric_policy_loss_abs.detach(),
         "actor/ratio": masked_mean(ratio_for_metrics, loss_mask_for_metrics),
+        "actor/ratio_abs": masked_mean(ratio_abs_for_metrics, loss_mask_for_metrics),
         "actor/clipped_ratio": masked_mean(
             clipped_ratio_for_metrics, loss_mask_for_metrics
         ),

@@ -20,7 +20,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: /workspace/results/
+    log_path: /workspace/results/realworld_dummy_sac_cnn
     project_name: rlinf
     experiment_name: "ci-test"
     logger_backends: ["tensorboard"] # wandb, swanlab
@@ -31,8 +31,6 @@ runner:
   only_eval: False
   val_check_interval: -1
   save_interval: -1
-  seq_length: 1024
-  max_prompt_length: 30
 
 algorithm:
   update_epoch: 32
@@ -56,8 +54,13 @@ algorithm:
   alpha_lr: 3.0e-4  # Learning rate for temperature parameter
   
   # Replay buffer settings
-  replay_buffer_capacity: 10000
-  min_buffer_size: 0  # Minimum buffer size before training starts
+  replay_buffer:
+    enable_cache: True
+    cache_size: 100 # number of trajectories cached in memory
+    sample_window_size: 100 # number of latest trajectories to sample from for replay buffer
+    min_buffer_size: 0  # Minimum buffer size before training starts
+    save_trajectories: False
+
   target_update_freq: 1  # Frequency of target network updates
 
   # params for rollout
@@ -106,9 +109,11 @@ env:
 rollout:
   group_name: "RolloutGroup"
   backend: "huggingface"
-  model_dir: ""
   enable_offload: False
   pipeline_stage_num: 1
+
+  collect_transitions: True
+  collect_prev_infos: False
 
   model:
     precision: ${actor.model.precision}

@@ -73,9 +73,33 @@
 依赖安装
 ---------------
 
+1. 克隆 RLinf 仓库
+~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+   # 为提高国内下载速度，可以使用：
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+2. 安装依赖
+~~~~~~~~~~~~~~~~
+
 **选项 1：Docker 镜像**
 
-使用 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` 来运行实验。
+使用 Docker 镜像运行实验。
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+      # 如果需要国内加速下载镜像，可以使用：
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
 
 请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
 
@@ -87,7 +111,8 @@
 
 .. code:: bash
 
-   pip install uv
+   # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
+
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
@@ -104,6 +129,8 @@
    git clone https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 
    # 方式2：使用 huggingface-hub
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 
@@ -331,7 +358,7 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
 
 .. note::
 
-   ``Metaworld`` 以及 ``CALVIN`` 暂时不支持设置 ``env.eval.auto_reset=True`` 的评估模式，建议使用单个脚本文件进行模型评估。
+   ``Metaworld`` 暂时不支持设置 ``env.eval.auto_reset=True`` 的评估模式，建议使用单个脚本文件进行模型评估。
 
 - 使用单个脚本文件进行模型评估，参考示例 `README.md <https://github.com/RLinf/RLinf/blob/main/toolkits/eval_scripts_openpi/README.md>`__，这种方式的评估脚本和 ``openpi`` 官方提供的评估脚本一致，支持输出每个子任务的成功率，但是速度较慢。
 
@@ -360,7 +387,7 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
 
 ::
 
-   bash examples/embodiment/run_embodiment.sh libero_10_ppo_openpi
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi_quickstart
 
 可视化与结果
 ------------

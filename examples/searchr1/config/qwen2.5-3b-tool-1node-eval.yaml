@@ -1,0 +1,144 @@
+defaults:
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    rollout,reward: all
+
+
+runner:
+  task_type: reasoning_eval
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: rlinf
+    experiment_name: ${runner.experiment_name}
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: 1
+  max_steps: -1
+
+  val_check_interval: 30
+  save_interval: 30
+
+  seq_length: 7096
+
+  resume_dir: null
+  experiment_name: searchr1-grpo-qwen2.5-3b-ins-eval
+  output_dir: ../results
+
+algorithm:
+  group_size: 1
+  n_minibatches: 2
+  rollout_batch_size_per_gpu: null # If set to null, rollout_batch_size will be evenly divided across all inference instances. You can reduce this parameter if inference consumes too much GPU memory.
+
+  # mbs to do log prob inference, can be set to
+  # lower than rollout_batch_size_per_gpu to reduce
+  # memory usage
+  logprob_forward_micro_batch_size: 1 # ${.rollout_batch_size_per_gpu}
+
+  # val rollout mbs
+  val_rollout_batch_size_per_gpu: 4 # ${.rollout_batch_size_per_gpu}
+
+  shuffle_rollout: False
+
+  # params for rollout
+  sampling_params:
+    do_sample: True
+    temperature: 1.0
+    top_k: 1000000
+    top_p: 1.0
+    repetition_penalty: 1.0
+    max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
+    min_new_tokens: 1
+    stop: ["</search>","?</search>","?</search>\n","?</search>\n\n","?</search><","?</search><\n","</search>\n","</search>\n\n","</search><","</search><\n","</search><think>","</search><|","</answer>","</answer><","</answer><think>","</answer>\n","</answer>\n\n","<|im_end|>"]
+
+agentloop:
+  group_name: "AgentLoopGroup"
+  maxturn: 2
+  max_tool_response_length: 500
+  tool_response_truncate_side: "right"
+  print_outputs: False
+
+rollout:
+  group_name: "RolloutGroup"
+
+  gpu_memory_utilization: 0.8
+  model:
+    model_path: /path/to/eval/model
+    model_type: qwen2.5
+    precision: fp16
+  enforce_eager: False         # if False, rollout engine will capture cuda graph, which will take more time to initialize.
+  distributed_executor_backend: mp   # ray or mp
+  disable_log_stats: False
+  detokenize: True            # Whether to detokenize the output. During RL we actually don't need to detokenize it. Can be set to True for debugging.
+  padding: null               # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
+  eos: null                   # will be tokenizer.eos_token_id if null.
+
+  rollout_backend: sglang     # here choose which backend to rollout,support [sglang, vllm] 
+
+  sglang:
+    attention_backend: triton # [flashinfer, triton] for more, see sglang's doc
+    decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
+    use_torch_compile: False # enable torch_compile in SGLang for rollout.
+    torch_compile_max_bs: 128 # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.
+
+  vllm:
+    attention_backend: FLASH_ATTN #[FLASH_ATTN,XFORMERS] for more, see vllm's doc
+    enable_chunked_prefill: True  # enable vllm to use chunked_prefill.
+    enable_prefix_caching: True   # enable vllm to use prefix_caching.
+    enable_flash_infer_sampler: True # if True, vllm will use flashinfer to do sampling.
+    max_num_batched_tokens: null # the maximum number of tokens to be batched together in vllm. If set to null, vllm will use its default value.
+    torch_profiler_dir: null # if not null, vllm will enable torch profiler and save the result to the specified directory.
+
+  return_logprobs: False
+
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  
+  validate_weight: False # whether to send all weights at first for weight comparison.
+  validate_save_dir: null # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
+  print_outputs: False         # whether to print the outputs (token ids, texts, etc.) of rollout engine.
+
+  max_running_requests: 64 # the maximum number of running requests in the rollout engine.
+  cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
+
+data:
+  type: math
+  max_prompt_length: 4096
+  filter_prompt_by_length: True
+  rollout_batch_size: 20
+  val_rollout_batch_size: 20
+  num_workers: 2
+  prompt_key: prompt
+  answer_key: solutions
+  apply_chat_template: False
+  shuffle: False
+  validation_shuffle: False
+  seed: 1234
+  train_data_paths: ["/path/to/eval.jsonl"]
+  val_data_paths: ["/path/to/eval.jsonl"]
+  data_size: 1000
+
+# Tools configuration for AgentLoop
+tools:
+  search:
+    server_addr: 0.0.0.0:8000
+    topk: 3
+
+reward:
+  group_name: "RewardGroup"
+  use_reward_model: False
+  reward_type: 'searchr1'
+  reward_scale: 1.0
+
+  tokenizer:
+    tokenizer_model: ${rollout.model.model_path}
+    use_fast: False
+    trust_remote_code: True
+    padding_side: 'right'

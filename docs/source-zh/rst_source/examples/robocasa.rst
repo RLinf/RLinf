@@ -117,11 +117,39 @@ RoboCasa Kitchen提供了涵盖多个类别的24个原子任务（不包含需�
 依赖安装
 --------
 
-方法 1：您可以使用 robocasa 的 RLinf docker 镜像 ``docker pull rlinf/rlinf:agentic-rlinf0.1-robocasa``。
-
-方法 2：通过运行以下命令直接在您的环境中安装依赖（确保您已经安装了 ``uv``）：
+1. 克隆 RLinf 仓库
+~~~~~~~~~~~~~~~~~~~~
 
 .. code:: bash
+
+   # 为提高国内下载速度，可以使用：
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+2. 安装依赖
+~~~~~~~~~~~~~~~~
+
+**选项 1：Docker 镜像**
+
+使用 Docker 镜像运行实验。
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.1-robocasa
+      # 如果需要国内加速下载镜像，可以使用：
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-robocasa
+
+**选项 2：自建环境**
+
+.. code:: bash
+
+   # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
 
    bash requirements/install.sh embodied --model openpi --env robocasa
    source .venv/bin/activate
@@ -144,5 +172,7 @@ RoboCasa Kitchen提供了涵盖多个类别的24个原子任务（不包含需�
    git clone https://huggingface.co/RLinf/RLinf-Pi0-RoboCasa
 
    # 方法 2: 使用 huggingface-hub
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-RoboCasa --local-dir RLinf-Pi0-RoboCasa

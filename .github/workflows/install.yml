@@ -92,6 +92,20 @@ jobs:
           bash requirements/install.sh embodied --model openvla-oft --env behavior
           rm -rf .venv
 
+      - name: Install docs
+        run: |
+          pip install uv
+          uv cache prune --ci
+          bash requirements/install.sh docs
+          rm -rf .venv
+
+      - name: Install docs
+        run: |
+          pip install uv
+          uv cache prune --ci
+          bash requirements/install.sh docs --use-mirror
+          rm -rf .venv
+
   build-franka:
     runs-on: ubuntu-latest
     container:
@@ -108,3 +122,56 @@ jobs:
           for v in 0.10.0 0.13.3 0.14.1 0.15.0 0.18.0; do \
             LIBFRANKA_VERSION="$v" FRANKA_ROS_VERSION=0.10.0 bash requirements/install.sh embodied --venv "franka-$v" --env franka; \
           done
+
+  sys-deps-fedora:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:42
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Install sys-deps
+        run: |
+          bash requirements/embodied/sys_deps.sh
+
+  sys-deps-arch:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Install sys-deps
+        run: |
+          bash requirements/embodied/sys_deps.sh
+
+  sys-deps-almalinux:
+    runs-on: ubuntu-latest
+    container:
+      image: almalinux:10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Install sys-deps
+        run: |
+          bash requirements/embodied/sys_deps.sh
+
+  sys-deps-rockylinux:
+    runs-on: ubuntu-latest
+    container:
+      image: rockylinux:9.3
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Install sys-deps
+        run: |
+          bash requirements/embodied/sys_deps.sh
+
+  sys-deps-ubuntu-latest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Install sys-deps
+        run: |
+          bash requirements/embodied/sys_deps.sh

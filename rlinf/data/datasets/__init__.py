@@ -41,7 +41,21 @@ def create_rl_dataset(
     """
 
     if config.data.type == "math":
-        dataset_cls = MathDataset
+        logging.info(f"Using dataset class: {MathDataset.__name__}")
+
+        train_dataset = MathDataset(
+            data_paths=config.data.train_data_paths,
+            config=config,
+            tokenizer=tokenizer,
+        )
+
+        val_dataset = MathDataset(
+            data_paths=config.data.val_data_paths,
+            config=config,
+            tokenizer=tokenizer,
+        )
+
+        return train_dataset, val_dataset
     elif config.data.type == "vision_language":
         # Prefer new factory-based VLM datasets; fallback to legacy if requested
         dataset_name = getattr(config.data, "dataset_name", None)
@@ -64,30 +78,10 @@ def create_rl_dataset(
             tokenizer=tokenizer,
         )
         return train_dataset, val_dataset
-    elif config.data.type == "robot_demo":
-        from rlinf.data.replay_buffer import SACReplayBuffer
-
-        train_dataset = SACReplayBuffer.create_from_demo(config.data.path)
-        return train_dataset, None
     else:
-        return None, None
-
-    logging.info(f"Using dataset class: {dataset_cls.__name__}")
-
-    # Instantiate the dataset using the determined dataset class
-    train_dataset = dataset_cls(
-        data_paths=config.data.train_data_paths,
-        config=config,
-        tokenizer=tokenizer,
-    )
-
-    val_dataset = dataset_cls(
-        data_paths=config.data.val_data_paths,
-        config=config,
-        tokenizer=tokenizer,
-    )
-
-    return train_dataset, val_dataset
+        raise NotImplementedError(
+            f"Unsupported dataset type {config.data.type}, only support ['math', 'vision_language', 'robot_demo']"
+        )
 
 
 def collate_fn(data_list: list["DatasetItem"]) -> dict[str, Any]:

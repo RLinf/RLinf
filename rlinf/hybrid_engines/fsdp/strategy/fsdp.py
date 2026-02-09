@@ -25,13 +25,14 @@ from torch.distributed.fsdp import (
 )
 from torch.optim import Optimizer
 
-from rlinf.config import SupportedModel, torch_dtype_from_precision
+from rlinf.config import torch_dtype_from_precision
 from rlinf.hybrid_engines.fsdp import FSDP
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
 from rlinf.hybrid_engines.fsdp.utils import (
     FSDPVersion,
     get_backward_prefetch_strategy,
     get_fsdp_wrap_policy,
+    get_grad_norm_for_mixed_precision,
     get_sharding_strategy,
     init_fn,
 )
@@ -67,10 +68,9 @@ class FSDPStrategy(FSDPStrategyBase):
 
         auto_wrap_policy = get_fsdp_wrap_policy(
             module=model,
-            config=None,
+            config=self.cfg.fsdp_config,
             is_lora=self.cfg.model.is_lora,
-            is_openvla_model=SupportedModel(self.cfg.model.model_type)
-            in [SupportedModel.OPENVLA, SupportedModel.OPENVLA_OFT],
+            model_type=self.cfg.model.model_type,
         )
 
         backward_prefetch = get_backward_prefetch_strategy(
@@ -218,6 +218,7 @@ class FSDPStrategy(FSDPStrategyBase):
                         state[key] = value.to(device, non_blocking=True)
         clear_memory()
 
+    @torch.no_grad()
     def clip_grad_norm_(
         self,
         model: FSDP,
@@ -228,14 +229,107 @@ class FSDPStrategy(FSDPStrategyBase):
 
         Args:
             - model (FSDP): The FSDP wrapped model.
-            - norm_type (Union[float,int]): The type of the used p-norm.
+            - norm_type (Union[float, int]): The type of the used p-norm.
 
         Returns:
             - float: The total norm of the gradients before clipping.
         """
-        return float(
-            model.clip_grad_norm_(self.cfg.optim.clip_grad, norm_type=norm_type).item()
+        device = torch.device(f"cuda:{int(os.environ['LOCAL_RANK'])}")
+        max_norm = float(self.cfg.optim.clip_grad)
+        norm_type = float(norm_type)
+        all_handles = getattr(model, "_all_handles", None)
+        if all_handles is None:
+            raise RuntimeError("Expected FSDP root module with `_all_handles`.")
+
+        all_no_shard = all(not handle.uses_sharded_strategy for handle in all_handles)
+        if all_no_shard:
+            return (
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm, norm_type)
+                .cpu()
+                .item()
+            )
+        sharded_params_set, nonsharded_params_set = set(), set()
+        sharded_params, nonsharded_params = [], []
+        grads = []
+
+        for handle in all_handles:
+            if handle.uses_sharded_strategy:
+                target_set, target_list = sharded_params_set, sharded_params
+            else:
+                target_set, target_list = nonsharded_params_set, nonsharded_params
+
+            if handle._use_orig_params:
+                for p in handle.flat_param._params:
+                    if p not in target_set:
+                        target_set.add(p)
+                        target_list.append(p)
+                        if p.grad is not None:
+                            grads.append(p.grad)
+            else:
+                fp = handle.flat_param
+                if fp not in target_set:
+                    target_set.add(fp)
+                    target_list.append(fp)
+                    if fp.grad is not None:
+                        grads.append(fp.grad)
+
+        # include non-FSDP-managed params (ignored modules etc.)
+        for p in model.parameters():
+            not_fsdp_managed = (
+                p not in sharded_params_set and p not in nonsharded_params_set
+            )
+            if not_fsdp_managed:
+                nonsharded_params_set.add(p)
+                nonsharded_params.append(p)
+                if p.grad is not None:
+                    grads.append(p.grad)
+        local_sharded_norm = get_grad_norm_for_mixed_precision(
+            sharded_params,
+            norm_type,
+            torch.tensor(0.0, device=device, dtype=torch.float32),
+            device,
         )
+        local_nonsharded_norm = (
+            get_grad_norm_for_mixed_precision(
+                nonsharded_params,
+                norm_type,
+                torch.tensor(0.0, device=device, dtype=torch.float32),
+                device,
+            )
+            if nonsharded_params
+            else None
+        )
+
+        if norm_type == torch.inf:
+            total_norm = (
+                torch.maximum(local_sharded_norm, local_nonsharded_norm)
+                if local_nonsharded_norm is not None
+                else local_sharded_norm
+            )
+            torch.distributed.all_reduce(
+                total_norm, op=torch.distributed.ReduceOp.MAX, group=self._dp_group
+            )
+        else:
+            total_norm = local_sharded_norm**norm_type
+            torch.distributed.all_reduce(
+                total_norm, op=torch.distributed.ReduceOp.SUM, group=self._dp_group
+            )
+            if local_nonsharded_norm is not None:
+                total_norm += local_nonsharded_norm**norm_type
+            total_norm = total_norm ** (1.0 / norm_type)
+
+        grad_norm = float(total_norm.item())
+
+        # Only apply clipping when the total norm exceeds the maximum allowed norm.
+        # This avoids unnecessary scaling and potential numerical issues for very small norms.
+        if grad_norm == 0.0 or grad_norm <= max_norm:
+            return grad_norm
+        clip_coef = max_norm / total_norm
+        clip_coef = torch.clamp(clip_coef, max=1.0)
+        for g in grads:
+            g.mul_(clip_coef.to(device=g.device, dtype=g.dtype))
+
+        return grad_norm
 
     def before_micro_batch(
         self, model: FSDP, is_last_micro_batch: bool

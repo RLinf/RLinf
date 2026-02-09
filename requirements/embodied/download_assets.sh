@@ -4,6 +4,7 @@ set -euo pipefail
 
 DOWNLOAD_DIR=${DOWNLOAD_DIR:-$HOME}
 SUPPORT_LIST=("maniskill" "openpi")
+GITHUB_PREFIX=${GITHUB_PREFIX:-""}
 ASSETS=()
 
 print_help() {
@@ -47,7 +48,7 @@ download_maniskill_assets() {
 		echo "[download_assets] SAPIEN PhysX assets already exist at $PHYSX_DIR, skipping download."
 	else
 		mkdir -p "$PHYSX_DIR"
-		wget -O "$PHYSX_DIR/linux-so.zip" "https://github.com/sapien-sim/physx-precompiled/releases/download/${PHYSX_VERSION}/linux-so.zip"
+		wget -O "$PHYSX_DIR/linux-so.zip" "${GITHUB_PREFIX}https://github.com/sapien-sim/physx-precompiled/releases/download/${PHYSX_VERSION}/linux-so.zip"
 		unzip "$PHYSX_DIR/linux-so.zip" -d "$PHYSX_DIR" && rm "$PHYSX_DIR/linux-so.zip"
 	fi
 }

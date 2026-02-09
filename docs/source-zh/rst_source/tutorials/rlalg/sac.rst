@@ -93,5 +93,8 @@ SAC 利用熵正则化的 Bellman 方程和自动温度调控，同时学习一�
       alpha_lr: 3.0e-4  # 温度参数的学习率
       
       # 回放缓冲区设置
-      replay_buffer_capacity: 50000 # 回放缓冲区大小
-      min_buffer_size: 200  # 开始更新策略时缓冲区数据量最小值 
+      replay_buffer:
+         enable_cache: True # 启用内存缓存以减少I/O开销
+         cache_size: 6000 # 内存缓存的轨迹数量
+         sample_window_size: 6000 # 滑动采样窗口大小
+         min_buffer_size: 200  # 开始更新策略时缓冲区数据量最小值

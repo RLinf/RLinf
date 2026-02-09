@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Optional, Union
+from typing import TYPE_CHECKING, Callable, Optional, Union
 
 import torch
 from omegaconf import DictConfig
@@ -26,16 +25,11 @@ if TYPE_CHECKING:
     from vllm.outputs import RequestOutput as VllmRequestOutput
 
 from rlinf.data.utils import batch_pad_to_fixed_len
-from rlinf.scheduler import Channel
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
+    merge_list,
+    merge_tensor,
     split_list,
-)
-from rlinf.utils.nested_dict_process import (
-    cat_list_of_dict_tensor,
-    put_tensor_device,
-    split_dict_to_chunk,
-    stack_list_of_dict_tensor,
 )
 
 
@@ -259,7 +253,6 @@ class RolloutResult:
     def _get_attention_masks_and_position_ids(
         prompt_lengths: torch.Tensor,
         response_lengths: torch.Tensor,
-        response_mask: torch.Tensor | None,
         max_prompt_len: int,
         total_len: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -274,33 +267,15 @@ class RolloutResult:
 
         # Compute the start and end positions of the prompt and response tokens
         prompt_start = max_prompt_len - prompt_lengths  # [B]
+        prompt_end = torch.full_like(prompt_start, max_prompt_len)  # [B]
         response_end = max_prompt_len + response_lengths  # [B]
 
         # Broadcast [B, total_len]
         prompt_start = prompt_start.unsqueeze(1)
+        prompt_end = prompt_end.unsqueeze(1)
         response_end = response_end.unsqueeze(1)
-        if response_mask is not None:
-            max_response_len = total_len - max_prompt_len
-            response_mask = batch_pad_to_fixed_len(
-                [torch.as_tensor(ids, dtype=torch.long) for ids in response_mask],
-                max_batch_len=max_response_len,
-                pad_token=0,
-            )
-
-            attention_mask = torch.cat(
-                [
-                    (
-                        torch.arange(max_prompt_len)
-                        .unsqueeze(0)
-                        .expand(response_mask.size(0), -1)
-                        >= prompt_start
-                    ),
-                    response_mask,
-                ],
-                dim=1,
-            ).bool()
-        else:
-            attention_mask = (arange_ids >= prompt_start) & (arange_ids < response_end)
+        attention_mask = (arange_ids >= prompt_start) & (arange_ids < response_end)
+        response_mask = (arange_ids >= prompt_end) & (arange_ids < response_end)
 
         # =========================
         # Position IDs
@@ -311,7 +286,24 @@ class RolloutResult:
             ps = prompt_start[i].item()
             position_ids[i, ps:] = torch.arange(total_len - ps)
 
-        return attention_mask, position_ids
+        return attention_mask, response_mask, position_ids
+
+    @staticmethod
+    def _get_response_masks(
+        response_mask: list[list[int]],  # [[0 / 1] * response len] * group size
+        max_prompt_len: int,
+        total_len: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        response_mask = batch_pad_to_fixed_len(
+            [
+                torch.as_tensor([0] * max_prompt_len + ids, dtype=torch.long)
+                for ids in response_mask
+            ],
+            max_batch_len=total_len,
+            pad_token=0,
+        ).bool()
+
+        return response_mask
 
     @staticmethod
     def from_vllm_results(
@@ -471,35 +463,16 @@ class RolloutResult:
             is_end=[],
         )
 
-        def merge_tensor(dst_tensor: torch.Tensor, src_tensor: torch.Tensor):
-            assert dst_tensor is None or torch.is_tensor(dst_tensor), (
-                f"Expected tensor, got {type(dst_tensor)}"
-            )
-            assert torch.is_tensor(src_tensor), (
-                f"Expected tensor, got {type(src_tensor)}"
-            )
-            if dst_tensor is None:
-                return src_tensor
-            else:
-                return torch.cat([dst_tensor, src_tensor], dim=0)
-
-        def merge_list(dst_list: list, src_list: list):
-            assert dst_list is None or isinstance(dst_list, list), (
-                f"Expected list, got {type(dst_list)}"
-            )
-            assert isinstance(src_list, list), f"Expected list, got {type(src_list)}"
-            if dst_list is None:
-                return src_list
-            else:
-                dst_list.extend(src_list)
-                return dst_list
-
         for res in rollout_results:
             merged_result.prompt_lengths.extend(res.prompt_lengths)
             merged_result.prompt_ids.extend(res.prompt_ids)
             merged_result.response_lengths.extend(res.response_lengths)
             merged_result.response_ids.extend(res.response_ids)
             merged_result.is_end.extend(res.is_end)
+            if res.response_mask is not None:
+                merged_result.response_mask = merge_list(
+                    merged_result.response_mask, res.response_mask
+                )
             if res.answers is not None:
                 merged_result.answers = merge_list(merged_result.answers, res.answers)
             if res.advantages is not None:
@@ -724,7 +697,14 @@ class RolloutResult:
                 shape ``[batch_size, training_seq_length]``.
 
             attention_mask (torch.Tensor):
-                Attention mask for the input sequence,
+                Attention mask for the whole input sequence,
+                Value: True for or prompt_ids and response_ids, False for others
+                shape ``[batch_size, training_seq_length]``.
+
+            response_mask (torch.Tensor):
+                Mask participate in adv and loss calculation for the whole input sequence,
+                To filter ids not generated by llm,
+                Value: True for or response_ids generated by llm, False for others
                 shape ``[batch_size, training_seq_length]``.
 
             is_end (torch.Tensor):
@@ -748,11 +728,16 @@ class RolloutResult:
                 shape ``[batch_size, training_seq_length - data_seq_length]``.
         """
 
-        # len = training_seq_length: input_ids, attention_mask, position_ids
-        #           [prompt_padding, prompt_ids,    response_ids, ... ,response_padding]
+        # len = training_seq_length: input_ids, attention_mask, position_ids, response_mask
+        # each row: [prompt_padding, prompt_ids,    response_ids, ... ,response_padding]
         #           |<-- padding -->|<-- pmp len -->|<-- resp len --->|<-- padding --->|
         #           |<---- cfg.data.seq_length ---->|
         #           |<------------------ cfg.runner.seq_length --------------------->|
+        # each row: [response_mask]
+        #           |<------- padding ------->|<- llm resp ->|<- tool resp ->|<- llm resp ->|<- padding ->|
+        #           |<-------- False -------->|<--- True --->|<--- False --->|<--- True --->|<-- False -->|
+        #           |<- cfg.data.seq_length ->|<------ cfg.runner.seq_length - cfg.data.seq_length ------>|
+        #           |<------------------------------ cfg.runner.seq_length ------------------------------>|
 
         # len = training_seq_length - data_seq_length: advantage, prev_logprobs, ref_logprobs
         # each row: [response_ids, ...,                , response_padding]
@@ -765,13 +750,20 @@ class RolloutResult:
         response_lengths = torch.tensor(self.response_lengths)
         is_end = torch.tensor(self.is_end, dtype=torch.bool)
 
-        attention_mask, position_ids = self._get_attention_masks_and_position_ids(
-            prompt_lengths=prompt_lengths,
-            response_lengths=response_lengths,
-            response_mask=self.response_mask,
-            max_prompt_len=data_seq_length,
-            total_len=training_seq_length,
+        attention_mask, response_mask, position_ids = (
+            self._get_attention_masks_and_position_ids(
+                prompt_lengths=prompt_lengths,
+                response_lengths=response_lengths,
+                max_prompt_len=data_seq_length,
+                total_len=training_seq_length,
+            )
         )
+        if self.response_mask is not None:
+            response_mask = self._get_response_masks(
+                self.response_mask,
+                max_prompt_len=data_seq_length,
+                total_len=training_seq_length,
+            )
 
         prompt_ids = batch_pad_to_fixed_len(
             [torch.as_tensor(ids, dtype=torch.long) for ids in self.prompt_ids],
@@ -792,6 +784,7 @@ class RolloutResult:
         batch = {
             "input_ids": input_ids.cuda(),
             "attention_mask": attention_mask.cuda(),
+            "response_mask": response_mask.cuda(),
             "is_end": is_end.cuda(),
             "position_ids": position_ids.cuda(),
             "prompt_lengths": prompt_lengths.cuda(),
@@ -836,7 +829,7 @@ class RolloutResult:
                     for logprobs in self.rollout_logprobs
                 ],
                 max_batch_len=max_response_len,
-                pad_token=pad_token,
+                pad_token=0,
             )
             batch["prev_logprobs"] = logprobs.cuda()
 
@@ -863,6 +856,114 @@ class RolloutResult:
             else:
                 raise ValueError(f"Unsupported batch key type: {type(batches[0][key])}")
         return merged_batch
+
+    @staticmethod
+    def split_results(
+        rollout_result: "RolloutResult",
+        split_num: int,
+    ) -> list["RolloutResult"]:
+        """
+        Split a single RolloutResult into multiple RolloutResult objects by group_size.
+
+        Args:
+            rollout_result: The RolloutResult to be split
+
+        Returns:
+            list of split RolloutResult objects
+        """
+        group_size = rollout_result.group_size
+        num_sequence = rollout_result.num_sequence
+
+        assert num_sequence % (rollout_result.group_size * split_num) == 0, (
+            f"num_sequence ({num_sequence}) must be divisible by split_num ({split_num}) and group_size ({rollout_result.group_size})"
+        )
+
+        list_none = [None for _ in range(split_num)]
+        fields_split = {}
+        # Split list fields
+        list_fields = [
+            "prompt_lengths",
+            "prompt_ids",
+            "response_lengths",
+            "response_ids",
+            "is_end",
+        ]
+        for k in list_fields:
+            v = getattr(rollout_result, k)
+            fields_split[k] = split_list(v, split_num)
+
+        # Split optional list fields
+        list_fields = [
+            "answers",
+            "image_data",
+            "multi_modal_inputs",
+            "prompt_texts",
+            "response_texts",
+            "rollout_logprobs",
+            "recompute_prev_logprobs",
+            "response_mask",
+        ]
+        for k in list_fields:
+            v = getattr(rollout_result, k)
+            if v is not None:
+                fields_split[k] = split_list(v, split_num)
+            else:
+                fields_split[k] = list_none
+
+        # Split optional tensor or list fields
+        optional_tensor_fields = [
+            "prev_logprobs",
+            "ref_logprobs",
+        ]
+        for k in optional_tensor_fields:
+            v = getattr(rollout_result, k)
+            if v is not None:
+                fields_split[k] = torch.chunk(v, split_num, dim=0)
+            else:
+                fields_split[k] = list_none
+
+        # Split optional tensor or list fields
+        optional_tensor_list_fields = [
+            "rewards",
+            "advantages",
+        ]
+        for k in optional_tensor_list_fields:
+            v = getattr(rollout_result, k)
+            if v is not None:
+                if isinstance(v, torch.Tensor):
+                    fields_split[k] = torch.chunk(v, split_num, dim=0)
+                else:
+                    fields_split[k] = split_list(v, split_num)
+            else:
+                fields_split[k] = list_none
+
+        # Create split RolloutResult objects
+        split_results = []
+        for i in range(split_num):
+            split_result = RolloutResult(
+                num_sequence=num_sequence // split_num,
+                group_size=group_size,
+                prompt_lengths=fields_split["prompt_lengths"][i],
+                prompt_ids=fields_split["prompt_ids"][i],
+                response_lengths=fields_split["response_lengths"][i],
+                response_ids=fields_split["response_ids"][i],
+                is_end=fields_split["is_end"][i],
+                rewards=fields_split["rewards"][i],
+                advantages=fields_split["advantages"][i],
+                prompt_texts=fields_split["prompt_texts"][i],
+                response_texts=fields_split["response_texts"][i],
+                answers=fields_split["answers"][i],
+                image_data=fields_split["image_data"][i],
+                multi_modal_inputs=fields_split["multi_modal_inputs"][i],
+                response_mask=fields_split["response_mask"][i],
+                rollout_logprobs=fields_split["rollout_logprobs"][i],
+                recompute_prev_logprobs=fields_split["recompute_prev_logprobs"][i],
+                prev_logprobs=fields_split["prev_logprobs"][i],
+                ref_logprobs=fields_split["ref_logprobs"][i],
+            )
+            split_results.append(split_result)
+
+        return split_results
 
 
 class BatchResizingIterator:
@@ -1036,380 +1137,3 @@ class BatchResizingIterator:
             )
 
             return self._get_next_micro_batch()
-
-
-def put_tensor_cpu(data_dict):
-    if data_dict is None:
-        return None
-
-    for key, value in data_dict.items():
-        if isinstance(value, dict):
-            data_dict[key] = put_tensor_cpu(value)
-        if isinstance(value, torch.Tensor):
-            data_dict[key] = value.cpu().contiguous()
-    return data_dict
-
-
-@dataclass(kw_only=True)
-class EnvOutput:
-    obs: dict[str, Any]
-    final_obs: Optional[dict[str, Any]] = None
-    dones: Optional[torch.Tensor] = None  # [B]
-    terminations: Optional[torch.Tensor] = None  # [B]
-    truncations: Optional[torch.Tensor] = None  # [B]
-    rewards: Optional[torch.Tensor] = None  # [B]
-
-    intervene_actions: Optional[torch.Tensor] = None  # [B]
-    intervene_flags: Optional[torch.Tensor] = None  # [B]
-
-    def __post_init__(self):
-        self.obs = put_tensor_device(self.obs, "cpu")
-        self.final_obs = (
-            put_tensor_device(self.final_obs, "cpu")
-            if self.final_obs is not None
-            else None
-        )
-        self.dones = self.dones.cpu().contiguous() if self.dones is not None else None
-        self.terminations = (
-            self.terminations.cpu().contiguous()
-            if self.terminations is not None
-            else None
-        )
-        self.truncations = (
-            self.truncations.cpu().contiguous()
-            if self.truncations is not None
-            else None
-        )
-        self.rewards = (
-            self.rewards.cpu().contiguous() if self.rewards is not None else None
-        )
-        self.intervene_actions = (
-            self.intervene_actions.cpu().contiguous()
-            if self.intervene_actions is not None
-            else None
-        )
-        self.intervene_flags = (
-            self.intervene_flags.cpu().contiguous()
-            if self.intervene_flags is not None
-            else None
-        )
-
-    def prepare_observations(self, obs: dict[str, Any]) -> dict[str, Any]:
-        image_tensor = obs["main_images"] if "main_images" in obs else None
-        wrist_image_tensor = obs["wrist_images"] if "wrist_images" in obs else None
-        extra_view_image_tensor = (
-            obs["extra_view_images"] if "extra_view_images" in obs else None
-        )
-        states = obs["states"] if "states" in obs else None
-        task_descriptions = (
-            list(obs["task_descriptions"]) if "task_descriptions" in obs else None
-        )
-
-        return {
-            "main_images": image_tensor,  # [N_ENV, H, W, C]
-            "wrist_images": wrist_image_tensor,  # [N_ENV, H, W, C] or [N_ENV, N_IMG, H, W, C]
-            "extra_view_images": extra_view_image_tensor,  # [N_ENV, N_IMG, H, W, C]
-            "states": states,
-            "task_descriptions": task_descriptions,
-        }
-
-    def to_dict(self):
-        env_output_dict = {}
-
-        env_output_dict["obs"] = self.prepare_observations(self.obs)
-        env_output_dict["final_obs"] = (
-            self.prepare_observations(self.final_obs)
-            if self.final_obs is not None
-            else None
-        )
-        env_output_dict["dones"] = self.dones
-        env_output_dict["terminations"] = self.terminations
-        env_output_dict["truncations"] = self.truncations
-        env_output_dict["rewards"] = self.rewards
-        env_output_dict["intervene_actions"] = self.intervene_actions
-        env_output_dict["intervene_flags"] = self.intervene_flags
-
-        return env_output_dict
-
-
-@dataclass(kw_only=True)
-class ChunkStepResult:
-    # required
-    prev_logprobs: torch.Tensor = None  # [B, action_dim]
-    prev_values: torch.Tensor = None  # [B, 1]
-    dones: torch.Tensor = None  # [B, 1]
-    truncations: torch.Tensor = None  # [B, 1]
-    terminations: torch.Tensor = None  # [B, 1]
-    rewards: torch.Tensor = None  # [B, 1]
-    forward_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
-
-    def __post_init__(self):
-        if self.prev_logprobs is not None:
-            self.prev_logprobs = self.prev_logprobs.cpu().contiguous()
-        if self.prev_values is not None:
-            self.prev_values = self.prev_values.cpu().contiguous()
-        if self.dones is not None:
-            self.dones = self.dones.cpu().contiguous()
-        if self.terminations is not None:
-            self.terminations = self.terminations.cpu().contiguous()
-        if self.truncations is not None:
-            self.truncations = self.truncations.cpu().contiguous()
-        if self.rewards is not None:
-            self.rewards = self.rewards.cpu().contiguous()
-        if self.forward_inputs:
-            self.forward_inputs = put_tensor_device(self.forward_inputs, "cpu")
-
-
-@dataclass(kw_only=True)
-class EmbodiedRolloutResult:
-    # required
-    rollout_epoch: int = None
-    prev_logprobs: list[torch.Tensor] = field(
-        default_factory=list
-    )  # lens of results is rollout_epoch * n_chunk_steps
-    prev_values: list[torch.Tensor] = field(
-        default_factory=list
-    )  # lens is rollout_epoch * (n_chunk_steps + 1) because of the bootstrap value
-    dones: list[torch.Tensor] = field(
-        default_factory=list
-    )  # lens of results is rollout_epoch * (n_chunk_steps + 1) because of the bootstrap value
-    terminations: list[torch.Tensor] = field(
-        default_factory=list
-    )  # lens of results is rollout_epoch * (n_chunk_steps + 1) because of the bootstrap value
-    truncations: list[torch.Tensor] = field(
-        default_factory=list
-    )  # lens of results is rollout_epoch * (n_chunk_steps + 1) because of the bootstrap value
-    rewards: list[torch.Tensor] = field(
-        default_factory=list
-    )  # lens of results is rollout_epoch * n_chunk_steps
-    forward_inputs: list[dict[str, list[torch.Tensor]]] = field(
-        default_factory=list
-    )  # lens of results is rollout_epoch * n_chunk_steps
-    transitions: list[tuple[dict[str, Any], dict[str, Any]]] = field(
-        default_factory=list
-    )
-
-    def append_result(self, result: ChunkStepResult):
-        if result.prev_logprobs is not None:
-            self.prev_logprobs.append(result.prev_logprobs)
-        if result.prev_values is not None:
-            self.prev_values.append(result.prev_values)
-        if result.dones is not None:
-            self.dones.append(result.dones)
-        if result.truncations is not None:
-            self.truncations.append(result.truncations)
-        if result.terminations is not None:
-            self.terminations.append(result.terminations)
-        if result.rewards is not None:
-            self.rewards.append(result.rewards)
-        if result.forward_inputs:
-            self.forward_inputs.append(result.forward_inputs)
-
-    def add_transition(self, obs, next_obs):
-        self.transitions.append(
-            {
-                "obs": put_tensor_device(obs, "cpu"),
-                "next_obs": put_tensor_device(next_obs, "cpu"),
-            }
-        )
-
-    def to_dict(self):
-        rollout_result_dict = {}
-        rollout_result_dict["prev_logprobs"] = (
-            torch.stack(self.prev_logprobs, dim=0).cpu().contiguous()
-            if len(self.prev_logprobs) > 0
-            else None
-        )
-        rollout_result_dict["prev_values"] = (
-            torch.stack(self.prev_values, dim=0).cpu().contiguous()
-            if len(self.prev_values) > 0
-            else None
-        )
-        rollout_result_dict["dones"] = (
-            torch.stack(self.dones, dim=0).cpu().contiguous()
-            if len(self.dones) > 0
-            else None
-        )
-        rollout_result_dict["terminations"] = (
-            torch.stack(self.terminations, dim=0).cpu().contiguous()
-            if len(self.terminations) > 0
-            else None
-        )
-        rollout_result_dict["truncations"] = (
-            torch.stack(self.truncations, dim=0).cpu().contiguous()
-            if len(self.truncations) > 0
-            else None
-        )
-        rollout_result_dict["rewards"] = (
-            torch.stack(self.rewards, dim=0).cpu().contiguous()
-            if len(self.rewards) > 0
-            else None
-        )
-
-        merged_forward_inputs = stack_list_of_dict_tensor(self.forward_inputs)
-        for k in merged_forward_inputs.keys():
-            assert k not in [
-                "dones",
-                "terminations",
-                "truncations",
-                "rewards",
-                "prev_logprobs",
-                "prev_values",
-            ]
-            rollout_result_dict[k] = merged_forward_inputs[k]
-
-        transition_dict = stack_list_of_dict_tensor(self.transitions)
-        if len(transition_dict) > 0:
-            rollout_result_dict["transitions"] = transition_dict
-
-        assert len(rollout_result_dict["dones"]) == len(
-            rollout_result_dict["prev_values"]
-        ), "dones and prev_values must have the same length"
-        assert (
-            len(rollout_result_dict["dones"])
-            == len(rollout_result_dict["rewards"]) + self.rollout_epoch
-        ), "dones length must be the length of rewards plus rollout_epoch"
-
-        return rollout_result_dict
-
-    def to_splitted_dict(self, split_size) -> list[dict[str, Any]]:
-        return split_dict_to_chunk(self.to_dict(), split_size, dim=1)
-
-
-@dataclass(kw_only=True)
-class AsyncEmbodiedRolloutBuffer:
-    prev_logprobs: asyncio.Queue[torch.Tensor] = field(default_factory=asyncio.Queue)
-    prev_values: asyncio.Queue[torch.Tensor] = field(default_factory=asyncio.Queue)
-    dones: asyncio.Queue[torch.Tensor] = field(default_factory=asyncio.Queue)
-    terminations: asyncio.Queue[torch.Tensor] = field(default_factory=asyncio.Queue)
-    truncations: asyncio.Queue[torch.Tensor] = field(default_factory=asyncio.Queue)
-    rewards: asyncio.Queue[torch.Tensor] = field(default_factory=asyncio.Queue)
-    transitions: asyncio.Queue[tuple[torch.Tensor, torch.Tensor]] = field(
-        default_factory=asyncio.Queue
-    )
-
-    forward_inputs: asyncio.Queue[dict[str, Any]] = field(default_factory=asyncio.Queue)
-
-    batches_per_send = 1
-
-    should_stop = False
-
-    @staticmethod
-    def create_from_dict(data_dict_list):
-        data_dict_keys = data_dict_list[0].keys()
-
-        prev_logprobs = asyncio.Queue()
-        prev_values = asyncio.Queue()
-        dones = asyncio.Queue()
-        truncations = asyncio.Queue()
-        terminations = asyncio.Queue()
-        rewards = asyncio.Queue()
-        transitions = asyncio.Queue()
-        forward_inputs = asyncio.Queue()
-
-        for data_dict in data_dict_list:
-            if "prev_logprobs" in data_dict_keys:
-                prev_logprobs.put(data_dict["prev_logprobs"])
-            if "prev_values" in data_dict_keys:
-                prev_values.put(data_dict["prev_values"])
-            if "dones" in data_dict_keys:
-                dones.put(data_dict["dones"])
-            if "truncations" in data_dict_keys:
-                truncations.put(data_dict["truncations"])
-            if "terminations" in data_dict_keys:
-                terminations.put(data_dict["terminations"])
-            if "rewards" in data_dict_keys:
-                rewards.put(data_dict["rewards"])
-            if "transitions" in data_dict_keys:
-                transitions.put(data_dict["transitions"])
-            if "forward_inputs" in data_dict_keys:
-                forward_inputs.put(data_dict["forward_inputs"])
-
-        return AsyncEmbodiedRolloutBuffer(
-            prev_logprobs=prev_logprobs,
-            prev_values=prev_values,
-            dones=dones,
-            terminations=terminations,
-            truncations=truncations,
-            rewards=rewards,
-            forward_inputs=forward_inputs,
-            transitions=transitions,
-        )
-
-    async def add_result(self, result: dict[str, Any]):
-        assert "prev_logprobs" in result
-        await self.prev_logprobs.put(
-            result["prev_logprobs"].cpu().contiguous()
-        )  # if "prev_logprobs" in result else None
-        await self.prev_values.put(
-            result["prev_values"].cpu().contiguous()
-        )  # if "prev_values" in result else None
-
-        await self.forward_inputs.put(
-            put_tensor_device(result["forward_inputs"], "cpu")
-        )
-
-    async def add_transition(self, obs, next_obs):
-        await self.transitions.put(
-            {
-                "obs": put_tensor_device(obs, "cpu"),
-                "next_obs": put_tensor_device(next_obs, "cpu"),
-            }
-        )
-
-    async def add(self, key, items):
-        if key == "rewards":
-            await self.rewards.put(items)
-        elif key == "dones":
-            await self.dones.put(items)
-        elif key == "terminations":
-            await self.terminations.put(items)
-        elif key == "truncations":
-            await self.truncations.put(items)
-        elif key == "prev_values":
-            await self.prev_values.put(items)
-        else:
-            raise NotImplementedError
-
-    async def send_data(self, data_channel: Channel, split_num):
-        # Collect data
-        prev_logprobs = []
-        dones = []
-        truncations = []
-        terminations = []
-        rewards = []
-        transitions = []
-        forward_inputs = []
-
-        for _ in range(self.batches_per_send):
-            prev_logprobs.append(await self.prev_logprobs.get())
-            dones.append(await self.dones.get())
-            truncations.append(await self.truncations.get())
-            terminations.append(await self.terminations.get())
-            rewards.append(await self.rewards.get())
-            transitions.append(await self.transitions.get())
-            forward_inputs.append(await self.forward_inputs.get())
-
-        data = {
-            "prev_logprobs": torch.cat(prev_logprobs, dim=0).cpu().contiguous(),
-            "dones": torch.cat(dones, dim=0).cpu().contiguous(),
-            "truncations": torch.cat(truncations, dim=0).cpu().contiguous(),
-            "terminations": torch.cat(terminations, dim=0).cpu().contiguous(),
-            "rewards": torch.cat(rewards, dim=0).cpu().contiguous(),
-            "transitions": cat_list_of_dict_tensor(transitions),
-        }
-        data.update(cat_list_of_dict_tensor(forward_inputs))
-        splited_data = split_dict_to_chunk(data, split_size=split_num, dim=0)
-
-        # Organize data
-        for i in range(split_num):
-            data_channel.put(splited_data[i])
-
-    async def run(self, data_channel, split_num):
-        cnt = 0
-        while not self.should_stop:
-            cnt += 1
-            await self.send_data(data_channel, split_num)
-
-    async def stop(self):
-        self.should_stop = True

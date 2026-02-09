@@ -1,5 +1,5 @@
-How to evaluate? Embodied Agent Scenarios
-============================================
+Evaluation Tutorial 1: Embodied VLA
+====================================
 
 Introduction
 ------------
@@ -36,14 +36,15 @@ Quick Start
 
 Any YAML file can be used for evaluation with the ``eval_embodiment.sh`` script, provided it includes the relevant ``env.eval`` configuration. Taking ``examples/embodiment/config/libero_10_grpo_openvlaoft_eval.yaml`` as an example here, you can modify the following in the configuration file as needed:
 
-1. **Adjust model path** (Current code logic requires modifying both the actor and rollout environments simultaneously): Modify the following three parameters to load the model to be evaluated:
+1. **Adjust model path** : Modify the following two parameters to load the model to be evaluated:
 
   1. ``rollout.model.model_path``
 
-  2. ``actor.model.model_path``
+  2. ``runner.ckpt_path`` (Optional) – ``.pt`` format file path, set this parameter if you want to evaluate a specific checkpoint.
 
-  3. ``actor.tokenizer.tokenizer_model``
-
+.. Note::
+  
+   If you need to convert checkpoint files from ``.distcp`` format to ``.pt`` format, please refer to the :doc:`Checkpoint Convertor <../tutorials/advance/convertor>` documentation for detailed instructions.
 
 2. **Control environment random seed**: You can adjust ``env.seed`` to change the environment's random function for result reproducibility, etc.
 
@@ -93,7 +94,6 @@ Any YAML file can be used for evaluation with the ``eval_embodiment.sh`` script,
   export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
   export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 
-  export CUDA_LAUNCH_BLOCKING=1
   export HYDRA_FULL_ERROR=1
 
 
@@ -154,7 +154,6 @@ Then, execute the following command in the terminal to start the evaluation.
   export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
   export SRC_FILE="${EMBODIED_PATH}/eval_embodied_agent.py"
 
-  export CUDA_LAUNCH_BLOCKING=1
   export HYDRA_FULL_ERROR=1
 
   EVAL_NAME=YOUR_EVAL_NAME
@@ -182,7 +181,7 @@ Then, execute the following command in the terminal to start the evaluation.
           env.eval.total_num_envs=${TOTAL_NUM_ENVS} \
           env.eval.init_params.id=${env_id} \
           env.eval.init_params.obj_set=${obj_set} \
-          runner.eval_policy_path=${CKPT_PATH}"
+          runner.ckpt_path=${CKPT_PATH}"
 
       echo ${CMD} > ${MEGA_LOG_FILE}
       ${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
@@ -203,7 +202,7 @@ Then, execute the following command in the terminal to start the evaluation.
           env.eval.total_num_envs=${TOTAL_NUM_ENVS} \
           env.eval.init_params.id=${env_id} \
           env.eval.init_params.obj_set=${obj_set} \
-          runner.eval_policy_path=${CKPT_PATH}"
+          runner.ckpt_path=${CKPT_PATH}"
       echo ${CMD}  > ${MEGA_LOG_FILE}
       ${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
   done

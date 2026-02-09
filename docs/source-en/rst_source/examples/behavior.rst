@@ -78,9 +78,33 @@ Dependency Installation
 
    Additionally, if your GPU lacks Ray Tracing capabilities (e.g., A100, H100), the rendering quality of BEHAVIOR will be very poor, and the visuals may suffer from severe artifacts or blurriness.
 
+1. Clone RLinf Repository
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+   # For mainland China users, you can use the following for better download speed:
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+2. Install Dependencies
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 **Option 1: Docker Image**
 
-Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-behavior`` for the experiment.
+Use Docker image for the experiment.
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.1-behavior
+      # For mainland China users, you can use the following for better download speed:
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-behavior
 
 **Option 2: Custom Environment**
 
@@ -88,8 +112,14 @@ Install dependencies directly in your environment by running the following comma
 
 .. code:: bash
 
-   pip install uv
+   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
+
+   # Install openvla-oft environment
    bash requirements/install.sh embodied --model openvla-oft --env behavior
+   source .venv/bin/activate
+
+   # Install openpi environment
+   bash requirements/install.sh embodied --model openpi --env behavior
    source .venv/bin/activate
 
 Assets Download
@@ -123,6 +153,8 @@ Assets Download
 
    # Make sure you are inside the correct Python virtual environment (venv) before running below commands
    # For our Docker image, you need to switch to the `openvla-oft` venv via `source switch_env openvla-oft`
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
    python -c "from omnigibson.utils.asset_utils import download_omnigibson_robot_assets; download_omnigibson_robot_assets()"
    python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets(accept_license=True)" 
    python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
@@ -145,8 +177,26 @@ OpenVLA-OFT provides a unified model that is suitable for all task types in the 
    git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-Behavior
 
    # Method 2: Using huggingface-hub
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir RLinf-OpenVLAOFT-Behavior
+
+**OpenPI Model Download**
+
+.. code:: bash
+
+   # Download the model (choose either method)
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-Behavior
+
+   # Method 2: Using huggingface-hub
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+   hf download RLinf/RLinf-Pi0-Behavior --local-dir RLinf-Pi0-Behavior
+
 
 After downloading, please make sure to specify the model path correctly in your configuration yaml file.
 

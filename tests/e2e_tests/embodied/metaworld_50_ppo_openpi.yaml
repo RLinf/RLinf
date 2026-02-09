@@ -20,7 +20,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: "../results"
+    log_path: "../results/metaworld_50_ppo_openpi"
     project_name: rlinf
     experiment_name: "test_openpi"
     logger_backends: ["tensorboard"] # wandb, swanlab
@@ -31,8 +31,6 @@ runner:
   only_eval: False
   val_check_interval: -1
   save_interval: 40
-  seq_length: 4096
-  max_prompt_length: 50
 
 algorithm:
   normalize_advantages: True

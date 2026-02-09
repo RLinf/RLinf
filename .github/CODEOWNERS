@@ -38,7 +38,11 @@
 
 /tests @andylin-hao
 /toolkits/auto_placement @i-Taozi
-/toolkits/ckpt_convertor @qurakchin
+/toolkits/ckpt_convertor @qurakchin @guozhen1997
+/toolkits/code_verifier @qurakchin
+/toolkits/math_verifier @guozhen1997
+/toolkits/realworld_check @andylin-hao @zanghz21
 
+/.cursor @andylin-hao
 /.pre-commit-config.yaml @andylin-hao
 /pyproject.toml @andylin-hao

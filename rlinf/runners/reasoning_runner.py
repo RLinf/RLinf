@@ -59,7 +59,7 @@ class ReasoningRunner:
         rollout: Union["SGLangWorker", "VLLMWorker"],
         inference: Optional[Union["FSDPInference", "MegatronInference"]],
         actor: Union["FSDPActor", "MegatronActor"],
-        reward: "RewardWorker",
+        reward: Optional["RewardWorker"],
         scheduler: "SchedulerWorker" = None,
     ):
         self.cfg = cfg
@@ -86,7 +86,10 @@ class ReasoningRunner:
         # Create a local channel (i.e., a channel that is different in every process)
         # if inference is not a dedicated worker
         self.inference_channel = Channel.create("Inference")
-        self.reward_channel = Channel.create("Reward")
+        if self.reward is not None:
+            self.reward_channel = Channel.create("Reward")
+        else:
+            self.reward_channel = self.rollout_channel
 
         # Configurations
         self.compute_ref_logprobs = (
@@ -166,7 +169,10 @@ class ReasoningRunner:
             f"{len(self.val_dataloader)}"
         )
 
-    def init_workers(self):
+    def init_rollout_workers(self):
+        """init rollout worker."""
+        rollout_handle = self.rollout.init_worker()
+
         # Must be done before actor init
         if self.cfg.runner.resume_dir is None:
             logging.info("Training from scratch")
@@ -174,21 +180,31 @@ class ReasoningRunner:
                 self.cfg.actor.training_backend == "megatron"
                 and self.cfg.actor.megatron.use_hf_ckpt
             ):
-                from toolkits.ckpt_convertor.convert_hf_to_mg import convert_hf_to_mg
+                from toolkits.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
+                    convert_hf_to_mg,
+                )
 
                 convert_hf_to_mg(
                     self.cfg.actor.megatron.ckpt_convertor.hf_model_path,
                     self.cfg.actor.megatron.ckpt_convertor,
                 )
 
-        # Init workers
-        self.rollout.init_worker().wait()
+        rollout_handle.wait()
         if self.use_pre_process_policy:
             self.rollout.offload_engine().wait()
-        self.actor.init_worker().wait()
+
+    def init_actor_workers(self):
+        """init actor worker and reward worker."""
+        if self.reward is not None:
+            self.reward.init_worker().wait()
+
+        actor_handle = self.actor.init_worker()
         if self.has_dedicated_inference:
-            self.inference.init_worker().wait()
-        self.reward.init_worker().wait()
+            inference_handle = self.inference.init_worker()
+
+        actor_handle.wait()
+        if self.has_dedicated_inference:
+            inference_handle.wait()
 
         if self.cfg.runner.resume_dir is None:
             return
@@ -212,6 +228,38 @@ class ReasoningRunner:
             logging.warning(
                 f"Warning: No dataloader state found at {dataloader_local_path}, will start from scratch"
             )
+
+    def init_workers(self):
+        if self.cfg.runner.resume_dir == "auto":
+            checkpoints_dir = os.path.join(
+                self.cfg.runner.logger.log_path, "checkpoints"
+            )
+
+            checkpoint_steps = []
+            if not os.path.exists(checkpoints_dir):
+                logging.info("No checkpoints found, starting from scratch")
+                self.cfg.runner.resume_dir = None
+            else:
+                checkpoint_steps = [
+                    int(d.split("global_step_")[-1])
+                    for d in os.listdir(checkpoints_dir)
+                    if d.startswith("global_step_")
+                    and os.path.isdir(os.path.join(checkpoints_dir, d))
+                ]
+
+            if checkpoint_steps:
+                max_step = max(checkpoint_steps)
+                self.cfg.runner.resume_dir = os.path.join(
+                    checkpoints_dir, f"global_step_{max_step}"
+                )
+                logging.info(
+                    f"Auto resume from checkpoint: {self.cfg.runner.resume_dir}"
+                )
+            else:
+                self.cfg.runner.resume_dir = None
+                logging.info("No checkpoints found, starting from scratch")
+        self.init_rollout_workers()
+        self.init_actor_workers()
 
     def _compute_flops_metrics(self, time_metrics, act_rollout_metrics) -> dict:
         rollout_time = time_metrics.get("rollout")

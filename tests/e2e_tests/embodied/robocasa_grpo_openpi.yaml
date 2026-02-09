@@ -20,7 +20,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: "../results"
+    log_path: "../results/robocasa_grpo_openpi"
     project_name: rlinf
     experiment_name: "test_openpi"
     logger_backends: ["tensorboard"] # wandb, swanlab
@@ -28,12 +28,10 @@ runner:
   max_epochs: 1
   max_steps: -1
   only_eval: False
-  eval_policy_path: null  # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
+  ckpt_path: null  # Optional: .pt file or None, if None, will use the checkpoint in rollout.model.model_path
 
   val_check_interval: -1
   save_interval: -1
-  seq_length: 4096
-  max_prompt_length: 50
 
   resume_dir: null
 

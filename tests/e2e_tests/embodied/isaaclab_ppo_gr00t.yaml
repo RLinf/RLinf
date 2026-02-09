@@ -22,7 +22,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: /workspace/results/
+    log_path: /workspace/results/isaaclab_ppo_gr00t
     project_name: rlinf
     experiment_name: "ci-test"
     logger_backends: ["tensorboard"] # wandb, swanlab
@@ -33,8 +33,6 @@ runner:
   only_eval: False
   val_check_interval: -1
   save_interval: -1
-  seq_length: 1024
-  max_prompt_length: 30
 
 algorithm:
   normalize_advantages: True

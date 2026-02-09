@@ -348,3 +348,102 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         if component_name not in self._component_rank_map:
             return None
         return super().get_hardware_ranks(component_name)
+
+
+class ModelParallelEvalComponentPlacement(ComponentPlacement):
+    """Component placement for model-parallel components in eval.
+
+    The components must be rollout and reward, whose GPUs must be continuous.
+
+    This placement only supports collocated mode.
+    """
+
+    def __init__(self, config: DictConfig, cluster: Cluster):
+        """Initialize ModelParallelEvalComponentPlacement
+
+        Args:
+            config (DictConfig): The configuration dictionary for the component placement.
+        """
+        super().__init__(config, cluster)
+
+        self._rollout_gpus = self._get_component_hardware("rollout")
+        self._reward_gpus = self._get_component_hardware("reward")
+        self._cluster_num_gpus = cluster.num_accelerators
+        assert self._rollout_gpus is not None, (
+            "Rollout GPUs must be specified in the component_placement config."
+        )
+        assert self._reward_gpus is not None, (
+            "Reward GPUs must be specified in the component_placement config."
+        )
+        assert self._rollout_gpus == list(
+            range(self._rollout_gpus[0], self._rollout_gpus[-1] + 1)
+        ), f"Rollout GPUs {self._rollout_gpus} must be continuous."
+
+        self._rollout_num_gpus = len(self._rollout_gpus)
+        self._reward_num_gpus = len(self._reward_gpus) if self._reward_gpus else 0
+
+        self._placement_mode = PlacementMode.COLLOCATED
+
+        # Sanity checking
+        assert self.rollout_tp_size <= self.rollout_world_size, (
+            f"Rollout TP size {self.rollout_tp_size} must be less than or equal to Rollout world size {self.rollout_world_size}."
+        )
+
+        self._generate_placements()
+
+    def _generate_placements(self):
+        assert self._placement_mode == PlacementMode.COLLOCATED
+        self._placements["rollout"] = PackedPlacementStrategy(
+            self._rollout_gpus[0],
+            self._rollout_gpus[-1],
+            num_hardware_per_process=self.rollout_tp_size,
+            stride=1,
+        )
+        if self._reward_gpus:
+            self._placements["reward"] = PackedPlacementStrategy(
+                self._reward_gpus[0], self._reward_gpus[-1]
+            )
+
+    @property
+    def is_collocated(self):
+        return True
+
+    @property
+    def is_disaggregated(self):
+        return False
+
+    @property
+    def is_auto(self):
+        return False
+
+    @property
+    def is_pipeline(self):
+        return False
+
+    @property
+    def has_dedicated_inference(self):
+        return False
+
+    @property
+    def rollout_dp_size(self) -> int:
+        return self._rollout_num_gpus // (
+            self._config.rollout.get("tensor_parallel_size", 1)
+            * self._config.rollout.get("pipeline_parallel_size", 1)
+        )
+
+    @property
+    def rollout_tp_size(self) -> int:
+        return self._config.rollout.get("tensor_parallel_size", 1)
+
+    @property
+    def rollout_world_size(self) -> int:
+        return self._rollout_num_gpus
+
+    @property
+    def reward_world_size(self) -> int:
+        return self._reward_num_gpus
+
+    def _get_component_hardware(self, component_name: str):
+        if component_name not in self._component_rank_map:
+            return None
+        return super().get_hardware_ranks(component_name)

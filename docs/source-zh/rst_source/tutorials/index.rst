@@ -30,6 +30,7 @@ RLinf 采用模块化设计，通过 Worker、WorkerGroup 与 Channel 抽象了�
    mode/index
    scheduler/index
    communication/index
+   components/index
    advance/index
    rlalg/index
    extend/index

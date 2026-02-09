@@ -62,6 +62,7 @@ class CalvinEnv(gym.Env):
         self.reset_state_ids_all = self.get_reset_state_ids_all()
         self.update_reset_state_ids()
         self._init_task_and_trial_ids()
+        self._init_task_info()
         self._init_env()
 
         self.prev_step_reward = np.zeros(self.num_envs)
@@ -137,6 +138,13 @@ class CalvinEnv(gym.Env):
             self._get_task_and_trial_ids_from_reset_state_ids(self.reset_state_ids)
         )
 
+    def _init_task_info(self):
+        self.task_sequence = [None] * self.num_envs
+        self.current_task = [None] * self.num_envs
+        self.current_task_idx = [0] * self.num_envs
+        self.previous_info = [None] * self.num_envs
+        self.task_descriptions = [None] * self.num_envs
+
     def _get_random_reset_state_ids(self, num_reset_states):
         reset_state_ids = self._generator.integers(
             low=0, high=self.total_num_group_envs, size=(num_reset_states,)
@@ -200,12 +208,14 @@ class CalvinEnv(gym.Env):
         ]
         return init_state
 
-    def _get_task_sequence(self, env_idx):
-        task_sequence = [
-            self.task_suite.get_task_sequence(self.trial_ids[env_id])
-            for env_id in env_idx
-        ]
-        return task_sequence
+    def _get_task_info(self, env_idx):
+        for i in env_idx:
+            self.task_sequence[i] = self.task_suite.get_task_sequence(self.trial_ids[i])
+            task = self.task_sequence[i][0]
+            self.current_task[i] = task
+            self.current_task_idx[i] = 0
+            self.previous_info[i] = self.env.get_info(id=i)[0]
+            self.task_descriptions[i] = self.task_suite.get_task_descriptions(task)
 
     @property
     def elapsed_steps(self):
@@ -252,6 +262,7 @@ class CalvinEnv(gym.Env):
         episode_info["return"] = self.returns.copy()
         episode_info["episode_len"] = self.elapsed_steps.copy()
         episode_info["reward"] = episode_info["return"] / episode_info["episode_len"]
+        episode_info["avg_len"] = self.current_task_idx.copy()
         infos["episode"] = to_tensor(episode_info)
         return infos
 
@@ -310,15 +321,7 @@ class CalvinEnv(gym.Env):
         init_state = self._get_reset_states(env_idx=env_idx)
         robot_obs, scene_obs = self.task_suite.get_obs_for_initial_condition(init_state)
         self.env.reset(id=env_idx, robot_obs=robot_obs, scene_obs=scene_obs)
-        # task
-        self.task_sequence = self._get_task_sequence(env_idx)
-        self.current_task = [self.task_sequence[env_id][0] for env_id in env_idx]
-        self.current_task_idx = [0] * len(env_idx)
-        self.previous_info = self.env.get_info(id=env_idx)
-        self.task_descriptions = [
-            self.task_suite.get_task_descriptions(self.current_task[env_id])
-            for env_id in env_idx
-        ]
+        self._get_task_info(env_idx)
 
     def reset(
         self,
@@ -339,7 +342,7 @@ class CalvinEnv(gym.Env):
             reset_state_ids = self._get_random_reset_state_ids(num_reset_states)
 
         self._reconfigure(reset_state_ids, env_idx)
-        raw_obs = self.env.get_obs(id=env_idx)
+        raw_obs = self.env.get_obs()
         obs = self._wrap_obs(raw_obs)
         if env_idx is not None:
             self._reset_metrics(env_idx)

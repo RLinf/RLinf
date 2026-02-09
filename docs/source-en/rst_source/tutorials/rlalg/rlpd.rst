@@ -85,7 +85,6 @@ RLPD builds on the SAC configuration with additional parameters for the offline 
    rollout:
      group_name: "RolloutGroup"
      backend: "huggingface"
-     model_dir: ""
      enable_offload: False
      pipeline_stage_num: 1
 

@@ -77,7 +77,8 @@ jobs:
               - 'rlinf/config.py'
               - 'rlinf/__init__.py'
               - 'rlinf/*/__init__.py'
-              - 'toolkits/**'
+              - 'toolkits/ckpt_convertor/**'
+              - 'toolkits/auto_placement/**'
             embodied_filter: &embodied
               - *shared
               - 'rlinf/envs/**'
@@ -87,6 +88,9 @@ jobs:
               - 'rlinf/runners/*embodied*.py'
               - 'examples/embodiment/**'
               - 'tests/e2e_tests/embodied/**'
+              - 'toolkits/eval_scripts_openpi/**'
+              - 'toolkits/realworld_check/**'
+              - 'toolkits/replay_buffer/**'
               - '.github/workflows/embodied-e2e-tests.yml'
             agent_reason_filter: &agent
               - *shared
@@ -95,12 +99,17 @@ jobs:
               - 'rlinf/runners/agent_runner.py'
               - 'rlinf/runners/reasoning_runner.py'
               - 'rlinf/runners/coding_online_rl_runner.py'
+              - 'rlinf/runners/agent_eval_runner.py'
+              - 'rlinf/runners/reasoning_eval_runner.py'
               - 'examples/coding_online_rl/**'
               - 'examples/multiturn_demo/**'
               - 'examples/reasoning/**'
+              - 'examples/searchr1/**'
               - 'tests/e2e_tests/agent/**'
               - 'tests/e2e_tests/coding_online_rl/**'
               - 'tests/e2e_tests/reasoning/**'
+              - 'toolkits/code_verifier/**'
+              - 'toolkits/math_verifier/**'
               - '.github/workflows/agent-e2e-tests.yml'
             sft_filter: &sft
               - *shared

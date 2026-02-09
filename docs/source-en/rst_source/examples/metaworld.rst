@@ -60,9 +60,33 @@ Algorithm
 Dependency Installation
 -----------------------
 
+1. Clone RLinf Repository
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+   # For mainland China users, you can use the following for better download speed:
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+2. Install Dependencies
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 **Option 1: Docker Image**
 
-Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-metaworld`` for the experiment.
+Use Docker image for the experiment.
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.1-metaworld
+      # For mainland China users, you can use the following for better download speed:
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-metaworld
 
 **Option 2: Custom Environment**
 
@@ -70,7 +94,8 @@ Install dependencies directly in your environment by running the following comma
 
 .. code:: bash
 
-   pip install uv
+   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
+
    bash requirements/install.sh embodied --model openpi --env metaworld
    source .venv/bin/activate
 
@@ -88,6 +113,8 @@ Before starting training, you need to download the corresponding pretrained mode
    git clone https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT
 
    # Method 2: Using huggingface-hub
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-MetaWorld-SFT --local-dir RLinf-Pi0-MetaWorld-SFT
    hf download RLinf/RLinf-Pi05-MetaWorld-SFT --local-dir RLinf-Pi05-MetaWorld-SFT
@@ -231,7 +258,7 @@ Visualization and Results
 
 MetaWorld Results
 -------------------------
-The results for Diffusion Policy, TinyVLA, and SmolVLA in the table below are referenced from the `SmolVLA paper <https://arxiv.org/abs/2403.04880>`_. The SFT results for π\ :sub:`0`\ and π\ :sub:`0.5`\ are obtained by retraining using the official `dataset <https://huggingface.co/datasets/lerobot/metaworld_mt50>`_ provided by LeRobot.
+The results for Diffusion Policy, TinyVLA, and SmolVLA in the table below are referenced from the `SmolVLA paper <https://arxiv.org/abs/2403.04880>`_. The SFT results for π\ :sub:`0`\  and π\ :sub:`0.5`\  are obtained by retraining using the official `dataset <https://huggingface.co/datasets/lerobot/metaworld_mt50>`_ provided by LeRobot.
 
 .. list-table:: **MetaWorld-MT50 Performance Comparison (Success Rate, %)**
    :widths: 15 10 10 10 10 10

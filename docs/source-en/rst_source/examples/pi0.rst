@@ -93,9 +93,33 @@ Algorithm
 Dependency Installation
 -----------------------
 
+1. Clone RLinf Repository
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+   # For mainland China users, you can use the following for better download speed:
+   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+2. Install Dependencies
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 **Option 1: Docker Image**
 
-Use the Docker image ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` for the experiment.
+Use Docker image for the experiment.
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
+      # For mainland China users, you can use the following for better download speed:
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
 
 Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
 
@@ -109,7 +133,8 @@ Install dependencies directly in your environment by running the following comma
 
 .. code:: bash
 
-   pip install uv
+   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
+
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
@@ -128,6 +153,8 @@ Before starting training, you need to download the corresponding pretrained mode
    git clone https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 
    # Method 2: Using huggingface-hub
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 
@@ -363,7 +390,7 @@ For models after SFT or RL training, we provide two evaluation methods:
 
 .. note::
 
-   ``Metaworld`` and ``CALVIN`` currently do not support the evaluation mode with ``env.eval.auto_reset=True``. It is recommended to use individual script files for model evaluation.
+   ``Metaworld`` currently do not support the evaluation mode with ``env.eval.auto_reset=True``. It is recommended to use individual script files for model evaluation.
 
 - Use individual script files for model evaluation, refer to the example `README.md <https://github.com/RLinf/RLinf/blob/main/toolkits/eval_scripts_openpi/README.md>`__. This method's evaluation scripts are consistent with the official evaluation scripts provided by ``openpi``, supporting output of success rates for each subtask, but it is slower.
 
@@ -396,7 +423,7 @@ the LIBERO environment, run:
 
 ::
 
-   bash examples/embodiment/run_embodiment.sh libero_10_ppo_openpi
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi_quickstart
 
 --------------
 

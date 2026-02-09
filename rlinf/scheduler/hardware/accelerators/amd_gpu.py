@@ -16,10 +16,14 @@
 # https://github.com/ray-project/ray/blob/161849364a784442cc659fb9780f1a6adee85fce/python/ray/_private/accelerators/amd_gpu.py
 
 import os
+from typing import TYPE_CHECKING, Optional
 
 from ray._private.accelerators.amd_gpu import AMDGPUAcceleratorManager
 
 from .accelerator import AcceleratorManager, AcceleratorType
+
+if TYPE_CHECKING:
+    from ...collective import CollectiveGroupOptions
 
 
 @AcceleratorManager.register_manager(AcceleratorType.AMD_GPU)
@@ -102,3 +106,36 @@ class AMDGPUManager(AcceleratorManager):
     def get_device_type() -> str:
         """Get the device type."""
         return "cuda"
+
+    @staticmethod
+    def get_accel_pg_options(options: Optional["CollectiveGroupOptions"]):
+        """Get the accelerator CCL process group options."""
+        from torch.distributed import ProcessGroupNCCL
+
+        if options is None or options.is_empty_options():
+            return None
+        else:
+            pg_options = ProcessGroupNCCL.Options()
+            # Default values following https://github.com/NVIDIA/Megatron-LM/blob/98d8c56dbdc9cc91b8a473debcf400958bba4524/megatron/core/parallel_state.py#L160
+            pg_options.config.cga_cluster_size = (
+                options.accel_cluster_size or 4
+            )  # Default 4
+            pg_options.config.max_ctas = options.accel_max_ctas or 32  # Default 32
+            pg_options.config.min_ctas = options.accel_min_ctas or 1  # Default 1
+            pg_options.is_high_priority_stream = options.is_high_priority_stream
+
+            config = pg_options.config
+            assert 0 <= config.cga_cluster_size <= 8, (
+                f"cga_cluster_size must be between 0 and 8, but got {config.cga_cluster_size}"
+            )
+            assert 1 <= config.max_ctas <= 32, (
+                f"max_ctas must be between 1 and 32, but got {config.max_ctas}"
+            )
+            assert 1 <= config.min_ctas <= 32, (
+                f"min_ctas must be between 1 and 32, but got {config.min_ctas}"
+            )
+            assert config.max_ctas >= config.min_ctas, (
+                f"max_ctas must be greater than or equal to min_ctas, but got {config.max_ctas} and {config.min_ctas}"
+            )
+
+            return pg_options
