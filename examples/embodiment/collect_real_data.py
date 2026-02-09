@@ -51,10 +51,10 @@ class DataCollector(Worker):
 
         self.buffer = TrajectoryReplayBuffer(
             seed=self.cfg.seed if hasattr(self.cfg, "seed") else 1234,
-            storage_dir=buffer_path,
-            storage_format="pt",
-            save_trajectories=True,
             enable_cache=False,
+            auto_save=True,
+            auto_save_path=buffer_path,
+            trajectory_format="pt",
         )
 
     def _process_obs(self, obs):
