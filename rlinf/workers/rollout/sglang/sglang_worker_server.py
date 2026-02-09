@@ -92,6 +92,7 @@ class SGLangWorkerWithHTTPServer(SGLangWorker):
 
             if self._return_logprobs:
                 request.logprobs = True
+                request.top_logprobs = 1 
 
             if request.temperature is None and "temperature" in self._sampling_params:
                 request.temperature = self._sampling_params["temperature"]
