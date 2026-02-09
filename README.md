@@ -109,7 +109,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
           </ul>
           <li><b>Custom Models</b></li>
           <ul>
-            <li>MLP-Policy ✅</li>
+            <li><a href="https://github.com/RLinf/RLinf/blob/main/docs/source-en/rst_source/examples/mlp.rst">MLP-Policy</a> ✅</li>
             <li>CNN-Policy ✅</li>
           </ul>
         </ul>
