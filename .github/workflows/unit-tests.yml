@@ -10,10 +10,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Create environment
+      - name: Create environment and install dependencies
         run: |
           uv venv
           UV_TORCH_BACKEND=auto uv sync
+          uv pip install transformers
 
       - name: Run pytest
         timeout-minutes: 20
@@ -39,7 +40,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Install dependencies
+      - name: Create environment and install dependencies
         run: |
           pip install uv
           uv venv
