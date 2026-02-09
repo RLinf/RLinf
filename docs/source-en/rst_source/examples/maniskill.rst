@@ -297,11 +297,11 @@ Running on a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) a
 
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/mani_openvla.png" style="width: 100%;"/>
+       <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-vla/mani_openvla.png" style="width: 100%;"/>
        <p><em>OpenVLA</em></p>
      </div>
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/mani_openvlaoft.png" style="width: 100%;"/>
+       <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-vla/mani_openvlaoft.png" style="width: 100%;"/>
        <p><em>OpenVLA-OFT</em></p>
      </div>
    </div>
