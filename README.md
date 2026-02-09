@@ -60,8 +60,8 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 <table style="width: 100%; table-layout: auto; border-collapse: collapse;">
   <thead align="center" valign="bottom">
     <tr>
-      <th style="min-width: 120px; text-align: left;">Simulators</th>
-      <th style="min-width: 120px;">Real-world Robotics</th>
+      <th style="min-width: 120px; text-align: left;">Simulators RL</th>
+      <th style="min-width: 120px;">Real-world Robotics RL</th>
       <th style="min-width: 120px;">Models</th>
       <th style="min-width: 120px;">Algorithms</th>
     </tr>

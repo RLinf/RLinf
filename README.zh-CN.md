@@ -60,8 +60,8 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 <table style="width: 100%; table-layout: auto; border-collapse: collapse;">
   <thead align="center" valign="bottom">
     <tr>
-      <th style="min-width: 120px; text-align: left;">模拟器</th>
-      <th style="min-width: 120px;">真机</th>
+      <th style="min-width: 120px; text-align: left;">模拟器强化学习</th>
+      <th style="min-width: 120px;">真机强化学习</th>
       <th style="min-width: 120px;">模型</th>
       <th style="min-width: 120px;">算法</th>
     </tr>
