@@ -7,9 +7,9 @@ hydra:
   output_subdir: null
 
 cluster:
-  num_nodes: 16
+  num_nodes: 1 
   component_placement:
-    actor,rollout,reward: all
+    actor,rollout,reward: 0-1
 
 runner:
   task_type: reasoning
@@ -276,3 +276,8 @@ reward:
 
 critic:
   use_critic_model: false
+
+profile_data:
+  actor_cost: 95.7    # Training component cost (seconds per iteration)
+  inference_cost: 30.8  # Inference component cost (seconds per iteration)
+  rollout_cost: 59.9    # Rollout component cost (seconds per iteration)

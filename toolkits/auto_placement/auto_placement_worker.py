@@ -174,7 +174,7 @@ def get_workflow_graph(cfg) -> dict[str, list[str]]:
                 "rollout": ["actor"],
                 "actor": [],
             }
-    elif cfg.runner.task_type == "embodiment":
+    elif cfg.runner.task_type == "embodied":
         return {
             "env": ["env_rollout"],
             "env_rollout": ["actor"],
