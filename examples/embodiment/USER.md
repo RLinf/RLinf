@@ -210,7 +210,7 @@ USER adopts a fully asynchronous pipeline that decouples data generation, traini
 
 With the Unified Hardware Abstraction Layer, USER treats robots as first-class resources, enabling:
 
-* **Parallel Training**: Training policies on multiple robots simultaneously (e.g., 2x Franka arms) to scale data collection.
+* **Parallel Training**: Training policies on multiple robots simultaneously (e.g., 2x Franka arms) under multi-task setting to scale data collection.
 * **Heterogeneous Training**: Training a unified policy across different robot embodiments (e.g., Franka 7-DoF + ARX 6-DoF).
 
 <div align="center">
@@ -221,7 +221,7 @@ With the Unified Hardware Abstraction Layer, USER treats robots as first-class r
 <strong>Parallel Training (2x Franka)</strong>
 </td>
 <td align="center">
-<img src="https://github.com/RLinf/misc/raw/main/pic/USER/USER-hetero.jpg" alt="Heterogeneous Training" width="350"/>
+<img src="https://github.com/RLinf/misc/raw/main/pic/USER/USER-hetero.jpg" alt="Heterogeneous Training" width="300"/>
 <strong>Heterogeneous (Franka + ARX)</strong>
 </td>
 </tr>
