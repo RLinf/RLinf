@@ -97,4 +97,4 @@ SAC 利用熵正则化的 Bellman 方程和自动温度调控，同时学习一�
          enable_cache: True # 启用内存缓存以减少I/O开销
          cache_size: 6000 # 内存缓存的轨迹数量
          sample_window_size: 6000 # 滑动采样窗口大小
-         min_buffer_size: 200  # 开始更新策略时缓冲区数据量最小值
+         min_buffer_size: 2  # 开始更新策略时缓冲区数据量最小值（以Trajectory为单位）
