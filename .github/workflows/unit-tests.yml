@@ -13,6 +13,7 @@ jobs:
       - name: Create environment and install dependencies
         run: |
           uv venv
+          source .venv/bin/activate
           UV_TORCH_BACKEND=auto uv sync
           uv pip install transformers
 
