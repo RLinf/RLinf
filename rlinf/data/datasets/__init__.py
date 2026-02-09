@@ -95,6 +95,11 @@ def collate_fn(data_list: list["DatasetItem"]) -> dict[str, Any]:
     """
     prompts = []
     lens = []
+    attention_masks = []
+    label_masks = []
+    has_attention_mask = True
+    has_label_mask = True
+
     for it in data_list:
         p = (
             it.prompt
@@ -109,11 +114,73 @@ def collate_fn(data_list: list["DatasetItem"]) -> dict[str, Any]:
         prompts.append(p)
         lens.append(p.numel())
 
+        am = getattr(it, "attention_mask", None)
+        if am is None:
+            has_attention_mask = False
+        else:
+            am = (
+                am
+                if isinstance(am, torch.Tensor)
+                else torch.as_tensor(am, dtype=torch.long)
+            )
+            if am.dim() == 2 and am.size(0) == 1:
+                am = am.squeeze(0)
+            attention_masks.append(am)
+
+        lm = getattr(it, "label_mask", None)
+        if lm is None:
+            has_label_mask = False
+        else:
+            lm = (
+                lm
+                if isinstance(lm, torch.Tensor)
+                else torch.as_tensor(lm, dtype=torch.bool)
+            )
+            if lm.dim() == 2 and lm.size(0) == 1:
+                lm = lm.squeeze(0)
+            label_masks.append(lm)
+
     if len(set(lens)) == 1:
         target_len = lens[0]
     else:
-        target_len = min(lens)
-        prompts = [p[-target_len:] if p.numel() > target_len else p for p in prompts]
+        target_len = max(lens)
+        # pad prompts on the left
+        padded_prompts = []
+        for p in prompts:
+            if p.numel() < target_len:
+                pad = target_len - p.numel()
+                p = torch.nn.functional.pad(p, (pad, 0), value=0)
+            padded_prompts.append(p)
+        prompts = padded_prompts
+
+        if has_attention_mask:
+            # attention_mask is padded on the left
+            # for example attention_mask:
+            # [True, True, True, True, True, True, False, False]
+            padded_attention = []
+            for m in attention_masks:
+                if m.numel() < target_len:
+                    pad = target_len - m.numel()
+                    m = torch.nn.functional.pad(m, (pad, 0), value=False)
+                padded_attention.append(m)
+            attention_masks = padded_attention
+
+    if has_label_mask:
+        # label_mask is padded on the left
+        # for example label_mask:
+        # [True, True, True, True, False, Fasle, True, True]
+        # for the labels,will be set:
+        # [-100, -100, -100, -100, -100, -100, -100, -100]
+        padded_label = []
+        for m, prompt_len in zip(label_masks, lens):
+            if m.numel() < prompt_len:
+                pad = prompt_len - m.numel()
+                m = torch.nn.functional.pad(m, (0, pad), value=False)
+            if m.numel() < target_len:
+                pad = target_len - m.numel()
+                m = torch.nn.functional.pad(m, (pad, 0), value=False)
+            padded_label.append(m)
+        label_masks = padded_label
 
     batch_prompt = torch.stack(prompts, dim=0)  # [B, L]
     batch_length = torch.tensor(
@@ -121,6 +188,17 @@ def collate_fn(data_list: list["DatasetItem"]) -> dict[str, Any]:
     )
 
     batch_idx = torch.tensor([int(it.idx) for it in data_list], dtype=torch.long)
+
+    multi_modal_list = [
+        it.multi_modal_inputs for it in data_list if it.multi_modal_inputs is not None
+    ]
+    multi_modal_inputs = {}
+    if multi_modal_list:
+        for k in multi_modal_list[0].keys():
+            vals = [m[k] for m in multi_modal_list]
+            multi_modal_inputs[k] = (
+                torch.cat(vals, dim=0) if isinstance(vals[0], torch.Tensor) else vals
+            )
 
     batch: dict[str, Any] = {
         "prompt": batch_prompt,  # [B, L]
@@ -133,8 +211,11 @@ def collate_fn(data_list: list["DatasetItem"]) -> dict[str, Any]:
         ],  # List[Optional[List[bytes|str]]]
         "prompt_text": [it.prompt_text for it in data_list],  # List[Optional[str]]
         "meta": [it.meta for it in data_list],  # List[Optional[dict]]
-        "multi_modal_inputs": [
-            it.multi_modal_inputs for it in data_list
-        ],  # List[Optional[dict]]
+        "multi_modal_inputs": multi_modal_inputs,
     }
+
+    batch["attention_mask"] = (
+        torch.stack(attention_masks, dim=0) if has_attention_mask else None
+    )
+    batch["label_mask"] = torch.stack(label_masks, dim=0) if has_label_mask else None
     return batch

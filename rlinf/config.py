@@ -58,6 +58,11 @@ class SupportedModel(Enum):
     FLOW_POLICY = ("flow_policy", "embodied")
     CMA_POLICY = ("cma", "embodied")
 
+    # Sft models
+    QWEN2_5_VL_SFT = ("qwen2.5_vl", "sft")
+    QWEN3_VL_SFT = ("qwen3_vl", "sft")
+    QWEN3_VL_MOE_SFT = ("qwen3_vl_moe", "sft")
+
     def __new__(cls, value, category):
         obj = object.__new__(cls)
         obj._value_ = value
@@ -815,6 +820,26 @@ def validate_embodied_cfg(cfg):
             cfg.env.train.omnigibson_cfg = omnigibson_cfg
             cfg.env.eval.omnigibson_cfg = omnigibson_cfg
 
+    return cfg
+
+
+def validate_vlm_sft_cfg(cfg: DictConfig) -> DictConfig:
+    assert cfg.data.get("train_data_paths", None) is not None, "data.train_data_paths is required"
+    assert cfg.model.get("is_lora", False) is not None, "model.is_lora is required"
+    assert cfg.optim.get("adam_beta1", None) is not None, "optim.adam_beta1 is required"
+    assert cfg.optim.get("adam_beta2", None) is not None, "optim.adam_beta2 is required"
+    assert cfg.optim.get("adam_eps", None) is not None, "optim.adam_eps is required"
+    assert cfg.runner.get("val_check_interval", None) is not None, "runner.val_check_interval is required"
+    assert cfg.runner.get("max_epochs", None) is not None, "runner.max_epochs is required"
+
+    with open_dict(cfg):
+        if cfg.data.get("eval_data_paths", None) is not None:
+            # set the val_check_interval to max_epochs
+            if cfg.runner.get("val_check_interval", None) is None:
+                cfg.runner.val_check_interval = cfg.runner.max_epochs
+        else:
+            # set the val_check_interval to -1 if there is no eval data
+            cfg.runner.val_check_interval = -1
     return cfg
 
 
