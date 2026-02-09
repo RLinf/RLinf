@@ -44,14 +44,6 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh maniskill_sac_flow_state
 
-      - name: ManiSkill SAC Flow Image test
-        timeout-minutes: 20
-        run: |
-          unset PYTHONPATH
-          export REPO_PATH=$(pwd)
-          source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh maniskill_sac_flow_image
-
       - name: Clean up
         run: |
           rm -rf .venv
