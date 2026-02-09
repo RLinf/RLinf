@@ -30,6 +30,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 
 ## 最新动态
+- [2026/02] 🔥 RLinf 支持 [Dexbotic](https://github.com/dexmal/dexbotic) 强化学习微调。文档：[RL on Dexbotic Model](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/dexbotic.html)。
 - [2026/02] 🔥 RLinf 支持基于 [GSEnv](https://github.com/chenkang455/ManiSkill-GS) 的 Real2Sim2Real 强化学习。文档：[RL with GSEnv](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/gsenv.html)。
 - [2026/01] 🔥 基于[OpenSora World Model](https://github.com/hpcaitech/Open-Sora)的强化学习微调已经上线！文档：[RL on OpenSora World Model](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/opensora.html)。
 - [2026/01] 🔥 基于[RoboTwin](https://github.com/robotwin-Platform/RoboTwin)的强化学习微调已经上线！文档：[RL on RoboTwin](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/robotwin.html)。
@@ -97,6 +98,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/maniskill.html">OpenVLA</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/libero.html">OpenVLA-OFT</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/gr00t.html">GR00T</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/dexbotic.html">Dexbotic</a> ✅</li>
           </ul>
           <li><b>VLM 模型</b></li>
           <ul>

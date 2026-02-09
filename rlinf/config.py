@@ -54,6 +54,7 @@ class SupportedModel(Enum):
     OPENPI = ("openpi", "embodied")
     MLP_POLICY = ("mlp_policy", "embodied")
     GR00T = ("gr00t", "embodied")
+    DEXBOTIC_PI = ("dexbotic_pi", "embodied")
     CNN_POLICY = ("cnn_policy", "embodied")
     FLOW_POLICY = ("flow_policy", "embodied")
     CMA_POLICY = ("cma", "embodied")
