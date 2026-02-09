@@ -21,20 +21,35 @@
 
 **IsaacLab 环境**
 
-- **环境**：高度客制化的仿真系统，基于isaacsim制作  
-- **任务**：高度客制化适应多个智能体的任务
-- **观测**：高度客制化输入
-- **动作空间**：高度客制化动作
+IsaacLab作为一个高度可定制的仿真平台，允许用户创建自定义的环境和任务。
+本示例用RLinf自定义的环境 `Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Rewarded-v0` 进行强化学习训练。
+
+- **环境**：IsaacLab仿真平台  
+- **任务**：控制Franka机械臂按照蓝、红、绿（自下而上）顺序堆叠立方体
+- **观测**：第三人称相机和机械臂腕部相机的 RGB 图像
+- **动作空间**：7 维连续动作 - 三维位置控制（x, y, z） - 三维旋转控制（roll, pitch, yaw） - 夹爪控制（开/合）
+
+**任务描述格式**
+
+.. code-block:: text
+
+   Stack the red block on the blue block, then stack the green block on the red block.
 
 **数据结构**
 
-- **任务描述**: 参考 `IsaacLab-Examples <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/environments.html>`__ 获取已有可用任务. 如果您想自定义任务请参考 `IsaacLab-Quickstart <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/own-project/index.html>`__ .
+- **图像**：主视角和手腕视角的RGB张量 ``[batch_size, 224, 224, 3]``  
+- **任务描述**：自然语言指令  
+- **状态**：末端执行器的位置、姿态和夹爪状态
+- **奖励**：稀疏的成功/失败奖励
 
 **添加自定义任务**
 
-如果您想添加自定义任务请参考 `RLinf/rlinf/envs/isaaclab/tasks/stack_cube.py` , 并将您自定义的脚本放置在  `RLinf/rlinf/envs/isaaclab/tasks` 下,  同时在 `RLinf/rlinf/envs/isaaclab/__init__.py` 内添加相关代码
+如果您想添加自定义任务，您可能需要进行以下三个步骤：
 
-算法
+1. **自定义IsaacLab环境**：请参考 `IsaacLab-Examples <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/environments.html>`__ 获取已有可用环境. 如果您想自定义环境请参考 `IsaacLab-Quickstart <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/own-project/index.html>`__ .
+2. **在RLinf中配置训练环境**：请参考 `RLinf/rlinf/envs/isaaclab/tasks/stack_cube.py` , 并将您自定义的脚本放置在  `RLinf/rlinf/envs/isaaclab/tasks` 下,  同时在 `RLinf/rlinf/envs/isaaclab/__init__.py` 内添加相关代码
+3. **配置任务ID**：请参考 ``examples/embodiment/config/env/isaaclab_stack_cube.yaml``，并将您自定义的环境配置文件中的 `init_params.id` 参数修改为您自定义的IsaacLab任务ID，同时确保 `examples/embodiment/config/isaaclab_ppo_gr00t_demo.yaml` 的开头 `defaults` 部分引用了正确的环境配置默认值。
+
 --------------
 
 **核心算法组件**
@@ -124,20 +139,19 @@ ISAAC-SIM下载
 .. code-block:: bash
 
    cd /workspace
-   # 下载libero spatial少样本SFT模型（任选其一）
+   # 下载IsaacLab stack_cube少样本SFT模型
    # 方法1：使用git clone
    git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
+   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Stack-cube
 
    # 方法2：使用huggingface-hub
    # 为提升国内下载速度，可以设置：
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
-   hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
+   hf download RLinf/RLinf-Gr00t-SFT-Stack-cube --local-dir RLinf-Gr00t-SFT-Stack-cube
 
 运行脚本
 -------------------
-.. note:: 因为现在暂时没有isaaclab的专家数据，所以我们现在的脚本都是可以跑通流程的demo
 
 **1. 关键集群配置**
 
@@ -181,8 +195,6 @@ ISAAC-SIM下载
 干扰，消除了卸载功能的需要。
 
 **2. 配置文件**
-
-gr00t上测试isaaclab中的 `Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Cosmos-v0` 任务
 
 - gr00t demo配置文件: ``examples/embodiment/config/isaaclab_ppo_gr00t_demo.yaml``
 

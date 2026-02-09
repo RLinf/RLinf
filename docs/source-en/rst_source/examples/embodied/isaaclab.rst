@@ -21,21 +21,39 @@ Environment
 
 **IsaacLab Environment**
 
-- **Environment**: Unified robotics learning framework built on top of Isaac Sim for scalable control and benchmarking.
-- **Task**: A wide range of robotic tasks with control for different robots.
-- **Observation**: Highly customized observation inputs.
-- **Action Space**: Highly customized action space.
+IsaacLab serves as a highly customizable simulation platform that allows users to create custom environments and tasks. 
+This example uses a custom RLinf environment `Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Rewarded-v0` for reinforcement learning training.
+
+- **Environment**: IsaacLab simulation platform
+- **Task**: Control the Franka robot arm to stack cubes in blue, red, and green order (from bottom to top)
+- **Observation**: RGB images from third-person camera and robot wrist camera
+- **Action Space**: 7-dimensional continuous actions
+  - 3D position control (x, y, z)
+  - 3D rotation control (roll, pitch, yaw)
+  - Gripper control (open/close)
+
+**Task Description Format**
+
+.. code-block:: text
+
+   Stack the red block on the blue block, then stack the green block on the red block.
 
 **Data Structure**
 
-- **Task_descriptions**: Refer to `IsaacLab-Examples <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/environments.html>`__ for available tasks. And refer to `IsaacLab-Quickstart <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/own-project/index.html>`__ for building customized task.
+- **Images**: RGB tensors from main view and wrist view ``[batch_size, 224, 224, 3]``
+- **Task Descriptions**: Natural language instructions
+- **State**: End-effector position, orientation, and gripper state
+- **Reward**: Sparse success/failure reward
 
-**Make Your Own Environment**
-If you want to make you own task, please refer to `RLinf/rlinf/envs/isaaclab/tasks/stack_cube.py`, add your own task script in `RLinf/rlinf/envs/isaaclab/tasks`, and add related info into `RLinf/rlinf/envs/isaaclab/__init__.py`
+**Adding Custom Tasks**
 
+If you want to add custom tasks, you may need to follow these three steps:
 
-Algorithm
----------
+1. **Customize IsaacLab Environment**: Refer to `IsaacLab-Examples <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/environments.html>`__ for available environments. For custom environment setup, refer to `IsaacLab-Quickstart <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/own-project/index.html>`__.
+2. **Configure Training Environment in RLinf**: Refer to `RLinf/rlinf/envs/isaaclab/tasks/stack_cube.py`, place your custom script in `RLinf/rlinf/envs/isaaclab/tasks`, and add relevant code in `RLinf/rlinf/envs/isaaclab/__init__.py`
+3. **Configure Task ID**: Refer to ``examples/embodiment/config/env/isaaclab_stack_cube.yaml``, and modify the `init_params.id` parameter to your custom IsaacLab task ID. Ensure that the `defaults` section at the beginning of ``examples/embodiment/config/isaaclab_ppo_gr00t_demo.yaml`` references the correct environment configuration defaults.
+
+--------------
 
 **Core Algorithm Components**
 
@@ -51,9 +69,8 @@ Algorithm
 
 2. **GRPO (Group Relative Policy Optimization)**
 
-   - For every state / prompt the policy generates *G* independent actions
-
-   - Compute the advantage of each action by subtracting the group's mean reward.
+   - For every state/prompt, the policy generates *G* independent actions
+   - Compute the advantage of each action by subtracting the group's mean reward
 
 Dependency Installation
 -----------------------
@@ -126,20 +143,19 @@ Model Download
 .. code-block:: bash
 
    cd /workspace
-   # Download the libero spatial few-shot SFT model (choose either method)
+   # Download IsaacLab stack_cube few-shot SFT model
    # Method 1: Using git clone
    git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
+   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Stack-cube
 
    # Method 2: Using huggingface-hub
    # For mainland China users, you can use the following for better download speed:
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
-   hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
+   hf download RLinf/RLinf-Gr00t-SFT-Stack-cube --local-dir RLinf-Gr00t-SFT-Stack-cube
 
 Running the Script
 ------------------
-.. note:: Due to there is no expert data of isaaclab now, the scripts below are all demo. With unified end-to-end pipeline, but no result.
 
 **1. Key Cluster Configuration**
 
@@ -155,7 +171,7 @@ Running the Script
    rollout:
       pipeline_stage_num: 2
 
-You can flexibly configure the GPU count for env, rollout, and actor components. 
+You can flexibly configure the GPU count for env, rollout, and actor components.
 Additionally, by setting ``pipeline_stage_num = 2`` in the configuration,
 you can achieve pipeline overlap between rollout and env, improving rollout efficiency.
 
@@ -183,7 +199,6 @@ where env, rollout, and actor components each use their own GPUs with no
 interference, eliminating the need for offloading functionality.
 
 **2. Configuration Files**
-The task is `Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Cosmos-v0` in isaaclab.
 
 - gr00t demo config file: ``examples/embodiment/config/isaaclab_ppo_gr00t_demo.yaml``
 
@@ -197,7 +212,7 @@ To train gr00t using the PPO algorithm in the Isaaclab environment, run:
 
    bash examples/embodiment/run_embodiment.sh isaaclab_ppo_gr00t_demo
 
-To evaluate gr00t using in the Isaaclab environment, run:
+To evaluate gr00t in the Isaaclab environment, run:
 
 .. code:: bash
 
@@ -212,7 +227,6 @@ Visualization and Results
 
    # Launch TensorBoard
    tensorboard --logdir ./logs --port 6006
-
 
 **2. Key Monitoring Metrics**
 
