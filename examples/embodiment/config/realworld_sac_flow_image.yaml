@@ -55,8 +55,10 @@ algorithm:
   group_size: 1
   normalize_advantages: False  # SAC doesn't use advantages
   kl_penalty: kl
+  enable_drq: False
 
-  agg_q: mean # min -> mean for real world
+  agg_q: min # or mean
+  actor_agg_q: mean
 
   backup_entropy: False    # True -> False for real world RLPD
   critic_subsample_size: 2
@@ -89,15 +91,17 @@ algorithm:
   # Replay buffer settings
   replay_buffer:
     enable_cache: True
-    cache_size: 100 # number of trajectories cached in memory
+    cache_size: 200 # number of trajectories cached in memory
     min_buffer_size: 200  # Minimum buffer size before training starts
     sample_window_size: 200 # number of latest trajectories to sample from for replay buffer
+    save_trajectories: False
 
   demo_buffer:
     enable_cache: True
-    cache_size: 100 # number of trajectories cached in memory
+    cache_size: 200 # number of trajectories cached in memory
     sample_window_size: 200 # number of latest trajectories to sample from for demo buffer
     load_path: "/path/to/demo_data"
+    save_trajectories: False
 
   num_updates_per_step: 64  # Number of gradient updates per training step
   target_update_freq: 1  # Frequency of target network updates

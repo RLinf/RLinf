@@ -76,10 +76,13 @@ Franka-Sim 环境基于项目 `serl <https://rail-berkeley.github.io/serl/docs/s
    - 价值函数裁剪；
    - 熵正则化。
 
-2. **GRPO（组相对策略优化）**
+2. **SAC (Soft Actor-Critic)**
 
-   - 对于每个状态/提示，策略生成 *G* 个独立动作；
-   - 通过减去组平均奖励来计算每个动作的优势。
+   - 通过 Bellman 公式和熵正则化学习 Q 值。
+
+   - 学习策略网络以最大化熵正则化的 Q 值。
+
+   - 学习温度参数以平衡探索与利用。
 
 依赖安装
 --------
@@ -121,6 +124,37 @@ Franka-Sim 环境基于项目 `serl <https://rail-berkeley.github.io/serl/docs/s
    # 为提高国内依赖安装速度，可以添加 --use-mirror 到下面的 install.sh 命令
    bash requirements/install.sh embodied --model openvla --env frankasim
    source .venv/bin/activate
+
+模型下载
+--------------
+
+如果您正在训练CNN Policy (如果是MLP Policy可以跳过此小节)，您需要先下载我们提供的ResNet checkpoint。
+
+**ResNet Checkpoint下载**
+
+.. code:: bash
+
+   # 方法1：使用git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+
+   # 方法2：使用huggingface-hub
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
+
+下载完成后，请确保在配置yaml文件中正确指定模型路径。
+更新 ``actor.model.model_path`` 和 ``rollout.model.model_path`` 为模型文件夹路径。
+
+.. code-block:: yaml
+   
+   rollout:
+      model:
+         model_path: Pathto/RLinf/RLinf-ResNet10-pretrained
+   actor:
+      model:
+         model_path: Pathto/RLinf/RLinf-ResNet10-pretrained
 
 运行脚本
 --------
@@ -167,7 +201,7 @@ Franka-Sim 环境基于项目 `serl <https://rail-berkeley.github.io/serl/docs/s
        rollout: 4-7
        actor: 8-15
 
-该配置实现 env、rollout、actor 各自使用独立 GPU，互不干扰，因此通常不需要 offload 功能。
+该配置实现 env、rollout、actor 各自使用独立 GPU, 互不干扰, 因此通常不需要 offload 功能。
 
 2. 启动命令
 ~~~~~~~~~~~
@@ -178,11 +212,12 @@ Franka-Sim 环境基于项目 `serl <https://rail-berkeley.github.io/serl/docs/s
 
    bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
 
-暂时只支持在 Franka-Sim 环境中使用 PPO 训练 MLP Policy：
+支持在 Franka-Sim 环境中使用 PPO 训练 MLP Policy 或使用SAC 训练 CNN Policy :
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
+   bash examples/embodiment/run_async.sh frankasim_sac_cnn_async
 
 可视化与结果
 ------------
@@ -254,3 +289,14 @@ Rollout 指标
        project_name: rlinf
        experiment_name: "maniskill_ppo_openvla"
        logger_backends: ["tensorboard"]  # wandb, swanlab
+
+仿真结果
+~~~~~~~~~~~~~~~~~~~
+以下提供了仿真环境中的异步SAC+CNN训练曲线。在1个小时的时间内, 能够成功学习到抓取抓取策略。并且在后续保持稳定。
+
+.. raw:: html
+
+  <div style="flex: 0.8; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/frankasim_curve.png" style="width: 100%;"/>
+      <p><em>成功率曲线</em></p>
+    </div>

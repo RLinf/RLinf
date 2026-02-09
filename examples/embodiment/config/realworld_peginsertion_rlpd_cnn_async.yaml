@@ -56,7 +56,9 @@ runner:
 algorithm:
   update_epoch: 8
   group_size: 1
-  agg_q: mean
+  agg_q: min # or mean
+  actor_agg_q: mean
+  enable_drq: False
 
   backup_entropy: False
   critic_subsample_size: 2
@@ -79,15 +81,17 @@ algorithm:
   # Replay buffer settings
   replay_buffer:
     enable_cache: True
-    cache_size: 100 # number of trajectories cached in memory
-    min_buffer_size: 200  # Minimum buffer size before training starts
+    cache_size: 200 # number of trajectories cached in memory
+    min_buffer_size: 5  # Minimum buffer size before training starts. If these parameter is set too large, it will take a long time to start real-world training 
     sample_window_size: 200 # number of latest trajectories to sample from for replay buffer
+    save_trajectories: False
 
   demo_buffer:
     enable_cache: True
-    cache_size: 100 # number of trajectories cached in memory
+    cache_size: 200 # number of trajectories cached in memory
     sample_window_size: 200 # number of latest trajectories to sample from for demo buffer
     load_path: "/path/to/demo_data"
+    save_trajectories: False
 
   target_update_freq: 1  # Frequency of target network updates
 

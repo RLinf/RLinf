@@ -83,7 +83,12 @@ class CNNPolicy(nn.Module, BasePolicy):
 
         self.cfg = cfg
         self.in_channels = self.cfg.image_size[0]
-
+        self.register_buffer(
+            "img_mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 1, 1, 3)
+        )
+        self.register_buffer(
+            "img_std", torch.tensor([0.229, 0.224, 0.225]).view(1, 1, 1, 3)
+        )
         self.encoders = nn.ModuleList()
         encoder_out_dim = 0
         if self.cfg.backbone == "resnet":
@@ -110,6 +115,7 @@ class CNNPolicy(nn.Module, BasePolicy):
                     use_layer_norm=True,
                 )
             )
+            self.state_proj._fsdp_wrap_name = "state_proj"
             init_mlp_weights(self.state_proj, nonlinearity="tanh")
             self.mix_proj = nn.Sequential(
                 *make_mlp(
@@ -134,7 +140,7 @@ class CNNPolicy(nn.Module, BasePolicy):
         if self.cfg.add_q_head:
             if self.cfg.backbone == "resnet":
                 hidden_size = encoder_out_dim + self.cfg.state_latent_dim
-                hidden_dims = [256, 256, 256]
+                hidden_dims = [256, 256]
             if self.cfg.q_head_type == "default":
                 self.q_head = MultiQHead(
                     hidden_size=hidden_size,
@@ -171,15 +177,19 @@ class CNNPolicy(nn.Module, BasePolicy):
 
     def preprocess_env_obs(self, env_obs):
         device = next(self.parameters()).device
+        mean = self.img_mean.to(device)
+        std = self.img_std.to(device)
+
         processed_env_obs = {}
         processed_env_obs["states"] = env_obs["states"].clone().to(device)
-        processed_env_obs["main_images"] = (
-            env_obs["main_images"].clone().to(device).float() / 255.0
-        )
+        x = env_obs["main_images"].clone().to(device).float() / 255.0
+        processed_env_obs["main_images"] = (x - mean) / std
+
         if env_obs.get("extra_view_images", None) is not None:
-            processed_env_obs["extra_view_images"] = (
-                env_obs["extra_view_images"].clone().to(device).float() / 255.0
-            )
+            ex = env_obs["extra_view_images"].clone().to(device).float() / 255.0
+            ex = (ex - mean.unsqueeze(1)) / std.unsqueeze(1)
+            processed_env_obs["extra_view_images"] = ex
+
         return processed_env_obs
 
     def get_feature(self, obs, detach_encoder=False):
@@ -194,10 +204,11 @@ class CNNPolicy(nn.Module, BasePolicy):
                 images = images.permute(0, 3, 1, 2)
             visual_features.append(self.encoders[img_id](images))
         visual_feature = torch.cat(visual_features, dim=-1)
-        if detach_encoder:
-            visual_feature = visual_feature.detach()
         state_embed = self.state_proj(obs["states"])
         x = torch.cat([visual_feature, state_embed], dim=1)
+        if detach_encoder:
+            x = x.detach()
+            visual_feature = visual_feature.detach()
         return x, visual_feature
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
@@ -272,7 +283,6 @@ class CNNPolicy(nn.Module, BasePolicy):
         mix_feature = self.mix_proj(full_feature)
         action_mean = self.actor_mean(mix_feature)
         action_logstd = self.actor_logstd(mix_feature)
-        action_logstd = torch.tanh(action_logstd)
 
         action_std = torch.exp(action_logstd)
         if self.cfg.std_range is not None:
@@ -311,9 +321,6 @@ class CNNPolicy(nn.Module, BasePolicy):
             action_logstd = self.actor_logstd.expand_as(action_mean)
         else:
             action_logstd = self.actor_logstd(mix_feature)
-
-        if self.cfg.final_tanh:
-            action_logstd = torch.tanh(action_logstd)
 
         action_std = action_logstd.exp()
         if self.cfg.std_range is not None:

@@ -31,6 +31,7 @@ from rlinf.hybrid_engines.fsdp import (
 )
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel, Worker
+from rlinf.utils import drq
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
     append_to_dict,
@@ -55,6 +56,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         self.demo_buffer = None
         self.alpha_optimizer = None
         self.update_step = 0
+        self.enable_drq = bool(getattr(self.cfg.actor, "enable_drq", False))
 
     def init_worker(self):
         self.setup_model_and_optimizer(initialize_target=True)
@@ -64,6 +66,11 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             self.offload_param_and_grad()
             self.offload_optimizer()
         self._setup_rollout_weight_dst_ranks()
+        if self.cfg.actor.get("compile_model", False):
+            self.model = torch.compile(
+                self.model, mode="default"
+            )  # max-autotune-no-cudagraphs
+            self.target_model = torch.compile(self.target_model, mode="default")
 
     def setup_model_and_optimizer(self, initialize_target=False) -> None:
         """Setup model, lr_scheduler, optimizer and grad_scaler."""
@@ -112,13 +119,25 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         if enable_critic_warmup:
             raise NotImplementedError
         else:
+            # ISSUE: currently the net weight still bind with the actor.
             for name, param in self.model.named_parameters():
-                if param.requires_grad:
-                    if "q_head" in name:
-                        params_critic.append(param)
-                    else:
-                        params_actor.append(param)
+                if not param.requires_grad:
+                    continue
+                if ("encoders" in name) or ("encoder" in name):
+                    params_critic.append(param)
+                    continue
+                if "q_head" in name:
+                    params_critic.append(param)
+                    continue
+                if "state_proj" in name:
+                    params_critic.append(param)
+                    continue
+                else:
+                    params_actor.append(param)
+                    continue
+
         assert len(params_critic) > 0
+        assert len(params_actor) > 0
         self.optimizer = torch.optim.Adam(
             [
                 {"params": params_actor, "lr": self._cfg.optim.lr, "betas": betas},
@@ -137,7 +156,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         if self.cfg.algorithm.get("auto_entropy_tuning", False):
             target_entropy = self.cfg.algorithm.get(
                 "target_entropy",
-                -self.cfg.actor.model.action_dim,  # Heuristic: -|A|
+                -self.cfg.actor.model.action_dim,
             )
             self.target_entropy = target_entropy
 
@@ -196,7 +215,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             else:
                 raise NotImplementedError
         else:
-            alpha = torch.Tensor(self.cfg.algorithm.initial_alpha).to(
+            alpha = torch.Tensor([self.cfg.algorithm.initial_alpha]).to(
                 dtype=self.torch_dtype, device=self.device
             )
         return alpha
@@ -224,7 +243,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             cache_size=self.cfg.algorithm.replay_buffer.cache_size,
             sample_window_size=self.cfg.algorithm.replay_buffer.sample_window_size,
             save_trajectories=self.cfg.algorithm.replay_buffer.get(
-                "save_trajectories", True
+                "save_trajectories", False
             ),
         )
 
@@ -244,7 +263,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 cache_size=self.cfg.algorithm.demo_buffer.cache_size,
                 sample_window_size=self.cfg.algorithm.demo_buffer.sample_window_size,
                 save_trajectories=self.cfg.algorithm.demo_buffer.get(
-                    "save_trajectories", True
+                    "save_trajectories", False
                 ),
             )
             self.demo_buffer.load_checkpoint(
@@ -258,6 +277,11 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         self.critic_subsample_size = self.cfg.algorithm.get("critic_subsample_size", -1)
         self.critic_sample_generator = torch.Generator(self.device)
         self.critic_sample_generator.manual_seed(seed)
+
+        self.target_update_type = self.cfg.algorithm.get("target_update_type", "all")
+        assert self.target_update_type in ["all", "q_head_only"], (
+            f"{self.target_update_type=} is not suppported!"
+        )
 
     def soft_update_target_model(self, tau: Optional[float] = None):
         """Soft update target model parameters"""
@@ -275,8 +299,12 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             ):
                 assert name1 == name2
                 if "q_head" not in name1:
-                    target_param.data.mul_(0.0)
-                    target_param.data.add_(online_param.data)
+                    if self.target_update_type == "all":
+                        target_param.data.mul_(1.0 - tau)
+                        target_param.data.add_(online_param.data * tau)
+                    else:
+                        target_param.data.mul_(0.0)
+                        target_param.data.add_(online_param.data)
                 else:
                     target_param.data.mul_(1.0 - tau)
                     target_param.data.add_(online_param.data * tau)
@@ -310,6 +338,8 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
 
         curr_obs = batch["curr_obs"]
         next_obs = batch["next_obs"]
+        actions = batch["actions"]
+
         with torch.no_grad():
             kwargs = {}
             if SupportedModel(self.cfg.actor.model.model_type) in [
@@ -328,7 +358,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                     forward_type=ForwardType.SAC_Q,
                     obs=next_obs,
                     actions=next_state_actions,
-                    shared_feature=shared_feature,
+                    shared_feature=None,
                 )
                 if self.critic_subsample_size > 0:
                     sample_idx = torch.randint(
@@ -371,17 +401,13 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             all_data_q_values = self.model(
                 forward_type=ForwardType.SAC_Q,
                 obs=curr_obs,
-                actions=batch["forward_inputs"]["action"]
-                if "action" in batch["forward_inputs"]
-                else batch["action_tokens"],
+                actions=actions,
             )
         else:
             all_data_q_values, all_qf_next = self.model(
                 forward_type=ForwardType.CROSSQ_Q,
                 obs=curr_obs,
-                actions=batch["forward_inputs"]["action"]
-                if "action" in batch["forward_inputs"]
-                else batch["action_tokens"],
+                actions=actions,
                 next_obs=next_obs,
                 next_actions=next_state_actions,
             )
@@ -413,12 +439,16 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         critic_loss = F.mse_loss(
             all_data_q_values, target_q_values.expand_as(all_data_q_values)
         )
-        return critic_loss
+        return critic_loss, {"q_data": all_data_q_values.mean().item()}
 
     @Worker.timer("forward_actor")
     def forward_actor(self, batch):
         use_crossq = self.cfg.algorithm.get("q_head_type", "default") == "crossq"
-        agg_q = self.cfg.algorithm.get("agg_q", "min")
+        if "actor_agg_q" in self.cfg.algorithm:
+            agg_q = self.cfg.algorithm["actor_agg_q"]
+        else:
+            agg_q = self.cfg.algorithm.get("agg_q", "min")
+
         curr_obs = batch["curr_obs"]
         kwargs = {}
         if self.cfg.actor.model.model_type in ["openvla", "openvla_oft"]:
@@ -432,7 +462,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 forward_type=ForwardType.SAC_Q,
                 obs=curr_obs,
                 actions=pi,
-                shared_feature=shared_feature,
+                shared_feature=None,
                 detach_encoder=True,
             )
         else:
@@ -442,18 +472,22 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 actions=pi,
                 next_obs=None,
                 next_actions=None,
-                shared_feature=shared_feature,
+                shared_feature=None,
                 detach_encoder=True,
             )
-
+        metrics = {
+            f"q_value_{q_id}": all_qf_pi[..., q_id].mean().item()
+            for q_id in range(self.cfg.actor.model.get("num_q_heads", 2))
+        }
         if agg_q == "min":
             qf_pi, _ = torch.min(all_qf_pi, dim=1, keepdim=True)
         elif agg_q == "mean":
             qf_pi = torch.mean(all_qf_pi, dim=1, keepdim=True)
+        metrics["q_pi"] = qf_pi.mean().item()
         actor_loss = ((self.alpha * log_pi) - qf_pi).mean()
 
         entropy = -log_pi.mean()
-        return actor_loss, entropy
+        return actor_loss, entropy, metrics
 
     @Worker.timer("forward_alpha")
     def forward_alpha(self, batch):
@@ -501,11 +535,21 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
 
         self.qf_optimizer.zero_grad()
         gbs_critic_loss = []
+        all_critic_metrics = {}
         for batch in train_micro_batch_list:
             batch = put_tensor_device(batch, device=self.device)
-            critic_loss = self.forward_critic(batch) / self.gradient_accumulation
+            if self.enable_drq:
+                drq.apply_drq(batch["curr_obs"], pad=4)
+                drq.apply_drq(batch["next_obs"], pad=4)
+
+            critic_loss, critic_metrics = self.forward_critic(batch)
+            critic_loss = critic_loss / self.gradient_accumulation
             critic_loss.backward()
             gbs_critic_loss.append(critic_loss.item() * self.gradient_accumulation)
+            append_to_dict(all_critic_metrics, critic_metrics)
+        all_critic_metrics = {
+            f"critic/{key}": np.mean(value) for key, value in all_critic_metrics.items()
+        }
         qf_grad_norm = self.model.clip_grad_norm_(
             max_norm=self.cfg.actor.optim.clip_grad
         )
@@ -517,19 +561,29 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             "sac/critic_loss": np.mean(gbs_critic_loss),
             "critic/lr": self.qf_optimizer.param_groups[0]["lr"],
             "critic/grad_norm": qf_grad_norm,
+            **all_critic_metrics,
         }
 
         if self.update_step % self.critic_actor_ratio == 0:
             self.optimizer.zero_grad()
             gbs_actor_loss = []
             gbs_entropy = []
+            all_actor_metrics = {}
             for batch in train_micro_batch_list:
+                if self.enable_drq:
+                    drq.apply_drq(batch["curr_obs"], pad=4)
+                    drq.apply_drq(batch["next_obs"], pad=4)
                 batch = put_tensor_device(batch, device=self.device)
-                actor_loss, entropy = self.forward_actor(batch)
+                actor_loss, entropy, q_metrics = self.forward_actor(batch)
                 actor_loss = actor_loss / self.gradient_accumulation
                 actor_loss.backward()
                 gbs_actor_loss.append(actor_loss.item() * self.gradient_accumulation)
                 gbs_entropy.append(entropy.item())
+                append_to_dict(all_actor_metrics, q_metrics)
+            all_actor_metrics = {
+                f"actor/{key}": np.mean(value)
+                for key, value in all_actor_metrics.items()
+            }
             actor_grad_norm = self.model.clip_grad_norm_(
                 max_norm=self.cfg.actor.optim.clip_grad
             )
@@ -537,11 +591,17 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             self.lr_scheduler.step()
 
             # Update temperature parameter if using automatic entropy tuning
+            gbs_alpha_loss = [0]
+            alpha_grad_norm = 0
             if hasattr(self, "base_alpha") and self.base_alpha is not None:
                 self.alpha_optimizer.zero_grad()
                 gbs_alpha_loss = []
                 for batch in train_micro_batch_list:
                     batch = put_tensor_device(batch, device=self.device)
+                    if self.enable_drq:
+                        drq.apply_drq(batch["curr_obs"], pad=4)
+                        drq.apply_drq(batch["next_obs"], pad=4)
+
                     alpha_loss = self.forward_alpha(batch) / self.gradient_accumulation
                     alpha_loss.backward()
                     gbs_alpha_loss.append(
@@ -566,6 +626,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                     "actor/grad_norm": actor_grad_norm,
                     "actor/entropy": np.mean(gbs_entropy),
                     "alpha/grad_norm": alpha_grad_norm,
+                    **all_actor_metrics,
                 }
             )
         # Soft update target network

@@ -577,7 +577,7 @@ class Worker(metaclass=WorkerMeta):
     ):
         """Send an object to a specific worker address in the collective group.
 
-        The function is specially optimized for torch.Tensor, List of torch.Tensor, Dict of torch.Tensor, which go through NCCL when the contained tensors are on GPU. Otherwise, all communications go through GLOO.
+        The function is specially optimized for torch.Tensor, List of torch.Tensor, Dict of torch.Tensor, and dataclass containing torch.Tensor, which go through NCCL when the contained tensors are on GPU. Otherwise, all communications go through GLOO.
 
         .. note::
             Do not mix send with recv_tensor
@@ -714,51 +714,6 @@ class Worker(metaclass=WorkerMeta):
         group = self._get_collective_group(src_addr)
         return group.recv_tensor(tensor=tensor, async_op=async_op, options=options)
 
-    def create_channel(
-        self,
-        channel_name: str,
-        maxsize: int = 0,
-        distributed: bool = False,
-        node_rank: int = 0,
-        local: bool = False,
-    ):
-        """Create a new channel with the specified placement rank and maximum size.
-
-        Args:
-            channel_name (str): The name of the channel.
-            maxsize (int): The maximum size of the channel queue. Defaults to 0 (unbounded).
-            distributed (bool): Whether the channel should be distributed. A distributed channel creates a distributed worker on each node, and routes communications to the channel worker on the same node as the current worker, benefitting from the locality of the data. The routing is based on the key of the put/get APIs. So if you expect the key to be randomly distributed, you should set this to False to avoid unnecessary routing overhead.
-            node_rank (int): The node rank of the current worker. Only valid when distributed is False.
-            local (bool): Create the channel for intra-process communication. A local channel cannot be connected by other workers, and its data cannot be shared among different processes.
-
-        Returns:
-            Channel: A new instance of the Channel class.
-
-        """
-        from ..channel.channel import Channel
-
-        return Channel.create(
-            name=channel_name,
-            maxsize=maxsize,
-            distributed=distributed,
-            node_rank=node_rank,
-            local=local,
-        )
-
-    def connect_channel(self, channel_name: str):
-        """Connect to an existing channel.
-
-        Args:
-            channel_name (str): The name of the channel to connect to.
-
-        Returns:
-            Channel: An instance of the Channel class connected to the specified channel.
-
-        """
-        from ..channel.channel import Channel
-
-        return Channel.connect(name=channel_name, current_worker=self)
-
     def broadcast(
         self,
         object: Optional[Any] = None,
@@ -854,6 +809,51 @@ class Worker(metaclass=WorkerMeta):
             async_op=async_op,
             options=options,
         )
+
+    def create_channel(
+        self,
+        channel_name: str,
+        maxsize: int = 0,
+        distributed: bool = False,
+        node_rank: int = 0,
+        local: bool = False,
+    ):
+        """Create a new channel with the specified placement rank and maximum size.
+
+        Args:
+            channel_name (str): The name of the channel.
+            maxsize (int): The maximum size of the channel queue. Defaults to 0 (unbounded).
+            distributed (bool): Whether the channel should be distributed. A distributed channel creates a distributed worker on each node, and routes communications to the channel worker on the same node as the current worker, benefitting from the locality of the data. The routing is based on the key of the put/get APIs. So if you expect the key to be randomly distributed, you should set this to False to avoid unnecessary routing overhead.
+            node_rank (int): The node rank of the current worker. Only valid when distributed is False.
+            local (bool): Create the channel for intra-process communication. A local channel cannot be connected by other workers, and its data cannot be shared among different processes.
+
+        Returns:
+            Channel: A new instance of the Channel class.
+
+        """
+        from ..channel.channel import Channel
+
+        return Channel.create(
+            name=channel_name,
+            maxsize=maxsize,
+            distributed=distributed,
+            node_rank=node_rank,
+            local=local,
+        )
+
+    def connect_channel(self, channel_name: str):
+        """Connect to an existing channel.
+
+        Args:
+            channel_name (str): The name of the channel to connect to.
+
+        Returns:
+            Channel: An instance of the Channel class connected to the specified channel.
+
+        """
+        from ..channel.channel import Channel
+
+        return Channel.connect(name=channel_name, current_worker=self)
 
     def get_name(self) -> str:
         """Convert the WorkerAddress to a string representation.

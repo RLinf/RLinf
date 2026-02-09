@@ -62,9 +62,10 @@ algorithm:
   # Replay buffer settings
   replay_buffer:
     enable_cache: True
-    cache_size: 5000 # number of trajectories cached in memory
+    cache_size: 10000 # number of trajectories cached in memory
     sample_window_size: 10000 # number of latest trajectories to sample from for replay buffer
     min_buffer_size: 0  # Minimum buffer size before training starts
+    save_trajectories: False
 
   target_update_freq: 1  # Frequency of target network updates
 

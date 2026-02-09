@@ -25,6 +25,7 @@ import numpy as np
 import torch
 
 from rlinf.data.embodied_io_struct import Trajectory
+from rlinf.utils.logging import get_logger
 
 
 class TrajectoryCache:
@@ -223,7 +224,7 @@ class TrajectoryReplayBuffer:
         storage_dir: str = "",
         storage_format: str = "pt",
         sample_window_size: int = 100,
-        save_trajectories: bool = True,
+        save_trajectories: bool = False,
     ):
         """
         Initialize trajectory-based replay buffer.
@@ -239,6 +240,7 @@ class TrajectoryReplayBuffer:
         self.enable_cache = enable_cache
         self.sample_window_size = sample_window_size
         self.save_trajectories = save_trajectories
+        self.logger = get_logger()
 
         if not self.save_trajectories and not self.enable_cache:
             raise ValueError("save_trajectories=False requires enable_cache=True")
@@ -247,9 +249,12 @@ class TrajectoryReplayBuffer:
                 "[TrajectoryReplayBuffer] save_trajectories=False: "
                 "checkpoint save/load is not supported."
             )
+            self.enable_cache = True
+            cache_size = sample_window_size
 
         # Storage directory
         assert storage_dir != "", "storage_dir is required"
+        self.logger.info(f"Created replay buffer with storage directory: {storage_dir}")
         self.storage_dir = storage_dir
         if self.save_trajectories:
             os.makedirs(self.storage_dir, exist_ok=True)
@@ -688,9 +693,22 @@ class TrajectoryReplayBuffer:
     def _flatten_trajectory(self, trajectory: Trajectory) -> dict:
         flat: dict[str, object] = {}
         tensor_fields = trajectory.__dataclass_fields__.keys()
+        traj_len = int(trajectory.rewards.shape[0])
+
         for field in tensor_fields:
             tensor = getattr(trajectory, field)
             if isinstance(tensor, torch.Tensor) and tensor.dim() >= 2:
+                if field in ["dones", "terminations", "truncations"]:
+                    extra = int(tensor.shape[0] - traj_len)
+                    if extra > 0:
+                        assert traj_len % extra == 0, (
+                            f"Trajectory length {traj_len} is not divisible by extra {extra} for field {field}"
+                        )
+                        epoch_len = traj_len // extra
+                        tensor = tensor.reshape(
+                            extra, epoch_len + 1, *tensor.shape[1:]
+                        )[:, 1:]
+                        tensor = tensor.reshape(traj_len, *tensor.shape[2:])
                 flat[field] = tensor.reshape(-1, *tensor.shape[2:])
 
         if trajectory.curr_obs:

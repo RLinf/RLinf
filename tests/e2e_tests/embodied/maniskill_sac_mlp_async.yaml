@@ -22,7 +22,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: /workspace/results/
+    log_path: /workspace/results/maniskill_sac_mlp_async
     project_name: rlinf
     experiment_name: "ci-test"
     logger_backends: ["tensorboard"] # wandb, swanlab

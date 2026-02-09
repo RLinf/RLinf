@@ -770,6 +770,9 @@ def validate_embodied_cfg(cfg):
         )
 
     with open_dict(cfg):
+        weight_sync_interval = cfg.runner.get("weight_sync_interval", 1)
+        assert weight_sync_interval > 0, "weight_sync_interval must be greater than 0"
+        cfg.runner.weight_sync_interval = weight_sync_interval
         if (
             SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.MANISKILL
             or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.MANISKILL
@@ -780,6 +783,8 @@ def validate_embodied_cfg(cfg):
                     return "pd_joint_delta_pos"
                 elif robot == "panda-ee-dpos":
                     return "pd_ee_delta_pos"
+                elif robot == "panda-ee-target-dpos":  # for GSEnv
+                    return "pd_ee_target_delta_pose"
                 elif "google_robot_static" in robot:
                     return "arm_pd_ee_delta_pose_align_interpolate_by_planner_gripper_pd_joint_target_delta_pos_interpolate_by_planner"
                 elif "widowx" in robot:

@@ -162,10 +162,15 @@ class MultiStepRolloutWorker(Worker):
 
         dones = env_output["dones"].bool().cpu().contiguous()
         rewards = env_output["rewards"].cpu().contiguous()
+        bootstrap_type = self.cfg.algorithm.get("bootstrap_type", "standard")
 
-        # Handle auto_reset: add bootstrap value to rewards for done episodes
-        # Note: currently this is not correct for chunk-size>1 with partial reset
-        if dones.any() and self.cfg.env.train.auto_reset:
+        if bootstrap_type == "standard":
+            last_step_truncations = env_output["truncations"].cpu().contiguous()[:, -1]
+        else:
+            last_step_truncations = dones[:, -1]
+
+        # Handle auto_reset: add bootstrap value ONLY for truncated episodes (not terminated)
+        if last_step_truncations.any() and self.cfg.env.train.auto_reset:
             if hasattr(self.hf_model, "value_head") or hasattr(self.hf_model, "q_head"):
                 final_obs = env_output["final_obs"]
                 with torch.no_grad():
@@ -175,11 +180,11 @@ class MultiStepRolloutWorker(Worker):
                     else:
                         _final_values = torch.zeros_like(actions[:, 0])
                 final_values = torch.zeros_like(_final_values[:, 0])  # [bsz, ]
-                last_step_dones = dones[:, -1]  # [bsz, ]
-
-                final_values[last_step_dones] = _final_values[:, 0][last_step_dones]
-
-                # Add bootstrap value to the last step of done episodes
+                # bootstrap only on the truncated episode
+                final_values[last_step_truncations] = _final_values[:, 0][
+                    last_step_truncations
+                ]
+                # Add bootstrap value to the last step of truncated episodes
                 rewards[:, -1] += self.cfg.algorithm.gamma * final_values.cpu()
 
         return dones, rewards
@@ -237,7 +242,7 @@ class MultiStepRolloutWorker(Worker):
                 if env_output["final_obs"] is not None:
                     env_output["final_obs"].pop("task_descriptions", None)
                 chunk_step_result = ChunkStepResult(
-                    actions=result.get("action", None),
+                    actions=result["forward_inputs"].get("action", None),
                     dones=dones,
                     rewards=rewards,
                     truncations=env_output["truncations"],

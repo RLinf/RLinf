@@ -139,7 +139,7 @@
           <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/frankasim.html" target="_blank" style="text-decoration: underline; color: blue;">
             <b>基于Franka-Sim的强化学习</b>
           </a><br>
-          支持Franka-Sim+MLP+PPO训练
+          支持Franka-Sim+MLP/CNN+PPO/SAC训练
         </p>
       </div>
 
@@ -192,6 +192,19 @@
          </a><br>
          支持 OpenSora 世界模型 + OpenVLA-OFT + GRPO 训练
        </p>
+      </div>
+    </div>
+
+    <div style="display: flex; justify-content: center; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+        <img src="https://github.com/RLinf/misc/raw/main/pic/gsenv.gif"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+          <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/gsenv.html" target="_blank" style="text-decoration: underline; color: blue;">
+            <b>基于 GSEnv 的 Real2Sim2Real 强化学习</b>
+          </a><br>
+          支持 GSEnv + π₀.₅ + PPO 训练
+        </p>
       </div>
     </div>
 
@@ -327,6 +340,7 @@ RLinf的整体设计简洁且模块化，以Worker为抽象封装强化学习训
    robotwin
    frankasim
    opensora
+   gsenv
    pi0
    gr00t
    sac_flow

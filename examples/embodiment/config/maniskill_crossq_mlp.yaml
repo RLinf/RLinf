@@ -49,7 +49,7 @@ algorithm:
   loss_type: embodied_sac
   loss_agg_func: "token-mean"
   
-  bootstrap_type: always
+  bootstrap_type: always # [standard, always]. Bootstrap Q-values according to terminations and truncations. "standard" only bootstraps when truncations, while "always" bootstraps when truncations or terminations.
   gamma: 0.8
   tau: 0.01  # Soft update coefficient for target networks
   auto_entropy_tuning: True  # Enable automatic entropy tuning
@@ -64,9 +64,10 @@ algorithm:
   # Replay buffer settings
   replay_buffer:
     enable_cache: True
-    cache_size: 5000 # number of trajectories cached in memory
+    cache_size: 10000 # number of trajectories cached in memory
     sample_window_size: 10000 # number of latest trajectories to sample from for replay buffer
     min_buffer_size: 0  # Minimum buffer size before training starts
+    save_trajectories: False
 
   target_update_freq: 1  # Frequency of target network updates
 

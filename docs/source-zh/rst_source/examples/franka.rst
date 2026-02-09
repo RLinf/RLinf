@@ -239,9 +239,9 @@ b. 安装依赖
     --network host \
     --name rlinf \
     -v .:/workspace/RLinf \
-    rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+    rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
     # 为了提高国内下载速度，也可以使用：
-    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0
+    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.1-maniskill_libero
 
 **方式 2：自定义环境（Custom Environment）**
 
@@ -428,9 +428,10 @@ RLinf 使用 ray 来管理分布式环境，这意味着：
 
    python -m toolkits.realworld_check.test_camera
 
-然后，通过运行一个 dummy 版本配置来测试基础集群配置。
+然后，通过运行一个 dummy 版本配置来测试基础集群配置。请参照``examples/embodiment/config/real_world_dummy_sac_cnn.yaml``文件添加`env.eval.override_cfg`。
 可以在配置文件中同时将 `env.train.override_cfg` 与 `env.eval.override_cfg` 部分的 `is_dummy` 字段设置为 `True`，
-以启用 dummy 模式。
+以启用 dummy 模式。请注意如果启用dummy模式，需要将上面运行 ``toolkits.realworld_check.test_camera.py`` 得到的camera序列号
+填补在 `env.train.override_cfg` 与 `env.eval.override_cfg` 部分的 `camera_serials` 字段。
 
 在 head 节点上运行测试脚本：
 
