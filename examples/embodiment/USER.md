@@ -57,7 +57,7 @@ The setup is split between the **Controller Node** and **Training/Rollout Nodes*
 
 ```bash
 # Into Repository
-cd USER
+cd RLinf
 bash requirements/install.sh embodied --env franka
 source .venv/bin/activate
 ```
@@ -82,11 +82,12 @@ Before training, collect initial demonstrations using a Space Mouse.
 
 ### Step 2: Cluster Setup
 
-USER uses **Ray** for distributed management. You must set environment variables on every node:
+RLinf-USER uses **Ray** for distributed management. You must set environment variables on every node:
 
 ```bash
-export USER_NODE_RANK=<0 to N-1>
-export PYTHONPATH=$PYTHONPATH:<path_to_USER>
+# Set unique rank for each node (0 to N-1)
+export RLINF_NODE_RANK=<0 to N-1>
+export PYTHONPATH=$PYTHONPATH:<path_to_RLinf>
 # On Head Node
 ray start --head --port=6379
 # On Worker Nodes
