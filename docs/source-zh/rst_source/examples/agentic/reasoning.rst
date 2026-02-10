@@ -165,7 +165,7 @@ Math推理的强化学习训练
 最终性能
 ~~~~~~~~~~~~~~~~~
 
-我们提供了一个评估 `工具包 <https://github.com/RLinf/LLMEvalKit>`_ 以及相应的 :doc:`评估文档 <../start/llm-eval>`。  
+我们提供了一个评估 `工具包 <https://github.com/RLinf/LLMEvalKit>`_ 以及相应的 :doc:`评估文档 <../../start/llm-eval>`。  
 
 在 AIME24、AIME25 和 GPQA-diamond 上的评测结果表明，RLinf 达到了 SOTA 性能。  
 

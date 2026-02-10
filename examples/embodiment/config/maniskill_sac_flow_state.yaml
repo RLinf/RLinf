@@ -37,7 +37,11 @@ algorithm:
   normalize_advantages: False  # SAC doesn't use advantages
   kl_penalty: kl
   group_size: 1
-  agg_q: min  # same as maniskill_sac_mlp.yaml
+
+  agg_q: min  # agg_q for critic
+  actor_agg_q: min # agg_q for actor, SAC uses min while RLPD uses mean
+  critic_subsample_size: 2 # number of Q-heads to subsample for critic update, used only in RLPD (num_q_heads=10)
+  enable_drq: False
 
   rollout_epoch: 1
   eval_rollout_epoch: 1 # same as maniskill_sac_mlp.yaml
@@ -69,8 +73,8 @@ algorithm:
     enable_cache: True
     cache_size: 6000 # number of trajectories cached in memory
     sample_window_size: 6000 # number of latest trajectories to sample from for replay buffer
-    min_buffer_size: 200  # Minimum buffer size before training starts
-    save_trajectories: False
+    min_buffer_size: 2  # Minimum buffer size before training starts (in number of trajectories)
+    auto_save: False
 
   num_updates_per_step: 64  # Number of gradient updates per training step
   target_update_freq: 1  # Frequency of target network updates
@@ -148,7 +152,7 @@ actor:
     precision: "32"
     add_value_head: False
     add_q_head: True
-    num_q_heads: 10  # number of Q heads for critic, passed to policy module
+    num_q_heads: 2  # 2 for SAC, 10 for RLPD
     
     # Flow Matching specific parameters
     denoising_steps: 4  # Number of denoising steps for flow matching

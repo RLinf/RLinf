@@ -66,7 +66,7 @@ RLinf 目前支持多类具身智能环境，可通过 **defaults** 中的 ``env
 依赖安装
 ---------------
 
-对于在仿真环境运行，请参考 :doc:`../start/installation` 进行安装。
+对于在仿真环境运行，请参考 :doc:`../../start/installation` 进行安装。
 
 本系列配置使用 Hydra 的 searchpath 从环境变量引入外部配置目录:
 

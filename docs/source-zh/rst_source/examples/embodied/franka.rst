@@ -485,7 +485,7 @@ RLinf 支持对多台 Franka 机器人进行统一管理，实现并行数据采
             node_rank: 2 # 第二个机器人控制节点的 rank
 
 自然地，你可以按照同样的方式扩展到更多的机器人。
-关于此类异构硬件配置语法的更多细节，请参考 :doc:`../tutorials/advance/hetero`。
+关于此类异构硬件配置语法的更多细节，请参考 :doc:`../../tutorials/advance/hetero`。
 
 
 

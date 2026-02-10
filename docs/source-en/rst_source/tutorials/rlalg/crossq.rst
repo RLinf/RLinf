@@ -97,4 +97,4 @@ CrossQ shares a nearly identical configuration with SAC. A single parameter, `q_
          enable_cache: True # Enable memory cache to reduce I/O overhead
          cache_size: 6000  # number of trajectories cached in memory
          sample_window_size: 6000  # number of latest trajectories to sample from for replay buffer
-         min_buffer_size: 200  # Minimum buffer size before training starts
+         min_buffer_size: 2  # Minimum buffer size before training starts (in number of trajectories)

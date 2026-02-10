@@ -82,16 +82,16 @@ algorithm:
   replay_buffer:
     enable_cache: True
     cache_size: 200 # number of trajectories cached in memory
-    min_buffer_size: 5  # Minimum buffer size before training starts. If these parameter is set too large, it will take a long time to start real-world training 
+    min_buffer_size: 2  # Minimum buffer size before training starts (in number of trajectories). If set too large, it will take a long time to start real-world training 
     sample_window_size: 200 # number of latest trajectories to sample from for replay buffer
-    save_trajectories: False
+    auto_save: False
 
   demo_buffer:
     enable_cache: True
     cache_size: 200 # number of trajectories cached in memory
     sample_window_size: 200 # number of latest trajectories to sample from for demo buffer
     load_path: "/path/to/demo_data"
-    save_trajectories: False
+    auto_save: False
 
   target_update_freq: 1  # Frequency of target network updates
 

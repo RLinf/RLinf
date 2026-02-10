@@ -402,6 +402,7 @@ class FlowStateConfig:
     add_value_head: bool = False  # No visual_feature -> No mix_feature -> No value_head -> add_value_head must be false !
     add_q_head: bool = False
     q_head_type: str = "default"
+    num_q_heads: int = 2
 
     action_scale = None
     final_tanh = True
@@ -515,7 +516,7 @@ class FlowStatePolicy(nn.Module, BasePolicy):
             self.q_head = MultiQHead(
                 hidden_size=self.cfg.obs_dim,
                 hidden_dims=[256, 256, 256],
-                num_q_heads=2,
+                num_q_heads=self.cfg.num_q_heads,
                 action_feature_dim=self.cfg.action_dim,
             )
 
