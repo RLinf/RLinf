@@ -139,6 +139,14 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openvla
 
+      - name: ManiSkill Async PPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run_async_ppo.sh maniskill_async_ppo_openvla
+
       - name: Clean up
         run: |
           rm -rf .venv
@@ -176,6 +184,15 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_goal_grpo_openvlaoft
+
+      - name: ManiSkill Async PPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          bash tests/e2e_tests/embodied/run_async_ppo.sh maniskill_async_ppo_openvlaoft
 
       - name: Clean up
         run: |
@@ -381,6 +398,15 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi05
 
+      - name: ManiSkill Async PPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          bash tests/e2e_tests/embodied/run_async_ppo.sh maniskill_async_ppo_openpi
+
       - name: Libero-Spatial DSRL PPO test
         timeout-minutes: 20
         run: |
@@ -577,6 +603,36 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh opensora_libero_spatial_grpo_openvlaoft
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-openvlaoft-wan-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          export WAN_PATH=/workspace/dataset/wan
+          bash requirements/install.sh embodied --model openvla-oft --env wan
+
+      - name: Wan GRPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh wan_libero_spatial_grpo_openvlaoft
 
       - name: Clean up
         run: |
