@@ -58,7 +58,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         ]:
             from torch.utils.data import DataLoader, DistributedSampler
             from rlinf.data.datasets.vlm import VLMDatasetRegistry
-            from rlinf.data.datasets import collate_fn
+            from rlinf.data.datasets import sft_collate_fn
 
             dataset_name = self.cfg.data.get("dataset_name", "robo2vlmsft")
             train_dataset = VLMDatasetRegistry.create(
@@ -90,7 +90,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 shuffle=(sampler is None),
                 num_workers=self.cfg.data.get("num_workers", 4),
                 drop_last=True,
-                collate_fn=collate_fn,
+                collate_fn=sft_collate_fn,
             )
             logging.info(f"Build data loader from {data_paths} with {len(train_dataset)} samples")
             return data_loader, {"dataset_name": dataset_name, "num_samples": len(train_dataset)}
@@ -137,8 +137,6 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                             input_ids=input_ids,
                             attention_mask=attention_mask,
                             **multi_modal_inputs,
-                            max_new_tokens=128,
-                            do_sample=True,
                         )
 
                 # encode the generated text

@@ -824,16 +824,12 @@ def validate_embodied_cfg(cfg):
 
 
 def validate_vlm_sft_cfg(cfg: DictConfig) -> DictConfig:
-    assert cfg.data.get("train_data_paths", None) is not None, "data.train_data_paths is required"
-    assert cfg.model.get("is_lora", False) is not None, "model.is_lora is required"
-    assert cfg.optim.get("adam_beta1", None) is not None, "optim.adam_beta1 is required"
-    assert cfg.optim.get("adam_beta2", None) is not None, "optim.adam_beta2 is required"
-    assert cfg.optim.get("adam_eps", None) is not None, "optim.adam_eps is required"
-    assert cfg.runner.get("val_check_interval", None) is not None, "runner.val_check_interval is required"
-    assert cfg.runner.get("max_epochs", None) is not None, "runner.max_epochs is required"
 
     with open_dict(cfg):
-        if cfg.data.get("eval_data_paths", None) is not None:
+        if cfg.data.get("train_data_paths", None) is None:
+            # if train_data_paths is None, the code will just eval the model
+            assert cfg.data.get("eval_data_paths", None) is not None, "the data.train_data_paths is None, so data.eval_data_paths is required"
+        elif cfg.data.get("eval_data_paths", None) is not None:
             # set the val_check_interval to max_epochs
             if cfg.runner.get("val_check_interval", None) is None:
                 cfg.runner.val_check_interval = cfg.runner.max_epochs

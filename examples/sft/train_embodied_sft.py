@@ -27,7 +27,6 @@ from rlinf.workers.sft.fsdp_ebodied_sft_worker import FSDPEmbodiedSftWorker
 
 mp.set_start_method("spawn", force=True)
 
-
 @hydra.main(
     version_base="1.1", config_path="config", config_name="maniskill_ppo_openvlaoft"
 )

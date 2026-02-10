@@ -473,6 +473,7 @@ class Robo2VLMDataset(VLMBaseDataset):
 
 @VLMDatasetRegistry.register("robo2vlmsft")
 class Robo2VLMSFTDataset(VLMBaseDataset):
+    # The reason for overriding the current function is that the SFT dataset requires masking the attention for the answer separately.
     def __init__(
         self,
         data_paths: Union[list[str], str],
@@ -483,12 +484,12 @@ class Robo2VLMSFTDataset(VLMBaseDataset):
         super().__init__(data_paths, config, tokenizer)
         self.apply_chat_template = config.data.apply_chat_template
         self.eval_dataset = eval_dataset
-        self.system_prompt = (
-            "You are a helpful robotic vision assistant specialized in "
-            "answering questions about robotic manipulation tasks. "
-            "Use <think></think> tags to show your reasoning process, "
-            "then provide your final answer in <answer></answer> tags."
-        )
+        # self.system_prompt = (
+        #     "You are a helpful robotic vision assistant specialized in "
+        #     "answering questions about robotic manipulation tasks. "
+        #     "Use <think></think> tags to show your reasoning process, "
+        #     "then provide your final answer in <answer></answer> tags."
+        # )
 
     def get_image_list(self, dataitem: dict[str, Any]) -> list[Union[bytes, str, None]]:
         images: list[Any] = []
@@ -560,7 +561,7 @@ class Robo2VLMSFTDataset(VLMBaseDataset):
             )
 
         prompt_text = self._processor.apply_chat_template(
-            prompt, tokenize=False, add_generation_prompt=False
+            prompt, tokenize=False, add_generation_prompt=True
         )
 
         assert isinstance(prompt_text[0], str), (
@@ -593,8 +594,9 @@ class Robo2VLMSFTDataset(VLMBaseDataset):
         {
             "messages": [
                 {"role": "user", "content": [
+                    {"type": "image1", "image1": <PIL.Image1>}
+                    {"type": "image2", "image2": <PIL.Image2>}
                     {"type": "text", "text": "User message"},
-                    {"type": "image", "image": <PIL.Image>}
                 ]},
                 {"role": "assistant", "content": [
                     {"type": "text", "text": "Assistant response"}
@@ -610,6 +612,16 @@ class Robo2VLMSFTDataset(VLMBaseDataset):
         correct_answer = raw.get(self.answer_key, None)
         assert correct_answer is not None, "correct_answer is required"
         images = self.get_image_list(raw)
+
+        str_images = []
+        for k in self.image_keys:
+            v = raw.get(k)
+            if isinstance(v, str):
+                str_images.append(v)
+            elif isinstance(v, list):
+                str_images.extend([x for x in v if isinstance(x, str)])
+
+        # convert the images to PIL Image objects
         images_inputs = []
         for image in images:
             image_obj = None
@@ -647,15 +659,15 @@ class Robo2VLMSFTDataset(VLMBaseDataset):
         # Create the answer using the correct choice (matching finetune example format)
         answer = f"{correct_answer_letter}. {choices[correct_answer_idx]}"
 
-        image_context = [{"type": "image"} for img in images_inputs]
+        image_context = [{"type": "image", "image": img} for img in images_inputs]
         image_context.append({"type": "text", "text": formatted_question})
 
         prompt = [
             (
-                {
-                    "role": "system",
-                    "content": [{"type": "text", "text": self.system_prompt}],
-                },
+                # {
+                #     "role": "system",
+                #     "content": [{"type": "text", "text": self.system_prompt}],
+                # },
                 {"role": "user", "content": image_context},
                 {"role": "assistant", "content": [{"type": "text", "text": answer}]},
             )
@@ -663,16 +675,16 @@ class Robo2VLMSFTDataset(VLMBaseDataset):
 
         without_assistant_prompt = [
             (
-                {
-                    "role": "system",
-                    "content": [{"type": "text", "text": self.system_prompt}],
-                },
+                # {
+                #     "role": "system",
+                #     "content": [{"type": "text", "text": self.system_prompt}],
+                # },
                 {"role": "user", "content": image_context},
             )
         ]
 
-        # prompt_inputs = input_ids, attention_mask, pixel_values, image_grid_thw
         # get the vlm model prompt inputs
+        # prompt_inputs = input_ids, attention_mask, pixel_values, image_grid_thw
         prompt_inputs = self.vlm_vision_convert(prompt, images_inputs)
         # get the vlm model prompt inputs without assistant for label
         label_prompt_inputs = self.vlm_vision_convert(
@@ -680,10 +692,12 @@ class Robo2VLMSFTDataset(VLMBaseDataset):
         )
 
         if self.eval_dataset:
+            # for eval dataset, we need to use the label prompt inputs
             input_ids = label_prompt_inputs.pop("input_ids")
             attention_mask = label_prompt_inputs.pop("attention_mask")
             label_mask = attention_mask
         else:
+            # for train dataset, we need to use the prompt prompt inputs
             input_ids = prompt_inputs.pop("input_ids")
             attention_mask = prompt_inputs.pop("attention_mask")
             label_mask = label_prompt_inputs.pop("attention_mask")

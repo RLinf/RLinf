@@ -35,6 +35,7 @@ data:
   dataset_name: "robo2vlmsft"
   apply_chat_template: True
   use_chat_template: True
+  # if train_data_paths is not None, the sft code will just eval the model
   train_data_paths: "/path/to/Robo2VLM-1"
   eval_data_paths: "/path/to/Robo2VLM-1"
   prompt_key: "question"
@@ -70,7 +71,8 @@ actor:
     adam_eps: 1.0e-08
     weight_decay: 0.01
     clip_grad: 1.0
-    warmup_style: "cosine"
+    lr_scheduler: "cosine"
+    total_training_steps: ${algorithm.runner.max_epochs}
     lr_warmup_steps: 200 
 
   # Override the default values in training_backend/fsdp

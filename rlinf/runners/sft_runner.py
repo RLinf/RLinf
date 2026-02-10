@@ -115,10 +115,22 @@ class SFTRunner:
             if eval_model:
                 evaluate_metrics = {f"eval/{k}": v for k, v in eval_metrics[0].items()}
                 logging_metrics.update(evaluate_metrics)
+                self.metric_logger.log(evaluate_metrics, _step)
 
             global_pbar.set_postfix(logging_metrics, refresh=False)
             global_pbar.update(1)
 
+        self.metric_logger.finish()
+    
+    def run_eval(self) -> None:
+        eval_handle: Handle = self.actor.run_eval()
+        eval_metrics = eval_handle.wait()
+        time_metrics = self.timer.consume_durations()
+        time_metrics["evaluate"] = eval_handle.consume_duration()
+        evaluate_metrics = {f"eval/{k}": v for k, v in eval_metrics[0].items()}
+        logging_metrics = time_metrics
+        logging_metrics.update(evaluate_metrics)
+        self.metric_logger.log(logging_metrics, 0)
         self.metric_logger.finish()
 
     def _save_checkpoint(self) -> None:
