@@ -15,7 +15,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 0-0
+    actor,env,rollout: 0-1
 
 runner:
   task_type: embodied
@@ -169,6 +169,12 @@ data:
 
 
 profile_data:
-  actor_cost: 95.7    # Training component cost (seconds per iteration)
-  inference_cost: 30.8  # Inference component cost (seconds per iteration)
-  rollout_cost: 59.9    # Rollout component cost (seconds per iteration)  
+  actor_cost: 140    # Training component cost (seconds per iteration)
+  # rollout_cost: 59.9    # Rollout component cost (seconds per iteration)  
+  env_cost : 10.0      # Environment step cost (seconds per iteration)
+  env_profile_data:
+    1: 10.0    # 1 env 
+    8: 12.0    # 8 env 
+  rollout_profile_data:
+    1: 10.0   # 1 rollout 
+    8: 12.0  # 8 rollout 

@@ -7,7 +7,7 @@ hydra:
   output_subdir: null
 
 cluster:
-  num_nodes: 32
+  num_nodes: 1
   component_placement:
     actor,rollout,reward: all
 
@@ -113,7 +113,7 @@ rollout:
 
   return_logprobs: ${not:${algorithm.recompute_logprobs}}
 
-  tensor_parallel_size: 4
+  tensor_parallel_size: 2
   pipeline_parallel_size: 1
   
   validate_weight: False # whether to send all weights at first for weight comparison.
@@ -159,7 +159,7 @@ actor:
     precision: fp16
     add_bias_linear: False
 
-    tensor_model_parallel_size: 8
+    tensor_model_parallel_size: 2
     pipeline_model_parallel_size: 1
 
     activation: swiglu
@@ -271,3 +271,9 @@ reward:
 
 critic:
   use_critic_model: false
+
+profile_data:
+  actor_cost: 95.7    # Training component cost (seconds per iteration)
+  inference_cost: 30.8  # Inference component cost (seconds per iteration)
+  rollout_cost: 59.9    # Rollout component cost (seconds per iteration)
+  

@@ -79,9 +79,11 @@ def init_global_config_env(config, component_placement):
     )
 
     for component in component_placement._components:
-        instance_num = getattr(component_placement, f"{component}_dp_size")
-        world_size = getattr(component_placement, f"{component}_world_size")
-        model_parallel_size = world_size // instance_num
+
+        if not component == "env" :      
+            instance_num = getattr(component_placement, f"{component}_dp_size")
+            world_size = getattr(component_placement, f"{component}_world_size")
+            model_parallel_size = world_size // instance_num
 
         if component == "rollout":
             component = "env_rollout"
