@@ -196,6 +196,16 @@ def main(cfg):
 
     schedule_result: ScheduleResult = auto_placement_worker.run()
 
+    if schedule_result is None:
+        print("=" * 50)
+        print("Error: Auto scheduler could not find any valid placement strategy.")
+        print("Possible reasons:")
+        print("1. Missing profile data for certain GPU scales.")
+        print(
+            "2. The hardware rank provided by component_placement configure is not compatible with that ray cluster detect."
+        )
+        return
+
     if (
         schedule_result.mode == ScheduleMode.COLLOCATED
         and not schedule_result.is_hybrid()

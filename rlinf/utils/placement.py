@@ -47,7 +47,7 @@ class HybridComponentPlacement(ComponentPlacement):
 class ModelParallelComponentPlacement(ComponentPlacement):
     """Component placement for model-parallel components.
 
-    The components must be actor, rollout, and optionally inference, whose GPUs must be continuous.
+    The components must be actor, rollout and optionally inference, reward, whose GPUs must be continuous.
 
     This placement supports both collocated and disaggregated modes.
 
@@ -68,7 +68,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         self._actor_gpus = self._get_component_hardware("actor")
         self._rollout_gpus = self._get_component_hardware("rollout")
         self._inference_gpus = self._get_component_hardware("inference")
-        # self._reward_gpus = self._get_component_hardware("reward")
+        self._reward_gpus = self._get_component_hardware("reward")
         self._cluster_num_gpus = cluster.num_accelerators
         assert self._actor_gpus is not None, (
             "Actor GPUs must be specified in the component_placement config."
@@ -95,7 +95,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             len(self._inference_gpus) if self._inference_gpus else 0
         )
         self._rollout_num_gpus = len(self._rollout_gpus)
-        # self._reward_num_gpus = len(self._reward_gpus) if self._reward_gpus else 0
+        self._reward_num_gpus = len(self._reward_gpus) if self._reward_gpus else 0
 
         if self._is_auto():
             self._placement_mode = PlacementMode.AUTO
@@ -194,10 +194,10 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 num_hardware_per_process=self.rollout_tp_size,
                 stride=stride,
             )
-            # if self._reward_gpus:
-            #     self._placements["reward"] = PackedPlacementStrategy(
-            #         self._reward_gpus[0], self._reward_gpus[-1]
-            #     )
+            if self._reward_gpus:
+                self._placements["reward"] = PackedPlacementStrategy(
+                    self._reward_gpus[0], self._reward_gpus[-1]
+                )
         elif self._placement_mode == PlacementMode.DISAGGREGATED:
             num_gpus_per_rollout_dp = len(self._rollout_gpus) // self.rollout_dp_size
             self._placements["rollout"] = PackedPlacementStrategy(
