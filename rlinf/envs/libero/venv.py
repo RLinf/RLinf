@@ -1,10 +1,11 @@
+
 # Copyright 2025 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     https://www.apache.org/licenses/LICENSE-2.0
+#      https://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,23 +14,112 @@
 # limitations under the License.
 
 import multiprocessing
+import os
 import warnings
 from multiprocessing import connection
 from typing import Any, Callable, Optional, Union
 
 import gym
 import numpy as np
-from libero.libero.envs import OffScreenRenderEnv
 
-from rlinf.envs.venv import (
-    BaseVectorEnv,
-    CloudpickleWrapper,
-    EnvWorker,
-    ShArray,
-    SubprocEnvWorker,
-    SubprocVectorEnv,
-    _setup_buf,
-)
+
+libero_type = os.environ.get("LIBERO_TYPE", "standard")
+
+if libero_type == "pro":
+    try:
+        from liberopro.liberopro.envs import OffScreenRenderEnv
+        from liberopro.liberopro.envs.venv import (
+            BaseVectorEnv,
+            CloudpickleWrapper,
+            EnvWorker,
+            ShArray,
+            SubprocEnvWorker,
+            SubprocVectorEnv,
+            _setup_buf,
+        )
+    except ImportError as e:
+        print(
+            f"[Venv] Warning: LIBERO_TYPE=pro but import failed ({e}). Falling back to standard libero..."
+        )
+        from libero.libero.envs import OffScreenRenderEnv
+        from libero.libero.envs.venv import (
+            BaseVectorEnv,
+            CloudpickleWrapper,
+            EnvWorker,
+            ShArray,
+            SubprocEnvWorker,
+            SubprocVectorEnv,
+            _setup_buf,
+        )
+
+elif libero_type == "plus":
+    try:
+        from liberoplus.liberoplus.envs import OffScreenRenderEnv
+        from liberoplus.liberoplus.envs.venv import (
+            BaseVectorEnv,
+            CloudpickleWrapper,
+            EnvWorker,
+            ShArray,
+            SubprocEnvWorker,
+            SubprocVectorEnv,
+            _setup_buf,
+        )
+    except ImportError as e:
+        print(
+            f"[Venv] Warning: LIBERO_TYPE=plus but import failed ({e}). Falling back to standard libero..."
+        )
+        from libero.libero.envs import OffScreenRenderEnv
+        from libero.libero.envs.venv import (
+            BaseVectorEnv,
+            CloudpickleWrapper,
+            EnvWorker,
+            ShArray,
+            SubprocEnvWorker,
+            SubprocVectorEnv,
+            _setup_buf,
+        )
+
+else:
+    try:
+        from libero.libero.envs import OffScreenRenderEnv
+        from libero.libero.envs.venv import (
+            BaseVectorEnv,
+            CloudpickleWrapper,
+            EnvWorker,
+            ShArray,
+            SubprocEnvWorker,
+            SubprocVectorEnv,
+            _setup_buf,
+        )
+    except ImportError:
+        try:
+            from liberopro.liberopro.envs import OffScreenRenderEnv
+            from liberopro.liberopro.envs.venv import (
+                BaseVectorEnv,
+                CloudpickleWrapper,
+                EnvWorker,
+                ShArray,
+                SubprocEnvWorker,
+                SubprocVectorEnv,
+                _setup_buf,
+            )
+        except ImportError:
+            try:
+                from liberoplus.liberoplus.envs import OffScreenRenderEnv
+                from liberoplus.liberoplus.envs.venv import (
+                    BaseVectorEnv,
+                    CloudpickleWrapper,
+                    EnvWorker,
+                    ShArray,
+                    SubprocEnvWorker,
+                    SubprocVectorEnv,
+                    _setup_buf,
+                )
+            except ImportError:
+                raise ImportError(
+                    "Could not import vector env utils from libero, liberopro, or liberoplus."
+                )
+
 
 gym_old_venv_step_type = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 gym_new_venv_step_type = tuple[
@@ -116,6 +206,7 @@ def _worker(
                 obs = env.set_init_state(data)
                 p.send(obs)
             elif cmd == "reconfigure":
+                # Uses OffScreenRenderEnv which is now dynamically imported at the top
                 env.close()
                 seed = data.pop("seed")
                 env = OffScreenRenderEnv(**data)
