@@ -66,7 +66,7 @@ def split_list(
     enforce_divisible_batch: Optional[bool] = True,
 ):
     """
-    Split a list into equal sized chunks
+    Split a list into equal sized chunks or fixed size chunks
     Args:
         inputs: Input list to split
         num_chunks: Number of chunks to split into. Can be a list of chunk sizes or a single integer.
@@ -216,7 +216,6 @@ def get_iterator_k_split(
             assert all((i > 0 for i in num_splits)) and sum(num_splits) == batch_size, (
                 f"Issue with batch size configuration! batch_size = {batch_size}, num_splits = {num_splits}"
             )
-            # split_batch = [torch.split(item[1], num_splits, dim=0) for item in items]
             tensor_items = {
                 k: torch.split(v, num_splits) for k, v in tensor_items.items()
             }

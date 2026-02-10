@@ -91,10 +91,6 @@ def compute_ppo_actor_loss(
     else:
         dual_clip_mask = torch.zeros_like(clip_mask)
 
-    # metric_policy_loss_abs = loss_agg_func(
-    #     policy_loss.abs(), loss_mask, loss_mask_ratio
-    # )
-    #policy_loss_metrics = policy_loss.clone()
     metric_policy_loss_abs = loss_agg_func(
         policy_loss.abs(), loss_mask, loss_mask_ratio
     )
@@ -126,8 +122,6 @@ def compute_ppo_actor_loss(
         # Broadcast loss_mask to match ratio's shape for metrics computation
         loss_mask_for_metrics = loss_mask.expand_as(ratio)
 
-    approx_kl = -approx_kl.sum() / loss_mask_count
-    # clip_fraction = clip_mask.logical_and_(loss_mask).count_nonzero() / loss_mask_count
     metrics_data = {
         "actor/policy_loss": policy_loss.detach(),
         "actor/policy_loss_abs": metric_policy_loss_abs.detach(),

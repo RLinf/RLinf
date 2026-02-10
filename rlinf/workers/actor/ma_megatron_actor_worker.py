@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -432,7 +432,6 @@ class MAMegatronActor(MegatronActor):
 
         # metrics
         rollout_metrics = self._compute_rollout_metrics(batch)
-        # eval_metrics = batch.pop("eval_metrics")
 
         # pack traj
         if self.cfg.actor.get("pack_traj", False):
