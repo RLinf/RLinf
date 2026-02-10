@@ -164,6 +164,10 @@ reward:
 critic:
   use_critic_model: False
 
+data:
+  env_num: 4
+
+
 profile_data:
   actor_cost: 95.7    # Training component cost (seconds per iteration)
   inference_cost: 30.8  # Inference component cost (seconds per iteration)
