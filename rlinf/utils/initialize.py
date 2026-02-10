@@ -55,7 +55,7 @@ def extract_selected_fields(cfg: DictConfig) -> DictConfig:
             for k, v in sub_cfg.items():
                 result[f"{prefix}{k}"] = v
 
-    return OmegaConf.create(result, flags={"allow_objects": True})
+    return OmegaConf.create(result)
 
 
 def set_megatron_args(cfg):
@@ -77,11 +77,6 @@ def set_megatron_args(cfg):
         )
     args.fp16 = precision_dtype == torch.float16
     args.bf16 = precision_dtype == torch.bfloat16
-    mix_precision_dtype = torch_dtype_from_precision(cfg.model.mix_precision)
-    args.main_grads_dtype = mix_precision_dtype
-    args.main_params_dtype = mix_precision_dtype
-    args.exp_avg_dtype = mix_precision_dtype
-    args.exp_avg_sq_dtype = mix_precision_dtype
 
     args.vocab_file = None
 

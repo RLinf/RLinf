@@ -311,18 +311,37 @@ def validate_fsdp_cfg(cfg: DictConfig, resume_dir: Optional[str] = None) -> Dict
             and mixed_precision_config.reduce_dtype is None
             and mixed_precision_config.buffer_dtype is None
         )
-        if "amp" not in config:
+        if "amp_autocast" in config or "amp_grad_scaler" in config:
+            assert "amp" not in config, (
+                "fsdp.amp_autocast and fsdp.amp_grad_scaler should not be enabled when fsdp.amp is used"
+            )
             config.amp = {}
-        config.amp.enabled = config.amp.get("enabled", False)
+            config.amp.enabled = config.amp_autocast.get("enabled", False)
+            config.amp.precision = config.amp_autocast.get("precision", "bf16")
+            config.amp.use_grad_scaler = config.get("amp_grad_scaler", False)
+        else:
+            if "amp" not in config:
+                config.amp = {}
+            config.amp.enabled = config.amp.get("enabled", False)
+            if config.amp.enabled is False:
+                if "precision" in config.amp:
+                    print(
+                        "Warning: fsdp_config.amp.precision will be deprecated under amp disabled condition, use fsdp_config.amp_autocast.precision instead"
+                    )
+                if "use_grad_scaler" in config.amp:
+                    print(
+                        "Warning: fsdp_config.amp.use_grad_scaler will be deprecated under amp disabled condition, use fsdp_config.amp_grad_scaler instead"
+                    )
+            config.amp.precision = config.amp.get("precision", "bf16")
+            config.amp.use_grad_scaler = config.amp.get("use_grad_scaler", False)
+
         if config.amp.enabled and use_fsdp_mixed_precision:
             assert False, (
                 "amp autocast should not be enabled when fsdp mixed_precision is enabled"
             )
-        config.amp.precision = config.amp.get("precision", "bf16")
         assert config.amp.precision in ["fp16", "bf16", "fp32"], (
             "fsdp.amp.precision must be one of ['fp16', 'bf16', 'fp32']"
         )
-        config.amp.use_grad_scaler = config.amp.get("use_grad_scaler", False)
         return config
 
     OmegaConf.set_struct(cfg, True)
@@ -560,12 +579,6 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
             cfg.model.get("precision", None) is not None
             and torch_dtype_from_precision(cfg.model.precision) is not None
         ), "model.precision is required"
-        if cfg.model.get("mix_precision", None) is not None:
-            assert torch_dtype_from_precision(cfg.model.mix_precision) is not None(
-                "model.precision is required"
-            )
-        else:
-            cfg.model.mix_precision = "fp32"
 
         cfg.model.tensor_model_parallel_size = cfg.model.get(
             "tensor_model_parallel_size", 1
