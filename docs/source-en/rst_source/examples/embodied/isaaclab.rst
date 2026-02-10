@@ -40,7 +40,7 @@ This example uses a custom RLinf environment `Isaac-Stack-Cube-Franka-IK-Rel-Vis
 
 **Data Structure**
 
-- **Images**: RGB tensors from main view and wrist view ``[batch_size, 224, 224, 3]``
+- **Images**: RGB tensors from main view and wrist view ``[batch_size, H, W, 3]`` (with ``H`` and ``W`` set by the camera resolution in the environment config, e.g., 256x256 in ``examples/embodiment/config/env/isaaclab_stack_cube.yaml``)
 - **Task Descriptions**: Natural language instructions
 - **State**: End-effector position, orientation, and gripper state
 - **Reward**: Sparse success/failure reward
@@ -269,3 +269,8 @@ Visualization and Results
        project_name: rlinf
        experiment_name: "isaaclab_ppo_gr00t_demo"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
+
+Acknowledgements
+---------
+Credit to Minghui Xu and Nan Yang for their contribution and support for this example!
+ 

@@ -37,7 +37,7 @@ IsaacLab作为一个高度可定制的仿真平台，允许用户创建自定义
 
 **数据结构**
 
-- **图像**：主视角和手腕视角的RGB张量 ``[batch_size, 224, 224, 3]``  
+- **图像**：主视角和手腕视角的 RGB 张量 ``[batch_size, H, W, 3]``（由 ``init_params.table_cam`` / ``init_params.wrist_cam`` 决定，默认 256x256）   
 - **任务描述**：自然语言指令  
 - **状态**：末端执行器的位置、姿态和夹爪状态
 - **奖励**：稀疏的成功/失败奖励
@@ -48,8 +48,9 @@ IsaacLab作为一个高度可定制的仿真平台，允许用户创建自定义
 
 1. **自定义IsaacLab环境**：请参考 `IsaacLab-Examples <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/environments.html>`__ 获取已有可用环境. 如果您想自定义环境请参考 `IsaacLab-Quickstart <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/own-project/index.html>`__ .
 2. **在RLinf中配置训练环境**：请参考 `RLinf/rlinf/envs/isaaclab/tasks/stack_cube.py` , 并将您自定义的脚本放置在  `RLinf/rlinf/envs/isaaclab/tasks` 下,  同时在 `RLinf/rlinf/envs/isaaclab/__init__.py` 内添加相关代码
-3. **配置任务ID**：请参考 ``examples/embodiment/config/env/isaaclab_stack_cube.yaml``，并将您自定义的环境配置文件中的 `init_params.id` 参数修改为您自定义的IsaacLab任务ID，同时确保 `examples/embodiment/config/isaaclab_ppo_gr00t_demo.yaml` 的开头 `defaults` 部分引用了正确的环境配置默认值。
+3. **配置任务ID**：请参考 ``examples/embodiment/config/env/isaaclab_stack_cube.yaml``，并将您自定义的环境配置文件中的 `init_params.id` 参数修改为您自定义的IsaacLab任务ID，同时确保 `examples/embodiment/config/isaaclab_franka_stack_cube_ppo_gr00t_demo` 的开头 `defaults` 部分引用了正确的环境配置默认值。
 
+算法
 --------------
 
 **核心算法组件**
@@ -196,7 +197,7 @@ ISAAC-SIM下载
 
 **2. 配置文件**
 
-- gr00t demo配置文件: ``examples/embodiment/config/isaaclab_ppo_gr00t_demo.yaml``
+- gr00t demo配置文件: ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_gr00t_demo.yaml``
 
 请将配置文件中的 `rollout.model.model_path` 参数修改为您本地下载的模型文件地址。
 
@@ -206,13 +207,13 @@ ISAAC-SIM下载
 
 .. code:: bash
 
-   bash examples/embodiment/run_embodiment.sh isaaclab_ppo_gr00t_demo
+   bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t_demo
 
 若想测试gt00t，请运行
 
 .. code:: bash
 
-   bash examples/embodiment/eval_embodiment.sh isaaclab_ppo_gr00t_demo
+   bash examples/embodiment/eval_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t_demo
 
 可视化和结果
 -------------------------------
@@ -263,5 +264,9 @@ ISAAC-SIM下载
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "isaaclab_ppo_gr00t_demo"
+       experiment_name: "isaaclab_franka_stack_cube_ppo_gr00t_demo"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
+
+致谢
+---------
+感谢许明辉和杨楠对本示例的贡献和支持！
