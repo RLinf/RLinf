@@ -13,19 +13,19 @@
 # limitations under the License.
 
 import logging
+import re
+
 import numpy as np
 import torch
 from omegaconf import DictConfig
 from tqdm import tqdm
-import re
 
 from rlinf.config import SupportedModel
-from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.utils import clear_memory
-
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
+
 
 class FSDPVlmSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
@@ -37,10 +37,15 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             % (self.cfg.actor.micro_batch_size * self._world_size)
             == 0
         ), "global_batch_size is not divisible by micro_batch_size * world_size"
-        self.gradient_accumulation = self.cfg.actor.global_batch_size // self.cfg.actor.micro_batch_size // self._world_size
+        self.gradient_accumulation = (
+            self.cfg.actor.global_batch_size
+            // self.cfg.actor.micro_batch_size
+            // self._world_size
+        )
 
     def build_tokenizer(self):
         from transformers import AutoTokenizer
+
         tokenizer = AutoTokenizer.from_pretrained(
             self.cfg.actor.model.model_path,
         )
@@ -57,8 +62,9 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             SupportedModel.QWEN3_VL_MOE_SFT,
         ]:
             from torch.utils.data import DataLoader, DistributedSampler
-            from rlinf.data.datasets.vlm import VLMDatasetRegistry
+
             from rlinf.data.datasets import sft_collate_fn
+            from rlinf.data.datasets.vlm import VLMDatasetRegistry
 
             dataset_name = self.cfg.data.get("dataset_name", "robo2vlmsft")
             train_dataset = VLMDatasetRegistry.create(
@@ -70,6 +76,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             )
 
             import torch.distributed as dist
+
             if dist.is_available() and dist.is_initialized():
                 sampler = DistributedSampler(
                     train_dataset,
@@ -92,8 +99,13 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 drop_last=True,
                 collate_fn=sft_collate_fn,
             )
-            logging.info(f"Build data loader from {data_paths} with {len(train_dataset)} samples")
-            return data_loader, {"dataset_name": dataset_name, "num_samples": len(train_dataset)}
+            logging.info(
+                f"Build data loader from {data_paths} with {len(train_dataset)} samples"
+            )
+            return data_loader, {
+                "dataset_name": dataset_name,
+                "num_samples": len(train_dataset),
+            }
 
         else:
             raise KeyError(
@@ -118,7 +130,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             self.model.eval()
             total = 0
             correct = 0
-            
+
             # get the next batch
             for _ in range(eval_step):
                 batch = next(eval_data_iter)
@@ -129,7 +141,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 attention_mask = batch["attention_mask"].to(self.device)
                 multi_modal_inputs = batch["multi_modal_inputs"]
                 for k, v in multi_modal_inputs.items():
-                    multi_modal_inputs[k] = v.to(device = self.device)
+                    multi_modal_inputs[k] = v.to(device=self.device)
 
                 with torch.no_grad():
                     with self.amp_context:
@@ -141,13 +153,16 @@ class FSDPVlmSftWorker(FSDPSftWorker):
 
                 # encode the generated text
                 for i in range(len(answers)):
-                    
                     full_pred_text = self.tokenizer.decode(
                         gen_ids[i].tolist(), skip_special_tokens=False
                     )
 
                     def _extract_answer(text: str) -> str:
-                        m = re.search(r"<\|im_start\|>assistant\s*(.*?)<\|im_end\|>", text, flags=re.DOTALL)
+                        m = re.search(
+                            r"<\|im_start\|>assistant\s*(.*?)<\|im_end\|>",
+                            text,
+                            flags=re.DOTALL,
+                        )
                         return m.group(1).strip() if m else text.strip()
 
                     pred_text = _extract_answer(full_pred_text)
@@ -190,7 +205,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
 
                 # get the next batch, if get the end of the data_iter, reset the data_iter
                 try:
-                    batch = next(self.data_iter)                  
+                    batch = next(self.data_iter)
                 except StopIteration:
                     self.data_iter = iter(self.data_loader)
                     logging.info("[INFO] data_iter exhausted, reset iterator")
@@ -198,11 +213,15 @@ class FSDPVlmSftWorker(FSDPSftWorker):
 
                 # hundle the input batch
                 input_ids = batch["prompt"].to(self.device)
-                attention_mask = batch["attention_mask"].to(self.device, dtype=torch.bool)
+                attention_mask = batch["attention_mask"].to(
+                    self.device, dtype=torch.bool
+                )
                 multi_modal_inputs = batch["multi_modal_inputs"]
                 for k, v in multi_modal_inputs.items():
-                    multi_modal_inputs[k] = v.to(device = self.device)
-                label_mask = batch["label_mask"].to(device = self.device, dtype=torch.bool)
+                    multi_modal_inputs[k] = v.to(device=self.device)
+                label_mask = batch["label_mask"].to(
+                    device=self.device, dtype=torch.bool
+                )
 
                 labels = input_ids.detach().clone().masked_fill(~attention_mask, -100)
                 # label_mask is encode by prompt without answer, so we need to mask the labels just save the answer tokens

@@ -824,11 +824,12 @@ def validate_embodied_cfg(cfg):
 
 
 def validate_vlm_sft_cfg(cfg: DictConfig) -> DictConfig:
-
     with open_dict(cfg):
         if cfg.data.get("train_data_paths", None) is None:
             # if train_data_paths is None, the code will just eval the model
-            assert cfg.data.get("eval_data_paths", None) is not None, "the data.train_data_paths is None, so data.eval_data_paths is required"
+            assert cfg.data.get("eval_data_paths", None) is not None, (
+                "the data.train_data_paths is None, so data.eval_data_paths is required"
+            )
         elif cfg.data.get("eval_data_paths", None) is not None:
             # set the val_check_interval to max_epochs
             if cfg.runner.get("val_check_interval", None) is None:

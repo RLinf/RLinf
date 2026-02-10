@@ -255,8 +255,6 @@ def sft_collate_fn(data_list: list["DatasetItem"]) -> dict[str, Any]:
         "multi_modal_inputs": multi_modal_inputs,
     }
 
-    batch["attention_mask"] = (
-        torch.stack(attention_masks, dim=0)
-    )
+    batch["attention_mask"] = torch.stack(attention_masks, dim=0)
     batch["label_mask"] = torch.stack(label_masks, dim=0)
     return batch
