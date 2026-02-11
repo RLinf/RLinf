@@ -70,10 +70,8 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
     def update_rollout_weights(self) -> None:
         self.rollout.pause_generation().wait()
 
-        rollout_sync_handle: Handle = self.rollout.sync_model_from_actor()
+        self.rollout.sync_model_from_actor()
         self.actor.sync_model_to_rollout().wait()
-        rollout_sync_handle.wait()
-
         self.rollout.set_version(self.global_step).wait()
         self.actor.set_version(self.global_step).wait()
         self.rollout.resume_generation().wait()
@@ -114,8 +112,9 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
                 with self.timer("actor_training"):
                     training_metrics = self.actor.run_training().wait()
 
-            self.global_step += 1
-            self.update_rollout_weights()
+                self.global_step += 1
+                with self.timer("update_rollout_weights"):
+                    self.update_rollout_weights()
 
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}

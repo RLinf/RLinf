@@ -21,6 +21,32 @@ from rlinf.scheduler import Channel
 from rlinf.workers.env.env_worker import EnvWorker
 
 
+def accumulate_env_metrics(
+    env_metrics: dict[Any, list],
+    env_info: dict,
+    stage_id: int,
+    stage_num: int,
+    keep_latest_only: bool,
+) -> None:
+    """Accumulate env metrics for async ppo env workers.
+
+    When `keep_latest_only` is True, only the latest value from each stage is kept.
+    Otherwise, each incoming value is appended.
+    """
+    for key, value in env_info.items():
+        if value is None:
+            continue
+        if key not in env_metrics:
+            if keep_latest_only:
+                env_metrics[key] = [None] * stage_num
+            else:
+                env_metrics[key] = []
+        if keep_latest_only:
+            env_metrics[key][stage_id] = value
+        else:
+            env_metrics[key].append(value)
+
+
 class AsyncPPOEnvWorker(EnvWorker):
     """Async PPO env worker with persistent interaction loop."""
 
@@ -84,13 +110,20 @@ class AsyncPPOEnvWorker(EnvWorker):
             for env_output in env_outputs
         ]
 
-    def record_env_metrics(self, env_metrics: dict[Any, list], env_info: dict) -> None:
-        for key, value in env_info.items():
-            if value is None:
-                continue
-            if key not in env_metrics:
-                env_metrics[key] = []
-            env_metrics[key].append(value)
+    def record_env_metrics(
+        self, env_metrics: dict[Any, list], env_info: dict, stage_id: int
+    ) -> None:
+        keep_latest_only = (
+            not self.cfg.env.train.auto_reset
+            and not self.cfg.env.train.ignore_terminations
+        )
+        accumulate_env_metrics(
+            env_metrics=env_metrics,
+            env_info=env_info,
+            stage_id=stage_id,
+            stage_num=self.stage_num,
+            keep_latest_only=keep_latest_only,
+        )
 
     def send_env_batch_async(
         self,
@@ -133,10 +166,12 @@ class AsyncPPOEnvWorker(EnvWorker):
                     )
                     self.send_env_batch(output_channel, env_output.to_dict())
                     env_outputs[stage_id] = env_output
-                    self.record_env_metrics(env_metrics, env_info)
+                    self.record_env_metrics(env_metrics, env_info, stage_id)
 
             aggregated_metrics = {}
             for key, values in env_metrics.items():
+                if values:
+                    values = [value for value in values if value is not None]
                 if values:
                     aggregated_metrics[key] = (
                         torch.cat(values, dim=0).contiguous().cpu()
