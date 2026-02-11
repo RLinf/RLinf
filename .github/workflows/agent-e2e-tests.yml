@@ -145,6 +145,34 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  reason-qwen-ppo-test:
+    runs-on: reason
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create reason environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
+          bash requirements/install.sh reason
+
+      - name: Megatron SGLang Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-ppo-collocated-mg-sgl.yaml
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   reason-qwen-importance-sampling-test:
     runs-on: reason
     steps:
