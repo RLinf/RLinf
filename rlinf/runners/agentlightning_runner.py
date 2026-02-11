@@ -26,6 +26,7 @@ from rlinf.workers.agent.agentlightning_rollout_worker import AgentLightningRoll
 if typing.TYPE_CHECKING:
 
     from rlinf.workers.actor.megatron_actor_worker import MegatronActor
+    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
     from rlinf.workers.inference.megatron_inference_worker import MegatronInference
     from rlinf.workers.rollout.sglang.sglang_worker_server import SGLangWorkerWithHTTPServer
 
@@ -40,7 +41,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         val_dataset: Dataset,
         rollout: "SGLangWorkerWithHTTPServer",
         inference: Optional["MegatronInference"],
-        actor: "MegatronActor",
+        actor: "MegatronActor | MAMegatronActor",
         store: LightningStore,
         adapter: TraceToTripletBase,
         agentlightning_rollout_worker: AgentLightningRolloutWorker,
