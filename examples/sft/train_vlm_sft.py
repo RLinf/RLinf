@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import logging
 
 import hydra
 import torch.multiprocessing as mp
@@ -30,7 +31,7 @@ mp.set_start_method("spawn", force=True)
 @hydra.main(version_base="1.1", config_path="config", config_name="vlm_sft")
 def main(cfg) -> None:
     cfg = validate_cfg(cfg)
-    print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
+    logging.info(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = HybridComponentPlacement(cfg, cluster)

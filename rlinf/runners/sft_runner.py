@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 from typing import Optional
 
@@ -123,14 +124,26 @@ class SFTRunner:
         self.metric_logger.finish()
 
     def run_eval(self) -> None:
-        eval_handle: Handle = self.actor.run_eval()
-        eval_metrics = eval_handle.wait()
+        with self.timer("evaluate"):
+            eval_handle: Handle = self.actor.run_eval()
+            eval_metrics = eval_handle.wait()
+
         time_metrics = self.timer.consume_durations()
         time_metrics["evaluate"] = eval_handle.consume_duration()
-        evaluate_metrics = {f"eval/{k}": v for k, v in eval_metrics[0].items()}
-        logging_metrics = time_metrics
+        time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
+
+        raw_eval = (
+            eval_metrics[0]
+            if isinstance(eval_metrics, (list, tuple)) and len(eval_metrics) > 0
+            else {}
+        )
+        evaluate_metrics = {f"eval/{k}": v for k, v in raw_eval.items()}
+
+        logging_metrics = {}
+        logging_metrics.update(time_metrics)
         logging_metrics.update(evaluate_metrics)
-        self.metric_logger.log(logging_metrics, 0)
+
+        logging.info(f"evaluate the model, metrics: {evaluate_metrics}")
         self.metric_logger.finish()
 
     def _save_checkpoint(self) -> None:

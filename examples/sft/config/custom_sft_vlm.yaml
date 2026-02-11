@@ -20,12 +20,12 @@ runner:
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   # sft runner use the len(dataset) as one epoch
-  max_epochs: 3000
+  max_epochs: 6000
   max_steps: -1
   # eval the model intenval
-  val_check_interval: 200
+  val_check_interval: 1000
   # save the model interval
-  save_interval: 200
+  save_interval: 1000
   experiment_name: qwen2_5_vl_sft
   output_dir: ../results
   resume_dir: null
@@ -65,14 +65,14 @@ actor:
     is_lora: False
 
   optim:
-    lr: 8e-5
+    lr: 1e-5
     adam_beta1: 0.9
     adam_beta2: 0.999
     adam_eps: 1.0e-08
     weight_decay: 0.01
     clip_grad: 1.0
     lr_scheduler: "cosine"
-    total_training_steps: ${algorithm.runner.max_epochs}
+    total_training_steps: ${runner.max_epochs}
     lr_warmup_steps: 200 
 
   # Override the default values in training_backend/fsdp

@@ -120,7 +120,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
 
         with torch.no_grad():
             with self.amp_context:
-                gen_ids = self.model.generate(
+                generate_ids = self.model.generate(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     **multi_modal_inputs,
@@ -129,7 +129,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         # encode the generated text
         for i in range(len(answers)):
             full_pred_text = self.tokenizer.decode(
-                gen_ids[i].tolist(), skip_special_tokens=False
+                generate_ids[i].tolist(), skip_special_tokens=False
             )
 
             def _extract_answer(text: str) -> str:
@@ -166,7 +166,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         labels = labels.masked_fill(label_mask, -100)
 
         with self.amp_context:
-            losses = self.model(
+            outputs = self.model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
@@ -174,4 +174,4 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             )
 
         # train model return the loss
-        return losses
+        return outputs.loss
