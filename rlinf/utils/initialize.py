@@ -66,14 +66,17 @@ def set_megatron_args(cfg):
     args.consumed_valid_samples = 0
 
     args.use_mp_args_from_checkpoint_args = False
-    args.fp16 = torch_dtype_from_precision(cfg.model.precision) == torch.float16
-    args.bf16 = torch_dtype_from_precision(cfg.model.precision) == torch.bfloat16
-    params_dtype = "${torch.dtype:float32}"
-    if cfg.optim.fp16:
-        params_dtype = "${torch.dtype:half}"
-    elif cfg.optim.bf16:
-        params_dtype = "${torch.dtype:bfloat16}"
-    args.params_dtype = params_dtype
+    precision_dtype = torch_dtype_from_precision(cfg.model.precision)
+    if precision_dtype == torch.float16:
+        args.params_dtype = "${torch.dtype:half}"
+    elif precision_dtype == torch.bfloat16:
+        args.params_dtype = "${torch.dtype:bfloat16}"
+    else:
+        assert False, (
+            "model.precision only available in fp16 or bf16 when using megatron"
+        )
+    args.fp16 = precision_dtype == torch.float16
+    args.bf16 = precision_dtype == torch.bfloat16
 
     args.vocab_file = None
 
