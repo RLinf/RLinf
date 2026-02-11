@@ -86,11 +86,14 @@ CrossQ shares a nearly identical configuration with SAC. A single parameter, `q_
       gamma: 0.8 # Discount factor.
       tau: 0.01  # Soft update coefficient for target networks
       target_update_freq: 1  # Frequency of target network updates
-      auto_entropy_tuning: True  # Enable automatic entropy tuning
-      alpha_type: softplus
-      initial_alpha: 0.01  # Initial temperature value
-      target_entropy: -4  # Target entropy (-action_dim)
-      alpha_lr: 3.0e-4  # Learning rate for temperature parameter
+      entropy_tuning:
+         alpha_type: softplus  # ["softplus","exp","fixed_alpha"]
+         initial_alpha: 0.01  # Initial temperature value
+         target_entropy: -4  # Target entropy (-action_dim)
+         optim:
+            lr: 3.0e-4  # Learning rate for temperature parameter
+            lr_scheduler: torch_constant
+            clip_grad: 10.0
       
       # Replay buffer settings
       replay_buffer:
