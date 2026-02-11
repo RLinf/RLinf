@@ -61,9 +61,10 @@ class BasePolicy(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def default_forward(self, **kwargs):
-        raise NotImplementedError
+    def default_forward(self, **kwargs): ...
 
     @abstractmethod
-    def predict_action_batch(self, **kwargs):
-        raise NotImplementedError
+    def predict_action_batch(self, **kwargs): ...
+
+    def enable_torch_compile(self, mode: str = "max-autotune-no-cudagraphs"):
+        return

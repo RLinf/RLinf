@@ -53,11 +53,14 @@ algorithm:
   bootstrap_type: always
   gamma: 0.8
   tau: 0.01  # Soft update coefficient for target networks
-  auto_entropy_tuning: True  # Enable automatic entropy tuning
-  alpha_type: softplus
-  initial_alpha: 0.01  # Initial temperature value
-  target_entropy: -4  # Target entropy (-action_dim)
-  alpha_lr: 3.0e-4  # Learning rate for temperature parameter
+  entropy_tuning:
+    alpha_type: softplus # choose from ["softplus", "exp", "fixed_alpha"], set to "softplus" or "exp" to enable automatic entropy tuning
+    initial_alpha: 0.01  # Initial temperature value
+    target_entropy: -4  # Target entropy (-action_dim)
+    optim:
+      lr: 3.0e-4  # Learning rate for temperature parameter
+      lr_scheduler: torch_constant
+      clip_grad: 10.0
   
   # Replay buffer settings
   replay_buffer:
@@ -65,7 +68,7 @@ algorithm:
     cache_size: 10000 # number of trajectories cached in memory
     sample_window_size: 10000 # number of latest trajectories to sample from for replay buffer
     min_buffer_size: 0  # Minimum buffer size before training starts
-    save_trajectories: False
+    auto_save: False
 
   target_update_freq: 1  # Frequency of target network updates
 
@@ -121,6 +124,7 @@ rollout:
     model_path: ""
     precision: ${actor.model.precision}
 
+  enable_torch_compile: True
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
@@ -141,12 +145,14 @@ actor:
 
 
   optim:
-    lr: 3.0e-4  # Lower learning rate for SAC
-    value_lr: 3.0e-4  # Q-network learning rate
-    adam_beta1: 0.9
-    adam_beta2: 0.999
-    adam_eps: 1.0e-08
     clip_grad: 10.0
+    lr: 3e-4
+    lr_scheduler: torch_constant
+
+  critic_optim:
+    clip_grad: 10.0
+    lr: 3e-4
+    lr_scheduler: torch_constant
 
   # Override the default values in training_backend/fsdp
   fsdp_config:

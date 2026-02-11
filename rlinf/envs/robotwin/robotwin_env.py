@@ -172,12 +172,22 @@ class RoboTwinEnv(gym.Env):
         batch_states = []
         batch_instructions = []
         for obs in raw_obs:
-            batch_images.append(self.center_and_crop(obs["full_image"], center_crop=self.center_crop))            
+            batch_images.append(
+                self.center_and_crop(obs["full_image"], center_crop=self.center_crop)
+            )
             wrist_images = []
             if "left_wrist_image" in obs and obs["left_wrist_image"] is not None:
-                wrist_images.append(self.center_and_crop(obs["left_wrist_image"], center_crop=self.center_crop))
+                wrist_images.append(
+                    self.center_and_crop(
+                        obs["left_wrist_image"], center_crop=self.center_crop
+                    )
+                )
             if "right_wrist_image" in obs and obs["right_wrist_image"] is not None:
-                wrist_images.append(self.center_and_crop(obs["right_wrist_image"], center_crop=self.center_crop))
+                wrist_images.append(
+                    self.center_and_crop(
+                        obs["right_wrist_image"], center_crop=self.center_crop
+                    )
+                )
             if len(wrist_images) > 0:
                 batch_wrist_images.append(
                     torch.stack([torch.from_numpy(img) for img in wrist_images])

@@ -89,6 +89,7 @@ jobs:
               - 'examples/embodiment/**'
               - 'tests/e2e_tests/embodied/**'
               - 'toolkits/eval_scripts_openpi/**'
+              - 'toolkits/eval_scripts_dexbotic/**'
               - 'toolkits/realworld_check/**'
               - 'toolkits/replay_buffer/**'
               - '.github/workflows/embodied-e2e-tests.yml'

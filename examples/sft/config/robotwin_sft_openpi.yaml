@@ -48,7 +48,7 @@ actor:
     action_dim: 14
     add_value_head: True
     openpi:
-      config_name: "pi0_aloha_robotwin"   # config name must contain "robotwin" for eval 
+      config_name: "pi0_aloha_robotwin"
       detach_critic_input: True
       num_images_in_input: 3
       train_expert_only: False            # if you follow RoboTwin official training, should set False

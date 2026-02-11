@@ -13,22 +13,22 @@ Replay Buffer 使用教程
 
    buffer = TrajectoryReplayBuffer(
        seed=1234,
-       storage_dir="/path/to/buffer",
        enable_cache=True,
        cache_size=5,
-       storage_format="pt",
        sample_window_size=100,
-       save_trajectories=True,
+       auto_save=True,
+       auto_save_path="/path/to/buffer",
+       trajectory_format="pt",
    )
 
 常用参数
 --------
 
-- `storage_dir`：轨迹存储目录；不传则使用日志目录。
-- `storage_format`：`pt`（默认）或 `pkl`。
 - `enable_cache` / `cache_size`：启用并控制缓存数量，用于提升采样吞吐。
 - `sample_window_size`：仅在最近 N 条轨迹内采样；0 表示全量。
-- `save_trajectories`：是否落盘保存；为 `False` 时需开启缓存，且不支持 checkpoint。
+- `auto_save`：是否自动落盘；为 `False` 时仅缓存并在保存 checkpoint 时落盘。
+- `auto_save_path`：开启 auto_save 时的轨迹存储目录。
+- `trajectory_format`：`pt`（默认）或 `pkl`。
 
 写入轨迹
 --------
@@ -42,7 +42,7 @@ Replay Buffer 使用教程
 
 - 为每条轨迹生成 `uuid` 与 `trajectory_id`
 - 更新 `_trajectory_index` 与计数器
-- 在后台线程异步保存轨迹文件（若 `save_trajectories=True`）
+- 在后台线程异步保存轨迹文件（若 `auto_save=True`）
 
 采样训练
 --------
@@ -62,15 +62,15 @@ Replay Buffer 使用教程
    buffer.save_checkpoint("/path/to/ckpt")
 
    buffer.load_checkpoint(
-       "/path/to/ckpt",
+       load_path="/path/to/ckpt",
        is_distributed=True,
        local_rank=0,
        world_size=4,
    )
 
-`save_trajectories=False` 时不支持 checkpoint 保存。
-加载时会从 checkpoint 的 metadata 中恢复 `storage_dir`。
-轨迹数据保存格式为 `trajectory_{trajectory_id}_{model_weights_uuid}_{model_update_count}.{storage_format}`。
+保存 checkpoint 时会把缓存轨迹与 metadata 一并写入 checkpoint 路径。
+加载时需要设置 `load_path` 指向包含 metadata 和轨迹文件的 checkpoint 目录。
+轨迹数据保存格式为 `trajectory_{trajectory_id}_{model_weights_uuid}_{model_update_count}.{trajectory_format}`。
 
 命令行测试
 --------------

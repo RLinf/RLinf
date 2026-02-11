@@ -23,6 +23,7 @@ from omegaconf.dictconfig import DictConfig
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.distributed import ScopedTimer
+from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics, print_metrics_table
 from rlinf.utils.runner_utils import check_progress
@@ -78,6 +79,7 @@ class EmbodiedRunner:
 
         self.timer = ScopedTimer(reduction="max", sync_cuda=False)
 
+        self.logger = get_logger()
         self.metric_logger = MetricLogger(cfg)
 
         # Async logging setup
@@ -123,6 +125,7 @@ class EmbodiedRunner:
         if resume_dir is None:
             return
 
+        self.logger.info(f"Resuming training from checkpoint directory {resume_dir}.")
         actor_checkpoint_path = os.path.join(resume_dir, "actor")
         assert os.path.exists(actor_checkpoint_path), (
             f"resume_dir {actor_checkpoint_path} does not exist."
@@ -266,6 +269,7 @@ class EmbodiedRunner:
         self.log_thread.join(timeout=1.0)
 
     def _save_checkpoint(self):
+        self.logger.info(f"Saving checkpoint at step {self.global_step}.")
         base_output_dir = os.path.join(
             self.cfg.runner.logger.log_path,
             self.cfg.runner.logger.experiment_name,
