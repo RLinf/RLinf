@@ -80,7 +80,6 @@ class CNNConfig:
 class CNNPolicy(nn.Module, BasePolicy):
     def __init__(self, cfg: CNNConfig):
         super().__init__()
-
         self.cfg = cfg
         self.in_channels = self.cfg.image_size[0]
         self.register_buffer(
@@ -170,6 +169,57 @@ class CNNPolicy(nn.Module, BasePolicy):
             )
         else:
             self.action_scale = None
+        self.torch_compile_enabled = False
+
+    def _get_feature_from_processed_tensors(
+        self,
+        main_images: torch.Tensor,
+        states: torch.Tensor,
+        extra_view_images: Optional[torch.Tensor] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        visual_features = []
+        for img_id in range(self.cfg.image_num):
+            if img_id == 0:
+                images = main_images
+            else:
+                if extra_view_images is None:
+                    raise ValueError(
+                        "extra_view_images is required when image_num > 1."
+                    )
+                images = extra_view_images[:, img_id - 1]
+            if images.shape[3] == 3:
+                # [B, H, W, C] -> [B, C, H, W]
+                images = images.permute(0, 3, 1, 2)
+            visual_features.append(self.encoders[img_id](images))
+        visual_feature = torch.cat(visual_features, dim=-1)
+        state_embed = self.state_proj(states)
+        full_feature = torch.cat([visual_feature, state_embed], dim=1)
+        return full_feature, visual_feature
+
+    def _policy_head(
+        self, full_feature: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        mix_feature = self.mix_proj(full_feature)
+        action_mean = self.actor_mean(mix_feature)
+        if self.cfg.independent_std:
+            action_logstd = self.actor_logstd.expand_as(action_mean)
+        else:
+            action_logstd = self.actor_logstd(mix_feature)
+        return mix_feature, action_mean, action_logstd
+
+    def _actor_forward_from_processed_tensors(
+        self,
+        main_images: torch.Tensor,
+        states: torch.Tensor,
+        extra_view_images: Optional[torch.Tensor] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        full_feature, _ = self._get_feature_from_processed_tensors(
+            main_images=main_images,
+            states=states,
+            extra_view_images=extra_view_images,
+        )
+        mix_feature, action_mean, action_logstd = self._policy_head(full_feature)
+        return full_feature, mix_feature, action_mean, action_logstd
 
     @property
     def num_action_chunks(self):
@@ -193,19 +243,11 @@ class CNNPolicy(nn.Module, BasePolicy):
         return processed_env_obs
 
     def get_feature(self, obs, detach_encoder=False):
-        visual_features = []
-        for img_id in range(self.cfg.image_num):
-            if img_id == 0:
-                images = obs["main_images"]
-            else:
-                images = obs["extra_view_images"][:, img_id - 1]
-            if images.shape[3] == 3:
-                # [B, H, W, C] -> [B, C, H, W]
-                images = images.permute(0, 3, 1, 2)
-            visual_features.append(self.encoders[img_id](images))
-        visual_feature = torch.cat(visual_features, dim=-1)
-        state_embed = self.state_proj(obs["states"])
-        x = torch.cat([visual_feature, state_embed], dim=1)
+        x, visual_feature = self._get_feature_from_processed_tensors(
+            main_images=obs["main_images"],
+            states=obs["states"],
+            extra_view_images=obs.get("extra_view_images"),
+        )
         if detach_encoder:
             x = x.detach()
             visual_feature = visual_feature.detach()
@@ -251,15 +293,13 @@ class CNNPolicy(nn.Module, BasePolicy):
             obs["extra_view_images"] = forward_inputs["extra_view_images"]
         obs = self.preprocess_env_obs(obs)
         action = forward_inputs["action"]
-
-        full_feature, visual_feature = self.get_feature(obs)
-        mix_feature = self.mix_proj(full_feature)
-        action_mean = self.actor_mean(mix_feature)
-        if self.cfg.independent_std:
-            action_logstd = self.actor_logstd.expand_as(action_mean)
-        else:
-            action_logstd = self.actor_logstd(mix_feature)
-
+        full_feature, mix_feature, action_mean, action_logstd = (
+            self._actor_forward_from_processed_tensors(
+                obs["main_images"],
+                obs["states"],
+                obs.get("extra_view_images"),
+            )
+        )
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
 
@@ -279,11 +319,13 @@ class CNNPolicy(nn.Module, BasePolicy):
         return output_dict
 
     def sac_forward(self, obs, **kwargs):
-        full_feature, visual_feature = self.get_feature(obs)
-        mix_feature = self.mix_proj(full_feature)
-        action_mean = self.actor_mean(mix_feature)
-        action_logstd = self.actor_logstd(mix_feature)
-
+        full_feature, mix_feature, action_mean, action_logstd = (
+            self._actor_forward_from_processed_tensors(
+                obs["main_images"],
+                obs["states"],
+                obs.get("extra_view_images"),
+            )
+        )
         action_std = torch.exp(action_logstd)
         if self.cfg.std_range is not None:
             action_std = torch.clamp(
@@ -314,13 +356,13 @@ class CNNPolicy(nn.Module, BasePolicy):
         **kwargs,
     ):
         obs = self.preprocess_env_obs(env_obs)
-        full_feature, visual_feature = self.get_feature(obs)
-        mix_feature = self.mix_proj(full_feature)
-        action_mean = self.actor_mean(mix_feature)
-        if self.cfg.independent_std:
-            action_logstd = self.actor_logstd.expand_as(action_mean)
-        else:
-            action_logstd = self.actor_logstd(mix_feature)
+        full_feature, mix_feature, action_mean, action_logstd = (
+            self._actor_forward_from_processed_tensors(
+                obs["main_images"],
+                obs["states"],
+                obs.get("extra_view_images"),
+            )
+        )
 
         action_std = action_logstd.exp()
         if self.cfg.std_range is not None:
@@ -405,3 +447,12 @@ class CNNPolicy(nn.Module, BasePolicy):
 
     def crossq_forward(self, obs, **kwargs):
         return self.sac_forward(obs, **kwargs)
+
+    def enable_torch_compile(self, mode: str = "max-autotune-no-cudagraphs"):
+        if self.torch_compile_enabled:
+            return
+        self._actor_forward_from_processed_tensors = torch.compile(
+            self._actor_forward_from_processed_tensors, mode=mode
+        )
+
+        self.torch_compile_enabled = True

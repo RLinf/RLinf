@@ -225,7 +225,9 @@ _CONFIGS = [
             base_config=DataConfig(
                 prompt_from_task=True
             ),  # we need language instruction
-            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_aloha_robotwin/assets"),
+            assets=AssetsConfig(
+                assets_dir="checkpoints/torch/pi0_aloha_robotwin/assets"
+            ),
             extra_delta_transform=True,  # True for delta action, False for abs_action
         ),
         freeze_filter=pi0_config.Pi0Config().get_freeze_filter(),

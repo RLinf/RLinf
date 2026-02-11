@@ -253,7 +253,9 @@ class FSDPModelManager:
             model=self.model, enable_critic_warmup=self.critic_warmup_steps > 0
         )
 
-        self.lr_scheduler = self.build_lr_scheduler(optimizer=self.optimizer)
+        self.lr_scheduler = self.build_lr_scheduler(
+            optimizer=self.optimizer, optim_config=self._cfg.optim
+        )
         self.grad_scaler = self.build_grad_scaler(
             self._cfg.fsdp_config.amp.use_grad_scaler
         )
@@ -378,25 +380,28 @@ class FSDPModelManager:
 
         return grad_norm, lr_list
 
-    def build_lr_scheduler(self, optimizer: Optimizer) -> LRScheduler:
+    def build_lr_scheduler(
+        self, optimizer: Optimizer, optim_config: DictConfig
+    ) -> LRScheduler:
         """
         Build the learning rate scheduler based on the configuration.
         Currently only support LambdaLR scheduler with various warmup styles.
 
         Args:
             optimizer (Optimizer): The optimizer for which to schedule the learning rate.
+            optim_config (DictConfig): The optimizer config.
 
         Returns:
             LRScheduler: The learning rate scheduler.
         """
-        total_steps = self._cfg.optim.get("total_training_steps", 0)
-        num_warmup_steps = int(self._cfg.optim.get("lr_warmup_steps", -1))
-        lr_scheduler = self._cfg.optim.get("lr_scheduler", "constant")
-        num_cycles = self._cfg.optim.get("num_cycles", 0.5)
-        min_lr = self._cfg.optim.get("min_lr", 0.0)
-        min_lr_rate = self._cfg.optim.get("min_lr_rate", None)
+        total_steps = optim_config.get("total_training_steps", 0)
+        num_warmup_steps = int(optim_config.get("lr_warmup_steps", -1))
+        lr_scheduler = optim_config.get("lr_scheduler", "constant")
+        num_cycles = optim_config.get("num_cycles", 0.5)
+        min_lr = optim_config.get("min_lr", 0.0)
+        min_lr_rate = optim_config.get("min_lr_rate", None)
         if num_warmup_steps < 0:
-            num_warmup_steps_ratio = self._cfg.optim.get("lr_warmup_steps_ratio", 0.0)
+            num_warmup_steps_ratio = optim_config.get("lr_warmup_steps_ratio", 0.0)
             num_warmup_steps = int(num_warmup_steps_ratio * total_steps)
 
         return get_lr_scheduler(
@@ -479,6 +484,89 @@ class FSDPModelManager:
         # in save/load_checkpoint calls
         warmup_optimizer_state(optimizer)
         return optimizer
+
+    def build_optimizers(
+        self,
+        model: Union[nn.Module, FSDPModule, FSDP],
+        main_optim_config: DictConfig,
+        param_filters: dict[str, list[str]],
+        filtered_optim_config: dict[str, DictConfig],
+    ):
+        main_betas = (
+            main_optim_config.get("adam_beta1", 0.9),
+            main_optim_config.get("adam_beta2", 0.999),
+        )
+        main_adam_eps = main_optim_config.get("adam_eps", 1e-8)
+        main_lr = main_optim_config.lr
+
+        filtered_optim_batas_map = {}
+        filtered_optim_adam_eps_map = {}
+        filtered_optim_lr_map = {}
+        for key, config in filtered_optim_config.items():
+            filtered_optim_batas_map[key] = (
+                config.get("adam_beta1", 0.9),
+                config.get("adam_beta2", 0.999),
+            )
+            filtered_optim_adam_eps_map[key] = config.get("adam_eps", 1e-8)
+            filtered_optim_lr_map[key] = config.lr
+
+        main_optim_params = []
+
+        filtered_params_dict = {}
+        for key in param_filters.keys():
+            filtered_params_dict[key] = []
+
+        # ISSUE: currently the net weight still bind with the actor.
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+
+            is_matched = False
+            for key, filters in param_filters.items():
+                for f in filters:
+                    if f in name:
+                        filtered_params_dict[key].append(param)
+                        is_matched = True
+                        break
+                if is_matched:
+                    break
+
+            if is_matched:
+                continue
+
+            main_optim_params.append(param)
+
+        assert len(main_optim_params) > 0
+        main_optimizer = torch.optim.Adam(
+            [
+                {
+                    "params": main_optim_params,
+                    "lr": main_lr,
+                    "betas": main_betas,
+                    "eps": main_adam_eps,
+                },
+            ]
+        )
+        optimizers = [main_optimizer]
+
+        for key, params in filtered_params_dict.items():
+            assert len(params) > 0, (
+                f"optimer {key=} is not match any params, with {param_filters(key)=}"
+            )
+        for key, params in filtered_params_dict.items():
+            optimizers.append(
+                torch.optim.Adam(
+                    [
+                        {
+                            "params": params,
+                            "lr": filtered_optim_lr_map[key],
+                            "betas": filtered_optim_batas_map[key],
+                            "eps": filtered_optim_adam_eps_map[key],
+                        },
+                    ]
+                )
+            )
+        return optimizers
 
     def build_grad_scaler(self, enabled: bool) -> ShardedGradScaler:
         """

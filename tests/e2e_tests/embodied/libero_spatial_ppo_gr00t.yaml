@@ -87,6 +87,7 @@ env:
   train:
     total_num_envs: 32
     max_episode_steps: 10
+    max_steps_per_rollout_epoch: 10
   eval:
     total_num_envs: 1
     max_episode_steps: 10
