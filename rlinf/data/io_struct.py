@@ -989,13 +989,29 @@ class DynamicRolloutResult:
     prompt_lengths: list[int]
     response_lengths: list[int]
     is_end: list[bool]
-    # prompt_ids: list[list[int]]
-    # response_ids: list[list[int]]
     # response_mask: Optional[list[list[int]]] = None
 
     # size of belows are group_size
     rewards: Optional[torch.Tensor | list[float]] = None
     advantages: Optional[torch.Tensor] = None
+
+    # extra fields used in reward / eval. not used in training
+    extra_fields_turn: Optional[dict] = None # [num_sequence]
+    extra_fields_traj: Optional[dict] = None # [group_size]
+    extra_fields_group: Optional[dict] = None # [1]
+
+    # todo: remove
+    # Evaluation metrics per trajectory (size: group_size)
+    # Each item is a dict with metric_type -> metric_dict mapping
+    roles: list[str]
+    role_group_sizes: list[int]
+
+    # belows are for debug
+    # # for reject sampling
+    # # size of belows are group_size
+    # prompt_texts: Optional[list[str]] = None
+    # response_texts: Optional[list[str]] = None
+    # answers: Optional[list[str | dict]] = None
 
     # Tool call counts per turn (size: num_sequence)
     turn_subtask_counts: Optional[list[int]] = None
@@ -1009,15 +1025,7 @@ class DynamicRolloutResult:
     # Evaluation metrics per trajectory (size: group_size)
     # Each item is a dict with metric_type -> metric_dict mapping
     eval_metrics: Optional[list] = None
-    roles: list[str]
-    role_group_sizes: list[int]
     total_turn_list_metric: Optional[list] = None
-
-    # for reject sampling
-    # size of belows are group_size
-    # prompt_texts: Optional[list[str]] = None
-    # response_texts: Optional[list[str]] = None
-    # answers: Optional[list[str | dict]] = None
 
     @staticmethod
     def _get_attention_masks_and_position_ids(
@@ -1165,22 +1173,6 @@ class DynamicRolloutResult:
                 batch["rewards"] = (
                     torch.as_tensor(self.rewards, dtype=torch.float).cuda().flatten()
                 )
-
-        # Add tool call metrics fields if available
-        if self.turn_subtask_counts is not None:
-            batch["turn_subtask_counts"] = self.turn_subtask_counts
-        if self.turn_search_counts is not None:
-            batch["turn_search_counts"] = self.turn_search_counts
-        if self.turn_access_counts is not None:
-            batch["turn_access_counts"] = self.turn_access_counts
-        if self.num_valid_planner_turns is not None:
-            batch["num_valid_planner_turns"] = self.num_valid_planner_turns
-        if self.num_valid_worker_turns is not None:
-            batch["num_valid_worker_turns"] = self.num_valid_worker_turns
-        if self.eval_metrics is not None:
-            batch["eval_metrics"] = self.eval_metrics
-        if self.total_turn_list_metric is not None:
-            batch["total_turn_list_metric"] = self.total_turn_list_metric
 
         return batch
 

@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 from uuid import uuid4
 
-import pandas as pd
 from omegaconf import DictConfig
 from transformers import AutoTokenizer
 
@@ -113,9 +112,6 @@ class AgentLoopWorker(Worker):
         if self.is_dynamic_rollout_batch:
             assert isinstance(self, MultiTurnAgentLoopWorker), (
                 "agent loop worker must be MultiTurnAgentLoopWorker if is_dynamic_rollout_batch is True"
-            )
-            assert self.return_logprobs, (
-                "recompute_logprobs must be False if is_dynamic_rollout_batch is True"
             )
 
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.rollout.model.model_path)
@@ -325,14 +321,24 @@ class AgentLoopWorker(Worker):
     async def run_one_query(self, prompt_ids: list[int], **kwargs) -> AgentLoopOutput:
         raise NotImplementedError("Subclasses must implement this method")
 
+
 class MultiTurnAgentLoopWorker(AgentLoopWorker):
     """Multi-turn agent loop worker."""
+    def __init__(
+        self,
+        cfg: DictConfig,
+        placement: ModelParallelComponentPlacement,
+    ):
+        super().__init__(cfg, placement)
+        self.extra_keys_turn = None
+        self.extra_keys_traj = None
+        self.is_eval = self.cfg.runner.task_type == "reasoning_eval"
 
     async def generate(
         self,
         prompt_ids: list[int],
         sampling_params: Optional[dict] = None,
-        rollout_name: str = None,
+        rollout_name: Optional[str] = None,
     ):
         channel_key = uuid4().hex
         if rollout_name is None:
@@ -358,7 +364,6 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         answer: str,
         group_size: int,
         output_channel: Channel,
-        is_eval: bool = False,
     ):
         """
         Run the agent loop for a group of queries.
@@ -368,9 +373,8 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
             answer: Ground truth answer
             group_size: Number of rollouts per query (k samples for pass@k)
             output_channel: Channel to output results
-            is_eval: If True, output evaluation-friendly format instead of DynamicRolloutResult
         """
-        rollout_tasks = []
+        rollout_tasks: list[asyncio.Task[MultiTurnAgentLoopOutput]] = []
         # grpo group_size
         for _ in range(group_size):
             task = asyncio.create_task(
@@ -381,15 +385,18 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         task_results = await asyncio.gather(*rollout_tasks)
 
         # For eval mode, allow multiple samples (group_size=k) to compute pass@k and avg@k
-        if is_eval:
-            rollout_result = self.get_rollout_result_eval(task_results, answer)
+        extra_fields_group = self.gen_extra_fields_group(task_results, answer)
+        if self.is_eval:
+            rollout_result = self.get_rollout_result(task_results, extra_fields_group, use_no_training=False)
         else:
-            rollout_result = self.get_rollout_result(task_results, answer)
+            rollout_result = self.get_rollout_result(task_results, extra_fields_group)
+        agent_metrics = self.get_rollout_metrics(rollout_result)
 
         await output_channel.put(rollout_result, async_op=True).async_wait()
+        return agent_metrics
 
     async def run_agentloop_rollout(
-        self, input_channel: Channel, output_channel: Channel, is_eval: bool = False
+        self, input_channel: Channel, output_channel: Channel,
     ):
         """
         Run the agent loop for multiple queries.
@@ -397,31 +404,66 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         Args:
             input_channel: Channel to receive rollout requests
             output_channel: Channel to output results
-            is_eval: If True, output evaluation-friendly format
         """
         with self.worker_timer():
             rollout_request: RolloutRequest = input_channel.get()
 
-            send_output_tasks = []
+            send_output_tasks: list[asyncio.Task[dict]] = []
             for input_ids, answer in zip(
                 rollout_request.input_ids, rollout_request.answers
             ):
-                send_output_tasks.append(
-                    asyncio.create_task(
-                        self.run_agentloop_rollout_group(
-                            input_ids,
-                            answer,
-                            rollout_request.n,
-                            output_channel,
-                            is_eval=is_eval,
-                        ),
-                    )
+                task = asyncio.create_task(
+                    self.run_agentloop_rollout_group(
+                        input_ids,
+                        answer,
+                        rollout_request.n,
+                        output_channel,
+                    ),
                 )
+                send_output_tasks.append(task)
 
-            await asyncio.gather(*send_output_tasks)
+            agent_metrics_list = await asyncio.gather(*send_output_tasks)
+            agent_metrics = self.post_process_metric(agent_metrics_list)
+            return agent_metrics
+
+    def gen_extra_fields_group(self, task_results: list[MultiTurnAgentLoopOutput], answer: str) -> Optional[dict]:
+        return None
+
+    def post_process_metric(self, agent_metrics_list: list[dict]):
+        if self._world_size > 1:
+            if self._rank == 0:
+                for i in range(1, self._world_size):
+                    recv_list = self.recv(self._group_name, i)
+                    agent_metrics_list.extend(recv_list)
+            else:
+                self.send(agent_metrics_list, self._group_name, 0)
+                return
+        keys_list = [i.keys() for i in agent_metrics_list]
+        all_keys = set([j for i in keys_list for j in i])
+        assert all((len(all_keys) == len(keys) for keys in keys_list))
+
+        whole_metrics = {}
+        for k in all_keys:
+            values_list = [i[k] for i in agent_metrics_list]
+            if "agent/turn/mean/" in k or "agent/traj/mean/" in k:
+                whole_metrics[k] = sum(values_list) / len(values_list)
+            elif "agent/turn/max/" in k or "agent/traj/max/" in k:
+                whole_metrics[k] = max(values_list)
+            else:
+                assert False
+        return whole_metrics
+
+    def get_rollout_metrics(
+        self,
+        rollout_result: DynamicRolloutResult,
+    ) -> dict:
+        return {}
 
     def get_rollout_result(
-        self, task_results: list[MultiTurnAgentLoopOutput], answer: str
+        self,
+        task_results: list[MultiTurnAgentLoopOutput],
+        extra_fields_group: Optional[dict]=None,
+        use_no_training=True,
     ) -> DynamicRolloutResult:
         """
         Collect group task results into a DynamicRolloutResult.
@@ -434,78 +476,52 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
         prompt_lengths = []
         response_lengths = []
         input_ids = []
-        rollout_logprobs = []
+        rollout_logprobs = None
+        if self.return_logprobs:
+            rollout_logprobs = []
         is_end = []
         rewards = []
 
-        # Collect tool call counts per turn
-        turn_subtask_counts = []
-        turn_search_counts = []
-        turn_access_counts = []
-
-        # Track valid turns for computing averages
-        num_valid_planner_turns = 0
-        num_valid_worker_turns = 0
-
         # Collect eval_metrics per trajectory
-        eval_metrics = []
-        total_turn_list_metric = []
         roles = []
-        role_group_sizes = []
-        role_group_size = 0
+
+        extra_fields_turn = None
+        if self.extra_keys_turn is not None:
+            extra_fields_turn = {k: list() for k in self.extra_keys_turn}
+        extra_fields_traj = None
+        if self.extra_keys_traj is not None:
+            extra_fields_traj = {k: list() for k in self.extra_keys_traj}
 
         for idx, task_result in enumerate(task_results):
-            # Extract eval_metric from extra_fields for this trajectory
-            eval_metric = task_result.extra_fields.get("eval_metric", None)
-            total_turn_list = task_result.extra_fields.get("total_turn_list", None)
-            eval_metrics.append(eval_metric)
-            total_turn_list_metric.append(total_turn_list)
-            have_role = False
-            for single_turn_output in task_result.train_buffer:
+            for single_turn_output in task_result.single_turn_outputs:
                 single_turn_output: AgentLoopOutput
+                if use_no_training and single_turn_output.extra_fields["not_training"] == True:
+                    continue
                 idx_to_traj.append(idx)
                 prompt_lengths.append(len(single_turn_output.prompt_ids))
                 response_lengths.append(len(single_turn_output.response_ids))
                 input_ids.append(
                     single_turn_output.prompt_ids + single_turn_output.response_ids
                 )
-                rollout_logprobs.append(single_turn_output.response_logprobs)
+                if self.return_logprobs:
+                    assert len(single_turn_output.response_logprobs) == len(single_turn_output.response_ids), (
+                        "response_logprobs should have the same length as response_ids"
+                    )
+                    rollout_logprobs.append(single_turn_output.response_logprobs)
                 is_end.append(single_turn_output.is_end)
                 rewards.append(single_turn_output.reward_score)
-                role = single_turn_output.extra_fields["role"]
-                roles.append(role)
-                if self.train_roles and role in self.train_roles:
-                    have_role = True
-
-            if have_role:
-                role_group_size += 1
 
             for single_turn_output in task_result.single_turn_outputs:
-                # Collect tool call info (keep all turns but track valid ones)
-                if single_turn_output.tool_call_info is not None:
-                    role = single_turn_output.tool_call_info.get("role", "")
-                    subtask_count = single_turn_output.tool_call_info.get("subtask", 0)
-                    search_count = single_turn_output.tool_call_info.get("search", 0)
-                    access_count = single_turn_output.tool_call_info.get("access", 0)
-
-                    turn_subtask_counts.append(subtask_count)
-                    turn_search_counts.append(search_count)
-                    turn_access_counts.append(access_count)
-
-                    # Track valid turns by role
-                    if role == "planner":
-                        assert subtask_count > 0
-                        num_valid_planner_turns += 1
-                    elif role == "worker" or role == "single":
-                        assert search_count > 0 or access_count > 0
-                        num_valid_worker_turns += 1
-                else:
-                    # Invalid turn - pad with zeros
-                    turn_subtask_counts.append(0)
-                    turn_search_counts.append(0)
-                    turn_access_counts.append(0)
-
-        role_group_sizes = [role_group_size] * len(idx_to_traj)
+                if self.extra_keys_turn is not None:
+                    for k in self.extra_keys_turn:
+                        v = single_turn_output.extra_fields.get(k, None)
+                        extra_fields_turn[k].append(v)
+                        if k == "role" and single_turn_output.extra_fields["not_training"] != True:
+                            roles.append(v)
+            if self.extra_keys_traj is not None:
+                for k in self.extra_keys_traj:
+                    v = task_result.extra_fields.get(k, None)
+                    extra_fields_traj[k].append(v)
 
         return DynamicRolloutResult(
             num_sequence=len(idx_to_traj),
@@ -517,97 +533,13 @@ class MultiTurnAgentLoopWorker(AgentLoopWorker):
             rollout_logprobs=rollout_logprobs,
             is_end=is_end,
             rewards=rewards,
+            extra_fields_turn=extra_fields_turn,
+            extra_fields_traj=extra_fields_traj,
+            extra_fields_group=extra_fields_group,
+            # train
             roles=roles,
-            role_group_sizes=role_group_sizes,
-            turn_subtask_counts=turn_subtask_counts,
-            turn_search_counts=turn_search_counts,
-            turn_access_counts=turn_access_counts,
-            num_valid_planner_turns=num_valid_planner_turns,
-            num_valid_worker_turns=num_valid_worker_turns,
-            eval_metrics=eval_metrics,
-            total_turn_list_metric=total_turn_list_metric,
+            role_group_sizes=[extra_fields_group["role_group_size"]] * len(idx_to_traj),
         )
-
-    def get_rollout_result_eval(
-        self, task_results: list[MultiTurnAgentLoopOutput], answer: str
-    ) -> dict:
-        """
-        Collect task results into an evaluation-friendly dictionary format.
-
-        Args:
-            task_results: List of MultiTurnAgentLoopOutput from multiple samples (k samples for pass@k)
-            answer: Ground truth answer
-
-        Returns:
-            Dictionary with human-readable evaluation data including:
-            - Individual sample data (k samples)
-            - All metrics computed per sample (EM, F1, LLM)
-        """
-        group_size = len(task_results)
-
-        # Collect data for all k samples
-        samples_data = []
-        for idx, task_result in enumerate(task_results):
-            if self.print_outputs:
-                if len(task_result.trace_prints) > 0:
-                    self.print_agent_outputs(None, task_result.trace_prints)
-
-            # Collect all turns with readable text for this sample
-            turns = []
-            for single_turn_output in task_result.single_turn_outputs:
-                single_turn_output: AgentLoopOutput
-                turn_data = {
-                    "prompt_text": single_turn_output.prompt_text,
-                    "response_text": single_turn_output.response_text,
-                    "prompt_ids_length": len(single_turn_output.prompt_ids),
-                    "response_ids_length": len(single_turn_output.response_ids),
-                    "is_end": single_turn_output.is_end,
-                    "reward_score": single_turn_output.reward_score,
-                    "role": single_turn_output.extra_fields.get("role", "unknown"),
-                    "tool_call_info": single_turn_output.tool_call_info,
-                }
-                turns.append(turn_data)
-
-            # Extract evaluation metrics for this sample
-            eval_metric = task_result.extra_fields.get("eval_metric", {})
-
-            final_answer = task_result.extra_fields.get("final_answer", None)
-            if final_answer is not None:
-                if isinstance(final_answer, pd.DataFrame):
-                    final_answer = final_answer.to_dict(orient="records")
-
-            # Extract total_turn_list for MAS workflow
-            total_turn_list = task_result.extra_fields.get("total_turn_list", None)
-
-            sample_data = {
-                "sample_idx": idx,
-                "num_turns": len(turns),
-                "turns": turns,
-                "origin_question": task_result.extra_fields.get(
-                    "origin_question", None
-                ),
-                "final_answer": final_answer,
-                "final_answer_text": task_result.extra_fields.get(
-                    "final_answer_text", None
-                ),
-                "planner_summary": task_result.extra_fields.get(
-                    "planner_summary", None
-                ),
-                # Evaluation metrics for this sample
-                "eval_metric": eval_metric,
-                # Total turn list for MAS: last element is main agent turns, others are subagent turns
-                "total_turn_list": total_turn_list,
-            }
-            samples_data.append(sample_data)
-
-        # Create evaluation result dictionary with all k samples
-        eval_result = {
-            "group_size": group_size,
-            "answer": answer,
-            "samples": samples_data,  # All k samples with their metrics
-        }
-        self.log_info(f"finish question id {answer['instance_id']}")
-        return eval_result
 
     async def run_one_query(self, *args, **kwargs) -> MultiTurnAgentLoopOutput:
         raise NotImplementedError("Subclasses must implement this method")

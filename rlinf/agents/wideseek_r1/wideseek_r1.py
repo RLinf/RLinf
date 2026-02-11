@@ -17,11 +17,14 @@ import copy
 import json
 import re
 import traceback
+from typing import Optional
 
 import numpy as np
 import pandas as pd
 from omegaconf import DictConfig
 
+from rlinf.data.io_struct import DynamicRolloutResult
+from rlinf.agents.wideseek_r1.utils.metrics import _compute_eval_metrics, _compute_mas_turn_metrics, _compute_tool_call_metrics
 from rlinf.agents.wideseek_r1.sglang_client import SGLangClient
 from rlinf.agents.wideseek_r1.utils.reward import (
     compute_score_em,
@@ -57,6 +60,9 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
         placement: ModelParallelComponentPlacement,
     ):
         super().__init__(cfg, placement)
+        self.extra_keys_turn = ["subtask_count", "search_count", "access_count", "role", "tool_call_info", "prompt_text", "response_text"]
+        self.extra_keys_traj = ["origin_question", "planner_summary", "final_answer", "final_answer_text", "num_valid_planner_turns", "num_valid_worker_turns", "eval_metric", "total_turn_list"]
+
         self.max_prompt_len = int(self.cfg.data.max_prompt_length)
         self.max_total_len = int(self.cfg.actor.model.encoder_seq_length)
 
@@ -719,14 +725,54 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                         if turn not in train_buffer:
                             train_buffer.append(turn)
 
+        sorted_train_buffer = []
+        for single_turn_output in output_buffer:
+            if single_turn_output not in sorted_train_buffer and single_turn_output in train_buffer:
+                sorted_train_buffer.append(single_turn_output)
+
         for single_turn_output in output_buffer:
             single_turn_output.reward_score = reward_score
         for single_turn_output in train_buffer:
             single_turn_output.reward_score = reward_score
 
+        for single_turn_output in output_buffer:
+            single_turn_output.extra_fields["not_training"] = True
+        for single_turn_output in train_buffer:
+            single_turn_output.extra_fields["not_training"] = False
+
+        # Track valid turns for computing averages
+        num_valid_planner_turns = 0
+        num_valid_worker_turns = 0
+
+        for single_turn_output in output_buffer:
+            # Collect tool call info (keep all turns but track valid ones)
+            single_turn_output: AgentLoopOutput
+            subtask_count = 0
+            search_count = 0
+            access_count = 0
+            if single_turn_output.tool_call_info is not None:
+                role = single_turn_output.tool_call_info.get("role", "")
+                subtask_count = single_turn_output.tool_call_info.get("subtask", 0)
+                search_count = single_turn_output.tool_call_info.get("search", 0)
+                access_count = single_turn_output.tool_call_info.get("access", 0)
+
+                # Track valid turns by role
+                if role == "planner":
+                    assert subtask_count > 0
+                    num_valid_planner_turns += 1
+                elif role == "worker" or role == "single":
+                    assert search_count > 0 or access_count > 0
+                    num_valid_worker_turns += 1
+            single_turn_output.extra_fields["subtask_count"] = subtask_count
+            single_turn_output.extra_fields["search_count"] = search_count
+            single_turn_output.extra_fields["access_count"] = access_count
+            single_turn_output.extra_fields["tool_call_info"] = single_turn_output.tool_call_info
+            single_turn_output.extra_fields["prompt_text"] = single_turn_output.prompt_text
+            single_turn_output.extra_fields["response_text"] = single_turn_output.response_text
+
         output = MultiTurnAgentLoopOutput(
             single_turn_outputs=output_buffer,
-            train_buffer=train_buffer,
+            train_buffer=sorted_train_buffer,
             trace_prints=[],  # Can add message_history tracking if needed
             extra_fields=dict(
                 final_answer=final_answer_extract,
@@ -737,9 +783,84 @@ class WideSeekR1AgentLoopWorker(MultiTurnAgentLoopWorker):
                 eval_metric=eval_metric,
                 total_turn_list=total_turn_list if self.workflow == "mas" else None,
                 instance_id=answer["instance_id"],
+                num_valid_planner_turns=num_valid_planner_turns,
+                num_valid_worker_turns=num_valid_worker_turns,
             ),
         )
         return output
+
+    def gen_extra_fields_group(self, task_results: list[MultiTurnAgentLoopOutput], answer: str) -> Optional[dict]:
+        role_group_size = 0
+        for task_result in task_results:
+            have_role = False
+            for single_turn_output in task_result.single_turn_outputs:
+                single_turn_output: AgentLoopOutput
+                role = single_turn_output.extra_fields["role"]
+                if self.train_roles and role in self.train_roles:
+                    have_role = True
+                    break
+
+            if have_role:
+                role_group_size += 1
+        return {"answer": answer, "role_group_size": role_group_size}
+
+    def get_rollout_metrics(
+        self,
+        rollout_result: DynamicRolloutResult,
+    ) -> dict:
+        try:
+            for k1, v2 in {
+                "turn_subtask_counts":      rollout_result.extra_fields_turn["subtask_count"],
+                "turn_search_counts":       rollout_result.extra_fields_turn["search_count"],
+                "turn_access_counts":       rollout_result.extra_fields_turn["access_count"],
+                "num_valid_planner_turns":  sum(rollout_result.extra_fields_traj["num_valid_planner_turns"]),
+                "num_valid_worker_turns":   sum(rollout_result.extra_fields_traj["num_valid_worker_turns"]),
+                "eval_metrics":             rollout_result.extra_fields_traj["eval_metric"],
+                "total_turn_list_metric":   rollout_result.extra_fields_traj["total_turn_list"],
+            }.items():
+                v1 = getattr(rollout_result, k1, None)
+                if v1 is not None:
+                    assert v1 == v2
+        except Exception as e:
+            breakpoint()
+
+        if self.is_eval:
+            return {}
+
+        rollout_batch_1 = dict(
+            turn_subtask_counts=rollout_result.extra_fields_turn["subtask_count"],
+            turn_search_counts=rollout_result.extra_fields_turn["search_count"],
+            turn_access_counts=rollout_result.extra_fields_turn["access_count"],
+            num_valid_planner_turns=sum(rollout_result.extra_fields_traj["num_valid_planner_turns"]),
+            num_valid_worker_turns=sum(rollout_result.extra_fields_traj["num_valid_worker_turns"]),
+        )
+
+        rollout_batch_2 = dict(
+            eval_metrics=rollout_result.extra_fields_traj["eval_metric"],
+        )
+
+        rollout_batch_3 = dict(
+            total_turn_list_metric=rollout_result.extra_fields_traj["total_turn_list"],
+        )
+
+        # idx_to_traj = rollout_batch["idx_to_traj"]
+        idx_to_traj = rollout_result.idx_to_traj
+        num_trajectories = max(idx_to_traj) + 1
+        tool_call_metrics = _compute_tool_call_metrics(
+            rollout_batch_1, idx_to_traj, int(num_trajectories)
+        )
+        # eval_metrics_dict = _compute_eval_metrics(
+        #     rollout_batch_2, device, data_parallel_group
+        # )
+        # mas_turn_metrics = _compute_mas_turn_metrics(
+        #     rollout_batch_3, device, data_parallel_group
+        # )
+        agent_metrics = {
+            **tool_call_metrics,
+            # **eval_metrics_dict,
+            # **mas_turn_metrics,
+        }
+        return agent_metrics
 
     async def get_final_reward_score(
         self, origin_question, extract_answer, label_answer, is_markdown=False
