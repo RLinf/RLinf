@@ -53,8 +53,8 @@ data:
   answer_key: answer
   is_markdown: True
   unique_columns: unique_columns 
-  train_data_paths: ["/mnt/project_rlinf/xzxuan/Multiagent/wideseek_r1/hybrid_20k.jsonl"]
-  val_data_paths: ["/mnt/project_rlinf/xzxuan/Multiagent/wideseek_r1/hybrid_20k.jsonl"]
+  train_data_paths: ["/mnt/project_rlinf/xzxuan/train_data/hybrid_20k.jsonl"]
+  val_data_paths: ["/mnt/project_rlinf/xzxuan/train_data/hybrid_20k.jsonl"]
   shuffle: False
   is_hybrid: True
   data_size: -1

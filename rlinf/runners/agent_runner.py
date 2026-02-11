@@ -202,7 +202,7 @@ class AgentRunner(ReasoningRunner):
                         )
 
                         if not self.is_pipeline:
-                            rollout_handle.wait()
+                            agent_metrics = rollout_handle.wait()[0]
                             offload_handles = [self.rollout.offload_engine()]
                             for solid_rollout in self.solid_rollouts.values():
                                 offload_handles.append(solid_rollout.offload_engine())
@@ -232,6 +232,8 @@ class AgentRunner(ReasoningRunner):
                             inference_channel = inference_input_channel
 
                         # Actor training, Advantages and returns
+                        if self.is_pipeline:
+                            agent_metrics = rollout_handle.wait()[0]
                         actor_handle: Handle = self.actor.run_training(
                             input_channel=inference_channel,
                         )
@@ -288,6 +290,7 @@ class AgentRunner(ReasoningRunner):
                         f"rollout/{k}": v for k, v in actor_rollout_metrics.items()
                     }
 
+                    self.metric_logger.log(agent_metrics, logging_steps)
                     self.metric_logger.log(log_time_metrics, logging_steps)
                     self.metric_logger.log(rollout_metrics, logging_steps)
                     for i in range(self.cfg.algorithm.n_minibatches):
@@ -309,6 +312,7 @@ class AgentRunner(ReasoningRunner):
                         self.metric_logger.log(flops_metrics, logging_steps)
                         logging_metrics.update(flops_metrics)
 
+                    logging_metrics.update(agent_metrics)
                     logging_metrics.update(actor_rollout_metrics)
                     logging_metrics.update(actor_training_metrics[-1])
 

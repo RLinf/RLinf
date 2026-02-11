@@ -159,7 +159,6 @@ class MAMegatronActor(MegatronActor):
                     log_probs = vocab_parallel_log_probs_from_logits(logits, label)
                     log_probs = log_probs.masked_fill(~label_mask, 0.0)
                     ret = {"log_probs": log_probs}
-                    # breakpoint()
 
                 return ret
 
@@ -184,6 +183,9 @@ class MAMegatronActor(MegatronActor):
                 # in last stage need to get the log_probs from the output
                 if unwrap_model(model).post_process:
                     output = output["log_probs"]
+                    output = output.clone()
+                    output[:, 1:] = output[:, :-1].clone()
+                    output[:, 0] = 0.0  # first token has no previous token
 
                 return output, id_func
 
@@ -192,8 +194,6 @@ class MAMegatronActor(MegatronActor):
                 curr_logprobs = curr_logprobs_ori.clone()
                 curr_logprobs[:, 1:] = curr_logprobs_ori[:, :-1].clone()
                 curr_logprobs[:, 0] = 0.0  # first token has no previous token
-
-                # curr_logprobs = output["log_probs"]
 
                 advantages = batch["advantages"]
                 prev_logprobs = batch["prev_logprobs"]
@@ -257,7 +257,6 @@ class MAMegatronActor(MegatronActor):
                     self.cfg.algorithm.early_stop_imp_ratio is not None
                     and _imp > self.cfg.algorithm.early_stop_imp_ratio
                 ):
-                    # breakpoint()
                     self.log_warning(
                         f"Current importance ratio {_imp.item():.4f} is larger "
                         f"than early stop threshold {self.cfg.algorithm.early_stop_imp_ratio}. Abandon this microbatch."
@@ -496,6 +495,7 @@ class MAMegatronActor(MegatronActor):
             shuffle=self.cfg.algorithm.get("shuffle_rollout", True),
             shuffle_seed=self.cfg.actor.seed,
         )
+
         if self.use_profiler:
             self.profiler.init_fwd_bwd_schedule(self.cfg.algorithm.n_minibatches)
 
@@ -532,7 +532,7 @@ class MAMegatronActor(MegatronActor):
         """
         with self.worker_timer():
             if batch.get("advantages", None) is None:
-                mask = batch["response_mask"]  # [num_sequence, seq_len]
+                mask = batch["response_mask"] # [num_sequence, seq_len]
                 advantages, _ = calculate_adv_and_returns(
                     task_type=self.cfg.runner.task_type,
                     adv_type=self.cfg.algorithm.adv_type,
@@ -731,18 +731,18 @@ class MAMegatronActor(MegatronActor):
         self._load_weight_and_optimizer()
         with self.worker_timer():
             # compute prev logprobs
-            prev_logprobs = self.inference_step(merged_batch)
+            prev_logprobs = self.inference_step(merged_batch).cpu()
             if rollout_result.rollout_logprobs is not None:
-                rollout_result.recompute_prev_logprobs = prev_logprobs.cpu()
+                rollout_result.recompute_prev_logprobs = prev_logprobs
             else:
-                rollout_result.prev_logprobs = prev_logprobs.cpu()
+                rollout_result.prev_logprobs = prev_logprobs
             if compute_ref_logprobs:
                 assert self.ref_policy_state_dict is not None, (
                     "ref_policy_state_dict must be set to compute ref_logprobs"
                 )
                 with cpu_weight_swap(self.model[0], self.ref_policy_state_dict):
-                    ref_logprobs = self.inference_step(merged_batch)
-                    rollout_result.ref_logprobs = ref_logprobs.cpu()
+                    ref_logprobs = self.inference_step(merged_batch).cpu()
+                    rollout_result.ref_logprobs = ref_logprobs
 
         rollout_result_per_group = DynamicRolloutResult.split_results(
             rollout_result, num_sequence_per_group
