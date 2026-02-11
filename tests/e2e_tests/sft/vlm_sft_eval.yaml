@@ -14,20 +14,20 @@ cluster:
 runner:
   task_type: sft
   logger:
-    log_path: ${runner.output_dir}/${runner.experiment_name}
+    log_path: /workspace/results/
     project_name: rlinf
     experiment_name: ${runner.experiment_name}
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   # sft runner use the len(dataset) as one epoch
-  max_epochs: 6000
+  max_epochs: 5
   max_steps: -1
   # eval the model intenval
-  val_check_interval: 1000
+  val_check_interval: -1
   # save the model interval
-  save_interval: 1000
-  experiment_name: qwen2_5_vl_sft
-  output_dir: ../results
+  save_interval: -1
+  experiment_name: qwen2_5_vl_sft_eval
+  output_dir: /workspace/results
   resume_dir: null
 
 data:
@@ -36,8 +36,8 @@ data:
   apply_chat_template: True
   use_chat_template: True
   # if train_data_paths is not None, the sft code will just eval the model
-  train_data_paths: "/path/to/Robo2VLM-1"
-  eval_data_paths: "/path/to/Robo2VLM-1"
+  train_data_paths: null
+  eval_data_paths: "/workspace/dataset/Robo2VLM-1/data"
   prompt_key: "question"
   choice_key: "choices"
   answer_key: "correct_answer"
@@ -53,8 +53,8 @@ algorithm:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 4
   eval_batch_size: 4
+  micro_batch_size: 4
   global_batch_size: 256
   seed: 42
 
@@ -62,7 +62,7 @@ actor:
   model:
     model_type: "qwen2.5_vl"
     precision: bf16
-    model_path: "/path/to/Qwen2.5-VL-3B-Instruct"
+    model_path: "/workspace/dataset/Qwen2.5-VL-3B-Instruct"
     is_lora: False
 
   optim:

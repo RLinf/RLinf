@@ -200,10 +200,6 @@ actor:
     moe_router_topk: 2
     moe_router_pre_softmax: False
     moe_aux_loss_coeff: 0.0
-    moe_router_dtype: fp32
-    moe_router_score_function: softmax
-    moe_token_drop_policy: probs
-    moe_permute_fusion: True
 
   optim:
     optimizer: adam

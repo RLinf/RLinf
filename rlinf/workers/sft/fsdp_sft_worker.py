@@ -42,6 +42,16 @@ class FSDPSftWorker(FSDPModelManager, Worker):
 
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
 
+        # set the global batch size, micro batch size and gradient accumulation
+        self.global_batch_size = self.cfg.actor.global_batch_size
+        self.micro_batch_size = self.cfg.actor.micro_batch_size
+        assert (
+            self.global_batch_size % (self.micro_batch_size * self._world_size) == 0
+        ), "global_batch_size is not divisible by micro_batch_size * world_size"
+        self.gradient_accumulation = (
+            self.global_batch_size // self.micro_batch_size // self._world_size
+        )
+
         # before load dataloader should build the tokenizer
         self.tokenizer = self.build_tokenizer()
 
@@ -139,9 +149,11 @@ class FSDPSftWorker(FSDPModelManager, Worker):
                 try:
                     batch = next(self.data_iter)
                 except StopIteration:
+                    if hasattr(self.data_loader, "sampler") and hasattr(
+                        self.data_loader.sampler, "set_epoch"
+                    ):
+                        self.data_loader.sampler.set_epoch(self.global_step)
                     self.data_iter = iter(self.data_loader)
-                    logging.info("[INFO] data_iter exhausted, reset iterator")
-                    batch = next(self.data_iter)
 
                 losses = self.get_train_model_output(batch)
 

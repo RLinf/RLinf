@@ -573,13 +573,14 @@ class Robo2VLMSFTDataset(VLMBaseDataset):
     ) -> tuple[torch.Tensor, int, dict[str, Any], torch.Tensor, Optional[str]]:
         """
         Return (
-        input_ids, the tokenized input ids,
-        int(input_ids.numel()), the length of the input ids,
-        prompt, the original prompt,
-        answer, the original answer,
-        attention_mask, the input_ids attention mask,
-        label_mask, the sft label mask,
-        multi_modal_inputs,).
+            input_ids: torch.Tensor,      # [L] or [1, L] token ids
+            int(input_ids.numel()),       # length of token ids
+            prompt: dict[str, Any],       # raw prompt/messages
+            answer: Optional[str],        # raw answer text (may be None)
+            attention_mask: torch.Tensor, # [L] or [1, L] attention mask
+            label_mask: torch.Tensor,     # [L] or [1, L] SFT label mask (prompt part masked)
+            multi_modal_inputs: dict[str, Any], # processor outputs (e.g. pixel_values, image_grid_thw)
+        ).
 
         If using chat template, encode with processor.
         Subclasses may override to support alternative prompting.
@@ -642,7 +643,13 @@ class Robo2VLMSFTDataset(VLMBaseDataset):
         if isinstance(choices, str):
             try:
                 choices = ast.literal_eval(choices)
-            except (ValueError, SyntaxError):
+            except (ValueError, SyntaxError) as e:
+                logging.warning(
+                    "Failed to parse choices as list, fallback to single choice. "
+                    "choices=%r, error=%s",
+                    choices,
+                    e,
+                )
                 choices = [str(choices)]
 
         # Create a formatted question with choices

@@ -26,18 +26,6 @@ from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 class FSDPVlmSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
-        self.global_batch_size = self.cfg.actor.global_batch_size
-        self.micro_batch_size = self.cfg.actor.micro_batch_size
-        assert (
-            self.cfg.actor.global_batch_size
-            % (self.cfg.actor.micro_batch_size * self._world_size)
-            == 0
-        ), "global_batch_size is not divisible by micro_batch_size * world_size"
-        self.gradient_accumulation = (
-            self.cfg.actor.global_batch_size
-            // self.cfg.actor.micro_batch_size
-            // self._world_size
-        )
 
     def build_tokenizer(self):
         from transformers import AutoTokenizer
@@ -85,7 +73,11 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             else:
                 sampler = None
 
-            batch_size = self.cfg.actor.micro_batch_size if not eval_dataset else 1
+            batch_size = (
+                self.micro_batch_size
+                if not eval_dataset
+                else self.cfg.data.get("eval_batch_size", 1)
+            )
             data_loader = DataLoader(
                 train_dataset,
                 batch_size=batch_size,
@@ -107,6 +99,9 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             raise KeyError(
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
             )
+
+    def _normalize_text(s: str) -> str:
+        return " ".join(str(s).strip().lower().split())
 
     def get_eval_model_output(self, batch: dict[str, Any]):
         # hundle the input batch
@@ -143,10 +138,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             pred_text = _extract_answer(full_pred_text)
             gold_text = answers[i]
 
-            def _normalize_text(s: str) -> str:
-                return " ".join(str(s).strip().lower().split())
-
-            if _normalize_text(pred_text) == _normalize_text(gold_text):
+            if self._normalize_text(pred_text) == self._normalize_text(gold_text):
                 correct += 1
 
         # eval model return the correct number of answers
