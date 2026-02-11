@@ -1070,22 +1070,15 @@ class MegatronActor(MegatronModelManager, Worker):
         args = get_args()
         args.rank = torch.distributed.get_rank()
         args.world_size = torch.distributed.get_world_size()
-        args.data_parallel_size = args.world_size // (
-            args.tensor_model_parallel_size
-            * args.pipeline_model_parallel_size
-            * args.context_parallel_size
-        )
+        
+        default_model_parallel_size_with_cp = args.tensor_model_parallel_size * args.pipeline_model_parallel_size * args.context_parallel_size
+        args.data_parallel_size = args.world_size // default_model_parallel_size_with_cp
         args.load = None
         self.default_parallel_strategy = {
             "tensor_model_parallel_size": args.tensor_model_parallel_size,
             "pipeline_model_parallel_size": args.pipeline_model_parallel_size,
             "context_parallel_size": args.context_parallel_size,
         }
-        default_model_parallel_size_with_cp = (
-            args.tensor_model_parallel_size
-            * args.pipeline_model_parallel_size
-            * args.context_parallel_size
-        )
 
         assert args.world_size == self.component_placement._cluster_num_gpus, (
             "In Auto-Scheduler mode, actor should be initialized on all GPUs."
@@ -1107,10 +1100,7 @@ class MegatronActor(MegatronModelManager, Worker):
             resharding_strategies.append(
                 {
                     "world_size": world_size,
-                    "tensor_model_parallel_size": args.tensor_model_parallel_size,
-                    "pipeline_model_parallel_size": args.pipeline_model_parallel_size,
-                    "context_parallel_size": args.context_parallel_size,
-                }
+                } | self.default_parallel_strategy
             )
 
         assert resharding_strategies[0]["world_size"] == args.world_size
