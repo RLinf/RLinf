@@ -13,6 +13,7 @@ import ray
 import ray.util
 from torch.utils.data import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
+from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from agentlightning.adapter.triplet import TraceToTripletBase
@@ -21,7 +22,6 @@ from rlinf.workers.agent.agentlightning_rollout_worker import AgentLightningRoll
 import typing
 
 if typing.TYPE_CHECKING:
-    from rlinf.scheduler import Channel
     from rlinf.workers.actor.megatron_actor_worker import MegatronActor
     from rlinf.workers.rollout.sglang.sglang_worker_server import SGLangWorkerWithHTTPServer
 
@@ -48,7 +48,6 @@ class AgentLightningEvalRunner:
         self.adapter = adapter
         self.agentlightning_rollout_worker = agentlightning_rollout_worker
 
-        from rlinf.scheduler import Channel
         self.dataloader_channel = Channel.create("DataLoader")
         self.rollout_channel = Channel.create("Rollout")
 
@@ -166,10 +165,10 @@ class AgentLightningEvalRunner:
             self.init_workers(use_original_model=True)
             self._sync_weights()
             avg_reward = self._run_eval_loop()
-            print(f"Evaluation Results:")
-            print(f"  Model: Original HuggingFace model ({self.cfg.actor.megatron.ckpt_convertor.hf_model_path})")
-            print(f"  Batches: {len(self.val_dataloader)}")
-            print(f"  Average Reward: {avg_reward:.6f}")
+            logging.info(f"Evaluation Results:")
+            logging.info(f"  Model: Original HuggingFace model ({self.cfg.actor.megatron.ckpt_convertor.hf_model_path})")
+            logging.info(f"  Batches: {len(self.val_dataloader)}")
+            logging.info(f"  Average Reward: {avg_reward:.6f}")
             return
         
         if checkpoint_dir is None:
@@ -202,8 +201,8 @@ class AgentLightningEvalRunner:
             step = int(os.path.basename(ckpt_dir).split("_")[-1])
         
         avg_reward = self._run_eval_loop()
-        print(f"Evaluation Results:")
-        print(f"  Checkpoint: {actor_checkpoint_path}")
-        print(f"  Step: {step}")
-        print(f"  Batches: {len(self.val_dataloader)}")
-        print(f"  Average Reward: {avg_reward:.6f}")
+        logging.info(f"Evaluation Results:")
+        logging.info(f"  Checkpoint: {actor_checkpoint_path}")
+        logging.info(f"  Step: {step}")
+        logging.info(f"  Batches: {len(self.val_dataloader)}")
+        logging.info(f"  Average Reward: {avg_reward:.6f}")
