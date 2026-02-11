@@ -217,7 +217,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                     )
 
                     if save_model:
-                            self._save_checkpoint()
+                        self._save_checkpoint()
 
                     if is_train_end:
                         logging.info(
