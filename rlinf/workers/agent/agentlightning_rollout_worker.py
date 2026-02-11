@@ -52,6 +52,7 @@ class AgentLightningRolloutWorker(Worker):
         self._data_id_to_rollout_ids: Dict[str, List[str]] = {}
         self.tokenizer = AutoTokenizer.from_pretrained(self.cfg.rollout.model.model_path)
         self.is_eval_mode: bool = False
+        self.advantage_mode: str = self.cfg.algorithm.get("advantage_mode", "turn")
 
     def init_worker(
         self,
@@ -87,7 +88,6 @@ class AgentLightningRolloutWorker(Worker):
             if isinstance(sampling_params, DictConfig):
                 sampling_params = OmegaConf.to_container(sampling_params, resolve=True)
             if self.is_eval_mode:
-                # In eval mode, use the same sampling_params but set temperature to 0
                 sampling_params["temperature"] = 0.0
             
             llm_resource = self.llm_proxy.as_resource(
@@ -294,103 +294,155 @@ class AgentLightningRolloutWorker(Worker):
                     completed_data_ids.append(data_id)
         return completed_data_ids
 
-    async def _async_get_rollout_result_for_data_id(self, data_id: str) -> Optional[RolloutResult]:
+    async def _async_get_rollout_result_for_data_id(self, data_id: str) -> Optional[Union[RolloutResult, DynamicRolloutResult]]:
         rollout_ids = self._data_id_to_rollout_ids[data_id]
         rollouts = [self._completed_rollout_ids[rollout_id] for rollout_id in rollout_ids]
         
         max_prompt_len = int(self.cfg.data.get("max_prompt_length", 4096))
         max_response_length = int(self.cfg.data.get("max_response_length", 2048))
         
-        prompt_ids_list: List[List[int]] = []
-        response_ids_list: List[List[int]] = []
-        prompt_lengths_list: List[int] = []
-        response_lengths_list: List[int] = []
-        is_end_list: List[bool] = []
-        rewards_list: List[float] = []
-        response_mask_list: List[List[int]] = []
-        prompt_texts_list: List[str] = []
-        response_texts_list: List[str] = []
-        rollout_logprobs_list: List[List[float]] = []
-
-        for rollout_legacy in rollouts:
-
-            first_triplet = rollout_legacy.triplets[0]
-            orig_prompt_ids = first_triplet.prompt.get("token_ids", [])
+        if self.advantage_mode == "turn":
+            idx_to_traj: List[int] = []
+            input_ids_list: List[List[int]] = []
+            prompt_lengths_list: List[int] = []
+            response_lengths_list: List[int] = []
+            is_end_list: List[bool] = []
+            rewards_list: List[float] = []
+            rollout_logprobs_list: List[List[float]] = []
             
-            if len(orig_prompt_ids) > max_prompt_len:
-                orig_prompt_ids = orig_prompt_ids[:max_prompt_len]
-            
-            accumulated_response_mask: List[int] = []
-            accumulated_full_sequence: List[int] = []
-            accumulated_logprobs: List[float] = []
-            
-            for triplet_idx, triplet in enumerate(rollout_legacy.triplets):
-                prompt_token_ids = triplet.prompt.get("token_ids", [])
-                response_token_ids = triplet.response.get("token_ids", [])
-
-                if triplet_idx == 0:
-                    accumulated_full_sequence = orig_prompt_ids + response_token_ids
-                    accumulated_response_mask += [1] * len(response_token_ids)
+            for traj_idx, rollout_legacy in enumerate(rollouts):
+                for triplet in rollout_legacy.triplets:
+                    prompt_ids = triplet.prompt.get("token_ids", [])
+                    response_ids = triplet.response.get("token_ids", [])
+                    
+                    if len(prompt_ids) > max_prompt_len:
+                        prompt_ids = prompt_ids[:max_prompt_len]
+                    if len(response_ids) > max_response_length:
+                        response_ids = response_ids[:max_response_length]
+                    
+                    input_ids = prompt_ids + response_ids
+                    
+                    turn_logprobs: List[float] = []
                     if self.cfg.rollout.return_logprobs:
                         logprobs = triplet.response.get("logprobs", [])
                         if logprobs:
-                            accumulated_logprobs += [lp.get("logprob", 0.0) for lp in logprobs]
-                else:
-                    tool_response_ids = prompt_token_ids[len(accumulated_full_sequence):]
-                    accumulated_full_sequence.extend(tool_response_ids)
-                    accumulated_full_sequence.extend(response_token_ids)
-                    accumulated_response_mask += [0] * len(tool_response_ids)
-                    accumulated_response_mask += [1] * len(response_token_ids)
+                            turn_logprobs = [lp.get("logprob", 0.0) for lp in logprobs]
+                            if len(turn_logprobs) > max_response_length:
+                                turn_logprobs = turn_logprobs[:max_response_length]
+                    
+                    idx_to_traj.append(traj_idx)
+                    input_ids_list.append(input_ids)
+                    prompt_lengths_list.append(len(prompt_ids))
+                    response_lengths_list.append(len(response_ids))
+                    is_end_list.append(True)
+                    rewards_list.append(rollout_legacy.final_reward)
+                    rollout_logprobs_list.append(turn_logprobs)
+
+            rewards_tensor = torch.tensor(rewards_list, dtype=torch.float32)
+
+            dynamic_rollout_result = DynamicRolloutResult(
+                num_sequence=len(input_ids_list),
+                group_size=len(rollouts),
+                idx_to_traj=idx_to_traj,
+                input_ids=input_ids_list,
+                prompt_lengths=prompt_lengths_list,
+                response_lengths=response_lengths_list,
+                is_end=is_end_list,
+                rewards=rewards_tensor,
+                rollout_logprobs=rollout_logprobs_list if self.cfg.rollout.return_logprobs else None,
+            )
+            return dynamic_rollout_result
+        else:
+            prompt_ids_list: List[List[int]] = []
+            response_ids_list: List[List[int]] = []
+            prompt_lengths_list: List[int] = []
+            response_lengths_list: List[int] = []
+            is_end_list: List[bool] = []
+            rewards_list: List[float] = []
+            response_mask_list: List[List[int]] = []
+            prompt_texts_list: List[str] = []
+            response_texts_list: List[str] = []
+            rollout_logprobs_list: List[List[float]] = []
+
+            for rollout_legacy in rollouts:
+
+                first_triplet = rollout_legacy.triplets[0]
+                orig_prompt_ids = first_triplet.prompt.get("token_ids", [])
+                
+                if len(orig_prompt_ids) > max_prompt_len:
+                    orig_prompt_ids = orig_prompt_ids[:max_prompt_len]
+                
+                accumulated_response_mask: List[int] = []
+                accumulated_full_sequence: List[int] = []
+                accumulated_logprobs: List[float] = []
+                
+                for triplet_idx, triplet in enumerate(rollout_legacy.triplets):
+                    prompt_token_ids = triplet.prompt.get("token_ids", [])
+                    response_token_ids = triplet.response.get("token_ids", [])
+
+                    if triplet_idx == 0:
+                        accumulated_full_sequence = orig_prompt_ids + response_token_ids
+                        accumulated_response_mask += [1] * len(response_token_ids)
+                        if self.cfg.rollout.return_logprobs:
+                            logprobs = triplet.response.get("logprobs", [])
+                            if logprobs:
+                                accumulated_logprobs += [lp.get("logprob", 0.0) for lp in logprobs]
+                    else:
+                        tool_response_ids = prompt_token_ids[len(accumulated_full_sequence):]
+                        accumulated_full_sequence.extend(tool_response_ids)
+                        accumulated_full_sequence.extend(response_token_ids)
+                        accumulated_response_mask += [0] * len(tool_response_ids)
+                        accumulated_response_mask += [1] * len(response_token_ids)
+                        if self.cfg.rollout.return_logprobs:
+                            logprobs = triplet.response.get("logprobs", [])
+                            if logprobs:
+                                accumulated_logprobs += [0.0] * len(tool_response_ids)
+                                accumulated_logprobs += [lp.get("logprob", 0.0) for lp in logprobs]
+                
+                response_ids = accumulated_full_sequence[len(orig_prompt_ids):]
+                
+                if len(response_ids) > max_response_length:
+                    response_ids = response_ids[:max_response_length]
+                    accumulated_response_mask = accumulated_response_mask[:max_response_length]
                     if self.cfg.rollout.return_logprobs:
-                        logprobs = triplet.response.get("logprobs", [])
-                        if logprobs:
-                            accumulated_logprobs += [0.0] * len(tool_response_ids)
-                            accumulated_logprobs += [lp.get("logprob", 0.0) for lp in logprobs]
-            
-            response_ids = accumulated_full_sequence[len(orig_prompt_ids):]
-            
-            if len(response_ids) > max_response_length:
-                response_ids = response_ids[:max_response_length]
-                accumulated_response_mask = accumulated_response_mask[:max_response_length]
+                        accumulated_logprobs = accumulated_logprobs[:max_response_length]
+
+
+                prompt_ids_list.append(orig_prompt_ids)
+                response_ids_list.append(response_ids)
+                prompt_lengths_list.append(len(orig_prompt_ids))
+                response_lengths_list.append(len(response_ids))
+                response_mask_list.append(accumulated_response_mask)
+                is_end_list.append(True)
+                
+                reward = rollout_legacy.final_reward
+                rewards_list.append(reward)
+                
                 if self.cfg.rollout.return_logprobs:
-                    accumulated_logprobs = accumulated_logprobs[:max_response_length]
+                    if len(accumulated_logprobs) > max_response_length:
+                        accumulated_logprobs = accumulated_logprobs[:max_response_length]
+                    rollout_logprobs_list.append(accumulated_logprobs)
 
-
-            prompt_ids_list.append(orig_prompt_ids)
-            response_ids_list.append(response_ids)
-            prompt_lengths_list.append(len(orig_prompt_ids))
-            response_lengths_list.append(len(response_ids))
-            response_mask_list.append(accumulated_response_mask)
-            is_end_list.append(True)
+            rewards_tensor = torch.tensor(rewards_list, dtype=torch.float32)
             
-            reward = rollout_legacy.final_reward
-            rewards_list.append(reward)
-            
-            if self.cfg.rollout.return_logprobs:
-                if len(accumulated_logprobs) > max_response_length:
-                    accumulated_logprobs = accumulated_logprobs[:max_response_length]
-                rollout_logprobs_list.append(accumulated_logprobs)
-
-        rewards_tensor = torch.tensor(rewards_list, dtype=torch.float32)
-        
-        prompt_texts_list = [self.tokenizer.decode(prompt_ids) for prompt_ids in prompt_ids_list]
-        response_texts_list = [self.tokenizer.decode(response_ids) for response_ids in response_ids_list]
-        rollout_result = RolloutResult(
-            num_sequence=len(prompt_ids_list),
-            group_size=len(prompt_ids_list),
-            prompt_lengths=prompt_lengths_list,
-            prompt_ids=prompt_ids_list,
-            response_lengths=response_lengths_list,
-            response_ids=response_ids_list,
-            is_end=is_end_list,
-            rewards=rewards_tensor,
-            response_mask=response_mask_list,
-            prompt_texts= prompt_texts_list,
-            response_texts= response_texts_list,
-            rollout_logprobs=rollout_logprobs_list if self.cfg.rollout.return_logprobs else None,
-        )
-        ##self.log_info(f"[RolloutResult] {rollout_result}")
-        return rollout_result
+            prompt_texts_list = [self.tokenizer.decode(prompt_ids) for prompt_ids in prompt_ids_list]
+            response_texts_list = [self.tokenizer.decode(response_ids) for response_ids in response_ids_list]
+            rollout_result = RolloutResult(
+                num_sequence=len(prompt_ids_list),
+                group_size=len(prompt_ids_list),
+                prompt_lengths=prompt_lengths_list,
+                prompt_ids=prompt_ids_list,
+                response_lengths=response_lengths_list,
+                response_ids=response_ids_list,
+                is_end=is_end_list,
+                rewards=rewards_tensor,
+                response_mask=response_mask_list,
+                prompt_texts= prompt_texts_list,
+                response_texts= response_texts_list,
+                rollout_logprobs=rollout_logprobs_list if self.cfg.rollout.return_logprobs else None,
+            )
+            ##self.log_info(f"[RolloutResult] {rollout_result}")
+            return rollout_result
 
     async def process_rollout_batch(
         self, input_channel: Channel, output_channel: Channel
