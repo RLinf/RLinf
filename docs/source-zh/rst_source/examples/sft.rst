@@ -19,7 +19,7 @@
 支持的数据集
 ------------------
 
-RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指定不同的数据集类型。
+RLinf 目前支持 LeRobot 格式和 VLM 格式的数据集，可以通过 **config_type** 指定不同的数据集类型。
 
 目前支持的数据格式包括：
 
@@ -29,6 +29,7 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
 - pi05_maniskill
 - pi05_metaworld
 - pi05_calvin
+- Robo2VLM
 
 也可通过自定义数据集格式来训练特定数据集，具体可参考以下文件
 
@@ -95,6 +96,44 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
         model:
             is_lora: True
             lora_rank: 32
+
+支持 VLM 格式数据集的 sft 训练示例配置位于 ``examples/sft/config/custom_sft_vlm.yaml``, 当前 sft 可支持 train 和 evaluate 功能。
+
+切换两者功能主要通过参数``train_data_paths``和``eval_data_paths``来控制。
+例如：
+
+.. code:: yaml
+
+    data:
+        type: vlm
+        dataset_name: "robo2vlmsft"
+        train_data_paths: "/path/to/Robo2VLM-1"
+        eval_data_paths: "/path/to/Robo2VLM-1"
+
+若设置``train_data_paths``，则代码会进行 train 功能，同时若设置``eval_data_paths``，则代码会进行 evaluate 功能。
+若未设置``train_data_paths``且设置``eval_data_paths``，则代码会进行 evaluate 功能。
+
+如果需要单独适配新的 sft 逻辑，可以参考 ``rlinf/workers/sft/fsdp_sft_worker.py`` 中的类``FSDPSftWorker``。
+实现具体的 ``build_tokenizer`` 、``build_dataloader`` 、``get_train_model_output`` 和 ``get_eval_model_output`` 方法。
+
+.. code:: python
+     @abstractmethod
+    def build_tokenizer(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    def build_dataloader(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_train_model_output(self, batch: dict[str, Any]):
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_eval_model_output(self, batch: dict[str, Any]):
+        raise NotImplementedError
+
+在 ``rlinf/runners/sft_runner.py`` 中会调用相关实现的函数来完成 sft 训练和评估。
 
 依赖安装
 -----------------------
