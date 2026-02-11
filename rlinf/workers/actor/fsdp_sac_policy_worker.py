@@ -14,22 +14,18 @@
 
 
 import os
-from typing import Optional, Union
+from typing import Optional
 
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from omegaconf import DictConfig
 
 from rlinf.config import SupportedModel
 from rlinf.data.embodied_io_struct import Trajectory
 from rlinf.data.replay_buffer import TrajectoryReplayBuffer
-from rlinf.hybrid_engines.fsdp import (
-    FSDP,
-    FSDPModule,
-)
 from rlinf.models.embodiment.base_policy import ForwardType
+from rlinf.models.embodiment.modules.entropy_tunning import EntropyTemperature
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils import drq
 from rlinf.utils.distributed import all_reduce_dict
@@ -52,7 +48,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         # SAC-specific initialization
         self.replay_buffer = None
         self.target_model = None
-        self.base_alpha = None
+        self.entropy_temp = None
         self.demo_buffer = None
         self.alpha_optimizer = None
         self.update_step = 0
@@ -80,13 +76,13 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             target_module = self.model_provider_func()
 
         # Enable gradient checkpointing if configured
-        if self._cfg.model.get("gradient_checkpointing", False):
-            self._logger.info("[FSDP] Enabling gradient checkpointing")
+        if self.cfg.actor.model.get("gradient_checkpointing", False):
+            self.logger.info("[FSDP] Enabling gradient checkpointing")
             module.gradient_checkpointing_enable()
             if initialize_target:
                 target_module.gradient_checkpointing_enable()
         else:
-            self._logger.info("[FSDP] Gradient checkpointing is disabled")
+            self.logger.info("[FSDP] Gradient checkpointing is disabled")
 
         # build model, optimizer, lr_scheduler, grad_scaler
         self.model = self._strategy.wrap_model(
@@ -98,131 +94,57 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             )
             self.target_model.requires_grad_(False)
             self.target_model_initialized = True
-        self.build_optimizer(
-            model=self.model, enable_critic_warmup=self.critic_warmup_steps > 0
-        )
 
-        self.build_lr_scheduler()
-
-        self.grad_scaler = self.build_grad_scaler(
-            self._cfg.fsdp_config.amp.use_grad_scaler
+        param_filters = {"critic": ["encoders", "encoder", "q_head", "state_proj"]}
+        filtered_optim_config = {"critic": self.cfg.actor.critic_optim}
+        optimizers = self.build_optimizers(
+            model=self.model,
+            main_optim_config=self.cfg.actor.optim,
+            param_filters=param_filters,
+            filtered_optim_config=filtered_optim_config,
         )
+        self.optimizer = optimizers[0]
+        self.qf_optimizer = optimizers[1]
 
-    def build_optimizer(
-        self,
-        model: Union[nn.Module, FSDPModule, FSDP],
-        enable_critic_warmup: bool = False,
-    ):
-        betas = (self._cfg.optim.adam_beta1, self._cfg.optim.adam_beta2)
-        params_actor = []
-        params_critic = []
-        if enable_critic_warmup:
-            raise NotImplementedError
-        else:
-            # ISSUE: currently the net weight still bind with the actor.
-            for name, param in self.model.named_parameters():
-                if not param.requires_grad:
-                    continue
-                if ("encoders" in name) or ("encoder" in name):
-                    params_critic.append(param)
-                    continue
-                if "q_head" in name:
-                    params_critic.append(param)
-                    continue
-                if "state_proj" in name:
-                    params_critic.append(param)
-                    continue
-                else:
-                    params_actor.append(param)
-                    continue
-
-        assert len(params_critic) > 0
-        assert len(params_actor) > 0
-        self.optimizer = torch.optim.Adam(
-            [
-                {"params": params_actor, "lr": self._cfg.optim.lr, "betas": betas},
-            ]
-        )
-        self.qf_optimizer = torch.optim.Adam(
-            [
-                {
-                    "params": params_critic,
-                    "lr": self._cfg.optim.value_lr,
-                    "betas": betas,
-                },
-            ]
-        )
+        # SAC alpha
         # Initialize temperature parameter for automatic entropy tuning
-        if self.cfg.algorithm.get("auto_entropy_tuning", False):
-            target_entropy = self.cfg.algorithm.get(
+        alpha_type = self.cfg.algorithm.entropy_tuning.get(
+            "alpha_type", "softplus"
+        )  # supported type: ["softplus","exp","fixed_alpha"]
+        self.entropy_temp = EntropyTemperature(
+            initial_alpha=self.cfg.algorithm.entropy_tuning.get("initial_alpha", 0.01),
+            alpha_type=alpha_type,
+            device=self.device,
+            dtype=self.torch_dtype,
+        )
+        if alpha_type != "fixed_alpha":
+            self.target_entropy = self.cfg.algorithm.entropy_tuning.get(
                 "target_entropy",
                 -self.cfg.actor.model.action_dim,
             )
-            self.target_entropy = target_entropy
 
-            self.alpha_type = self.cfg.algorithm.get("alpha_type", "softplus")
-            if self.alpha_type == "exp":
-                self.base_alpha = torch.nn.Parameter(
-                    np.log(self.cfg.algorithm.get("initial_alpha", 1))
-                    * torch.ones(1, device=self.device),
-                    requires_grad=True,
-                )
-            elif self.alpha_type == "softplus":
-                self.base_alpha = torch.nn.Parameter(
-                    np.log(np.exp(self.cfg.algorithm.get("initial_alpha", 0.01)) - 1)
-                    * torch.ones(1, device=self.device),
-                    requires_grad=True,
-                )
-            else:
-                raise NotImplementedError
             self.alpha_optimizer = torch.optim.Adam(
-                [self.base_alpha], lr=self.cfg.algorithm.get("alpha_lr", 3e-4)
+                self.entropy_temp.parameters(),
+                lr=self.cfg.algorithm.entropy_tuning.optim.lr,
             )
 
-    def build_lr_scheduler(self):
-        lr_scheduler_type = self._cfg.optim.get("lr_scheduler_type", "constant")
-        if lr_scheduler_type == "constant":
-            self.lr_scheduler = torch.optim.lr_scheduler.ConstantLR(
-                self.optimizer, factor=1
-            )
-            self.qf_lr_scheduler = torch.optim.lr_scheduler.ConstantLR(
-                self.qf_optimizer, factor=1
-            )
-            if self.cfg.algorithm.get("auto_entropy_tuning", False):
-                self.alpha_lr_scheduler = torch.optim.lr_scheduler.ConstantLR(
-                    self.alpha_optimizer, factor=1
-                )
-        elif lr_scheduler_type == "cosine":
-            self.lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer, T_max=self.max_steps, eta_min=1e-6
-            )
-            self.qf_lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                self.qf_optimizer, T_max=self.max_steps, eta_min=1e-6
-            )
-            if self.cfg.algorithm.get("auto_entropy_tuning", False):
-                self.alpha_lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                    self.alpha_optimizer, T_max=self.max_steps, eta_min=1e-6
-                )
-        else:
-            raise NotImplementedError
+        self.build_lr_schedulers()
 
-    def compute_alpha(self):
-        if self.cfg.algorithm.get("auto_entropy_tuning", False):
-            if self.alpha_type == "exp":
-                alpha = self.base_alpha.exp()
-            elif self.alpha_type == "softplus":
-                alpha = torch.nn.functional.softplus(self.base_alpha)
-            else:
-                raise NotImplementedError
-        else:
-            alpha = torch.Tensor([self.cfg.algorithm.initial_alpha]).to(
-                dtype=self.torch_dtype, device=self.device
-            )
-        return alpha
+        self.grad_scaler = self.build_grad_scaler(
+            self.cfg.actor.fsdp_config.amp.use_grad_scaler
+        )
 
-    @property
-    def alpha(self):
-        return self.compute_alpha().item()
+    def build_lr_schedulers(self):
+        self.lr_scheduler = self.build_lr_scheduler(
+            self.optimizer, self.cfg.actor.optim
+        )
+        self.qf_lr_scheduler = self.build_lr_scheduler(
+            self.qf_optimizer, self.cfg.actor.critic_optim
+        )
+        if self.alpha_optimizer is not None:
+            self.alpha_lr_scheduler = self.build_lr_scheduler(
+                self.optimizer, self.cfg.algorithm.entropy_tuning.optim
+            )
 
     def setup_sac_components(self):
         """Initialize SAC-specific components"""
@@ -242,7 +164,9 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             sample_window_size=self.cfg.algorithm.replay_buffer.sample_window_size,
             auto_save=self.cfg.algorithm.replay_buffer.get("auto_save", False),
             auto_save_path=auto_save_path,
-            trajectory_format="pt",
+            trajectory_format=self.cfg.algorithm.replay_buffer.get(
+                "trajectory_format", "pt"
+            ),
         )
 
         if self.cfg.algorithm.get("demo_buffer", {}).get("load_path", None) is not None:
@@ -376,7 +300,9 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                     qf_next_target = torch.mean(all_qf_next_target, dim=1, keepdim=True)
 
                 if self.cfg.algorithm.get("backup_entropy", True):
-                    qf_next_target = qf_next_target - self.alpha * next_state_log_pi
+                    qf_next_target = (
+                        qf_next_target - self.entropy_temp.alpha * next_state_log_pi
+                    )
                     qf_next_target = qf_next_target.to(dtype=self.torch_dtype)
                 if bootstrap_type == "always":
                     target_q_values = (
@@ -414,7 +340,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             elif agg_q == "mean":
                 qf_next = torch.mean(all_qf_next, dim=1, keepdim=True)
             if self.cfg.algorithm.get("backup_entropy", True):
-                qf_next = qf_next - self.alpha * next_state_log_pi
+                qf_next = qf_next - self.entropy_temp.alpha * next_state_log_pi
                 qf_next = qf_next.to(dtype=self.torch_dtype)
 
             if bootstrap_type == "always":
@@ -480,7 +406,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         elif agg_q == "mean":
             qf_pi = torch.mean(all_qf_pi, dim=1, keepdim=True)
         metrics["q_pi"] = qf_pi.mean().item()
-        actor_loss = ((self.alpha * log_pi) - qf_pi).mean()
+        actor_loss = ((self.entropy_temp.alpha * log_pi) - qf_pi).mean()
 
         entropy = -log_pi.mean()
         return actor_loss, entropy, metrics
@@ -499,7 +425,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             )
             log_pi = log_pi.sum(dim=-1, keepdim=True)
 
-        alpha = self.compute_alpha()
+        alpha = self.entropy_temp.compute_alpha()
         alpha_loss = -alpha * (log_pi.mean() + self.target_entropy)
         return alpha_loss
 
@@ -547,7 +473,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             f"critic/{key}": np.mean(value) for key, value in all_critic_metrics.items()
         }
         qf_grad_norm = self.model.clip_grad_norm_(
-            max_norm=self.cfg.actor.optim.clip_grad
+            max_norm=self.cfg.actor.critic_optim.clip_grad
         )
 
         self.qf_optimizer.step()
@@ -589,7 +515,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             # Update temperature parameter if using automatic entropy tuning
             gbs_alpha_loss = [0]
             alpha_grad_norm = 0
-            if hasattr(self, "base_alpha") and self.base_alpha is not None:
+            if self.alpha_optimizer is not None:
                 self.alpha_optimizer.zero_grad()
                 gbs_alpha_loss = []
                 for batch in train_micro_batch_list:
@@ -604,10 +530,11 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                         alpha_loss.item() * self.gradient_accumulation
                     )
                 torch.distributed.all_reduce(
-                    self.base_alpha.grad, op=torch.distributed.ReduceOp.AVG
+                    self.entropy_temp.base_alpha.grad, op=torch.distributed.ReduceOp.AVG
                 )
                 alpha_grad_norm = torch.nn.utils.clip_grad_norm_(
-                    self.base_alpha, self.cfg.actor.optim.clip_grad
+                    self.entropy_temp.base_alpha,
+                    self.cfg.algorithm.entropy_tuning.optim.clip_grad,
                 )
                 self.alpha_optimizer.step()
                 self.alpha_lr_scheduler.step()
@@ -617,7 +544,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 {
                     "sac/actor_loss": np.mean(gbs_actor_loss),
                     "sac/alpha_loss": np.mean(gbs_alpha_loss),
-                    "sac/alpha": self.alpha,
+                    "sac/alpha": self.entropy_temp.alpha,
                     "actor/lr": self.optimizer.param_groups[0]["lr"],
                     "actor/grad_norm": actor_grad_norm,
                     "actor/entropy": np.mean(gbs_entropy),
@@ -714,15 +641,93 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         return {}
 
     def save_checkpoint(self, save_base_path, step):
-        super().save_checkpoint(save_base_path, step)
+        if self.is_weight_offloaded:
+            self.load_param_and_grad(self.device)
+            self.is_weight_offloaded = False
+        if self.is_optimizer_offloaded:
+            self.load_optimizer(self.device)
+            self.is_optimizer_offloaded = False
+
+        # Save model
+        self._strategy.save_checkpoint(
+            model=self.model,
+            optimizers=[self.optimizer, self.qf_optimizer],
+            lr_schedulers=[self.lr_scheduler, self.qf_lr_scheduler],
+            save_path=save_base_path,
+            checkpoint_format="local_shard"
+            if self.cfg.actor.fsdp_config.use_orig_params
+            else "dcp",
+        )
+
+        # Save sac components
+        # save alpha
+        if self.alpha_optimizer is not None:
+            alpha_save_path = os.path.join(save_base_path, "sac_components/alpha")
+            self._strategy.save_checkpoint(
+                model=self.entropy_temp,
+                optimizers=self.alpha_optimizer,
+                lr_schedulers=self.alpha_lr_scheduler,
+                save_path=alpha_save_path,
+                save_full_model_weights=False,
+            )
+
+        # save target model
+        target_model_save_path = os.path.join(
+            save_base_path, "sac_components/target_model"
+        )
+        os.makedirs(target_model_save_path, exist_ok=True)
+        target_model_state_dict = self._strategy.get_model_state_dict(
+            self.target_model, cpu_offload=False, full_state_dict=True
+        )
+        torch.save(
+            target_model_state_dict,
+            os.path.join(target_model_save_path, f"checkpoint_rank_{self._rank}.pt"),
+        )
+
+        # save replay buffer
         buffer_save_path = os.path.join(
-            save_base_path, f"replay_buffer/rank_{self._rank}"
+            save_base_path, f"sac_components/replay_buffer/rank_{self._rank}"
         )
         self.replay_buffer.save_checkpoint(buffer_save_path)
 
     def load_checkpoint(self, load_base_path):
-        super().load_checkpoint(load_base_path)
+        # load model
+        self._strategy.load_checkpoint(
+            model=self.model,
+            optimizers=[self.optimizer, self.qf_optimizer],
+            lr_schedulers=[self.lr_scheduler, self.qf_lr_scheduler],
+            load_path=load_base_path,
+            checkpoint_format="local_shard"
+            if self.cfg.actor.fsdp_config.use_orig_params
+            else "dcp",
+        )
+
+        # load alpha
+        if self.alpha_optimizer is not None:
+            alpha_load_path = os.path.join(load_base_path, "sac_components/alpha")
+            self._strategy.load_checkpoint(
+                model=self.entropy_temp,
+                optimizers=self.alpha_optimizer,
+                lr_schedulers=self.alpha_lr_scheduler,
+                load_path=alpha_load_path,
+            )
+
+        # load target model
+        target_model_load_path = os.path.join(
+            load_base_path, "sac_components/target_model"
+        )
+        target_model_state_dict = torch.load(
+            os.path.join(target_model_load_path, f"checkpoint_rank_{self._rank}.pt")
+        )
+        self._strategy.load_model_with_state_dict(
+            self.target_model,
+            target_model_state_dict,
+            cpu_offload=False,
+            full_state_dict=True,
+        )
+
+        # load replay buffer
         buffer_load_path = os.path.join(
-            load_base_path, f"replay_buffer/rank_{self._rank}"
+            load_base_path, f"sac_components/replay_buffer/rank_{self._rank}"
         )
         self.replay_buffer.load_checkpoint(buffer_load_path)
