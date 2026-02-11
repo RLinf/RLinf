@@ -484,12 +484,6 @@ class Robo2VLMSFTDataset(VLMBaseDataset):
         super().__init__(data_paths, config, tokenizer)
         self.apply_chat_template = config.data.apply_chat_template
         self.eval_dataset = eval_dataset
-        # self.system_prompt = (
-        #     "You are a helpful robotic vision assistant specialized in "
-        #     "answering questions about robotic manipulation tasks. "
-        #     "Use <think></think> tags to show your reasoning process, "
-        #     "then provide your final answer in <answer></answer> tags."
-        # )
 
     def get_image_list(self, dataitem: dict[str, Any]) -> list[Union[bytes, str, None]]:
         images: list[Any] = []
@@ -664,24 +658,12 @@ class Robo2VLMSFTDataset(VLMBaseDataset):
 
         prompt = [
             (
-                # {
-                #     "role": "system",
-                #     "content": [{"type": "text", "text": self.system_prompt}],
-                # },
                 {"role": "user", "content": image_context},
                 {"role": "assistant", "content": [{"type": "text", "text": answer}]},
             )
         ]
 
-        without_assistant_prompt = [
-            (
-                # {
-                #     "role": "system",
-                #     "content": [{"type": "text", "text": self.system_prompt}],
-                # },
-                {"role": "user", "content": image_context},
-            )
-        ]
+        without_assistant_prompt = [({"role": "user", "content": image_context},)]
 
         # get the vlm model prompt inputs
         # prompt_inputs = input_ids, attention_mask, pixel_values, image_grid_thw
