@@ -42,13 +42,12 @@ logging.getLogger().setLevel(logging.INFO)
 
 
 class AgentEvalRunner(ReasoningEvalRunner):
-    """Runner for agent task RL training."""
+    """Runner for agent task RL evaluation."""
 
     def __init__(
         self,
         cfg: DictConfig,
         placement: ModelParallelComponentPlacement,
-        train_dataset: Dataset,
         val_dataset: Dataset,
         rollout: Union["SGLangWorker", "VLLMWorker"],
         reward: Optional[RewardWorker],
@@ -59,11 +58,11 @@ class AgentEvalRunner(ReasoningEvalRunner):
         super().__init__(
             cfg,
             placement,
-            train_dataset,
             val_dataset,
             rollout,
             reward,
         )
+        # Agent-specific attributes
         all_tool_calls = list(
             itertools.chain(
                 *(worker_info.tool_names for worker_info in tool_workers.values())
@@ -105,57 +104,6 @@ class AgentEvalRunner(ReasoningEvalRunner):
 
         self.tool_output_channel = Channel.create("ToolOutput")
 
-        # Initialize storage for accumulating evaluation results across all batches
-        self.accumulated_results = []
-
-    def _save_eval_results(self, all_results, accuracy, total_count):
-        """Save evaluation results to JSON file.
-
-        Args:
-            all_results: List of result dictionaries for each sample
-            accuracy: Overall accuracy score
-            total_count: Total number of samples evaluated
-        """
-        # Create output directory in the experiment folder
-        output_dir = os.path.join(
-            self.cfg.runner.output_dir, self.cfg.runner.experiment_name
-        )
-        local_mkdir_safe(output_dir)
-
-        # Fixed filename (no timestamp)
-        output_file = os.path.join(output_dir, "eval_results.json")
-
-        # Prepare timestamp
-        import datetime
-
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        # Prepare complete results structure
-        results_data = {
-            "summary": {
-                "dataset_size": total_count,
-                "correct_count": sum(1 for r in all_results if r["is_correct"]),
-                "accuracy": accuracy,
-                "experiment_name": self.cfg.runner.experiment_name,
-                "timestamp": timestamp,
-                "config": {
-                    "group_size": self.cfg.algorithm.get("group_size", 1),
-                    "max_turns": self.cfg.agentloop.get("max_turns", 5),
-                    "data_paths": OmegaConf.to_container(
-                        self.cfg.data.val_data_paths, resolve=True
-                    ),
-                },
-            },
-            "results": all_results,
-        }
-
-        # Write results to JSON with readable formatting
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(results_data, f, ensure_ascii=False, indent=2)
-
-        logging.info(f"Evaluation results saved to: {output_file}")
-        return output_file
-
     def init_rollout_workers(self):
         """init rollout workers, tool workers and agent loop worker."""
         rollout_handles = [self.rollout.init_worker()]
@@ -181,120 +129,38 @@ class AgentEvalRunner(ReasoningEvalRunner):
             self.solid_generate_input_channels,
         ).wait()
 
-    def log_eval(self, input_channel):
-        """Collect evaluation results and compute metrics for a single batch.
+    def run(self):
+        """Run evaluation on validation dataset.
 
         This function:
-        1. Collects rollout results from the reward channel for one batch
-        2. Computes batch accuracy metrics
-        3. Accumulates results (does NOT save to file yet)
+        1. Runs rollout on validation data (accumulates raw results)
+        2. Aggregates all results after all batches complete
+        3. Saves results to files
         """
-        recv_batch_size = 0
-        world_size = 1
+        context = self.pre_process()
 
-        total_batch_size_per_dp = (
-            self.cfg.data.rollout_batch_size
-            * self.cfg.algorithm.get("group_size", 1)
-            // world_size
-        )
-
-        # Storage for this batch's results
-        batch_results = []
-        correct_count = 0
-        total_count = 0
-
-        while recv_batch_size < total_batch_size_per_dp:
-            rollout_result: RolloutResult = input_channel.get()
-            recv_batch_size += rollout_result.num_sequence
-
-            # Process each sequence in the batch
-            # Since group_size=1 for evaluation, num_sequence equals batch_size
-            for i in range(rollout_result.num_sequence):
-                # Extract information for this sequence
-                answer = rollout_result.answers[i] if rollout_result.answers else None
-                reward = (
-                    rollout_result.rewards[i].item()
-                    if rollout_result.rewards is not None
-                    else None
-                )
-
-                # Decode texts
-                prompt_text = (
-                    rollout_result.prompt_texts[i]
-                    if rollout_result.prompt_texts
-                    else None
-                )
-                response_text = (
-                    rollout_result.response_texts[i]
-                    if rollout_result.response_texts
-                    else None
-                )
-
-                # Determine if the answer is correct based on reward
-                # Assuming reward > 0 means correct
-                is_correct = reward > 0 if reward is not None else False
-
-                if is_correct:
-                    correct_count += 1
-                total_count += 1
-
-                # Create result entry (index will be updated later)
-                result_entry = {
-                    "index": len(self.accumulated_results),  # Use global index
-                    "prompt_text": prompt_text,
-                    "response_text": response_text,
-                    "answer": answer,
-                    "reward": reward,
-                    "is_correct": is_correct,
-                }
-
-                batch_results.append(result_entry)
-                # Add to accumulated results immediately
-                self.accumulated_results.append(result_entry)
-
-        assert recv_batch_size == total_batch_size_per_dp, (
-            f"Expected {total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
-        )
-
-        # Compute batch accuracy
-        accuracy = correct_count / total_count if total_count > 0 else 0.0
-
-        # Log batch statistics
-        logging.info("Batch Evaluation Summary:")
-        logging.info(f"  Batch samples: {total_count}")
-        logging.info(f"  Batch correct: {correct_count}")
-        logging.info(f"  Batch accuracy: {accuracy:.4f}")
-        logging.info(f"  Total accumulated samples: {len(self.accumulated_results)}")
-
-        return accuracy, total_count
-
-    def run(self):
-        logging.info("=" * 80)
-        logging.info("Starting Agent System Evaluation")
-        logging.info("=" * 80)
-        logging.info(f"Validation dataset size: {len(self.val_dataset)}")
-        logging.info(f"Batch size: {self.cfg.data.rollout_batch_size}")
-        logging.info(f"Group size: {self.cfg.algorithm.get('group_size', 1)}")
-        logging.info(f"Max turns: {self.cfg.agentloop.get('max_turns', 5)}")
-        logging.info("=" * 80)
-
+        # Initialize progress bar
         eval_pbar = tqdm(
             total=len(self.val_dataloader),
             desc="Evaluation",
             ncols=100,
         )
 
+        # Start rollout server and tool workers
         self.run_timer.start_time()
         self.rollout.rollout_serverless(
             self.generate_input_channel, self.generate_output_channel
         )
+        for solid_rollout_name, solid_rollout in self.solid_rollouts.items():
+            solid_rollout.rollout_serverless(
+                self.solid_generate_input_channels[solid_rollout_name],
+                self.generate_output_channel,
+            )
         for tool_worker in self.tool_workers:
             tool_worker.start_server()
 
-        total_correct = 0
-        total_samples = 0
-
         try:
+            # Process validation batches
             for batch_idx, batch in enumerate(self.val_dataloader):
                 logging.info(
                     f"\nProcessing batch {batch_idx + 1}/{len(self.val_dataloader)}"
@@ -320,37 +186,25 @@ class AgentEvalRunner(ReasoningEvalRunner):
                     else:
                         eval_input_channel = self.rollout_channel
 
-                    # Log evaluation
-                    batch_accuracy, batch_count = self.log_eval(
-                        input_channel=eval_input_channel
+                    # Accumulate and log results
+                    self.log_eval(
+                        context,
+                        input_channel=eval_input_channel,
+                        batch_idx=batch_idx,
+                        batch=batch,
                     )
 
                     # Wait for all handles to complete
                     rollout_handle.wait()
-                    reward_handle.wait()
-
-                    # Update aggregated statistics
-                    batch_correct = int(batch_accuracy * batch_count)
-                    total_correct += batch_correct
-                    total_samples += batch_count
+                    if self.reward is not None:
+                        reward_handle.wait()
 
                 time_metrics = self.timer.consume_durations()
                 time_metrics["rollout"] = rollout_handle.consume_duration()
-                time_metrics["reward"] = reward_handle.consume_duration()
+                if self.reward is not None:
+                    time_metrics["reward"] = reward_handle.consume_duration()
 
-                # Update progress bar with current metrics
-                current_accuracy = (
-                    total_correct / total_samples if total_samples > 0 else 0.0
-                )
-                eval_pbar.set_postfix(
-                    {
-                        "batch_acc": f"{batch_accuracy:.4f}",
-                        "overall_acc": f"{current_accuracy:.4f}",
-                        "samples": total_samples,
-                        "rollout_time": f"{time_metrics.get('rollout', 0):.2f}s",
-                    }
-                )
-                eval_pbar.update(1)
+                self.update_pbar(context, eval_pbar, time_metrics)
 
                 self.global_steps += 1
 
@@ -359,21 +213,38 @@ class AgentEvalRunner(ReasoningEvalRunner):
                 tool_worker.stop_server()
 
         eval_pbar.close()
-
-        # Final summary
-        final_accuracy = total_correct / total_samples if total_samples > 0 else 0.0
-        logging.info("\n" + "=" * 80)
-        logging.info("EVALUATION COMPLETED")
-        logging.info("=" * 80)
-        logging.info(f"Total samples evaluated: {total_samples}")
-        logging.info(f"Total correct: {total_correct}")
-        logging.info(
-            f"Final accuracy: {final_accuracy:.4f} ({final_accuracy * 100:.2f}%)"
-        )
-        logging.info("=" * 80)
-
-        # Save all accumulated results to JSON file
-        logging.info(f"Saving {len(self.accumulated_results)} results to JSON file...")
-        self._save_eval_results(self.accumulated_results, final_accuracy, total_samples)
+        self.post_process(context)
 
         self.metric_logger.finish()
+
+    def pre_process(self) -> dict:
+        raise NotImplementedError()
+
+    def log_eval(
+        self,
+        context: dict,
+        input_channel,
+        batch_idx,
+        batch,
+    ):
+        raise NotImplementedError()
+
+    def post_process(
+        self,
+        context: dict,
+    ) -> dict:
+        raise NotImplementedError()
+
+    def update_pbar(
+        self,
+        context: dict,
+        eval_pbar,
+        time_metrics,
+    ):
+        # Update progress bar with current metrics
+        eval_pbar.set_postfix(
+            {
+                "rollout_time": f"{time_metrics.get('rollout', 0):.2f}s",
+            }
+        )
+        eval_pbar.update(1)

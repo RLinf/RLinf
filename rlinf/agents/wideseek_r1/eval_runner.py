@@ -12,223 +12,68 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import itertools
 import json
 import logging
 import os
 import typing
+from typing import Optional, Union
 
 import pandas as pd
-import torch
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from torch.utils.data import Dataset
-from torchdata.stateful_dataloader import StatefulDataLoader
 from tqdm import tqdm
 
-from rlinf.data.io_struct import RolloutRequest
-from rlinf.scheduler import Channel
+from rlinf.data.io_struct import DynamicRolloutResult
+from rlinf.runners.agent_eval_runner import AgentEvalRunner
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
-from rlinf.utils.data_iter_utils import split_list
-from rlinf.utils.distributed import ScopedTimer
-from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.runner_utils import local_mkdir_safe
-from rlinf.utils.timers import Timer
 from rlinf.workers.agent.agent_loop import MultiTurnAgentLoopWorker
-from rlinf.workers.agent.tool_worker import ToolChannelInfo, ToolWorker, ToolWorkerInfo
+from rlinf.workers.agent.tool_worker import ToolWorker, ToolWorkerInfo
+from rlinf.workers.reward.reward_worker import RewardWorker
 
 if typing.TYPE_CHECKING:
     from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
+    from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
 
 logging.getLogger().setLevel(logging.INFO)
 
 
-class AgentEvalRunner:
-    """Runner for agent task evaluation."""
+class WideSeekR1AgentEvalRunner(AgentEvalRunner):
+    """Runner for wideseek r1 task RL evaluation."""
 
     def __init__(
         self,
         cfg: DictConfig,
         placement: ModelParallelComponentPlacement,
         val_dataset: Dataset,
-        rollout: "SGLangWorker",
+        rollout: Union["SGLangWorker", "VLLMWorker"],
+        reward: Optional[RewardWorker],
         agent_loop: MultiTurnAgentLoopWorker,
         tool_workers: dict[ToolWorker, ToolWorkerInfo] = {},
-        solid_rollouts: dict[str, "SGLangWorker"] = {},
+        solid_rollouts: dict[str, Union["SGLangWorker", "VLLMWorker"]] = {},
     ):
-        # Initialize base attributes
-        self.cfg = cfg
-        self.component_placement = placement
-        self.is_pipeline = self.component_placement.is_pipeline
+        super().__init__(
+            cfg,
+            placement,
+            val_dataset,
+            rollout,
+            reward,
+            agent_loop,
+            tool_workers,
+            solid_rollouts
+        )
+        # Initialize storage for accumulating raw evaluation results across all batches
+        # Each item is the raw eval_result dict from agent_loop
+        self.accumulated_raw_results = []
 
-        # Workers
-        self.rollout = rollout
-
-        # Scheduler task
-        self.scheduler = None
-        self.use_pre_process_policy = False
-
-        # Data channels
-        self.dataloader_channel = Channel.create("DataLoader")
-        self.rollout_channel = Channel.create("Rollout")
-
-        # Configurations
+        # Specific Configurations
         self.compute_ref_logprobs = (
             self.cfg.algorithm.kl_beta > 0
             or self.cfg.algorithm.get("reinpp_kl_beta", 0) > 0
         )
         self.recompute_logprobs = self.cfg.algorithm.recompute_logprobs
-        self.consumed_samples = 0
-        self.global_steps = 0
-
-        # Build dataloader and compute `max_steps`
-        self._build_dataloader(val_dataset)
-        self._set_max_steps()
-
-        # Wandb table
-        self.val_df = pd.DataFrame(columns=["step", "prompt", "response", "reward"])
-
-        # Timers
-        self.timer = ScopedTimer(reduction="max", sync_cuda=False)
-        self.run_timer = Timer(None)  # Timer that checks if we should stop training
-
-        self.metric_logger = MetricLogger(cfg)
-
-        # Agent-specific attributes
-        all_tool_calls = list(
-            itertools.chain(
-                *(worker_info.tool_names for worker_info in tool_workers.values())
-            )
-        )
-        all_tool_worker_group_names = [
-            worker.worker_group_name for worker in tool_workers
-        ]
-        assert len(set(all_tool_worker_group_names)) == len(
-            all_tool_worker_group_names
-        ), (
-            f"AgentRunner: tool workers must be unique. all tool_worker_group_names are {all_tool_worker_group_names}"
-        )
-        assert len(set(all_tool_calls)) == len(all_tool_calls), (
-            f"AgentRunner: tool_calls must be unique. all tool_calls are {all_tool_calls}"
-        )
-        self.agent_loop = agent_loop
-        self.tool_workers = tool_workers
-        self.solid_rollouts = solid_rollouts
-        self.generate_input_channel = Channel.create("GenerateInput")
-        self.generate_output_channel = Channel.create("GenerateOutput")
-        self.solid_generate_input_channels = {}
-        if self.solid_rollouts is not None:
-            for solid_rollout_name in self.solid_rollouts:
-                self.solid_generate_input_channels[solid_rollout_name] = Channel.create(
-                    f"SolidRolloutInput-{solid_rollout_name}"
-                )
-        # tool worker name to tool channel info.
-        self.tool_channel_info_map = {}
-        # tool name to tool worker. a tool worker may have multiple tools.
-        self.tool_name_map = {}
-        for worker, worker_info in self.tool_workers.items():
-            self.tool_channel_info_map[worker.worker_group_name] = ToolChannelInfo(
-                tool_names=worker_info.tool_names,
-                has_session=worker_info.has_session,
-                input_channel=Channel.create(f"Tool-{worker.worker_group_name}"),
-            )
-            for tool_name in worker_info.tool_names:
-                self.tool_name_map[tool_name] = worker.worker_group_name
-
-        self.tool_output_channel = Channel.create("ToolOutput")
-
-        # Initialize storage for accumulating raw evaluation results across all batches
-        # Each item is the raw eval_result dict from agent_loop
-        self.accumulated_raw_results = []
-
-    def _build_dataloader(self, val_dataset, collate_fn=None):
-        """
-        Creates the train and validation dataloaders.
-        """
-        self.val_dataset = val_dataset
-        if collate_fn is None:
-            from rlinf.data.datasets import collate_fn
-
-        num_workers = self.cfg.data.num_workers
-
-        val_batch_size = (
-            self.cfg.data.val_rollout_batch_size
-        )  # Prefer config value if set
-        if val_batch_size is None:
-            val_batch_size = len(self.val_dataset)
-
-        self.val_dataloader = StatefulDataLoader(
-            dataset=self.val_dataset,
-            batch_size=val_batch_size,
-            num_workers=num_workers,
-            shuffle=self.cfg.data.get("validation_shuffle", True),
-            drop_last=False,
-            collate_fn=collate_fn,
-        )
-
-    def _compute_flops_metrics(self, time_metrics, act_rollout_metrics) -> dict:
-        rollout_time = time_metrics.get("rollout")
-        training_time = time_metrics.get("training")
-
-        num_gpus_actor = self.component_placement.actor_world_size
-        num_gpus_rollout = self.component_placement.rollout_world_size
-
-        rollout_tflops = act_rollout_metrics["rollout_tflops"]
-        training_tflops = act_rollout_metrics["training_tflops"]
-
-        flops_metrics = {
-            "rollout_tflops_per_gpu": 0.0,
-            "training_tflops_per_gpu": 0.0,
-        }
-        if rollout_time > 0 and rollout_tflops > 0:
-            flops_metrics["rollout_tflops_per_gpu"] = (
-                rollout_tflops / rollout_time / num_gpus_rollout
-            )
-
-        if training_time > 0 and training_tflops > 0:
-            flops_metrics["training_tflops_per_gpu"] = (
-                training_tflops / training_time / num_gpus_actor
-            )
-
-        return flops_metrics
-
-    def _set_max_steps(self):
-        self.num_steps_per_epoch = len(self.val_dataloader)
-        self.max_steps = self.num_steps_per_epoch * self.cfg.runner.max_epochs
-
-        if (max_steps := self.cfg.runner.get("max_steps", -1)) >= 0:
-            self.max_steps = min(self.max_steps, max_steps)
-
-    @property
-    def epoch(self):
-        return self.global_steps // self.num_steps_per_epoch
-
-    def _put_batch(self, batch: dict[str, torch.Tensor]):
-        prompt_ids = batch["prompt"].tolist()
-        lengths = batch["length"].tolist()
-        answers = batch["answer"]
-        image_data = batch["image_data"]
-        multi_modal_inputs = batch["multi_modal_inputs"]
-        prompt_ids = [ids[-pmp_len:] for ids, pmp_len in zip(prompt_ids, lengths)]
-        rollout_dp_size = self.component_placement.rollout_dp_size
-
-        for input_ids, answers, image_data, multi_modal_inputs in zip(
-            split_list(prompt_ids, rollout_dp_size, enforce_divisible_batch=False),
-            split_list(answers, rollout_dp_size, enforce_divisible_batch=False),
-            split_list(image_data, rollout_dp_size, enforce_divisible_batch=False),
-            split_list(
-                multi_modal_inputs, rollout_dp_size, enforce_divisible_batch=False
-            ),
-        ):
-            request = RolloutRequest(
-                n=self.cfg.algorithm.group_size,
-                input_ids=input_ids,
-                answers=answers,
-                image_data=image_data,
-                multi_modal_inputs=multi_modal_inputs,
-            )
-            self.dataloader_channel.put(request, async_op=True)
 
     def _save_eval_results(self, all_results, aggregated_metrics, total_count):
         """Save evaluation results to JSON files and per-response directory.
@@ -336,75 +181,6 @@ class AgentEvalRunner:
         logging.info(f"Evaluation results saved to: {output_file_key}")
         logging.info(f"Per-response files saved to: {response_dir}")
         return output_file_key
-
-    def init_workers(self):
-        """init tool workers and agent loop worker."""
-        for worker in self.tool_workers:
-            input_channel = self.tool_channel_info_map[
-                worker.worker_group_name
-            ].input_channel
-            worker.init_worker(input_channel, self.tool_output_channel).wait()
-
-        if self.solid_rollouts is not None:
-            for solid_rollout in self.solid_rollouts.values():
-                solid_rollout.init_worker().wait()
-                solid_rollout.onload_engine().wait()
-
-        self.agent_loop.init_worker(
-            self.generate_input_channel,
-            self.generate_output_channel,
-            self.tool_channel_info_map,
-            self.tool_name_map,
-            self.tool_output_channel,
-            self.solid_generate_input_channels,
-        ).wait()
-
-        # Init workers
-        self.rollout.init_worker().wait()
-        if self.use_pre_process_policy:
-            self.rollout.offload_engine().wait()
-
-        if self.cfg.runner.resume_dir is None:
-            return
-
-        # Resume from checkpoint
-        logging.info(f"Load from checkpoint folder: {self.cfg.runner.resume_dir}")
-        # set global step
-        self.global_steps = int(self.cfg.runner.resume_dir.split("global_step_")[-1])
-        logging.info(f"Setting global step to {self.global_steps}")
-
-    def log_eval(self, input_channel, expected_batch_size=None):
-        """Collect raw evaluation results from channel for a single batch.
-
-        Simply accumulates raw eval_result dicts from agent_loop without processing.
-        All metric computation is deferred to _aggregate_all_results().
-
-        Args:
-            input_channel: The channel to receive rollout results from
-            expected_batch_size: Expected number of queries in this batch.
-
-        Returns:
-            Number of queries received in this batch
-        """
-        group_size = self.cfg.algorithm.get("group_size", 1)
-
-        if expected_batch_size is not None:
-            total_batch_size_per_dp = expected_batch_size
-        else:
-            total_batch_size_per_dp = self.cfg.data.rollout_batch_size
-
-        recv_batch_size = 0
-        while recv_batch_size < total_batch_size_per_dp:
-            # Receive raw evaluation dictionary from agent_loop
-            eval_result: dict = input_channel.get()
-            self.accumulated_raw_results.append(eval_result)
-            recv_batch_size += 1
-
-        assert recv_batch_size == total_batch_size_per_dp, (
-            f"Expected {total_batch_size_per_dp} queries from channel, but got {recv_batch_size}"
-        )
-
-        return recv_batch_size
 
     def _aggregate_all_results(self):
         """Aggregate all accumulated raw results into final metrics.
@@ -871,14 +647,125 @@ class AgentEvalRunner:
 
         return processed_results, aggregated_metrics
 
-    def run(self):
-        """Run evaluation on validation dataset.
+    def log_eval(
+        self,
+        context: dict,
+        batch_idx,
+        batch,
+        input_channel,
+    ):
+        """Collect raw evaluation results from channel for a single batch.
 
-        This function:
-        1. Runs rollout on validation data (accumulates raw results)
-        2. Aggregates all results after all batches complete
-        3. Saves results to files
+        Simply accumulates raw eval_result dicts from agent_loop without processing.
+        All metric computation is deferred to _aggregate_all_results().
+
+        Args:
+            input_channel: The channel to receive rollout results from
+            expected_batch_size: Expected number of queries in this batch.
+
+        Returns:
+            Number of queries received in this batch
         """
+        # Calculate actual batch size from the batch data
+        if "prompt" in batch:
+            expected_batch_size = batch["prompt"].shape[0]
+        elif "answer" in batch:
+            expected_batch_size = len(batch["answer"])
+        else:
+            expected_batch_size = self.cfg.data.val_rollout_batch_size
+
+        logging.info(f"Actual batch size for this batch: {expected_batch_size}")
+
+        group_size = self.cfg.algorithm.get("group_size", 1)
+
+        if expected_batch_size is not None:
+            total_batch_size_per_dp = expected_batch_size
+        else:
+            total_batch_size_per_dp = self.cfg.data.rollout_batch_size
+
+        recv_batch_size = 0
+        while recv_batch_size < total_batch_size_per_dp:
+            # Receive raw evaluation dictionary from agent_loop
+            rollout_result = input_channel.get()
+            eval_result: dict = self.extract_eval_result(rollout_result)
+            self.accumulated_raw_results.append(eval_result)
+            recv_batch_size += 1
+
+        assert recv_batch_size == total_batch_size_per_dp, (
+            f"Expected {total_batch_size_per_dp} queries from channel, but got {recv_batch_size}"
+        )
+
+        return recv_batch_size
+
+    def extract_eval_result(
+        self,
+        rollout_result: DynamicRolloutResult,
+        log_info=None,
+    ) -> dict:
+        # debug asserts
+        if rollout_result.total_turn_list_metric is not None:
+            assert rollout_result.total_turn_list_metric == rollout_result.extra_fields_traj["total_turn_list"]
+        if rollout_result.eval_metrics is not None:
+            assert rollout_result.eval_metrics == rollout_result.extra_fields_traj["eval_metric"]
+
+        group_size = rollout_result.group_size
+
+        eval_metrics = rollout_result.extra_fields_traj["eval_metric"] or [None] * group_size
+        total_turn_list_metric = (
+            rollout_result.extra_fields_traj["total_turn_list"] or [None] * group_size
+        )
+
+        samples_data: list[dict] = []
+        for traj_idx in range(group_size):
+            eval_metric = (
+                eval_metrics[traj_idx] if traj_idx < len(eval_metrics) else None
+            ) or {}
+            total_turn_list = (
+                total_turn_list_metric[traj_idx]
+                if traj_idx < len(total_turn_list_metric)
+                else None
+            )
+
+            turn_idxes = [i for i, j in enumerate(rollout_result.idx_to_traj) if j == traj_idx]
+            turns = []
+            for turn_idx in turn_idxes:
+                turn_data = {
+                    "prompt_text": rollout_result.extra_fields_turn["prompt_text"][turn_idx],
+                    "response_text": rollout_result.extra_fields_turn["response_text"][turn_idx],
+                    "prompt_ids_length": rollout_result.prompt_lengths[turn_idx],
+                    "response_ids_length": rollout_result.response_lengths[turn_idx],
+                    "is_end": rollout_result.is_end[turn_idx],
+                    "reward_score": rollout_result.rewards[turn_idx],
+                    "role": rollout_result.extra_fields_turn["role"][turn_idx],
+                    "tool_call_info": rollout_result.extra_fields_turn["tool_call_info"][turn_idx],
+                }
+                turns.append(turn_data)
+
+            final_answer = rollout_result.extra_fields_traj["final_answer"][traj_idx]
+            if isinstance(final_answer, pd.DataFrame):
+                final_answer = final_answer.to_dict(orient="records")
+            samples_data.append(
+                {
+                    "sample_idx": traj_idx,
+                    "num_turns": len(turn_idxes),
+                    "turns": turns,
+                    "origin_question": rollout_result.extra_fields_traj["origin_question"][traj_idx],
+                    "final_answer": final_answer,
+                    "final_answer_text": rollout_result.extra_fields_traj["final_answer_text"][traj_idx],
+                    "planner_summary": rollout_result.extra_fields_traj["planner_summary"][traj_idx],
+                    "eval_metric": eval_metric,
+                    "total_turn_list": total_turn_list,
+                }
+            )
+
+        answer = rollout_result.extra_fields_group["answer"]
+        eval_result = {"group_size": group_size, "answer": answer, "samples": samples_data}
+        if isinstance(answer, dict) and "instance_id" in answer and log_info is not None:
+            log_info(f"finish question id {answer['instance_id']}")
+        return eval_result
+
+    def pre_process(self) -> dict:
+        # raise NotImplementedError()
         logging.info("=" * 80)
         logging.info("Starting Multi-Agent System Evaluation")
         logging.info("=" * 80)
@@ -886,84 +773,12 @@ class AgentEvalRunner:
         logging.info(f"Batch size: {self.cfg.data.val_rollout_batch_size}")
         logging.info(f"Group size: {self.cfg.algorithm.get('group_size', 1)}")
         logging.info("=" * 80)
+        return {}
 
-        # Initialize progress bar
-        eval_pbar = tqdm(
-            total=len(self.val_dataloader),
-            desc="Evaluation",
-            ncols=100,
-        )
-
-        # Start rollout server
-        self.run_timer.start_time()
-        self.rollout.rollout_serverless(
-            self.generate_input_channel, self.generate_output_channel
-        )
-        if self.solid_rollouts is not None:
-            for solid_rollout_name, solid_rollout in self.solid_rollouts.items():
-                solid_rollout.rollout_serverless(
-                    self.solid_generate_input_channels[solid_rollout_name],
-                    self.generate_output_channel,
-                )
-
-        # Start tool workers
-        for tool_worker in self.tool_workers:
-            tool_worker.start_server()
-
-        try:
-            # Process validation batches - just accumulate raw results
-            for batch_idx, batch in enumerate(self.val_dataloader):
-                logging.info(
-                    f"\nProcessing batch {batch_idx + 1}/{len(self.val_dataloader)}"
-                )
-
-                # Calculate actual batch size from the batch data
-                if "prompt" in batch:
-                    actual_batch_size = batch["prompt"].shape[0]
-                elif "answer" in batch:
-                    actual_batch_size = len(batch["answer"])
-                else:
-                    actual_batch_size = self.cfg.data.val_rollout_batch_size
-
-                logging.info(f"Actual batch size for this batch: {actual_batch_size}")
-
-                with self.timer("step"):
-                    with self.timer("prepare_data"):
-                        self._put_batch(batch)
-
-                    rollout_handle: Handle = self.agent_loop.run_agentloop_rollout(
-                        input_channel=self.dataloader_channel,
-                        output_channel=self.rollout_channel,
-                        is_eval=True,
-                    )
-
-                    # Simply accumulate raw results
-                    batch_count = self.log_eval(
-                        input_channel=self.rollout_channel,
-                        expected_batch_size=actual_batch_size,
-                    )
-
-                    rollout_handle.wait()
-
-                time_metrics = self.timer.consume_durations()
-                time_metrics["rollout"] = rollout_handle.consume_duration()
-
-                eval_pbar.set_postfix(
-                    {
-                        "queries": len(self.accumulated_raw_results),
-                        "rollout_time": f"{time_metrics.get('rollout', 0):.2f}s",
-                    }
-                )
-                eval_pbar.update(1)
-
-                self.global_steps += 1
-
-        finally:
-            for tool_worker in self.tool_workers:
-                tool_worker.stop_server()
-
-        eval_pbar.close()
-
+    def post_process(
+        self,
+        context: dict,
+    ) -> dict:
         # Aggregate all results after all batches complete
         logging.info(f"Aggregating {len(self.accumulated_raw_results)} results...")
         processed_results, final_metrics = self._aggregate_all_results()
@@ -974,4 +789,17 @@ class AgentEvalRunner:
         logging.info(f"Saving {total_queries} results to JSON files...")
         self._save_eval_results(processed_results, final_metrics, total_queries)
 
-        self.metric_logger.finish()
+    def update_pbar(
+        self,
+        context: dict,
+        eval_pbar,
+        time_metrics,
+    ):
+        # Update progress bar with current metrics
+        eval_pbar.set_postfix(
+            {
+                "queries": len(self.accumulated_raw_results),
+                "rollout_time": f"{time_metrics.get('rollout', 0):.2f}s",
+            }
+        )
+        eval_pbar.update(1)

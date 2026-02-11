@@ -39,13 +39,12 @@ logging.getLogger().setLevel(logging.INFO)
 
 
 class ReasoningEvalRunner:
-    """Runner for reasoning task RL training."""
+    """Runner for reasoning task RL evaluation."""
 
     def __init__(
         self,
         cfg: DictConfig,
         placement: ModelParallelEvalComponentPlacement,
-        train_dataset: Dataset,
         val_dataset: Dataset,
         rollout: Union["SGLangWorker", "VLLMWorker"],
         reward: Optional[RewardWorker],
@@ -73,11 +72,10 @@ class ReasoningEvalRunner:
         self.global_steps = 0
 
         # Build dataloader and compute `max_steps`
-        self._build_dataloader(train_dataset, val_dataset)
+        self._build_dataloader(val_dataset)
         self._set_max_steps()
 
         # Wandb table
-        self.train_df = pd.DataFrame(columns=["step", "prompt", "response", "reward"])
         self.val_df = pd.DataFrame(columns=["step", "prompt", "response", "reward"])
 
         # Timers
@@ -86,37 +84,15 @@ class ReasoningEvalRunner:
 
         self.metric_logger = MetricLogger(cfg)
 
-    def _build_dataloader(self, train_dataset, val_dataset, collate_fn=None):
+    def _build_dataloader(self, val_dataset, collate_fn=None):
         """
         Creates the train and validation dataloaders.
         """
-        self.train_dataset, self.val_dataset = train_dataset, val_dataset
+        self.val_dataset = val_dataset
         if collate_fn is None:
             from rlinf.data.datasets import collate_fn
 
-        # Use a sampler to facilitate checkpoint resumption.
-        # If shuffling is enabled in the data configuration, create a random sampler.
-        if self.cfg.data.shuffle:
-            train_dataloader_generator = torch.Generator()
-            train_dataloader_generator.manual_seed(self.cfg.data.get("seed", 1))
-            sampler = RandomSampler(
-                data_source=self.train_dataset, generator=train_dataloader_generator
-            )
-        else:
-            # If shuffling is disabled, use a sequential sampler to iterate through the dataset in order.
-            sampler = SequentialSampler(data_source=self.train_dataset)
-
         num_workers = self.cfg.data.num_workers
-
-        self.train_dataloader = StatefulDataLoader(
-            dataset=self.train_dataset,
-            batch_size=self.cfg.data.rollout_batch_size
-            * self.cfg.algorithm.get("max_num_gen_batches", 1),
-            num_workers=num_workers,
-            drop_last=True,
-            collate_fn=collate_fn,
-            sampler=sampler,
-        )
 
         val_batch_size = (
             self.cfg.data.val_rollout_batch_size
@@ -133,12 +109,10 @@ class ReasoningEvalRunner:
             collate_fn=collate_fn,
         )
 
-        assert len(self.train_dataloader) >= 1, "Train dataloader is empty!"
         assert len(self.val_dataloader) >= 1, "Validation dataloader is empty!"
 
         logging.info(
-            f"Size of train dataloader: {len(self.train_dataloader)}, Size of val dataloader: "
-            f"{len(self.val_dataloader)}"
+            f"Size of val dataloader: {len(self.val_dataloader)}"
         )
 
     def init_rollout_workers(self):
@@ -157,7 +131,7 @@ class ReasoningEvalRunner:
         self.init_actor_workers()
 
     def _set_max_steps(self):
-        self.num_steps_per_epoch = len(self.train_dataloader)
+        self.num_steps_per_epoch = len(self.val_dataloader)
         self.max_steps = self.num_steps_per_epoch * self.cfg.runner.max_epochs
 
         if (max_steps := self.cfg.runner.get("max_steps", -1)) >= 0:

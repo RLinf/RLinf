@@ -23,7 +23,7 @@ from rlinf.agents.wideseek_r1.wideseek_r1 import WideSeekR1AgentLoopWorker
 from rlinf.config import validate_cfg
 from rlinf.data.datasets import create_rl_dataset
 from rlinf.data.tokenizers import hf_tokenizer
-from rlinf.runners.eval_runner import AgentEvalRunner
+from rlinf.agents.wideseek_r1.eval_runner import WideSeekR1AgentEvalRunner as EvalRunner
 from rlinf.scheduler import Cluster, NodePlacementStrategy, PackedPlacementStrategy
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.utils import output_redirector
@@ -147,11 +147,12 @@ def main(cfg) -> None:
         ): ToolWorkerInfo(tool_names=["access"], has_session=False),
     }
 
-    runner = AgentEvalRunner(
+    runner = EvalRunner(
         cfg=cfg,
         placement=component_placement,
         val_dataset=val_ds,
         rollout=rollout_group,
+        reward=None,
         agent_loop=agentloop_group,
         tool_workers=tool_workers,
         solid_rollouts={"subworker": subworker_rollout_group}

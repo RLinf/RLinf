@@ -7,9 +7,9 @@ cluster:
     actor,rollout,reward: all
 
 runner:
-  experiment_name: eval_qa
+  experiment_name: eval-qa-dbg
   output_dir: /mnt/project_rlinf/zhuchunyang_rl/logs
-  seq_length: 32000  
+  seq_length: 8192  
 
   max_epochs: 1
   max_steps: -1  
@@ -20,6 +20,8 @@ algorithm:
 agentloop:
   use_llm_judge_api: True
   workflow: mas
+  max_planner_turns: 2
+  max_worker_turns: 2
 
 rollout:
   model:

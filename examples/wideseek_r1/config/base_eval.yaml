@@ -12,7 +12,7 @@ cluster:
     actor,rollout,reward: all
 
 runner:
-  task_type: reasoning
+  task_type: reasoning_eval
   logger:
     log_path: ${runner.output_dir}/${runner.experiment_name}
     project_name: rlinf
