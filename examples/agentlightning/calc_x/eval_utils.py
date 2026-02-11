@@ -36,7 +36,7 @@ def float_eval(input_str: str) -> float:
     return float(expr.evalf())
 
 
-def scalar_are_results_same(pred_result: str, true_result: str, rel_tol: float) -> bool:
+def compare_are_results_same(pred_result: str, true_result: str, rel_tol: float) -> bool:
     pred_result = str(pred_result) if pred_result is not None else ""  # type: ignore
     true_result = str(true_result) if true_result is not None else ""  # type: ignore
 
@@ -61,10 +61,10 @@ def scalar_are_results_same(pred_result: str, true_result: str, rel_tol: float) 
 
 
 async def evaluate(prediction: str, ground_truth: str) -> float:
-    return float(scalar_are_results_same(prediction, ground_truth, 1e-2))
+    return float(compare_are_results_same(prediction, ground_truth, 1e-2))
 
 
 @reward
 async def evaluate_v0_1(prediction: str, ground_truth: str) -> float:
-    return float(scalar_are_results_same(prediction, ground_truth, 1e-2))
+    return float(compare_are_results_same(prediction, ground_truth, 1e-2))
 
