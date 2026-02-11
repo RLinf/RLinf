@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import time
 from functools import partial
 from typing import Callable, Optional
@@ -24,11 +25,16 @@ from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.training.global_vars import get_args
 from megatron.training.training import unwrap_model
+from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig
+from torch.multiprocessing.reductions import reduce_tensor
 
+import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import (
     calculate_adv_and_returns,
+    policy_loss,
 )
+from rlinf.algorithms.utils import kl_penalty
 from rlinf.data.io_struct import (
     BatchResizingIterator,
     RolloutResult,
@@ -54,6 +60,7 @@ from rlinf.utils.data_iter_utils import (
 )
 from rlinf.utils.distributed import (
     RolloutDataBalance,
+    all_reduce_int,
     broadcast_tensor_within_pp,
     compute_rollout_metrics,
     masked_normalization,
@@ -72,12 +79,14 @@ from rlinf.utils.utils import (
     cpu_dict,
     cpu_weight_swap,
     masked_mean,
+    retrieve_model_state_dict_in_cpu,
     seq_mean_token_mean,
     seq_mean_token_sum,
 )
+from rlinf.workers.rollout.utils import RankMapper
 
 try:
-    from params_resharding import resharding_init
+    from params_resharding import nccl_group_recreate, resharding_init
 
     HAVE_RESHARDING = True
 except ImportError:
@@ -132,8 +141,6 @@ class MegatronWorker(MegatronModelManager, Worker):
             raise NotImplementedError(
                 f"algorithm.loss_agg_func={self.cfg.algorithm.loss_agg_func} is not supported!"
             )
-        self.kl_beta = self.cfg.algorithm.kl_beta
-        self.kl_penalty_type = self.cfg.algorithm.kl_penalty_type
 
         # Actor configurations
         self.enable_dynamic_batch_size = self.cfg.runner.enable_dynamic_batch_size
@@ -143,7 +150,7 @@ class MegatronWorker(MegatronModelManager, Worker):
         self.offload_grad = self.role_cfg.offload_grad
 
         self.ref_policy_state_dict = None
-        self.is_pipeline = self.component_placement.is_pipeline
+        self.is_pipeline = placement.is_pipeline
         self.placement_mode = placement._placement_mode
         self.enable_dp_load_balance = self.role_cfg.get("enable_dp_load_balance", False)
         self.variable_seq_lengths = self.cfg.actor.model.variable_seq_lengths
@@ -257,6 +264,7 @@ class MegatronWorker(MegatronModelManager, Worker):
             self._setup_inference_weight_dst_ranks()
 
         # offload weights and optimizers after initialization if offload is enabled
+        # this is necessary if actor and critic are colocated
         self._offload_weight_and_optimizer()
 
         torch.distributed.barrier()
@@ -277,10 +285,16 @@ class MegatronWorker(MegatronModelManager, Worker):
             else:
                 result = None
             result = self.broadcast(
-                result, ranks=parallel_state._MODEL_PARALLEL_GLOBAL_RANKS
+                result,
+                groups=[
+                    (self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)
+                ],
             )
             result = self.broadcast(
-                result, ranks=parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS
+                result,
+                groups=[
+                    (self._group_name, parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS)
+                ],
             )
 
         batch = result.to_actor_batch(
@@ -348,21 +362,29 @@ class MegatronWorker(MegatronModelManager, Worker):
                         unfinished_result = None
                     if time.time() >= time_until:
                         last_result_len = result_len
-                        result_len = self.all_reduce_dp_min(len(rollout_results))
+                        result_len = all_reduce_int(
+                            len(rollout_results),
+                            group=parallel_state.get_data_parallel_group(),
+                        )
                         if last_result_len < result_len:
                             time_until = time.time() + 0.1
                 else:
                     last_result_len = result_len
-                    result_len = self.all_reduce_dp_min(len(rollout_results))
+                    result_len = all_reduce_int(
+                        len(rollout_results),
+                        group=parallel_state.get_data_parallel_group(),
+                    )
 
         # broadcast to other ranks
         if not self.is_data_io_rank:
             result_len = None
         result_len = self.broadcast(
-            result_len, ranks=parallel_state._MODEL_PARALLEL_GLOBAL_RANKS
+            result_len,
+            groups=[(self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)],
         )
         result_len = self.broadcast(
-            result_len, ranks=parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS
+            result_len,
+            groups=[(self._group_name, parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS)],
         )
         if self.is_data_io_rank:
             cliped_results = list(rollout_results[result_len:])
@@ -372,10 +394,16 @@ class MegatronWorker(MegatronModelManager, Worker):
         for i in range(result_len):
             rollout_result = rollout_results[i]
             rollout_result = self.broadcast(
-                rollout_result, ranks=parallel_state._MODEL_PARALLEL_GLOBAL_RANKS
+                rollout_result,
+                groups=[
+                    (self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)
+                ],
             )
             rollout_result = self.broadcast(
-                rollout_result, ranks=parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS
+                rollout_result,
+                groups=[
+                    (self._group_name, parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS)
+                ],
             )
             rollout_results[i] = rollout_result
 
@@ -393,6 +421,9 @@ class MegatronWorker(MegatronModelManager, Worker):
         return batch, rollout_result, result_len, cliped_results, unfinished_result
 
     def put_result(self, result: RolloutResult, channel: Channel | list[Channel]):
+        # consider the case that this megatron worker needs to
+        # transfer data to multiple destinations through
+        # multiple channels
         if not isinstance(channel, list):
             channel = [channel]
         for ch in channel:
@@ -823,7 +854,10 @@ class MegatronWorker(MegatronModelManager, Worker):
             return
         assert not self.is_weight_offloaded
         self.offload_model_weights_and_grad(offload_grad=True)
-        self.broadcast(None, ranks=list(range(inference_world_size)))
+        self.broadcast(
+            None,
+            groups=[(self._group_name, list(range(inference_world_size)))],
+        )
         self.is_weight_offloaded = True
         if self._rank == 0:
             self.schedule_channel.put(None, key=self.scheduler_response_queue)
@@ -1177,7 +1211,6 @@ class MegatronWorker(MegatronModelManager, Worker):
                 min(total_result_len, self.cfg.algorithm.n_minibatches),
             )
             for split_result in split_results:
-                # print(f'run_inference: put_result, {len(split_result.prompt_ids)}')
                 self.put_result(split_result, output_channel)
         assert total_num_samples == self.total_batch_size_per_dp, (
             f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {total_result_len}"
@@ -1209,7 +1242,7 @@ class MegatronWorker(MegatronModelManager, Worker):
                     loss_mask=mask.cuda(),
                     values=prev_values,
                     group_size=self.cfg.algorithm.group_size,
-                    kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0), # TODO use kl_beta or reinpp_kl_beta??
+                    kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
                     kl_penalty_type=self.kl_penalty_type,
                     logprob=prev_logprobs,
                     ref_logprob=ref_logprobs,
