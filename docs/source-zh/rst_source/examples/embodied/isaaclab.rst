@@ -1,4 +1,4 @@
-使用 IsaacLab 进行强化学习
+基于IsaacLab的强化学习训练
 ====================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
@@ -54,7 +54,7 @@ IsaacLab 是一个高度可定制的仿真平台，允许用户创建自定义�
 
 1. **自定义 IsaacLab 环境**：可参考 `IsaacLab-Examples <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/environments.html>`__ 中的可用环境；自定义环境项目可参考 `IsaacLab-Quickstart <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/own-project/index.html>`__。
 2. **在 RLinf 中配置训练环境**：参考 ``rlinf/envs/isaaclab/tasks/stack_cube.py``，将自定义脚本放到 ``rlinf/envs/isaaclab/tasks``，并在 ``rlinf/envs/isaaclab/__init__.py`` 中添加相关代码。
-3. **配置任务 ID**：参考 ``examples/embodiment/config/env/isaaclab_stack_cube.yaml``，修改 ``init_params.id`` 为自定义 IsaacLab 任务 ID，并确保 ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_gr00t_demo.yaml`` 文件开头的 ``defaults`` 引用了正确的环境配置。
+3. **配置任务 ID**：参考 ``examples/embodiment/config/env/isaaclab_stack_cube.yaml``，修改 ``init_params.id`` 为自定义 IsaacLab 任务 ID，并确保 ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_gr00t.yaml`` 文件开头的 ``defaults`` 引用了正确的环境配置。
 
 算法
 ----
@@ -158,7 +158,7 @@ Isaac Sim 下载
 运行脚本
 --------
 
-本示例默认配置文件为 ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_gr00t_demo.yaml``。
+本示例默认配置文件为 ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_gr00t.yaml``。
 你可以修改该配置文件以调整训练设置（例如 GPU 分配、训练超参数与日志记录选项）。
 
 **1. 关键集群配置**
@@ -208,13 +208,13 @@ Isaac Sim 下载
 
 .. code:: bash
 
-   bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t_demo
+   bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t
 
 在 IsaacLab 环境中评估 gr00t：
 
 .. code:: bash
 
-   bash examples/embodiment/eval_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t_demo
+   bash examples/embodiment/eval_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t
 
 可视化与结果
 ------------
@@ -280,7 +280,7 @@ Isaac Sim 下载
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "isaaclab_franka_stack_cube_ppo_gr00t_demo"
+       experiment_name: "isaaclab_franka_stack_cube_ppo_gr00t"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 强化学习结果

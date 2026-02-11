@@ -51,7 +51,7 @@ If you want to add custom tasks, you may need to follow these three steps:
 
 1. **Customize IsaacLab Environment**: Refer to `IsaacLab-Examples <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/environments.html>`__ for available environments. For custom environment setup, refer to `IsaacLab-Quickstart <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/own-project/index.html>`__.
 2. **Configure Training Environment in RLinf**: Refer to `RLinf/rlinf/envs/isaaclab/tasks/stack_cube.py`, place your custom script in `RLinf/rlinf/envs/isaaclab/tasks`, and add relevant code in `RLinf/rlinf/envs/isaaclab/__init__.py`
-3. **Configure Task ID**: Refer to ``examples/embodiment/config/env/isaaclab_stack_cube.yaml``, and modify the `init_params.id` parameter to your custom IsaacLab task ID. Ensure that the `defaults` section at the beginning of ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_gr00t_demo.yaml`` references the correct environment configuration defaults.
+3. **Configure Task ID**: Refer to ``examples/embodiment/config/env/isaaclab_stack_cube.yaml``, and modify the `init_params.id` parameter to your custom IsaacLab task ID. Ensure that the `defaults` section at the beginning of ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_gr00t.yaml`` references the correct environment configuration defaults.
 
 Algorithm
 --------------
@@ -158,7 +158,7 @@ Model Download
 Running the Script
 ------------------
 
-The default configuration file for this example is ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_gr00t_demo.yaml``. You can modify the configuration file to adjust the training settings, such as GPU allocation, training hyperparameters, and logging options.
+The default configuration file for this example is ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_gr00t.yaml``. You can modify the configuration file to adjust the training settings, such as GPU allocation, training hyperparameters, and logging options.
 
 **1. Key Cluster Configuration**
 
@@ -212,13 +212,13 @@ To train gr00t using the PPO algorithm in the IsaacLab environment, run:
 
 .. code:: bash
 
-   bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t_demo
+   bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t
 
 To evaluate gr00t in the IsaacLab environment, run:
 
 .. code:: bash
 
-   bash examples/embodiment/eval_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t_demo
+   bash examples/embodiment/eval_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t
 
 Visualization and Results
 -------------------------
@@ -284,7 +284,7 @@ Visualization and Results
      logger:
        log_path: "../results"
        project_name: rlinf
-       experiment_name: "isaaclab_franka_stack_cube_ppo_gr00t_demo"
+       experiment_name: "isaaclab_franka_stack_cube_ppo_gr00t"
        logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
 
 Reinforcement learning result

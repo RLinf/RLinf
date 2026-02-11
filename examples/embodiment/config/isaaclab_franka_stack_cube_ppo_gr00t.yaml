@@ -32,7 +32,7 @@ cluster:
             # Recommended to increase to number of CPU cores (use lscpu to check) divided by rollout world size.
             # Do not set this globally in the shell script which will increase the number of threads for all processes,
             # because PyTorch performance will be degraded, contrary to numpy.
-            - OMP_NUM_THREADS: 1
+            - OMP_NUM_THREADS: 32
 
 runner:
   task_type: embodied
@@ -131,7 +131,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/isaaclab_stack_cube_gr00t_ckpt"
+    model_path: "/path/to/RLinf-Gr00t-SFT-Stack-cube" # https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Stack-cube
     precision: ${actor.model.precision}
 
 actor:
@@ -144,7 +144,7 @@ actor:
 
   # Override the default values in model/gr00t
   model:
-    model_path: "/path/to/isaaclab_stack_cube_gr00t_ckpt"
+    model_path: "/path/to/RLinf-Gr00t-SFT-Stack-cube" # https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Stack-cube
     add_value_head: True
     embodiment_tag: "isaaclab_franka"
     obs_converter_type: "isaaclab_stack_cube"
