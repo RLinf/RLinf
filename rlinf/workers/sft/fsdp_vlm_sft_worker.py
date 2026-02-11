@@ -100,8 +100,25 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
             )
 
-    def _normalize_text(s: str) -> str:
+    def _normalize_text(self, s: str) -> str:
         return " ".join(str(s).strip().lower().split())
+
+    def _extract_answer(self, text: str) -> str:
+        if SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.QWEN2_5_VL_SFT,
+            SupportedModel.QWEN3_VL_SFT,
+            SupportedModel.QWEN3_VL_MOE_SFT,
+        ]:
+            m = re.search(
+                r"<\|im_start\|>assistant\s*(.*?)<\|im_end\|>",
+                text,
+                flags=re.DOTALL,
+            )
+            return m.group(1).strip() if m else text.strip()
+        else:
+            raise ValueError(
+                f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
+            )
 
     def get_eval_model_output(self, batch: dict[str, Any]):
         # hundle the input batch
@@ -127,15 +144,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 generate_ids[i].tolist(), skip_special_tokens=False
             )
 
-            def _extract_answer(text: str) -> str:
-                m = re.search(
-                    r"<\|im_start\|>assistant\s*(.*?)<\|im_end\|>",
-                    text,
-                    flags=re.DOTALL,
-                )
-                return m.group(1).strip() if m else text.strip()
-
-            pred_text = _extract_answer(full_pred_text)
+            pred_text = self._extract_answer(full_pred_text)
             gold_text = answers[i]
 
             if self._normalize_text(pred_text) == self._normalize_text(gold_text):
