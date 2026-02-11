@@ -96,12 +96,12 @@ async def calc_agent(task: MathProblem, llm: agl.LLM) -> None:
             else:
                 answer = last_message
         except asyncio.TimeoutError as e:
-            print("Timeout occurred. Error:", str(e))
+            logger.warning("Timeout occurred. Error:", str(e))
             answer = "None"
         except Exception as e:
-            print("Failure:", str(e))
+            logger.warning("Failure:", str(e))
             answer = "None"
         reward = await evaluate(answer, str(task["result"]))
         agl.emit_reward(reward)  # Emit reward for tracing
         # Disabled verbose logging
-        print("answer: {} ground_truth: {} reward: {}".format(answer, task["result"], reward))
+        #print("answer: {} ground_truth: {} reward: {}".format(answer, task["result"], reward))
