@@ -1070,8 +1070,12 @@ class MegatronActor(MegatronModelManager, Worker):
         args = get_args()
         args.rank = torch.distributed.get_rank()
         args.world_size = torch.distributed.get_world_size()
-        
-        default_model_parallel_size_with_cp = args.tensor_model_parallel_size * args.pipeline_model_parallel_size * args.context_parallel_size
+
+        default_model_parallel_size_with_cp = (
+            args.tensor_model_parallel_size
+            * args.pipeline_model_parallel_size
+            * args.context_parallel_size
+        )
         args.data_parallel_size = args.world_size // default_model_parallel_size_with_cp
         args.load = None
         self.default_parallel_strategy = {
@@ -1100,7 +1104,8 @@ class MegatronActor(MegatronModelManager, Worker):
             resharding_strategies.append(
                 {
                     "world_size": world_size,
-                } | self.default_parallel_strategy
+                }
+                | self.default_parallel_strategy
             )
 
         assert resharding_strategies[0]["world_size"] == args.world_size
