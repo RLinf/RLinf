@@ -1,0 +1,37 @@
+env_type: maniskill
+
+total_num_envs: null
+
+auto_reset: False
+ignore_terminations: False
+use_rel_reward: True
+reward_mode: only_success
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: True
+max_steps_per_rollout_epoch: 100
+max_episode_steps: 100 # max episode steps for truncation
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  id: "GSEnv-PutCubeOnPlate-v0"
+  num_envs: null # will be set in ManiSkillEnv init
+  obs_mode: "state"
+  control_mode: None
+  max_episode_steps: ${env.train.max_episode_steps} # max episode steps for truncation
+  robot_uids: "my_franka"
+  render_mode: "rgb_array"
+  disable_env_checker: True
+  sim_config:
+    sim_freq: 500
+    control_freq: 10
+
+  gs_kwargs:
+    render_interface: "gs_rlinf"
+    cache_table: True
+    render_bs: 4
+  

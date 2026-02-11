@@ -79,11 +79,11 @@ We provide Docker images for different experiments:
 
 - **Embodied:**
 
-  - ``rlinf/rlinf:agentic-rlinf0.1-torch2.6.0-openvla-openvlaoft-pi0`` for the Libero or ManiSkill benchmarks. For other embodied experiments, please refer to the corresponding sections in :doc:`../examples/index`
+  - ``rlinf/rlinf:agentic-rlinf0.1-maniskill_libero`` for the Libero or ManiSkill benchmarks. For other embodied experiments, please refer to the corresponding sections in :doc:`../examples/index`
 
 - **Math reasoning:** 
 
-  - ``rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6-vllm0.8.5-megatron0.13.0-te2.1`` (used for enhancing LLM reasoning on MATH tasks)
+  - ``rlinf/rlinf:math-rlinf0.1-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1`` (used for enhancing LLM reasoning on MATH tasks)
 
 
 Once you've identified the appropriate image for your setup, pull the Docker image:

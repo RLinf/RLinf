@@ -70,8 +70,8 @@ algorithm:
     enable_cache: True
     cache_size: 6000 # number of trajectories cached in memory
     sample_window_size: 6000 # number of latest trajectories to sample from for replay buffer
-    min_buffer_size: 200  # Minimum buffer size before training starts
-    save_trajectories: False
+    min_buffer_size: 2  # Minimum buffer size before training starts (in number of trajectories)
+    auto_save: False
 
   num_updates_per_step: 64  # Number of gradient updates per training step
   target_update_freq: 1  # Frequency of target network updates

@@ -54,6 +54,7 @@ class SupportedModel(Enum):
     OPENPI = ("openpi", "embodied")
     MLP_POLICY = ("mlp_policy", "embodied")
     GR00T = ("gr00t", "embodied")
+    DEXBOTIC_PI = ("dexbotic_pi", "embodied")
     CNN_POLICY = ("cnn_policy", "embodied")
     FLOW_POLICY = ("flow_policy", "embodied")
     CMA_POLICY = ("cma", "embodied")
@@ -376,9 +377,6 @@ def validate_fsdp_cfg(cfg: DictConfig, resume_dir: Optional[str] = None) -> Dict
         cfg.fsdp_config.enable_gradient_accumulation = cfg.fsdp_config.get(
             "enable_gradient_accumulation", False
         )
-
-        if resume_dir is not None:
-            cfg.fsdp_config.use_orig_params = True
 
         assert cfg.fsdp_config.backward_prefetch in [
             None,
@@ -822,6 +820,8 @@ def validate_embodied_cfg(cfg):
                     return "pd_joint_delta_pos"
                 elif robot == "panda-ee-dpos":
                     return "pd_ee_delta_pos"
+                elif robot == "panda-ee-target-dpos":  # for GSEnv
+                    return "pd_ee_target_delta_pose"
                 elif "google_robot_static" in robot:
                     return "arm_pd_ee_delta_pose_align_interpolate_by_planner_gripper_pd_joint_target_delta_pos_interpolate_by_planner"
                 elif "widowx" in robot:

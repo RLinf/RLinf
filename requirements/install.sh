@@ -16,7 +16,7 @@ USE_MIRRORS=0
 GITHUB_PREFIX=""
 NO_ROOT=0
 SUPPORTED_TARGETS=("embodied" "reason" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora")
 
 # Ensure uv is installed
@@ -423,6 +423,27 @@ install_gr00t_model() {
     uv pip uninstall pynvml || true
 }
 
+install_dexbotic_model() {
+    case "$ENV_NAME" in
+        maniskill_libero)
+            create_and_sync_venv
+            install_common_embodied_deps
+
+            local dexbotic_path
+            dexbotic_path=$(clone_or_reuse_repo DEXBOTIC_PATH "$VENV_DIR/dexbotic" "https://github.com/dexmal/dexbotic.git")
+            uv pip install -e "$dexbotic_path"
+
+            install_maniskill_libero_env
+            uv pip install transformers==4.53.2
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for Dexbotic model." >&2
+            exit 1
+            ;;
+    esac
+    uv pip uninstall pynvml || true
+}
+
 install_env_only() {
     create_and_sync_venv
     SKIP_ROS=${SKIP_ROS:-0}
@@ -737,6 +758,9 @@ main() {
                     ;;
                 gr00t)
                     install_gr00t_model
+                    ;;
+                dexbotic)
+                    install_dexbotic_model
                     ;;
                 "")
                     install_env_only
