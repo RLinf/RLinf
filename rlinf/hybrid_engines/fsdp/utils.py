@@ -40,6 +40,7 @@ from torch.distributed.fsdp.wrap import (
 from torch.optim import Optimizer
 from transformers.trainer_pt_utils import get_module_class_from_name
 
+from rlinf.config import SupportedModel
 from rlinf.hybrid_engines.fsdp import (
     BackwardPrefetch,
     CPUOffloadPolicy,
@@ -92,7 +93,7 @@ def get_init_weight_context_manager(use_meta_tensor=True):
     return init_context
 
 
-def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_openvla_model=False):
+def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
     """
     FSDP wrap policy that handles both standard transformer models and VLA models.
 
@@ -135,7 +136,10 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_openvla_model=Fa
     policies.append(resnet_policy)
 
     # Add vision transformer policies for OpenVLA models
-    if is_openvla_model:
+    if SupportedModel(model_type) in [
+        SupportedModel.OPENVLA,
+        SupportedModel.OPENVLA_OFT,
+    ]:
         from prismatic.extern.hf.modeling_prismatic import PrismaticProjector
         from timm.models.vision_transformer import VisionTransformer
 
@@ -156,6 +160,26 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, is_openvla_model=Fa
             module_classes={PrismaticProjector},
         )
         policies.append(prismatic_fsdp_wrapping_policy)
+
+    if (
+        SupportedModel(model_type) == SupportedModel.CNN_POLICY
+        and not config.use_orig_params
+    ):
+        from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
+
+        from rlinf.models.embodiment.modules.resnet_utils import ResNetEncoder
+
+        encoder_policy = functools.partial(
+            _module_wrap_policy, module_classes={ResNetEncoder}
+        )
+        policies.append(encoder_policy)
+
+        def is_state_proj(m):
+            return getattr(m, "_fsdp_wrap_name", None) == "state_proj"
+
+        policies.append(
+            functools.partial(lambda_auto_wrap_policy, lambda_fn=is_state_proj)
+        )
 
     if hasattr(module, "value_head"):
         from rlinf.models.embodiment.modules.value_head import ValueHead
@@ -356,6 +380,8 @@ def get_lr_scheduler(
     # only one of min_lr and min_lr_rate should be set. If min_lr_rate is set, min_lr will be ignored.
     if min_lr_rate is not None:
         min_lr = None
+
+    # HF-style (with warmup)
     if lr_scheduler == "constant":
         from torch.optim.lr_scheduler import LambdaLR
 
@@ -378,6 +404,20 @@ def get_lr_scheduler(
             last_epoch=last_epoch,
             min_lr_rate=min_lr_rate,
             min_lr=min_lr,
+        )
+    # PyTorch native
+    elif lr_scheduler == "torch_constant":
+        from torch.optim.lr_scheduler import ConstantLR
+
+        return ConstantLR(optimizer, factor=1)
+
+    elif lr_scheduler == "torch_cosine":
+        from torch.optim.lr_scheduler import CosineAnnealingLR
+
+        return CosineAnnealingLR(
+            optimizer,
+            T_max=num_training_steps,
+            eta_min=1e-6,
         )
     else:
         raise NotImplementedError(f"Scheduler type {lr_scheduler} is not supported")
