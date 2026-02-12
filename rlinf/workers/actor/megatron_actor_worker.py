@@ -1104,8 +1104,10 @@ class MegatronActor(MegatronModelManager, Worker):
             resharding_strategies.append(
                 {
                     "world_size": world_size,
+                    "tensor_model_parallel_size": args.tensor_model_parallel_size,
+                    "pipeline_model_parallel_size": args.pipeline_model_parallel_size,
+                    "context_parallel_size": args.context_parallel_size,
                 }
-                | self.default_parallel_strategy
             )
 
         assert resharding_strategies[0]["world_size"] == args.world_size
