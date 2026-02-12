@@ -24,7 +24,7 @@ from rlinf.config import validate_cfg
 from rlinf.runners.sft_runner import SFTRunner
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.workers.sft.fsdp_embodied_sft_worker import FSDPEmbodiedSftWorker
+from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
 
 mp.set_start_method("spawn", force=True)
 
@@ -43,7 +43,7 @@ def main(cfg) -> None:
 
     # Create actor worker group
     actor_placement = component_placement.get_strategy("actor")
-    actor_group = FSDPEmbodiedSftWorker.create_group(cfg).launch(
+    actor_group = FSDPVlaSftWorker.create_group(cfg).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
     )
 

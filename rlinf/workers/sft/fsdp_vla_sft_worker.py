@@ -22,7 +22,7 @@ from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 
-class FSDPEmbodiedSftWorker(FSDPSftWorker):
+class FSDPVlaSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
 

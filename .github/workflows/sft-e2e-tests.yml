@@ -26,7 +26,7 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/sft/run.sh maniskill_sft_openpi
+          bash tests/e2e_tests/sft/run_vla_sft.sh maniskill_sft_openpi
 
       - name: SFT Robo2vlm train test
         timeout-minutes: 20
@@ -34,7 +34,7 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/sft/run.sh robo2vlm_sft_train
+          bash tests/e2e_tests/sft/run_vlm_sft.sh robo2vlm_sft_train
 
       - name: SFT Robo2vlm Eval test
         timeout-minutes: 20
@@ -42,7 +42,7 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/sft/run.sh robo2vlm_sft_eval
+          bash tests/e2e_tests/sft/run_vlm_sft.sh robo2vlm_sft_eval
 
       - name: Clean up
         run: |
