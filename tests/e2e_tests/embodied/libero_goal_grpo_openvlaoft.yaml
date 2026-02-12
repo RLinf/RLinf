@@ -86,6 +86,7 @@ env:
   train:
     total_num_envs: 32
     max_episode_steps: 8
+    max_steps_per_rollout_epoch: 8
     reward_coef: ${algorithm.reward_coef}
     group_size: ${algorithm.group_size}
     reset_gripper_open: False

@@ -246,7 +246,7 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
      model:
        model_path: "/path/to/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup"  # SFT 模型路径
        model_type: "openvla_oft"                                             # 模型类型设置为openvla_oft
-       implement_version: "offical"                                          # openvla_oft实现版本（RLinf OpenVLA-OFT模型的实现接入了oft官方版本和rlinf sft微调版本，RoboTwin环境使用官方版本）
+       implement_version: "official"                                          # openvla_oft实现版本（RLinf OpenVLA-OFT模型的实现接入了oft官方版本和rlinf sft微调版本，RoboTwin环境使用官方版本）
        action_dim: 14                                                        # RoboTwin 动作维度（14维）
        use_proprio: True                                                     # 是否使用本体感觉信息
        proprio_dim: 14                                                       # 本体感觉维度
@@ -382,7 +382,7 @@ RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace
 1. **模型配置**：
 
    - ``actor.model.model_type: "openvla_oft"``：使用 OpenVLA-OFT 模型
-   - ``actor.model.implement_version: "offical"``：使用 OpenVLA-OFT 官方版本
+   - ``actor.model.implement_version: "official"``：使用 OpenVLA-OFT 官方版本
    - ``actor.model.action_dim: 14``：14 维动作空间（包含本体感觉）
    - ``actor.model.use_proprio: True``：启用本体感觉输入
    - ``actor.model.proprio_dim: 14``：本体感觉维度

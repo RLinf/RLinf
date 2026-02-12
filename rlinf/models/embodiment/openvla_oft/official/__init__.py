@@ -39,7 +39,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         AutoProcessor,
     )
 
-    from rlinf.models.embodiment.openvla_oft.offical.openvla_oft_action_model import (
+    from rlinf.models.embodiment.openvla_oft.official.openvla_oft_action_model import (
         OpenVLAOFTForRLActionPrediction,
         OpenVLAOFTRLConfig,
     )

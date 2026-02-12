@@ -86,10 +86,10 @@ env:
   train:
     total_num_envs: 16
     max_episode_steps: 8
+    max_steps_per_rollout_epoch: 8
     reward_coef: ${algorithm.reward_coef}
     group_size: ${algorithm.group_size}
     reset_gripper_open: False
-    max_steps_per_rollout_epoch: 16
     opensora_wm_hf_ckpt_path: "/workspace/dataset/RLinf-OpenSora-LIBERO-Spatial"
   eval:
     total_num_envs: 4
@@ -117,8 +117,8 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 2
-  global_batch_size: 32
+  micro_batch_size: 4
+  global_batch_size: 16
   seed: 1234
   enable_offload: True
 

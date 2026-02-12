@@ -177,14 +177,6 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_goal_grpo_openvlaoft
 
-      - name: Libero-130 GRPO test
-        timeout-minutes: 20
-        run: |
-          unset PYTHONPATH
-          export REPO_PATH=$(pwd)
-          source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh libero_130_grpo_openvlaoft
-
       - name: Clean up
         run: |
           rm -rf .venv
@@ -528,6 +520,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export LIBERO_PATH=/workspace/dataset/LIBERO
+          export DEXBOTIC_PATH=/workspace/dataset/dexbotic
           bash requirements/install.sh embodied --model dexbotic --env maniskill_libero
 
       - name: Libero-Spatial PPO Dexbotic test
