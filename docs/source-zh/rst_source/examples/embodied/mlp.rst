@@ -55,7 +55,7 @@ RLinf 目前支持多类具身智能环境，可通过 **defaults** 中的 ``env
 
     -   通过 Bellman 备份与熵正则化学习 Q 值(off-policy)。
     -   使用 MLP 作为 Actor 策略网络，并在配置中启用 Q 相关头/结构(``add_q_head: True``)。
-    -   支持自动温度调节(``auto_entropy_tuning: True``)，平衡探索与利用。
+    -   支持自动温度调节（配置 ``entropy_tuning``，如 ``alpha_type: softplus``），平衡探索与利用。
 
 3.  **GRPO(Group Relative Policy Optimization)**
 
