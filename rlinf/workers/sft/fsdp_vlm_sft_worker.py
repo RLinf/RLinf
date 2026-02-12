@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
+import os
 import re
 from typing import Any
 
@@ -26,6 +28,49 @@ from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 class FSDPVlmSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
+
+    def _save_data_state(self, save_path: str):
+        state = {
+            "data_epoch": self._data_epoch,
+            "data_iter_offset": self._data_iter_offset,
+        }
+        with open(os.path.join(save_path, "data_state.json"), "w") as f:
+            json.dump(state, f)
+
+    def save_checkpoint(self, save_path: str, step: int = 0):
+        super().save_checkpoint(save_path, step)
+        if self._rank == 0:
+            self._save_data_state(save_path)
+
+    def _load_data_state(self, load_path: str):
+        path = os.path.join(load_path, "data_state.json")
+        if not os.path.exists(path):
+            return
+        with open(path, "r") as f:
+            state = json.load(f)
+        self._data_epoch = int(state.get("data_epoch", 0))
+        self._data_iter_offset = int(state.get("data_iter_offset", 0))
+
+        if hasattr(self.data_loader, "sampler") and hasattr(
+            self.data_loader.sampler, "set_epoch"
+        ):
+            self.data_loader.sampler.set_epoch(self._data_epoch)
+
+        self.data_iter = iter(self.data_loader)
+        for _ in range(self._data_iter_offset):
+            try:
+                next(self.data_iter)
+            except StopIteration:
+                self._data_epoch += 1
+                if hasattr(self.data_loader, "sampler") and hasattr(
+                    self.data_loader.sampler, "set_epoch"
+                ):
+                    self.data_loader.sampler.set_epoch(self._data_epoch)
+                self.data_iter = iter(self.data_loader)
+
+    def load_checkpoint(self, load_path: str):
+        super().load_checkpoint(load_path)
+        self._load_data_state(load_path)
 
     def build_tokenizer(self):
         from transformers import AutoTokenizer
@@ -76,7 +121,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             batch_size = (
                 self.micro_batch_size
                 if not eval_dataset
-                else self.cfg.data.get("eval_batch_size", 1)
+                else self.cfg.actor.get("eval_batch_size", 1)
             )
             data_loader = DataLoader(
                 train_dataset,

@@ -42,9 +42,11 @@ class FSDPSftWorker(FSDPModelManager, Worker):
 
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
 
-        # set the global batch size, micro batch size and gradient accumulation
+        # set the global batch size, micro batch size, eval batch size and gradient accumulation
         self.global_batch_size = self.cfg.actor.global_batch_size
         self.micro_batch_size = self.cfg.actor.micro_batch_size
+        self.eval_batch_size = self.cfg.actor.get("eval_batch_size", 1)
+
         assert (
             self.global_batch_size % (self.micro_batch_size * self._world_size) == 0
         ), "global_batch_size is not divisible by micro_batch_size * world_size"
@@ -77,6 +79,9 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             self.eval_data_loader = None
 
         self.global_step = 0
+        # set the dataloader epoch and data iter offset
+        self._data_epoch = 0
+        self._data_iter_offset = 0
 
     def init_worker(self):
         self.setup_model_and_optimizer()
@@ -111,7 +116,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
                 dynamic_ncols=True,
             )
             self.model.eval()
-            total = eval_step
+            total = eval_step * self.eval_batch_size
             correct = 0
 
             # get the next batch
@@ -148,12 +153,19 @@ class FSDPSftWorker(FSDPModelManager, Worker):
 
                 try:
                     batch = next(self.data_iter)
+                    self._data_iter_offset += 1
                 except StopIteration:
+                    self._data_epoch += 1
+                    logging.info(
+                        f"[INFO] data_iter exhausted, reset iterator self._data_epoch {self._data_epoch}"
+                    )
                     if hasattr(self.data_loader, "sampler") and hasattr(
                         self.data_loader.sampler, "set_epoch"
                     ):
-                        self.data_loader.sampler.set_epoch(self.global_step)
+                        self.data_loader.sampler.set_epoch(self._data_epoch)
                     self.data_iter = iter(self.data_loader)
+                    batch = next(self.data_iter)
+                    self._data_iter_offset = 1
 
                 losses = self.get_train_model_output(batch)
 

@@ -37,12 +37,12 @@ data:
   use_chat_template: True
   # if train_data_paths is not None, the sft code will just eval the model
   train_data_paths: null
-  eval_data_paths: "/workspace/dataset/Robo2VLM-1/data"
+  eval_data_paths: "/workspace/dataset/Robo2vlm/data"
   prompt_key: "question"
   choice_key: "choices"
   answer_key: "correct_answer"
   image_keys: ["image"]
-  max_prompt_length: 20480
+  max_prompt_length: 1024
   lazy_loading: false
   num_workers: 16
   answer_separator: ""
@@ -62,7 +62,7 @@ actor:
   model:
     model_type: "qwen2.5_vl"
     precision: bf16
-    model_path: "/workspace/dataset/Qwen2.5-VL-3B-Instruct"
+    model_path: "/workspace/dataset/Qwen2.5-VL-3B-Instruct-Robo2vlm-sft"
     is_lora: False
 
   optim:
