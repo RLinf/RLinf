@@ -483,7 +483,7 @@ def get_iterator_dynamic(
     num_batches_divided_by=None,
     same_micro_num_in_dp=True,
     min_num_micro_batch=None,
-) -> Iterator:
+):
     """
     Split a batch into microbatches based on max token length or fixed number
 
@@ -495,6 +495,7 @@ def get_iterator_dynamic(
         same_micro_num_in_dp: Whether to synchronize micro-batch numbers across data parallel ranks
         min_num_micro_batch: Minimum number of micro-batches to create
     """
+    assert dist.is_initialized()
     if isinstance(batch, (dict, UserDict)):
         # Get effective sequence length of each sample
         seq_len_effective = batch["attention_mask"].sum(dim=1)
@@ -514,7 +515,7 @@ def get_iterator_dynamic(
         if min_num_micro_batch is not None:
             # used to support pp
             num_micro_batches = max(min_num_micro_batch, num_micro_batches)
-        if dist.is_initialized() and same_micro_num_in_dp:
+        if same_micro_num_in_dp:
             num_micro_batches = torch.tensor([num_micro_batches], device="cuda")
             dist.all_reduce(num_micro_batches, op=dist.ReduceOp.MAX, group=dp_group)
             num_micro_batches = num_micro_batches.cpu().item()
@@ -523,25 +524,47 @@ def get_iterator_dynamic(
                 num_micro_batches, num_batches_divided_by
             )
 
-        # print(f"num_microbatches: {num_micro_batches}")
-        # Use get_seqlen_balanced_partitions for partitioning
-        partitions = get_seqlen_balanced_partitions(
-            seqlen_list=seq_len_list, k_partitions=num_micro_batches, equal_size=False
-        )
+        valid_max_token = 0
+        while valid_max_token == 0:
+            # Use get_seqlen_balanced_partitions for partitioning
+            partitions = get_seqlen_balanced_partitions(
+                seqlen_list=seq_len_list,
+                k_partitions=num_micro_batches,
+                equal_size=False,
+            )
 
-        # Create microbatches
-        microbatches = []
-        for partition in partitions:
-            curr_batch = {}
-            for key, value in batch.items():
-                if isinstance(value, torch.Tensor):
-                    curr_batch[key] = torch.stack([value[idx] for idx in partition])
-                elif isinstance(value, list):
-                    curr_batch[key] = [value[idx] for idx in partition]
-                else:
-                    continue
-            microbatches.append(curr_batch)
-
+            # Create microbatches
+            valid_max_token = 1
+            microbatches = []
+            for partition in partitions:
+                curr_batch = {}
+                for key, value in batch.items():
+                    if isinstance(value, torch.Tensor):
+                        curr_batch[key] = torch.stack([value[idx] for idx in partition])
+                    elif isinstance(value, list):
+                        curr_batch[key] = [value[idx] for idx in partition]
+                    else:
+                        continue
+                microbatches.append(curr_batch)
+                if (
+                    sum(curr_batch["prompt_lengths"])
+                    + sum(curr_batch["response_lengths"])
+                    > max_tokens_per_mbs
+                ):
+                    valid_max_token = 0
+                    print(
+                        "[Warning] get_iterator_dynamic: "
+                        f"max len > max_tokens_per_mbs in dict batch! "
+                        f"prompt_lengths: {curr_batch['prompt_lengths'].tolist()}, "
+                        f"response_lengths: {curr_batch['response_lengths'].tolist()}, "
+                        f"max_tokens_per_mbs: {max_tokens_per_mbs}"
+                    )
+                    break
+            valid_max_token = torch.tensor([valid_max_token], device="cuda")
+            dist.all_reduce(valid_max_token, op=dist.ReduceOp.MIN, group=dp_group)
+            valid_max_token = valid_max_token.cpu().item()
+            if valid_max_token == 0:
+                num_micro_batches += 1
     else:
         # Handle list of tensors
         if not batch:
@@ -564,7 +587,7 @@ def get_iterator_dynamic(
         if min_num_micro_batch is not None:
             # used to support pp
             num_micro_batches = max(min_num_micro_batch, num_micro_batches)
-        if dist.is_initialized() and same_micro_num_in_dp:
+        if same_micro_num_in_dp:
             num_micro_batches = torch.tensor([num_micro_batches], device="cuda")
             dist.all_reduce(num_micro_batches, op=dist.ReduceOp.MAX, group=dp_group)
             num_micro_batches = num_micro_batches.cpu().item()
@@ -575,26 +598,50 @@ def get_iterator_dynamic(
 
         seq_len_list = seq_len_effective.tolist()
 
-        partitions = get_seqlen_balanced_partitions(
-            seqlen_list=seq_len_list, k_partitions=num_micro_batches, equal_size=False
-        )
+        valid_max_token = 0
+        while valid_max_token == 0:
+            partitions = get_seqlen_balanced_partitions(
+                seqlen_list=seq_len_list,
+                k_partitions=num_micro_batches,
+                equal_size=False,
+            )
 
-        microbatches = []
-        for partition in partitions:
-            curr_batch = []
-            for item in batch:
-                if torch.is_tensor(item):
-                    curr_batch.append(torch.stack([item[idx] for idx in partition]))
-                elif isinstance(item, list):
-                    if isinstance(item[0], torch.Tensor):
-                        curr_batch.append([item[idx] for idx in partition])
+            valid_max_token = 1
+            microbatches = []
+            for partition in partitions:
+                curr_batch = []
+                for item in batch:
+                    if torch.is_tensor(item):
+                        curr_batch.append(torch.stack([item[idx] for idx in partition]))
+                    elif isinstance(item, list):
+                        if isinstance(item[0], torch.Tensor):
+                            curr_batch.append([item[idx] for idx in partition])
+                        else:
+                            curr_batch.append([item[idx] for idx in partition])
+                    elif item is None:
+                        curr_batch.append(None)
                     else:
-                        curr_batch.append([item[idx] for idx in partition])
-                elif item is None:
-                    curr_batch.append(None)
-                else:
-                    raise ValueError(f"Unsupported item type: {type(item)}")
-            microbatches.append(curr_batch)
+                        raise ValueError(f"Unsupported item type: {type(item)}")
+                microbatches.append(curr_batch)
+                if (
+                    sum(curr_batch["prompt_lengths"])
+                    + sum(curr_batch["response_lengths"])
+                    > max_tokens_per_mbs
+                ):
+                    valid_max_token = 0
+                    print(
+                        "[Warning] get_iterator_dynamic: "
+                        f"max len > max_tokens_per_mbs in iterator batch! "
+                        f"prompt_lengths: {curr_batch['prompt_lengths'].tolist()}, "
+                        f"response_lengths: {curr_batch['response_lengths'].tolist()}, "
+                        f"max_tokens_per_mbs: {max_tokens_per_mbs}"
+                    )
+                    break
+            valid_max_token = torch.tensor([valid_max_token], device="cuda")
+            dist.all_reduce(valid_max_token, op=dist.ReduceOp.MIN, group=dp_group)
+            valid_max_token = valid_max_token.cpu().item()
+            if valid_max_token == 0:
+                num_micro_batches += 1
     n_micro_batch = len(microbatches)
     return itertools.chain(microbatches), partitions, n_micro_batch
 

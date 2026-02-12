@@ -31,7 +31,6 @@ Each trajectory entry includes:
 - `num_samples`: number of samples in the trajectory (`T * B`)
 - `shape`: trajectory tensor shape
 - `max_episode_length`: maximum episode length
-- `storage_dir`: storage directory (when saved)
 
 Index and metadata files:
 
@@ -118,10 +117,10 @@ Checkpoint and Distributed Loading
 
 The buffer supports checkpointing and distributed loading by rank:
 
+- `load_path`: path to the checkpoint directory that contains both metadata and trajectory files
 - `is_distributed`: enable sharded loading
 - `local_rank`: load the shard for the current rank (0-based)
 - `world_size`: total number of ranks (shard count)
-- `storage_dir`: persisted storage directory for the metadata and trajectory data
 - maintain consistency for `size`, `total_samples`, and `trajectory_counter`
 
 Usage Tips
@@ -129,5 +128,5 @@ Usage Tips
 
 - **Long trajectories**: prefer windowed sampling to reduce stale data.
 - **High concurrency**: enable cache to improve sampling throughput.
-- **No persistence needed**: set `save_trajectories=False`; only in-memory cache
-  is available and checkpoints are disabled.
+- **No persistence needed**: set `auto_save=False`; cached trajectories and metadata
+  are saved into the checkpoint path when `save_checkpoint` is called.

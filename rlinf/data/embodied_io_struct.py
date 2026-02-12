@@ -125,6 +125,8 @@ class ChunkStepResult:
     forward_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
 
     def __post_init__(self):
+        if self.actions is not None:
+            self.actions = self.actions.cpu().contiguous()
         if self.prev_logprobs is not None:
             self.prev_logprobs = self.prev_logprobs.cpu().contiguous()
         if self.prev_values is not None:
@@ -203,7 +205,9 @@ class EmbodiedRolloutResult:
     def append_step_result(self, result: ChunkStepResult):
         if result.actions is not None:
             self.actions.append(result.actions)
-            self.intervene_flags.append(torch.zeros(1, dtype=torch.bool))
+            self.intervene_flags.append(
+                torch.zeros_like(result.actions, dtype=torch.bool)
+            )
         if result.rewards is not None:
             self.rewards.append(result.rewards)
         if result.terminations is not None:
@@ -223,10 +227,19 @@ class EmbodiedRolloutResult:
         self, intervene_actions: torch.Tensor, intervene_flags: torch.Tensor
     ):
         if self.actions and len(self.actions) > 0:
-            self.actions[-1] = intervene_actions * intervene_flags[
-                ..., None
-            ] + self.actions[-1] * (~intervene_flags[..., None])
-            self.intervene_flags[-1] = intervene_flags
+            if intervene_actions is not None and intervene_actions.dim() == 3:
+                if intervene_actions.shape[1] == 1:
+                    intervene_actions = intervene_actions.squeeze(1)
+            if self.actions[-1] is not None and self.actions[-1].dim() == 3:
+                if self.actions[-1].shape[1] == 1:
+                    self.actions[-1] = self.actions[-1].squeeze(1)
+
+            flags = intervene_flags
+            if flags.dim() == 1:
+                flags = flags[:, None]
+
+            self.actions[-1] = intervene_actions * flags + self.actions[-1] * (~flags)
+            self.intervene_flags[-1] = flags.expand_as(self.actions[-1])
 
     def append_transitions(self, curr_obs=None, next_obs=None):
         assert curr_obs is not None and next_obs is not None
